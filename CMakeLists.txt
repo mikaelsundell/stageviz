@@ -77,7 +77,7 @@ if (APPLE)
         MACOSX_BUNDLE_INFO_PLIST "${project_bundle}"
     )
     set_target_properties (${project_name} PROPERTIES
-        OUTPUT_NAME ${project_name}
+        OUTPUT_NAME "${project_name}"
     )
     target_compile_definitions (${project_name} PRIVATE GL_SILENCE_DEPRECATION)
     target_compile_definitions (${project_name} PRIVATE PXR_PYTHON_DIR="${OpenUSD_PYTHON_DIR}")

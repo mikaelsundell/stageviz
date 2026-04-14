@@ -102,8 +102,7 @@ ConsoleWidgetPrivate::eventFilter(QObject* object, QEvent* event)
         if (event->type() == QEvent::ShortcutOverride) {
             auto* keyEvent = static_cast<QKeyEvent*>(event);
 
-            if (keyEvent->matches(QKeySequence::SelectAll) ||
-                keyEvent->matches(QKeySequence::Copy)) {
+            if (keyEvent->matches(QKeySequence::SelectAll) || keyEvent->matches(QKeySequence::Copy)) {
                 event->accept();
                 return true;
             }

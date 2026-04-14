@@ -54,22 +54,5 @@ namespace os {
  */
     QString persistScopedPath(const QString& bookmark);
 
-    ///@}
-
-    /** @name Platform Utilities */
-    ///@{
-
-    /**
- * @brief Writes a message to the platform console.
- *
- * Useful for debugging or forwarding messages to
- * system logging facilities.
- *
- * @param message Message to output.
- */
-    void console(const QString& message);
-
-    ///@}
-
 }  // namespace os
 }  // namespace stageviz
