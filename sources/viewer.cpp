@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
 // Copyright (c) 2025 - present Mikael Sundell
-// https://github.com/mikaelsundell/usdviewer
+// https://github.com/mikaelsundell/stageviz
 
 #include "viewer.h"
 #include "application.h"
@@ -43,7 +43,7 @@
 // generated files
 #include "ui_viewer.h"
 
-namespace usdviewer {
+namespace stageviz {
 
 class ViewerPrivate : public QObject, public SignalGuard {
     Q_OBJECT
@@ -867,14 +867,14 @@ ViewerPrivate::copyImage()
 void
 ViewerPrivate::selectAll()
 {
-    session()->commandStack()->run(new Command(usdviewer::selectAll()));
+    session()->commandStack()->run(new Command(stageviz::selectAll()));
 }
 
 void
 ViewerPrivate::selectInvert()
 {
     if (session()->selectionList()->paths().size())
-        session()->commandStack()->run(new Command(usdviewer::selectInvert()));
+        session()->commandStack()->run(new Command(stageviz::selectInvert()));
 }
 
 void
@@ -1336,13 +1336,13 @@ ViewerPrivate::toggleConsole(bool checked)
 void
 ViewerPrivate::openGithubReadme()
 {
-    QDesktopServices::openUrl(QUrl("https://github.com/mikaelsundell/usdviewer/blob/master/README.md"));
+    QDesktopServices::openUrl(QUrl("https://github.com/mikaelsundell/stageviz/blob/master/README.md"));
 }
 
 void
 ViewerPrivate::openGithubIssues()
 {
-    QDesktopServices::openUrl(QUrl("https://github.com/mikaelsundell/usdviewer/issues"));
+    QDesktopServices::openUrl(QUrl("https://github.com/mikaelsundell/stageviz/issues"));
 }
 
 void
@@ -1630,7 +1630,7 @@ Viewer::setArguments(const QStringList& arguments)
 
     if (arguments.size() == 2) {
         QString arg = arguments[1];
-        const QString protocolPrefix = "usdviewer://";
+        const QString protocolPrefix = "stageviz://";
         if (arg.startsWith(protocolPrefix, Qt::CaseInsensitive)) {
             QString pathEncoded = arg.mid(protocolPrefix.length());
             QString decodedPath = QUrl::fromPercentEncoding(pathEncoded.toUtf8());
@@ -1693,6 +1693,6 @@ Viewer::dropEvent(QDropEvent* event)
     event->ignore();
 }
 
-}  // namespace usdviewer
+}  // namespace stageviz
 
 #include "viewer.moc"

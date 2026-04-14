@@ -1,13 +1,13 @@
-// Copyright 2022-present Contributors to the jobman project.
+// Copyright 2022-present Contributors to the stageviz project.
 // SPDX-License-Identifier: BSD-3-Clause
-// https://github.com/mikaelsundell/jobman
+// https://github.com/mikaelsundell/stageviz
 
 #include "os.h"
 #include <QApplication>
 #include <QScreen>
 #include <windows.h>
 
-namespace usdviewer {
+namespace stageviz {
 namespace os {
     void setDarkTheme() {}
 
@@ -25,9 +25,9 @@ namespace os {
 
     void console(const QString& message)
     {
-        QString string = QStringLiteral("usdviewer: %1\n").arg(message);
+        QString string = QStringLiteral("stageviz: %1\n").arg(message);
         OutputDebugStringW(reinterpret_cast<const wchar_t*>(string.utf16()));
     }
 
 }  // namespace os
-}  // namespace usdviewer
+}  // namespace stageviz

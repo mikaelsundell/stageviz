@@ -3,5 +3,5 @@
 build
 build.*
 deploy.*
-usdviewer_*
+stageviz_*
 plugin*

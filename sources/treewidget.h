@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
 // Copyright (c) 2025 - present Mikael Sundell
-// https://github.com/mikaelsundell/usdviewer
+// https://github.com/mikaelsundell/stageviz
 
 #pragma once
 
@@ -8,7 +8,7 @@
 #include <QTreeWidget>
 #include <memory>
 
-namespace usdviewer {
+namespace stageviz {
 
 class TreeWidgetPrivate;
 
@@ -102,4 +102,4 @@ private:
     std::unique_ptr<TreeWidgetPrivate> p;
 };
 
-}  // namespace usdviewer
+}  // namespace stageviz

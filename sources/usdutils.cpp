@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
 // Copyright (c) 2025 - present Mikael Sundell
-// https://github.com/mikaelsundell/usdviewer
+// https://github.com/mikaelsundell/stageviz
 
 #include "usdutils.h"
 #include "qtutils.h"
@@ -15,7 +15,7 @@
 #include <pxr/usd/usdGeom/tokens.h>
 #include <stack>
 
-namespace usdviewer {
+namespace stageviz {
 namespace path {
     QList<SdfPath> topLevelPaths(const QList<SdfPath>& paths)
     {
@@ -715,4 +715,4 @@ namespace stage {
     }
 
 }  // namespace stage
-}  // namespace usdviewer
+}  // namespace stageviz

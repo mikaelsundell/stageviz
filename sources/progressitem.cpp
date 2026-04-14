@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: BSD-3-Clause
 // Copyright (c) 2025 - present Mikael Sundell
-// https://github.com/mikaelsundell/usdviewer
+// https://github.com/mikaelsundell/stageviz
 
 #include "progressitem.h"
 #include <QPointer>
 
-namespace usdviewer {
+namespace stageviz {
 class ProgressItemPrivate {
 public:
     void init();
@@ -36,4 +36,4 @@ ProgressItem::ProgressItem(QTreeWidgetItem* parent)
 
 ProgressItem::~ProgressItem() = default;
 
-}  // namespace usdviewer
+}  // namespace stageviz

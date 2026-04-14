@@ -1,11 +1,11 @@
 @echo off
-REM Copyright 2022-present Contributors to the usdviewer project.
+REM Copyright 2022-present Contributors to the stageviz project.
 REM SPDX-License-Identifier: BSD-3-Clause
-REM https://github.com/mikaelsundell/usdviewer
+REM https://github.com/mikaelsundell/stageviz
 
 set "app_dir=%~dp0"
-set "app_name=USDViewer"
-set "pkg_name=usdviewer"
+set "app_name=Stageviz"
+set "pkg_name=stageviz"
 set "build_type="
 set "deploy=0"
 set "cmake_generator=Visual Studio 16 2019"
@@ -64,10 +64,10 @@ for /f "tokens=*" %%V in ('cmake --version') do (
     )
 )
 
-REM build usdviewer
-:build_usdviewer
+REM build stageviz
+:build_stageviz
 
-echo Building USDViewer for %build_type% using %cmake_generator%
+echo Building stageviz for %build_type% using %cmake_generator%
 echo -------------------------------------------------------
 
 set "build_dir=%app_dir%build.%build_type%"
@@ -96,19 +96,19 @@ if errorlevel 1 goto :error
 
 REM deploy the configuration if requested
 if "%deploy%"=="1" (
-    call :deploy_usdviewer
+    call :deploy_stageviz
 )
 
 goto :end
 
-:deploy_usdviewer
+:deploy_stageviz
 REM deploy using windeployqt
 set "deploy_dir=%app_dir%deploy.%build_type%"
 set "windeployqt=%THIRDPARTY_DIR%\bin\windeployqt6.exe"
 set "exe_path=%build_dir%\%build_type%\%app_name%.exe"
 set "resources_path=%build_dir%\%build_type%\resources"
 
-echo Deploying USDViewer for %build_type% to %deploy_dir%
+echo Deploying stageviz for %build_type% to %deploy_dir%
 echo -------------------------------------------------
 
 REM check if windeployqt exists

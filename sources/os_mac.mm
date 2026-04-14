@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
 // Copyright (c) 2025 - present Mikael Sundell
-// https://github.com/mikaelsundell/usdviewer
+// https://github.com/mikaelsundell/stageviz
 
 #include "os.h"
 
@@ -11,7 +11,7 @@
 #include <QApplication>
 #include <QScreen>
 
-namespace usdviewer {
+namespace stageviz {
 namespace os {
 void setDarkTheme()
 {
@@ -70,4 +70,4 @@ QString saveBookmark(const QString& bookmark)
     }
 }
 }  // namespace os
-}  // namespace usdviewer
+}  // namespace stageviz

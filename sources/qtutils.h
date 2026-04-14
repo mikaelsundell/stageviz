@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
 // Copyright (c) 2025 - present Mikael Sundell
-// https://github.com/mikaelsundell/usdviewer
+// https://github.com/mikaelsundell/stageviz
 
 #pragma once
 
@@ -20,7 +20,7 @@
 
 PXR_NAMESPACE_USING_DIRECTIVE
 
-namespace usdviewer {
+namespace stageviz {
 namespace qt {
 
     /** @name Qt / Image Conversions */
@@ -230,11 +230,11 @@ namespace qt {
     ///@}
 
 }  // namespace qt
-}  // namespace usdviewer
+}  // namespace stageviz
 
 PXR_NAMESPACE_OPEN_SCOPE
 
-using namespace usdviewer::qt;
+using namespace stageviz::qt;
 
 /**
  * @brief Qt hash function for SdfPath.

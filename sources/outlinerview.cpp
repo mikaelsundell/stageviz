@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
 // Copyright (c) 2025 - present Mikael Sundell
-// https://github.com/mikaelsundell/usdviewer
+// https://github.com/mikaelsundell/stageviz
 
 #include "outlinerview.h"
 #include "application.h"
@@ -19,7 +19,7 @@ PXR_NAMESPACE_USING_DIRECTIVE
 // generated files
 #include "ui_outlinerview.h"
 
-namespace usdviewer {
+namespace stageviz {
 
 class OutlinerViewPrivate : public QObject, public SignalGuard {
 public:
@@ -284,4 +284,4 @@ OutlinerView::enableFollow(bool enable)
     p->follow(enable);
 }
 
-}  // namespace usdviewer
+}  // namespace stageviz

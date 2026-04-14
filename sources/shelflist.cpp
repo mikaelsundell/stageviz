@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
 // Copyright (c) 2025 - present Mikael Sundell
-// https://github.com/mikaelsundell/usdviewer
+// https://github.com/mikaelsundell/stageviz
 
 #include "shelflist.h"
 #include "application.h"
@@ -20,7 +20,7 @@
 #include <QPointer>
 #include <QStyledItemDelegate>
 
-namespace usdviewer {
+namespace stageviz {
 
 class ShelfListPrivate {
 public:
@@ -114,7 +114,7 @@ ShelfListPrivate::init()
     d.list->setSelectionMode(QAbstractItemView::NoSelection);
     d.list->setContextMenuPolicy(Qt::CustomContextMenu);
 
-    const int iconSize = usdviewer::style()->iconSize(Style::UIScale::Medium);
+    const int iconSize = stageviz::style()->iconSize(Style::UIScale::Medium);
     d.list->setIconSize(QSize(iconSize, iconSize));
 
     const int pad = 12;
@@ -210,7 +210,7 @@ ShelfListPrivate::iconImage(const QImage& image) const
     if (image.isNull())
         return QImage();
 
-    const int iconSize = usdviewer::style()->iconSize(Style::UIScale::Large);
+    const int iconSize = stageviz::style()->iconSize(Style::UIScale::Large);
     const int tilePadding = 10;
     const int logicalSize = iconSize + tilePadding * 2;
     if (logicalSize <= 0)
@@ -456,4 +456,4 @@ ShelfList::leaveEvent(QEvent* event)
     QListWidget::leaveEvent(event);
 }
 
-}  // namespace usdviewer
+}  // namespace stageviz

@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: BSD-3-Clause
 // Copyright (c) 2022 - present Mikael Sundell.
-// https://github.com/mikaelsundell/flipman
+// https://github.com/mikaelsundell/stageviz
 
 #include "settings.h"
 #include <QPointer>
 #include <QSettings>
 
-namespace usdviewer {
+namespace stageviz {
 class SettingsPrivate {
 public:
     SettingsPrivate();
@@ -41,4 +41,4 @@ Settings::setValue(const QString& key, const QVariant& value)
     settings.setValue(key, value);
 }
 
-}  // namespace usdviewer
+}  // namespace stageviz

@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: BSD-3-Clause
 // Copyright (c) 2025 - present Mikael Sundell
-// https://github.com/mikaelsundell/usdviewer
+// https://github.com/mikaelsundell/stageviz
 
 #include "dockwidget.h"
 #include <QMouseEvent>
 #include <QPointer>
 
-namespace usdviewer {
+namespace stageviz {
 class DockWidgetPrivate : public QObject {
 public:
     void init();
@@ -66,4 +66,4 @@ DockWidget::mouseMoveEvent(QMouseEvent* event)
     }
     move(event->globalPosition().toPoint() - p->d.dragStart);
 }
-}  // namespace usdviewer
+}  // namespace stageviz

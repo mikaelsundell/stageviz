@@ -1,7 +1,7 @@
 #!/bin/bash
-##  Copyright 2022-present Contributors to the usdviewer project.
+##  Copyright 2022-present Contributors to the stageviz project.
 ##  SPDX-License-Identifier: BSD-3-Clause
-##  https://github.com/mikaelsundell/usdviewer
+##  https://github.com/mikaelsundell/stageviz
 
 mkdir AppIcon.iconset
 sips -z 16 16     AppIcon.png --out AppIcon.iconset/icon_16x16.png

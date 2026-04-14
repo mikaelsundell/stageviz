@@ -1,14 +1,14 @@
 #!/bin/bash
-##  Copyright 2022-present Contributors to the usdviewer project.
+##  Copyright 2022-present Contributors to the stageviz project.
 ##  SPDX-License-Identifier: BSD-3-Clause
-##  https://github.com/mikaelsundell/usdviewer
+##  https://github.com/mikaelsundell/stageviz
 
 script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 machine_arch=$(uname -m)
 macos_version=$(sw_vers -productVersion)
 major_version=$(echo "$macos_version" | cut -d '.' -f 1)
-app_name="USDViewer"
-pkg_name="usdviewer"
+app_name="Stageviz"
+pkg_name="stageviz"
 
 # signing
 sign_code=OFF
@@ -62,7 +62,7 @@ if [ "$build_type" != "debug" ] && [ "$build_type" != "release" ] && [ "$build_t
     exit 1
 fi
 
-echo "Building usdviewer for $build_type"
+echo "Building stageviz for $build_type"
 echo "---------------------------------"
 
 # signing
@@ -95,8 +95,8 @@ if ! [[ $(cmake --version | grep -o '[0-9]\+\(\.[0-9]\+\)*' | head -n1) < "3.28.
     exit 1;
 fi
 
-# build usdviewer
-build_usdviewer() {
+# build stageviz
+build_stageviz() {
     local build_type="$1"
 
     # cmake
@@ -215,8 +215,8 @@ build_usdviewer() {
 
 # build types
 if [ "$build_type" == "all" ]; then
-    build_usdviewer "debug"
-    build_usdviewer "release"
+    build_stageviz "debug"
+    build_stageviz "release"
 else
-    build_usdviewer "$build_type"
+    build_stageviz "$build_type"
 fi

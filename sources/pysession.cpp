@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
 // Copyright (c) 2025 - present Mikael Sundell
-// https://github.com/mikaelsundell/usdviewer
+// https://github.com/mikaelsundell/stageviz
 
 #include "application.h"
 #include "commandstack.h"
@@ -20,7 +20,7 @@
 #include <QVariantMap>
 
 PXR_NAMESPACE_USING_DIRECTIVE
-using namespace usdviewer;
+using namespace stageviz;
 
 namespace {
 
@@ -36,7 +36,7 @@ checkSession(Session* s)
     if (s)
         return true;
 
-    PyErr_SetString(PyExc_RuntimeError, "usdviewer session is not available");
+    PyErr_SetString(PyExc_RuntimeError, "stageviz session is not available");
     return false;
 }
 
@@ -46,7 +46,7 @@ checkSelectionList(SelectionList* selection)
     if (selection)
         return true;
 
-    PyErr_SetString(PyExc_RuntimeError, "usdviewer selection list is not available");
+    PyErr_SetString(PyExc_RuntimeError, "stageviz selection list is not available");
     return false;
 }
 
@@ -56,7 +56,7 @@ checkCommandStack(CommandStack* stack)
     if (stack)
         return true;
 
-    PyErr_SetString(PyExc_RuntimeError, "usdviewer command stack is not available");
+    PyErr_SetString(PyExc_RuntimeError, "stageviz command stack is not available");
     return false;
 }
 
@@ -309,8 +309,8 @@ wrapUsdStage(const UsdStageRefPtr& stage)
 // ----------------------------------------------------------------------------
 
 static PyModuleDef pysessionModule = { PyModuleDef_HEAD_INIT,
-                                       "usdviewer",
-                                       "Python interface for usdviewer Session",
+                                       "stageviz",
+                                       "Python interface for stageviz Session",
                                        -1,
                                        nullptr,
                                        nullptr,
@@ -1086,18 +1086,18 @@ PyModule_getCurrentStage(PyObject*, PyObject*)
 }
 
 static PyMethodDef Module_methods[]
-    = { { "session", (PyCFunction)PyModule_session, METH_NOARGS, "Get the current usdviewer session wrapper" },
+    = { { "session", (PyCFunction)PyModule_session, METH_NOARGS, "Get the current stageviz session wrapper" },
         { "selectionList", (PyCFunction)PyModule_selectionList, METH_NOARGS,
-          "Get the current usdviewer selection list wrapper" },
+          "Get the current stageviz selection list wrapper" },
         { "getCurrentStage", (PyCFunction)PyModule_getCurrentStage, METH_NOARGS, "Get the current native USD stage" },
         { nullptr, nullptr, 0, nullptr } };
 
 PyMODINIT_FUNC
-PyInit_usdviewer(void)
+PyInit_stageviz(void)
 {
     pysessionModule.m_methods = Module_methods;
 
-    PySessionType.tp_name = "usdviewer.Session";
+    PySessionType.tp_name = "stageviz.Session";
     PySessionType.tp_basicsize = sizeof(PySessionObject);
     PySessionType.tp_itemsize = 0;
     PySessionType.tp_flags = Py_TPFLAGS_DEFAULT;
@@ -1105,7 +1105,7 @@ PyInit_usdviewer(void)
     PySessionType.tp_dealloc = reinterpret_cast<destructor>(PySession_dealloc);
     PySessionType.tp_methods = PySession_methods;
 
-    PySelectionListType.tp_name = "usdviewer.SelectionList";
+    PySelectionListType.tp_name = "stageviz.SelectionList";
     PySelectionListType.tp_basicsize = sizeof(PySelectionListObject);
     PySelectionListType.tp_itemsize = 0;
     PySelectionListType.tp_flags = Py_TPFLAGS_DEFAULT;
@@ -1113,7 +1113,7 @@ PyInit_usdviewer(void)
     PySelectionListType.tp_dealloc = reinterpret_cast<destructor>(PySelectionList_dealloc);
     PySelectionListType.tp_methods = PySelectionList_methods;
 
-    PyCommandStackType.tp_name = "usdviewer.CommandStack";
+    PyCommandStackType.tp_name = "stageviz.CommandStack";
     PyCommandStackType.tp_basicsize = sizeof(PyCommandStackObject);
     PyCommandStackType.tp_itemsize = 0;
     PyCommandStackType.tp_flags = Py_TPFLAGS_DEFAULT;
@@ -1178,7 +1178,7 @@ PyInit_usdviewer(void)
 }
 
 extern "C" PyObject*
-PyInit_usdviewer_wrapper()
+PyInit_stageviz_wrapper()
 {
-    return PyInit_usdviewer();
+    return PyInit_stageviz();
 }

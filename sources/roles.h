@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: BSD-3-Clause
 // Copyright (c) 2025 - present Mikael Sundell
-// https://github.com/mikaelsundell/usdviewer
+// https://github.com/mikaelsundell/stageviz
 
 #pragma once
 
 #include <Qt>
 
-namespace usdviewer::roles::shelf {
+namespace stageviz::roles::shelf {
 
 /**
  * @brief Item data role storing the user-visible script name.
@@ -18,4 +18,4 @@ inline constexpr int scriptName = Qt::UserRole + 1;
  */
 inline constexpr int scriptIcon = Qt::UserRole + 2;
 
-}  // namespace usdviewer::roles::shelf
+}  // namespace stageviz::roles::shelf

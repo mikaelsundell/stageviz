@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
 // Copyright (c) 2022 - present Mikael Sundell.
-// https://github.com/mikaelsundell/flipman
+// https://github.com/mikaelsundell/stageviz
 
 #include "application.h"
 #include "console.h"
@@ -19,7 +19,7 @@
 
 PXR_NAMESPACE_USING_DIRECTIVE
 
-namespace usdviewer {
+namespace stageviz {
 class ApplicationPrivate {
 public:
     ApplicationPrivate();
@@ -127,8 +127,8 @@ Application::instance()
     if (!app) {
         qFatal("Fatal Error in [Application::instance()]:\n"
                "The global application instance is missing or is not a core::Application. "
-               "Ensure you have instantiated usdviewer::Application in your main() function.");
+               "Ensure you have instantiated stageviz::Application in your main() function.");
     }
     return app;
 }
-}  // namespace usdviewer
+}  // namespace stageviz

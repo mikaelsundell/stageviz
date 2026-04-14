@@ -1,7 +1,7 @@
 @echo off
-REM Copyright 2022-present Contributors to the usdviewer project.
+REM Copyright 2022-present Contributors to the stageviz project.
 REM SPDX-License-Identifier: BSD-3-Clause
-REM https://github.com/mikaelsundell/usdviewer
+REM https://github.com/mikaelsundell/stageviz
 
 REM Create a temporary folder for resized icons
 mkdir AppIcon_ico_set

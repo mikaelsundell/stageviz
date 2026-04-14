@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
 // Copyright (c) 2025 - present Mikael Sundell
-// https://github.com/mikaelsundell/usdviewer
+// https://github.com/mikaelsundell/stageviz
 
 #include "console.h"
 #include <QMetaObject>
@@ -10,7 +10,7 @@
 #include <thread>
 #include <unistd.h>
 
-namespace usdviewer {
+namespace stageviz {
 
 class ConsolePrivate : public QObject {
     Q_OBJECT
@@ -209,6 +209,6 @@ Console::lines() const
     return p->lines();
 }
 
-}  // namespace usdviewer
+}  // namespace stageviz
 
 #include "console.moc"

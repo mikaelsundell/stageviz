@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: BSD-3-Clause
 // Copyright (c) 2025 - present Mikael Sundell
-// https://github.com/mikaelsundell/usdviewer
+// https://github.com/mikaelsundell/stageviz
 
 #pragma once
 
 #include <QPlainTextEdit>
 
-namespace usdviewer {
+namespace stageviz {
 
 class PythonEditorPrivate;
 
@@ -48,4 +48,4 @@ private:
     QScopedPointer<PythonEditorPrivate> p;
 };
 
-}  // namespace usdviewer
+}  // namespace stageviz

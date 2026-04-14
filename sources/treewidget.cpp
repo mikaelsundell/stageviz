@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
 // Copyright (c) 2025 - present Mikael Sundell
-// https://github.com/mikaelsundell/usdviewer
+// https://github.com/mikaelsundell/stageviz
 
 #include "treewidget.h"
 #include "application.h"
@@ -13,7 +13,7 @@
 #include <QPointer>
 #include <QStyledItemDelegate>
 
-namespace usdviewer {
+namespace stageviz {
 
 class TreeWidgetPrivate {
 public:
@@ -529,4 +529,4 @@ TreeWidget::drawRow(QPainter* painter, const QStyleOptionViewItem& option, const
     QTreeWidget::drawRow(painter, opt, index);
 }
 
-}  // namespace usdviewer
+}  // namespace stageviz

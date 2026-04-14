@@ -13,12 +13,12 @@
 #define slots Q_SLOTS
 
 extern "C" PyObject*
-PyInit_usdviewer_wrapper();
+PyInit_stageviz_wrapper();
 
 extern "C" PyObject*
-PyInit__usdviewer_native_wrapper();
+PyInit__stageviz_native_wrapper();
 
-namespace usdviewer {
+namespace stageviz {
 
 class PythonInterpreterPrivate {
 public:
@@ -50,8 +50,8 @@ PythonInterpreterPrivate::init()
     if (d.initialized)
         return;
 
-    if (PyImport_AppendInittab("usdviewer", PyInit_usdviewer_wrapper) == -1) {
-        qWarning("Failed to add usdviewer module");
+    if (PyImport_AppendInittab("stageviz", PyInit_stageviz_wrapper) == -1) {
+        qWarning("Failed to add stageviz module");
         return;
     }
 
@@ -78,10 +78,10 @@ PythonInterpreterPrivate::init()
     d.locals = d.globals;
     Py_INCREF(d.locals);
 
-    PyObject* module = PyImport_ImportModule("usdviewer");
+    PyObject* module = PyImport_ImportModule("stageviz");
     if (!module) {
         PyErr_Print();
-        qWarning() << "[Python] Failed to import usdviewer module";
+        qWarning() << "[Python] Failed to import stageviz module";
         return;
     }
 
@@ -299,4 +299,4 @@ PythonInterpreter::executeScript(const QString& script)
     return p->executeScript(script);
 }
 
-}  // namespace usdviewer
+}  // namespace stageviz

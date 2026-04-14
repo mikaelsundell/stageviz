@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
 // Copyright (c) 2025 - present Mikael Sundell
-// https://github.com/mikaelsundell/usdviewer
+// https://github.com/mikaelsundell/stageviz
 
 #include "style.h"
 #include "qtutils.h"
@@ -13,7 +13,7 @@
 #include <QScopedPointer>
 #include <QSurfaceFormat>
 
-namespace usdviewer {
+namespace stageviz {
 
 class StylePrivate {
 public:
@@ -448,4 +448,4 @@ Style::colorSpace() const
     return p->colorSpace();
 }
 
-}  // namespace usdviewer
+}  // namespace stageviz

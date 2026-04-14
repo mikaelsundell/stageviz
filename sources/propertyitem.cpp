@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: BSD-3-Clause
 // Copyright (c) 2025 - present Mikael Sundell
-// https://github.com/mikaelsundell/usdviewer
+// https://github.com/mikaelsundell/stageviz
 
 #include "propertyitem.h"
 #include <QPointer>
 
-namespace usdviewer {
+namespace stageviz {
 class PropertyItemPrivate {
 public:
     void init();
@@ -48,4 +48,4 @@ PropertyItem::itemStates() const
     return Visible;
 }
 
-}  // namespace usdviewer
+}  // namespace stageviz

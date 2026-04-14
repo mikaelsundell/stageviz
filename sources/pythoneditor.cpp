@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
 // Copyright (c) 2025 - present Mikael Sundell
-// https://github.com/mikaelsundell/usdviewer
+// https://github.com/mikaelsundell/stageviz
 
 #include "pythoneditor.h"
 
@@ -9,7 +9,7 @@
 #include <QSyntaxHighlighter>
 #include <QTextBlock>
 
-namespace usdviewer {
+namespace stageviz {
 
 class PythonEditorPrivate {
 public:
@@ -206,4 +206,4 @@ PythonEditor::lineNumberAreaPaintEvent(QPaintEvent* event)
     }
 }
 
-}  // namespace usdviewer
+}  // namespace stageviz

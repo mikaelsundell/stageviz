@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: BSD-3-Clause
 // Copyright (c) 2025 - present Mikael Sundell
-// https://github.com/mikaelsundell/usdviewer
+// https://github.com/mikaelsundell/stageviz
 
 #pragma once
 #include <QProcess>
 #include <QWidget>
 
-namespace usdviewer {
+namespace stageviz {
 namespace os {
 
     /** @name Application Appearance */
@@ -72,4 +72,4 @@ namespace os {
     ///@}
 
 }  // namespace os
-}  // namespace usdviewer
+}  // namespace stageviz

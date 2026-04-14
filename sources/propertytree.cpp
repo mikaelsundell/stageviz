@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
 // Copyright (c) 2025 - present Mikael Sundell
-// https://github.com/mikaelsundell/usdviewer
+// https://github.com/mikaelsundell/stageviz
 
 #include "propertytree.h"
 #include "notice.h"
@@ -31,7 +31,7 @@
 
 PXR_NAMESPACE_USING_DIRECTIVE
 
-namespace usdviewer {
+namespace stageviz {
 class PropertyTreePrivate : public QObject, public SignalGuard {
 public:
     void init();
@@ -298,4 +298,4 @@ PropertyTree::updateSelection(const QList<SdfPath>& paths)
     p->updateSelection(paths);
 }
 
-}  // namespace usdviewer
+}  // namespace stageviz

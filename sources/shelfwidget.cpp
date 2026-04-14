@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
 // Copyright (c) 2025 - present Mikael Sundell
-// https://github.com/mikaelsundell/usdviewer
+// https://github.com/mikaelsundell/stageviz
 
 #include "shelfwidget.h"
 #include "application.h"
@@ -29,7 +29,7 @@
 #include <QUrl>
 #include <QVariantMap>
 
-namespace usdviewer {
+namespace stageviz {
 
 class ShelfWidgetPrivate : public QObject {
     Q_OBJECT
@@ -331,7 +331,7 @@ ShelfWidget::fromVariantList(const QVariantList& scripts)
 QSize
 ShelfWidget::sizeHint() const
 {
-    const int iconSize = usdviewer::style()->iconSize(Style::UIScale::Large);
+    const int iconSize = stageviz::style()->iconSize(Style::UIScale::Large);
     const int tilePadding = 10;
     const int height = iconSize + tilePadding * 2 + 2;
     return QSize(QWidget::sizeHint().width(), height);
@@ -340,7 +340,7 @@ ShelfWidget::sizeHint() const
 QSize
 ShelfWidget::minimumSizeHint() const
 {
-    const int iconSize = usdviewer::style()->iconSize(Style::UIScale::Large);
+    const int iconSize = stageviz::style()->iconSize(Style::UIScale::Large);
     const int tilePadding = 10;
     const int height = iconSize + tilePadding * 2 + 2;
     return QSize(0, height);
@@ -352,6 +352,6 @@ ShelfWidget::eventFilter(QObject* object, QEvent* event)
     return QWidget::eventFilter(object, event);
 }
 
-}  // namespace usdviewer
+}  // namespace stageviz
 
 #include "shelfwidget.moc"

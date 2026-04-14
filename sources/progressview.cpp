@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
 // Copyright (c) 2025 - present Mikael Sundell
-// https://github.com/mikaelsundell/usdviewer
+// https://github.com/mikaelsundell/stageviz
 
 #include "progressview.h"
 #include "application.h"
@@ -19,7 +19,7 @@
 // generated files
 #include "ui_progressview.h"
 
-namespace usdviewer {
+namespace stageviz {
 
 namespace {
     constexpr int kNotifyPathsRole = Qt::UserRole + 1;
@@ -369,4 +369,4 @@ ProgressView::ProgressView(QWidget* parent)
 
 ProgressView::~ProgressView() = default;
 
-}  // namespace usdviewer
+}  // namespace stageviz

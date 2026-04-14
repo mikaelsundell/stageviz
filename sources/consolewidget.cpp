@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
 // Copyright (c) 2025 - present Mikael Sundell
-// https://github.com/mikaelsundell/usdviewer
+// https://github.com/mikaelsundell/stageviz
 
 #include "consolewidget.h"
 #include "application.h"
@@ -22,7 +22,7 @@ PXR_NAMESPACE_USING_DIRECTIVE
 // generated files
 #include "ui_consolewidget.h"
 
-namespace usdviewer {
+namespace stageviz {
 
 class ConsoleWidgetPrivate : public QObject {
 public:
@@ -261,4 +261,4 @@ ConsoleWidget::ConsoleWidget(QWidget* parent)
 
 ConsoleWidget::~ConsoleWidget() = default;
 
-}  // namespace usdviewer
+}  // namespace stageviz

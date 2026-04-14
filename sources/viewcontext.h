@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
 // Copyright (c) 2025 - present Mikael Sundell
-// https://github.com/mikaelsundell/usdviewer
+// https://github.com/mikaelsundell/stageviz
 
 #pragma once
 
@@ -8,7 +8,7 @@
 #include <QReadWriteLock>
 #include <QScopedPointer>
 
-namespace usdviewer {
+namespace stageviz {
 
 class Command;
 class CommandStack;
@@ -85,4 +85,4 @@ private:
     QScopedPointer<ViewContextPrivate> p;
 };
 
-}  // namespace usdviewer
+}  // namespace stageviz

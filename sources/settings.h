@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
 // Copyright (c) 2024 - present Mikael Sundell
-// https://github.com/mikaelsundell/flipman
+// https://github.com/mikaelsundell/stageviz
 
 #pragma once
 
@@ -8,7 +8,7 @@
 #include <QScopedPointer>
 #include <QVariant>
 
-namespace usdviewer {
+namespace stageviz {
 
 class SettingsPrivate;
 
@@ -50,4 +50,4 @@ private:
     QScopedPointer<SettingsPrivate> p;
 };
 
-}  // namespace usdviewer
+}  // namespace stageviz

@@ -72,7 +72,7 @@
           <number>0</number>
          </property>
          <item>
-          <widget class="usdviewer::ImagingGLWidget" name="imagingGLWidget"/>
+          <widget class="stageviz::ImagingGLWidget" name="imagingGLWidget"/>
          </item>
         </layout>
        </widget>
@@ -84,7 +84,7 @@
  </widget>
  <customwidgets>
   <customwidget>
-   <class>usdviewer::ImagingGLWidget</class>
+   <class>stageviz::ImagingGLWidget</class>
    <extends>QOpenGLWidget</extends>
    <header>../../../sources/imagingglwidget.h</header>
   </customwidget>

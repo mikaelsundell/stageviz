@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
 // Copyright (c) 2025 - present Mikael Sundell
-// https://github.com/mikaelsundell/usdviewer
+// https://github.com/mikaelsundell/stageviz
 
 #include "renderview.h"
 #include "application.h"
@@ -12,7 +12,7 @@
 // generated files
 #include "ui_renderview.h"
 
-namespace usdviewer {
+namespace stageviz {
 class RenderViewPrivate : public QObject {
 public:
     void init();
@@ -305,4 +305,4 @@ RenderView::visibleCapturePaths() const
     return p->imageGLWidget()->visibleCapturePaths();
 }
 
-}  // namespace usdviewer
+}  // namespace stageviz

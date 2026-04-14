@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
 // Copyright (c) 2025 - present Mikael Sundell
-// https://github.com/mikaelsundell/usdviewer
+// https://github.com/mikaelsundell/stageviz
 //
 // Debug lock helpers for QReadWriteLock.
 //
@@ -24,14 +24,14 @@
 //
 // To enable tracing, define:
 //
-//   #define USDVIEWER_TRACE_LOCKS 1
+//   #define STAGEVIZ_TRACE_LOCKS 1
 //
 // before including this header, or add it to your build defines.
 //
 // Optional threshold tuning:
 //
-//   #define USDVIEWER_TRACE_LOCKS_WAIT_MS  1.0
-//   #define USDVIEWER_TRACE_LOCKS_HOLD_MS  2.0
+//   #define STAGEVIZ_TRACE_LOCKS_WAIT_MS  1.0
+//   #define STAGEVIZ_TRACE_LOCKS_HOLD_MS  2.0
 //
 // The header assumes CommandDispatcher::stageLock() returns QReadWriteLock*.
 
@@ -42,19 +42,19 @@
 #include <QReadWriteLock>
 #include <QThread>
 
-#ifndef USDVIEWER_TRACE_LOCKS
-#    define USDVIEWER_TRACE_LOCKS 0
+#ifndef STAGEVIZ_TRACE_LOCKS
+#    define STAGEVIZ_TRACE_LOCKS 0
 #endif
 
-#ifndef USDVIEWER_TRACE_LOCKS_WAIT_MS
-#    define USDVIEWER_TRACE_LOCKS_WAIT_MS 1.0
+#ifndef STAGEVIZ_TRACE_LOCKS_WAIT_MS
+#    define STAGEVIZ_TRACE_LOCKS_WAIT_MS 1.0
 #endif
 
-#ifndef USDVIEWER_TRACE_LOCKS_HOLD_MS
-#    define USDVIEWER_TRACE_LOCKS_HOLD_MS 2.0
+#ifndef STAGEVIZ_TRACE_LOCKS_HOLD_MS
+#    define STAGEVIZ_TRACE_LOCKS_HOLD_MS 2.0
 #endif
 
-namespace usdviewer::debug {
+namespace stageviz::debug {
 
 inline quintptr
 currentThreadId()
@@ -136,13 +136,13 @@ public:
 private:
     static qint64 waitThresholdNs()
     {
-        static const qint64 value = msToNs(USDVIEWER_TRACE_LOCKS_WAIT_MS);
+        static const qint64 value = msToNs(STAGEVIZ_TRACE_LOCKS_WAIT_MS);
         return value;
     }
 
     static qint64 holdThresholdNs()
     {
-        static const qint64 value = msToNs(USDVIEWER_TRACE_LOCKS_HOLD_MS);
+        static const qint64 value = msToNs(STAGEVIZ_TRACE_LOCKS_HOLD_MS);
         return value;
     }
 
@@ -241,13 +241,13 @@ public:
 private:
     static qint64 waitThresholdNs()
     {
-        static const qint64 value = msToNs(USDVIEWER_TRACE_LOCKS_WAIT_MS);
+        static const qint64 value = msToNs(STAGEVIZ_TRACE_LOCKS_WAIT_MS);
         return value;
     }
 
     static qint64 holdThresholdNs()
     {
-        static const qint64 value = msToNs(USDVIEWER_TRACE_LOCKS_HOLD_MS);
+        static const qint64 value = msToNs(STAGEVIZ_TRACE_LOCKS_HOLD_MS);
         return value;
     }
 
@@ -278,24 +278,24 @@ private:
     bool m_locked = true;
 };
 
-}  // namespace usdviewer::debug
+}  // namespace stageviz::debug
 
-#if USDVIEWER_TRACE_LOCKS
+#if STAGEVIZ_TRACE_LOCKS
 
-#    define USDVIEWER_READ_LOCKER(var, lock, name) \
-        ::usdviewer::debug::DebugReadLocker var((lock), (name), __FILE__, __LINE__, Q_FUNC_INFO)
+#    define STAGEVIZ_READ_LOCKER(var, lock, name) \
+        ::stageviz::debug::DebugReadLocker var((lock), (name), __FILE__, __LINE__, Q_FUNC_INFO)
 
-#    define USDVIEWER_WRITE_LOCKER(var, lock, name) \
-        ::usdviewer::debug::DebugWriteLocker var((lock), (name), __FILE__, __LINE__, Q_FUNC_INFO)
+#    define STAGEVIZ_WRITE_LOCKER(var, lock, name) \
+        ::stageviz::debug::DebugWriteLocker var((lock), (name), __FILE__, __LINE__, Q_FUNC_INFO)
 
 #else
 
-#    define USDVIEWER_READ_LOCKER(var, lock, name) QReadLocker var((lock))
+#    define STAGEVIZ_READ_LOCKER(var, lock, name) QReadLocker var((lock))
 
-#    define USDVIEWER_WRITE_LOCKER(var, lock, name) QWriteLocker var((lock))
+#    define STAGEVIZ_WRITE_LOCKER(var, lock, name) QWriteLocker var((lock))
 
 #endif
 
-#define READ_LOCKER(var, lock, name) USDVIEWER_READ_LOCKER(var, lock, name)
+#define READ_LOCKER(var, lock, name) STAGEVIZ_READ_LOCKER(var, lock, name)
 
-#define WRITE_LOCKER(var, lock, name) USDVIEWER_WRITE_LOCKER(var, lock, name)
+#define WRITE_LOCKER(var, lock, name) STAGEVIZ_WRITE_LOCKER(var, lock, name)

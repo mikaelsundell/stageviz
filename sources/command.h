@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
 // Copyright (c) 2025 - present Mikael Sundell
-// https://github.com/mikaelsundell/usdviewer
+// https://github.com/mikaelsundell/stageviz
 
 #pragma once
 
@@ -9,7 +9,7 @@
 
 PXR_NAMESPACE_USING_DIRECTIVE
 
-namespace usdviewer {
+namespace stageviz {
 
 /**
  * @class Command
@@ -290,4 +290,4 @@ movePath(const SdfPath& fromPath, const SdfPath& newParentPath, int insertIndex)
 
 ///@}
 
-}  // namespace usdviewer
+}  // namespace stageviz

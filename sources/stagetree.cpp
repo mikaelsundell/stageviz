@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
 // Copyright (c) 2025 - present Mikael Sundell
-// https://github.com/mikaelsundell/usdviewer
+// https://github.com/mikaelsundell/stageviz
 
 #include "stagetree.h"
 #include "application.h"
@@ -36,7 +36,7 @@
 
 PXR_NAMESPACE_USING_DIRECTIVE
 
-namespace usdviewer {
+namespace stageviz {
 
 class StageTreePrivate : public QObject, public SignalGuard {
 public:
@@ -1903,4 +1903,4 @@ StageTree::mouseMoveEvent(QMouseEvent* event)
     QTreeWidget::mouseMoveEvent(event);
 }
 
-}  // namespace usdviewer
+}  // namespace stageviz

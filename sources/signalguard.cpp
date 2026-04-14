@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: BSD-3-Clause
 // Copyright (c) 2025 - present Mikael Sundell
-// https://github.com/mikaelsundell/usdviewer
+// https://github.com/mikaelsundell/stageviz
 
 #include "signalguard.h"
 #include <QVector>
 
-namespace usdviewer {
+namespace stageviz {
 
 class SignalGuardPrivate : public QObject {
 public:
@@ -82,4 +82,4 @@ SignalGuard::Scope::~Scope()
         m_guard->endGuard();
 }
 
-}  // namespace usdviewer
+}  // namespace stageviz

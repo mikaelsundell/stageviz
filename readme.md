@@ -1,4 +1,4 @@
-usdviewer
+stageviz
 ==================
 
 [![License](https://img.shields.io/badge/license-BSD%203--Clause-blue.svg?style=flat-square)](https://github.com/mikaelsundell/brawtool/blob/master/README.md)
@@ -88,10 +88,10 @@ Project
 -------
 
 * GitHub page   
-https://github.com/mikaelsundell/usdviewer
+https://github.com/mikaelsundell/stageviz
 
 * Issues   
-https://github.com/mikaelsundell/usdviewer/issues
+https://github.com/mikaelsundell/stageviz/issues
 
 ## License ##
 

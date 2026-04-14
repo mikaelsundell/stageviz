@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2024 - present Mikael Sundell
-# https://github.com/mikaelsundell/usdviewer
+# https://github.com/mikaelsundell/stageviz
 
 cmake_minimum_required (VERSION 3.27)
-set (project_name "USDViewer")
+set (project_name "stageviz")
 
 project (${project_name})
 
@@ -51,7 +51,7 @@ set (project_copyright "Copyright 2025-present Contributors to the ${project_nam
 set (project_identifier "com.github.mikaelsundell.${project_name}")
 set (project_long_version "1.3.4")
 set (project_short_version "1.3")
-set (project_url "https://github.com/mikaelsundell/usdviewer")
+set (project_url "https://github.com/mikaelsundell/stageviz")
 
 if (APPLE)
     set (project_bundle

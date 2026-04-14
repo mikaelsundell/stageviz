@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
 // Copyright (c) 2025 - present Mikael Sundell
-// https://github.com/mikaelsundell/usdviewer
+// https://github.com/mikaelsundell/stageviz
 
 #include "qtutils.h"
 #include <QApplication>
@@ -14,7 +14,7 @@
 #include <pxr/usd/usdGeom/bboxCache.h>
 #include <pxr/usd/usdGeom/imageable.h>
 
-namespace usdviewer {
+namespace stageviz {
 namespace qt {
 
     qreal devicePixelRatio() { return qApp ? qApp->devicePixelRatio() : 1.0; }
@@ -162,7 +162,7 @@ namespace qt {
         return GfVec4f(color.redF(), color.greenF(), color.blueF(), color.alphaF());
     }
 }  // namespace qt
-}  // namespace usdviewer
+}  // namespace stageviz
 
 void
 CheckOpenGLError(const char* function, const char* file, int line)
@@ -394,7 +394,7 @@ QDebug
 operator<<(QDebug debug, const SdfPath& path)
 {
     QDebugStateSaver saver(debug);
-    debug.nospace() << "SdfPath(\"" << usdviewer::qt::StringToQString(path.GetString()) << "\")";
+    debug.nospace() << "SdfPath(\"" << stageviz::qt::StringToQString(path.GetString()) << "\")";
     return debug;
 }
 

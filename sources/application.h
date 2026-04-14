@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: BSD-3-Clause
 // Copyright (c) 2024 - present Mikael Sundell
-// https://github.com/mikaelsundell/flipman
+// https://github.com/mikaelsundell/stageviz
 
 #pragma once
 
 #include <QApplication>
 #include <QScopedPointer>
 
-namespace usdviewer {
+namespace stageviz {
 class PythonInterpreter;
 class Console;
 class Session;
@@ -17,7 +17,7 @@ class ApplicationPrivate;
 
 /**
  * @class Application
- * @brief Main application object for usdviewer.
+ * @brief Main application object for stageviz.
  *
  * Extends QApplication and provides access to global subsystems
  * used throughout the viewer such as settings and style.
@@ -26,7 +26,7 @@ class Application : public QApplication {
     Q_OBJECT
 public:
     /**
-     * @brief Constructs the usdviewer application.
+     * @brief Constructs the stageviz application.
      *
      * @param argc Argument count.
      * @param argv Argument vector.
@@ -72,7 +72,7 @@ public:
      * @brief Returns the global Application instance.
      *
      * Asserts if the active QCoreApplication is not an
-     * usdviewer::Application instance.
+     * stageviz::Application instance.
      */
     static Application* instance();
 
@@ -140,4 +140,4 @@ settings()
     return a ? a->settings() : nullptr;
 }
 
-}  // namespace usdviewer
+}  // namespace stageviz

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
 // Copyright (c) 2025 - present Mikael Sundell
-// https://github.com/mikaelsundell/usdviewer
+// https://github.com/mikaelsundell/stageviz
 
 #include "session.h"
 #include "commandstack.h"
@@ -21,7 +21,7 @@
 #include <pxr/usd/usdGeom/xform.h>
 #include <stack>
 
-namespace usdviewer {
+namespace stageviz {
 class SessionPrivate : public QSharedData {
 public:
     SessionPrivate();
@@ -180,8 +180,8 @@ SessionPrivate::~SessionPrivate() = default;
 void
 SessionPrivate::init()
 {
-    qRegisterMetaType<NoticeEntry>("usdviewer::NoticeEntry");
-    qRegisterMetaType<NoticeBatch>("usdviewer::NoticeBatch");
+    qRegisterMetaType<NoticeEntry>("stageviz::NoticeEntry");
+    qRegisterMetaType<NoticeBatch>("stageviz::NoticeBatch");
 
     d.commandStack.reset(new CommandStack());
     d.selectionList.reset(new SelectionList());
@@ -1122,4 +1122,4 @@ Session::flushPrimsUpdates()
     p->flushPrims();
 }
 
-}  // namespace usdviewer
+}  // namespace stageviz

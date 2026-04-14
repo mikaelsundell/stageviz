@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
 // Copyright (c) 2025 - present Mikael Sundell
-// https://github.com/mikaelsundell/usdviewer
+// https://github.com/mikaelsundell/stageviz
 
 #include "command.h"
 #include "commandstack.h"
@@ -19,7 +19,7 @@
 #include <pxr/usd/usdGeom/tokens.h>
 #include <pxr/usd/usdGeom/xform.h>
 
-namespace usdviewer {
+namespace stageviz {
 
 namespace payload {
     struct UndoItem {
@@ -2128,4 +2128,4 @@ movePath(const SdfPath& fromPath, const SdfPath& newParentPath, int insertIndex)
         });
 }
 
-}  // namespace usdviewer
+}  // namespace stageviz

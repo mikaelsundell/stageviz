@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
 // Copyright (c) 2025 - present Mikael Sundell
-// https://github.com/mikaelsundell/usdviewer
+// https://github.com/mikaelsundell/stageviz
 
 #pragma once
 
@@ -12,7 +12,7 @@
 
 PXR_NAMESPACE_USING_DIRECTIVE
 
-namespace usdviewer {
+namespace stageviz {
 
 /**
  * @struct NoticeEntry
@@ -60,8 +60,8 @@ struct NoticeBatch {
     QList<NoticeEntry> entries;
 };
 
-}  // namespace usdviewer
+}  // namespace stageviz
 
 // Register for Qt signal/slot usage
-Q_DECLARE_METATYPE(usdviewer::NoticeEntry)
-Q_DECLARE_METATYPE(usdviewer::NoticeBatch)
+Q_DECLARE_METATYPE(stageviz::NoticeEntry)
+Q_DECLARE_METATYPE(stageviz::NoticeBatch)

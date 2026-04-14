@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
 // Copyright (c) 2025 - present Mikael Sundell
-// https://github.com/mikaelsundell/usdviewer
+// https://github.com/mikaelsundell/stageviz
 
 #include "viewcamera.h"
 #include "qtutils.h"
@@ -9,7 +9,7 @@
 #include <pxr/base/gf/rotation.h>
 #include <pxr/usd/usdGeom/bboxCache.h>
 
-namespace usdviewer {
+namespace stageviz {
 class ViewCameraPrivate : public QSharedData {
 public:
     void init();
@@ -380,4 +380,4 @@ ViewCamera::operator=(const ViewCamera& other)
     }
     return *this;
 }
-}  // namespace usdviewer
+}  // namespace stageviz

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
 // Copyright (c) 2025 - present Mikael Sundell
-// https://github.com/mikaelsundell/usdviewer
+// https://github.com/mikaelsundell/stageviz
 
 #pragma once
 
@@ -9,7 +9,7 @@
 #include <QVariant>
 #include <QWidget>
 
-namespace usdviewer {
+namespace stageviz {
 
 class ShelfWidgetPrivate;
 
@@ -143,4 +143,4 @@ private:
     QScopedPointer<ShelfWidgetPrivate> p;
 };
 
-}  // namespace usdviewer
+}  // namespace stageviz
