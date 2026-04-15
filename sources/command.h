@@ -4,9 +4,8 @@
 
 #pragma once
 
-#include "stageviz.h"
-
 #include "session.h"
+#include "stageviz.h"
 #include <pxr/usd/sdf/path.h>
 
 PXR_NAMESPACE_USING_DIRECTIVE

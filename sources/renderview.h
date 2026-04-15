@@ -4,10 +4,9 @@
 
 #pragma once
 
-#include "stageviz.h"
-
 #include "selectionlist.h"
 #include "session.h"
+#include "stageviz.h"
 #include <QTreeWidget>
 #include <pxr/usd/usd/stage.h>
 

@@ -3,9 +3,9 @@
 
 #include "pythoninterpreter.h"
 #include "application.h"
-#include "commandstack.h"
 #include "os.h"
 #include "session.h"
+
 #include <QDir>
 #include <QPointer>
 
@@ -60,7 +60,7 @@ PythonInterpreterPrivate::init()
 
     QStringList pythonDirs;
 #if DEPLOY_BUILD
-#    ifdef __APPLE__
+#    ifdef Q_OS_MAC
     pythonDirs << QDir::cleanPath(os::getApplicationPath() + "/Frameworks/site-packages");
 #    else
     pythonDirs << QDir::cleanPath(os::getApplicationPath() + "/site-packages");
@@ -68,9 +68,6 @@ PythonInterpreterPrivate::init()
 #else
     pythonDirs = QString::fromUtf8(PYTHON_SEARCH_DIRS).split(';', Qt::SkipEmptyParts);
 #endif
-
-
-    qInfo() << "pythonDirs: " << pythonDirs;
 
     PyObject* sysPath = PySys_GetObject("path");  // borrowed reference
     if (sysPath && PyList_Check(sysPath)) {
@@ -91,7 +88,18 @@ PythonInterpreterPrivate::init()
     configure();
 
     PyObject* mainModule = PyImport_AddModule("__main__");
+    if (!mainModule) {
+        PyErr_Print();
+        qWarning() << "[Python] Failed to get __main__ module";
+        return;
+    }
+
     PyObject* mainDict = PyModule_GetDict(mainModule);
+    if (!mainDict) {
+        PyErr_Print();
+        qWarning() << "[Python] Failed to get __main__.__dict__";
+        return;
+    }
 
     d.globals = mainDict;
     Py_INCREF(d.globals);
@@ -106,34 +114,31 @@ PythonInterpreterPrivate::init()
         return;
     }
 
-    PyObject* cls = PyObject_GetAttrString(module, "Session");
-    if (!cls || !PyCallable_Check(cls)) {
+    PyDict_SetItemString(d.globals, "stageviz", module);
+
+    PyObject* sessionFactory = PyObject_GetAttrString(module, "session");
+    if (!sessionFactory || !PyCallable_Check(sessionFactory)) {
         PyErr_Print();
-        qWarning() << "[Python] Failed to get Session class";
-        Py_XDECREF(cls);
+        qWarning() << "[Python] Failed to get stageviz.session factory";
+        Py_XDECREF(sessionFactory);
         Py_DECREF(module);
         return;
     }
 
-    PyObject* instance = PyObject_CallObject(cls, nullptr);
-    if (!instance) {
+    PyObject* sessionInstance = PyObject_CallObject(sessionFactory, nullptr);
+    if (!sessionInstance) {
         PyErr_Print();
-        qWarning() << "[Python] Failed to create Session instance";
-        Py_DECREF(cls);
+        qWarning() << "[Python] Failed to create stageviz session instance";
+        Py_DECREF(sessionFactory);
         Py_DECREF(module);
         return;
     }
 
-    PyDict_SetItemString(d.globals, "session", instance);
+    PyDict_SetItemString(d.globals, "session", sessionInstance);
 
-    Py_DECREF(instance);
-    Py_DECREF(cls);
+    Py_DECREF(sessionInstance);
+    Py_DECREF(sessionFactory);
     Py_DECREF(module);
-
-    PyObject* key = PyUnicode_FromString("session");
-    int has = PyDict_Contains(d.globals, key);
-    Q_UNUSED(has);
-    Py_DECREF(key);
 
     d.initialized = true;
 }
@@ -207,7 +212,6 @@ PythonInterpreterPrivate::executeScript(const QString& script)
         const char* code = scriptBytes.constData();
 
         session()->setPrimsUpdate(Session::PrimsUpdate::Deferred);
-        session()->commandStack()->clear();
 
         PyObject* result = PyRun_String(code, Py_file_input, d.globals, d.locals);
 
@@ -227,7 +231,7 @@ PythonInterpreterPrivate::executeScript(const QString& script)
             output = pythonError();
             qWarning().noquote() << "[Python]" << output;
             session()->notifyStatus(Session::Notify::Status::Error,
-                                    QStringLiteral("Python script failed. Check the Python log for details"));
+                                    QStringLiteral("Python script failed. Check the Python log for details."));
         }
     } catch (const std::exception& e) {
         session()->setPrimsUpdate(Session::PrimsUpdate::Immediate);

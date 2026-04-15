@@ -38,7 +38,6 @@
 #pragma once
 
 #include "stageviz.h"
-
 #include <QDebug>
 #include <QElapsedTimer>
 #include <QReadWriteLock>

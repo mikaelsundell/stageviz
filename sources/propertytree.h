@@ -4,9 +4,8 @@
 
 #pragma once
 
-#include "stageviz.h"
-
 #include "notice.h"
+#include "stageviz.h"
 #include "treewidget.h"
 #include <QTreeWidget>
 #include <pxr/usd/usd/stage.h>

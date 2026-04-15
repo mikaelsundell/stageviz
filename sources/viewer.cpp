@@ -12,7 +12,7 @@
 #include "os.h"
 #include "outlinerview.h"
 #include "progressview.h"
-#include "pythonview.h"
+#include "pythonwidget.h"
 #include "qtutils.h"
 #include "renderview.h"
 #include "selectionlist.h"
@@ -62,7 +62,7 @@ public:
     DockWidget* progressDock();
     OutlinerView* outlinerView();
     ProgressView* progressView();
-    PythonView* pythonView();
+    PythonWidget* pythonWidget();
     ConsoleWidget* consoleWidget();
     RenderView* renderView();
     bool eventFilter(QObject* object, QEvent* event);
@@ -159,7 +159,7 @@ public:
         QPointer<DockWidget> progressDock;
         QPointer<OutlinerView> outlinerView;
         QPointer<ProgressView> progressView;
-        QPointer<PythonView> pythonView;
+        QPointer<PythonWidget> pythonWidget;
         QPointer<ConsoleWidget> consoleWidget;
     };
     Data d;
@@ -220,15 +220,21 @@ ViewerPrivate::initDocks()
     d.progressView->setObjectName("progressView");
     d.progressView->setAttribute(Qt::WA_DeleteOnClose, false);
     d.progressDock = createDock("progressDock", "Progress", d.progressView, d.progressArea);
-    d.pythonView = new PythonView(nullptr);
-    d.pythonView->setObjectName("pythonView");
-    d.pythonView->setAttribute(Qt::WA_DeleteOnClose, false);
-    d.pythonView->setWindowFlags(Qt::Tool | Qt::WindowTitleHint | Qt::WindowCloseButtonHint);
-    d.pythonView->setWindowTitle("Python");
-    d.pythonView->installEventFilter(this);
-    d.pythonView->hide();
+    d.pythonWidget = new PythonWidget(nullptr);
+    d.pythonWidget->setObjectName("pythonWidget");
+    d.pythonWidget->setAttribute(Qt::WA_DeleteOnClose, false);
+    d.pythonWidget->setWindowFlags(Qt::Tool | Qt::WindowTitleHint | Qt::WindowCloseButtonHint);
+#ifdef Q_OS_MAC
+    d.pythonWidget->setAttribute(Qt::WA_MacAlwaysShowToolWindow, true);
+#endif
+    d.pythonWidget->setWindowTitle("Python");
+    d.pythonWidget->installEventFilter(this);
+    d.pythonWidget->hide();
     d.consoleWidget = new ConsoleWidget(nullptr);
     d.consoleWidget->setWindowFlags(Qt::Tool | Qt::WindowTitleHint | Qt::WindowCloseButtonHint);
+#ifdef Q_OS_MAC
+    d.consoleWidget->setAttribute(Qt::WA_MacAlwaysShowToolWindow, true);
+#endif
     d.consoleWidget->setObjectName("consoleWidget");
     d.consoleWidget->setAttribute(Qt::WA_DeleteOnClose, false);
     d.consoleWidget->setWindowTitle("Console");
@@ -547,10 +553,10 @@ ViewerPrivate::progressView()
     return d.progressView.data();
 }
 
-PythonView*
-ViewerPrivate::pythonView()
+PythonWidget*
+ViewerPrivate::pythonWidget()
 {
-    return d.pythonView.data();
+    return d.pythonWidget.data();
 }
 
 ConsoleWidget*
@@ -568,7 +574,7 @@ ViewerPrivate::renderView()
 bool
 ViewerPrivate::eventFilter(QObject* object, QEvent* event)
 {
-    if (object == d.pythonView) {
+    if (object == d.pythonWidget) {
         switch (event->type()) {
         case QEvent::Show: updateDockAction(d.ui->viewPython, true); break;
         case QEvent::Hide: updateDockAction(d.ui->viewPython, false); break;
@@ -583,8 +589,8 @@ ViewerPrivate::eventFilter(QObject* object, QEvent* event)
                     d.outlinerDock->show();
                 if (d.ui->viewProgress->isChecked() && d.progressDock && !d.progressDock->isVisible())
                     d.progressDock->show();
-                if (d.ui->viewPython->isChecked() && d.pythonView && !d.pythonView->isVisible())
-                    d.pythonView->show();
+                if (d.ui->viewPython->isChecked() && d.pythonWidget && !d.pythonWidget->isVisible())
+                    d.pythonWidget->show();
                 if (d.ui->viewConsole->isChecked() && d.consoleWidget && !d.consoleWidget->isVisible())
                     d.consoleWidget->show();
             });
@@ -1300,15 +1306,15 @@ ViewerPrivate::toggleProgress(bool checked)
 void
 ViewerPrivate::togglePython(bool checked)
 {
-    if (!d.pythonView)
+    if (!d.pythonWidget)
         return;
     if (checked) {
-        d.pythonView->show();
-        d.pythonView->raise();
-        d.pythonView->activateWindow();
+        d.pythonWidget->show();
+        d.pythonWidget->raise();
+        d.pythonWidget->activateWindow();
     }
     else {
-        d.pythonView->hide();
+        d.pythonWidget->hide();
     }
 }
 
@@ -1649,9 +1655,9 @@ Viewer::closeEvent(QCloseEvent* event)
 
     p->saveSettings();
 
-    if (p->d.pythonView) {
-        p->d.pythonView->hide();
-        p->d.pythonView->close();
+    if (p->d.pythonWidget) {
+        p->d.pythonWidget->hide();
+        p->d.pythonWidget->close();
     }
 
     if (p->d.consoleWidget) {

@@ -5,7 +5,6 @@
 #pragma once
 
 #include "stageviz.h"
-
 #include <QList>
 #include <QMetaType>
 #include <pxr/base/tf/token.h>
@@ -31,22 +30,22 @@ namespace stageviz {
  * - changed fields (for info-only cases)
  */
 struct NoticeEntry {
-    /// Path of the affected object (prim or property)
+    /* Path of the affected object (prim or property) */
     SdfPath path;
 
-    /// Associated path for namespace edits (rename/reparent pairs)
+    /* Associated path for namespace edits (rename/reparent pairs) */
     SdfPath associatedPath;
 
-    /// Classification for prim resyncs (from USD)
+    /* Classification for prim resyncs (from USD) */
     UsdNotice::ObjectsChanged::PrimResyncType primResyncType = UsdNotice::ObjectsChanged::PrimResyncType::Invalid;
 
-    /// True if this path is in GetChangedInfoOnlyPaths()
+    /* True if this path is in GetChangedInfoOnlyPaths() */
     bool changedInfoOnly = false;
 
-    /// True if this path is in GetResolvedAssetPathsResyncedPaths()
+    /* True if this path is in GetResolvedAssetPathsResyncedPaths() */
     bool resolvedAssetPathsResynced = false;
 
-    /// Changed fields for this object (may be empty)
+    /* Changed fields for this object (may be empty) */
     TfTokenVector changedFields;
 };
 

@@ -5,7 +5,6 @@
 #pragma once
 
 #include "stageviz.h"
-
 #include <QTreeWidget>
 #include <pxr/usd/usd/stage.h>
 

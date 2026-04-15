@@ -23,7 +23,6 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 find_package(OpenUSD REQUIRED)
 find_package(Boost CONFIG COMPONENTS Python REQUIRED)
 find_package(Python3 COMPONENTS Interpreter Development REQUIRED)
-find_package(pybind11 REQUIRED)
 find_package(MaterialX CONFIG REQUIRED)
 find_package(OpenImageIO CONFIG REQUIRED)
 
@@ -31,18 +30,37 @@ function(find_python_package_root out_python_dir out_package_dir prefix package_
     set(found_python_dir "")
     set(found_package_dir "")
 
-    foreach(candidate
+    # Preserve the existing mac/Linux search locations and add the Windows
+    # layout used by this 3rdparty build, e.g.:
+    #   <prefix>/python/MaterialX/PyMaterialXCore*.pyd
+    set(candidates
+        "${prefix}/${package_name}"
+        "${prefix}/python/${package_name}"
+        "${prefix}/Python/${package_name}"
         "${prefix}/site-packages/${package_name}"
         "${prefix}/lib/site-packages/${package_name}"
+        "${prefix}/Lib/site-packages/${package_name}"
         "${prefix}/lib/python${Python3_VERSION_MAJOR}.${Python3_VERSION_MINOR}/site-packages/${package_name}"
+        "${prefix}/Lib/python${Python3_VERSION_MAJOR}.${Python3_VERSION_MINOR}/site-packages/${package_name}"
         "${prefix}/python${Python3_VERSION_MAJOR}.${Python3_VERSION_MINOR}/site-packages/${package_name}"
+        "${prefix}/Python${Python3_VERSION_MAJOR}.${Python3_VERSION_MINOR}/site-packages/${package_name}"
     )
+
+    message(STATUS "Searching Python runtime for ${package_name} under: ${prefix}")
+
+    foreach(candidate IN LISTS candidates)
+        message(STATUS "  checking: ${candidate}")
+
         file(GLOB found_modules
             "${candidate}/${module_glob}.so"
             "${candidate}/${module_glob}.pyd"
             "${candidate}/${module_glob}.dll"
         )
+
         if(found_modules)
+            list(GET found_modules 0 first_match)
+            message(STATUS "  found ${package_name} module: ${first_match}")
+
             set(found_package_dir "${candidate}")
             get_filename_component(found_python_dir "${candidate}" DIRECTORY)
             break()
@@ -54,7 +72,7 @@ function(find_python_package_root out_python_dir out_package_dir prefix package_
 endfunction()
 
 function(require_python_package_root python_dir_var package_name prefix)
-    if(NOT ${python_dir_var})
+    if(NOT DEFINED ${python_dir_var} OR "${${python_dir_var}}" STREQUAL "")
         message(FATAL_ERROR "Failed to locate ${package_name} Python runtime under ${prefix}")
     endif()
 endfunction()
@@ -79,15 +97,23 @@ find_python_package_root(
     "*"
 )
 
-# Avoid find_package(PySide6 CONFIG REQUIRED) here because current PySide6Config
-# may fail on missing development-side typesystems paths even when the runtime
-# Python package itself is present.
+# Avoid find_package(PySide6 CONFIG REQUIRED) here because the current
+# PySide6Config may fail on missing development-side typesystem paths even when
+# the runtime Python package itself is present.
 find_python_package_root(
     PySide6_PYTHON_DIR
     PySide6_PACKAGE_DIR
     "${Qt6_PREFIX}"
     "PySide6"
     "QtCore*"
+)
+
+find_python_package_root(
+    Shiboken6_PYTHON_DIR
+    Shiboken6_PACKAGE_DIR
+    "${Qt6_PREFIX}"
+    "shiboken6"
+    "Shiboken*"
 )
 
 if(NOT OpenUSD_PYTHON_DIR)
@@ -97,12 +123,14 @@ endif()
 require_python_package_root(MaterialX_PYTHON_DIR "MaterialX" "${MaterialX_PREFIX}")
 require_python_package_root(OpenImageIO_PYTHON_DIR "OpenImageIO" "${OpenImageIO_PREFIX}")
 require_python_package_root(PySide6_PYTHON_DIR "PySide6" "${Qt6_PREFIX}")
+require_python_package_root(Shiboken6_PYTHON_DIR "shiboken6" "${Qt6_PREFIX}")
 
 set(PROJECT_PYTHON_DIRS
     "${OpenUSD_PYTHON_DIR}"
     "${MaterialX_PYTHON_DIR}"
     "${OpenImageIO_PYTHON_DIR}"
     "${PySide6_PYTHON_DIR}"
+    "${Shiboken6_PYTHON_DIR}"
 )
 list(REMOVE_DUPLICATES PROJECT_PYTHON_DIRS)
 list(JOIN PROJECT_PYTHON_DIRS ";" PROJECT_PYTHON_DIRS_STR)
@@ -138,7 +166,6 @@ else()
 endif()
 
 # source groups
-source_group("Icon Files" FILES ${project_icons})
 source_group("Resource Files" FILES ${project_resources})
 
 set(project_copyright "Copyright 2025-present Contributors to the ${project_name} project")

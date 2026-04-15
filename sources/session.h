@@ -4,9 +4,8 @@
 
 #pragma once
 
-#include "stageviz.h"
-
 #include "notice.h"
+#include "stageviz.h"
 #include <QExplicitlySharedDataPointer>
 #include <QMap>
 #include <QObject>

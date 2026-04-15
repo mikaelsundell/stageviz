@@ -5,7 +5,6 @@
 #pragma once
 
 #include "stageviz.h"
-
 #include <QOpenGLFunctions>
 #include <pxr/base/gf/frustum.h>
 #include <pxr/base/gf/matrix4d.h>

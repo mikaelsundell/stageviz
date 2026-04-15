@@ -2,7 +2,7 @@
 // Copyright (c) 2025 - present Mikael Sundell
 // https://github.com/mikaelsundell/stageviz
 
-#include "pythonview.h"
+#include "pythonwidget.h"
 #include "application.h"
 #include "mime.h"
 #include "pythoninterpreter.h"
@@ -17,6 +17,7 @@
 #include <QDropEvent>
 #include <QFileDialog>
 #include <QJsonDocument>
+#include <QKeyEvent>
 #include <QLineEdit>
 #include <QListWidgetItem>
 #include <QMenu>
@@ -25,18 +26,20 @@
 #include <QPlainTextEdit>
 #include <QPointer>
 #include <QSaveFile>
+#include <QShortcut>
 #include <QStyle>
 #include <QTabBar>
 #include <QTextCursor>
+#include <QTextDocument>
 #include <QToolButton>
 #include <QVariantMap>
 
 // generated files
-#include "ui_pythonview.h"
+#include "ui_pythonwidget.h"
 
 namespace stageviz {
 
-class PythonViewPrivate : public QObject {
+class PythonWidgetPrivate : public QObject {
 public:
     void init();
     bool eventFilter(QObject* object, QEvent* event) override;
@@ -56,6 +59,14 @@ public:
     void updateClearButton();
     bool isPointInSelection(QPlainTextEdit* edit, const QPoint& pos) const;
 
+    void showEditorContextMenu(const QPoint& pos);
+    bool findText(const QString& text, QTextDocument::FindFlags flags = {});
+    void findNext();
+    void findPrevious();
+    void focusFind();
+    QString searchText() const;
+    void resetSearchStart(QTextDocument::FindFlags flags);
+
 public Q_SLOTS:
     void run();
     void clear();
@@ -66,28 +77,39 @@ public Q_SLOTS:
 
 public:
     struct Data {
-        QScopedPointer<Ui_PythonView> ui;
-        QPointer<PythonView> view;
+        QScopedPointer<Ui_PythonWidget> ui;
+        QPointer<PythonWidget> view;
         QPoint dragStartPos;
         QPointer<QLineEdit> tabRenameEditor;
         int tabRenameIndex = -1;
         bool dragCandidate = false;
         QPointer<QPlainTextEdit> dragSourceEdit;
+        QString lastSearch;
     };
     Data d;
 };
 
 void
-PythonViewPrivate::init()
+PythonWidgetPrivate::init()
 {
-    d.ui.reset(new Ui_PythonView());
+    d.ui.reset(new Ui_PythonWidget());
     d.ui->setupUi(d.view.data());
     d.ui->run->setIcon(style()->icon(Style::IconRole::Run));
     d.ui->clear->setIcon(style()->icon(Style::IconRole::Clear));
+    d.ui->next->setIcon(style()->icon(Style::IconRole::Right));
+    d.ui->previous->setIcon(style()->icon(Style::IconRole::Left));
+
     d.ui->log->setReadOnly(true);
     d.ui->log->setContextMenuPolicy(Qt::CustomContextMenu);
     d.ui->log->setAcceptDrops(false);
+    d.ui->log->installEventFilter(this);
+
     d.ui->editor->setAcceptDrops(true);
+    d.ui->editor->setContextMenuPolicy(Qt::CustomContextMenu);
+    d.ui->editor->viewport()->installEventFilter(this);
+
+    d.ui->find->installEventFilter(this);
+
     d.ui->tabWidget->setTabsClosable(false);
     d.ui->tabWidget->setMovable(true);
     d.ui->tabWidget->tabBar()->setContextMenuPolicy(Qt::CustomContextMenu);
@@ -101,25 +123,80 @@ PythonViewPrivate::init()
         bar->setMinimumWidth(0);
         bar->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
     }
-    d.ui->editor->viewport()->installEventFilter(this);
+
     // connect
-    QObject::connect(d.ui->run, &QToolButton::clicked, this, &PythonViewPrivate::run);
-    QObject::connect(d.ui->clear, &QToolButton::clicked, this, &PythonViewPrivate::clear);
+    QObject::connect(d.ui->run, &QToolButton::clicked, this, &PythonWidgetPrivate::run);
+    QObject::connect(d.ui->clear, &QToolButton::clicked, this, &PythonWidgetPrivate::clear);
+    QObject::connect(d.ui->next, &QToolButton::clicked, this, &PythonWidgetPrivate::findNext);
+    QObject::connect(d.ui->previous, &QToolButton::clicked, this, &PythonWidgetPrivate::findPrevious);
+
     QObject::connect(d.ui->editor->document(), &QTextDocument::contentsChanged, this,
-                     &PythonViewPrivate::updateClearButton);
-    QObject::connect(d.ui->log, &QWidget::customContextMenuRequested, this, &PythonViewPrivate::showLogContextMenu);
+                     &PythonWidgetPrivate::updateClearButton);
+
+    QObject::connect(d.ui->log, &QWidget::customContextMenuRequested, this, &PythonWidgetPrivate::showLogContextMenu);
+    QObject::connect(d.ui->editor, &QWidget::customContextMenuRequested, this,
+                     &PythonWidgetPrivate::showEditorContextMenu);
+
     QObject::connect(d.ui->tabWidget->tabBar(), &QWidget::customContextMenuRequested, this,
-                     &PythonViewPrivate::showTabContextMenu);
+                     &PythonWidgetPrivate::showTabContextMenu);
     QObject::connect(d.ui->tabWidget->tabBar(), &QTabBar::tabMoved, this, [this](int, int) { saveShelves(); });
-    QObject::connect(session(), &Session::stageChanged, this, &PythonViewPrivate::stageChanged);
+
+    QObject::connect(d.ui->find, &QLineEdit::textChanged, this, [this](const QString&) { d.lastSearch.clear(); });
+
+    QObject::connect(d.ui->find, &QLineEdit::returnPressed, this, [this]() {
+        if (QApplication::keyboardModifiers().testFlag(Qt::ShiftModifier))
+            findPrevious();
+        else
+            findNext();
+    });
+
+    QObject::connect(session(), &Session::stageChanged, this, &PythonWidgetPrivate::stageChanged);
+
+    auto* find = new QShortcut(QKeySequence::Find, d.view.data());
+    QObject::connect(find, &QShortcut::activated, this, [this]() { focusFind(); });
+
     loadShelves();
     createDefaultTabIfNeeded();
     updateClearButton();
 }
 
 bool
-PythonViewPrivate::eventFilter(QObject* object, QEvent* event)
+PythonWidgetPrivate::eventFilter(QObject* object, QEvent* event)
 {
+    if (object == d.ui->log) {
+        if (event->type() == QEvent::ShortcutOverride) {
+            auto* keyEvent = static_cast<QKeyEvent*>(event);
+
+            if (keyEvent->matches(QKeySequence::SelectAll) || keyEvent->matches(QKeySequence::Copy)) {
+                event->accept();
+                return true;
+            }
+        }
+
+        if (event->type() == QEvent::KeyPress) {
+            auto* keyEvent = static_cast<QKeyEvent*>(event);
+
+            if (keyEvent->matches(QKeySequence::SelectAll)) {
+                d.ui->log->selectAll();
+                return true;
+            }
+
+            if (keyEvent->matches(QKeySequence::Copy)) {
+                d.ui->log->copy();
+                return true;
+            }
+        }
+    }
+
+    if (object == d.ui->find && event->type() == QEvent::KeyPress) {
+        auto* keyEvent = static_cast<QKeyEvent*>(event);
+        if (keyEvent->key() == Qt::Key_Escape) {
+            d.ui->find->clearFocus();
+            d.ui->editor->setFocus();
+            return true;
+        }
+    }
+
     if (object == d.ui->tabWidget->tabBar()) {
         QTabBar* tabBar = d.ui->tabWidget->tabBar();
         if (event->type() == QEvent::MouseButtonDblClick) {
@@ -131,6 +208,7 @@ PythonViewPrivate::eventFilter(QObject* object, QEvent* event)
             }
         }
     }
+
     if (object == d.ui->editor->viewport()) {
         QPlainTextEdit* edit = d.ui->editor;
         if (!edit)
@@ -150,6 +228,7 @@ PythonViewPrivate::eventFilter(QObject* object, QEvent* event)
             }
             break;
         }
+
         case QEvent::MouseMove: {
             auto* mouseEvent = static_cast<QMouseEvent*>(event);
             if (!(mouseEvent->buttons() & Qt::LeftButton))
@@ -160,15 +239,18 @@ PythonViewPrivate::eventFilter(QObject* object, QEvent* event)
                 break;
             if (!edit->textCursor().hasSelection())
                 break;
+
             startScriptDrag(edit);
             d.dragCandidate = false;
             d.dragSourceEdit = nullptr;
             return true;
         }
+
         case QEvent::MouseButtonRelease:
             d.dragCandidate = false;
             d.dragSourceEdit = nullptr;
             break;
+
         case QEvent::DragEnter: {
             auto* dragEvent = static_cast<QDragEnterEvent*>(event);
             if (dragEvent->mimeData()->hasFormat(mime::script) || dragEvent->mimeData()->hasText()) {
@@ -177,6 +259,7 @@ PythonViewPrivate::eventFilter(QObject* object, QEvent* event)
             }
             break;
         }
+
         case QEvent::DragMove: {
             auto* dragEvent = static_cast<QDragMoveEvent*>(event);
             if (dragEvent->mimeData()->hasFormat(mime::script) || dragEvent->mimeData()->hasText()) {
@@ -185,6 +268,7 @@ PythonViewPrivate::eventFilter(QObject* object, QEvent* event)
             }
             break;
         }
+
         case QEvent::Drop: {
             auto* dropEvent = static_cast<QDropEvent*>(event);
             if (dropEvent->mimeData()->hasFormat(mime::script) || dropEvent->mimeData()->hasText()) {
@@ -206,6 +290,7 @@ PythonViewPrivate::eventFilter(QObject* object, QEvent* event)
             }
             break;
         }
+
         default: break;
         }
     }
@@ -214,7 +299,7 @@ PythonViewPrivate::eventFilter(QObject* object, QEvent* event)
 }
 
 void
-PythonViewPrivate::executeCode(const QString& code)
+PythonWidgetPrivate::executeCode(const QString& code)
 {
     auto* interpreter = pythonInterpreter();
     const QString trimmed = code.trimmed();
@@ -231,19 +316,18 @@ PythonViewPrivate::executeCode(const QString& code)
 }
 
 void
-PythonViewPrivate::createDefaultTabIfNeeded()
+PythonWidgetPrivate::createDefaultTabIfNeeded()
 {
     if (d.ui->tabWidget->count() == 0)
         createShelfTab(tr("Default"));
 }
 
 int
-PythonViewPrivate::createShelfTab(const QString& name, const QVariantList& scripts)
+PythonWidgetPrivate::createShelfTab(const QString& name, const QVariantList& scripts)
 {
     auto* shelf = new ShelfWidget(d.ui->tabWidget);
     shelf->fromVariantList(scripts);
 
-    // connect
     QObject::connect(shelf, &ShelfWidget::itemActivated, this, [this](const QString& code) { executeCode(code); });
     QObject::connect(shelf, &ShelfWidget::itemContextMenuRequested, this,
                      [this, shelf](const QPoint& pos, QListWidgetItem* item) {
@@ -308,19 +392,19 @@ PythonViewPrivate::createShelfTab(const QString& name, const QVariantList& scrip
 }
 
 ShelfWidget*
-PythonViewPrivate::currentShelf() const
+PythonWidgetPrivate::currentShelf() const
 {
     return qobject_cast<ShelfWidget*>(d.ui->tabWidget->currentWidget());
 }
 
 ShelfWidget*
-PythonViewPrivate::shelfAt(int index) const
+PythonWidgetPrivate::shelfAt(int index) const
 {
     return qobject_cast<ShelfWidget*>(d.ui->tabWidget->widget(index));
 }
 
 void
-PythonViewPrivate::beginTabRename(int index)
+PythonWidgetPrivate::beginTabRename(int index)
 {
     cancelTabRename();
 
@@ -338,11 +422,11 @@ PythonViewPrivate::beginTabRename(int index)
     d.tabRenameEditor->show();
     d.tabRenameEditor->setFocus();
 
-    QObject::connect(d.tabRenameEditor, &QLineEdit::editingFinished, this, &PythonViewPrivate::commitTabRename);
+    QObject::connect(d.tabRenameEditor, &QLineEdit::editingFinished, this, &PythonWidgetPrivate::commitTabRename);
 }
 
 void
-PythonViewPrivate::commitTabRename()
+PythonWidgetPrivate::commitTabRename()
 {
     if (!d.tabRenameEditor)
         return;
@@ -358,7 +442,7 @@ PythonViewPrivate::commitTabRename()
 }
 
 void
-PythonViewPrivate::cancelTabRename()
+PythonWidgetPrivate::cancelTabRename()
 {
     if (!d.tabRenameEditor)
         return;
@@ -369,7 +453,7 @@ PythonViewPrivate::cancelTabRename()
 }
 
 void
-PythonViewPrivate::removeTab(int index)
+PythonWidgetPrivate::removeTab(int index)
 {
     if (index < 0 || index >= d.ui->tabWidget->count())
         return;
@@ -385,7 +469,7 @@ PythonViewPrivate::removeTab(int index)
 }
 
 void
-PythonViewPrivate::exportTab(int index)
+PythonWidgetPrivate::exportTab(int index)
 {
     ShelfWidget* shelf = shelfAt(index);
     if (!shelf)
@@ -414,7 +498,7 @@ PythonViewPrivate::exportTab(int index)
 }
 
 void
-PythonViewPrivate::loadShelves()
+PythonWidgetPrivate::loadShelves()
 {
     d.ui->tabWidget->clear();
 
@@ -429,7 +513,7 @@ PythonViewPrivate::loadShelves()
 }
 
 void
-PythonViewPrivate::saveShelves() const
+PythonWidgetPrivate::saveShelves() const
 {
     QVariantList tabs;
     for (int i = 0; i < d.ui->tabWidget->count(); ++i) {
@@ -447,31 +531,31 @@ PythonViewPrivate::saveShelves() const
 }
 
 void
-PythonViewPrivate::startScriptDrag(QPlainTextEdit* edit)
+PythonWidgetPrivate::startScriptDrag(QPlainTextEdit* edit)
 {
     QString code = qt::normalizeNewlines(edit->textCursor().selectedText()).trimmed();
     if (code.isEmpty())
         return;
 
-    auto* mime = new QMimeData();
-    mime->setData(mime::script, code.toUtf8());
-    mime->setText(code);
+    auto* mimeData = new QMimeData();
+    mimeData->setData(mime::script, code.toUtf8());
+    mimeData->setText(code);
 
     auto* drag = new QDrag(edit);
-    drag->setMimeData(mime);
+    drag->setMimeData(mimeData);
     drag->setPixmap(style()->icon(Style::IconRole::Code));
     drag->exec(Qt::CopyAction);
 }
 
 void
-PythonViewPrivate::updateClearButton()
+PythonWidgetPrivate::updateClearButton()
 {
     const bool enabled = d.ui->editor->isEnabled() && !d.ui->editor->document()->isEmpty();
     d.ui->clear->setEnabled(enabled);
 }
 
 bool
-PythonViewPrivate::isPointInSelection(QPlainTextEdit* edit, const QPoint& pos) const
+PythonWidgetPrivate::isPointInSelection(QPlainTextEdit* edit, const QPoint& pos) const
 {
     if (!edit)
         return false;
@@ -489,8 +573,70 @@ PythonViewPrivate::isPointInSelection(QPlainTextEdit* edit, const QPoint& pos) c
     return hitPos >= selStart && hitPos < selEnd;
 }
 
+QString
+PythonWidgetPrivate::searchText() const
+{
+    return d.ui->find->text().trimmed();
+}
+
 void
-PythonViewPrivate::stageChanged(UsdStageRefPtr stage, Session::LoadPolicy policy, Session::StageStatus status)
+PythonWidgetPrivate::resetSearchStart(QTextDocument::FindFlags flags)
+{
+    if (!d.ui || !d.ui->editor)
+        return;
+
+    QTextCursor cursor = d.ui->editor->textCursor();
+    cursor.movePosition(flags.testFlag(QTextDocument::FindBackward) ? QTextCursor::End : QTextCursor::Start);
+    d.ui->editor->setTextCursor(cursor);
+}
+
+void
+PythonWidgetPrivate::focusFind()
+{
+    d.ui->find->setFocus();
+    d.ui->find->selectAll();
+}
+
+bool
+PythonWidgetPrivate::findText(const QString& text, QTextDocument::FindFlags flags)
+{
+    if (text.isEmpty())
+        return false;
+
+    if (d.lastSearch != text) {
+        d.lastSearch = text;
+        resetSearchStart(flags);
+    }
+
+    if (d.ui->editor->find(text, flags))
+        return true;
+
+    resetSearchStart(flags);
+    return d.ui->editor->find(text, flags);
+}
+
+void
+PythonWidgetPrivate::findNext()
+{
+    const QString text = searchText();
+    if (text.isEmpty())
+        return;
+
+    findText(text);
+}
+
+void
+PythonWidgetPrivate::findPrevious()
+{
+    const QString text = searchText();
+    if (text.isEmpty())
+        return;
+
+    findText(text, QTextDocument::FindBackward);
+}
+
+void
+PythonWidgetPrivate::stageChanged(UsdStageRefPtr stage, Session::LoadPolicy policy, Session::StageStatus status)
 {
     Q_UNUSED(stage);
     Q_UNUSED(policy);
@@ -499,11 +645,14 @@ PythonViewPrivate::stageChanged(UsdStageRefPtr stage, Session::LoadPolicy policy
     d.ui->editor->setEnabled(enabled);
     d.ui->log->setEnabled(enabled);
     d.ui->tabWidget->setEnabled(enabled);
+    d.ui->find->setEnabled(enabled);
+    d.ui->next->setEnabled(enabled);
+    d.ui->previous->setEnabled(enabled);
     updateClearButton();
 }
 
 void
-PythonViewPrivate::showLogContextMenu(const QPoint& pos)
+PythonWidgetPrivate::showLogContextMenu(const QPoint& pos)
 {
     QMenu* menu = d.ui->log->createStandardContextMenu();
     menu->addSeparator();
@@ -517,7 +666,26 @@ PythonViewPrivate::showLogContextMenu(const QPoint& pos)
 }
 
 void
-PythonViewPrivate::showTabContextMenu(const QPoint& pos)
+PythonWidgetPrivate::showEditorContextMenu(const QPoint& pos)
+{
+    QMenu* menu = d.ui->editor->createStandardContextMenu();
+    menu->addSeparator();
+
+    QAction* findAction = menu->addAction(tr("Find"));
+    QObject::connect(findAction, &QAction::triggered, this, [this]() { focusFind(); });
+
+    QAction* findNextAction = menu->addAction(tr("Find Next"));
+    QObject::connect(findNextAction, &QAction::triggered, this, [this]() { findNext(); });
+
+    QAction* findPreviousAction = menu->addAction(tr("Find Previous"));
+    QObject::connect(findPreviousAction, &QAction::triggered, this, [this]() { findPrevious(); });
+
+    menu->exec(d.ui->editor->viewport()->mapToGlobal(pos));
+    delete menu;
+}
+
+void
+PythonWidgetPrivate::showTabContextMenu(const QPoint& pos)
 {
     QTabBar* tabBar = d.ui->tabWidget->tabBar();
     const int index = tabBar->tabAt(pos);
@@ -551,7 +719,7 @@ PythonViewPrivate::showTabContextMenu(const QPoint& pos)
 }
 
 void
-PythonViewPrivate::newTab()
+PythonWidgetPrivate::newTab()
 {
     const int index = createShelfTab(tr("Shelf"));
     saveShelves();
@@ -559,27 +727,27 @@ PythonViewPrivate::newTab()
 }
 
 void
-PythonViewPrivate::run()
+PythonWidgetPrivate::run()
 {
     executeCode(d.ui->editor->toPlainText());
 }
 
 void
-PythonViewPrivate::clear()
+PythonWidgetPrivate::clear()
 {
     d.ui->editor->clear();
     updateClearButton();
 }
 
-PythonView::PythonView(QWidget* parent)
+PythonWidget::PythonWidget(QWidget* parent)
     : QWidget(parent)
-    , p(new PythonViewPrivate())
+    , p(new PythonWidgetPrivate())
 {
     p->d.view = this;
     p->init();
 }
 
-PythonView::~PythonView()
+PythonWidget::~PythonWidget()
 {
     if (p)
         p->saveShelves();

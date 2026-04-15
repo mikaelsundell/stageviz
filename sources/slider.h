@@ -5,7 +5,6 @@
 #pragma once
 
 #include "stageviz.h"
-
 #include <QScopedPointer>
 #include <QSlider>
 

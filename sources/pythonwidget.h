@@ -5,7 +5,6 @@
 #pragma once
 
 #include "stageviz.h"
-
 #include <QWidget>
 #include <pxr/usd/usd/stage.h>
 
@@ -13,10 +12,10 @@ PXR_NAMESPACE_USING_DIRECTIVE
 
 namespace stageviz {
 
-class PythonViewPrivate;
+class PythonWidgetPrivate;
 
 /**
- * @class PythonView
+ * @class PythonWidget
  * @brief Widget for editing and executing Python scripts.
  *
  * Provides a user interface for writing and running Python code
@@ -27,7 +26,7 @@ class PythonViewPrivate;
  * The view is intended for scripting, automation, and development
  * of custom tools operating on the current session and USD stage.
  */
-class PythonView : public QWidget {
+class PythonWidget : public QWidget {
     Q_OBJECT
 public:
     /**
@@ -35,16 +34,16 @@ public:
      *
      * @param parent Optional parent widget.
      */
-    PythonView(QWidget* parent = nullptr);
+    PythonWidget(QWidget* parent = nullptr);
 
     /**
-     * @brief Destroys the PythonView instance.
+     * @brief Destroys the PythonWidget instance.
      */
-    virtual ~PythonView();
+    virtual ~PythonWidget();
 
 private:
-    Q_DISABLE_COPY_MOVE(PythonView)
-    QScopedPointer<PythonViewPrivate> p;
+    Q_DISABLE_COPY_MOVE(PythonWidget)
+    QScopedPointer<PythonWidgetPrivate> p;
 };
 
 }  // namespace stageviz

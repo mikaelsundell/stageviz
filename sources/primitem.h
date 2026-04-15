@@ -5,7 +5,6 @@
 #pragma once
 
 #include "stageviz.h"
-
 #include "treeitem.h"
 #include <pxr/usd/usd/stage.h>
 

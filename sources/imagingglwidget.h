@@ -4,10 +4,9 @@
 
 #pragma once
 
-#include "stageviz.h"
-
 #include "notice.h"
 #include "selectionlist.h"
+#include "stageviz.h"
 #include "viewcamera.h"
 #include <QOpenGLFunctions>
 #include <QOpenGLWidget>

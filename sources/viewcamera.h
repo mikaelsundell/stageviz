@@ -5,7 +5,6 @@
 #pragma once
 
 #include "stageviz.h"
-
 #include <QExplicitlySharedDataPointer>
 #include <QObject>
 #include <pxr/usd/usdGeom/camera.h>
