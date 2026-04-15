@@ -253,14 +253,11 @@ ImagingGLWidgetPrivate::close()
     d.viewCamera = ViewCamera();
     d.drag = false;
     d.sweep = false;
-
     d.glEngine.reset();
     initGL();
-
     if (d.sceneTreeEnabled) {
         updateSceneTree();
     }
-
     d.glwidget->update();
 }
 

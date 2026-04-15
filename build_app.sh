@@ -185,7 +185,12 @@ build_stageviz() {
     local xcode_type
     xcode_type=$(echo "$build_type" | awk '{ print toupper(substr($0, 1, 1)) tolower(substr($0, 2)) }')
 
-    cmake .. -DCMAKE_MODULE_PATH="$script_dir/modules" -DCMAKE_PREFIX_PATH="$prefix" -G Xcode
+    cmake .. \
+        -DCMAKE_MODULE_PATH="$script_dir/modules" \
+        -DCMAKE_PREFIX_PATH="$prefix" \
+        -DSTAGEVIZ_DEPLOY_BUILD=ON \
+        -G Xcode
+
     cmake --build . --config "$xcode_type" --parallel
 
     if [ "$github" == "ON" ]; then
@@ -210,9 +215,11 @@ build_stageviz() {
             "Python3.framework" \
             "$app_bundle"
 
-        echo "Deploy extra USD runtime dylibs"
+        echo "Deploy extra runtime dylibs"
         copy_extra_libs \
             "$app_bundle/Contents/Frameworks" \
+            "$prefix/lib/libshiboken6.abi3.6.10.dylib" \
+            "$prefix/lib/libpyside6.abi3.6.10.dylib" \
             "$prefix/lib/libusd_usdSkel.dylib" \
             "$prefix/lib/libusd_usdSkelImaging.dylib" \
             "$prefix/lib/libusd_hdGp.dylib"

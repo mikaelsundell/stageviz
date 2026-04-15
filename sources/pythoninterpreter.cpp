@@ -4,8 +4,9 @@
 #include "pythoninterpreter.h"
 #include "application.h"
 #include "commandstack.h"
+#include "os.h"
 #include "session.h"
-#include <QDebug>
+#include <QDir>
 #include <QPointer>
 
 #undef slots
@@ -57,13 +58,30 @@ PythonInterpreterPrivate::init()
 
     Py_Initialize();
 
+    QStringList pythonDirs;
+    #if DEPLOY_BUILD
+    #    ifdef __APPLE__
+        pythonDirs << QDir::cleanPath(os::getApplicationPath() + "/Frameworks/site-packages");
+    #    else
+        pythonDirs << QDir::cleanPath(os::getApplicationPath() + "/site-packages");
+    #    endif
+    #else
+        pythonDirs = QString::fromUtf8(PYTHON_SEARCH_DIRS).split(';', Qt::SkipEmptyParts);
+    #endif
+    
     PyObject* sysPath = PySys_GetObject("path");  // borrowed reference
     if (sysPath && PyList_Check(sysPath)) {
-        PyObject* path = PyUnicode_FromString(PXR_PYTHON_DIR);
-        if (path) {
-            if (PySequence_Contains(sysPath, path) == 0)
-                PyList_Insert(sysPath, 0, path);
-            Py_DECREF(path);
+        for (auto it = pythonDirs.crbegin(); it != pythonDirs.crend(); ++it) {
+            const QString cleanDir = QDir::cleanPath(*it);
+            if (!QDir(cleanDir).exists())
+                continue;
+
+            PyObject* path = PyUnicode_FromString(cleanDir.toUtf8().constData());
+            if (path) {
+                if (PySequence_Contains(sysPath, path) == 0)
+                    PyList_Insert(sysPath, 0, path);
+                Py_DECREF(path);
+            }
         }
     }
 

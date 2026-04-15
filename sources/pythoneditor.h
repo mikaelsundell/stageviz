@@ -4,6 +4,8 @@
 
 #pragma once
 
+#include "stageviz.h"
+
 #include <QPlainTextEdit>
 
 namespace stageviz {

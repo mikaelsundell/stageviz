@@ -4,6 +4,8 @@
 
 #pragma once
 
+#include "stageviz.h"
+
 #include <QList>
 #include <QMetaType>
 #include <pxr/base/tf/token.h>

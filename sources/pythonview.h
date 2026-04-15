@@ -4,6 +4,8 @@
 
 #pragma once
 
+#include "stageviz.h"
+
 #include <QWidget>
 #include <pxr/usd/usd/stage.h>
 

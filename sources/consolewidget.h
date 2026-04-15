@@ -4,6 +4,8 @@
 
 #pragma once
 
+#include "stageviz.h"
+
 #include <QHideEvent>
 #include <QShowEvent>
 #include <QWidget>

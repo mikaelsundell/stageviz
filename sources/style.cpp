@@ -213,8 +213,8 @@ StylePrivate::updateTheme(Style::Theme theme)
         map(Style::ColorRole::Progress, QColor::fromHsl(216, 82, 20));
         map(Style::ColorRole::Button, QColor::fromHsl(220, 6, 36));
         map(Style::ColorRole::ButtonAlt, QColor::fromHsl(220, 6, 64));
-        map(Style::ColorRole::Render, QColor::fromHsl(220, 6, 25));
-        map(Style::ColorRole::RenderAlt, QColor::fromHsl(220, 6, 40));
+        map(Style::ColorRole::Render, QColor::fromHsl(210, 11, 35));
+        map(Style::ColorRole::RenderAlt, QColor::fromHsl(210, 6, 25));
         map(Style::ColorRole::Selection, QColor::fromHsl(55, 220, 180));
         map(Style::ColorRole::SelectionAlt, QColor::fromHsl(55, 140, 120));
         map(Style::ColorRole::Warning, QColor(220, 170, 40));
@@ -236,8 +236,8 @@ StylePrivate::updateTheme(Style::Theme theme)
         map(Style::ColorRole::Progress, QColor::fromHsl(210, 90, 45));
         map(Style::ColorRole::Button, QColor::fromHsl(0, 0, 180));
         map(Style::ColorRole::ButtonAlt, QColor::fromHsl(0, 0, 160));
-        map(Style::ColorRole::Render, QColor::fromHsl(220, 6, 25));
-        map(Style::ColorRole::RenderAlt, QColor::fromHsl(220, 6, 40));
+        map(Style::ColorRole::Render, QColor::fromHsl(210, 11, 35));
+        map(Style::ColorRole::RenderAlt, QColor::fromHsl(210, 6, 25));
         map(Style::ColorRole::Selection, QColor::fromHsl(55, 220, 180));
         map(Style::ColorRole::SelectionAlt, QColor::fromHsl(55, 140, 120));
         map(Style::ColorRole::Warning, QColor(180, 130, 30));

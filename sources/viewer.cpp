@@ -266,7 +266,7 @@ ViewerPrivate::init()
     d.ui->setupUi(d.viewer.data());
     attach(d.ui->displayIsolate);
     initDocks();
-    d.backgroundColor = QColor(settings()->value("backgroundColor", "#4f4f4f").toString());
+    d.backgroundColor = QColor(settings()->value("backgroundColor", style()->color(Style::ColorRole::Render)).toString());
     d.ui->backgroundColor->setStyleSheet("background-color: " + d.backgroundColor.name() + ";");
     d.backgroundColorFilter.reset(new MouseEvent);
     d.ui->backgroundColor->installEventFilter(d.backgroundColorFilter.data());

@@ -4,6 +4,8 @@
 
 #pragma once
 
+#include "stageviz.h"
+
 #include "command.h"
 #include "selectionlist.h"
 #include "session.h"

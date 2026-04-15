@@ -52,12 +52,12 @@ ApplicationPrivate::init()
     d.pythonInterpreter.reset(new PythonInterpreter());
 #ifdef NDEBUG
     QStringList pluginDirs;
-#    ifdef _WIN32
-    const QString pluginUsdDir = os::getApplicationPath() + "/plugins/usd";
-    const QString usdDir = os::getApplicationPath() + "/usd";
-#    else
+#    ifdef __APPLE__
     const QString pluginUsdDir = os::getApplicationPath() + "/PlugIns/usd";
     const QString usdDir = os::getApplicationPath() + "/Frameworks/usd";
+#    else
+    const QString pluginUsdDir = os::getApplicationPath() + "/plugins/usd";
+    const QString usdDir = os::getApplicationPath() + "/usd";
 #    endif
     if (QDir(pluginUsdDir).exists())
         pluginDirs << pluginUsdDir;
