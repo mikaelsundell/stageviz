@@ -59,16 +59,19 @@ PythonInterpreterPrivate::init()
     Py_Initialize();
 
     QStringList pythonDirs;
-    #if DEPLOY_BUILD
-    #    ifdef __APPLE__
-        pythonDirs << QDir::cleanPath(os::getApplicationPath() + "/Frameworks/site-packages");
-    #    else
-        pythonDirs << QDir::cleanPath(os::getApplicationPath() + "/site-packages");
-    #    endif
-    #else
-        pythonDirs = QString::fromUtf8(PYTHON_SEARCH_DIRS).split(';', Qt::SkipEmptyParts);
-    #endif
-    
+#if DEPLOY_BUILD
+#    ifdef __APPLE__
+    pythonDirs << QDir::cleanPath(os::getApplicationPath() + "/Frameworks/site-packages");
+#    else
+    pythonDirs << QDir::cleanPath(os::getApplicationPath() + "/site-packages");
+#    endif
+#else
+    pythonDirs = QString::fromUtf8(PYTHON_SEARCH_DIRS).split(';', Qt::SkipEmptyParts);
+#endif
+
+
+    qInfo() << "pythonDirs: " << pythonDirs;
+
     PyObject* sysPath = PySys_GetObject("path");  // borrowed reference
     if (sysPath && PyList_Check(sysPath)) {
         for (auto it = pythonDirs.crbegin(); it != pythonDirs.crend(); ++it) {

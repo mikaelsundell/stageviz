@@ -188,7 +188,7 @@ build_stageviz() {
     cmake .. \
         -DCMAKE_MODULE_PATH="$script_dir/modules" \
         -DCMAKE_PREFIX_PATH="$prefix" \
-        -DSTAGEVIZ_DEPLOY_BUILD=ON \
+        -DDEPLOY_BUILD=ON \
         -G Xcode
 
     cmake --build . --config "$xcode_type" --parallel

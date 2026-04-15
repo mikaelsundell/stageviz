@@ -28,6 +28,7 @@
 #include <QDesktopServices>
 #include <QDragEnterEvent>
 #include <QElapsedTimer>
+#include <QEvent>
 #include <QFileDialog>
 #include <QImageWriter>
 #include <QMessageBox>
@@ -59,7 +60,6 @@ public:
     void updateDockAction(QAction* action, bool checked);
     DockWidget* outlinerDock();
     DockWidget* progressDock();
-    DockWidget* pythonDock();
     OutlinerView* outlinerView();
     ProgressView* progressView();
     PythonView* pythonView();
@@ -152,13 +152,11 @@ public:
         QColor backgroundColor;
         Qt::DockWidgetArea outlinerArea;
         Qt::DockWidgetArea progressArea;
-        Qt::DockWidgetArea pythonArea;
         QScopedPointer<MouseEvent> backgroundColorFilter;
         QScopedPointer<Ui_Viewer> ui;
         QPointer<Viewer> viewer;
         QPointer<DockWidget> outlinerDock;
         QPointer<DockWidget> progressDock;
-        QPointer<DockWidget> pythonDock;
         QPointer<OutlinerView> outlinerView;
         QPointer<ProgressView> progressView;
         QPointer<PythonView> pythonView;
@@ -176,7 +174,6 @@ ViewerPrivate::ViewerPrivate()
     d.extensions = { "usd", "usda", "usdc", "usdz" };
     d.outlinerArea = Qt::LeftDockWidgetArea;
     d.progressArea = Qt::RightDockWidgetArea;
-    d.pythonArea = Qt::RightDockWidgetArea;
 }
 
 DockWidget*
@@ -223,35 +220,32 @@ ViewerPrivate::initDocks()
     d.progressView->setObjectName("progressView");
     d.progressView->setAttribute(Qt::WA_DeleteOnClose, false);
     d.progressDock = createDock("progressDock", "Progress", d.progressView, d.progressArea);
-    d.pythonView = new PythonView(d.viewer.data());
+    d.pythonView = new PythonView(nullptr);
     d.pythonView->setObjectName("pythonView");
     d.pythonView->setAttribute(Qt::WA_DeleteOnClose, false);
-    d.pythonDock = createDock("pythonDock", "Python", d.pythonView, d.pythonArea);
+    d.pythonView->setWindowFlags(Qt::Tool | Qt::WindowTitleHint | Qt::WindowCloseButtonHint);
+    d.pythonView->setWindowTitle("Python");
+    d.pythonView->installEventFilter(this);
+    d.pythonView->hide();
     d.consoleWidget = new ConsoleWidget(nullptr);
     d.consoleWidget->setWindowFlags(Qt::Tool | Qt::WindowTitleHint | Qt::WindowCloseButtonHint);
     d.consoleWidget->setObjectName("consoleWidget");
     d.consoleWidget->setAttribute(Qt::WA_DeleteOnClose, false);
     d.consoleWidget->setWindowTitle("Console");
     d.consoleWidget->hide();
-    // connect
     connect(d.outlinerDock, &QDockWidget::dockLocationChanged, this,
             [this](Qt::DockWidgetArea area) { d.outlinerArea = area; });
     connect(d.progressDock, &QDockWidget::dockLocationChanged, this,
             [this](Qt::DockWidgetArea area) { d.progressArea = area; });
-    connect(d.pythonDock, &QDockWidget::dockLocationChanged, this,
-            [this](Qt::DockWidgetArea area) { d.pythonArea = area; });
 
     connect(d.outlinerDock, &QDockWidget::visibilityChanged, this,
             [this](bool visible) { updateDockAction(d.ui->viewOutliner, visible); });
     connect(d.progressDock, &QDockWidget::visibilityChanged, this,
             [this](bool visible) { updateDockAction(d.ui->viewProgress, visible); });
-    connect(d.pythonDock, &QDockWidget::visibilityChanged, this,
-            [this](bool visible) { updateDockAction(d.ui->viewPython, visible); });
     connect(d.consoleWidget, &ConsoleWidget::visibilityChanged, this,
             [this](bool visible) { updateDockAction(d.ui->viewConsole, visible); });
     d.outlinerDock->show();
     d.progressDock->show();
-    d.pythonDock->hide();
     updateDockAction(d.ui->viewOutliner, true);
     updateDockAction(d.ui->viewProgress, true);
     updateDockAction(d.ui->viewPython, false);
@@ -266,7 +260,8 @@ ViewerPrivate::init()
     d.ui->setupUi(d.viewer.data());
     attach(d.ui->displayIsolate);
     initDocks();
-    d.backgroundColor = QColor(settings()->value("backgroundColor", style()->color(Style::ColorRole::Render)).toString());
+    d.backgroundColor = QColor(
+        settings()->value("backgroundColor", style()->color(Style::ColorRole::Render)).toString());
     d.ui->backgroundColor->setStyleSheet("background-color: " + d.backgroundColor.name() + ";");
     d.backgroundColorFilter.reset(new MouseEvent);
     d.ui->backgroundColor->installEventFilter(d.backgroundColorFilter.data());
@@ -540,12 +535,6 @@ ViewerPrivate::progressDock()
     return d.progressDock.data();
 }
 
-DockWidget*
-ViewerPrivate::pythonDock()
-{
-    return d.pythonDock.data();
-}
-
 OutlinerView*
 ViewerPrivate::outlinerView()
 {
@@ -579,9 +568,14 @@ ViewerPrivate::renderView()
 bool
 ViewerPrivate::eventFilter(QObject* object, QEvent* event)
 {
-    Q_UNUSED(object);
-
-    if (event->type() == QEvent::WindowStateChange) {
+    if (object == d.pythonView) {
+        switch (event->type()) {
+        case QEvent::Show: updateDockAction(d.ui->viewPython, true); break;
+        case QEvent::Hide: updateDockAction(d.ui->viewPython, false); break;
+        default: break;
+        }
+    }
+    if (object == d.viewer && event->type() == QEvent::WindowStateChange) {
         Qt::WindowStates state = d.viewer->windowState();
         if (!(state & Qt::WindowMinimized)) {
             QTimer::singleShot(0, d.viewer, [this]() {
@@ -589,8 +583,8 @@ ViewerPrivate::eventFilter(QObject* object, QEvent* event)
                     d.outlinerDock->show();
                 if (d.ui->viewProgress->isChecked() && d.progressDock && !d.progressDock->isVisible())
                     d.progressDock->show();
-                if (d.ui->viewPython->isChecked() && d.pythonDock && !d.pythonDock->isVisible())
-                    d.pythonDock->show();
+                if (d.ui->viewPython->isChecked() && d.pythonView && !d.pythonView->isVisible())
+                    d.pythonView->show();
                 if (d.ui->viewConsole->isChecked() && d.consoleWidget && !d.consoleWidget->isVisible())
                     d.consoleWidget->show();
             });
@@ -1306,14 +1300,15 @@ ViewerPrivate::toggleProgress(bool checked)
 void
 ViewerPrivate::togglePython(bool checked)
 {
-    if (!d.pythonDock)
+    if (!d.pythonView)
         return;
     if (checked) {
-        d.pythonDock->show();
-        d.pythonDock->raise();
+        d.pythonView->show();
+        d.pythonView->raise();
+        d.pythonView->activateWindow();
     }
     else {
-        d.pythonDock->hide();
+        d.pythonView->hide();
     }
 }
 
@@ -1651,11 +1646,19 @@ Viewer::closeEvent(QCloseEvent* event)
         event->ignore();
         return;
     }
+
     p->saveSettings();
+
+    if (p->d.pythonView) {
+        p->d.pythonView->hide();
+        p->d.pythonView->close();
+    }
+
     if (p->d.consoleWidget) {
         p->d.consoleWidget->hide();
         p->d.consoleWidget->close();
     }
+
     event->accept();
 }
 
