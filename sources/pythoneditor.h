@@ -17,7 +17,7 @@ class PythonEditorPrivate;
  * @brief Code editor for writing Python scripts.
  *
  * Provides a plain text editor optimized for Python scripting,
- * typically used within a PythonWidget. The editor may include
+ * typically used within a PythonDialog. The editor may include
  * features such as syntax highlighting, indentation handling,
  * and script editing utilities.
  *

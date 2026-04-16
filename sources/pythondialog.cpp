@@ -2,7 +2,7 @@
 // Copyright (c) 2025 - present Mikael Sundell
 // https://github.com/mikaelsundell/stageviz
 
-#include "pythonwidget.h"
+#include "pythondialog.h"
 #include "application.h"
 #include "mime.h"
 #include "pythoninterpreter.h"
@@ -35,11 +35,11 @@
 #include <QVariantMap>
 
 // generated files
-#include "ui_pythonwidget.h"
+#include "ui_pythondialog.h"
 
 namespace stageviz {
 
-class PythonWidgetPrivate : public QObject {
+class PythonDialogPrivate : public QObject {
 public:
     void init();
     bool eventFilter(QObject* object, QEvent* event) override;
@@ -77,23 +77,23 @@ public Q_SLOTS:
 
 public:
     struct Data {
-        QScopedPointer<Ui_PythonWidget> ui;
-        QPointer<PythonWidget> view;
         QPoint dragStartPos;
         QPointer<QLineEdit> tabRenameEditor;
         int tabRenameIndex = -1;
         bool dragCandidate = false;
         QPointer<QPlainTextEdit> dragSourceEdit;
         QString lastSearch;
+        QScopedPointer<Ui_PythonDialog> ui;
+        QPointer<PythonDialog> dialog;
     };
     Data d;
 };
 
 void
-PythonWidgetPrivate::init()
+PythonDialogPrivate::init()
 {
-    d.ui.reset(new Ui_PythonWidget());
-    d.ui->setupUi(d.view.data());
+    d.ui.reset(new Ui_PythonDialog());
+    d.ui->setupUi(d.dialog.data());
     d.ui->run->setIcon(style()->icon(Style::IconRole::Run));
     d.ui->clear->setIcon(style()->icon(Style::IconRole::Clear));
     d.ui->next->setIcon(style()->icon(Style::IconRole::Right));
@@ -125,20 +125,20 @@ PythonWidgetPrivate::init()
     }
 
     // connect
-    QObject::connect(d.ui->run, &QToolButton::clicked, this, &PythonWidgetPrivate::run);
-    QObject::connect(d.ui->clear, &QToolButton::clicked, this, &PythonWidgetPrivate::clear);
-    QObject::connect(d.ui->next, &QToolButton::clicked, this, &PythonWidgetPrivate::findNext);
-    QObject::connect(d.ui->previous, &QToolButton::clicked, this, &PythonWidgetPrivate::findPrevious);
+    QObject::connect(d.ui->run, &QToolButton::clicked, this, &PythonDialogPrivate::run);
+    QObject::connect(d.ui->clear, &QToolButton::clicked, this, &PythonDialogPrivate::clear);
+    QObject::connect(d.ui->next, &QToolButton::clicked, this, &PythonDialogPrivate::findNext);
+    QObject::connect(d.ui->previous, &QToolButton::clicked, this, &PythonDialogPrivate::findPrevious);
 
     QObject::connect(d.ui->editor->document(), &QTextDocument::contentsChanged, this,
-                     &PythonWidgetPrivate::updateClearButton);
+                     &PythonDialogPrivate::updateClearButton);
 
-    QObject::connect(d.ui->log, &QWidget::customContextMenuRequested, this, &PythonWidgetPrivate::showLogContextMenu);
+    QObject::connect(d.ui->log, &QWidget::customContextMenuRequested, this, &PythonDialogPrivate::showLogContextMenu);
     QObject::connect(d.ui->editor, &QWidget::customContextMenuRequested, this,
-                     &PythonWidgetPrivate::showEditorContextMenu);
+                     &PythonDialogPrivate::showEditorContextMenu);
 
     QObject::connect(d.ui->tabWidget->tabBar(), &QWidget::customContextMenuRequested, this,
-                     &PythonWidgetPrivate::showTabContextMenu);
+                     &PythonDialogPrivate::showTabContextMenu);
     QObject::connect(d.ui->tabWidget->tabBar(), &QTabBar::tabMoved, this, [this](int, int) { saveShelves(); });
 
     QObject::connect(d.ui->find, &QLineEdit::textChanged, this, [this](const QString&) { d.lastSearch.clear(); });
@@ -150,9 +150,9 @@ PythonWidgetPrivate::init()
             findNext();
     });
 
-    QObject::connect(session(), &Session::stageChanged, this, &PythonWidgetPrivate::stageChanged);
+    QObject::connect(session(), &Session::stageChanged, this, &PythonDialogPrivate::stageChanged);
 
-    auto* find = new QShortcut(QKeySequence::Find, d.view.data());
+    auto* find = new QShortcut(QKeySequence::Find, d.dialog.data());
     QObject::connect(find, &QShortcut::activated, this, [this]() { focusFind(); });
 
     loadShelves();
@@ -161,7 +161,7 @@ PythonWidgetPrivate::init()
 }
 
 bool
-PythonWidgetPrivate::eventFilter(QObject* object, QEvent* event)
+PythonDialogPrivate::eventFilter(QObject* object, QEvent* event)
 {
     if (object == d.ui->log) {
         if (event->type() == QEvent::ShortcutOverride) {
@@ -299,7 +299,7 @@ PythonWidgetPrivate::eventFilter(QObject* object, QEvent* event)
 }
 
 void
-PythonWidgetPrivate::executeCode(const QString& code)
+PythonDialogPrivate::executeCode(const QString& code)
 {
     auto* interpreter = pythonInterpreter();
     const QString trimmed = code.trimmed();
@@ -316,14 +316,14 @@ PythonWidgetPrivate::executeCode(const QString& code)
 }
 
 void
-PythonWidgetPrivate::createDefaultTabIfNeeded()
+PythonDialogPrivate::createDefaultTabIfNeeded()
 {
     if (d.ui->tabWidget->count() == 0)
         createShelfTab(tr("Default"));
 }
 
 int
-PythonWidgetPrivate::createShelfTab(const QString& name, const QVariantList& scripts)
+PythonDialogPrivate::createShelfTab(const QString& name, const QVariantList& scripts)
 {
     auto* shelf = new ShelfWidget(d.ui->tabWidget);
     shelf->fromVariantList(scripts);
@@ -367,7 +367,7 @@ PythonWidgetPrivate::createShelfTab(const QString& name, const QVariantList& scr
                          }
                          else if (chosen == exportAction) {
                              const QString fileName
-                                 = QFileDialog::getSaveFileName(d.view.data(), tr("Export Script"),
+                                 = QFileDialog::getSaveFileName(d.dialog.data(), tr("Export Script"),
                                                                 item->text() + QStringLiteral(".py"),
                                                                 tr("Python Files (*.py);;Text Files (*.txt)"));
                              if (!fileName.isEmpty()) {
@@ -392,19 +392,19 @@ PythonWidgetPrivate::createShelfTab(const QString& name, const QVariantList& scr
 }
 
 ShelfWidget*
-PythonWidgetPrivate::currentShelf() const
+PythonDialogPrivate::currentShelf() const
 {
     return qobject_cast<ShelfWidget*>(d.ui->tabWidget->currentWidget());
 }
 
 ShelfWidget*
-PythonWidgetPrivate::shelfAt(int index) const
+PythonDialogPrivate::shelfAt(int index) const
 {
     return qobject_cast<ShelfWidget*>(d.ui->tabWidget->widget(index));
 }
 
 void
-PythonWidgetPrivate::beginTabRename(int index)
+PythonDialogPrivate::beginTabRename(int index)
 {
     cancelTabRename();
 
@@ -422,11 +422,11 @@ PythonWidgetPrivate::beginTabRename(int index)
     d.tabRenameEditor->show();
     d.tabRenameEditor->setFocus();
 
-    QObject::connect(d.tabRenameEditor, &QLineEdit::editingFinished, this, &PythonWidgetPrivate::commitTabRename);
+    QObject::connect(d.tabRenameEditor, &QLineEdit::editingFinished, this, &PythonDialogPrivate::commitTabRename);
 }
 
 void
-PythonWidgetPrivate::commitTabRename()
+PythonDialogPrivate::commitTabRename()
 {
     if (!d.tabRenameEditor)
         return;
@@ -442,7 +442,7 @@ PythonWidgetPrivate::commitTabRename()
 }
 
 void
-PythonWidgetPrivate::cancelTabRename()
+PythonDialogPrivate::cancelTabRename()
 {
     if (!d.tabRenameEditor)
         return;
@@ -453,7 +453,7 @@ PythonWidgetPrivate::cancelTabRename()
 }
 
 void
-PythonWidgetPrivate::removeTab(int index)
+PythonDialogPrivate::removeTab(int index)
 {
     if (index < 0 || index >= d.ui->tabWidget->count())
         return;
@@ -469,7 +469,7 @@ PythonWidgetPrivate::removeTab(int index)
 }
 
 void
-PythonWidgetPrivate::exportTab(int index)
+PythonDialogPrivate::exportTab(int index)
 {
     ShelfWidget* shelf = shelfAt(index);
     if (!shelf)
@@ -483,7 +483,7 @@ PythonWidgetPrivate::exportTab(int index)
                                     ? QStringLiteral("shelf.json")
                                     : d.ui->tabWidget->tabText(index).trimmed() + QStringLiteral(".json");
 
-    const QString fileName = QFileDialog::getSaveFileName(d.view.data(), tr("Export Shelf"), defaultName,
+    const QString fileName = QFileDialog::getSaveFileName(d.dialog.data(), tr("Export Shelf"), defaultName,
                                                           tr("JSON Files (*.json)"));
     if (fileName.isEmpty())
         return;
@@ -498,7 +498,7 @@ PythonWidgetPrivate::exportTab(int index)
 }
 
 void
-PythonWidgetPrivate::loadShelves()
+PythonDialogPrivate::loadShelves()
 {
     d.ui->tabWidget->clear();
 
@@ -513,7 +513,7 @@ PythonWidgetPrivate::loadShelves()
 }
 
 void
-PythonWidgetPrivate::saveShelves() const
+PythonDialogPrivate::saveShelves() const
 {
     QVariantList tabs;
     for (int i = 0; i < d.ui->tabWidget->count(); ++i) {
@@ -531,7 +531,7 @@ PythonWidgetPrivate::saveShelves() const
 }
 
 void
-PythonWidgetPrivate::startScriptDrag(QPlainTextEdit* edit)
+PythonDialogPrivate::startScriptDrag(QPlainTextEdit* edit)
 {
     QString code = qt::normalizeNewlines(edit->textCursor().selectedText()).trimmed();
     if (code.isEmpty())
@@ -548,14 +548,14 @@ PythonWidgetPrivate::startScriptDrag(QPlainTextEdit* edit)
 }
 
 void
-PythonWidgetPrivate::updateClearButton()
+PythonDialogPrivate::updateClearButton()
 {
     const bool enabled = d.ui->editor->isEnabled() && !d.ui->editor->document()->isEmpty();
     d.ui->clear->setEnabled(enabled);
 }
 
 bool
-PythonWidgetPrivate::isPointInSelection(QPlainTextEdit* edit, const QPoint& pos) const
+PythonDialogPrivate::isPointInSelection(QPlainTextEdit* edit, const QPoint& pos) const
 {
     if (!edit)
         return false;
@@ -574,13 +574,13 @@ PythonWidgetPrivate::isPointInSelection(QPlainTextEdit* edit, const QPoint& pos)
 }
 
 QString
-PythonWidgetPrivate::searchText() const
+PythonDialogPrivate::searchText() const
 {
     return d.ui->find->text().trimmed();
 }
 
 void
-PythonWidgetPrivate::resetSearchStart(QTextDocument::FindFlags flags)
+PythonDialogPrivate::resetSearchStart(QTextDocument::FindFlags flags)
 {
     if (!d.ui || !d.ui->editor)
         return;
@@ -591,14 +591,14 @@ PythonWidgetPrivate::resetSearchStart(QTextDocument::FindFlags flags)
 }
 
 void
-PythonWidgetPrivate::focusFind()
+PythonDialogPrivate::focusFind()
 {
     d.ui->find->setFocus();
     d.ui->find->selectAll();
 }
 
 bool
-PythonWidgetPrivate::findText(const QString& text, QTextDocument::FindFlags flags)
+PythonDialogPrivate::findText(const QString& text, QTextDocument::FindFlags flags)
 {
     if (text.isEmpty())
         return false;
@@ -616,7 +616,7 @@ PythonWidgetPrivate::findText(const QString& text, QTextDocument::FindFlags flag
 }
 
 void
-PythonWidgetPrivate::findNext()
+PythonDialogPrivate::findNext()
 {
     const QString text = searchText();
     if (text.isEmpty())
@@ -626,7 +626,7 @@ PythonWidgetPrivate::findNext()
 }
 
 void
-PythonWidgetPrivate::findPrevious()
+PythonDialogPrivate::findPrevious()
 {
     const QString text = searchText();
     if (text.isEmpty())
@@ -636,7 +636,7 @@ PythonWidgetPrivate::findPrevious()
 }
 
 void
-PythonWidgetPrivate::stageChanged(UsdStageRefPtr stage, Session::LoadPolicy policy, Session::StageStatus status)
+PythonDialogPrivate::stageChanged(UsdStageRefPtr stage, Session::LoadPolicy policy, Session::StageStatus status)
 {
     Q_UNUSED(stage);
     Q_UNUSED(policy);
@@ -652,7 +652,7 @@ PythonWidgetPrivate::stageChanged(UsdStageRefPtr stage, Session::LoadPolicy poli
 }
 
 void
-PythonWidgetPrivate::showLogContextMenu(const QPoint& pos)
+PythonDialogPrivate::showLogContextMenu(const QPoint& pos)
 {
     QMenu* menu = d.ui->log->createStandardContextMenu();
     menu->addSeparator();
@@ -666,7 +666,7 @@ PythonWidgetPrivate::showLogContextMenu(const QPoint& pos)
 }
 
 void
-PythonWidgetPrivate::showEditorContextMenu(const QPoint& pos)
+PythonDialogPrivate::showEditorContextMenu(const QPoint& pos)
 {
     QMenu* menu = d.ui->editor->createStandardContextMenu();
     menu->addSeparator();
@@ -685,7 +685,7 @@ PythonWidgetPrivate::showEditorContextMenu(const QPoint& pos)
 }
 
 void
-PythonWidgetPrivate::showTabContextMenu(const QPoint& pos)
+PythonDialogPrivate::showTabContextMenu(const QPoint& pos)
 {
     QTabBar* tabBar = d.ui->tabWidget->tabBar();
     const int index = tabBar->tabAt(pos);
@@ -719,7 +719,7 @@ PythonWidgetPrivate::showTabContextMenu(const QPoint& pos)
 }
 
 void
-PythonWidgetPrivate::newTab()
+PythonDialogPrivate::newTab()
 {
     const int index = createShelfTab(tr("Shelf"));
     saveShelves();
@@ -727,30 +727,29 @@ PythonWidgetPrivate::newTab()
 }
 
 void
-PythonWidgetPrivate::run()
+PythonDialogPrivate::run()
 {
     executeCode(d.ui->editor->toPlainText());
 }
 
 void
-PythonWidgetPrivate::clear()
+PythonDialogPrivate::clear()
 {
     d.ui->editor->clear();
     updateClearButton();
 }
 
-PythonWidget::PythonWidget(QWidget* parent)
-    : QWidget(parent)
-    , p(new PythonWidgetPrivate())
+PythonDialog::PythonDialog(QWidget* parent)
+    : QDialog(parent)
+    , p(new PythonDialogPrivate())
 {
-    p->d.view = this;
+    p->d.dialog = this;
     p->init();
 }
 
-PythonWidget::~PythonWidget()
+PythonDialog::~PythonDialog()
 {
-    if (p)
-        p->saveShelves();
+    p->saveShelves();
 }
 
 }  // namespace stageviz

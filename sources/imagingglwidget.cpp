@@ -22,6 +22,7 @@
 #include <QLocale>
 #include <QMouseEvent>
 #include <QObject>
+#include <QOpenGLContext>
 #include <QPainter>
 #include <QPen>
 #include <QPoint>
@@ -31,8 +32,11 @@
 #include <pxr/base/tf/error.h>
 #include <pxr/imaging/cameraUtil/framing.h>
 #include <pxr/imaging/glf/diagnostic.h>
+#include <pxr/imaging/hd/driver.h>
 #include <pxr/imaging/hd/engine.h>
 #include <pxr/imaging/hd/renderIndex.h>
+#include <pxr/imaging/hgi/hgi.h>
+#include <pxr/imaging/hgi/tokens.h>
 #include <pxr/usd/usd/primRange.h>
 #include <pxr/usd/usd/stage.h>
 #include <pxr/usd/usdGeom/bboxCache.h>
@@ -85,7 +89,6 @@ public:
     bool isPathMaskedIn(const SdfPath& path) const;
     bool pickMaskedIntersection(const UsdImagingGLEngine::PickParams& pickParams, const GfFrustum& pickFrustum,
                                 UsdImagingGLEngine::IntersectionResultVector* results);
-
     static QList<SdfPath> uniquePaths(const QList<SdfPath>& paths)
     {
         QList<SdfPath> unique;
@@ -129,6 +132,7 @@ public:
         QList<SdfPath> selection;
         QList<SdfPath> visibleCapture;
         std::vector<GfBBox3d> selectionBBoxes;
+        HgiUniquePtr hgi;
         QScopedPointer<UsdImagingGLEngine> glEngine;
         QPointer<ViewContext> context;
         QPointer<ImagingGLWidget> glwidget;
@@ -169,20 +173,29 @@ ImagingGLWidgetPrivate::init()
 void
 ImagingGLWidgetPrivate::initGL()
 {
-    if (!d.glEngine) {
-        UsdImagingGLEngine::Parameters params;
-        params.allowAsynchronousSceneProcessing = false;
-        d.glEngine.reset(new UsdImagingGLEngine(params));
-        Hgi* hgi = d.glEngine->GetHgi();
-        if (hgi) {
-            TfToken driver = hgi->GetAPIName();
-            Q_UNUSED(driver);
-        }
-        else {
-            qWarning() << "could not initialize gl engine, no hydra driver found.";
-            d.glEngine.reset();
-        }
+    if (d.glEngine)
+        return;
+
+    QOpenGLContext* ctx = QOpenGLContext::currentContext();
+    if (!ctx) {
+        qWarning() << "could not initialize gl engine, no current OpenGL context";
+        return;
     }
+
+    UsdImagingGLEngine::Parameters params {};
+    params.displayUnloadedPrimsWithBounds = true;
+    params.allowAsynchronousSceneProcessing = false;
+
+    d.glEngine.reset(new UsdImagingGLEngine(params));
+
+    Hgi* hgi = d.glEngine->GetHgi();
+    if (!hgi) {
+        qWarning() << "could not initialize gl engine, no hydra driver found.";
+        d.glEngine.reset();
+        return;
+    }
+
+    qInfo() << "hydra Hgi API:" << TfTokenToQString(hgi->GetAPIName());
 }
 
 void
@@ -254,7 +267,7 @@ ImagingGLWidgetPrivate::close()
     d.drag = false;
     d.sweep = false;
     d.glEngine.reset();
-    initGL();
+    d.hgi.reset();
     if (d.sceneTreeEnabled) {
         updateSceneTree();
     }
@@ -279,6 +292,9 @@ ImagingGLWidgetPrivate::resetView()
 void
 ImagingGLWidgetPrivate::paintGL()
 {
+    if (!d.glEngine)
+        initGL();
+
     glClearColor(d.clearColor.redF(), d.clearColor.greenF(), d.clearColor.blueF(), d.clearColor.alphaF());
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     if (d.stage) {
@@ -381,20 +397,26 @@ ImagingGLWidgetPrivate::paintGL()
                 }
                 else {
                     Hgi* hgi = d.glEngine->GetHgi();
-                    hgi->StartFrame();
-
-                    UsdPrim root = d.stage->GetPseudoRoot();
-                    if (!d.mask.isEmpty()) {
-                        SdfPathVector paths;
-                        for (const SdfPath& path : d.mask)
-                            paths.push_back(path);
-                        d.glEngine->PrepareBatch(root, d.params);
-                        d.glEngine->RenderBatch(paths, d.params);
+                    if (!hgi) {
+                        qWarning() << "gl engine has no Hgi, render pass will be skipped";
                     }
                     else {
-                        d.glEngine->Render(root, d.params);
+                        hgi->StartFrame();
+
+                        UsdPrim root = d.stage->GetPseudoRoot();
+                        if (!d.mask.isEmpty()) {
+                            SdfPathVector paths;
+                            for (const SdfPath& path : d.mask)
+                                paths.push_back(path);
+                            d.glEngine->PrepareBatch(root, d.params);
+                            d.glEngine->RenderBatch(paths, d.params);
+                        }
+                        else {
+                            d.glEngine->Render(root, d.params);
+                        }
+
+                        hgi->EndFrame();
                     }
-                    hgi->EndFrame();
                 }
             }
             if (!mark.IsClean()) {
@@ -890,7 +912,7 @@ ImagingGLWidgetPrivate::updateStage(UsdStageRefPtr stage)
     d.visibleCapture.clear();
     d.selectionBBoxes.clear();
     d.glEngine.reset();
-    initGL();
+    d.hgi.reset();
     if (d.stage)
         initCamera();
     rebuildSelectionBBoxes();
@@ -1181,7 +1203,6 @@ ImagingGLWidgetPrivate::updateSceneTree()
     }
 
     double dpr = d.glwidget->devicePixelRatioF();
-
     QFont font = app()->font();
     font.setPointSize(style()->fontSize(Style::UIScale::Small));
     font.setLetterSpacing(QFont::AbsoluteSpacing, 0.5);

@@ -2,7 +2,7 @@
 // Copyright (c) 2025 - present Mikael Sundell
 // https://github.com/mikaelsundell/stageviz
 
-#include "consolewidget.h"
+#include "consoledialog.h"
 #include "application.h"
 #include "console.h"
 #include "style.h"
@@ -17,16 +17,14 @@
 #include <QTextCursor>
 #include <QTextDocument>
 
-PXR_NAMESPACE_USING_DIRECTIVE
-
 // generated files
-#include "ui_consolewidget.h"
+#include "ui_consoledialog.h"
 
 namespace stageviz {
 
-class ConsoleWidgetPrivate : public QObject {
+class ConsoleDialogPrivate : public QObject {
 public:
-    ConsoleWidgetPrivate();
+    ConsoleDialogPrivate();
     void init();
     bool eventFilter(QObject* object, QEvent* event) override;
     void appendText(const QString& text);
@@ -40,26 +38,26 @@ public:
 
 public:
     struct Data {
-        QScopedPointer<Ui_ConsoleWidget> ui;
-        QPointer<ConsoleWidget> view;
         QString lastSearch;
+        QScopedPointer<Ui_ConsoleDialog> ui;
+        QPointer<ConsoleDialog> dialog;
     };
     Data d;
 };
 
-ConsoleWidgetPrivate::ConsoleWidgetPrivate() {}
+ConsoleDialogPrivate::ConsoleDialogPrivate() {}
 
 void
-ConsoleWidgetPrivate::init()
+ConsoleDialogPrivate::init()
 {
-    d.ui.reset(new Ui_ConsoleWidget());
-    d.ui->setupUi(d.view.data());
+    d.ui.reset(new Ui_ConsoleDialog());
+    d.ui->setupUi(d.dialog.data());
     d.ui->log->setReadOnly(true);
     d.ui->log->setPlainText(console()->text());
     d.ui->log->setContextMenuPolicy(Qt::CustomContextMenu);
     d.ui->previous->setIcon(style()->icon(Style::IconRole::Left));
     d.ui->next->setIcon(style()->icon(Style::IconRole::Right));
-    d.view->installEventFilter(this);
+    d.dialog->installEventFilter(this);
     d.ui->log->installEventFilter(this);
     d.ui->find->installEventFilter(this);
     // connect
@@ -78,22 +76,22 @@ ConsoleWidgetPrivate::init()
     });
     connect(d.ui->next, &QAbstractButton::clicked, this, [this]() { findNext(); });
     connect(d.ui->previous, &QAbstractButton::clicked, this, [this]() { findPrevious(); });
-    auto* find = new QShortcut(QKeySequence::Find, d.view.data());
+    auto* find = new QShortcut(QKeySequence::Find, d.dialog.data());
     connect(find, &QShortcut::activated, this, [this]() { focusFind(); });
 }
 
 bool
-ConsoleWidgetPrivate::eventFilter(QObject* object, QEvent* event)
+ConsoleDialogPrivate::eventFilter(QObject* object, QEvent* event)
 {
-    if (object == d.view) {
+    if (object == d.dialog) {
         switch (event->type()) {
         case QEvent::Show:
-            if (d.view)
-                Q_EMIT d.view->visibilityChanged(true);
+            if (d.dialog)
+                Q_EMIT d.dialog->visibilityChanged(true);
             break;
         case QEvent::Hide:
-            if (d.view)
-                Q_EMIT d.view->visibilityChanged(false);
+            if (d.dialog)
+                Q_EMIT d.dialog->visibilityChanged(false);
             break;
         default: break;
         }
@@ -134,13 +132,13 @@ ConsoleWidgetPrivate::eventFilter(QObject* object, QEvent* event)
 }
 
 QString
-ConsoleWidgetPrivate::searchText() const
+ConsoleDialogPrivate::searchText() const
 {
     return d.ui->find->text().trimmed();
 }
 
 void
-ConsoleWidgetPrivate::resetSearchStart(QTextDocument::FindFlags flags)
+ConsoleDialogPrivate::resetSearchStart(QTextDocument::FindFlags flags)
 {
     if (!d.ui || !d.ui->log)
         return;
@@ -151,7 +149,7 @@ ConsoleWidgetPrivate::resetSearchStart(QTextDocument::FindFlags flags)
 }
 
 void
-ConsoleWidgetPrivate::focusFind()
+ConsoleDialogPrivate::focusFind()
 {
     if (!d.ui || !d.ui->find)
         return;
@@ -161,7 +159,7 @@ ConsoleWidgetPrivate::focusFind()
 }
 
 bool
-ConsoleWidgetPrivate::findText(const QString& text, QTextDocument::FindFlags flags)
+ConsoleDialogPrivate::findText(const QString& text, QTextDocument::FindFlags flags)
 {
     if (text.isEmpty())
         return false;
@@ -176,7 +174,7 @@ ConsoleWidgetPrivate::findText(const QString& text, QTextDocument::FindFlags fla
 }
 
 void
-ConsoleWidgetPrivate::findNext()
+ConsoleDialogPrivate::findNext()
 {
     const QString text = searchText();
     if (text.isEmpty())
@@ -186,7 +184,7 @@ ConsoleWidgetPrivate::findNext()
 }
 
 void
-ConsoleWidgetPrivate::findPrevious()
+ConsoleDialogPrivate::findPrevious()
 {
     const QString text = searchText();
     if (text.isEmpty())
@@ -196,7 +194,7 @@ ConsoleWidgetPrivate::findPrevious()
 }
 
 void
-ConsoleWidgetPrivate::showLogContextMenu(const QPoint& pos)
+ConsoleDialogPrivate::showLogContextMenu(const QPoint& pos)
 {
     QMenu* menu = d.ui->log->createStandardContextMenu();
     menu->addSeparator();
@@ -220,7 +218,7 @@ ConsoleWidgetPrivate::showLogContextMenu(const QPoint& pos)
 }
 
 void
-ConsoleWidgetPrivate::appendText(const QString& text)
+ConsoleDialogPrivate::appendText(const QString& text)
 {
     if (!d.ui || !d.ui->log)
         return;
@@ -250,14 +248,14 @@ ConsoleWidgetPrivate::appendText(const QString& text)
     }
 }
 
-ConsoleWidget::ConsoleWidget(QWidget* parent)
-    : QWidget(parent)
-    , p(new ConsoleWidgetPrivate())
+ConsoleDialog::ConsoleDialog(QWidget* parent)
+    : QDialog(parent)
+    , p(new ConsoleDialogPrivate())
 {
-    p->d.view = this;
+    p->d.dialog = this;
     p->init();
 }
 
-ConsoleWidget::~ConsoleWidget() = default;
+ConsoleDialog::~ConsoleDialog() = default;
 
 }  // namespace stageviz

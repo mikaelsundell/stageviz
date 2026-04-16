@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <ui version="4.0">
- <class>ConsoleWidget</class>
- <widget class="QWidget" name="ConsoleWidget">
+ <class>ConsoleDialog</class>
+ <widget class="QDialog" name="ConsoleDialog">
   <property name="windowModality">
    <enum>Qt::WindowModality::NonModal</enum>
   </property>

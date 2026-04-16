@@ -5,25 +5,20 @@
 #pragma once
 
 #include "stageviz.h"
-#include <QHideEvent>
-#include <QShowEvent>
-#include <QWidget>
-#include <pxr/usd/usd/stage.h>
-
-PXR_NAMESPACE_USING_DIRECTIVE
+#include <QDialog>
 
 namespace stageviz {
 
-class ConsoleWidgetPrivate;
+class ConsoleDialogPrivate;
 
 /**
- * @class ConsoleWidget
- * @brief Widget for displaying console output and messages.
+ * @class ConsoleDialog
+ * @brief Dialog for displaying console output and messages.
  *
  * Provides a UI component for presenting log output, status messages,
  * or other textual feedback within the application.
  */
-class ConsoleWidget : public QWidget {
+class ConsoleDialog : public QDialog {
     Q_OBJECT
 public:
     /**
@@ -31,12 +26,12 @@ public:
      *
      * @param parent Optional parent widget.
      */
-    ConsoleWidget(QWidget* parent = nullptr);
+    ConsoleDialog(QWidget* parent = nullptr);
 
     /**
-     * @brief Destroys the ConsoleWidget instance.
+     * @brief Destroys the ConsoleDialog instance.
      */
-    virtual ~ConsoleWidget();
+    virtual ~ConsoleDialog();
 
 Q_SIGNALS:
     /**
@@ -47,7 +42,7 @@ Q_SIGNALS:
     void visibilityChanged(bool visible);
 
 private:
-    QScopedPointer<ConsoleWidgetPrivate> p;
+    QScopedPointer<ConsoleDialogPrivate> p;
 };
 
 }  // namespace stageviz
