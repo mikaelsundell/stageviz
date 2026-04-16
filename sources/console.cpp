@@ -8,9 +8,44 @@
 #include <atomic>
 #include <cstdio>
 #include <thread>
-#include <unistd.h>
+
+#ifdef Q_OS_WIN
+#    include <fcntl.h>
+#    include <io.h>
+#else
+#    include <unistd.h>
+#endif
 
 namespace stageviz {
+
+namespace {
+
+#ifdef Q_OS_WIN
+    using fd_t = int;
+    int fd_pipe(int fds[2]) { return ::_pipe(fds, 8192, _O_BINARY); }
+    int fd_dup(int fd) { return ::_dup(fd); }
+    int fd_dup2(int from, int to) { return ::_dup2(from, to); }
+    int fd_close(int fd) { return ::_close(fd); }
+    int fd_read(int fd, void* buffer, unsigned int count) { return ::_read(fd, buffer, count); }
+    void set_unbuffered_stdout_stderr()
+    {
+        ::setvbuf(stdout, nullptr, _IONBF, 0);
+        ::setvbuf(stderr, nullptr, _IONBF, 0);
+    }
+#else
+    using fd_t = int;
+    int fd_pipe(int fds[2]) { return ::pipe(fds); }
+    int fd_dup(int fd) { return ::dup(fd); }
+    int fd_dup2(int from, int to) { return ::dup2(from, to); }
+    int fd_close(int fd) { return ::close(fd); }
+    ssize_t fd_read(int fd, void* buffer, size_t count) { return ::read(fd, buffer, count); }
+    void set_unbuffered_stdout_stderr()
+    {
+        ::setvbuf(stdout, nullptr, _IONBF, 0);
+        ::setvbuf(stderr, nullptr, _IONBF, 0);
+    }
+#endif
+}  // namespace
 
 class ConsolePrivate : public QObject {
     Q_OBJECT
@@ -21,19 +56,16 @@ public:
     bool start();
     void stop();
     bool isRunning() const;
-
     QString text() const;
     QStringList lines() const;
 
-private:
-    void readerLoop();
-
 public:
+    void readerLoop();
     struct Data {
-        int readFd = -1;
-        int writeFd = -1;
-        int oldStdout = -1;
-        int oldStderr = -1;
+        fd_t readFd = -1;
+        fd_t writeFd = -1;
+        fd_t oldStdout = -1;
+        fd_t oldStderr = -1;
         std::atomic_bool running = false;
         QString buffer;
         std::thread readerThread;
@@ -55,35 +87,38 @@ ConsolePrivate::start()
 {
     if (d.running)
         return true;
-
     int pipeFds[2] = { -1, -1 };
-    if (::pipe(pipeFds) != 0)
+    if (fd_pipe(pipeFds) != 0)
         return false;
-
     d.readFd = pipeFds[0];
     d.writeFd = pipeFds[1];
-
-    d.oldStdout = ::dup(STDOUT_FILENO);
-    d.oldStderr = ::dup(STDERR_FILENO);
+#ifdef Q_OS_WIN
+    d.oldStdout = fd_dup(_fileno(stdout));
+    d.oldStderr = fd_dup(_fileno(stderr));
+#else
+    d.oldStdout = fd_dup(STDOUT_FILENO);
+    d.oldStderr = fd_dup(STDERR_FILENO);
+#endif
     if (d.oldStdout < 0 || d.oldStderr < 0) {
         stop();
         return false;
     }
-
     std::fflush(stdout);
     std::fflush(stderr);
-
-    if (::dup2(d.writeFd, STDOUT_FILENO) < 0 || ::dup2(d.writeFd, STDERR_FILENO) < 0) {
+#ifdef Q_OS_WIN
+    if (fd_dup2(d.writeFd, _fileno(stdout)) < 0 || fd_dup2(d.writeFd, _fileno(stderr)) < 0) {
         stop();
         return false;
     }
-
-    std::setvbuf(stdout, nullptr, _IONBF, 0);
-    std::setvbuf(stderr, nullptr, _IONBF, 0);
-
+#else
+    if (fd_dup2(d.writeFd, STDOUT_FILENO) < 0 || fd_dup2(d.writeFd, STDERR_FILENO) < 0) {
+        stop();
+        return false;
+    }
+#endif
+    set_unbuffered_stdout_stderr();
     d.running = true;
     d.readerThread = std::thread([this]() { readerLoop(); });
-
     return true;
 }
 
@@ -95,28 +130,41 @@ ConsolePrivate::stop()
 
     d.running = false;
 
+    std::fflush(stdout);
+    std::fflush(stderr);
+
+#ifdef Q_OS_WIN
     if (d.oldStdout >= 0) {
-        ::dup2(d.oldStdout, STDOUT_FILENO);
-        ::close(d.oldStdout);
+        fd_dup2(d.oldStdout, _fileno(stdout));
+        fd_close(d.oldStdout);
         d.oldStdout = -1;
     }
-
     if (d.oldStderr >= 0) {
-        ::dup2(d.oldStderr, STDERR_FILENO);
-        ::close(d.oldStderr);
+        fd_dup2(d.oldStderr, _fileno(stderr));
+        fd_close(d.oldStderr);
         d.oldStderr = -1;
     }
-
+#else
+    if (d.oldStdout >= 0) {
+        fd_dup2(d.oldStdout, STDOUT_FILENO);
+        fd_close(d.oldStdout);
+        d.oldStdout = -1;
+    }
+    if (d.oldStderr >= 0) {
+        fd_dup2(d.oldStderr, STDERR_FILENO);
+        fd_close(d.oldStderr);
+        d.oldStderr = -1;
+    }
+#endif
     if (d.writeFd >= 0) {
-        ::close(d.writeFd);
+        fd_close(d.writeFd);
         d.writeFd = -1;
     }
-
     if (d.readerThread.joinable())
         d.readerThread.join();
 
     if (d.readFd >= 0) {
-        ::close(d.readFd);
+        fd_close(d.readFd);
         d.readFd = -1;
     }
 }
@@ -145,10 +193,13 @@ ConsolePrivate::readerLoop()
     char chunk[4096];
 
     for (;;) {
-        const ssize_t count = ::read(d.readFd, chunk, sizeof(chunk));
+#ifdef Q_OS_WIN
+        const int count = fd_read(d.readFd, chunk, unsigned(sizeof(chunk)));
+#else
+        const ssize_t count = fd_read(d.readFd, chunk, sizeof(chunk));
+#endif
         if (count > 0) {
             const QString text = QString::fromLocal8Bit(chunk, int(count));
-
             if (d.console) {
                 QMetaObject::invokeMethod(
                     d.console.data(),
@@ -161,10 +212,8 @@ ConsolePrivate::readerLoop()
             }
             continue;
         }
-
         if (count == 0)
             break;
-
         break;
     }
 }
