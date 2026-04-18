@@ -26,6 +26,10 @@ find_package(Python3 COMPONENTS Interpreter Development REQUIRED)
 find_package(MaterialX CONFIG REQUIRED)
 find_package(OpenImageIO CONFIG REQUIRED)
 
+if(WIN32)
+    find_package(TBB CONFIG REQUIRED)
+endif()
+
 function(find_python_package_root out_python_dir out_package_dir prefix package_name module_glob)
     set(found_python_dir "")
     set(found_package_dir "")
@@ -244,6 +248,7 @@ elseif(WIN32)
         OpenGL::GL
         OpenUSD::OpenUSD
         Python3::Python
+        TBB::tbb
         "User32.lib"
         "Gdi32.lib"
         "Shell32.lib"
