@@ -21,13 +21,25 @@ set(CMAKE_AUTOUIC ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 find_package(OpenUSD REQUIRED)
-find_package(Boost CONFIG COMPONENTS Python REQUIRED)
-find_package(Python3 COMPONENTS Interpreter Development REQUIRED)
 find_package(MaterialX CONFIG REQUIRED)
 find_package(OpenImageIO CONFIG REQUIRED)
 
 if(WIN32)
     find_package(TBB CONFIG REQUIRED)
+endif()
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake")
+include(python)
+include(boost)
+
+if(WIN32)
+    set(Python3_FIND_ABI OFF ANY ANY)
+    find_package(Python3 COMPONENTS Interpreter Development.Embed REQUIRED)
+
+    find_python_runtime(python)
+    find_boost_python(boost_python)
+else()
+    find_package(Python3 COMPONENTS Interpreter Development REQUIRED)
 endif()
 
 function(find_python_package_root out_python_dir out_package_dir prefix package_name module_glob)
@@ -212,13 +224,15 @@ if(APPLE)
         $<$<BOOL:${DEPLOY_BUILD}>:DEPLOY_BUILD=1>
     )
 
+    find_package(Boost CONFIG REQUIRED COMPONENTS python39)
+
     target_link_libraries(${project_name}
         Qt6::Core
         Qt6::Concurrent
         Qt6::Gui
         Qt6::OpenGLWidgets
         Qt6::Widgets
-        Boost::python
+        Boost::python39
         OpenUSD::OpenUSD
         Python3::Python
         "-framework CoreFoundation"
@@ -238,16 +252,20 @@ elseif(WIN32)
         $<$<BOOL:${DEPLOY_BUILD}>:DEPLOY_BUILD=1>
     )
 
+    target_link_directories(${project_name} PRIVATE
+        ${PYTHON_RUNTIME_LIBRARY_DIRS}
+    )
+
     target_link_libraries(${project_name}
         Qt6::Core
         Qt6::Concurrent
         Qt6::Gui
         Qt6::OpenGLWidgets
         Qt6::Widgets
-        Boost::python
+        boost_python
         OpenGL::GL
         OpenUSD::OpenUSD
-        Python3::Python
+        python
         TBB::tbb
         "User32.lib"
         "Gdi32.lib"

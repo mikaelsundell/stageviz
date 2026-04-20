@@ -163,9 +163,15 @@ if exist "%resources_path%" (
     echo Resources not found at %resources_path%, skipping
 )
 
-REM copy extra dependency
-if exist "%prefix_bin%\lcms2.dll" (
-    copy "%prefix_bin%\lcms2.dll" "%deploy_dir%" >nul
+REM copy extra dependencies
+for %%D in (lcms2 zlib libpng16) do (
+    if exist "%prefix_bin%\%%D.dll" (
+        echo Copying %%D.dll from %prefix_bin%
+        copy "%prefix_bin%\%%D.dll" "%deploy_dir%" >nul
+        if errorlevel 1 goto :error
+    ) else (
+        echo WARNING: %%D.dll not found in %prefix_bin%
+    )
 )
 
 REM run windeployqt
@@ -191,7 +197,7 @@ if exist "%prefix_bin%\tbb12.dll" (
 )
 
 REM copy USD-related DLLs from the actual config lib dir
-set "usd_dependencies=usd_ar usd_arch usd_boost usd_python usd_cameraUtil usd_js usd_garch usd_gf usd_geomUtil usd_glf usd_hd usd_hio usd_hdar usd_hdgp usd_hdx usd_hdsi usd_hdSt usd_hf usd_hgi usd_hgiInterop usd_hgiGL usd_kind usd_pcp usd_plug usd_pxOsd usd_sdf usd_sdr usd_tf usd_ts usd_trace usd_usd usd_usdGeom usd_usdImaging usd_usdImagingGL usd_usdLux usd_usdRender usd_usdShade usd_usdVol usd_vt usd_work"
+set "usd_dependencies=usd_ar usd_arch usd_boost usd_python usd_cameraUtil usd_js usd_garch usd_gf usd_geomUtil usd_glf usd_hd usd_hdMtlx usd_hio usd_hdar usd_hdgp usd_hdx usd_hdsi usd_hdSt usd_hf usd_hgi usd_hgiInterop usd_hgiGL usd_kind usd_pcp usd_plug usd_pxOsd usd_sdf usd_sdr usd_tf usd_ts usd_trace usd_usd usd_usdGeom usd_usdImaging usd_usdImagingGL usd_usdLux usd_usdRender usd_usdShade usd_usdVol usd_vt usd_work"
 
 for %%D in (%usd_dependencies%) do (
     if exist "%prefix_lib%\%%D.dll" (
