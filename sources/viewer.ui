@@ -26,6 +26,9 @@
    <property name="styleSheet">
     <string notr="true"/>
    </property>
+   <property name="MainWidget" stdset="0">
+    <bool>true</bool>
+   </property>
    <layout class="QVBoxLayout" name="verticalLayout">
     <property name="spacing">
      <number>2</number>
@@ -281,7 +284,7 @@
           <number>0</number>
          </property>
          <property name="bottomMargin">
-          <number>4</number>
+          <number>0</number>
          </property>
          <item>
           <widget class="stageviz::RenderView" name="renderView" native="true">
@@ -313,7 +316,7 @@
      <x>0</x>
      <y>0</y>
      <width>1576</width>
-     <height>21</height>
+     <height>33</height>
     </rect>
    </property>
    <widget class="QMenu" name="menuDisplay">
@@ -457,22 +460,14 @@
     <property name="title">
      <string>View</string>
     </property>
-    <widget class="QMenu" name="menuTheme">
-     <property name="title">
-      <string>Theme</string>
-     </property>
-     <addaction name="themeLight"/>
-     <addaction name="themeDark"/>
-    </widget>
     <widget class="QMenu" name="menu_3">
      <property name="title">
       <string>Head-up display</string>
      </property>
-     <addaction name="hudSceneTree"/>
-     <addaction name="hudGpuPerformance"/>
+     <addaction name="hudSceneStats"/>
+     <addaction name="hudPerformanceStats"/>
      <addaction name="hudCameraAxis"/>
     </widget>
-    <addaction name="menuTheme"/>
     <addaction name="separator"/>
     <addaction name="menu_3"/>
     <addaction name="separator"/>
@@ -892,7 +887,7 @@
     <string>GPU Statistics</string>
    </property>
   </action>
-  <action name="hudSceneTree">
+  <action name="hudSceneStats">
    <property name="checkable">
     <bool>true</bool>
    </property>
@@ -906,7 +901,7 @@
     <string>Space</string>
    </property>
   </action>
-  <action name="hudGpuPerformance">
+  <action name="hudPerformanceStats">
    <property name="checkable">
     <bool>true</bool>
    </property>

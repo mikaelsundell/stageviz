@@ -12,6 +12,7 @@
 #include <QRegularExpression>
 #include <QScopedPointer>
 #include <QSurfaceFormat>
+#include <algorithm>
 
 namespace stageviz {
 
@@ -20,9 +21,9 @@ public:
     StylePrivate();
     ~StylePrivate();
     void init();
-    void updateTheme(Style::Theme theme);
     void updateColorSpace(const QColorSpace& colorSpace);
     void updateStylesheet();
+    void updateTheme();
     QColorSpace colorSpace() const;
     QColor color(Style::ColorRole role, Style::UIState state) const;
     int fontSize(Style::UIScale scale) const;
@@ -47,7 +48,6 @@ public:
     };
 
     struct Data {
-        Style::Theme theme = Style::Theme::Dark;
         QHash<QString, QColor> palette;
         QHash<QString, QString> icons;
         QHash<QString, int> fontSizes;
@@ -75,7 +75,7 @@ StylePrivate::~StylePrivate() = default;
 void
 StylePrivate::init()
 {
-    updateTheme(d.theme);
+    updateTheme();
     updateColorSpace(QColorSpace::SRgb);
     updateStylesheet();
 }
@@ -191,58 +191,32 @@ StylePrivate::updateStylesheet()
 }
 
 void
-StylePrivate::updateTheme(Style::Theme theme)
+StylePrivate::updateTheme()
 {
-    d.theme = theme;
     d.palette.clear();
-
     auto map = [&](Style::ColorRole role, QColor color) { d.palette[roleName(role)] = color; };
-    if (theme == Style::Theme::Dark) {
-        map(Style::ColorRole::Base, QColor::fromHsl(220, 6, 42));
-        map(Style::ColorRole::BaseAlt, QColor::fromHsl(220, 6, 48));
-        map(Style::ColorRole::Dock, QColor::fromHsl(220, 6, 56));
-        map(Style::ColorRole::DockAlt, QColor::fromHsl(220, 6, 40));
-        map(Style::ColorRole::Accent, QColor::fromHsl(220, 6, 20));
-        map(Style::ColorRole::AccentAlt, QColor::fromHsl(220, 6, 24));
-        map(Style::ColorRole::Text, QColor::fromHsl(0, 0, 220));
-        map(Style::ColorRole::Highlight, QColor::fromHsl(216, 82, 80));
-        map(Style::ColorRole::HighlightAlt, QColor::fromHsl(216, 60, 60));
-        map(Style::ColorRole::Border, QColor::fromHsl(220, 3, 32));
-        map(Style::ColorRole::BorderAlt, QColor::fromHsl(220, 3, 64));
-        map(Style::ColorRole::Handle, QColor::fromHsl(0, 0, 150));
-        map(Style::ColorRole::Progress, QColor::fromHsl(216, 82, 20));
-        map(Style::ColorRole::Button, QColor::fromHsl(220, 6, 36));
-        map(Style::ColorRole::ButtonAlt, QColor::fromHsl(220, 6, 64));
-        map(Style::ColorRole::Render, QColor::fromHsl(210, 11, 35));
-        map(Style::ColorRole::RenderAlt, QColor::fromHsl(210, 6, 25));
-        map(Style::ColorRole::Selection, QColor::fromHsl(55, 220, 180));
-        map(Style::ColorRole::SelectionAlt, QColor::fromHsl(55, 140, 120));
-        map(Style::ColorRole::Warning, QColor(220, 170, 40));
-        map(Style::ColorRole::Error, QColor(200, 50, 50));
-    }
-    else {
-        map(Style::ColorRole::Base, QColor::fromHsl(0, 0, 210));
-        map(Style::ColorRole::BaseAlt, QColor::fromHsl(0, 0, 208));
-        map(Style::ColorRole::Dock, QColor::fromHsl(0, 0, 210));
-        map(Style::ColorRole::DockAlt, QColor::fromHsl(0, 0, 180));
-        map(Style::ColorRole::Accent, QColor::fromHsl(210, 10, 92));
-        map(Style::ColorRole::AccentAlt, QColor::fromHsl(210, 10, 88));
-        map(Style::ColorRole::Text, QColor::fromHsl(0, 0, 15));
-        map(Style::ColorRole::Highlight, QColor::fromHsl(210, 90, 180));
-        map(Style::ColorRole::HighlightAlt, QColor::fromHsl(210, 40, 220));
-        map(Style::ColorRole::Border, QColor::fromHsl(0, 0, 200));
-        map(Style::ColorRole::BorderAlt, QColor::fromHsl(0, 0, 180));
-        map(Style::ColorRole::Handle, QColor::fromHsl(0, 0, 120));
-        map(Style::ColorRole::Progress, QColor::fromHsl(210, 90, 45));
-        map(Style::ColorRole::Button, QColor::fromHsl(0, 0, 180));
-        map(Style::ColorRole::ButtonAlt, QColor::fromHsl(0, 0, 160));
-        map(Style::ColorRole::Render, QColor::fromHsl(210, 11, 35));
-        map(Style::ColorRole::RenderAlt, QColor::fromHsl(210, 6, 25));
-        map(Style::ColorRole::Selection, QColor::fromHsl(55, 220, 180));
-        map(Style::ColorRole::SelectionAlt, QColor::fromHsl(55, 140, 120));
-        map(Style::ColorRole::Warning, QColor(180, 130, 30));
-        map(Style::ColorRole::Error, QColor(180, 40, 40));
-    }
+    map(Style::ColorRole::Base, QColor::fromHsl(220, 6, 56));
+    map(Style::ColorRole::BaseAlt, QColor::fromHsl(220, 6, 42));
+    map(Style::ColorRole::Accent, QColor::fromHsl(220, 6, 20));
+    map(Style::ColorRole::AccentAlt, QColor::fromHsl(220, 6, 24));
+    map(Style::ColorRole::Text, QColor::fromHsl(0, 0, 220));
+    map(Style::ColorRole::Highlight, QColor::fromHsl(216, 82, 80));
+    map(Style::ColorRole::HighlightAlt, QColor::fromHsl(216, 60, 60));
+    map(Style::ColorRole::Border, QColor::fromHsl(220, 3, 32));
+    map(Style::ColorRole::BorderAlt, QColor::fromHsl(220, 3, 64));
+    map(Style::ColorRole::Handle, QColor::fromHsl(0, 0, 150));
+    map(Style::ColorRole::Progress, QColor::fromHsl(216, 82, 20));
+    map(Style::ColorRole::Button, QColor::fromHsl(220, 6, 36));
+    map(Style::ColorRole::ButtonAlt, QColor::fromHsl(220, 6, 64));
+    map(Style::ColorRole::Item, QColor::fromHsl(220, 6, 48));
+    map(Style::ColorRole::ItemAlt, QColor::fromHsl(220, 6, 40));
+    map(Style::ColorRole::Render, QColor::fromHsl(210, 11, 35));
+    map(Style::ColorRole::RenderAlt, QColor::fromHsl(210, 6, 25));
+    map(Style::ColorRole::Selection, QColor::fromHsl(55, 220, 180));
+    map(Style::ColorRole::SelectionAlt, QColor::fromHsl(55, 140, 120));
+    map(Style::ColorRole::Warning, QColor(220, 170, 40));
+    map(Style::ColorRole::Error, QColor(200, 50, 50));
+
     d.icons[roleName(Style::IconRole::BranchOpen)] = ":/icons/resources/BranchOpen.png";
     d.icons[roleName(Style::IconRole::BranchClosed)] = ":/icons/resources/BranchClosed.png";
     d.icons[roleName(Style::IconRole::Clear)] = ":/icons/resources/Clear.png";
@@ -271,9 +245,15 @@ StylePrivate::updateTheme(Style::Theme theme)
     d.icons[roleName(Style::IconRole::Wireframe)] = ":/icons/resources/Wireframe.png";
     d.icons[roleName(Style::IconRole::Shaded)] = ":/icons/resources/Shaded.png";
 
+#ifdef Q_OS_WIN
+    d.fontSizes[roleName(Style::UIScale::Small)] = 11;
+    d.fontSizes[roleName(Style::UIScale::Medium)] = 12;
+    d.fontSizes[roleName(Style::UIScale::Large)] = 16;
+#else
     d.fontSizes[roleName(Style::UIScale::Small)] = 10;
     d.fontSizes[roleName(Style::UIScale::Medium)] = 11;
     d.fontSizes[roleName(Style::UIScale::Large)] = 14;
+#endif
 
     d.iconSizes[roleName(Style::UIScale::Small)] = 16;
     d.iconSizes[roleName(Style::UIScale::Medium)] = 32;
@@ -290,9 +270,9 @@ QColor
 StylePrivate::color(Style::ColorRole role, Style::UIState state) const
 {
     QColor color = d.palette.value(roleName(role), QColor());
-    if (state == Style::UIState::Disabled) {
+    if (state == Style::UIState::Disabled)
         return color.darker(150);
-    }
+
     return color;
 }
 
@@ -372,32 +352,47 @@ Style::Style()
 
 Style::~Style() = default;
 
-void
-Style::setTheme(Theme theme)
-{
-    if (p->d.theme == theme)
-        return;
-
-    p->updateTheme(theme);
-    Q_EMIT themeChanged(theme);
-}
-
-Style::Theme
-Style::theme() const
-{
-    return p->d.theme;
-}
-
 QColor
 Style::color(ColorRole role, UIState state) const
 {
     return p->color(role, state);
 }
 
+void
+Style::setColor(ColorRole role, const QColor& color)
+{
+    if (!color.isValid())
+        return;
+
+    const QString key = p->roleName(role);
+    if (p->d.palette.value(key) == color)
+        return;
+
+    p->d.palette[key] = color;
+    Q_EMIT colorChanged(role);
+}
+
 QPixmap
 Style::icon(IconRole role, UIScale scale, UIState state) const
 {
     return p->icon(role, scale, state);
+}
+
+QString
+Style::iconPath(IconRole role) const
+{
+    return p->iconPath(role);
+}
+
+void
+Style::setIconPath(IconRole role, const QString& path)
+{
+    const QString key = p->roleName(role);
+    if (p->d.icons.value(key) == path)
+        return;
+
+    p->d.icons[key] = path;
+    p->d.pixmaps.clear();
 }
 
 int
@@ -434,6 +429,16 @@ Style::setIconSize(UIScale scale, int size)
     const QString key = p->roleName(scale);
     if (p->d.iconSizes.value(key) == size)
         return;
+
+    p->d.iconSizes[key] = size;
+    p->d.pixmaps.clear();
+}
+
+void
+Style::refresh()
+{
+    p->d.pixmaps.clear();
+    p->updateStylesheet();
 }
 
 void

@@ -224,7 +224,7 @@ RenderView::defaultCameraLightEnabled() const
 void
 RenderView::setDefaultCameraLightEnabled(bool enabled)
 {
-    p->imageGLWidget()->enableDefaultCameraLight(enabled);
+    p->imageGLWidget()->setDefaultCameraLightEnabled(enabled);
 }
 
 bool
@@ -236,7 +236,7 @@ RenderView::sceneLightsEnabled() const
 void
 RenderView::setSceneLightsEnabled(bool enabled)
 {
-    p->imageGLWidget()->enableSceneLights(enabled);
+    p->imageGLWidget()->setSceneLightsEnabled(enabled);
 }
 
 bool
@@ -248,31 +248,31 @@ RenderView::sceneMaterialsEnabled() const
 void
 RenderView::setSceneMaterialsEnabled(bool enabled)
 {
-    p->imageGLWidget()->enableSceneShaders(enabled);
+    p->imageGLWidget()->setSceneShadersEnabled(enabled);
 }
 
 bool
-RenderView::sceneTreeEnabled() const
+RenderView::sceneStatsEnabled() const
 {
-    return p->imageGLWidget()->sceneTreeEnabled();
+    return p->imageGLWidget()->sceneStatsEnabled();
 }
 
 void
-RenderView::setSceneTreeEnabled(bool enabled)
+RenderView::setSceneStatsEnabled(bool enabled)
 {
-    p->imageGLWidget()->enableSceneTree(enabled);
+    p->imageGLWidget()->setSceneStatsEnabled(enabled);
 }
 
 bool
-RenderView::gpuPerformanceEnabled() const
+RenderView::performanceStatsEnabled() const
 {
-    return p->imageGLWidget()->gpuPerformanceEnabled();
+    return p->imageGLWidget()->performanceStatsEnabled();
 }
 
 void
-RenderView::setGpuPerformanceEnabled(bool enabled)
+RenderView::setPerformanceStatsEnabled(bool enabled)
 {
-    p->imageGLWidget()->enableGpuPerformance(enabled);
+    p->imageGLWidget()->setPerformanceStatsEnabled(enabled);
 }
 
 bool
@@ -284,7 +284,7 @@ RenderView::cameraAxisEnabled() const
 void
 RenderView::setCameraAxisEnabled(bool enabled)
 {
-    p->imageGLWidget()->enableCameraAxis(enabled);
+    p->imageGLWidget()->setCameraAxisEnabled(enabled);
 }
 
 void

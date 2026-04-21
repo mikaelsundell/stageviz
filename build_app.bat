@@ -4,6 +4,7 @@ REM SPDX-License-Identifier: BSD-3-Clause
 REM https://github.com/mikaelsundell/stageviz
 
 set "app_dir=%~dp0"
+set "original_dir=%cd%"
 set "app_name=Stageviz"
 set "pkg_name=stageviz"
 set "build_type="
@@ -27,6 +28,7 @@ goto parse_args
 
 if "%build_type%"=="" (
     echo Invalid build type: Please specify 'Debug', 'Release', or 'All'
+    cd /d "%original_dir%"
     exit /b 1
 )
 
@@ -87,11 +89,17 @@ set "build_dir=%app_dir%build.%current_build_type%"
 
 if exist "%build_dir%" rmdir /s /q "%build_dir%"
 mkdir "%build_dir%"
-cd /d "%build_dir%"
+
+pushd "%build_dir%"
+if errorlevel 1 (
+    echo Failed to enter build directory: %build_dir%
+    goto :error
+)
 
 REM prefix directory
 if not defined THIRDPARTY_DIR (
     echo Could not find 3rdparty project environment variable THIRDPARTY_DIR
+    popd
     goto :error
 )
 
@@ -99,20 +107,36 @@ REM cmake friendly paths
 set "cmake_dir=%app_dir:\=/%"
 set "cmake_thirdparty_dir=%THIRDPARTY_DIR:\=/%"
 
+REM DEPLOY_BUILD must only be ON for packaged/deploy builds
+set "deploy_build=OFF"
+if "%deploy%"=="1" set "deploy_build=ON"
+
+echo DEPLOY_BUILD=%deploy_build%
+
 REM generate build with cmake
-cmake .. -G "%cmake_generator%" -DCMAKE_MODULE_PATH="%cmake_dir%modules" -DCMAKE_PREFIX_PATH="%cmake_thirdparty_dir%" -DDEPLOY_BUILD=ON
-if errorlevel 1 goto :error
+cmake .. -G "%cmake_generator%" -DCMAKE_MODULE_PATH="%cmake_dir%modules" -DCMAKE_PREFIX_PATH="%cmake_thirdparty_dir%" -DDEPLOY_BUILD=%deploy_build%
+if errorlevel 1 (
+    popd
+    goto :error
+)
 
 REM build the configuration
 cmake --build . --config %current_build_type% --parallel --verbose
-if errorlevel 1 goto :error
+if errorlevel 1 (
+    popd
+    goto :error
+)
 
 REM deploy the configuration if requested
 if "%deploy%"=="1" (
     call :deploy_stageviz %current_build_type%
-    if errorlevel 1 goto :error
+    if errorlevel 1 (
+        popd
+        goto :error
+    )
 )
 
+popd
 exit /b 0
 
 :deploy_stageviz
@@ -197,7 +221,7 @@ if exist "%prefix_bin%\tbb12.dll" (
 )
 
 REM copy USD-related DLLs from the actual config lib dir
-set "usd_dependencies=usd_ar usd_arch usd_boost usd_python usd_cameraUtil usd_js usd_garch usd_gf usd_geomUtil usd_glf usd_hd usd_hdMtlx usd_hio usd_hdar usd_hdgp usd_hdx usd_hdsi usd_hdSt usd_hf usd_hgi usd_hgiInterop usd_hgiGL usd_kind usd_pcp usd_plug usd_pxOsd usd_sdf usd_sdr usd_tf usd_ts usd_trace usd_usd usd_usdGeom usd_usdImaging usd_usdImagingGL usd_usdLux usd_usdRender usd_usdShade usd_usdVol usd_vt usd_work"
+set "usd_dependencies=usd_ar usd_arch usd_boost usd_python usd_cameraUtil usd_js usd_garch usd_gf usd_geomUtil usd_glf usd_hd usd_hdMtlx usd_hio usd_hdar usd_hdgp usd_hdx usd_hdsi usd_hdSt usd_hf usd_hgi usd_hgiInterop usd_hgiGL usd_kind usd_pcp usd_plug usd_pxOsd usd_sdf usd_sdr usd_tf usd_ts usd_trace usd_usd usd_usdGeom usd_usdImaging usd_usdImagingGL usd_usdLux usd_usdMtlx usd_usdRender usd_usdShade usdSkelImaging usd_usdUI usd_usdUtils usd_usdVol usd_vt usd_work"
 
 for %%D in (%usd_dependencies%) do (
     if exist "%prefix_lib%\%%D.dll" (
@@ -317,7 +341,9 @@ echo ZIP file created successfully: %zipfile%
 exit /b 0
 
 :error
+cd /d "%original_dir%"
 exit /b 1
 
 :end
+cd /d "%original_dir%"
 exit /b 0

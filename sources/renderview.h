@@ -146,28 +146,28 @@ public:
     ///@{
 
     /**
-     * @brief Returns whether  scene tree hud is displayed.
+     * @brief Returns whether scene stats hud is displayed.
      */
-    bool sceneTreeEnabled() const;
+    bool sceneStatsEnabled() const;
 
     /**
-     * @brief Enables or disables scene tree hud.
+     * @brief Enables or disables scene stats hud.
      *
      * @param enabled Scene tree statistics display state.
      */
-    void setSceneTreeEnabled(bool enabled);
+    void setSceneStatsEnabled(bool enabled);
 
     /**
-     * @brief Returns whether rendering gpu performance hud are displayed.
+     * @brief Returns whether rendering performance stats hud are displayed.
      */
-    bool gpuPerformanceEnabled() const;
+    bool performanceStatsEnabled() const;
 
     /**
-     * @brief Enables or disables gpu performance hud.
+     * @brief Enables or disables performance stats hud.
      *
-     * @param enabled Gpu performance hud display state.
+     * @param enabled performance stats hud display state.
      */
-    void setGpuPerformanceEnabled(bool enabled);
+    void setPerformanceStatsEnabled(bool enabled);
 
     /**
      * @brief Returns whether rendering camera axis hud are displayed.

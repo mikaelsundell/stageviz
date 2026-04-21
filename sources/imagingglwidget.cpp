@@ -83,9 +83,9 @@ public:
     GfVec2i widgetSize() const;
     GfVec4d widgetViewport() const;
     void drawBorder(QPainter& painter);
-    void drawAxis(QPainter& painter);
-    void updateSceneTree();
-    void updateGpuPerformance();
+    void updateAxis();
+    void updateSceneStats();
+    void updatePerformanceStats();
     bool isPathMaskedIn(const SdfPath& path) const;
     bool pickMaskedIntersection(const UsdImagingGLEngine::PickParams& pickParams, const GfFrustum& pickFrustum,
                                 UsdImagingGLEngine::IntersectionResultVector* results);
@@ -112,16 +112,17 @@ public:
         bool defaultCameraLightEnabled;
         bool sceneLightsEnabled;
         bool sceneShadersEnabled;
-        bool sceneTreeEnabled;
-        bool gpuPerformanceEnabled;
+        bool sceneStatsEnabled;
+        bool performanceStatsEnabled;
         bool cameraAxisEnabled;
         bool drag;
         bool sweep;
         QPoint start;
         QPoint end;
         QPoint mousepos;
-        QImage sceneTree;
-        QImage gpuPerformance;
+        QImage sceneStats;
+        QImage performanceStats;
+        QImage axis;
         ViewCamera viewCamera;
         GfBBox3d selectionBBox;
         ImagingGLWidget::DrawMode drawMode;
@@ -161,8 +162,8 @@ ImagingGLWidgetPrivate::init()
     d.defaultCameraLightEnabled = true;
     d.sceneLightsEnabled = true;
     d.sceneShadersEnabled = false;
-    d.sceneTreeEnabled = true;
-    d.gpuPerformanceEnabled = false;
+    d.sceneStatsEnabled = true;
+    d.performanceStatsEnabled = false;
     d.cameraAxisEnabled = true;
     d.drag = false;
     d.sweep = false;
@@ -222,6 +223,7 @@ ImagingGLWidgetPrivate::initCamera()
         d.viewCamera.setCameraUp(ViewCamera::Z);
     }
     d.viewCamera.frameAll();
+    updateAxis();
 }
 
 void
@@ -268,8 +270,8 @@ ImagingGLWidgetPrivate::close()
     d.sweep = false;
     d.glEngine.reset();
     d.hgi.reset();
-    if (d.sceneTreeEnabled) {
-        updateSceneTree();
+    if (d.sceneStatsEnabled) {
+        updateSceneStats();
     }
     d.glwidget->update();
 }
@@ -280,6 +282,7 @@ ImagingGLWidgetPrivate::frame(const GfBBox3d& bbox)
     d.viewCamera.setBoundingBox(bbox);
     d.viewCamera.frameAll();
     d.glwidget->update();
+    updateAxis();
 }
 
 void
@@ -287,6 +290,7 @@ ImagingGLWidgetPrivate::resetView()
 {
     initCamera();
     d.glwidget->update();
+    updateAxis();
 }
 
 void
@@ -431,8 +435,8 @@ ImagingGLWidgetPrivate::paintGL()
             qWarning() << "gl engine is not inititialized, render pass will be skipped";
         }
     }
-    if (d.gpuPerformanceEnabled) {
-        updateGpuPerformance();
+    if (d.performanceStatsEnabled) {
+        updatePerformanceStats();
     }
 }
 
@@ -453,17 +457,19 @@ ImagingGLWidgetPrivate::paintEvent(QPaintEvent* event)
         painter.drawRect(rect);
         painter.restore();
     }
-    if (d.sceneTreeEnabled) {
-        painter.drawImage(QPoint(0, 0), d.sceneTree);
+    if (d.sceneStatsEnabled) {
+        painter.drawImage(QPoint(0, 0), d.sceneStats);
     }
-    if (d.gpuPerformanceEnabled) {
-        int marginRight = 24;
-        QPoint pos(d.glwidget->width() - d.gpuPerformance.width() / d.gpuPerformance.devicePixelRatio() - marginRight,
+    if (d.performanceStatsEnabled) {
+        int margin = 24;
+        QPoint pos(d.glwidget->width() - d.performanceStats.width() / d.performanceStats.devicePixelRatio() - margin,
                    0);
-        painter.drawImage(pos, d.gpuPerformance);
+        painter.drawImage(pos, d.performanceStats);
     }
     if (d.cameraAxisEnabled) {
-        drawAxis(painter);
+        const int margin = 8;
+        const int axisHeight = qRound(d.axis.height() / d.axis.devicePixelRatio());
+        painter.drawImage(QPoint(margin, d.glwidget->height() - margin - axisHeight), d.axis);
     }
     drawBorder(painter);
 }
@@ -672,10 +678,12 @@ ImagingGLWidgetPrivate::mouseMoveEvent(QMouseEvent* event)
                 d.viewCamera.distance(1 + factor);
             }
             d.glwidget->update();
+            updateAxis();
         }
         else if (d.sweep) {
             d.end = event->pos();
             d.glwidget->update();
+            updateAxis();
         }
         d.mousepos = event->pos();
     }
@@ -794,6 +802,7 @@ ImagingGLWidgetPrivate::wheelEvent(QWheelEvent* event)
     double factor = 1.0 - clamped;
     d.viewCamera.distance(factor);
     d.glwidget->update();
+    updateAxis();
 }
 
 void
@@ -883,8 +892,8 @@ ImagingGLWidgetPrivate::captureVisible()
         }
     }
 
-    if (changed && d.sceneTreeEnabled)
-        updateSceneTree();
+    if (changed && d.sceneStatsEnabled)
+        updateSceneStats();
 
     if (changed)
         d.glwidget->update();
@@ -899,8 +908,8 @@ ImagingGLWidgetPrivate::clearVisibleCapture()
         return;
 
     d.visibleCapture.clear();
-    if (d.sceneTreeEnabled)
-        updateSceneTree();
+    if (d.sceneStatsEnabled)
+        updateSceneStats();
     d.glwidget->update();
 }
 
@@ -916,10 +925,11 @@ ImagingGLWidgetPrivate::updateStage(UsdStageRefPtr stage)
     if (d.stage)
         initCamera();
     rebuildSelectionBBoxes();
-    if (d.sceneTreeEnabled) {
-        updateSceneTree();
+    if (d.sceneStatsEnabled) {
+        updateSceneStats();
     }
     d.glwidget->update();
+    updateAxis();
 }
 
 void
@@ -945,8 +955,8 @@ ImagingGLWidgetPrivate::updatePrims(const NoticeBatch& batch)
 
     SignalGuard::Scope guard(this);
     rebuildSelectionBBoxes();
-    if (d.sceneTreeEnabled) {
-        updateSceneTree();
+    if (d.sceneStatsEnabled) {
+        updateSceneStats();
     }
     d.glwidget->update();
 }
@@ -960,8 +970,8 @@ ImagingGLWidgetPrivate::updateSelection(const QList<SdfPath>& paths)
         d.glEngine->SetSelected(QListToSdfPathVector(paths));
     }
     rebuildSelectionBBoxes();
-    if (d.sceneTreeEnabled) {
-        updateSceneTree();
+    if (d.sceneStatsEnabled) {
+        updateSceneStats();
     }
     d.glwidget->update();
 }
@@ -1005,15 +1015,15 @@ ImagingGLWidgetPrivate::widgetViewport() const
 void
 ImagingGLWidgetPrivate::drawBorder(QPainter& painter)
 {
-    const int w = 2;
-    painter.setPen(QPen(style()->color(Style::ColorRole::BorderAlt), w));
+    const int w = 1;
+    painter.setPen(QPen(style()->color(Style::ColorRole::Border), w));
     painter.setBrush(Qt::NoBrush);
-    QRect r = d.glwidget->rect().adjusted(w / 2, w / 2, -w / 2, -w / 2);
+    QRect r = d.glwidget->rect().adjusted(w / 1, w / 1, -w / 1, -w / 1);
     painter.drawRect(r);
 }
 
 void
-ImagingGLWidgetPrivate::drawAxis(QPainter& painter)
+ImagingGLWidgetPrivate::updateAxis()
 {
     GfCamera camera = d.viewCamera.camera();
     GfFrustum frustum = camera.GetFrustum();
@@ -1027,10 +1037,12 @@ ImagingGLWidgetPrivate::drawAxis(QPainter& painter)
     const int radius = 30;
     const int bubbleRadius = 10;
 
-    const QPoint center(margin + radius, d.glwidget->height() - margin - radius);
+    const int width = margin + radius * 2 + margin;
+    const int height = margin + radius * 2 + margin;
+    const QPoint center(margin + radius, margin + radius);
 
-    auto toPoint = [&](const GfVec3d& dir) -> QPointF {
-        return QPointF(center.x() + dir[0] * radius, center.y() - dir[1] * radius);
+    auto toPoint = [&](const GfVec3d& dir) -> QPoint {
+        return QPoint(qRound(center.x() + dir[0] * radius), qRound(center.y() - dir[1] * radius));
     };
 
     struct AxisLine {
@@ -1047,37 +1059,51 @@ ImagingGLWidgetPrivate::drawAxis(QPainter& painter)
     const bool hasStage = static_cast<bool>(d.stage);
     const qreal opacity = hasStage ? 1.0 : 0.35;
 
-    painter.save();
+    const qreal dpr = d.glwidget->devicePixelRatioF();
+    d.axis = QImage(qRound(width * dpr), qRound(height * dpr), QImage::Format_ARGB32_Premultiplied);
+    d.axis.setDevicePixelRatio(dpr);
+    d.axis.fill(Qt::transparent);
+
+    QPainter painter(&d.axis);
     painter.setOpacity(opacity);
     painter.setRenderHint(QPainter::Antialiasing, true);
+    painter.setRenderHint(QPainter::TextAntialiasing, true);
+
+    QFont font = app()->font();
+    font.setPixelSize(style()->fontSize(Style::UIScale::Small));
+    font.setBold(true);
+    painter.setFont(font);
+
+    QFontMetrics fm(font);
+
     painter.setPen(Qt::NoPen);
     painter.setBrush(QColor(0, 0, 0, 20));
     painter.drawEllipse(center, radius - 10, radius - 10);
 
-    QFont font = app()->font();
-    font.setPointSize(style()->fontSize(Style::UIScale::Small));
-    font.setBold(true);
-    painter.setFont(font);
-
     for (const AxisLine& axis : axes) {
-        QPointF end = toPoint(axis.dir);
+        const QPoint end = toPoint(axis.dir);
+
         painter.setPen(QPen(axis.color, 2.0, Qt::SolidLine, Qt::RoundCap));
         painter.drawLine(center, end);
-        painter.setBrush(axis.color);
-        painter.setPen(Qt::NoPen);
-        painter.drawEllipse(end, bubbleRadius, bubbleRadius);
-        QRectF textRect(end.x() - bubbleRadius, end.y() - bubbleRadius, bubbleRadius * 2, bubbleRadius * 2);
 
-        painter.setPen(QColor(0, 0, 0, 180));
-        painter.drawText(textRect.translated(1, 1), Qt::AlignCenter, axis.label);
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(axis.color);
+        painter.drawEllipse(end, bubbleRadius, bubbleRadius);
+
+        const int textWidth = fm.horizontalAdvance(axis.label);
+        const int textX = end.x() - textWidth / 2;
+        const int textY = end.y() + (fm.ascent() - fm.descent()) / 2;
+
+        painter.setPen(QColor(0, 0, 0, 160));
+        painter.drawText(textX + 1, textY + 1, axis.label);
+
         painter.setPen(Qt::white);
-        painter.drawText(textRect, Qt::AlignCenter, axis.label);
+        painter.drawText(textX, textY, axis.label);
     }
-    painter.restore();
 }
 
 void
-ImagingGLWidgetPrivate::updateSceneTree()
+ImagingGLWidgetPrivate::updateSceneStats()
 {
     struct SceneStats {
         size_t prims = 0;
@@ -1203,8 +1229,8 @@ ImagingGLWidgetPrivate::updateSceneTree()
     }
 
     double dpr = d.glwidget->devicePixelRatioF();
-    QFont font = app()->font();
-    font.setPointSize(style()->fontSize(Style::UIScale::Small));
+    QFont font = d.glwidget->font();
+    font.setPixelSize(style()->fontSize(Style::UIScale::Small));
     font.setLetterSpacing(QFont::AbsoluteSpacing, 0.5);
 
     QFontMetrics fm(font);
@@ -1224,11 +1250,11 @@ ImagingGLWidgetPrivate::updateSceneTree()
     qsizetype width = labelWidth + columnSpacing + valueWidth + marginLeft;
     qsizetype height = rows.size() * rowHeight + marginTop;
 
-    d.sceneTree = QImage(width * dpr, height * dpr, QImage::Format_ARGB32_Premultiplied);
-    d.sceneTree.setDevicePixelRatio(dpr);
-    d.sceneTree.fill(Qt::transparent);
+    d.sceneStats = QImage(width * dpr, height * dpr, QImage::Format_ARGB32_Premultiplied);
+    d.sceneStats.setDevicePixelRatio(dpr);
+    d.sceneStats.fill(Qt::transparent);
 
-    QPainter p(&d.sceneTree);
+    QPainter p(&d.sceneStats);
     p.setRenderHint(QPainter::TextAntialiasing);
     p.setFont(font);
 
@@ -1255,7 +1281,7 @@ ImagingGLWidgetPrivate::updateSceneTree()
 }
 
 void
-ImagingGLWidgetPrivate::updateGpuPerformance()
+ImagingGLWidgetPrivate::updatePerformanceStats()
 {
     const VtDictionary stats = d.glEngine->GetRenderStats();
     auto fmtMB = [&](unsigned long bytes) {
@@ -1282,7 +1308,7 @@ ImagingGLWidgetPrivate::updateGpuPerformance()
 
     double dpr = d.glwidget->devicePixelRatioF();
     QFont font = app()->font();
-    font.setPointSize(style()->fontSize(Style::UIScale::Small));
+    font.setPixelSize(style()->fontSize(Style::UIScale::Small));
     font.setLetterSpacing(QFont::AbsoluteSpacing, 0.5);
 
     QFontMetrics fm(font);
@@ -1301,11 +1327,11 @@ ImagingGLWidgetPrivate::updateGpuPerformance()
     qsizetype width = labelWidth + columnSpacing + valueWidth + marginLeft;
     qsizetype height = rows.size() * rowHeight + marginTop;
 
-    d.gpuPerformance = QImage(width * dpr, height * dpr, QImage::Format_ARGB32_Premultiplied);
-    d.gpuPerformance.setDevicePixelRatio(dpr);
-    d.gpuPerformance.fill(Qt::transparent);
+    d.performanceStats = QImage(width * dpr, height * dpr, QImage::Format_ARGB32_Premultiplied);
+    d.performanceStats.setDevicePixelRatio(dpr);
+    d.performanceStats.fill(Qt::transparent);
 
-    QPainter p(&d.gpuPerformance);
+    QPainter p(&d.performanceStats);
     p.setRenderHint(QPainter::TextAntialiasing);
     p.setFont(font);
 
@@ -1424,7 +1450,7 @@ ImagingGLWidget::defaultCameraLightEnabled() const
 }
 
 void
-ImagingGLWidget::enableDefaultCameraLight(bool enabled)
+ImagingGLWidget::setDefaultCameraLightEnabled(bool enabled)
 {
     if (enabled != p->d.defaultCameraLightEnabled) {
         p->d.defaultCameraLightEnabled = enabled;
@@ -1439,7 +1465,7 @@ ImagingGLWidget::sceneLightsEnabled() const
 }
 
 void
-ImagingGLWidget::enableSceneLights(bool enabled)
+ImagingGLWidget::setSceneLightsEnabled(bool enabled)
 {
     if (enabled != p->d.sceneLightsEnabled) {
         p->d.sceneLightsEnabled = enabled;
@@ -1454,7 +1480,7 @@ ImagingGLWidget::sceneShadersEnabled() const
 }
 
 void
-ImagingGLWidget::enableSceneShaders(bool enabled)
+ImagingGLWidget::setSceneShadersEnabled(bool enabled)
 {
     if (enabled != p->d.sceneShadersEnabled) {
         p->d.sceneShadersEnabled = enabled;
@@ -1463,32 +1489,32 @@ ImagingGLWidget::enableSceneShaders(bool enabled)
 }
 
 bool
-ImagingGLWidget::sceneTreeEnabled() const
+ImagingGLWidget::sceneStatsEnabled() const
 {
-    return p->d.sceneTreeEnabled;
+    return p->d.sceneStatsEnabled;
 }
 
 void
-ImagingGLWidget::enableSceneTree(bool enabled)
+ImagingGLWidget::setSceneStatsEnabled(bool enabled)
 {
-    if (enabled != p->d.sceneTreeEnabled) {
-        p->d.sceneTreeEnabled = enabled;
-        p->updateSceneTree();
+    if (enabled != p->d.sceneStatsEnabled) {
+        p->d.sceneStatsEnabled = enabled;
+        p->updateSceneStats();
         update();
     }
 }
 
 bool
-ImagingGLWidget::gpuPerformanceEnabled() const
+ImagingGLWidget::performanceStatsEnabled() const
 {
-    return p->d.gpuPerformanceEnabled;
+    return p->d.performanceStatsEnabled;
 }
 
 void
-ImagingGLWidget::enableGpuPerformance(bool enabled)
+ImagingGLWidget::setPerformanceStatsEnabled(bool enabled)
 {
-    if (enabled != p->d.gpuPerformanceEnabled) {
-        p->d.gpuPerformanceEnabled = enabled;
+    if (enabled != p->d.performanceStatsEnabled) {
+        p->d.performanceStatsEnabled = enabled;
         update();
     }
 }
@@ -1500,7 +1526,7 @@ ImagingGLWidget::cameraAxisEnabled() const
 }
 
 void
-ImagingGLWidget::enableCameraAxis(bool enabled)
+ImagingGLWidget::setCameraAxisEnabled(bool enabled)
 {
     if (enabled != p->d.cameraAxisEnabled) {
         p->d.cameraAxisEnabled = enabled;

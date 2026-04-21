@@ -8,7 +8,9 @@
 #include <QColor>
 #include <QColorSpace>
 #include <QObject>
+#include <QPixmap>
 #include <QScopedPointer>
+#include <QString>
 
 namespace stageviz {
 class StylePrivate;
@@ -16,19 +18,11 @@ class Style : public QObject {
     Q_OBJECT
 public:
     /**
-     * @brief Global theme modes.
-     */
-    enum Theme { Dark, Light };
-    Q_ENUM(Theme)
-
-    /**
      * @brief Semantic color roles.
      */
     enum ColorRole {
         Base,
         BaseAlt,
-        Dock,
-        DockAlt,
         Accent,
         AccentAlt,
         Text,
@@ -40,6 +34,8 @@ public:
         Progress,
         Button,
         ButtonAlt,
+        Item,
+        ItemAlt,
         Render,
         RenderAlt,
         Selection,
@@ -106,24 +102,29 @@ public:
     ///@{
 
     /**
-     * @brief Sets the active theme.
-     */
-    void setTheme(Theme theme);
-
-    /**
-     * @brief Returns the active theme.
-     */
-    Theme theme() const;
-
-    /**
      * @brief Returns color for a role.
      */
     QColor color(ColorRole role, UIState state = UIState::Normal) const;
 
     /**
+     * @brief Sets color for a role.
+     */
+    void setColor(ColorRole role, const QColor& color);
+
+    /**
      * @brief Returns icon for a role and size.
      */
-    QPixmap icon(IconRole role, UIScale scale = UIScale::Medium, UIState = UIState::Normal) const;
+    QPixmap icon(IconRole role, UIScale scale = UIScale::Medium, UIState state = UIState::Normal) const;
+
+    /**
+     * @brief Returns icon resource path for a role.
+     */
+    QString iconPath(IconRole role) const;
+
+    /**
+     * @brief Sets icon resource path for a role.
+     */
+    void setIconPath(IconRole role, const QString& path);
 
     /**
      * @brief Returns font size for a scale.
@@ -145,6 +146,11 @@ public:
      */
     void setIconSize(UIScale scale, int size);
 
+    /**
+     * @brief Rebuilds and reapplies the application stylesheet.
+     */
+    void refresh();
+
     ///@}
 
     /** @name Rendering */
@@ -163,11 +169,6 @@ public:
     ///@}
 
 Q_SIGNALS:
-
-    /**
-     * @brief Emitted when theme changes.
-     */
-    void themeChanged(Theme theme);
 
     /**
      * @brief Emitted when a color role changes.

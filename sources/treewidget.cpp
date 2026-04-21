@@ -485,8 +485,8 @@ TreeWidget::drawRow(QPainter* painter, const QStyleOptionViewItem& option, const
     rowRect.setRight(viewport()->width());
 
     const bool alternatingRow = p->visualRowIndex(index) % 2 == 1;
-    const QColor bg = alternatingRow ? app()->style()->color(Style::ColorRole::BaseAlt)
-                                     : app()->style()->color(Style::ColorRole::Base);
+    const QColor bg = alternatingRow ? app()->style()->color(Style::ColorRole::ItemAlt)
+                                     : app()->style()->color(Style::ColorRole::Item);
 
     painter->fillRect(rowRect, bg);
 

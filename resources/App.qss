@@ -3,22 +3,30 @@
  * https://github.com/mikaelsundell/stageviz
  */
 
-/* Top-level widgets */
 QMainWindow,
 QDialog
 {
+    color: $color.text;
     font-size: $font.size.medium;
     background-color: $color.base;
 }
 
 QMainWindow::separator {
-    background: $color.base;
+    background: $color.basealt;
     width: 6px;
+}
+
+QWidget[MainWidget="true"] {
+    background-color: $color.basealt;
+}
+
+QWidget[DockWidget="true"] {
+    background-color: $color.dock;
 }
 
 QCheckBox {
     color: $color.text;
-    background-color: $color.base;
+    background-color: $color.basealt;
     font-size: $font.size.medium;
     spacing: 8px;
     padding-right: 10px;
@@ -89,8 +97,24 @@ QFrame {
     border: 1px solid $color.border;
 }
 
-QWidget[DockWidget="true"] {
-    background-color: $color.dock;
+QGroupBox
+{
+    color: $color.text;
+    font-size: $font.size.medium;
+    background-color: $color.base;
+    border: 1px solid $color.borderalt;
+    margin-top: 10px;
+    padding-top: 12px;
+}
+
+QGroupBox::title
+{
+    subcontrol-origin: margin;
+    subcontrol-position: top left;
+    color: $color.text;
+    padding: 0px 6px;
+    left: 8px;
+    background-color: $color.base;
 }
 
 QLabel
@@ -104,7 +128,7 @@ QLineEdit
 {
     color: $color.text;
     font-size: $font.size.medium;
-    background-color: $color.base;
+    background-color: $color.basealt;
     selection-background-color: $color.highlight;
     height: 18px;  
     min-height: 18px;  
@@ -117,13 +141,15 @@ QLineEdit
 }
 
 QListWidget {
-    background-color: $color.base;
+    color: $color.text;
+    background-color: $color.basealt;
     border: 1px solid $color.borderalt;
     outline: none;
     padding: 0px;
 }
 
 QListWidget::item {
+    color: $color.text;
     background-color: $color.basealt;
     border: 1px solid $color.borderalt;
     margin: 4px;
@@ -131,8 +157,34 @@ QListWidget::item {
 }
 
 QListWidget::item:selected {
+    color: $color.text;
     background-color: $color.highlight;
     border: 1px solid $color.highlight;
+}
+
+QMenuBar {
+    background-color: $color.base;
+    color: $color.text;
+    border: 0px;
+    spacing: 0px;
+    padding: 2px;
+}
+
+QMenuBar::item {
+    background: transparent;
+    color: $color.text;
+    padding: 6px 12px;
+    margin: 0px;
+}
+
+QMenuBar::item:selected {
+    background-color: $color.highlight;
+    color: $color.text;
+}
+
+QMenuBar::item:pressed {
+    background-color: $color.highlight;
+    color: $color.text;
 }
 
 QMenu {
@@ -143,13 +195,9 @@ QMenu {
 
 QMenu::item {
     color: $color.text;
+    font-size: $font.size.medium;
     background-color: transparent;
     padding: 4px 20px 4px 20px;
-    font-size: $font.size.medium;
-}
-
-QMenu::item:disabled {
-    color: $color.text.disabled;
 }
 
 QMenu::item:selected {
@@ -195,15 +243,15 @@ QProgressBar {
     min-height: 10px;
     max-height: 10px; 
     border-radius: 4px;
-    background-color: $color.base;
+    background-color: $color.basealt;
 }
 
 QPlainTextEdit
 {
     font-family: "Menlo", "Consolas", "Courier New", monospace;
-    font-size: 8px;
+    font-size: $font.size.small;
     color: $color.text;
-    background-color: $color.base;
+    background-color: $color.basealt;
     selection-background-color: $color.highlight;
     selection-color: $color.text;
     border: 1px solid $color.borderalt;
@@ -227,7 +275,6 @@ QProgressBar::chunk {
 QPushButton
 {
     color: $color.text;
-    font-size: $font.size.medium;
     background-color: $color.button;
     height: 20px;  
     min-width: 50px;      
@@ -253,8 +300,19 @@ QPushButton:pressed
     background-color: $color.borderalt;
 }
 
+QScrollArea
+{
+    background-color: $color.base;
+    border: 1px solid $color.borderalt;
+}
+
+QScrollArea > QWidget > QWidget
+{
+    background-color: $color.base;
+}
+
 QScrollBar:horizontal {
-    background: $color.base;
+    background: $color.basealt;
     height: 16px;
     margin: 0;
     border: none;
@@ -290,7 +348,7 @@ QScrollBar::sub-page:horizontal {
 }
 
 QScrollBar:vertical {
-    background: $color.base;
+    background: $color.basealt;
     width: 16px;
     margin: 0;
     border: none;
@@ -326,7 +384,68 @@ QScrollBar::sub-page:vertical {
 }
 
 QAbstractScrollArea::corner { 
-    background: $color.base;
+    background: $color.basealt;
+}
+
+QSpinBox
+{
+    color: $color.text;
+    font-size: $font.size.medium;
+    background-color: $color.basealt;
+    selection-background-color: $color.highlight;
+    min-height: 20px;
+    border: 1px solid $color.borderalt;
+    border-radius: 0px;
+    padding: 2px 22px 2px 6px;
+}
+
+QSpinBox:disabled
+{
+    color: $color.text.disabled;
+}
+
+QSpinBox::up-button,
+QSpinBox::down-button
+{
+    subcontrol-origin: border;
+    width: 16px;
+    border: 0px;
+    background-color: $color.basealt;
+}
+
+QSpinBox::up-button
+{
+    subcontrol-position: top right;
+}
+
+QSpinBox::down-button
+{
+    subcontrol-position: bottom right;
+}
+
+QSpinBox::up-arrow
+{
+    width: 10px;
+    height: 10px;
+    image: url("$icon.right");
+    transform: rotate(-90deg);
+}
+
+QSpinBox::down-arrow
+{
+    width: 10px;
+    height: 10px;
+    image: url("$icon.right");
+    transform: rotate(90deg);
+}
+
+QAbstractSpinBox
+{
+    color: $color.text;
+    font-size: $font.size.medium;
+    background-color: $color.basealt;
+    selection-background-color: $color.highlight;
+    border: 1px solid $color.borderalt;
 }
 
 QSplitter::handle {
@@ -342,7 +461,7 @@ QStatusBar {
 
 QTabWidget::pane
 {
-    background-color: $color.base;
+    background-color: $color.basealt;
     border-left: 1px solid $color.borderalt;
     border-right: 1px solid $color.borderalt;
     border-bottom: 1px solid $color.borderalt;
@@ -410,12 +529,12 @@ QTabBar QToolButton::right-arrow
 
 QTabBar QToolButton:hover
 {
-    background-color: $color.base;
+    background-color: $color.basealt;
 }
 
 QTabBar QToolButton:pressed
 {
-    background-color: $color.base;
+    background-color: $color.basealt;
 }
 
 QTabBar QToolButton::menu-indicator
@@ -426,8 +545,8 @@ QTabBar QToolButton::menu-indicator
 QTabBar::tab:selected
 {
     color: $color.text;
-    background-color: $color.base;
-    border-bottom-color: $color.base;
+    background-color: $color.basealt;
+    border-bottom-color: $color.basealt;
 }
 
 QTabBar::tab:!selected
@@ -445,15 +564,35 @@ QTextBrowser
 {
     font-size: $font.size.medium;
     color: $color.text;
-    background-color: $color.base;
+    background-color: $color.basealt;
     selection-background-color: $color.highlight;
-    alternate-background-color: $color.base;
+    alternate-background-color: $color.basealt;
+}
+
+QTextEdit
+{
+    font-family: "Menlo", "Consolas", "Courier New", monospace;
+    font-size: $font.size.small;
+    color: $color.text;
+    background-color: $color.basealt;
+    selection-background-color: $color.highlight;
+    selection-color: $color.text;
+    border: 1px solid $color.borderalt;
+    outline: none;
+    padding: 6px;
+}
+
+QTextEdit:disabled
+{
+    color: $color.text.disabled;
+    background-color: $color.basealt;
+    selection-background-color: $color.basealt;
+    selection-color: $color.text.disabled;
 }
 
 QToolButton
 {
     color: $color.text;
-    font-size: $font.size.medium;
     background-color: $color.button;
     border: 1px solid $color.borderalt;
     border-radius: 0px;
@@ -491,7 +630,7 @@ QSlider {
 QSlider::groove:horizontal {
     height: 4px;
     border-radius: 4px;
-    background: $color.base;
+    background: $color.basealt;
 }
 
 QSlider::handle:horizontal {
@@ -506,29 +645,79 @@ QSplitter
     border: 0px;
 }
 
-QTreeView
+QTableView
 {
-    font-size: $font.size.small;
     color: $color.text;
+    font-size: $font.size.medium;
     outline: none;
     border: 1px solid $color.borderalt;
-    background-color: $color.base;
+    background-color: $color.item;
     selection-background-color: $color.highlight;
-    alternate-background-color: $color.basealt;
+    gridline-color: $color.borderalt;
+}
+
+QTableView QHeaderView
+{
+    background-color: $color.basealt;
+    border: none;
+}
+
+QTableView QHeaderView::section
+{
+    color: $color.text;
+    background-color: $color.basealt;
+    border: none;
+    padding: 4px 6px;
+}
+
+QTableView::item
+{
+    height: 28px;
+    color: $color.text;
+    background-color: $color.item;
+    selection-background-color: $color.highlight;
+}
+
+QHeaderView
+{
+    background-color: $color.basealt;
+    border: none;
+}
+
+QHeaderView::section
+{
+    color: $color.text;
+    background-color: $color.basealt;
+    border: none;
+    padding: 4px 6px;
+}
+
+QTreeView
+{
+    color: $color.text;
+    font-size: $font.size.medium;
+    outline: none;
+    border: 1px solid $color.borderalt;
+    background-color: $color.item;
+    selection-background-color: $color.highlight;
+}
+
+QTreeView QHeaderView
+{
+    background-color: $color.basealt;
+    border: none;
 }
 
 QTreeView QHeaderView:section
 {
-    font-size: $font.size.medium;
     color: $color.text;
-    background-color: $color.base;
+    background-color: $color.basealt;
     border: none;
     padding: 4px 6px;
 }
 
 QTreeView::item {
     height: 28px;
-    font-size: $font.size.small;
     color: $color.text;
     selection-background-color: $color.highlight;
 }

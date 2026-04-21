@@ -152,7 +152,7 @@ public:
      *
      * @param enabled Light state.
      */
-    void enableDefaultCameraLight(bool enabled);
+    void setDefaultCameraLightEnabled(bool enabled);
 
     /**
      * @brief Returns whether scene lights are enabled.
@@ -164,7 +164,7 @@ public:
      *
      * @param enabled Light state.
      */
-    void enableSceneLights(bool enabled);
+    void setSceneLightsEnabled(bool enabled);
 
     /**
      * @brief Returns whether scene materials are enabled.
@@ -176,31 +176,31 @@ public:
      *
      * @param enabled Material state.
      */
-    void enableSceneShaders(bool enabled);
+    void setSceneShadersEnabled(bool enabled);
 
     /**
      * @brief Returns whether  scene tree hud is displayed.
      */
-    bool sceneTreeEnabled() const;
+    bool sceneStatsEnabled() const;
 
     /**
      * @brief Enables or disables scene tree hud.
      *
      * @param enabled Scene tree statistics display state.
      */
-    void enableSceneTree(bool enabled);
+    void setSceneStatsEnabled(bool enabled);
 
     /**
      * @brief Returns whether rendering gpu performance hud are displayed.
      */
-    bool gpuPerformanceEnabled() const;
+    bool performanceStatsEnabled() const;
 
     /**
-     * @brief Enables or disables gpu performance hud.
+     * @brief Enables or disables performance stats hud.
      *
-     * @param enabled Gpu performance hud display state.
+     * @param enabled performance stats hud display state.
      */
-    void enableGpuPerformance(bool enabled);
+    void setPerformanceStatsEnabled(bool enabled);
 
     /**
      * @brief Returns whether rendering camera axis hud are displayed.
@@ -212,7 +212,7 @@ public:
      *
      * @param enabled Camera axis hud display state.
      */
-    void enableCameraAxis(bool enabled);
+    void setCameraAxisEnabled(bool enabled);
 
     ///@}
 

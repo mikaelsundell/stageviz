@@ -88,31 +88,65 @@ function(find_boost_python out_target)
     )
     list(SORT boost_python_debug_candidates COMPARE NATURAL ORDER ASCENDING)
 
-    if(NOT boost_python_debug_candidates)
-        message(FATAL_ERROR
-            "Boost.Python debug library not found.\n"
-            "Prefix: ${boost_prefix}\n"
-            "Include: ${boost_include_dir}\n"
-            "Lib dir: ${boost_library_dir}\n"
-            "Python tag: ${boost_python_version_tag}\n"
-            "Arch tag: ${boost_arch_tag}\n"
-            "Boost version: ${boost_version_tag}"
-        )
-    endif()
-
-    list(GET boost_python_debug_candidates 0 boost_python_lib_debug)
-
     file(GLOB boost_python_release_candidates
         "${boost_library_dir}/libboost_python${boost_python_version_tag}-*-${boost_arch_tag}-${boost_version_tag}.lib"
     )
-
     list(FILTER boost_python_release_candidates EXCLUDE REGEX "-gd-")
     list(FILTER boost_python_release_candidates EXCLUDE REGEX "-gyd-")
     list(SORT boost_python_release_candidates COMPARE NATURAL ORDER ASCENDING)
 
+    set(boost_python_lib_debug "")
     set(boost_python_lib_release "")
+
+    if(boost_python_debug_candidates)
+        list(GET boost_python_debug_candidates 0 boost_python_lib_debug)
+    endif()
+
     if(boost_python_release_candidates)
         list(GET boost_python_release_candidates 0 boost_python_lib_release)
+    endif()
+
+    set(config_name "")
+    if(CMAKE_CONFIGURATION_TYPES)
+        if(CMAKE_BUILD_TYPE)
+            set(config_name "${CMAKE_BUILD_TYPE}")
+        else()
+            get_filename_component(config_name "${boost_prefix}" NAME)
+        endif()
+    else()
+        set(config_name "${CMAKE_BUILD_TYPE}")
+    endif()
+    string(TOLOWER "${config_name}" config_name_lower)
+
+    set(require_debug_lib OFF)
+    if(config_name_lower STREQUAL "debug")
+        set(require_debug_lib ON)
+    endif()
+
+    if(require_debug_lib)
+        if(NOT boost_python_lib_debug)
+            message(FATAL_ERROR
+                "Boost.Python debug library not found.\n"
+                "Prefix: ${boost_prefix}\n"
+                "Include: ${boost_include_dir}\n"
+                "Lib dir: ${boost_library_dir}\n"
+                "Python tag: ${boost_python_version_tag}\n"
+                "Arch tag: ${boost_arch_tag}\n"
+                "Boost version: ${boost_version_tag}"
+            )
+        endif()
+    else()
+        if(NOT boost_python_lib_release)
+            message(FATAL_ERROR
+                "Boost.Python release library not found.\n"
+                "Prefix: ${boost_prefix}\n"
+                "Include: ${boost_include_dir}\n"
+                "Lib dir: ${boost_library_dir}\n"
+                "Python tag: ${boost_python_version_tag}\n"
+                "Arch tag: ${boost_arch_tag}\n"
+                "Boost version: ${boost_version_tag}"
+            )
+        endif()
     endif()
 
     set(target_name "${out_target}")
@@ -125,19 +159,29 @@ function(find_boost_python out_target)
 
     set_target_properties(${target_name} PROPERTIES
         IMPORTED_CONFIGURATIONS "Debug;Release;RelWithDebInfo;MinSizeRel"
-        IMPORTED_LOCATION_DEBUG "${boost_python_lib_debug}"
-        IMPORTED_LOCATION_RELWITHDEBINFO "${boost_python_lib_debug}"
         INTERFACE_INCLUDE_DIRECTORIES "${boost_include_dir}"
     )
+
+    if(boost_python_lib_debug)
+        set_target_properties(${target_name} PROPERTIES
+            IMPORTED_LOCATION_DEBUG "${boost_python_lib_debug}"
+        )
+    elseif(boost_python_lib_release)
+        set_target_properties(${target_name} PROPERTIES
+            IMPORTED_LOCATION_DEBUG "${boost_python_lib_release}"
+        )
+    endif()
 
     if(boost_python_lib_release)
         set_target_properties(${target_name} PROPERTIES
             IMPORTED_LOCATION_RELEASE "${boost_python_lib_release}"
+            IMPORTED_LOCATION_RELWITHDEBINFO "${boost_python_lib_release}"
             IMPORTED_LOCATION_MINSIZEREL "${boost_python_lib_release}"
         )
-    else()
+    elseif(boost_python_lib_debug)
         set_target_properties(${target_name} PROPERTIES
             IMPORTED_LOCATION_RELEASE "${boost_python_lib_debug}"
+            IMPORTED_LOCATION_RELWITHDEBINFO "${boost_python_lib_debug}"
             IMPORTED_LOCATION_MINSIZEREL "${boost_python_lib_debug}"
         )
     endif()
@@ -147,10 +191,14 @@ function(find_boost_python out_target)
     message(STATUS "Boost lib dir: ${boost_library_dir}")
     message(STATUS "Boost version tag: ${boost_version_tag}")
     message(STATUS "Boost arch tag: ${boost_arch_tag}")
-    message(STATUS "Boost.Python debug lib: ${boost_python_lib_debug}")
+    if(boost_python_lib_debug)
+        message(STATUS "Boost.Python debug lib: ${boost_python_lib_debug}")
+    else()
+        message(STATUS "Boost.Python debug lib: <not found>")
+    endif()
     if(boost_python_lib_release)
         message(STATUS "Boost.Python release lib: ${boost_python_lib_release}")
     else()
-        message(STATUS "Boost.Python release lib: <not found, using debug lib fallback>")
+        message(STATUS "Boost.Python release lib: <not found>")
     endif()
 endfunction()

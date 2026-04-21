@@ -69,6 +69,8 @@ PythonInterpreterPrivate::init()
     pythonDirs = QString::fromUtf8(PYTHON_SEARCH_DIRS).split(';', Qt::SkipEmptyParts);
 #endif
 
+    qDebug() << pythonDirs;
+
     PyObject* sysPath = PySys_GetObject("path");  // borrowed reference
     if (sysPath && PyList_Check(sysPath)) {
         for (auto it = pythonDirs.crbegin(); it != pythonDirs.crend(); ++it) {
@@ -114,7 +116,12 @@ PythonInterpreterPrivate::init()
         return;
     }
 
-    PyDict_SetItemString(d.globals, "stageviz", module);
+    if (PyDict_SetItemString(d.globals, "stageviz", module) != 0) {
+        PyErr_Print();
+        qWarning() << "[Python] Failed to inject stageviz module";
+        Py_DECREF(module);
+        return;
+    }
 
     PyObject* sessionFactory = PyObject_GetAttrString(module, "session");
     if (!sessionFactory || !PyCallable_Check(sessionFactory)) {
@@ -134,10 +141,47 @@ PythonInterpreterPrivate::init()
         return;
     }
 
-    PyDict_SetItemString(d.globals, "session", sessionInstance);
+    if (PyDict_SetItemString(d.globals, "session", sessionInstance) != 0) {
+        PyErr_Print();
+        qWarning() << "[Python] Failed to inject session instance";
+        Py_DECREF(sessionInstance);
+        Py_DECREF(sessionFactory);
+        Py_DECREF(module);
+        return;
+    }
 
     Py_DECREF(sessionInstance);
     Py_DECREF(sessionFactory);
+
+    PyObject* styleFactory = PyObject_GetAttrString(module, "style");
+    if (!styleFactory || !PyCallable_Check(styleFactory)) {
+        PyErr_Print();
+        qWarning() << "[Python] Failed to get stageviz.style factory";
+        Py_XDECREF(styleFactory);
+        Py_DECREF(module);
+        return;
+    }
+
+    PyObject* styleInstance = PyObject_CallObject(styleFactory, nullptr);
+    if (!styleInstance) {
+        PyErr_Print();
+        qWarning() << "[Python] Failed to create stageviz style instance";
+        Py_DECREF(styleFactory);
+        Py_DECREF(module);
+        return;
+    }
+
+    if (PyDict_SetItemString(d.globals, "style", styleInstance) != 0) {
+        PyErr_Print();
+        qWarning() << "[Python] Failed to inject style instance";
+        Py_DECREF(styleInstance);
+        Py_DECREF(styleFactory);
+        Py_DECREF(module);
+        return;
+    }
+
+    Py_DECREF(styleInstance);
+    Py_DECREF(styleFactory);
     Py_DECREF(module);
 
     d.initialized = true;
@@ -210,13 +254,7 @@ PythonInterpreterPrivate::executeScript(const QString& script)
     try {
         QByteArray scriptBytes = script.toUtf8();
         const char* code = scriptBytes.constData();
-
-        session()->setPrimsUpdate(Session::PrimsUpdate::Deferred);
-
         PyObject* result = PyRun_String(code, Py_file_input, d.globals, d.locals);
-
-        session()->setPrimsUpdate(Session::PrimsUpdate::Immediate);
-
         if (result) {
             if (result != Py_None) {
                 PyObject* str = PyObject_Str(result);
@@ -234,13 +272,11 @@ PythonInterpreterPrivate::executeScript(const QString& script)
                                     QStringLiteral("Python script failed. Check the Python log for details."));
         }
     } catch (const std::exception& e) {
-        session()->setPrimsUpdate(Session::PrimsUpdate::Immediate);
         output = QStringLiteral("[C++ exception] ") + QString::fromUtf8(e.what());
         qWarning().noquote() << output;
         session()->notifyStatus(Session::Notify::Status::Error,
                                 QStringLiteral("Python script failed. Check the Python log for details."));
     } catch (...) {
-        session()->setPrimsUpdate(Session::PrimsUpdate::Immediate);
         output = QStringLiteral("[C++ exception] Unknown error");
         qWarning().noquote() << output;
         session()->notifyStatus(Session::Notify::Status::Error,

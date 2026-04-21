@@ -10,6 +10,8 @@ set(project_bundle_name "Stageviz")
 project(${project_name})
 
 # options
+# DEPLOY_BUILD must be set explicitly by the build script for packaged builds.
+# Local development builds should keep this OFF and reuse the discovered runtime paths.
 option(DEPLOY_BUILD "Use deployed app bundle runtime paths" OFF)
 
 # packages
@@ -151,6 +153,13 @@ set(PROJECT_PYTHON_DIRS
 list(REMOVE_DUPLICATES PROJECT_PYTHON_DIRS)
 list(JOIN PROJECT_PYTHON_DIRS ";" PROJECT_PYTHON_DIRS_STR)
 
+message(STATUS "DEPLOY_BUILD: ${DEPLOY_BUILD}")
+message(STATUS "PROJECT_PYTHON_DIRS:")
+foreach(python_dir IN LISTS PROJECT_PYTHON_DIRS)
+    message(STATUS "  ${python_dir}")
+endforeach()
+message(STATUS "PROJECT_PYTHON_DIRS_STR: ${PROJECT_PYTHON_DIRS_STR}")
+
 configure_file(
     "${CMAKE_SOURCE_DIR}/sources/config.h.in"
     "${CMAKE_BINARY_DIR}/config.h"
@@ -221,8 +230,13 @@ if(APPLE)
 
     target_compile_definitions(${project_name} PRIVATE
         GL_SILENCE_DEPRECATION
-        $<$<BOOL:${DEPLOY_BUILD}>:DEPLOY_BUILD=1>
     )
+
+    if(DEPLOY_BUILD)
+        target_compile_definitions(${project_name} PRIVATE DEPLOY_BUILD=1)
+    else()
+        target_compile_definitions(${project_name} PRIVATE DEPLOY_BUILD=0)
+    endif()
 
     find_package(Boost CONFIG REQUIRED COMPONENTS python39)
 
@@ -247,10 +261,15 @@ elseif(WIN32)
     target_compile_definitions(${project_name} PRIVATE
         WIN32
         WINVER=0x0A00
-        $<$<CONFIG:Debug>:TBB_USE_DEBUG=1>
         GL_SILENCE_DEPRECATION
-        $<$<BOOL:${DEPLOY_BUILD}>:DEPLOY_BUILD=1>
+        $<$<CONFIG:Debug>:TBB_USE_DEBUG=1>
     )
+
+    if(DEPLOY_BUILD)
+        target_compile_definitions(${project_name} PRIVATE DEPLOY_BUILD=1)
+    else()
+        target_compile_definitions(${project_name} PRIVATE DEPLOY_BUILD=0)
+    endif()
 
     target_link_directories(${project_name} PRIVATE
         ${PYTHON_RUNTIME_LIBRARY_DIRS}

@@ -114,8 +114,6 @@ public Q_SLOTS:
     void sceneShaders(bool checked);
     void renderShaded();
     void renderWireframe();
-    void light();
-    void dark();
     void toggleOutliner(bool checked);
     void toggleProgress(bool checked);
     void togglePython(bool checked);
@@ -220,7 +218,7 @@ ViewerPrivate::initDocks()
     d.progressView->setObjectName("progressView");
     d.progressView->setAttribute(Qt::WA_DeleteOnClose, false);
     d.progressDock = createDock("progressDock", "Progress", d.progressView, d.progressArea);
-    d.pythonDialog = new PythonDialog(nullptr);
+    d.pythonDialog = new PythonDialog(d.viewer.data());
     d.pythonDialog->setObjectName("pythonDialog");
     d.pythonDialog->setAttribute(Qt::WA_DeleteOnClose, false);
     d.pythonDialog->setWindowFlags(Qt::Tool | Qt::WindowTitleHint | Qt::WindowCloseButtonHint);
@@ -230,7 +228,7 @@ ViewerPrivate::initDocks()
     d.pythonDialog->setWindowTitle("Python");
     d.pythonDialog->installEventFilter(this);
     d.pythonDialog->hide();
-    d.consoleDialog = new ConsoleDialog(nullptr);
+    d.consoleDialog = new ConsoleDialog(d.viewer.data());
     d.consoleDialog->setWindowFlags(Qt::Tool | Qt::WindowTitleHint | Qt::WindowCloseButtonHint);
 #ifdef Q_OS_MAC
     d.consoleDialog->setAttribute(Qt::WA_MacAlwaysShowToolWindow, true);
@@ -361,14 +359,6 @@ ViewerPrivate::init()
         d.ui->shaded->setDefaultAction(d.ui->displayRenderWireframe);
     }
     connect(d.backgroundColorFilter.data(), &MouseEvent::pressed, this, &ViewerPrivate::backgroundColor);
-    connect(d.ui->themeLight, &QAction::triggered, this, &ViewerPrivate::light);
-    connect(d.ui->themeDark, &QAction::triggered, this, &ViewerPrivate::dark);
-    {
-        QActionGroup* actions = new QActionGroup(this);
-        actions->setExclusive(true);
-        actions->addAction(d.ui->themeLight);
-        actions->addAction(d.ui->themeDark);
-    }
     connect(session(), &Session::boundingBoxChanged, this, &ViewerPrivate::boundingBoxChanged);
     connect(session(), &Session::maskChanged, this, &ViewerPrivate::maskChanged);
     connect(session(), &Session::primsChanged, this, &ViewerPrivate::primsChanged);
@@ -379,10 +369,10 @@ ViewerPrivate::init()
     connect(session()->commandStack(), &CommandStack::canUndoChanged, d.ui->editUndo, &QAction::setEnabled);
     connect(session()->commandStack(), &CommandStack::canRedoChanged, d.ui->editRedo, &QAction::setEnabled);
     connect(session()->commandStack(), &CommandStack::canClearChanged, d.ui->editClear, &QAction::setEnabled);
-    connect(d.ui->hudSceneTree, &QAction::toggled, this,
-            [=](bool checked) { renderView()->setSceneTreeEnabled(checked); });
-    connect(d.ui->hudGpuPerformance, &QAction::toggled, this,
-            [=](bool checked) { renderView()->setGpuPerformanceEnabled(checked); });
+    connect(d.ui->hudSceneStats, &QAction::toggled, this,
+            [=](bool checked) { renderView()->setSceneStatsEnabled(checked); });
+    connect(d.ui->hudPerformanceStats, &QAction::toggled, this,
+            [=](bool checked) { renderView()->setPerformanceStatsEnabled(checked); });
     connect(d.ui->hudCameraAxis, &QAction::toggled, this,
             [=](bool checked) { renderView()->setCameraAxisEnabled(checked); });
     connect(d.ui->viewOutliner, &QAction::toggled, this, &ViewerPrivate::toggleOutliner);
@@ -445,27 +435,17 @@ ViewerPrivate::initSettings()
         d.ui->policyPayload->setChecked(true);
     }
 
-    bool sceneTree = settings()->value("sceneTree", true).toBool();
-    d.ui->hudSceneTree->setChecked(sceneTree);
-    renderView()->setSceneTreeEnabled(sceneTree);
+    bool sceneStats = settings()->value("sceneTree", true).toBool();
+    d.ui->hudSceneStats->setChecked(sceneStats);
+    renderView()->setSceneStatsEnabled(sceneStats);
 
-    bool gpuPerformance = settings()->value("gpuPerformance", false).toBool();
-    d.ui->hudGpuPerformance->setChecked(gpuPerformance);
-    renderView()->setGpuPerformanceEnabled(gpuPerformance);
+    bool performanceStats = settings()->value("gpuPerformance", false).toBool();
+    d.ui->hudPerformanceStats->setChecked(performanceStats);
+    renderView()->setPerformanceStatsEnabled(performanceStats);
 
     bool cameraAxis = settings()->value("cameraAxis", true).toBool();
     d.ui->hudCameraAxis->setChecked(cameraAxis);
     renderView()->setCameraAxisEnabled(cameraAxis);
-
-    QString theme = settings()->value("theme", "dark").toString();
-    if (theme == "dark") {
-        dark();
-        d.ui->themeDark->setChecked(true);
-    }
-    else {
-        light();
-        d.ui->themeLight->setChecked(true);
-    }
 
     d.recentFiles = settings()->value("recentFiles", QStringList()).toStringList();
     initRecentFiles();
@@ -580,21 +560,34 @@ ViewerPrivate::eventFilter(QObject* object, QEvent* event)
         default: break;
         }
     }
-    if (object == d.viewer && event->type() == QEvent::WindowStateChange) {
-        Qt::WindowStates state = d.viewer->windowState();
-        if (!(state & Qt::WindowMinimized)) {
+    if (object == d.consoleDialog) {
+        switch (event->type()) {
+        case QEvent::Show: updateDockAction(d.ui->viewConsole, true); break;
+        case QEvent::Hide: updateDockAction(d.ui->viewConsole, false); break;
+        default: break;
+        }
+    }
+    if (object == d.viewer
+        && (event->type() == QEvent::WindowStateChange || event->type() == QEvent::ActivationChange)) {
+        const Qt::WindowStates state = d.viewer->windowState();
+        if (!(state & Qt::WindowMinimized) && d.viewer->isActiveWindow()) {
             QTimer::singleShot(0, d.viewer, [this]() {
                 if (d.ui->viewOutliner->isChecked() && d.outlinerDock && !d.outlinerDock->isVisible())
                     d.outlinerDock->show();
                 if (d.ui->viewProgress->isChecked() && d.progressDock && !d.progressDock->isVisible())
                     d.progressDock->show();
-                if (d.ui->viewPython->isChecked() && d.pythonDialog && !d.pythonDialog->isVisible())
+                if (d.ui->viewPython->isChecked() && d.pythonDialog) {
                     d.pythonDialog->show();
-                if (d.ui->viewConsole->isChecked() && d.consoleDialog && !d.consoleDialog->isVisible())
+                    d.pythonDialog->raise();
+                }
+                if (d.ui->viewConsole->isChecked() && d.consoleDialog) {
                     d.consoleDialog->show();
+                    d.consoleDialog->raise();
+                }
             });
         }
     }
+
     return QObject::eventFilter(object, event);
 }
 
@@ -1024,8 +1017,8 @@ void
 ViewerPrivate::saveSettings()
 {
     settings()->setValue("recentFiles", d.recentFiles);
-    settings()->setValue("sceneTree", d.ui->hudSceneTree->isChecked());
-    settings()->setValue("gpuPerformance", d.ui->hudGpuPerformance->isChecked());
+    settings()->setValue("sceneStats", d.ui->hudSceneStats->isChecked());
+    settings()->setValue("performanceStats", d.ui->hudPerformanceStats->isChecked());
     settings()->setValue("cameraAxis", d.ui->hudCameraAxis->isChecked());
 }
 
@@ -1258,20 +1251,6 @@ void
 ViewerPrivate::renderWireframe()
 {
     renderView()->setRenderMode(RenderView::RenderMode::Wireframe);
-}
-
-void
-ViewerPrivate::light()
-{
-    style()->setTheme(Style::Theme::Light);
-    settings()->setValue("theme", "light");
-}
-
-void
-ViewerPrivate::dark()
-{
-    style()->setTheme(Style::Theme::Dark);
-    settings()->setValue("theme", "dark");
 }
 
 void
