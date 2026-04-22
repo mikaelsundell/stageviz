@@ -3,11 +3,17 @@
 
 #include "pythoninterpreter.h"
 #include "application.h"
+#include "config.h"
 #include "os.h"
 #include "session.h"
 
 #include <QDir>
 #include <QPointer>
+#include <QStringList>
+
+#ifdef Q_OS_WIN
+#    include <windows.h>
+#endif
 
 #undef slots
 #include <Python.h>
@@ -28,6 +34,8 @@ public:
     void init();
     void release();
     void configure();
+    void configureModulePaths();
+    void configureRuntimeLibraryPaths();
     QString executeScript(const QString& script);
     QString pythonError() const;
 
@@ -46,6 +54,77 @@ PythonInterpreterPrivate::PythonInterpreterPrivate() {}
 PythonInterpreterPrivate::~PythonInterpreterPrivate() { release(); }
 
 void
+PythonInterpreterPrivate::configureModulePaths()
+{
+    QStringList pythonModulePaths;
+#if DEPLOY_BUILD
+#    ifdef Q_OS_MAC
+    pythonModulePaths << QDir::cleanPath(os::getApplicationPath() + "/Frameworks/site-packages");
+#    else
+    pythonModulePaths << QDir::cleanPath(os::getApplicationPath() + "/site-packages");
+#    endif
+#else
+    pythonModulePaths = QString::fromUtf8(PYTHON_MODULE_PATHS).split(';', Qt::SkipEmptyParts);
+#endif
+
+    qInfo() << "Python module paths:" << pythonModulePaths;
+
+    PyObject* sysPath = PySys_GetObject("path");  // borrowed reference
+    if (!sysPath || !PyList_Check(sysPath))
+        return;
+
+    for (auto it = pythonModulePaths.crbegin(); it != pythonModulePaths.crend(); ++it) {
+        const QString cleanDir = QDir::cleanPath(*it);
+        if (!QDir(cleanDir).exists())
+            continue;
+
+        PyObject* path = PyUnicode_FromString(cleanDir.toUtf8().constData());
+        if (!path)
+            continue;
+
+        if (PySequence_Contains(sysPath, path) == 0)
+            PyList_Insert(sysPath, 0, path);
+
+        Py_DECREF(path);
+    }
+}
+
+void
+PythonInterpreterPrivate::configureRuntimeLibraryPaths()
+{
+    QStringList runtimeLibraryPaths;
+#if DEPLOY_BUILD
+#    ifdef Q_OS_MAC
+    runtimeLibraryPaths << QDir::cleanPath(os::getApplicationPath() + "/Frameworks");
+#    elif defined(Q_OS_WIN)
+    runtimeLibraryPaths << QDir::cleanPath(os::getApplicationPath());
+#    else
+    runtimeLibraryPaths << QDir::cleanPath(os::getApplicationPath());
+#    endif
+#else
+    runtimeLibraryPaths = QString::fromUtf8(PYTHON_RUNTIME_LIBRARY_PATHS).split(';', Qt::SkipEmptyParts);
+#endif
+
+    qDebug() << "Python runtime library paths:" << runtimeLibraryPaths;
+
+#ifdef Q_OS_WIN
+    SetDefaultDllDirectories(LOAD_LIBRARY_SEARCH_DEFAULT_DIRS | LOAD_LIBRARY_SEARCH_USER_DIRS);
+
+    for (const QString& dir : runtimeLibraryPaths) {
+        const QString cleanDir = QDir::cleanPath(dir);
+        if (!QDir(cleanDir).exists())
+            continue;
+
+        const std::wstring widePath = cleanDir.toStdWString();
+        if (!AddDllDirectory(widePath.c_str()))
+            qWarning() << "[Python] Failed to add DLL directory:" << cleanDir;
+    }
+#else
+    Q_UNUSED(runtimeLibraryPaths);
+#endif
+}
+
+void
 PythonInterpreterPrivate::init()
 {
     if (d.initialized)
@@ -58,35 +137,8 @@ PythonInterpreterPrivate::init()
 
     Py_Initialize();
 
-    QStringList pythonDirs;
-#if DEPLOY_BUILD
-#    ifdef Q_OS_MAC
-    pythonDirs << QDir::cleanPath(os::getApplicationPath() + "/Frameworks/site-packages");
-#    else
-    pythonDirs << QDir::cleanPath(os::getApplicationPath() + "/site-packages");
-#    endif
-#else
-    pythonDirs = QString::fromUtf8(PYTHON_SEARCH_DIRS).split(';', Qt::SkipEmptyParts);
-#endif
-
-    qDebug() << pythonDirs;
-
-    PyObject* sysPath = PySys_GetObject("path");  // borrowed reference
-    if (sysPath && PyList_Check(sysPath)) {
-        for (auto it = pythonDirs.crbegin(); it != pythonDirs.crend(); ++it) {
-            const QString cleanDir = QDir::cleanPath(*it);
-            if (!QDir(cleanDir).exists())
-                continue;
-
-            PyObject* path = PyUnicode_FromString(cleanDir.toUtf8().constData());
-            if (path) {
-                if (PySequence_Contains(sysPath, path) == 0)
-                    PyList_Insert(sysPath, 0, path);
-                Py_DECREF(path);
-            }
-        }
-    }
-
+    configureRuntimeLibraryPaths();
+    configureModulePaths();
     configure();
 
     PyObject* mainModule = PyImport_AddModule("__main__");

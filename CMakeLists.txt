@@ -95,14 +95,25 @@ function(require_python_package_root python_dir_var package_name prefix)
     endif()
 endfunction()
 
-get_filename_component(MaterialX_PREFIX "${MaterialX_DIR}/../../.." ABSOLUTE)
-get_filename_component(OpenImageIO_PREFIX "${OpenImageIO_DIR}/../../.." ABSOLUTE)
-get_filename_component(Qt6_PREFIX "${Qt6_DIR}/../../.." ABSOLUTE)
+function(append_existing_paths out_var)
+    set(result "${${out_var}}")
+    foreach(path IN LISTS ARGN)
+        if(EXISTS "${path}")
+            list(APPEND result "${path}")
+        endif()
+    endforeach()
+    list(REMOVE_DUPLICATES result)
+    set(${out_var} "${result}" PARENT_SCOPE)
+endfunction()
+
+get_filename_component(materialx_prefix "${MaterialX_DIR}/../../.." ABSOLUTE)
+get_filename_component(openimageio_prefix "${OpenImageIO_DIR}/../../.." ABSOLUTE)
+get_filename_component(qt6_prefix "${Qt6_DIR}/../../.." ABSOLUTE)
 
 find_python_package_root(
     MaterialX_PYTHON_DIR
     MaterialX_PACKAGE_DIR
-    "${MaterialX_PREFIX}"
+    "${materialx_prefix}"
     "MaterialX"
     "PyMaterialXCore*"
 )
@@ -110,7 +121,7 @@ find_python_package_root(
 find_python_package_root(
     OpenImageIO_PYTHON_DIR
     OpenImageIO_PACKAGE_DIR
-    "${OpenImageIO_PREFIX}"
+    "${openimageio_prefix}"
     "OpenImageIO"
     "*"
 )
@@ -121,7 +132,7 @@ find_python_package_root(
 find_python_package_root(
     PySide6_PYTHON_DIR
     PySide6_PACKAGE_DIR
-    "${Qt6_PREFIX}"
+    "${qt6_prefix}"
     "PySide6"
     "QtCore*"
 )
@@ -129,7 +140,7 @@ find_python_package_root(
 find_python_package_root(
     Shiboken6_PYTHON_DIR
     Shiboken6_PACKAGE_DIR
-    "${Qt6_PREFIX}"
+    "${qt6_prefix}"
     "shiboken6"
     "Shiboken*"
 )
@@ -138,27 +149,50 @@ if(NOT OpenUSD_PYTHON_DIR)
     message(FATAL_ERROR "OpenUSD_PYTHON_DIR is not set")
 endif()
 
-require_python_package_root(MaterialX_PYTHON_DIR "MaterialX" "${MaterialX_PREFIX}")
-require_python_package_root(OpenImageIO_PYTHON_DIR "OpenImageIO" "${OpenImageIO_PREFIX}")
-require_python_package_root(PySide6_PYTHON_DIR "PySide6" "${Qt6_PREFIX}")
-require_python_package_root(Shiboken6_PYTHON_DIR "shiboken6" "${Qt6_PREFIX}")
+require_python_package_root(MaterialX_PYTHON_DIR "MaterialX" "${materialx_prefix}")
+require_python_package_root(OpenImageIO_PYTHON_DIR "OpenImageIO" "${openimageio_prefix}")
+require_python_package_root(PySide6_PYTHON_DIR "PySide6" "${qt6_prefix}")
+require_python_package_root(Shiboken6_PYTHON_DIR "shiboken6" "${qt6_prefix}")
 
-set(PROJECT_PYTHON_DIRS
+# Python import paths (sys.path)
+set(python_module_paths
     "${OpenUSD_PYTHON_DIR}"
     "${MaterialX_PYTHON_DIR}"
     "${OpenImageIO_PYTHON_DIR}"
     "${PySide6_PYTHON_DIR}"
     "${Shiboken6_PYTHON_DIR}"
 )
-list(REMOVE_DUPLICATES PROJECT_PYTHON_DIRS)
-list(JOIN PROJECT_PYTHON_DIRS ";" PROJECT_PYTHON_DIRS_STR)
+list(REMOVE_DUPLICATES python_module_paths)
+list(JOIN python_module_paths ";" PYTHON_MODULE_PATHS_STR)
 
-message(STATUS "DEPLOY_BUILD: ${DEPLOY_BUILD}")
-message(STATUS "PROJECT_PYTHON_DIRS:")
-foreach(python_dir IN LISTS PROJECT_PYTHON_DIRS)
-    message(STATUS "  ${python_dir}")
+# Native runtime library paths (DLL/.so/.dylib lookup)
+set(python_runtime_library_paths)
+
+append_existing_paths(python_runtime_library_paths
+    "${materialx_prefix}/bin"
+    "${materialx_prefix}/lib"
+    "${materialx_prefix}/lib64"
+    "${openimageio_prefix}/bin"
+    "${openimageio_prefix}/lib"
+    "${openimageio_prefix}/lib64"
+    "${qt6_prefix}/bin"
+    "${qt6_prefix}/lib"
+)
+
+list(REMOVE_DUPLICATES python_runtime_library_paths)
+list(JOIN python_runtime_library_paths ";" PYTHON_RUNTIME_LIBRARY_PATHS_STR)
+
+message(STATUS "python_module_paths:")
+foreach(path IN LISTS python_module_paths)
+    message(STATUS "  ${path}")
 endforeach()
-message(STATUS "PROJECT_PYTHON_DIRS_STR: ${PROJECT_PYTHON_DIRS_STR}")
+message(STATUS "PYTHON_MODULE_PATHS_STR: ${PYTHON_MODULE_PATHS_STR}")
+
+message(STATUS "python_runtime_library_paths:")
+foreach(path IN LISTS python_runtime_library_paths)
+    message(STATUS "  ${path}")
+endforeach()
+message(STATUS "PYTHON_RUNTIME_LIBRARY_PATHS_STR: ${PYTHON_RUNTIME_LIBRARY_PATHS_STR}")
 
 configure_file(
     "${CMAKE_SOURCE_DIR}/sources/config.h.in"
@@ -204,7 +238,6 @@ if(APPLE)
         "${CMAKE_SOURCE_DIR}/resources/MacOSXBundle.plist.in"
     )
     list(APPEND project_resources "resources/AppIcon.icns")
-
     set(MACOSX_BUNDLE_EXECUTABLE_NAME ${project_name})
     set(MACOSX_BUNDLE_INFO_STRING ${project_bundle_name})
     set(MACOSX_BUNDLE_BUNDLE_NAME ${project_bundle_name})
@@ -220,7 +253,6 @@ if(APPLE)
     list(APPEND project_sources "sources/os_mac.mm")
 
     add_executable(${project_name} MACOSX_BUNDLE ${project_sources} ${project_resources})
-
     set_target_properties(${project_name} PROPERTIES
         XCODE_ATTRIBUTE_PRODUCT_BUNDLE_IDENTIFIER "${project_identifier}"
         XCODE_ATTRIBUTE_MACOSX_DEPLOYMENT_TARGET "${MACOSX_DEPLOYMENT_TARGET}"
@@ -257,7 +289,6 @@ elseif(WIN32)
     list(APPEND project_sources "sources/os_win.cpp")
 
     add_executable(${project_name} WIN32 ${project_sources} ${project_resources})
-
     target_compile_definitions(${project_name} PRIVATE
         WIN32
         WINVER=0x0A00
@@ -270,10 +301,6 @@ elseif(WIN32)
     else()
         target_compile_definitions(${project_name} PRIVATE DEPLOY_BUILD=0)
     endif()
-
-    target_link_directories(${project_name} PRIVATE
-        ${PYTHON_RUNTIME_LIBRARY_DIRS}
-    )
 
     target_link_libraries(${project_name}
         Qt6::Core
