@@ -1284,9 +1284,7 @@ void
 ImagingGLWidgetPrivate::updatePerformanceStats()
 {
     const VtDictionary stats = d.glEngine->GetRenderStats();
-    auto fmtMB = [&](unsigned long bytes) {
-        return QString::number(double(bytes) / (1024.0 * 1024.0), 'f', 2) + " MB";
-    };
+    auto fmtMB = [&](uint64_t bytes) { return QString::number(double(bytes) / (1024.0 * 1024.0), 'f', 2) + " MB"; };
 
     struct Row {
         QString label;
@@ -1295,16 +1293,17 @@ ImagingGLWidgetPrivate::updatePerformanceStats()
 
     QVector<Row> rows;
     rows.append({ "GPU time", QString::number(d.gpuPerformanceMs, 'f', 2) + " ms" });
+
     if (stats.count("gpuMemoryUsed"))
-        rows.append({ "GPU mem", fmtMB(VtDictionaryGet<unsigned long>(stats, "gpuMemoryUsed")) });
+        rows.append({ "GPU mem", fmtMB(VtDictionaryGet<uint64_t>(stats, "gpuMemoryUsed")) });
     if (stats.count("primvar"))
-        rows.append({ " primvar", fmtMB(VtDictionaryGet<unsigned long>(stats, "primvar")) });
+        rows.append({ " primvar", fmtMB(VtDictionaryGet<uint64_t>(stats, "primvar")) });
     if (stats.count("topology"))
-        rows.append({ " topology", fmtMB(VtDictionaryGet<unsigned long>(stats, "topology")) });
+        rows.append({ " topology", fmtMB(VtDictionaryGet<uint64_t>(stats, "topology")) });
     if (stats.count("drawingShader"))
-        rows.append({ " shader", fmtMB(VtDictionaryGet<unsigned long>(stats, "drawingShader")) });
+        rows.append({ " shader", fmtMB(VtDictionaryGet<uint64_t>(stats, "drawingShader")) });
     if (stats.count("textureMemory"))
-        rows.append({ " texture", fmtMB(VtDictionaryGet<unsigned long>(stats, "textureMemory")) });
+        rows.append({ " texture", fmtMB(VtDictionaryGet<uint64_t>(stats, "textureMemory")) });
 
     double dpr = d.glwidget->devicePixelRatioF();
     QFont font = app()->font();
