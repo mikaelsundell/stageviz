@@ -66,9 +66,6 @@ PythonInterpreterPrivate::configureModulePaths()
 #else
     pythonModulePaths = QString::fromUtf8(PYTHON_MODULE_PATHS).split(';', Qt::SkipEmptyParts);
 #endif
-
-    qInfo() << "Python module paths:" << pythonModulePaths;
-
     PyObject* sysPath = PySys_GetObject("path");  // borrowed reference
     if (!sysPath || !PyList_Check(sysPath))
         return;
@@ -104,9 +101,6 @@ PythonInterpreterPrivate::configureRuntimeLibraryPaths()
 #else
     runtimeLibraryPaths = QString::fromUtf8(PYTHON_RUNTIME_LIBRARY_PATHS).split(';', Qt::SkipEmptyParts);
 #endif
-
-    qDebug() << "Python runtime library paths:" << runtimeLibraryPaths;
-
 #ifdef Q_OS_WIN
     SetDefaultDllDirectories(LOAD_LIBRARY_SEARCH_DEFAULT_DIRS | LOAD_LIBRARY_SEARCH_USER_DIRS);
 

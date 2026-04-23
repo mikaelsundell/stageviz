@@ -109,9 +109,10 @@ set "cmake_thirdparty_dir=%THIRDPARTY_DIR:\=/%"
 
 REM DEPLOY_BUILD must only be ON for packaged/deploy builds
 set "deploy_build=OFF"
-if "%deploy%"=="1" set "deploy_build=ON"
-
-echo DEPLOY_BUILD=%deploy_build%
+if "%deploy%"=="1" (
+    set "deploy_build=ON"
+    echo Deployment enabled
+)
 
 cmake .. -G "%cmake_generator%" -DCMAKE_MODULE_PATH="%cmake_dir%modules" -DCMAKE_PREFIX_PATH="%cmake_thirdparty_dir%" -DDEPLOY_BUILD=%deploy_build%
 if errorlevel 1 (
@@ -153,21 +154,21 @@ set "prefix_plugin_root=%prefix%\plugin"
 set "prefix_plugin_usd=%prefix_plugin_root%\usd"
 set "prefix_usd_root=%prefix_lib%\usd"
 
-REM Prefer launcher if available, otherwise fall back to python
+REM prefer launcher if available, otherwise fall back to python
 set "python_cmd=py -3"
 where py >nul 2>&1
 if errorlevel 1 set "python_cmd=python"
 
-REM Search paths for deploywin.py
+REM search paths for deploywin.py
 set "deploy_search_paths=%prefix%;%prefix_bin%;%prefix_lib%;%prefix%\python;%prefix_lib%\python;%prefix_plugin_root%;%prefix_plugin_usd%;%prefix_usd_root%"
 
-REM Directories that deploywin.py should copy as-is
-set "copy_dirs=%prefix_plugin_usd%|plugin\usd;%prefix_usd_root%|usd"
+REM directories that deploywin.py should copy as-is
+set "copy_dirs=%prefix_plugin_usd%|plugin\usd|plugins;%prefix_usd_root%|usd"
 
-REM Python package discovery roots
+REM python package discovery roots
 set "python_roots=%prefix%\site-packages;%prefix_lib%\site-packages;%prefix%\Lib\site-packages;%prefix%\python;%prefix_lib%\python;%prefix%\python\Lib\site-packages;%prefix%\python\lib\site-packages;%prefix_lib%\python3.9\site-packages;%prefix%\python\lib\python3.9\site-packages"
 
-REM Python packages to deploy into site-packages
+REM python packages to deploy into site-packages
 set "python_packages=pxr;PySide6;shiboken6;MaterialX;OpenImageIO"
 
 echo Deploying stageviz for %current_build_type% to %deploy_dir%
@@ -224,8 +225,43 @@ echo Running deploywin.py...
     "%python_packages%"
 if errorlevel 1 goto :error
 
+REM extract version from CMakeLists.txt
+set "version_file=%app_dir%CMakeLists.txt"
+set "version="
+for /f "usebackq tokens=2 delims= " %%A in (`findstr /c:"set(project_long_version" "%version_file%"`) do (
+    set "version=%%A"
+)
+
+if "!version!"=="" (
+    for /f "usebackq tokens=2 delims= " %%A in (`findstr /c:"set ^(project_long_version" "%version_file%"`) do (
+        set "version=%%A"
+    )
+)
+if "!version!"=="" (
+    echo Failed to extract version from CMakeLists.txt
+    goto :error
+)
+
+REM clean surrounding quotes and trailing parenthesis
+set "version=!version:"=!"
+set "version=!version:)=!"
+
+for /f "tokens=2 delims==" %%I in ('wmic os get localdatetime /value ^| find "LocalDateTime"') do set "datetime=%%I"
+set "current_date=%datetime:~2,6%"
+
+set "zipfile=%deploy_dir%\%app_name%_%version%_%current_date%_%current_build_type%.zip"
+echo Creating zip file: %zipfile%
+
+powershell -command "Compress-Archive -Path '%deploy_dir%\*' -DestinationPath '%zipfile%' -Force"
+if errorlevel 1 (
+    echo Failed to create ZIP file
+    goto :error
+)
+
+echo ZIP file created successfully: %zipfile%
 echo.
 echo Deployment successful
+exit /b 0
 
 :error
 cd /d "%original_dir%"

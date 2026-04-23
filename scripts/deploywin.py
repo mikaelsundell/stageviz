@@ -2,10 +2,12 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # https://github.com/mikaelsundell/stageviz
 
+import fnmatch
 import os
 import shutil
-import
+import sys
 import pefile
+
 
 copied_binaries = set()
 missing_dlls = set()
@@ -60,9 +62,9 @@ excluded_dlls = {  # lowercase
     "ws2_32.dll",
 }
 
-extra_dlls = [
-    "usd_hdgp.dll",
-    "usd_usdHydra.dll",
+# copy all matching DLLs from search paths.
+extra_dll_patterns = [
+    "usd_*.dll",
 ]
 
 
@@ -94,6 +96,16 @@ def should_skip_python_file(filename: str) -> bool:
     )
 
 
+def should_skip_copied_directory_file(filename: str, mode: str) -> bool:
+    lower = filename.lower()
+
+    # plugin/usd trees and similar should be copied as-is, but keep import libs out
+    if mode == "plugins":
+        return lower.endswith(".lib")
+
+    return False
+
+
 def split_list_arg(value: str):
     if not value:
         return []
@@ -101,6 +113,17 @@ def split_list_arg(value: str):
 
 
 def parse_directory_specs(value: str):
+    r"""
+    Parse semicolon-separated directory specs.
+
+    Supported forms:
+      <src>|<dest-relative>
+      <src>|<dest-relative>|<mode>
+
+    Example:
+      C:\prefix\plugin\usd|plugin\usd|plugins
+      C:\prefix\lib\usd|usd
+    """
     specs = []
     if not value:
         return specs
@@ -109,16 +132,25 @@ def parse_directory_specs(value: str):
         item = item.strip()
         if not item:
             continue
-        if "|" not in item:
-            print(f"Warning: Invalid directory spec '{item}', expected '<src>|<dest-relative>'")
+
+        parts = [part.strip() for part in item.split("|")]
+        if len(parts) not in (2, 3):
+            print(
+                f"Warning: Invalid directory spec '{item}', "
+                "expected '<src>|<dest-relative>' or '<src>|<dest-relative>|<mode>'"
+            )
             continue
-        src, dest_rel = item.split("|", 1)
-        src = os.path.normpath(src.strip())
-        dest_rel = os.path.normpath(dest_rel.strip())
+
+        src = os.path.normpath(parts[0])
+        dest_rel = os.path.normpath(parts[1])
+        mode = parts[2] if len(parts) == 3 else "default"
+
         if not src or not dest_rel:
             print(f"Warning: Invalid directory spec '{item}'")
             continue
-        specs.append((src, dest_rel))
+
+        specs.append((src, dest_rel, mode))
+
     return specs
 
 
@@ -140,8 +172,6 @@ def find_dll_dependencies(binary_path: str):
 
 
 def find_dll_in_paths(dll_name: str, search_paths):
-    dll_name_lower = dll_name.lower()
-
     for path in search_paths:
         checked_paths.add(norm(path))
 
@@ -162,6 +192,49 @@ def find_dll_in_paths(dll_name: str, search_paths):
             continue
 
     return None
+
+
+def find_matching_dlls_in_paths(pattern: str, search_paths):
+    matches = []
+    seen = set()
+    pattern_lower = pattern.lower()
+
+    for path in search_paths:
+        checked_paths.add(norm(path))
+
+        try:
+            for entry in os.listdir(path):
+                entry_path = os.path.join(path, entry)
+
+                if os.path.isfile(entry_path):
+                    entry_lower = entry.lower()
+                    if fnmatch.fnmatch(entry_lower, pattern_lower):
+                        key = norm(entry_path)
+                        if key not in seen:
+                            seen.add(key)
+                            matches.append(entry_path)
+
+                elif os.path.isdir(entry_path):
+                    checked_paths.add(norm(entry_path))
+                    try:
+                        for nested in os.listdir(entry_path):
+                            nested_path = os.path.join(entry_path, nested)
+                            if not os.path.isfile(nested_path):
+                                continue
+
+                            nested_lower = nested.lower()
+                            if fnmatch.fnmatch(nested_lower, pattern_lower):
+                                key = norm(nested_path)
+                                if key not in seen:
+                                    seen.add(key)
+                                    matches.append(nested_path)
+                    except OSError:
+                        continue
+
+        except OSError:
+            continue
+
+    return matches
 
 
 def ensure_directory(path: str):
@@ -278,24 +351,38 @@ def scan_directory_for_binary_dependencies(src_dir: str, dest_dir: str, extra_pa
 def copy_extra_dependencies(dest_dir: str, search_paths):
     print("\nCopying explicitly requested extra dependencies...\n")
 
-    for dll_name in extra_dlls:
-        dll_path = find_dll_in_paths(dll_name, search_paths)
-        if dll_path:
+    for pattern in extra_dll_patterns:
+        matches = find_matching_dlls_in_paths(pattern, search_paths)
+
+        if not matches:
+            print(f"Warning: No DLLs matched pattern {pattern}")
+            missing_dlls.add(pattern)
+            continue
+
+        for dll_path in sorted(matches):
             copy_file(dll_path, dest_dir)
-        else:
-            print(f"Warning: Extra DLL {dll_name} not found")
-            missing_dlls.add(dll_name)
 
 
-def ignore_copytree_patterns(src, names):
-    ignored = []
-    for name in names:
-        if should_skip_dir(name):
-            ignored.append(name)
-    return ignored
+def make_copytree_ignore(mode: str):
+    def _ignore(src, names):
+        ignored = []
+        for name in names:
+            full_path = os.path.join(src, name)
+
+            if os.path.isdir(full_path):
+                if should_skip_dir(name):
+                    ignored.append(name)
+                continue
+
+            if should_skip_copied_directory_file(name, mode):
+                ignored.append(name)
+
+        return ignored
+
+    return _ignore
 
 
-def copy_directory_to_relative_dest(src: str, dest_root: str, dest_relative: str):
+def copy_directory_to_relative_dest(src: str, dest_root: str, dest_relative: str, mode: str = "default"):
     if not os.path.isdir(src):
         print(f"Warning: Directory not found: {src}")
         missing_directories.add(src)
@@ -313,10 +400,10 @@ def copy_directory_to_relative_dest(src: str, dest_root: str, dest_relative: str
             src,
             final_dest,
             dirs_exist_ok=True,
-            ignore=ignore_copytree_patterns,
+            ignore=make_copytree_ignore(mode),
         )
         copied_directories.add(final_dest_key)
-        print(f"Copied directory: {src} -> {final_dest}")
+        print(f"Copied directory [{mode}]: {src} -> {final_dest}")
         return final_dest
     except Exception as exc:
         print(f"Failed to copy directory {src} -> {final_dest}: {exc}")
@@ -327,8 +414,8 @@ def copy_requested_directories(dest_root: str, directory_specs):
     print("\nCopying requested directories...\n")
     copied_paths = []
 
-    for src, dest_relative in directory_specs:
-        copied_path = copy_directory_to_relative_dest(src, dest_root, dest_relative)
+    for src, dest_relative, mode in directory_specs:
+        copied_path = copy_directory_to_relative_dest(src, dest_root, dest_relative, mode)
         if copied_path:
             copied_paths.append(copied_path)
 

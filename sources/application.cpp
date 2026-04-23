@@ -56,7 +56,7 @@ ApplicationPrivate::init()
     const QString pluginUsdDir = os::getApplicationPath() + "/PlugIns/usd";
     const QString usdDir = os::getApplicationPath() + "/Frameworks/usd";
 #    else
-    const QString pluginUsdDir = os::getApplicationPath() + "/plugins/usd";
+    const QString pluginUsdDir = os::getApplicationPath() + "/plugin/usd";
     const QString usdDir = os::getApplicationPath() + "/usd";
 #    endif
     if (QDir(pluginUsdDir).exists())

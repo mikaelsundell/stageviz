@@ -47,7 +47,7 @@ function(find_python_package_root out_python_dir out_package_dir prefix package_
     set(found_python_dir "")
     set(found_package_dir "")
 
-    # Preserve the existing mac/Linux search locations and add the Windows
+    # preserve the existing mac/Linux search locations and add the Windows
     # layout used by this 3rdparty build, e.g.:
     #   <prefix>/python/MaterialX/PyMaterialXCore*.pyd
     set(candidates
@@ -125,7 +125,7 @@ find_python_package_root(
     "*"
 )
 
-# Avoid find_package(PySide6 CONFIG REQUIRED) here because the current
+# avoid find_package(PySide6 CONFIG REQUIRED) here because the current
 # PySide6Config may fail on missing development-side typesystem paths even when
 # the runtime Python package itself is present.
 find_python_package_root(
@@ -153,7 +153,7 @@ require_python_package_root(OpenImageIO_PYTHON_DIR "OpenImageIO" "${openimageio_
 require_python_package_root(PySide6_PYTHON_DIR "PySide6" "${qt6_prefix}")
 require_python_package_root(Shiboken6_PYTHON_DIR "shiboken6" "${qt6_prefix}")
 
-# Python import paths (sys.path)
+# python import paths (sys.path)
 set(python_module_paths
     "${OpenUSD_PYTHON_DIR}"
     "${MaterialX_PYTHON_DIR}"
@@ -164,7 +164,7 @@ set(python_module_paths
 list(REMOVE_DUPLICATES python_module_paths)
 list(JOIN python_module_paths ";" PYTHON_MODULE_PATHS_STR)
 
-# Native runtime library paths (DLL/.so/.dylib lookup)
+# native runtime library paths (DLL/.so/.dylib lookup)
 set(python_runtime_library_paths)
 
 append_existing_paths(python_runtime_library_paths
@@ -185,13 +185,11 @@ message(STATUS "python_module_paths:")
 foreach(path IN LISTS python_module_paths)
     message(STATUS "  ${path}")
 endforeach()
-message(STATUS "PYTHON_MODULE_PATHS_STR: ${PYTHON_MODULE_PATHS_STR}")
 
 message(STATUS "python_runtime_library_paths:")
 foreach(path IN LISTS python_runtime_library_paths)
     message(STATUS "  ${path}")
 endforeach()
-message(STATUS "PYTHON_RUNTIME_LIBRARY_PATHS_STR: ${PYTHON_RUNTIME_LIBRARY_PATHS_STR}")
 
 configure_file(
     "${CMAKE_SOURCE_DIR}/sources/config.h.in"
