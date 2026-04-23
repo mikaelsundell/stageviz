@@ -37,7 +37,6 @@ include(boost)
 if(WIN32)
     set(Python3_FIND_ABI OFF ANY ANY)
     find_package(Python3 COMPONENTS Interpreter Development.Embed REQUIRED)
-
     find_python_runtime(python)
     find_boost_python(boost_python)
 else()
@@ -294,6 +293,7 @@ elseif(WIN32)
         WINVER=0x0A00
         GL_SILENCE_DEPRECATION
         $<$<CONFIG:Debug>:TBB_USE_DEBUG=1>
+        $<$<CONFIG:Debug>:BOOST_DEBUG_PYTHON=1>
     )
 
     if(DEPLOY_BUILD)
@@ -335,7 +335,6 @@ elseif(WIN32)
                 $<$<CONFIG:Release>:${project_release}/resources/${resource_name}>
         )
     endforeach()
-
 else()
     message(WARNING "Unknown platform. ${project_name} may not be built correctly.")
 endif()

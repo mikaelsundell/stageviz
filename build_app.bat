@@ -113,14 +113,12 @@ if "%deploy%"=="1" set "deploy_build=ON"
 
 echo DEPLOY_BUILD=%deploy_build%
 
-REM generate build with cmake
 cmake .. -G "%cmake_generator%" -DCMAKE_MODULE_PATH="%cmake_dir%modules" -DCMAKE_PREFIX_PATH="%cmake_thirdparty_dir%" -DDEPLOY_BUILD=%deploy_build%
 if errorlevel 1 (
     popd
     goto :error
 )
 
-REM build the configuration
 cmake --build . --config %current_build_type% --parallel --verbose
 if errorlevel 1 (
     popd
@@ -145,200 +143,89 @@ set "deploy_dir=%app_dir%deploy.%current_build_type%"
 set "exe_path=%build_dir%\%current_build_type%\%app_name%.exe"
 set "resources_path=%build_dir%\%current_build_type%\resources"
 set "windeployqt=%THIRDPARTY_DIR%\bin\windeployqt6.exe"
+set "deploy_script=%app_dir%scripts\deploywin.py"
 
 REM THIRDPARTY_DIR is already the active config prefix.
 set "prefix=%THIRDPARTY_DIR%"
 set "prefix_bin=%prefix%\bin"
 set "prefix_lib=%prefix%\lib"
-set "prefix_plugin_usd=%prefix%\plugin\usd"
+set "prefix_plugin_root=%prefix%\plugin"
+set "prefix_plugin_usd=%prefix_plugin_root%\usd"
 set "prefix_usd_root=%prefix_lib%\usd"
+
+REM Prefer launcher if available, otherwise fall back to python
+set "python_cmd=py -3"
+where py >nul 2>&1
+if errorlevel 1 set "python_cmd=python"
+
+REM Search paths for deploywin.py
+set "deploy_search_paths=%prefix%;%prefix_bin%;%prefix_lib%;%prefix%\python;%prefix_lib%\python;%prefix_plugin_root%;%prefix_plugin_usd%;%prefix_usd_root%"
+
+REM Directories that deploywin.py should copy as-is
+set "copy_dirs=%prefix_plugin_usd%|plugin\usd;%prefix_usd_root%|usd"
+
+REM Python package discovery roots
+set "python_roots=%prefix%\site-packages;%prefix_lib%\site-packages;%prefix%\Lib\site-packages;%prefix%\python;%prefix_lib%\python;%prefix%\python\Lib\site-packages;%prefix%\python\lib\site-packages;%prefix_lib%\python3.9\site-packages;%prefix%\python\lib\python3.9\site-packages"
+
+REM Python packages to deploy into site-packages
+set "python_packages=pxr;PySide6;shiboken6;MaterialX;OpenImageIO"
 
 echo Deploying stageviz for %current_build_type% to %deploy_dir%
 echo -------------------------------------------------
 echo Using 3rdparty prefix: %prefix%
 
-REM check if windeployqt exists
 if not exist "%windeployqt%" (
-    echo windeployqt not found in %prefix_bin%
+    echo ERROR: windeployqt not found: %windeployqt%
+    goto :error
+)
+
+if not exist "%deploy_script%" (
+    echo ERROR: deploy script not found: %deploy_script%
     goto :error
 )
 
 if not exist "%prefix%" (
-    echo 3rdparty config prefix not found: %prefix%
+    echo ERROR: 3rdparty config prefix not found: %prefix%
+    goto :error
+)
+
+if not exist "%exe_path%" (
+    echo ERROR: Executable not found: %exe_path%
     goto :error
 )
 
 REM clean deploy directory
 if exist "%deploy_dir%" rmdir /s /q "%deploy_dir%"
 mkdir "%deploy_dir%"
-
-REM copy executable
-if not exist "%exe_path%" (
-    echo Executable not found: %exe_path%
-    goto :error
-)
-copy "%exe_path%" "%deploy_dir%" >nul
 if errorlevel 1 goto :error
 
-REM copy resources
+REM copy resources before runtime deployment
 if exist "%resources_path%" (
+    echo Copying resources...
     xcopy "%resources_path%" "%deploy_dir%\resources" /E /I /Y >nul
+    if errorlevel 1 goto :error
 ) else (
     echo Resources not found at %resources_path%, skipping
 )
 
-REM copy extra dependencies
-for %%D in (lcms2 zlib libpng16) do (
-    if exist "%prefix_bin%\%%D.dll" (
-        echo Copying %%D.dll from %prefix_bin%
-        copy "%prefix_bin%\%%D.dll" "%deploy_dir%" >nul
-        if errorlevel 1 goto :error
-    ) else (
-        echo WARNING: %%D.dll not found in %prefix_bin%
-    )
-)
-
-REM run windeployqt
-"%windeployqt%" "%deploy_dir%\%app_name%.exe" --dir "%deploy_dir%"
+REM run windeployqt first so Qt runtime/plugins are in place
+echo Running windeployqt...
+"%windeployqt%" "%exe_path%" --dir "%deploy_dir%"
 if errorlevel 1 goto :error
 
-REM copy Python runtime
-if exist "%LOCALAPPDATA%\Programs\Python\Python39\python39.dll" (
-    echo Copying python39.dll from %LOCALAPPDATA%\Programs\Python\Python39
-    copy "%LOCALAPPDATA%\Programs\Python\Python39\python39.dll" "%deploy_dir%" >nul
-    if errorlevel 1 goto :error
-) else (
-    echo WARNING: python39.dll not found in %LOCALAPPDATA%\Programs\Python\Python39
-)
-
-REM copy TBB runtime
-if exist "%prefix_bin%\tbb12.dll" (
-    echo Copying tbb12.dll from %prefix_bin%
-    copy "%prefix_bin%\tbb12.dll" "%deploy_dir%" >nul
-    if errorlevel 1 goto :error
-) else (
-    echo WARNING: tbb12.dll not found in %prefix_bin%
-)
-
-REM copy USD-related DLLs from the actual config lib dir
-set "usd_dependencies=usd_ar usd_arch usd_boost usd_python usd_cameraUtil usd_js usd_garch usd_gf usd_geomUtil usd_glf usd_hd usd_hdMtlx usd_hio usd_hdar usd_hdgp usd_hdx usd_hdsi usd_hdSt usd_hf usd_hgi usd_hgiInterop usd_hgiGL usd_kind usd_pcp usd_plug usd_pxOsd usd_sdf usd_sdr usd_tf usd_ts usd_trace usd_usd usd_usdGeom usd_usdImaging usd_usdImagingGL usd_usdLux usd_usdMtlx usd_usdRender usd_usdShade usdSkelImaging usd_usdUI usd_usdUtils usd_usdVol usd_vt usd_work"
-
-for %%D in (%usd_dependencies%) do (
-    if exist "%prefix_lib%\%%D.dll" (
-        echo Copying %%D.dll from %prefix_lib%
-        copy "%prefix_lib%\%%D.dll" "%deploy_dir%" >nul
-        if errorlevel 1 goto :error
-    ) else (
-        echo WARNING: Missing USD runtime DLL: %prefix_lib%\%%D.dll
-    )
-)
-
-REM copy usd plugin binaries
-if exist "%prefix_plugin_usd%" (
-    echo Copying usd plugins to %deploy_dir%\plugins\usd
-    if exist "%deploy_dir%\plugins\usd" rmdir /s /q "%deploy_dir%\plugins\usd"
-    mkdir "%deploy_dir%\plugins" 2>nul
-    xcopy "%prefix_plugin_usd%" "%deploy_dir%\plugins\usd" /E /I /Y >nul
-    if errorlevel 1 goto :error
-) else (
-    echo WARNING: Could not find usd plugin folder at %prefix_plugin_usd%
-)
-
-REM copy usd plugin metadata root
-if exist "%prefix_usd_root%" (
-    echo Copying usd plugin metadata root to %deploy_dir%\usd
-    if exist "%deploy_dir%\usd" rmdir /s /q "%deploy_dir%\usd"
-    xcopy "%prefix_usd_root%" "%deploy_dir%\usd" /E /I /Y >nul
-    if errorlevel 1 goto :error
-) else (
-    echo WARNING: Could not find usd metadata root at %prefix_usd_root%
-)
-
-REM deploy python bindings
-set "site_packages_dst=%deploy_dir%\site-packages"
-if exist "%site_packages_dst%" rmdir /s /q "%site_packages_dst%"
-mkdir "%site_packages_dst%"
-
-set "python_projects=pxr PySide6 shiboken6 MaterialX OpenImageIO"
-
-set "python_root_1=%prefix%\site-packages"
-set "python_root_2=%prefix_lib%\site-packages"
-set "python_root_3=%prefix%\Lib\site-packages"
-set "python_root_4=%prefix_lib%\python"
-set "python_root_5=%prefix%\python\Lib\site-packages"
-set "python_root_6=%prefix%\python\lib\site-packages"
-set "python_root_7=%prefix_lib%\python3.9\site-packages"
-set "python_root_8=%prefix%\python\lib\python3.9\site-packages"
-
-for %%P in (%python_projects%) do (
-    set "package_src="
-
-    if exist "!python_root_1!\%%P" set "package_src=!python_root_1!\%%P"
-    if not defined package_src if exist "!python_root_2!\%%P" set "package_src=!python_root_2!\%%P"
-    if not defined package_src if exist "!python_root_3!\%%P" set "package_src=!python_root_3!\%%P"
-    if not defined package_src if exist "!python_root_4!\%%P" set "package_src=!python_root_4!\%%P"
-    if not defined package_src if exist "!python_root_5!\%%P" set "package_src=!python_root_5!\%%P"
-    if not defined package_src if exist "!python_root_6!\%%P" set "package_src=!python_root_6!\%%P"
-    if not defined package_src if exist "!python_root_7!\%%P" set "package_src=!python_root_7!\%%P"
-    if not defined package_src if exist "!python_root_8!\%%P" set "package_src=!python_root_8!\%%P"
-
-    if defined package_src (
-        echo Copying python package %%P
-        echo   from: !package_src!
-        echo   to:   %site_packages_dst%\%%P
-        if exist "%site_packages_dst%\%%P" rmdir /s /q "%site_packages_dst%\%%P"
-        xcopy "!package_src!" "%site_packages_dst%\%%P" /E /I /Y >nul
-        if errorlevel 1 goto :error
-    ) else (
-        echo WARNING: Python package %%P not found in known search roots under %prefix%
-    )
-)
-
-echo.
-echo Deployed USD DLLs:
-dir /b "%deploy_dir%\usd_*.dll" 2>nul
-
-echo.
-echo Deployed python packages:
-dir /b "%site_packages_dst%" 2>nul
+REM run recursive deployment script for DLLs, plugin folders and python packages
+echo Running deploywin.py...
+%python_cmd% "%deploy_script%" ^
+    "%exe_path%" ^
+    "%deploy_dir%" ^
+    "%deploy_search_paths%" ^
+    "%copy_dirs%" ^
+    "%python_roots%" ^
+    "%python_packages%"
+if errorlevel 1 goto :error
 
 echo.
 echo Deployment successful
-
-REM extract version from CMakeLists.txt
-set "version_file=%app_dir%CMakeLists.txt"
-set "version="
-
-for /f "usebackq tokens=2 delims= " %%A in (`findstr /c:"set(project_long_version" "%version_file%"`) do (
-    set "version=%%A"
-    set "version=!version:~1,-1!"
-)
-
-if "%version%"=="" (
-    for /f "usebackq tokens=2 delims= " %%A in (`findstr /c:"set (project_long_version" "%version_file%"`) do (
-        set "version=%%A"
-        set "version=!version:~1,-1!"
-    )
-)
-
-if "%version%"=="" (
-    echo Failed to extract version from CMakeLists.txt
-    goto :error
-)
-
-for /f "tokens=2 delims==" %%I in ('wmic os get localdatetime /value ^| find "LocalDateTime"') do set datetime=%%I
-set "current_date=%datetime:~2,6%"
-
-set "zipfile=%deploy_dir%\%app_name%_%version%_%current_date%_%current_build_type%.zip"
-echo Creating zip file: %zipfile%
-powershell -command "Compress-Archive -Path '%deploy_dir%\*' -DestinationPath '%zipfile%' -Force"
-if errorlevel 1 (
-    echo Failed to create ZIP file
-    goto :error
-)
-
-echo ZIP file created successfully: %zipfile%
-exit /b 0
 
 :error
 cd /d "%original_dir%"
