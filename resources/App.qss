@@ -276,6 +276,7 @@ QPushButton
 {
     color: $color.text;
     background-color: $color.button;
+    font-size: $font.size.small;
     height: 20px;  
     min-width: 50px;      
     border: 1px solid $color.borderalt;
@@ -461,7 +462,7 @@ QStatusBar {
 
 QTabWidget::pane
 {
-    background-color: $color.basealt;
+    background-color: $color.item;
     border-left: 1px solid $color.borderalt;
     border-right: 1px solid $color.borderalt;
     border-bottom: 1px solid $color.borderalt;
@@ -476,14 +477,14 @@ QTabWidget::tab-bar
 
 QTabBar
 {
-    background: transparent;
+    background: $color.itemalt;
 }
 
 QTabBar::tab
 {
     font-size: $font.size.medium;
     color: $color.text;
-    background-color: $color.basealt;
+    background-color: $color.itemalt;
     border-top: 1px solid $color.borderalt;
     border-left: 1px solid $color.borderalt;
     border-right: 1px solid $color.borderalt;
@@ -494,10 +495,28 @@ QTabBar::tab
     min-width: 60px;
 }
 
+QTabBar::tab:selected
+{
+    color: $color.text;
+    background-color: $color.item;
+    border-bottom-color: $color.item;
+}
+
+QTabBar::tab:!selected
+{
+    color: $color.text;
+    background-color: $color.itemalt;
+}
+
+QTabBar::tab:hover:!selected
+{
+    background-color: $color.item;
+}
+
 QTabBar QToolButton
 {
     color: $color.text;
-    background-color: $color.basealt;
+    background-color: $color.itemalt;
     border: 1px solid $color.borderalt;
     padding: 0px;
     margin: 0px;
@@ -507,57 +526,15 @@ QTabBar QToolButton
     max-height: 34px;
 }
 
-QTabBar QToolButton::left-arrow
-{
-    image: url("$icon.left");
-    width: 16px;
-    height: 16px;
-    position: relative;
-    top: -4px;
-    left: -4px;
-}
-
-QTabBar QToolButton::right-arrow
-{
-    image: url("$icon.right");
-    width: 16px;
-    height: 16px;
-    position: relative;
-    top: -4px;
-    left: -4px;
-}
-
-QTabBar QToolButton:hover
-{
-    background-color: $color.basealt;
-}
-
+QTabBar QToolButton:hover,
 QTabBar QToolButton:pressed
 {
-    background-color: $color.basealt;
+    background-color: $color.item;
 }
 
 QTabBar QToolButton::menu-indicator
 {
     image: none;
-}
-
-QTabBar::tab:selected
-{
-    color: $color.text;
-    background-color: $color.basealt;
-    border-bottom-color: $color.basealt;
-}
-
-QTabBar::tab:!selected
-{
-    color: $color.text;
-    background-color: $color.basealt;
-}
-
-QTabBar::tab:hover:!selected
-{
-    background-color: $color.basealt;
 }
 
 QTextBrowser

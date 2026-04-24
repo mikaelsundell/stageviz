@@ -1,8 +1,7 @@
 <RCC>
-  <qresource prefix="style">
-    <file>../resources/App.qss</file>
-  </qresource>
+
   <qresource prefix="icons">
+    <file>../resources/AppIcon.png</file>
     <file>../resources/BranchOpen.png</file>
     <file>../resources/BranchClosed.png</file>
     <file>../resources/Checked.png</file>
@@ -30,5 +29,11 @@
     <file>../resources/Undo.png</file>
     <file>../resources/Visible.png</file>
     <file>../resources/Wireframe.png</file>
+  </qresource>
+  <qresource prefix="style">
+    <file>../resources/App.qss</file>
+  </qresource>
+  <qresource prefix="text">
+    <file>../resources/Copyright.txt</file>
   </qresource>
 </RCC>

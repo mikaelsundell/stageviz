@@ -15,7 +15,7 @@ project(${project_name})
 option(DEPLOY_BUILD "Use deployed app bundle runtime paths" OFF)
 
 # packages
-set(qt6_modules Core Concurrent Gui OpenGLWidgets Widgets)
+set(qt6_modules Core Concurrent Gui Network OpenGLWidgets Widgets)
 find_package(Qt6 COMPONENTS ${qt6_modules} CONFIG REQUIRED)
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
@@ -226,7 +226,7 @@ source_group("Resource Files" FILES ${project_resources})
 
 set(project_copyright "Copyright 2025-present Contributors to the ${project_name} project")
 set(project_identifier "com.github.mikaelsundell.${project_name}")
-set(project_long_version "0.1.0")
+set(project_long_version "0.1.1")
 set(project_short_version "0.1")
 set(project_url "https://github.com/mikaelsundell/stageviz")
 
@@ -273,6 +273,7 @@ if(APPLE)
         Qt6::Core
         Qt6::Concurrent
         Qt6::Gui
+        Qt6::Network
         Qt6::OpenGLWidgets
         Qt6::Widgets
         Boost::python39
@@ -304,6 +305,7 @@ elseif(WIN32)
         Qt6::Core
         Qt6::Concurrent
         Qt6::Gui
+        Qt6::Network
         Qt6::OpenGLWidgets
         Qt6::Widgets
         boost_python

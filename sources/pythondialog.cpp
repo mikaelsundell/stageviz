@@ -98,18 +98,14 @@ PythonDialogPrivate::init()
     d.ui->clear->setIcon(style()->icon(Style::IconRole::Clear));
     d.ui->next->setIcon(style()->icon(Style::IconRole::Right));
     d.ui->previous->setIcon(style()->icon(Style::IconRole::Left));
-
     d.ui->log->setReadOnly(true);
     d.ui->log->setContextMenuPolicy(Qt::CustomContextMenu);
     d.ui->log->setAcceptDrops(false);
     d.ui->log->installEventFilter(this);
-
     d.ui->editor->setAcceptDrops(true);
     d.ui->editor->setContextMenuPolicy(Qt::CustomContextMenu);
     d.ui->editor->viewport()->installEventFilter(this);
-
     d.ui->find->installEventFilter(this);
-
     d.ui->tabWidget->setTabsClosable(false);
     d.ui->tabWidget->setMovable(true);
     d.ui->tabWidget->tabBar()->setContextMenuPolicy(Qt::CustomContextMenu);
@@ -123,13 +119,11 @@ PythonDialogPrivate::init()
         bar->setMinimumWidth(0);
         bar->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
     }
-
     // connect
     QObject::connect(d.ui->run, &QToolButton::clicked, this, &PythonDialogPrivate::run);
     QObject::connect(d.ui->clear, &QToolButton::clicked, this, &PythonDialogPrivate::clear);
     QObject::connect(d.ui->next, &QToolButton::clicked, this, &PythonDialogPrivate::findNext);
     QObject::connect(d.ui->previous, &QToolButton::clicked, this, &PythonDialogPrivate::findPrevious);
-
     QObject::connect(d.ui->editor->document(), &QTextDocument::contentsChanged, this,
                      &PythonDialogPrivate::updateClearButton);
 
@@ -747,9 +741,6 @@ PythonDialog::PythonDialog(QWidget* parent)
     p->init();
 }
 
-PythonDialog::~PythonDialog()
-{
-    p->saveShelves();
-}
+PythonDialog::~PythonDialog() { p->saveShelves(); }
 
 }  // namespace stageviz

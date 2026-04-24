@@ -7,6 +7,8 @@
 #include "commandstack.h"
 #include "consoledialog.h"
 #include "dockwidget.h"
+#include "githubclient.h"
+#include "messagebox.h"
 #include "mouseevent.h"
 #include "notice.h"
 #include "os.h"
@@ -56,8 +58,6 @@ public:
     void initSettings();
     bool loadFile(const QString& fileName);
     bool mergeFile(const QString& fileName);
-    DockWidget* createDock(const QString& objectName, const QString& title, QWidget* view, Qt::DockWidgetArea area);
-    void updateDockAction(QAction* action, bool checked);
     DockWidget* outlinerDock();
     DockWidget* progressDock();
     OutlinerView* outlinerView();
@@ -118,6 +118,8 @@ public Q_SLOTS:
     void toggleProgress(bool checked);
     void togglePython(bool checked);
     void toggleConsole(bool checked);
+    void openAbout();
+    void checkUpdates();
     void openGithubReadme();
     void openGithubIssues();
 
@@ -131,6 +133,8 @@ public Q_SLOTS:
     void notifyStatusChanged(Session::Notify::Status status, const QString& message);
 
 public:
+    DockWidget* createDock(const QString& objectName, const QString& title, QWidget* view, Qt::DockWidgetArea area);
+    void updateDockAction(QAction* action, bool checked);
     void updateModified(bool modified);
     void updateRecentFiles(const QString& filename);
     void updateWindowTitle();
@@ -172,87 +176,6 @@ ViewerPrivate::ViewerPrivate()
     d.extensions = { "usd", "usda", "usdc", "usdz" };
     d.outlinerArea = Qt::LeftDockWidgetArea;
     d.progressArea = Qt::RightDockWidgetArea;
-}
-
-DockWidget*
-ViewerPrivate::createDock(const QString& objectName, const QString& title, QWidget* view, Qt::DockWidgetArea area)
-{
-    DockWidget* dock = new DockWidget(d.viewer.data());
-    dock->setObjectName(objectName);
-    dock->setWindowTitle(title);
-    dock->setMinimumSize(QSize(350, 0));
-
-    QWidget* contents = new QWidget(dock);
-    contents->setObjectName(objectName + "Contents");
-    contents->setStyleSheet(QString());
-    contents->setProperty("DockWidget", QVariant(true));
-
-    QVBoxLayout* layout = new QVBoxLayout(contents);
-    layout->setSpacing(0);
-    layout->setContentsMargins(4, 4, 4, 4);
-    layout->addWidget(view);
-
-    dock->setWidget(contents);
-    d.viewer->addDockWidget(area, dock);
-    return dock;
-}
-
-void
-ViewerPrivate::updateDockAction(QAction* action, bool checked)
-{
-    if (!action)
-        return;
-    action->blockSignals(true);
-    action->setChecked(checked);
-    action->blockSignals(false);
-}
-
-void
-ViewerPrivate::initDocks()
-{
-    d.outlinerView = new OutlinerView(d.viewer.data());
-    d.outlinerView->setObjectName("outlinerView");
-    d.outlinerView->setAttribute(Qt::WA_DeleteOnClose, false);
-    d.outlinerDock = createDock("outlinerDock", "Outliner", d.outlinerView, d.outlinerArea);
-    d.progressView = new ProgressView(d.viewer.data());
-    d.progressView->setObjectName("progressView");
-    d.progressView->setAttribute(Qt::WA_DeleteOnClose, false);
-    d.progressDock = createDock("progressDock", "Progress", d.progressView, d.progressArea);
-    d.pythonDialog = new PythonDialog(d.viewer.data());
-    d.pythonDialog->setObjectName("pythonDialog");
-    d.pythonDialog->setAttribute(Qt::WA_DeleteOnClose, false);
-    d.pythonDialog->setWindowFlags(Qt::Tool | Qt::WindowTitleHint | Qt::WindowCloseButtonHint);
-#ifdef Q_OS_MAC
-    d.pythonDialog->setAttribute(Qt::WA_MacAlwaysShowToolWindow, true);
-#endif
-    d.pythonDialog->setWindowTitle("Python");
-    d.pythonDialog->installEventFilter(this);
-    d.pythonDialog->hide();
-    d.consoleDialog = new ConsoleDialog(d.viewer.data());
-    d.consoleDialog->setWindowFlags(Qt::Tool | Qt::WindowTitleHint | Qt::WindowCloseButtonHint);
-#ifdef Q_OS_MAC
-    d.consoleDialog->setAttribute(Qt::WA_MacAlwaysShowToolWindow, true);
-#endif
-    d.consoleDialog->setAttribute(Qt::WA_DeleteOnClose, false);
-    d.consoleDialog->setWindowTitle("Console");
-    d.consoleDialog->hide();
-    connect(d.outlinerDock, &QDockWidget::dockLocationChanged, this,
-            [this](Qt::DockWidgetArea area) { d.outlinerArea = area; });
-    connect(d.progressDock, &QDockWidget::dockLocationChanged, this,
-            [this](Qt::DockWidgetArea area) { d.progressArea = area; });
-
-    connect(d.outlinerDock, &QDockWidget::visibilityChanged, this,
-            [this](bool visible) { updateDockAction(d.ui->viewOutliner, visible); });
-    connect(d.progressDock, &QDockWidget::visibilityChanged, this,
-            [this](bool visible) { updateDockAction(d.ui->viewProgress, visible); });
-    connect(d.consoleDialog, &ConsoleDialog::visibilityChanged, this,
-            [this](bool visible) { updateDockAction(d.ui->viewConsole, visible); });
-    d.outlinerDock->show();
-    d.progressDock->show();
-    updateDockAction(d.ui->viewOutliner, true);
-    updateDockAction(d.ui->viewProgress, true);
-    updateDockAction(d.ui->viewPython, false);
-    updateDockAction(d.ui->viewConsole, false);
 }
 
 void
@@ -346,6 +269,7 @@ ViewerPrivate::init()
     connect(d.ui->displayResetView, &QAction::triggered, this, &ViewerPrivate::resetView);
     connect(d.ui->displayCollapse, &QAction::triggered, this, &ViewerPrivate::collapse);
     connect(d.ui->displayExpand, &QAction::triggered, this, &ViewerPrivate::expand);
+    connect(d.ui->helpAbout, &QAction::triggered, this, &ViewerPrivate::openAbout);
     connect(d.ui->helpGithubReadme, &QAction::triggered, this, &ViewerPrivate::openGithubReadme);
     connect(d.ui->helpGithubIssues, &QAction::triggered, this, &ViewerPrivate::openGithubIssues);
     {
@@ -382,6 +306,54 @@ ViewerPrivate::init()
     renderView()->setFocus();
     initSettings();
     newFile();
+}
+
+void
+ViewerPrivate::initDocks()
+{
+    d.outlinerView = new OutlinerView(d.viewer.data());
+    d.outlinerView->setObjectName("outlinerView");
+    d.outlinerView->setAttribute(Qt::WA_DeleteOnClose, false);
+    d.outlinerDock = createDock("outlinerDock", "Outliner", d.outlinerView, d.outlinerArea);
+    d.progressView = new ProgressView(d.viewer.data());
+    d.progressView->setObjectName("progressView");
+    d.progressView->setAttribute(Qt::WA_DeleteOnClose, false);
+    d.progressDock = createDock("progressDock", "Progress", d.progressView, d.progressArea);
+    d.pythonDialog = new PythonDialog(d.viewer.data());
+    d.pythonDialog->setObjectName("pythonDialog");
+    d.pythonDialog->setAttribute(Qt::WA_DeleteOnClose, false);
+    d.pythonDialog->setWindowFlags(Qt::Tool | Qt::WindowTitleHint | Qt::WindowCloseButtonHint);
+#ifdef Q_OS_MAC
+    d.pythonDialog->setAttribute(Qt::WA_MacAlwaysShowToolWindow, true);
+#endif
+    d.pythonDialog->setWindowTitle("Python");
+    d.pythonDialog->installEventFilter(this);
+    d.pythonDialog->hide();
+    d.consoleDialog = new ConsoleDialog(d.viewer.data());
+    d.consoleDialog->setWindowFlags(Qt::Tool | Qt::WindowTitleHint | Qt::WindowCloseButtonHint);
+#ifdef Q_OS_MAC
+    d.consoleDialog->setAttribute(Qt::WA_MacAlwaysShowToolWindow, true);
+#endif
+    d.consoleDialog->setAttribute(Qt::WA_DeleteOnClose, false);
+    d.consoleDialog->setWindowTitle("Console");
+    d.consoleDialog->hide();
+    connect(d.outlinerDock, &QDockWidget::dockLocationChanged, this,
+            [this](Qt::DockWidgetArea area) { d.outlinerArea = area; });
+    connect(d.progressDock, &QDockWidget::dockLocationChanged, this,
+            [this](Qt::DockWidgetArea area) { d.progressArea = area; });
+
+    connect(d.outlinerDock, &QDockWidget::visibilityChanged, this,
+            [this](bool visible) { updateDockAction(d.ui->viewOutliner, visible); });
+    connect(d.progressDock, &QDockWidget::visibilityChanged, this,
+            [this](bool visible) { updateDockAction(d.ui->viewProgress, visible); });
+    connect(d.consoleDialog, &ConsoleDialog::visibilityChanged, this,
+            [this](bool visible) { updateDockAction(d.ui->viewConsole, visible); });
+    d.outlinerDock->show();
+    d.progressDock->show();
+    updateDockAction(d.ui->viewOutliner, true);
+    updateDockAction(d.ui->viewProgress, true);
+    updateDockAction(d.ui->viewPython, false);
+    updateDockAction(d.ui->viewConsole, false);
 }
 
 void
@@ -1313,6 +1285,110 @@ ViewerPrivate::toggleConsole(bool checked)
 }
 
 void
+ViewerPrivate::openAbout()
+{
+    QFile file(":/text/resources/Copyright.txt");
+    QString details;
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        qWarning() << "failed to open copyright resource:" << file.errorString();
+    }
+    else {
+        QTextStream in(&file);
+        details = in.readAll();
+    }
+    MessageBox::about(d.viewer.data(), QString("%1 %2").arg(PROJECT_NAME).arg(PROJECT_VERSION), PROJECT_COPYRIGHT,
+                      details, GITHUB_URL);
+}
+
+void
+ViewerPrivate::checkUpdates()
+{
+    auto compareVersion = [](const QString& version, const QString& other) {
+        auto parseVersion = [](QString value) {
+            value.remove(QRegularExpression(QStringLiteral("^[^0-9]*")));
+
+            QVector<int> parts;
+            const QStringList tokens = value.split('.', Qt::SkipEmptyParts);
+            for (const QString& token : tokens) {
+                bool ok = false;
+                const int number = token.toInt(&ok);
+                parts.append(ok ? number : 0);
+            }
+            return parts;
+        };
+
+        const QVector<int> a = parseVersion(version);
+        const QVector<int> b = parseVersion(other);
+        const qsizetype n = std::max(a.size(), b.size());
+
+        for (qsizetype i = 0; i < n; ++i) {
+            const int ai = (i < a.size()) ? a[i] : 0;
+            const int bi = (i < b.size()) ? b[i] : 0;
+            if (ai < bi)
+                return -1;
+            if (ai > bi)
+                return 1;
+        }
+
+        return 0;
+    };
+
+    auto* github = new GithubClient(this);
+
+    connect(github, &GithubClient::releasesReceived, this,
+            [this, github, compareVersion](const QList<Github::Release>& releases) {
+                github->deleteLater();
+
+                if (releases.isEmpty()) {
+                    qWarning() << "no github releases found";
+                    return;
+                }
+
+                const Github::Release& latest = releases.first();
+
+                if (compareVersion(PROJECT_VERSION, latest.tag) < 0) {
+                    const QString skipTag = settings()->value("skipTag", QString()).toString();
+
+                    if (skipTag == latest.tag)
+                        return;
+
+                    if (latest.assets.isEmpty()) {
+                        qWarning() << "no github release assets found";
+                        return;
+                    }
+
+                    const QString title = QString("There is a new version of %1 available").arg(PROJECT_NAME);
+                    const QString heading = tr("What's new in version %1").arg(latest.tag);
+                    const QString details = latest.notes;
+
+                    const bool download = MessageBox::update(d.viewer.data(), title, heading, details,
+                                                             latest.url.toString());
+
+                    if (download) {
+                        const Github::Asset& asset = latest.assets.first();
+                        QDesktopServices::openUrl(asset.url);
+                    }
+                    else {
+                        settings()->setValue("skipTag", latest.tag);
+                    }
+
+                    return;
+                }
+
+                MessageBox::information(
+                    d.viewer.data(), QString("%1 is up to date").arg(PROJECT_NAME),
+                    tr("You are running the latest version of %1 %2.").arg(PROJECT_NAME).arg(PROJECT_VERSION));
+            });
+
+    connect(github, &GithubClient::errorOccurred, this, [github](const QString& error) {
+        qWarning() << "github error:" << error;
+        github->deleteLater();
+    });
+
+    github->setUrl(GITHUB_URL);
+}
+
+void
 ViewerPrivate::openGithubReadme()
 {
     QDesktopServices::openUrl(QUrl("https://github.com/mikaelsundell/stageviz/blob/master/README.md"));
@@ -1480,6 +1556,39 @@ ViewerPrivate::notifyStatusChanged(Session::Notify::Status status, const QString
     });
 }
 
+DockWidget*
+ViewerPrivate::createDock(const QString& objectName, const QString& title, QWidget* view, Qt::DockWidgetArea area)
+{
+    DockWidget* dock = new DockWidget(d.viewer.data());
+    dock->setObjectName(objectName);
+    dock->setWindowTitle(title);
+    dock->setMinimumSize(QSize(350, 0));
+
+    QWidget* contents = new QWidget(dock);
+    contents->setObjectName(objectName + "Contents");
+    contents->setStyleSheet(QString());
+    contents->setProperty("DockWidget", QVariant(true));
+
+    QVBoxLayout* layout = new QVBoxLayout(contents);
+    layout->setSpacing(0);
+    layout->setContentsMargins(4, 4, 4, 4);
+    layout->addWidget(view);
+
+    dock->setWidget(contents);
+    d.viewer->addDockWidget(area, dock);
+    return dock;
+}
+
+void
+ViewerPrivate::updateDockAction(QAction* action, bool checked)
+{
+    if (!action)
+        return;
+    action->blockSignals(true);
+    action->setChecked(checked);
+    action->blockSignals(false);
+}
+
 void
 ViewerPrivate::updateModified(bool modified)
 {
@@ -1555,18 +1664,12 @@ ViewerPrivate::saveChanges()
     if (!hasChanges())
         return true;
 
-    QString name = session()->filename().isEmpty() ? "Untitled" : QFileInfo(session()->filename()).fileName();
+    const QString name = session()->filename().isEmpty() ? "Untitled" : QFileInfo(session()->filename()).fileName();
 
-    QMessageBox::StandardButton button
-        = QMessageBox::warning(d.viewer.data(), PROJECT_NAME, QString("Save changes to %1?").arg(name),
-                               QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel, QMessageBox::Save);
-
-    switch (button) {
-    case QMessageBox::Save: return saveFile();
-    case QMessageBox::Discard: return true;
-    case QMessageBox::Cancel:
-    default: return false;
+    if (MessageBox::question(d.viewer.data(), tr("Save changes?"), tr("Save changes to %1?").arg(name))) {
+        return saveFile();
     }
+    return true;
 }
 
 void

@@ -386,13 +386,11 @@ TreeWidget::mouseReleaseEvent(QMouseEvent* event)
 
         if (p->hitCheckbox(event->pos(), &index)) {
             Qt::CheckState state = static_cast<Qt::CheckState>(index.data(Qt::CheckStateRole).toInt());
-
             switch (state) {
             case Qt::Unchecked: state = Qt::Checked; break;
             case Qt::Checked:
             case Qt::PartiallyChecked: state = Qt::Unchecked; break;
             }
-
             model()->setData(index, state, Qt::CheckStateRole);
             p->d.suppressNextSelection = false;
             event->accept();

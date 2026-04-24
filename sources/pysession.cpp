@@ -467,7 +467,6 @@ initPySessionType()
     PySessionType.tp_new = PySession_new;
     PySessionType.tp_dealloc = reinterpret_cast<destructor>(PySession_dealloc);
     PySessionType.tp_methods = PySession_methods;
-
     return PyType_Ready(&PySessionType) >= 0;
 }
 
@@ -479,7 +478,6 @@ addPySessionType(PyObject* module)
         Py_DECREF(&PySessionType);
         return -1;
     }
-
     return 0;
 }
 

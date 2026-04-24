@@ -12,7 +12,6 @@ oiiotool AppIcon.png --attrib "Exif:ColorSpace" 1 --resize 32x32 -o AppIcon_ico_
 oiiotool AppIcon.png --attrib "Exif:ColorSpace" 1 --resize 48x48 -o AppIcon_ico_set\icon_48x48.png
 oiiotool AppIcon.png --attrib "Exif:ColorSpace" 1 --resize 64x64 -o AppIcon_ico_set\icon_64x64.png
 oiiotool AppIcon.png --attrib "Exif:ColorSpace" 1 --resize 128x128 -o AppIcon_ico_set\icon_128x128.png
-oiiotool AppIcon.png --attrib "Exif:ColorSpace" 1 --resize 256x256 -o AppIcon_ico_set\icon_256x256.png
 
 REM Create the ICO file using all the resized PNGs
 oiiotool ^
@@ -21,5 +20,4 @@ oiiotool ^
     AppIcon_ico_set\icon_48x48.png ^
     AppIcon_ico_set\icon_64x64.png ^
     AppIcon_ico_set\icon_128x128.png ^
-    AppIcon_ico_set\icon_256x256.png ^
     --compression png -o AppIcon.ico

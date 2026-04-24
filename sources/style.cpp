@@ -40,7 +40,6 @@ public:
         int scale;
         int state;
         int physicalSize;
-
         bool operator==(const IconKey& o) const
         {
             return role == o.role && scale == o.scale && state == o.state && physicalSize == o.physicalSize;
@@ -208,8 +207,8 @@ StylePrivate::updateTheme()
     map(Style::ColorRole::Progress, QColor::fromHsl(216, 82, 20));
     map(Style::ColorRole::Button, QColor::fromHsl(220, 6, 36));
     map(Style::ColorRole::ButtonAlt, QColor::fromHsl(220, 6, 64));
-    map(Style::ColorRole::Item, QColor::fromHsl(220, 6, 48));
-    map(Style::ColorRole::ItemAlt, QColor::fromHsl(220, 6, 40));
+    map(Style::ColorRole::Item, QColor::fromHsl(220, 6, 50));
+    map(Style::ColorRole::ItemAlt, QColor::fromHsl(220, 6, 42));
     map(Style::ColorRole::Render, QColor::fromHsl(210, 11, 35));
     map(Style::ColorRole::RenderAlt, QColor::fromHsl(210, 6, 25));
     map(Style::ColorRole::Selection, QColor::fromHsl(55, 220, 180));

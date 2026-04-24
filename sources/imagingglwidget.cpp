@@ -182,21 +182,19 @@ ImagingGLWidgetPrivate::initGL()
         qWarning() << "could not initialize gl engine, no current OpenGL context";
         return;
     }
-
     UsdImagingGLEngine::Parameters params {};
     params.displayUnloadedPrimsWithBounds = true;
     params.allowAsynchronousSceneProcessing = false;
-
     d.glEngine.reset(new UsdImagingGLEngine(params));
-
     Hgi* hgi = d.glEngine->GetHgi();
     if (!hgi) {
         qWarning() << "could not initialize gl engine, no hydra driver found.";
         d.glEngine.reset();
+        d.sceneStats = QImage();
+        d.performanceStats = QImage();
+        d.axis = QImage();
         return;
     }
-
-    qInfo() << "hydra Hgi API:" << TfTokenToQString(hgi->GetAPIName());
 }
 
 void
@@ -430,13 +428,14 @@ ImagingGLWidgetPrivate::paintGL()
             d.gpuPerformanceMs = gpuTimeNSecs / 1e6;
             d.count++;
             Q_EMIT d.glwidget->renderReady(timer.elapsed());
+
+            if (d.performanceStatsEnabled) {
+                updatePerformanceStats();
+            }
         }
         else {
             qWarning() << "gl engine is not inititialized, render pass will be skipped";
         }
-    }
-    if (d.performanceStatsEnabled) {
-        updatePerformanceStats();
     }
 }
 
@@ -444,6 +443,9 @@ void
 ImagingGLWidgetPrivate::paintEvent(QPaintEvent* event)
 {
     Q_UNUSED(event);
+    if (!d.glEngine) {
+        return;
+    }
 
     QPainter painter(d.glwidget);
     painter.setRenderHint(QPainter::Antialiasing, true);
@@ -1283,6 +1285,11 @@ ImagingGLWidgetPrivate::updateSceneStats()
 void
 ImagingGLWidgetPrivate::updatePerformanceStats()
 {
+    if (!d.glEngine) {
+        d.performanceStats = QImage();
+        return;
+    }
+
     const VtDictionary stats = d.glEngine->GetRenderStats();
     auto fmtMB = [&](uint64_t bytes) { return QString::number(double(bytes) / (1024.0 * 1024.0), 'f', 2) + " MB"; };
 
@@ -1292,8 +1299,11 @@ ImagingGLWidgetPrivate::updatePerformanceStats()
     };
 
     QVector<Row> rows;
-    rows.append({ "GPU time", QString::number(d.gpuPerformanceMs, 'f', 2) + " ms" });
+    if (Hgi* hgi = d.glEngine->GetHgi()) {
+        rows.append({ "Hgi", TfTokenToQString(hgi->GetAPIName()) });
+    }
 
+    rows.append({ "GPU time", QString::number(d.gpuPerformanceMs, 'f', 2) + " ms" });
     if (stats.count("gpuMemoryUsed"))
         rows.append({ "GPU mem", fmtMB(VtDictionaryGet<uint64_t>(stats, "gpuMemoryUsed")) });
     if (stats.count("primvar"))
@@ -1304,6 +1314,7 @@ ImagingGLWidgetPrivate::updatePerformanceStats()
         rows.append({ " shader", fmtMB(VtDictionaryGet<uint64_t>(stats, "drawingShader")) });
     if (stats.count("textureMemory"))
         rows.append({ " texture", fmtMB(VtDictionaryGet<uint64_t>(stats, "textureMemory")) });
+
 
     double dpr = d.glwidget->devicePixelRatioF();
     QFont font = app()->font();
