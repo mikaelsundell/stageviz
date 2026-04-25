@@ -183,8 +183,8 @@ ImagingGLWidgetPrivate::initGL()
         return;
     }
     UsdImagingGLEngine::Parameters params {};
-    params.displayUnloadedPrimsWithBounds = true;
-    params.allowAsynchronousSceneProcessing = false;
+    params.displayUnloadedPrimsWithBounds = false;
+    params.allowAsynchronousSceneProcessing = true;
     d.glEngine.reset(new UsdImagingGLEngine(params));
     Hgi* hgi = d.glEngine->GetHgi();
     if (!hgi) {

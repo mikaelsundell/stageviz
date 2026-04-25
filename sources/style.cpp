@@ -214,7 +214,7 @@ StylePrivate::updateTheme()
     map(Style::ColorRole::Selection, QColor::fromHsl(55, 220, 180));
     map(Style::ColorRole::SelectionAlt, QColor::fromHsl(55, 140, 120));
     map(Style::ColorRole::Warning, QColor(220, 170, 40));
-    map(Style::ColorRole::Error, QColor(200, 50, 50));
+    map(Style::ColorRole::Error, QColor(200, 80, 120));
 
     d.icons[roleName(Style::IconRole::BranchOpen)] = ":/icons/resources/BranchOpen.png";
     d.icons[roleName(Style::IconRole::BranchClosed)] = ":/icons/resources/BranchClosed.png";

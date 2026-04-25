@@ -53,24 +53,6 @@ protected:
     bool viewportEvent(QEvent* event) override;
 
     /**
-     * @brief Handles mouse press events.
-     * @param event Mouse event.
-     */
-    void mousePressEvent(QMouseEvent* event) override;
-
-    /**
-     * @brief Handles mouse release events.
-     * @param event Mouse event.
-     */
-    void mouseReleaseEvent(QMouseEvent* event) override;
-
-    /**
-     * @brief Handles mouse double click events.
-     * @param event Mouse event.
-     */
-    void mouseDoubleClickEvent(QMouseEvent* event) override;
-
-    /**
      * @brief Returns the selection command for a given event.
      *
      * Restricts selection updates to intended interactive regions such as
@@ -82,14 +64,6 @@ protected:
      */
     QItemSelectionModel::SelectionFlags selectionCommand(const QModelIndex& index,
                                                          const QEvent* event = nullptr) const override;
-
-    /**
-     * @brief Draws custom branch indicators for a row.
-     * @param painter Painter used for drawing.
-     * @param rect Qt branch rect.
-     * @param index Row model index.
-     */
-    void drawBranches(QPainter* painter, const QRect& rect, const QModelIndex& index) const override;
 
     /**
      * @brief Draws a custom row background and debug overlays.
