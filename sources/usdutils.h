@@ -35,6 +35,27 @@ namespace path {
     QList<SdfPath> topLevelPaths(const QList<SdfPath>& paths);
 
     /**
+     * @brief Removes duplicate prim paths while preserving order.
+     *
+     * Keeps the first occurrence of each non-empty path and skips
+     * subsequent duplicates. Empty paths are ignored.
+     *
+     * Example:
+     *   /A
+     *   /B
+     *   /A
+     *
+     * Result:
+     *   /A
+     *   /B
+     *
+     * @param paths Prim paths to filter.
+     *
+     * @return List of unique, non-empty prim paths.
+     */
+    QList<SdfPath> uniquePaths(const QList<SdfPath>& paths);
+
+    /**
      * @brief Filters a list of prim paths to only minimal root paths.
      *
      * Sorts the input by hierarchy depth and removes paths that are equal to,

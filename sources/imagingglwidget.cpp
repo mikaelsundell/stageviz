@@ -89,16 +89,6 @@ public:
     bool isPathMaskedIn(const SdfPath& path) const;
     bool pickMaskedIntersection(const UsdImagingGLEngine::PickParams& pickParams, const GfFrustum& pickFrustum,
                                 UsdImagingGLEngine::IntersectionResultVector* results);
-    static QList<SdfPath> uniquePaths(const QList<SdfPath>& paths)
-    {
-        QList<SdfPath> unique;
-        unique.reserve(paths.size());
-        for (const SdfPath& path : paths) {
-            if (!path.IsEmpty() && !unique.contains(path))
-                unique.append(path);
-        }
-        return unique;
-    }
 
     struct Data {
         size_t count;
@@ -463,8 +453,7 @@ ImagingGLWidgetPrivate::paintEvent(QPaintEvent* event)
         painter.drawImage(QPoint(0, 0), d.sceneStats);
     }
     if (d.performanceStatsEnabled) {
-        int margin = 24;
-        QPoint pos(d.glwidget->width() - d.performanceStats.width() / d.performanceStats.devicePixelRatio() - margin,
+        QPoint pos(d.glwidget->width() - d.performanceStats.width() / d.performanceStats.devicePixelRatio(),
                    0);
         painter.drawImage(pos, d.performanceStats);
     }
@@ -763,7 +752,7 @@ ImagingGLWidgetPrivate::sweepEvent(const QRect& rect, QMouseEvent* event)
         }
     }
 
-    selectedPaths = uniquePaths(selectedPaths);
+    selectedPaths = path::uniquePaths(selectedPaths);
 
     bool update = false;
     if (!selectedPaths.isEmpty()) {
@@ -883,7 +872,7 @@ ImagingGLWidgetPrivate::captureVisible()
         }
     }
 
-    captured = uniquePaths(captured);
+    captured = path::uniquePaths(captured);
     bool changed = false;
     int addedCount = 0;
     for (const SdfPath& path : captured) {
@@ -1260,24 +1249,24 @@ ImagingGLWidgetPrivate::updateSceneStats()
     p.setRenderHint(QPainter::TextAntialiasing);
     p.setFont(font);
 
+    QColor textColor;
+    if (d.stage) {
+        textColor = style()->color(Style::ColorRole::Text, Style::UIState::Normal);
+    }
+    else {
+        textColor = style()->color(Style::ColorRole::Text, Style::UIState::Disabled);
+    }
+    const QColor shadowColor(0, 0, 0, 160);
     int y = marginTop + fm.ascent();
+    int labelX = marginLeft;
+    int valueX = marginLeft + labelWidth + columnSpacing;
     for (const auto& r : rows) {
-        int labelX = marginLeft;
-        int valueX = marginLeft + labelWidth + columnSpacing;
-        p.setPen(QColor(0, 0, 0, 160));
+        p.setPen(shadowColor);
         p.drawText(labelX + 1, y + 1, r.label);
         p.drawText(valueX + 1, y + 1, r.value);
-        QColor textColor;
-        if (d.stage) {
-            textColor = style()->color(Style::ColorRole::Text, Style::UIState::Normal);
-        }
-        else {
-            textColor = style()->color(Style::ColorRole::Text, Style::UIState::Disabled);
-        }
         p.setPen(textColor);
         p.drawText(labelX, y, r.label);
         p.drawText(valueX, y, r.value);
-
         y += rowHeight;
     }
 }
@@ -1285,12 +1274,12 @@ ImagingGLWidgetPrivate::updateSceneStats()
 void
 ImagingGLWidgetPrivate::updatePerformanceStats()
 {
-    if (!d.glEngine) {
-        d.performanceStats = QImage();
-        return;
-    }
+    const bool hasEngine = d.glEngine && d.stage;
 
-    const VtDictionary stats = d.glEngine->GetRenderStats();
+    VtDictionary stats;
+    if (d.glEngine)
+        stats = d.glEngine->GetRenderStats();
+
     auto fmtMB = [&](uint64_t bytes) { return QString::number(double(bytes) / (1024.0 * 1024.0), 'f', 2) + " MB"; };
 
     struct Row {
@@ -1299,45 +1288,51 @@ ImagingGLWidgetPrivate::updatePerformanceStats()
     };
 
     QVector<Row> rows;
-    if (Hgi* hgi = d.glEngine->GetHgi()) {
-        rows.append({ "Hgi", TfTokenToQString(hgi->GetAPIName()) });
+    if (d.glEngine) {
+        if (Hgi* hgi = d.glEngine->GetHgi())
+            rows.append({ "Hgi", TfTokenToQString(hgi->GetAPIName()) });
+    }
+    else {
+        rows.append(Row { "Hgi", QString::fromUtf8("-") });
     }
 
-    rows.append({ "GPU time", QString::number(d.gpuPerformanceMs, 'f', 2) + " ms" });
-    if (stats.count("gpuMemoryUsed"))
-        rows.append({ "GPU mem", fmtMB(VtDictionaryGet<uint64_t>(stats, "gpuMemoryUsed")) });
-    if (stats.count("primvar"))
-        rows.append({ " primvar", fmtMB(VtDictionaryGet<uint64_t>(stats, "primvar")) });
-    if (stats.count("topology"))
-        rows.append({ " topology", fmtMB(VtDictionaryGet<uint64_t>(stats, "topology")) });
-    if (stats.count("drawingShader"))
-        rows.append({ " shader", fmtMB(VtDictionaryGet<uint64_t>(stats, "drawingShader")) });
-    if (stats.count("textureMemory"))
-        rows.append({ " texture", fmtMB(VtDictionaryGet<uint64_t>(stats, "textureMemory")) });
+    rows.append({ "GPU time", hasEngine ? QString::number(d.gpuPerformanceMs, 'f', 2) + " ms" : "-" });
+    if (hasEngine) {
+        if (stats.count("gpuMemoryUsed"))
+            rows.append({ "GPU mem", fmtMB(VtDictionaryGet<uint64_t>(stats, "gpuMemoryUsed")) });
+        if (stats.count("primvar"))
+            rows.append({ "primvar", fmtMB(VtDictionaryGet<uint64_t>(stats, "primvar")) });
+        if (stats.count("topology"))
+            rows.append({ "topology", fmtMB(VtDictionaryGet<uint64_t>(stats, "topology")) });
+        if (stats.count("drawingShader"))
+            rows.append({ "shader", fmtMB(VtDictionaryGet<uint64_t>(stats, "drawingShader")) });
+        if (stats.count("textureMemory"))
+            rows.append({ "texture", fmtMB(VtDictionaryGet<uint64_t>(stats, "textureMemory")) });
+    }
 
-
-    double dpr = d.glwidget->devicePixelRatioF();
+    const double dpr = d.glwidget->devicePixelRatioF();
     QFont font = app()->font();
     font.setPixelSize(style()->fontSize(Style::UIScale::Small));
     font.setLetterSpacing(QFont::AbsoluteSpacing, 0.5);
 
     QFontMetrics fm(font);
-    int rowHeight = fm.lineSpacing() + 2;
-    int marginLeft = 18;
-    int marginTop = 16;
-    int columnSpacing = 20;
+    const int rowHeight = fm.lineSpacing() + 2;
+    const int marginLeft = 18;
+    const int marginRight = 18;
+    const int marginTop = 16;
+    const int columnSpacing = 24;
     int labelWidth = 0;
     int valueWidth = 0;
 
-    for (const auto& r : rows) {
+    for (const Row& r : rows) {
         labelWidth = std::max(labelWidth, fm.horizontalAdvance(r.label));
         valueWidth = std::max(valueWidth, fm.horizontalAdvance(r.value));
     }
 
-    qsizetype width = labelWidth + columnSpacing + valueWidth + marginLeft;
-    qsizetype height = rows.size() * rowHeight + marginTop;
+    const qsizetype width = marginLeft + labelWidth + columnSpacing + valueWidth + marginRight;
+    const qsizetype height = rows.size() * rowHeight + marginTop;
 
-    d.performanceStats = QImage(width * dpr, height * dpr, QImage::Format_ARGB32_Premultiplied);
+    d.performanceStats = QImage(qRound(width * dpr), qRound(height * dpr), QImage::Format_ARGB32_Premultiplied);
     d.performanceStats.setDevicePixelRatio(dpr);
     d.performanceStats.fill(Qt::transparent);
 
@@ -1345,26 +1340,29 @@ ImagingGLWidgetPrivate::updatePerformanceStats()
     p.setRenderHint(QPainter::TextAntialiasing);
     p.setFont(font);
 
+    QColor textColor;
+    if (d.stage)
+    {
+        textColor = style()->color(Style::ColorRole::Text, Style::UIState::Normal);
+    }
+    else
+    {
+        textColor = style()->color(Style::ColorRole::Text, Style::UIState::Disabled);
+    }
+    const QColor shadowColor(0, 0, 0, 160);
+    const int labelX = marginLeft;
+    const int valueRight = width - marginRight;
     int y = marginTop + fm.ascent();
 
-    for (const auto& r : rows) {
-        int labelX = marginLeft;
-        int valueX = marginLeft + labelWidth + columnSpacing;
-
-        p.setPen(QColor(0, 0, 0, 160));
-        p.drawText(labelX + 1, y + 1, r.label);
-        p.drawText(valueX + 1, y + 1, r.value);
-        QColor textColor;
-        if (d.stage) {
-            textColor = style()->color(Style::ColorRole::Text, Style::UIState::Normal);
-        }
-        else {
-            textColor = style()->color(Style::ColorRole::Text, Style::UIState::Disabled);
-        }
+    for (const Row& r : rows) {
+        const QRect labelRect(labelX, y - fm.ascent(), labelWidth, rowHeight);
+        const QRect valueRect(valueRight - valueWidth, y - fm.ascent(), valueWidth, rowHeight);
+        p.setPen(shadowColor);
+        p.drawText(labelRect.translated(1, 1), Qt::AlignLeft | Qt::AlignVCenter, r.label);
+        p.drawText(valueRect.translated(1, 1), Qt::AlignRight | Qt::AlignVCenter, r.value);
         p.setPen(textColor);
-        p.drawText(labelX, y, r.label);
-        p.drawText(valueX, y, r.value);
-
+        p.drawText(labelRect, Qt::AlignLeft | Qt::AlignVCenter, r.label);
+        p.drawText(valueRect, Qt::AlignRight | Qt::AlignVCenter, r.value);
         y += rowHeight;
     }
 }

@@ -270,6 +270,7 @@ ViewerPrivate::init()
     connect(d.ui->displayCollapse, &QAction::triggered, this, &ViewerPrivate::collapse);
     connect(d.ui->displayExpand, &QAction::triggered, this, &ViewerPrivate::expand);
     connect(d.ui->helpAbout, &QAction::triggered, this, &ViewerPrivate::openAbout);
+    connect(d.ui->helpCheckUpdates, &QAction::triggered, this, &ViewerPrivate::checkUpdates);
     connect(d.ui->helpGithubReadme, &QAction::triggered, this, &ViewerPrivate::openGithubReadme);
     connect(d.ui->helpGithubIssues, &QAction::triggered, this, &ViewerPrivate::openGithubIssues);
     {

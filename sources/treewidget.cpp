@@ -74,11 +74,12 @@ public:
             if (index.column() == 0) {
                 int x = l.contentRect.left() + xOffset;
 
-                l.isCheckable = (index.flags() & Qt::ItemIsUserCheckable) && index.data(Qt::CheckStateRole).isValid();
+                l.isCheckable = (index.flags() & Qt::ItemIsUserCheckable)
+                                && index.data(Qt::CheckStateRole).isValid();
 
                 if (l.isCheckable) {
                     l.checkRect = QRect(x, l.contentRect.center().y() - iconSize / 2 + yOffset, iconSize, iconSize);
-                    l.checkHitRect = l.checkRect.adjusted(3, 1, -2, -1);
+                    l.checkHitRect = l.checkRect;
                     x = l.checkRect.right() + 1 + iconSpacing;
                 }
 
@@ -183,17 +184,31 @@ public:
             if (index.column() == 0) {
                 painter->setBrush(Qt::NoBrush);
 
+                if (!l.checkRect.isNull()) {
+                    QPen checkRectPen(Qt::yellow);
+                    checkRectPen.setWidth(1);
+                    painter->setPen(checkRectPen);
+                    painter->drawRect(l.checkRect.adjusted(0, 0, -1, -1));
+                }
+
                 if (!l.checkHitRect.isNull()) {
-                    QPen checkPen(Qt::cyan);
-                    checkPen.setWidth(1);
-                    painter->setPen(checkPen);
+                    QPen checkHitPen(Qt::cyan);
+                    checkHitPen.setWidth(1);
+                    painter->setPen(checkHitPen);
                     painter->drawRect(l.checkHitRect.adjusted(0, 0, -1, -1));
                 }
 
+                if (!l.iconRect.isNull()) {
+                    QPen iconRectPen(Qt::red);
+                    iconRectPen.setWidth(1);
+                    painter->setPen(iconRectPen);
+                    painter->drawRect(l.iconRect.adjusted(0, 0, -1, -1));
+                }
+
                 if (!l.iconHitRect.isNull()) {
-                    QPen iconPen(Qt::magenta);
-                    iconPen.setWidth(1);
-                    painter->setPen(iconPen);
+                    QPen iconHitPen(Qt::magenta);
+                    iconHitPen.setWidth(1);
+                    painter->setPen(iconHitPen);
                     painter->drawRect(l.iconHitRect.adjusted(0, 0, -1, -1));
                 }
 
@@ -207,7 +222,9 @@ public:
             painter->restore();
         }
     };
+
     enum DropMode { DropNone = 0, DropAboveItem = 1, DropOnItem = 2, DropBelowItem = 3 };
+
     struct Data {
         bool suppressSelection = false;
         bool branchExpanded = false;
@@ -216,6 +233,7 @@ public:
         QPointer<ItemDelegate> delegate;
         QPointer<TreeWidget> tree;
     };
+
     Data d;
 };
 
@@ -238,6 +256,7 @@ TreeWidgetPrivate::eventFilter(QObject* watched, QEvent* event)
             auto* mouse = static_cast<QMouseEvent*>(event);
             if (mouse->button() != Qt::LeftButton)
                 break;
+
             QModelIndex index;
             if (hitBranch(mouse->pos(), &index)) {
                 d.suppressSelection = true;
@@ -246,6 +265,7 @@ TreeWidgetPrivate::eventFilter(QObject* watched, QEvent* event)
                 d.checkboxIndex = QModelIndex();
                 return true;
             }
+
             if (hitCheckbox(mouse->pos(), &index)) {
                 d.suppressSelection = true;
                 d.checkboxIndex = index;
@@ -253,9 +273,11 @@ TreeWidgetPrivate::eventFilter(QObject* watched, QEvent* event)
                 d.branchExpanded = false;
                 return true;
             }
+
             clearHit();
             break;
         }
+
         case QEvent::MouseButtonRelease: {
             auto* mouse = static_cast<QMouseEvent*>(event);
             if (mouse->button() != Qt::LeftButton)
@@ -269,12 +291,15 @@ TreeWidgetPrivate::eventFilter(QObject* watched, QEvent* event)
                     const bool targetExpanded = !d.branchExpanded;
                     d.tree->setExpanded(index, targetExpanded);
                 }
+
                 clearHit();
                 return true;
             }
+
             if (d.checkboxIndex.isValid()) {
                 const bool releaseOnCheckbox = hitCheckbox(mouse->pos(), &index);
                 const bool sameCheckbox = releaseOnCheckbox && index == d.checkboxIndex;
+
                 if (sameCheckbox) {
                     Qt::CheckState state = static_cast<Qt::CheckState>(index.data(Qt::CheckStateRole).toInt());
                     switch (state) {
@@ -282,28 +307,35 @@ TreeWidgetPrivate::eventFilter(QObject* watched, QEvent* event)
                     case Qt::Checked:
                     case Qt::PartiallyChecked: state = Qt::Unchecked; break;
                     }
+
                     d.tree->model()->setData(index, state, Qt::CheckStateRole);
                 }
+
                 clearHit();
                 return true;
             }
+
             break;
         }
+
         case QEvent::MouseButtonDblClick: {
             auto* mouse = static_cast<QMouseEvent*>(event);
             if (mouse->button() != Qt::LeftButton)
                 break;
-            if (hitBranch(mouse->pos())) {
+
+            if (hitBranch(mouse->pos()))
                 return true;
-            }
-            if (hitCheckbox(mouse->pos())) {
+
+            if (hitCheckbox(mouse->pos()))
                 return true;
-            }
+
             break;
         }
+
         default: break;
         }
     }
+
     return QObject::eventFilter(watched, event);
 }
 
@@ -324,6 +356,7 @@ TreeWidgetPrivate::hasSelectedChildren(QTreeWidgetItem* item) const
         if (child->isSelected() || hasSelectedChildren(child))
             return true;
     }
+
     return false;
 }
 
@@ -332,13 +365,16 @@ TreeWidgetPrivate::visualRowIndex(const QModelIndex& index) const
 {
     int row = 0;
     QModelIndex current = index.siblingAtColumn(0);
+
     while (true) {
         QModelIndex above = d.tree->indexAbove(current);
         if (!above.isValid())
             break;
+
         current = above;
         ++row;
     }
+
     return row;
 }
 
@@ -476,6 +512,23 @@ TreeWidgetPrivate::drawBranches(QPainter* painter, const QRect& rect, const QMod
                                 : app()->style()->icon(Style::IconRole::BranchClosed, Style::UIScale::Small);
 
     icon.paint(painter, r, Qt::AlignCenter);
+
+#ifdef STAGEVIZ_DEBUG_TREE_HITREGIONS
+    painter->save();
+    painter->setBrush(Qt::NoBrush);
+
+    QPen branchRectPen(Qt::blue);
+    branchRectPen.setWidth(1);
+    painter->setPen(branchRectPen);
+    painter->drawRect(r.adjusted(0, 0, -1, -1));
+
+    QPen branchHitPen(Qt::cyan);
+    branchHitPen.setWidth(1);
+    painter->setPen(branchHitPen);
+    painter->drawRect(hr.adjusted(0, 0, -1, -1));
+
+    painter->restore();
+#endif
 }
 
 void
@@ -544,8 +597,11 @@ TreeWidgetPrivate::drawRow(QPainter* painter, const QStyleOptionViewItem& option
         case TreeWidgetPrivate::DropBelowItem:
             painter->drawLine(rowRect.left(), rowRect.bottom(), rowRect.right(), rowRect.bottom());
             break;
-        case TreeWidgetPrivate::DropOnItem: painter->drawRect(rowRect.adjusted(1, 1, -2, -2)); break;
-        default: break;
+        case TreeWidgetPrivate::DropOnItem:
+            painter->drawRect(rowRect.adjusted(1, 1, -2, -2));
+            break;
+        default:
+            break;
         }
 
         painter->restore();
@@ -573,8 +629,6 @@ TreeWidget::itemViewOption(const QModelIndex& index) const
     opt.rect = visualRect(index);
     return opt;
 }
-
-
 
 bool
 TreeWidget::viewportEvent(QEvent* event)
@@ -619,7 +673,8 @@ TreeWidget::selectionCommand(const QModelIndex& index, const QEvent* event) cons
         return QItemSelectionModel::NoUpdate;
     }
 
-    default: break;
+    default:
+        break;
     }
 
     return QTreeWidget::selectionCommand(index, event);
@@ -645,6 +700,6 @@ TreeWidget::drawRow(QPainter* painter, const QStyleOptionViewItem& option, const
     }
 }
 
-}  // namespace stageviz
+} // namespace stageviz
 
 #include "treewidget.moc"

@@ -5,7 +5,7 @@
 cmake_minimum_required(VERSION 3.27)
 
 set(project_name "stageviz")
-set(project_bundle_name "Stageviz")
+set(project_output_name "Stageviz")
 
 project(${project_name})
 
@@ -236,8 +236,8 @@ if(APPLE)
     )
     list(APPEND project_resources "resources/AppIcon.icns")
     set(MACOSX_BUNDLE_EXECUTABLE_NAME ${project_name})
-    set(MACOSX_BUNDLE_INFO_STRING ${project_bundle_name})
-    set(MACOSX_BUNDLE_BUNDLE_NAME ${project_bundle_name})
+    set(MACOSX_BUNDLE_INFO_STRING ${project_output_name})
+    set(MACOSX_BUNDLE_BUNDLE_NAME ${project_output_name})
     set(MACOSX_BUNDLE_GUI_IDENTIFIER ${project_identifier})
     set(MACOSX_BUNDLE_ICON_FILE AppIcon.icns)
     set(MACOSX_BUNDLE_LONG_VERSION_STRING ${project_short_version})
@@ -287,6 +287,10 @@ elseif(WIN32)
     list(APPEND project_sources "sources/os_win.cpp")
 
     add_executable(${project_name} WIN32 ${project_sources} ${project_resources})
+    set_target_properties(${project_name} PROPERTIES
+        OUTPUT_NAME "${project_output_name}"
+    )
+
     target_compile_definitions(${project_name} PRIVATE
         WIN32
         WINVER=0x0A00
@@ -340,7 +344,7 @@ else()
 endif()
 
 target_compile_definitions(${project_name} PRIVATE
-    -DPROJECT_NAME="${project_name}"
+    -DPROJECT_NAME="${project_output_name}"
     -DPROJECT_VERSION="${project_long_version}"
     -DPROJECT_COPYRIGHT="${project_copyright}"
     -DPROJECT_IDENTIFIER="${project_identifier}"

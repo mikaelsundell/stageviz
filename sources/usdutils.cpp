@@ -37,6 +37,17 @@ namespace path {
         return result;
     }
 
+    QList<SdfPath> uniquePaths(const QList<SdfPath>& paths)
+    {
+        QList<SdfPath> unique;
+        unique.reserve(paths.size());
+        for (const SdfPath& path : paths) {
+            if (!path.IsEmpty() && !unique.contains(path))
+                unique.append(path);
+        }
+        return unique;
+    }
+
     QList<SdfPath> minimalRootPaths(const QList<SdfPath>& paths)
     {
         QList<SdfPath> sorted = paths;

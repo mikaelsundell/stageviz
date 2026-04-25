@@ -19,6 +19,7 @@ public:
 public:
     struct Data {
         QString title;
+        QString type;
         QString url;
         QString text;
         QString details;
@@ -54,8 +55,7 @@ MessageBoxPrivate::init()
 bool
 MessageBoxPrivate::exec()
 {
-    d.dialog->setWindowTitle(d.title);
-
+    d.dialog->setWindowTitle(d.type);
     d.ui->icon->setFixedSize(d.iconSize, d.iconSize);
     d.ui->icon->setScaledContents(true);
     if (d.showIcon) {
@@ -64,9 +64,7 @@ MessageBoxPrivate::exec()
     else {
         d.ui->icon->hide();
     }
-
     d.ui->title->setText(d.title);
-
     if (d.url.isEmpty()) {
         d.ui->url->hide();
     }
@@ -75,7 +73,6 @@ MessageBoxPrivate::exec()
         d.ui->url->setOpenExternalLinks(true);
         d.ui->url->show();
     }
-
     if (d.text.isEmpty()) {
         d.ui->text->hide();
     }
@@ -91,7 +88,6 @@ MessageBoxPrivate::exec()
         d.ui->details->setText(d.details);
         d.ui->details->show();
     }
-
     d.ui->accept->setText(d.acceptText);
     if (d.showReject) {
         d.ui->reject->setText(d.rejectText);
@@ -100,10 +96,8 @@ MessageBoxPrivate::exec()
     else {
         d.ui->reject->hide();
     }
-
     d.dialog->adjustSize();
     d.dialog->setMaximumHeight(d.dialog->sizeHint().height());
-
     return d.dialog->exec() == QDialog::Accepted;
 }
 
@@ -121,6 +115,7 @@ bool
 MessageBox::information(QWidget* parent, const QString& title, const QString& text)
 {
     MessageBox box(parent);
+    box.p->d.type = "Information";
     box.p->d.title = title;
     box.p->d.text = text;
     box.p->d.acceptText = tr("Close");
@@ -133,10 +128,11 @@ bool
 MessageBox::warning(QWidget* parent, const QString& title, const QString& text)
 {
     MessageBox box(parent);
+    box.p->d.type = "Warning";
     box.p->d.title = title;
     box.p->d.text = text;
     box.p->d.acceptText = tr("Close");
-    box.p->d.iconSize = 64;
+    box.p->d.showIcon = false;
     box.p->d.showReject = false;
     return box.p->exec();
 }
@@ -145,11 +141,12 @@ bool
 MessageBox::question(QWidget* parent, const QString& title, const QString& text)
 {
     MessageBox box(parent);
+    box.p->d.type = "Question";
     box.p->d.title = title;
     box.p->d.text = text;
     box.p->d.acceptText = tr("Yes");
     box.p->d.rejectText = tr("No");
-    box.p->d.iconSize = 64;
+    box.p->d.showIcon = false;
     box.p->d.showReject = true;
     return box.p->exec();
 }
@@ -159,6 +156,7 @@ MessageBox::about(QWidget* parent, const QString& title, const QString& heading,
                   const QString& url)
 {
     MessageBox box(parent);
+    box.p->d.type = title;
     box.p->d.title = title;
     box.p->d.url = url;
     box.p->d.text = heading;
@@ -173,6 +171,7 @@ MessageBox::update(QWidget* parent, const QString& title, const QString& heading
                    const QString& url)
 {
     MessageBox box(parent);
+    box.p->d.type = "Update";
     box.p->d.title = title;
     box.p->d.url = url;
     box.p->d.text = heading;
