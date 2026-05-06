@@ -261,6 +261,9 @@ ImagingGLWidgetPrivate::close()
     if (d.sceneStatsEnabled) {
         updateSceneStats();
     }
+    if (d.performanceStatsEnabled) {
+        updatePerformanceStats();
+    }
     d.glwidget->update();
 }
 
@@ -1311,7 +1314,7 @@ ImagingGLWidgetPrivate::updatePerformanceStats()
     }
 
     const double dpr = d.glwidget->devicePixelRatioF();
-    QFont font = app()->font();
+    QFont font = d.glwidget->font();
     font.setPixelSize(style()->fontSize(Style::UIScale::Small));
     font.setLetterSpacing(QFont::AbsoluteSpacing, 0.5);
 
@@ -1350,10 +1353,9 @@ ImagingGLWidgetPrivate::updatePerformanceStats()
         textColor = style()->color(Style::ColorRole::Text, Style::UIState::Disabled);
     }
     const QColor shadowColor(0, 0, 0, 160);
+    int y = marginTop + fm.ascent();
     const int labelX = marginLeft;
     const int valueRight = width - marginRight;
-    int y = marginTop + fm.ascent();
-
     for (const Row& r : rows) {
         const QRect labelRect(labelX, y - fm.ascent(), labelWidth, rowHeight);
         const QRect valueRect(valueRight - valueWidth, y - fm.ascent(), valueWidth, rowHeight);

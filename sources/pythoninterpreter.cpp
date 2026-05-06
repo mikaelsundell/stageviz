@@ -40,6 +40,7 @@ public:
     QString pythonError() const;
 
 public:
+    bool injectFactoryInstance(PyObject* module, const char* factoryName, const char* globalName);
     struct Data {
         QPointer<PythonInterpreter> interpreter;
         PyObject* globals = nullptr;
@@ -169,65 +170,12 @@ PythonInterpreterPrivate::init()
         return;
     }
 
-    PyObject* sessionFactory = PyObject_GetAttrString(module, "session");
-    if (!sessionFactory || !PyCallable_Check(sessionFactory)) {
-        PyErr_Print();
-        qWarning() << "[Python] Failed to get stageviz.session factory";
-        Py_XDECREF(sessionFactory);
+    if (!injectFactoryInstance(module, "application", "application")
+        || !injectFactoryInstance(module, "session", "session") || !injectFactoryInstance(module, "style", "style")) {
         Py_DECREF(module);
         return;
     }
 
-    PyObject* sessionInstance = PyObject_CallObject(sessionFactory, nullptr);
-    if (!sessionInstance) {
-        PyErr_Print();
-        qWarning() << "[Python] Failed to create stageviz session instance";
-        Py_DECREF(sessionFactory);
-        Py_DECREF(module);
-        return;
-    }
-
-    if (PyDict_SetItemString(d.globals, "session", sessionInstance) != 0) {
-        PyErr_Print();
-        qWarning() << "[Python] Failed to inject session instance";
-        Py_DECREF(sessionInstance);
-        Py_DECREF(sessionFactory);
-        Py_DECREF(module);
-        return;
-    }
-
-    Py_DECREF(sessionInstance);
-    Py_DECREF(sessionFactory);
-
-    PyObject* styleFactory = PyObject_GetAttrString(module, "style");
-    if (!styleFactory || !PyCallable_Check(styleFactory)) {
-        PyErr_Print();
-        qWarning() << "[Python] Failed to get stageviz.style factory";
-        Py_XDECREF(styleFactory);
-        Py_DECREF(module);
-        return;
-    }
-
-    PyObject* styleInstance = PyObject_CallObject(styleFactory, nullptr);
-    if (!styleInstance) {
-        PyErr_Print();
-        qWarning() << "[Python] Failed to create stageviz style instance";
-        Py_DECREF(styleFactory);
-        Py_DECREF(module);
-        return;
-    }
-
-    if (PyDict_SetItemString(d.globals, "style", styleInstance) != 0) {
-        PyErr_Print();
-        qWarning() << "[Python] Failed to inject style instance";
-        Py_DECREF(styleInstance);
-        Py_DECREF(styleFactory);
-        Py_DECREF(module);
-        return;
-    }
-
-    Py_DECREF(styleInstance);
-    Py_DECREF(styleFactory);
     Py_DECREF(module);
 
     d.initialized = true;
@@ -388,6 +336,38 @@ PythonInterpreterPrivate::pythonError() const
     }
 
     return msg;
+}
+
+bool
+PythonInterpreterPrivate::injectFactoryInstance(PyObject* module, const char* factoryName, const char* globalName)
+{
+    PyObject* factory = PyObject_GetAttrString(module, factoryName);
+    if (!factory || !PyCallable_Check(factory)) {
+        PyErr_Print();
+        qWarning() << "[Python] Failed to get stageviz." << factoryName << "factory";
+        Py_XDECREF(factory);
+        return false;
+    }
+
+    PyObject* instance = PyObject_CallObject(factory, nullptr);
+    if (!instance) {
+        PyErr_Print();
+        qWarning() << "[Python] Failed to create stageviz" << factoryName << "instance";
+        Py_DECREF(factory);
+        return false;
+    }
+
+    if (PyDict_SetItemString(d.globals, globalName, instance) != 0) {
+        PyErr_Print();
+        qWarning() << "[Python] Failed to inject" << globalName << "instance";
+        Py_DECREF(instance);
+        Py_DECREF(factory);
+        return false;
+    }
+
+    Py_DECREF(instance);
+    Py_DECREF(factory);
+    return true;
 }
 
 PythonInterpreter::PythonInterpreter(QObject* parent)

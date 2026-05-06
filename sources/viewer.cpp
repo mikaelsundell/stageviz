@@ -315,11 +315,21 @@ ViewerPrivate::initDocks()
     d.outlinerView = new OutlinerView(d.viewer.data());
     d.outlinerView->setObjectName("outlinerView");
     d.outlinerView->setAttribute(Qt::WA_DeleteOnClose, false);
+
     d.outlinerDock = createDock("outlinerDock", "Outliner", d.outlinerView, d.outlinerArea);
+    d.outlinerDock->setFeatures(QDockWidget::NoDockWidgetFeatures);
+    d.outlinerDock->setAllowedAreas(Qt::LeftDockWidgetArea);
+    d.outlinerDock->setTitleBarWidget(new QWidget(d.outlinerDock));
+
     d.progressView = new ProgressView(d.viewer.data());
     d.progressView->setObjectName("progressView");
     d.progressView->setAttribute(Qt::WA_DeleteOnClose, false);
+
     d.progressDock = createDock("progressDock", "Progress", d.progressView, d.progressArea);
+    d.progressDock->setFeatures(QDockWidget::NoDockWidgetFeatures);
+    d.progressDock->setAllowedAreas(Qt::RightDockWidgetArea);
+    d.progressDock->setTitleBarWidget(new QWidget(d.progressDock));
+
     d.pythonDialog = new PythonDialog(d.viewer.data());
     d.pythonDialog->setObjectName("pythonDialog");
     d.pythonDialog->setAttribute(Qt::WA_DeleteOnClose, false);
@@ -330,6 +340,7 @@ ViewerPrivate::initDocks()
     d.pythonDialog->setWindowTitle("Python");
     d.pythonDialog->installEventFilter(this);
     d.pythonDialog->hide();
+
     d.consoleDialog = new ConsoleDialog(d.viewer.data());
     d.consoleDialog->setWindowFlags(Qt::Tool | Qt::WindowTitleHint | Qt::WindowCloseButtonHint);
 #ifdef Q_OS_MAC
@@ -337,11 +348,8 @@ ViewerPrivate::initDocks()
 #endif
     d.consoleDialog->setAttribute(Qt::WA_DeleteOnClose, false);
     d.consoleDialog->setWindowTitle("Console");
+    d.consoleDialog->installEventFilter(this);
     d.consoleDialog->hide();
-    connect(d.outlinerDock, &QDockWidget::dockLocationChanged, this,
-            [this](Qt::DockWidgetArea area) { d.outlinerArea = area; });
-    connect(d.progressDock, &QDockWidget::dockLocationChanged, this,
-            [this](Qt::DockWidgetArea area) { d.progressArea = area; });
 
     connect(d.outlinerDock, &QDockWidget::visibilityChanged, this,
             [this](bool visible) { updateDockAction(d.ui->viewOutliner, visible); });
@@ -349,10 +357,12 @@ ViewerPrivate::initDocks()
             [this](bool visible) { updateDockAction(d.ui->viewProgress, visible); });
     connect(d.consoleDialog, &ConsoleDialog::visibilityChanged, this,
             [this](bool visible) { updateDockAction(d.ui->viewConsole, visible); });
+
     d.outlinerDock->show();
-    d.progressDock->show();
+    d.progressDock->hide();
+
     updateDockAction(d.ui->viewOutliner, true);
-    updateDockAction(d.ui->viewProgress, true);
+    updateDockAction(d.ui->viewProgress, false);
     updateDockAction(d.ui->viewPython, false);
     updateDockAction(d.ui->viewConsole, false);
 }
@@ -1537,7 +1547,6 @@ ViewerPrivate::notifyStatusChanged(Session::Notify::Status status, const QString
 
     if (hasError) {
         QColor color = style()->color(Style::ColorRole::Error);
-        color.setAlphaF(0.20);
         bar->setStyleSheet(QStringLiteral("QStatusBar { background-color: rgba(%1, %2, %3, %4); }"
                                           "QStatusBar::item { border: none; }")
                                .arg(color.red())
@@ -1563,7 +1572,7 @@ ViewerPrivate::createDock(const QString& objectName, const QString& title, QWidg
     DockWidget* dock = new DockWidget(d.viewer.data());
     dock->setObjectName(objectName);
     dock->setWindowTitle(title);
-    dock->setMinimumSize(QSize(350, 0));
+    dock->setMinimumSize(QSize(200, 0));
 
     QWidget* contents = new QWidget(dock);
     contents->setObjectName(objectName + "Contents");

@@ -267,6 +267,10 @@ QPlainTextEdit:disabled
     selection-color: $color.text.disabled;
 }
 
+QProgressBar {
+    color: $color.text;
+}
+
 QProgressBar::chunk {
     border-radius: 4px;
     background-color: $color.highlight;

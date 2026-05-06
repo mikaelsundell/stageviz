@@ -25,6 +25,8 @@ excluded_dlls = {  # lowercase
     "comctl32.dll",
     "comdlg32.dll",
     "crypt32.dll",
+    "d3d",
+    "D3Dcompiler",
     "dbg",
     "dnsapi.dll",
     "dwrite.dll",

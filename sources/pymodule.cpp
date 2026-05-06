@@ -3,6 +3,7 @@
 // https://github.com/mikaelsundell/stageviz
 
 #include "application.h"
+#include "pyapplication.h"
 #include "pyselectionlist.h"
 #include "pysession.h"
 #include "pystyle.h"
@@ -14,6 +15,16 @@ using namespace stageviz::python;
 static PyModuleDef pyStagevizModule = {
     PyModuleDef_HEAD_INIT, "stageviz", "Python interface for stageviz", -1, nullptr, nullptr, nullptr, nullptr, nullptr
 };
+
+static PyObject*
+PyModule_application(PyObject*, PyObject*)
+{
+    Application* app = Application::instance();
+    if (!app)
+        Py_RETURN_NONE;
+
+    return createPyApplication(app);
+}
 
 static PyObject*
 PyModule_session(PyObject*, PyObject*)
@@ -51,7 +62,9 @@ PyModule_getCurrentStage(PyObject*, PyObject*)
     return wrapUsdStage(s->stage());
 }
 
-static PyMethodDef Module_methods[] = { { "session", reinterpret_cast<PyCFunction>(PyModule_session), METH_NOARGS,
+static PyMethodDef Module_methods[] = { { "application", reinterpret_cast<PyCFunction>(PyModule_application),
+                                          METH_NOARGS, "Get the current stageviz application wrapper" },
+                                        { "session", reinterpret_cast<PyCFunction>(PyModule_session), METH_NOARGS,
                                           "Get the current stageviz session wrapper" },
                                         { "style", reinterpret_cast<PyCFunction>(PyModule_style), METH_NOARGS,
                                           "Get the current stageviz style wrapper" },
@@ -66,6 +79,9 @@ PyInit_stageviz(void)
 {
     pyStagevizModule.m_methods = Module_methods;
 
+    if (!initPyApplicationType())
+        return nullptr;
+
     if (!initPySelectionListType())
         return nullptr;
 
@@ -78,6 +94,11 @@ PyInit_stageviz(void)
     PyObject* module = PyModule_Create(&pyStagevizModule);
     if (!module)
         return nullptr;
+
+    if (addPyApplicationType(module) < 0) {
+        Py_DECREF(module);
+        return nullptr;
+    }
 
     if (addPySelectionListType(module) < 0) {
         Py_DECREF(module);

@@ -129,34 +129,7 @@ namespace name {
         if (input.empty())
             return "Prim";
 
-        std::string result;
-        result.reserve(input.size());
-
-        for (char c : input) {
-            if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_')
-                result.push_back(c);
-            else
-                result.push_back('_');
-        }
-
-        if (!result.empty() && (result[0] >= '0' && result[0] <= '9'))
-            result.insert(result.begin(), '_');
-
-        bool allUnderscore = true;
-        for (char c : result) {
-            if (c != '_') {
-                allUnderscore = false;
-                break;
-            }
-        }
-
-        if (allUnderscore)
-            return "Prim";
-
-        if (!SdfPath::IsValidIdentifier(result))
-            return "Prim";
-
-        return result;
+        return TfMakeValidIdentifier(input);
     }
 
     QString makeSafeName(const UsdStageRefPtr& stage, const SdfPath& parentPath, const QString& inputName)
