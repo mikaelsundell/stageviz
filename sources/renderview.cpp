@@ -28,6 +28,7 @@ public Q_SLOTS:
     void primsChanged(const NoticeBatch& batch);
     void selectionChanged(const QList<SdfPath>& paths);
     void stageChanged(UsdStageRefPtr stage, Session::LoadPolicy policy, Session::StageStatus status);
+    void stageUpChanged(Session::StageUp stageUp);
     void captureReady(qint64 elapsed);
     void renderReady(qint64 elapsed);
 
@@ -56,6 +57,7 @@ RenderViewPrivate::init()
     connect(session(), &Session::maskChanged, this, &RenderViewPrivate::maskChanged);
     connect(session(), &Session::primsChanged, this, &RenderViewPrivate::primsChanged);
     connect(session(), &Session::stageChanged, this, &RenderViewPrivate::stageChanged);
+    connect(session(), &Session::stageUpChanged, this, &RenderViewPrivate::stageUpChanged);
     connect(session()->selectionList(), &SelectionList::selectionChanged, this, &RenderViewPrivate::selectionChanged);
 }
 
@@ -128,6 +130,11 @@ RenderViewPrivate::stageChanged(UsdStageRefPtr stage, Session::LoadPolicy policy
     else {
         imageGLWidget()->close();
     }
+}
+
+void
+RenderViewPrivate::stageUpChanged(Session::StageUp stageUp)
+{
 }
 
 void

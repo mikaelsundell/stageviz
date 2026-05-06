@@ -232,11 +232,13 @@ ViewerPrivate::init()
     connect(d.ui->editShowRecursive, &QAction::triggered, this, &ViewerPrivate::showRecursive);
     connect(d.ui->editHideSelected, &QAction::triggered, this, &ViewerPrivate::hideSelected);
     connect(d.ui->editHideRecursive, &QAction::triggered, this, &ViewerPrivate::hideRecursive);
+    connect(d.ui->editStageUpY, &QAction::triggered, this, &ViewerPrivate::stageUpY);
+    connect(d.ui->editStageUpZ, &QAction::triggered, this, &ViewerPrivate::stageUpZ);
     {
         QActionGroup* actions = new QActionGroup(this);
         actions->setExclusive(true);
-        actions->addAction(d.ui->stageUpY);
-        actions->addAction(d.ui->stageUpZ);
+        actions->addAction(d.ui->editStageUpY);
+        actions->addAction(d.ui->editStageUpZ);
     }
     connect(d.ui->editPayloadLoad, &QAction::triggered, this, &ViewerPrivate::payloadLoad);
     connect(d.ui->editPayloadUnload, &QAction::triggered, this, &ViewerPrivate::payloadUnload);
@@ -573,10 +575,6 @@ ViewerPrivate::enable(bool enable)
                                 d.ui->fileExportSelected,
                                 d.ui->fileExportImage,
                                 d.ui->editCopyImage,
-                                d.ui->editDeleteSelected,
-                                d.ui->editPayloadLoad,
-                                d.ui->editPayloadUnload,
-                                d.ui->editPayloadInvertSelected,
                                 d.ui->editShowSelected,
                                 d.ui->editShowRecursive,
                                 d.ui->editHideSelected,
@@ -584,6 +582,12 @@ ViewerPrivate::enable(bool enable)
                                 d.ui->editSelectVisibleCapture,
                                 d.ui->editSelectVisibleClear,
                                 d.ui->editSelectVisibleSelect,
+                                d.ui->editStageUpY,
+                                d.ui->editStageUpZ,
+                                d.ui->editPayloadLoad,
+                                d.ui->editPayloadUnload,
+                                d.ui->editPayloadInvertSelected,
+                                d.ui->editDeleteSelected,
                                 d.ui->displayIsolate,
                                 d.ui->displayFrameAll,
                                 d.ui->displayFrameSelected,
@@ -591,9 +595,7 @@ ViewerPrivate::enable(bool enable)
                                 d.ui->displayExpand,
                                 d.ui->displayCollapse,
                                 d.ui->displayRenderShaded,
-                                d.ui->displayRenderWireframe,
-                                d.ui->stageUpY,
-                                d.ui->stageUpZ };
+                                d.ui->displayRenderWireframe };
     for (QAction* action : actions) {
         if (action)
             action->setEnabled(enable);
@@ -1509,8 +1511,8 @@ ViewerPrivate::stageChanged(UsdStageRefPtr stage, Session::LoadPolicy policy, Se
 void
 ViewerPrivate::stageUpChanged(Session::StageUp stageUp)
 {
-    d.ui->stageUpY->setChecked(stageUp == Session::StageUp::Y);
-    d.ui->stageUpZ->setChecked(stageUp == Session::StageUp::Z);
+    d.ui->editStageUpY->setChecked(stageUp == Session::StageUp::Y);
+    d.ui->editStageUpZ->setChecked(stageUp == Session::StageUp::Z);
 }
 
 void

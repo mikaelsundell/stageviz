@@ -481,8 +481,8 @@
      <property name="title">
       <string>Stage up</string>
      </property>
-     <addaction name="stageUpY"/>
-     <addaction name="stageUpZ"/>
+     <addaction name="editStageUpY"/>
+     <addaction name="editStageUpZ"/>
     </widget>
     <widget class="QMenu" name="menuPayloads">
      <property name="title">
@@ -539,9 +539,11 @@
     <addaction name="separator"/>
     <addaction name="viewOutliner"/>
     <addaction name="viewProgress"/>
+    <addaction name="separator"/>
     <addaction name="viewPython"/>
     <addaction name="separator"/>
     <addaction name="viewConsole"/>
+    <addaction name="separator"/>
    </widget>
    <addaction name="menuFile"/>
    <addaction name="menuEdit"/>
@@ -1008,7 +1010,7 @@
     <string>Ctrl+N</string>
    </property>
   </action>
-  <action name="stageUpY">
+  <action name="editStageUpY">
    <property name="checkable">
     <bool>true</bool>
    </property>
@@ -1019,7 +1021,7 @@
     <string>Y</string>
    </property>
   </action>
-  <action name="stageUpZ">
+  <action name="editStageUpZ">
    <property name="text">
     <string>Z</string>
    </property>
