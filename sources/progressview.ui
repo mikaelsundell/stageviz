@@ -21,7 +21,7 @@
     <number>6</number>
    </property>
    <property name="topMargin">
-    <number>12</number>
+    <number>8</number>
    </property>
    <property name="rightMargin">
     <number>6</number>
@@ -102,6 +102,9 @@
          </property>
          <property name="rightMargin">
           <number>0</number>
+         </property>
+         <property name="bottomMargin">
+          <number>4</number>
          </property>
          <item>
           <widget class="QPushButton" name="cancel">
