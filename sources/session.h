@@ -20,6 +20,7 @@ namespace stageviz {
 
 class CommandStack;
 class SelectionList;
+class ViewState;
 class SessionPrivate;
 
 /**
@@ -298,21 +299,6 @@ public:
 
     ///@}
 
-    /** @name Session Subsystems */
-    ///@{
-
-    /**
-     * @brief Returns the command stack subsystem.
-     */
-    CommandStack* commandStack() const;
-
-    /**
-     * @brief Returns the selection list subsystem.
-     */
-    SelectionList* selectionList() const;
-
-    ///@}
-
     /**
      * @brief Returns the current prim update behavior.
      */
@@ -330,7 +316,32 @@ public:
      * @brief Emits any buffered prim changes.
      */
     void flushPrimsUpdates();
+    
+    /** @name Command State */
+    ///@{
 
+    /**
+     * @brief Returns the command stack used for undo and redo.
+     */
+    CommandStack* commandStack() const;
+
+    ///@}
+
+    /** @name View State */
+    ///@{
+
+    /**
+     * @brief Returns the shared selection state.
+     */
+    SelectionList* selectionList() const;
+
+    /**
+     * @brief Returns the shared viewport state.
+     */
+    ViewState* viewState() const;
+
+    ///@}
+    
     /**
      * @brief Sets a textual status message.
      */

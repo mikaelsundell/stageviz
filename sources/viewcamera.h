@@ -5,7 +5,6 @@
 #pragma once
 
 #include "stageviz.h"
-#include <QExplicitlySharedDataPointer>
 #include <QObject>
 #include <pxr/usd/usdGeom/camera.h>
 
@@ -27,7 +26,8 @@ class ViewCameraPrivate;
  * Internally the camera state can be converted to a USD
  * compatible @c GfCamera for rendering.
  */
-class ViewCamera {
+class ViewCamera : public QObject {
+    Q_OBJECT
 public:
     /**
      * @brief Camera up-axis orientation.
@@ -44,10 +44,13 @@ public:
      */
     enum FovDirection { Vertical, Horizontal };
 
+public:
     /**
-     * @brief Constructs a default camera.
+     * @brief Constructs a ViewCamera.
+     *
+     * @param parent Optional parent object.
      */
-    ViewCamera();
+    ViewCamera(QObject* parent = nullptr);
 
     /**
      * @brief Constructs a camera with aspect ratio and field of view.
@@ -59,14 +62,9 @@ public:
     ViewCamera(double aspectratio, double fov, ViewCamera::FovDirection direction = Vertical);
 
     /**
-     * @brief Copy constructor.
-     */
-    ViewCamera(const ViewCamera& other);
-
-    /**
      * @brief Destroys the ViewCamera instance.
      */
-    virtual ~ViewCamera();
+    ~ViewCamera();
 
     /** @name Framing and Navigation */
     ///@{
@@ -74,7 +72,7 @@ public:
     /**
      * @brief Frames the entire scene bounding box.
      */
-    void frameAll() const;
+    void frameAll();
 
     /**
      * @brief Resets the camera view to default orientation.
@@ -194,7 +192,7 @@ public:
     /**
      * @brief Returns the camera up-axis.
      */
-    CameraUp cameraUp();
+    CameraUp cameraUp() const;
 
     /**
      * @brief Sets the camera up-axis.
@@ -209,7 +207,7 @@ public:
     /**
      * @brief Returns the current camera interaction mode.
      */
-    CameraMode cameraMode();
+    CameraMode cameraMode() const;
 
     /**
      * @brief Sets the camera interaction mode.
@@ -244,12 +242,25 @@ public:
     ///@}
 
     /**
-     * @brief Assignment operator.
+     * @brief Resets the camera to its default state.
+     *
+     * Restores default projection, clipping, orientation, focus, and
+     * navigation parameters.
      */
-    ViewCamera& operator=(const ViewCamera& other);
+    void reset();
+    
+    
+Q_SIGNALS:
+    /**
+     * @brief Emitted when the camera changes.
+     *
+     * @param camera Current USD camera representation.
+     */
+    void cameraChanged(const GfCamera& camera);
 
 private:
-    QExplicitlySharedDataPointer<ViewCameraPrivate> p;
+    Q_DISABLE_COPY_MOVE(ViewCamera)
+    QScopedPointer<ViewCameraPrivate> p;
 };
 
 }  // namespace stageviz

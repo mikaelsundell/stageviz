@@ -75,11 +75,6 @@ public:
     ///@{
 
     /**
-     * @brief Returns the current view camera.
-     */
-    ViewCamera viewCamera() const;
-
-    /**
      * @brief Frames the specified bounding box.
      *
      * @param bbox Bounding box to frame.
@@ -292,13 +287,6 @@ public:
     * @param batch Batched USD change entries.
     */
     void updatePrims(const NoticeBatch& batch);
-
-    /**
-     * @brief Updates the current selection.
-     *
-     * @param paths Selected prim paths.
-     */
-    void updateSelection(const QList<SdfPath>& paths);
 
     ///@}
 

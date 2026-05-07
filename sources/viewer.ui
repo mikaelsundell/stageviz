@@ -379,7 +379,7 @@
      <x>0</x>
      <y>0</y>
      <width>1200</width>
-     <height>33</height>
+     <height>21</height>
     </rect>
    </property>
    <widget class="QMenu" name="menuDisplay">
@@ -1022,6 +1022,9 @@
    </property>
   </action>
   <action name="editStageUpZ">
+   <property name="checkable">
+    <bool>true</bool>
+   </property>
    <property name="text">
     <string>Z</string>
    </property>

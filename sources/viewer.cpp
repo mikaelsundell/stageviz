@@ -121,12 +121,12 @@ public Q_SLOTS:
     void openGithubIssues();
 
 public Q_SLOTS:
-    void boundingBoxChanged(const GfBBox3d& bbox);
-    void selectionChanged(const QList<SdfPath>& paths);
-    void maskChanged(const QList<SdfPath>& paths);
-    void primsChanged(const NoticeBatch& batch);
-    void stageChanged(UsdStageRefPtr stage, Session::LoadPolicy policy, Session::StageStatus status);
-    void stageUpChanged(Session::StageUp stageUp);
+    void updateBoundingBox(const GfBBox3d& bbox);
+    void updateMask(const QList<SdfPath>& paths);
+    void updatePrims(const NoticeBatch& batch);
+    void updateStage(UsdStageRefPtr stage, Session::LoadPolicy policy, Session::StageStatus status);
+    void updateStageUp(Session::StageUp stageUp);
+    void updateSelection(const QList<SdfPath>& paths);
     void notifyStatusChanged(Session::Notify::Status status, const QString& message);
 
 public:
@@ -276,13 +276,13 @@ ViewerPrivate::init()
         d.ui->shaded->setDefaultAction(d.ui->displayRenderWireframe);
     }
     connect(d.backgroundColorFilter.data(), &MouseEvent::pressed, this, &ViewerPrivate::backgroundColor);
-    connect(session(), &Session::boundingBoxChanged, this, &ViewerPrivate::boundingBoxChanged);
-    connect(session(), &Session::maskChanged, this, &ViewerPrivate::maskChanged);
-    connect(session(), &Session::primsChanged, this, &ViewerPrivate::primsChanged);
-    connect(session(), &Session::stageChanged, this, &ViewerPrivate::stageChanged);
-    connect(session(), &Session::stageUpChanged, this, &ViewerPrivate::stageUpChanged);
+    connect(session(), &Session::boundingBoxChanged, this, &ViewerPrivate::updateBoundingBox);
+    connect(session(), &Session::maskChanged, this, &ViewerPrivate::updateMask);
+    connect(session(), &Session::primsChanged, this, &ViewerPrivate::updatePrims);
+    connect(session(), &Session::stageChanged, this, &ViewerPrivate::updateStage);
+    connect(session(), &Session::stageUpChanged, this, &ViewerPrivate::updateStageUp);
     connect(session(), &Session::notifyStatusChanged, this, &ViewerPrivate::notifyStatusChanged);
-    connect(session()->selectionList(), &SelectionList::selectionChanged, this, &ViewerPrivate::selectionChanged);
+    connect(session()->selectionList(), &SelectionList::selectionChanged, this, &ViewerPrivate::updateSelection);
     connect(session()->commandStack(), &CommandStack::canUndoChanged, d.ui->editUndo, &QAction::setEnabled);
     connect(session()->commandStack(), &CommandStack::canRedoChanged, d.ui->editRedo, &QAction::setEnabled);
     connect(session()->commandStack(), &CommandStack::canClearChanged, d.ui->editClear, &QAction::setEnabled);
@@ -331,12 +331,12 @@ ViewerPrivate::initDocks()
     d.ui->splitter->setStretchFactor(1, 1);
     d.ui->splitter->setStretchFactor(2, 0);
 
-    const QByteArray splitterState = settings()->value("viewer/splitterState").toByteArray();
-    if (!splitterState.isEmpty())
-        d.ui->splitter->restoreState(splitterState);
-    else
-        d.ui->splitter->setSizes({ 280, 640, 280 });
-
+    const int left = 280;
+    const int right = 280;
+    const int total = d.ui->splitter->width() > 0 ? d.ui->splitter->width() : d.viewer->width();
+    const int center = std::max(400, total - left - right);
+    d.ui->splitter->setSizes({ left, center, right });
+    
     d.pythonDialog = new PythonDialog(d.viewer.data());
     d.pythonDialog->setObjectName("pythonDialog");
     d.pythonDialog->setAttribute(Qt::WA_DeleteOnClose, false);
@@ -992,8 +992,6 @@ ViewerPrivate::saveSettings()
     settings()->setValue("sceneStats", d.ui->hudSceneStats->isChecked());
     settings()->setValue("performanceStats", d.ui->hudPerformanceStats->isChecked());
     settings()->setValue("cameraAxis", d.ui->hudCameraAxis->isChecked());
-
-    settings()->setValue("viewer/splitterState", d.ui->splitter->saveState());
     settings()->setValue("viewer/outlinerVisible", d.ui->outlinerWidget->isVisible());
     settings()->setValue("viewer/progressVisible", d.ui->progressWidget->isVisible());
 }
@@ -1393,7 +1391,7 @@ ViewerPrivate::openGithubIssues()
 }
 
 void
-ViewerPrivate::boundingBoxChanged(const GfBBox3d& bbox)
+ViewerPrivate::updateBoundingBox(const GfBBox3d& bbox)
 {
     if (!d.init && !bbox.GetRange().IsEmpty()) {
         frameAll();
@@ -1402,7 +1400,7 @@ ViewerPrivate::boundingBoxChanged(const GfBBox3d& bbox)
 }
 
 void
-ViewerPrivate::selectionChanged(const QList<SdfPath>& paths)
+ViewerPrivate::updateSelection(const QList<SdfPath>& paths)
 {
     const bool hasSelection = !paths.isEmpty();
     d.ui->displayExpand->setEnabled(hasSelection);
@@ -1482,14 +1480,14 @@ ViewerPrivate::selectionChanged(const QList<SdfPath>& paths)
 }
 
 void
-ViewerPrivate::maskChanged(const QList<SdfPath>& paths)
+ViewerPrivate::updateMask(const QList<SdfPath>& paths)
 {
     SignalGuard::Scope guard(this);
     d.ui->displayIsolate->setChecked(!paths.isEmpty());
 }
 
 void
-ViewerPrivate::primsChanged(const NoticeBatch& batch)
+ViewerPrivate::updatePrims(const NoticeBatch& batch)
 {
     if (batch.entries.isEmpty())
         return;
@@ -1498,7 +1496,7 @@ ViewerPrivate::primsChanged(const NoticeBatch& batch)
 }
 
 void
-ViewerPrivate::stageChanged(UsdStageRefPtr stage, Session::LoadPolicy policy, Session::StageStatus status)
+ViewerPrivate::updateStage(UsdStageRefPtr stage, Session::LoadPolicy policy, Session::StageStatus status)
 {
     Q_UNUSED(stage);
     Q_UNUSED(policy);
@@ -1509,7 +1507,7 @@ ViewerPrivate::stageChanged(UsdStageRefPtr stage, Session::LoadPolicy policy, Se
 }
 
 void
-ViewerPrivate::stageUpChanged(Session::StageUp stageUp)
+ViewerPrivate::updateStageUp(Session::StageUp stageUp)
 {
     d.ui->editStageUpY->setChecked(stageUp == Session::StageUp::Y);
     d.ui->editStageUpZ->setChecked(stageUp == Session::StageUp::Z);

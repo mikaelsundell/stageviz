@@ -8,6 +8,8 @@
 #include "selectionlist.h"
 #include "tracelocks.h"
 #include "usdutils.h"
+#include "viewstate.h"
+#include "viewcamera.h"
 #include <QFile>
 #include <QFileInfo>
 #include <QJsonArray>
@@ -86,7 +88,6 @@ public:
                 return;
 
             NoticeBatch batch;
-
             for (const SdfPath& path : notice.GetChangedInfoOnlyPaths()) {
                 NoticeEntry entry;
                 entry.path = path;
@@ -94,14 +95,12 @@ public:
                 entry.changedFields = notice.GetChangedFields(path);
                 batch.entries.append(entry);
             }
-
             for (const SdfPath& path : notice.GetResolvedAssetPathsResyncedPaths()) {
                 NoticeEntry entry;
                 entry.path = path;
                 entry.resolvedAssetPathsResynced = true;
                 batch.entries.append(entry);
             }
-
             for (const SdfPath& path : notice.GetResyncedPaths()) {
                 NoticeEntry entry;
                 entry.path = path;
@@ -109,16 +108,13 @@ public:
                     entry.primResyncType = notice.GetPrimResyncType(path, &entry.associatedPath);
                 batch.entries.append(entry);
             }
-
             if (batch.entries.isEmpty())
                 return;
 
             QMetaObject::invokeMethod(d.parent->d.session, [this, batch]() { d.parent->updatePrims(batch); });
         }
-
         void blockSignals(bool block) { d.suppress.store(block); }
         bool signalsBlocked() const { return d.suppress.load(); }
-
         struct Data {
             std::atomic<bool> suppress { false };
             TfNotice::Key key;
@@ -152,21 +148,19 @@ public:
         Session::LoadPolicy loadPolicy = Session::LoadPolicy::All;
         Session::PrimsUpdate primsUpdate = Session::PrimsUpdate::Immediate;
         Session::StageStatus stageStatus = Session::StageStatus::Closed;
-
+        NoticeBatch pendingNotices;
+        QString filename;
         QString changeName;
         size_t changeDepth = 0;
         size_t expectedChanges = 0;
         size_t completedChanges = 0;
         std::atomic<bool> changeCancelled { false };
-
-        QString filename;
         GfBBox3d bbox;
-        NoticeBatch pendingNotices;
         QList<SdfPath> mask;
-
         mutable QReadWriteLock stageLock;
         QScopedPointer<CommandStack> commandStack;
         QScopedPointer<SelectionList> selectionList;
+        QScopedPointer<ViewState> viewState;
         QScopedPointer<StageWatcher> stageWatcher;
         QPointer<Session> session;
     };
@@ -182,9 +176,9 @@ SessionPrivate::init()
 {
     qRegisterMetaType<NoticeEntry>("stageviz::NoticeEntry");
     qRegisterMetaType<NoticeBatch>("stageviz::NoticeBatch");
-
     d.commandStack.reset(new CommandStack());
     d.selectionList.reset(new SelectionList());
+    d.viewState.reset(new ViewState());
 }
 
 void
@@ -192,19 +186,28 @@ SessionPrivate::initStage()
 {
     UsdStageRefPtr stage;
     const GfBBox3d bbox = boundingBox();
+    Session::StageUp up = Session::StageUp::Z;
 
     {
         READ_LOCKER(locker, &d.stageLock, "stageLock");
         stage = d.stage;
+        if (stage) {
+            const TfToken upAxis = UsdGeomGetStageUpAxis(stage);
+            up = (upAxis == UsdGeomTokens->y) ? Session::StageUp::Y : Session::StageUp::Z;
+        }
     }
-
     {
         WRITE_LOCKER(locker, &d.stageLock, "stageLock");
         d.stageStatus = Session::StageStatus::Loaded;
         d.bbox = bbox;
         d.pendingNotices.entries.clear();
     }
-
+    if (d.viewState && d.viewState->camera()) {
+        ViewCamera* camera = d.viewState->camera();
+        camera->setBoundingBox(bbox);
+        camera->setCameraUp(up == Session::StageUp::Y ? ViewCamera::Y : ViewCamera::Z);
+        camera->reset();
+    }
     d.stageWatcher->watch(stage);
 }
 
@@ -296,7 +299,6 @@ SessionPrivate::newStage(Session::LoadPolicy policy)
         mask = d.mask;
         created = true;
     }
-
     d.commandStack->clear();
     d.selectionList->clear();
 
@@ -350,7 +352,6 @@ SessionPrivate::loadFromFile(const QString& filename, Session::LoadPolicy policy
             return false;
         }
     }
-
     d.commandStack->clear();
     d.selectionList->clear();
 
@@ -570,8 +571,50 @@ SessionPrivate::loadState(const QString& filename)
         return false;
 
     const QJsonObject root = doc.object();
-    const QJsonArray payloads = root.value("loadedPayloads").toArray();
+    if (d.viewState && d.viewState->camera()) {
+        ViewCamera* camera = d.viewState->camera();
+        const QJsonObject cameraObject = root.value("viewCamera").toObject();
 
+        if (!cameraObject.isEmpty()) {
+            if (cameraObject.contains("aspectRatio"))
+                camera->setAspectRatio(cameraObject.value("aspectRatio").toDouble());
+
+            if (cameraObject.contains("fov"))
+                camera->setFov(cameraObject.value("fov").toDouble());
+
+            if (cameraObject.contains("nearClipping"))
+                camera->setNearClipping(cameraObject.value("nearClipping").toDouble());
+
+            if (cameraObject.contains("farClipping"))
+                camera->setFarClipping(cameraObject.value("farClipping").toDouble());
+
+            if (cameraObject.contains("cameraUp")) {
+                const QString value = cameraObject.value("cameraUp").toString();
+                if (value == "X")
+                    camera->setCameraUp(ViewCamera::X);
+                else if (value == "Y")
+                    camera->setCameraUp(ViewCamera::Y);
+                else if (value == "Z")
+                    camera->setCameraUp(ViewCamera::Z);
+            }
+
+            if (cameraObject.contains("fovDirection")) {
+                const QString value = cameraObject.value("fovDirection").toString();
+                if (value == "Horizontal")
+                    camera->setFovDirection(ViewCamera::Horizontal);
+                else if (value == "Vertical")
+                    camera->setFovDirection(ViewCamera::Vertical);
+            }
+
+            const QJsonArray focusPoint = cameraObject.value("focusPoint").toArray();
+            if (focusPoint.size() == 3) {
+                camera->setFocusPoint(GfVec3d(focusPoint.at(0).toDouble(),
+                                               focusPoint.at(1).toDouble(),
+                                               focusPoint.at(2).toDouble()));
+            }
+        }
+    }
+    const QJsonArray payloads = root.value("loadedPayloads").toArray();
     WRITE_LOCKER(locker, &d.stageLock, "stageLock");
     if (!d.stage)
         return false;
@@ -588,6 +631,7 @@ SessionPrivate::loadState(const QString& filename)
         const UsdPrim prim = d.stage->GetPrimAtPath(path);
         if (!prim || !prim.IsValid())
             continue;
+
         if (!stage::isPayload(d.stage, path))
             continue;
 
@@ -602,6 +646,7 @@ SessionPrivate::saveState(const QString& filename)
 {
     QString stageFilename;
     QJsonArray payloads;
+
     {
         READ_LOCKER(locker, &d.stageLock, "stageLock");
         if (!d.stage)
@@ -626,11 +671,46 @@ SessionPrivate::saveState(const QString& filename)
                 stack.push(child);
         }
     }
-
     QJsonObject root;
     root["version"] = 1;
     root["stageFile"] = stageFilename;
     root["loadedPayloads"] = payloads;
+    if (d.viewState && d.viewState->camera()) {
+        ViewCamera* camera = d.viewState->camera();
+        auto cameraUpToString = [](ViewCamera::CameraUp value) {
+            switch (value) {
+            case ViewCamera::X: return QStringLiteral("X");
+            case ViewCamera::Y: return QStringLiteral("Y");
+            case ViewCamera::Z: return QStringLiteral("Z");
+            }
+            return QStringLiteral("Y");
+        };
+
+        auto fovDirectionToString = [](ViewCamera::FovDirection value) {
+            switch (value) {
+            case ViewCamera::Horizontal: return QStringLiteral("Horizontal");
+            case ViewCamera::Vertical: return QStringLiteral("Vertical");
+            }
+            return QStringLiteral("Vertical");
+        };
+
+        const GfVec3d focusPoint = camera->focusPoint();
+
+        QJsonArray focusPointArray;
+        focusPointArray.append(focusPoint[0]);
+        focusPointArray.append(focusPoint[1]);
+        focusPointArray.append(focusPoint[2]);
+
+        QJsonObject cameraObject;
+        cameraObject["aspectRatio"] = camera->aspectRatio();
+        cameraObject["fov"] = camera->fov();
+        cameraObject["nearClipping"] = camera->nearClipping();
+        cameraObject["farClipping"] = camera->farClipping();
+        cameraObject["cameraUp"] = cameraUpToString(camera->cameraUp());
+        cameraObject["fovDirection"] = fovDirectionToString(camera->fovDirection());
+        cameraObject["focusPoint"] = focusPointArray;
+        root["viewCamera"] = cameraObject;
+    }
 
     QFile file(QFileInfo(filename).absoluteFilePath());
     if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate))
@@ -748,7 +828,6 @@ SessionPrivate::setStageUp(Session::StageUp stageUp)
 {
     bool changed = false;
     GfBBox3d bbox;
-
     {
         WRITE_LOCKER(locker, &d.stageLock, "stageLock");
         if (!d.stage)
@@ -770,7 +849,11 @@ SessionPrivate::setStageUp(Session::StageUp stageUp)
         WRITE_LOCKER(locker, &d.stageLock, "stageLock");
         d.bbox = bbox;
     }
-
+    if (d.viewState && d.viewState->camera()) {
+        ViewCamera* camera = d.viewState->camera();
+        camera->setBoundingBox(bbox);
+        camera->setCameraUp(stageUp == Session::StageUp::Y ? ViewCamera::Y : ViewCamera::Z);
+    }
     Q_EMIT d.session->stageUpChanged(stageUp);
     Q_EMIT d.session->boundingBoxChanged(bbox);
 }
@@ -785,7 +868,7 @@ SessionPrivate::boundingBox()
         stage = d.stage;
         mask = d.mask;
     }
-
+    
     Q_ASSERT(stage && "stage is not loaded");
     if (!stage)
         return GfBBox3d();
@@ -794,7 +877,6 @@ SessionPrivate::boundingBox()
         UsdGeomBBoxCache bboxCache(UsdTimeCode::Default(), UsdGeomImageable::GetOrderedPurposeTokens(), true);
         return bboxCache.ComputeWorldBound(stage->GetPseudoRoot());
     }
-
     return stage::boundingBox(stage, mask);
 }
 
@@ -1080,16 +1162,22 @@ Session::stageLock() const
     return &p->d.stageLock;
 }
 
+CommandStack*
+Session::commandStack() const
+{
+    return p->d.commandStack.data();
+}
+
 SelectionList*
 Session::selectionList() const
 {
     return p->d.selectionList.data();
 }
 
-CommandStack*
-Session::commandStack() const
+ViewState*
+Session::viewState() const
 {
-    return p->d.commandStack.data();
+    return p->d.viewState.data();
 }
 
 Session::PrimsUpdate

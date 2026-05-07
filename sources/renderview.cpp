@@ -17,18 +17,16 @@ class RenderViewPrivate : public QObject {
 public:
     void init();
     ImagingGLWidget* imageGLWidget();
-    ViewCamera camera();
     void frameAll();
     void frameSelected();
     void resetView();
 
 public Q_SLOTS:
-    void boundingBoxChanged(const GfBBox3d& bbox);
-    void maskChanged(const QList<SdfPath>& paths);
-    void primsChanged(const NoticeBatch& batch);
-    void selectionChanged(const QList<SdfPath>& paths);
-    void stageChanged(UsdStageRefPtr stage, Session::LoadPolicy policy, Session::StageStatus status);
-    void stageUpChanged(Session::StageUp stageUp);
+    void updateBoundingBox(const GfBBox3d& bbox);
+    void updateMask(const QList<SdfPath>& paths);
+    void updatePrims(const NoticeBatch& batch);
+    void updateSelection(const QList<SdfPath>& paths);
+    void updateStage(UsdStageRefPtr stage, Session::LoadPolicy policy, Session::StageStatus status);
     void captureReady(qint64 elapsed);
     void renderReady(qint64 elapsed);
 
@@ -49,28 +47,22 @@ RenderViewPrivate::init()
     d.context.reset(new ViewContext(d.view.data()));
     d.context->setStageLock(session()->stageLock());
     d.context->setCommandStack(session()->commandStack());
+    d.context->setSelectionList(session()->selectionList());
+    d.context->setViewState(session()->viewState());
     imageGLWidget()->setContext(d.context.data());
     // connect
     connect(imageGLWidget(), &ImagingGLWidget::captureReady, this, &RenderViewPrivate::captureReady);
     connect(imageGLWidget(), &ImagingGLWidget::renderReady, this, &RenderViewPrivate::renderReady);
-    connect(session(), &Session::boundingBoxChanged, this, &RenderViewPrivate::boundingBoxChanged);
-    connect(session(), &Session::maskChanged, this, &RenderViewPrivate::maskChanged);
-    connect(session(), &Session::primsChanged, this, &RenderViewPrivate::primsChanged);
-    connect(session(), &Session::stageChanged, this, &RenderViewPrivate::stageChanged);
-    connect(session(), &Session::stageUpChanged, this, &RenderViewPrivate::stageUpChanged);
-    connect(session()->selectionList(), &SelectionList::selectionChanged, this, &RenderViewPrivate::selectionChanged);
+    connect(session(), &Session::boundingBoxChanged, this, &RenderViewPrivate::updateBoundingBox);
+    connect(session(), &Session::maskChanged, this, &RenderViewPrivate::updateMask);
+    connect(session(), &Session::primsChanged, this, &RenderViewPrivate::updatePrims);
+    connect(session(), &Session::stageChanged, this, &RenderViewPrivate::updateStage);
 }
 
 ImagingGLWidget*
 RenderViewPrivate::imageGLWidget()
 {
     return d.ui->imagingGLWidget;
-}
-
-ViewCamera
-RenderViewPrivate::camera()
-{
-    return imageGLWidget()->viewCamera();
 }
 
 void
@@ -98,31 +90,25 @@ RenderViewPrivate::resetView()
 }
 
 void
-RenderViewPrivate::boundingBoxChanged(const GfBBox3d& bbox)
+RenderViewPrivate::updateBoundingBox(const GfBBox3d& bbox)
 {
     imageGLWidget()->updateBoundingBox(bbox);
 }
 
 void
-RenderViewPrivate::maskChanged(const QList<SdfPath>& paths)
+RenderViewPrivate::updateMask(const QList<SdfPath>& paths)
 {
     imageGLWidget()->updateMask(paths);
 }
 
 void
-RenderViewPrivate::primsChanged(const NoticeBatch& batch)
+RenderViewPrivate::updatePrims(const NoticeBatch& batch)
 {
     imageGLWidget()->updatePrims(batch);
 }
 
 void
-RenderViewPrivate::selectionChanged(const QList<SdfPath>& paths)
-{
-    imageGLWidget()->updateSelection(paths);
-}
-
-void
-RenderViewPrivate::stageChanged(UsdStageRefPtr stage, Session::LoadPolicy policy, Session::StageStatus status)
+RenderViewPrivate::updateStage(UsdStageRefPtr stage, Session::LoadPolicy policy, Session::StageStatus status)
 {
     if (status == Session::StageStatus::Loaded) {
         imageGLWidget()->updateStage(session()->stage());
@@ -130,11 +116,6 @@ RenderViewPrivate::stageChanged(UsdStageRefPtr stage, Session::LoadPolicy policy
     else {
         imageGLWidget()->close();
     }
-}
-
-void
-RenderViewPrivate::stageUpChanged(Session::StageUp stageUp)
-{
 }
 
 void

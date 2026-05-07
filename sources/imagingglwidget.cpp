@@ -13,6 +13,7 @@
 #include "tracelocks.h"
 #include "usdutils.h"
 #include "viewcamera.h"
+#include "viewstate.h"
 #include "viewcontext.h"
 #include <QApplication>
 #include <QColor>
@@ -55,6 +56,9 @@ public:
     void init();
     void initGL();
     void initCamera();
+    void initContext();
+    SelectionList* selectionList();
+    ViewCamera* viewCamera();
     void close();
     void frame(const GfBBox3d& bbox);
     void resetView();
@@ -71,11 +75,14 @@ public:
     void updateBoundingBox(const GfBBox3d& bbox);
     void updateMask(const QList<SdfPath>& paths);
     void updatePrims(const NoticeBatch& batch);
-    void updateSelection(const QList<SdfPath>& paths);
     void captureVisible();
     void clearVisibleCapture();
     void rebuildSelectionBBoxes();
-
+    
+public Q_SLOTS:
+    void updateCamera(const GfCamera& camera);
+    void updateSelection(const QList<SdfPath>& paths);
+    
 public:
     QPoint deviceRatio(QPoint value) const;
     double deviceRatio(double value) const;
@@ -89,7 +96,6 @@ public:
     bool isPathMaskedIn(const SdfPath& path) const;
     bool pickMaskedIntersection(const UsdImagingGLEngine::PickParams& pickParams, const GfFrustum& pickFrustum,
                                 UsdImagingGLEngine::IntersectionResultVector* results);
-
     struct Data {
         size_t count;
         qint64 frame;
@@ -113,7 +119,6 @@ public:
         QImage sceneStats;
         QImage performanceStats;
         QImage axis;
-        ViewCamera viewCamera;
         GfBBox3d selectionBBox;
         ImagingGLWidget::DrawMode drawMode;
         UsdStageRefPtr stage;
@@ -188,30 +193,46 @@ ImagingGLWidgetPrivate::initGL()
 }
 
 void
-ImagingGLWidgetPrivate::initCamera()
+ImagingGLWidgetPrivate::initContext()
 {
-    UsdStageRefPtr stage;
-    GfBBox3d bbox;
-    TfToken upAxis;
-    {
-        READ_LOCKER(locker, d.context->stageLock(), "stageLock");
-        stage = d.stage;
-        bbox = d.bbox;
-        Q_ASSERT("stage is not loaded" && stage);
-        if (!stage)
-            return;
-        upAxis = UsdGeomGetStageUpAxis(stage);
+    connect(selectionList(), &SelectionList::selectionChanged, this, &ImagingGLWidgetPrivate::updateSelection);
+    connect(viewCamera(), &ViewCamera::cameraChanged, this, &ImagingGLWidgetPrivate::updateCamera);
+}
+
+SelectionList*
+ImagingGLWidgetPrivate::selectionList()
+{
+    return d.context->selectionList();
+}
+
+
+ViewCamera*
+ImagingGLWidgetPrivate::viewCamera()
+{
+    return d.context->viewState()->camera();
+}
+
+void
+ImagingGLWidgetPrivate::close()
+{
+    d.mask.clear();
+    d.selection.clear();
+    d.visibleCapture.clear();
+    d.selectionBBoxes.clear();
+    d.stage = nullptr;
+    d.bbox = GfBBox3d();
+    d.selectionBBox = GfBBox3d();
+    d.drag = false;
+    d.sweep = false;
+    d.glEngine.reset();
+    d.hgi.reset();
+    if (d.sceneStatsEnabled) {
+        updateSceneStats();
     }
-    d.viewCamera = ViewCamera();
-    d.viewCamera.setBoundingBox(bbox);
-    if (upAxis == TfToken("Y")) {
-        d.viewCamera.setCameraUp(ViewCamera::Y);
+    if (d.performanceStatsEnabled) {
+        updatePerformanceStats();
     }
-    else {
-        d.viewCamera.setCameraUp(ViewCamera::Z);
-    }
-    d.viewCamera.frameAll();
-    updateAxis();
+    d.glwidget->update();
 }
 
 void
@@ -243,45 +264,18 @@ ImagingGLWidgetPrivate::rebuildSelectionBBoxes()
     }
 }
 
-void
-ImagingGLWidgetPrivate::close()
-{
-    d.mask.clear();
-    d.selection.clear();
-    d.visibleCapture.clear();
-    d.selectionBBoxes.clear();
-    d.stage = nullptr;
-    d.bbox = GfBBox3d();
-    d.selectionBBox = GfBBox3d();
-    d.viewCamera = ViewCamera();
-    d.drag = false;
-    d.sweep = false;
-    d.glEngine.reset();
-    d.hgi.reset();
-    if (d.sceneStatsEnabled) {
-        updateSceneStats();
-    }
-    if (d.performanceStatsEnabled) {
-        updatePerformanceStats();
-    }
-    d.glwidget->update();
-}
 
 void
 ImagingGLWidgetPrivate::frame(const GfBBox3d& bbox)
 {
-    d.viewCamera.setBoundingBox(bbox);
-    d.viewCamera.frameAll();
-    d.glwidget->update();
-    updateAxis();
+    viewCamera()->setBoundingBox(bbox);
+    viewCamera()->frameAll();
 }
 
 void
 ImagingGLWidgetPrivate::resetView()
 {
-    initCamera();
-    d.glwidget->update();
-    updateAxis();
+    viewCamera()->reset();
 }
 
 void
@@ -321,8 +315,8 @@ ImagingGLWidgetPrivate::paintGL()
             glViewport(viewport[0], viewport[1], viewport[2], viewport[3]);
 #endif
 
-            d.viewCamera.setAspectRatio(widgetAspectRatio());
-            GfCamera camera = d.viewCamera.camera();
+            viewCamera()->setAspectRatio(widgetAspectRatio());
+            GfCamera camera = viewCamera()->camera();
             GfFrustum frustum = camera.GetFrustum();
             GfMatrix4d viewModel = frustum.ComputeViewMatrix();
             GfMatrix4d projectionMatrix = frustum.ComputeProjectionMatrix();
@@ -350,7 +344,7 @@ ImagingGLWidgetPrivate::paintGL()
             {
                 std::vector<GlfSimpleLight> lights;
                 if (d.defaultCameraLightEnabled) {
-                    GfCamera lightCamera = d.viewCamera.camera();
+                    GfCamera lightCamera = viewCamera()->camera();
                     GfMatrix4d viewInverse = lightCamera.GetTransform();
                     GfVec3d camPos = viewInverse.ExtractTranslation();
 
@@ -456,8 +450,7 @@ ImagingGLWidgetPrivate::paintEvent(QPaintEvent* event)
         painter.drawImage(QPoint(0, 0), d.sceneStats);
     }
     if (d.performanceStatsEnabled) {
-        QPoint pos(d.glwidget->width() - d.performanceStats.width() / d.performanceStats.devicePixelRatio(),
-                   0);
+        QPoint pos(d.glwidget->width() - d.performanceStats.width() / d.performanceStats.devicePixelRatio(), 0);
         painter.drawImage(pos, d.performanceStats);
     }
     if (d.cameraAxisEnabled) {
@@ -559,7 +552,7 @@ ImagingGLWidgetPrivate::focusEvent(QMouseEvent* event)
 
     GfVec2d size(1.0 / static_cast<double>(viewport[2]), 1.0 / static_cast<double>(viewport[3]));
 
-    GfCamera camera = d.viewCamera.camera();
+    GfCamera camera = viewCamera()->camera();
     GfFrustum frustum = camera.GetFrustum();
     GfFrustum pickFrustum = frustum.ComputeNarrowedFrustum(pos, size);
 
@@ -583,7 +576,7 @@ ImagingGLWidgetPrivate::focusEvent(QMouseEvent* event)
                                                           d.params, &hitPoint, &hitNormal, &hitPrimPath,
                                                           &hitInstancerPath);
             if (hit && !hitPrimPath.IsEmpty()) {
-                d.viewCamera.setFocusPoint(hitPoint);
+                viewCamera()->setFocusPoint(hitPoint);
                 d.glwidget->update();
             }
             return;
@@ -614,8 +607,7 @@ ImagingGLWidgetPrivate::focusEvent(QMouseEvent* event)
     }
 
     if (found) {
-        d.viewCamera.setFocusPoint(bestHitPoint);
-        d.glwidget->update();
+        viewCamera()->setFocusPoint(bestHitPoint);
     }
 }
 
@@ -634,13 +626,13 @@ ImagingGLWidgetPrivate::mousePressEvent(QMouseEvent* event)
         if (event->modifiers() & (Qt::AltModifier | Qt::MetaModifier)) {
             d.drag = true;
             if (event->button() == Qt::LeftButton) {
-                d.viewCamera.setCameraMode(ViewCamera::Tumble);
+                viewCamera()->setCameraMode(ViewCamera::Tumble);
             }
             else if (event->button() == Qt::MiddleButton) {
-                d.viewCamera.setCameraMode(ViewCamera::Truck);
+                viewCamera()->setCameraMode(ViewCamera::Truck);
             }
             else if (event->button() == Qt::RightButton) {
-                d.viewCamera.setCameraMode(ViewCamera::Zoom);
+                viewCamera()->setCameraMode(ViewCamera::Zoom);
             }
         }
         else {
@@ -659,25 +651,21 @@ ImagingGLWidgetPrivate::mouseMoveEvent(QMouseEvent* event)
         QPoint pos = event->pos();
         if (d.drag) {
             QPoint delta = deviceRatio(pos) - deviceRatio(d.mousepos);
-            if (d.viewCamera.cameraMode() == ViewCamera::Truck) {
+            if (viewCamera()->cameraMode() == ViewCamera::Truck) {
                 double height = widgetSize()[1];
-                double factor = d.viewCamera.mapToFrustumHeight(height);
-                d.viewCamera.truck(-delta.x() * factor, delta.y() * factor);
+                double factor = viewCamera()->mapToFrustumHeight(height);
+                viewCamera()->truck(-delta.x() * factor, delta.y() * factor);
             }
-            else if (d.viewCamera.cameraMode() == ViewCamera::Tumble) {
-                d.viewCamera.tumble(0.25 * delta.x(), 0.25 * delta.y());
+            else if (viewCamera()->cameraMode() == ViewCamera::Tumble) {
+                viewCamera()->tumble(0.25 * delta.x(), 0.25 * delta.y());
             }
-            else if (d.viewCamera.cameraMode() == ViewCamera::Zoom) {
+            else if (viewCamera()->cameraMode() == ViewCamera::Zoom) {
                 double factor = -.002 * (delta.x() + delta.y());
-                d.viewCamera.distance(1 + factor);
+                viewCamera()->distance(1 + factor);
             }
-            d.glwidget->update();
-            updateAxis();
         }
         else if (d.sweep) {
             d.end = event->pos();
-            d.glwidget->update();
-            updateAxis();
         }
         d.mousepos = event->pos();
     }
@@ -689,7 +677,7 @@ ImagingGLWidgetPrivate::mouseReleaseEvent(QMouseEvent* event)
     if (d.stage) {
         if (d.drag) {
             d.drag = false;
-            d.viewCamera.setCameraMode(ViewCamera::None);
+            viewCamera()->setCameraMode(ViewCamera::None);
         }
         else if (d.sweep) {
             d.end = event->pos();
@@ -740,7 +728,7 @@ ImagingGLWidgetPrivate::sweepEvent(const QRect& rect, QMouseEvent* event)
     UsdImagingGLEngine::PickParams pickParams;
     pickParams.resolveMode = isClick ? TfToken("resolveNearestToCenter") : TfToken("resolveDeep");
 
-    GfCamera cam = d.viewCamera.camera();
+    GfCamera cam = viewCamera()->camera();
     GfFrustum fr = cam.GetFrustum();
     GfFrustum pickFr = fr.ComputeNarrowedFrustum(center, size);
 
@@ -794,9 +782,7 @@ ImagingGLWidgetPrivate::wheelEvent(QWheelEvent* event)
     double delta = static_cast<double>(event->angleDelta().y()) / 1000.0;
     double clamped = std::max(-0.5, std::min(0.5, delta));
     double factor = 1.0 - clamped;
-    d.viewCamera.distance(factor);
-    d.glwidget->update();
-    updateAxis();
+    viewCamera()->distance(factor);
 }
 
 void
@@ -814,7 +800,7 @@ ImagingGLWidgetPrivate::captureVisible()
     const GfVec2i size = widgetSize();
     const GfVec4d viewport = widgetViewport();
 
-    GfCamera camera = d.viewCamera.camera();
+    GfCamera camera = viewCamera()->camera();
     GfFrustum frustum = camera.GetFrustum();
 
     UsdImagingGLEngine::PickParams pickParams;
@@ -916,8 +902,6 @@ ImagingGLWidgetPrivate::updateStage(UsdStageRefPtr stage)
     d.selectionBBoxes.clear();
     d.glEngine.reset();
     d.hgi.reset();
-    if (d.stage)
-        initCamera();
     rebuildSelectionBBoxes();
     if (d.sceneStatsEnabled) {
         updateSceneStats();
@@ -953,6 +937,13 @@ ImagingGLWidgetPrivate::updatePrims(const NoticeBatch& batch)
         updateSceneStats();
     }
     d.glwidget->update();
+}
+
+void
+ImagingGLWidgetPrivate::updateCamera(const GfCamera& camera)
+{
+    d.glwidget->update();
+    updateAxis();
 }
 
 void
@@ -1019,7 +1010,7 @@ ImagingGLWidgetPrivate::drawBorder(QPainter& painter)
 void
 ImagingGLWidgetPrivate::updateAxis()
 {
-    GfCamera camera = d.viewCamera.camera();
+    GfCamera camera = viewCamera()->camera();
     GfFrustum frustum = camera.GetFrustum();
     GfMatrix4d viewMatrix = frustum.ComputeViewMatrix();
 
@@ -1296,10 +1287,11 @@ ImagingGLWidgetPrivate::updatePerformanceStats()
             rows.append({ "Hgi", TfTokenToQString(hgi->GetAPIName()) });
     }
     else {
-        rows.append(Row { "Hgi", QString::fromUtf8("-") });
+        rows.append({ "Hgi", QStringLiteral("-") });
     }
 
     rows.append({ "GPU time", hasEngine ? QString::number(d.gpuPerformanceMs, 'f', 2) + " ms" : "-" });
+
     if (hasEngine) {
         if (stats.count("gpuMemoryUsed"))
             rows.append({ "GPU mem", fmtMB(VtDictionaryGet<uint64_t>(stats, "gpuMemoryUsed")) });
@@ -1324,6 +1316,7 @@ ImagingGLWidgetPrivate::updatePerformanceStats()
     const int marginRight = 18;
     const int marginTop = 16;
     const int columnSpacing = 24;
+
     int labelWidth = 0;
     int valueWidth = 0;
 
@@ -1332,8 +1325,8 @@ ImagingGLWidgetPrivate::updatePerformanceStats()
         valueWidth = std::max(valueWidth, fm.horizontalAdvance(r.value));
     }
 
-    const qsizetype width = marginLeft + labelWidth + columnSpacing + valueWidth + marginRight;
-    const qsizetype height = rows.size() * rowHeight + marginTop;
+    const int width = marginLeft + labelWidth + columnSpacing + valueWidth + marginRight;
+    const int height = static_cast<int>(rows.size()) * rowHeight + marginTop;
 
     d.performanceStats = QImage(qRound(width * dpr), qRound(height * dpr), QImage::Format_ARGB32_Premultiplied);
     d.performanceStats.setDevicePixelRatio(dpr);
@@ -1343,19 +1336,16 @@ ImagingGLWidgetPrivate::updatePerformanceStats()
     p.setRenderHint(QPainter::TextAntialiasing);
     p.setFont(font);
 
-    QColor textColor;
-    if (d.stage)
-    {
-        textColor = style()->color(Style::ColorRole::Text, Style::UIState::Normal);
-    }
-    else
-    {
-        textColor = style()->color(Style::ColorRole::Text, Style::UIState::Disabled);
-    }
+    const QColor textColor = d.stage
+                                 ? style()->color(Style::ColorRole::Text, Style::UIState::Normal)
+                                 : style()->color(Style::ColorRole::Text, Style::UIState::Disabled);
+
     const QColor shadowColor(0, 0, 0, 160);
+
     int y = marginTop + fm.ascent();
     const int labelX = marginLeft;
     const int valueRight = width - marginRight;
+
     for (const Row& r : rows) {
         const QRect labelRect(labelX, y - fm.ascent(), labelWidth, rowHeight);
         const QRect valueRect(valueRight - valueWidth, y - fm.ascent(), valueWidth, rowHeight);
@@ -1390,13 +1380,8 @@ ImagingGLWidget::setContext(ViewContext* context)
 {
     if (p->d.context != context) {
         p->d.context = context;
+        p->initContext();
     }
-}
-
-ViewCamera
-ImagingGLWidget::viewCamera() const
-{
-    return p->d.viewCamera;
 }
 
 QImage
@@ -1601,12 +1586,6 @@ void
 ImagingGLWidget::updatePrims(const NoticeBatch& batch)
 {
     p->updatePrims(batch);
-}
-
-void
-ImagingGLWidget::updateSelection(const QList<SdfPath>& paths)
-{
-    p->updateSelection(paths);
 }
 
 void

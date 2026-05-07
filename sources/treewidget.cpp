@@ -74,8 +74,7 @@ public:
             if (index.column() == 0) {
                 int x = l.contentRect.left() + xOffset;
 
-                l.isCheckable = (index.flags() & Qt::ItemIsUserCheckable)
-                                && index.data(Qt::CheckStateRole).isValid();
+                l.isCheckable = (index.flags() & Qt::ItemIsUserCheckable) && index.data(Qt::CheckStateRole).isValid();
 
                 if (l.isCheckable) {
                     l.checkRect = QRect(x, l.contentRect.center().y() - iconSize / 2 + yOffset, iconSize, iconSize);
@@ -545,7 +544,8 @@ TreeWidgetPrivate::drawColumn(QPainter* painter, const QStyleOptionViewItem& opt
     else
         opt.state &= ~QStyle::State_Selected;
 
-    d.tree->itemDelegate(index)->paint(painter, opt, index);
+    if (QAbstractItemDelegate* delegate = d.tree->itemDelegateForIndex(index))
+        delegate->paint(painter, opt, index);
 }
 
 QRect
@@ -597,11 +597,8 @@ TreeWidgetPrivate::drawRow(QPainter* painter, const QStyleOptionViewItem& option
         case TreeWidgetPrivate::DropBelowItem:
             painter->drawLine(rowRect.left(), rowRect.bottom(), rowRect.right(), rowRect.bottom());
             break;
-        case TreeWidgetPrivate::DropOnItem:
-            painter->drawRect(rowRect.adjusted(1, 1, -2, -2));
-            break;
-        default:
-            break;
+        case TreeWidgetPrivate::DropOnItem: painter->drawRect(rowRect.adjusted(1, 1, -2, -2)); break;
+        default: break;
         }
 
         painter->restore();
@@ -673,8 +670,7 @@ TreeWidget::selectionCommand(const QModelIndex& index, const QEvent* event) cons
         return QItemSelectionModel::NoUpdate;
     }
 
-    default:
-        break;
+    default: break;
     }
 
     return QTreeWidget::selectionCommand(index, event);
@@ -700,6 +696,6 @@ TreeWidget::drawRow(QPainter* painter, const QStyleOptionViewItem& option, const
     }
 }
 
-} // namespace stageviz
+}  // namespace stageviz
 
 #include "treewidget.moc"

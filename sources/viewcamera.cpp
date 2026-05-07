@@ -10,17 +10,20 @@
 #include <pxr/usd/usdGeom/bboxCache.h>
 
 namespace stageviz {
-class ViewCameraPrivate : public QSharedData {
+
+class ViewCameraPrivate {
 public:
     void init();
     void frameAll();
     void tumble(double x, double y);
-    void truck(double up, double down);
+    void truck(double right, double up);
     void distance(double factor);
     double mapToFrustumHeight(int height);
     GfMatrix4d mapToCameraUp();
     GfCamera camera();
     GfMatrix4d rotateAxis(const GfVec3d& value, double angle);
+    void reset();
+public:
     struct Data {
         double aspectRatio;
         double fov;
@@ -36,9 +39,9 @@ public:
         ViewCamera::CameraUp cameraUp;
         ViewCamera::CameraMode cameraMode;
         ViewCamera::FovDirection direction;
-        double axisyaw;    // x-axis
-        double axispitch;  // y-axis
-        double axisroll;   // z-axis
+        double axisyaw;
+        double axispitch;
+        double axisroll;
         GfCamera camera;
         bool valid = false;
     };
@@ -50,19 +53,23 @@ ViewCameraPrivate::init()
 {
     d.aspectRatio = 1.0;
     d.fov = 60.0;
-    d.nearClipping = 1;
-    d.farClipping = 2000000;
+    d.nearClipping = 1.0;
+    d.farClipping = 2000000.0;
     d.fit = 1.1;
+    d.distance = 1.0;
     d.inverseUp = GfMatrix4d(1.0);
-    d.center = GfVec3d(0);
+    d.boundingBox = GfBBox3d();
+    d.center = GfVec3d(0.0);
     d.focusPoint = d.center;
+    d.range = GfRange3d();
     d.cameraUp = ViewCamera::Y;
     d.cameraMode = ViewCamera::None;
     d.direction = ViewCamera::Vertical;
-    d.axisyaw = 0;
-    d.axispitch = 0;
-    d.axisroll = 0;
+    d.axisyaw = 0.0;
+    d.axispitch = 0.0;
+    d.axisroll = 0.0;
     d.inverseUp = mapToCameraUp();
+    d.valid = false;
 }
 
 void
@@ -70,15 +77,17 @@ ViewCameraPrivate::frameAll()
 {
     GfVec3d size = d.range.GetSize();
     double maxsize = std::max(size[0], std::max(size[1], size[2]));
+
     double fovangle = d.fov * 0.5;
-    if (fovangle == 0.0) {
+    if (fovangle == 0.0)
         fovangle = 0.5;
-    }
+
     double length = maxsize * d.fit * 0.5;
     d.distance = length / std::atan(fovangle * M_PI / 180.0);
-    if (d.distance < d.nearClipping + maxsize * 0.5) {
+
+    if (d.distance < d.nearClipping + maxsize * 0.5)
         d.distance = d.nearClipping + length;
-    }
+
     d.center = d.range.GetMidpoint();
     d.focusPoint = d.center;
     d.valid = false;
@@ -98,7 +107,8 @@ ViewCameraPrivate::truck(double right, double up)
     const GfFrustum frustum = camera().GetFrustum();
     GfVec3d cameraUp = frustum.ComputeUpVector();
     GfVec3d cameraRight = GfCross(frustum.ComputeViewDirection(), cameraUp);
-    GfVec3d delta = (right * cameraRight + up * cameraUp);
+    GfVec3d delta = right * cameraRight + up * cameraUp;
+
     d.center += delta;
     d.focusPoint += delta;
     d.valid = false;
@@ -107,7 +117,7 @@ ViewCameraPrivate::truck(double right, double up)
 void
 ViewCameraPrivate::distance(double factor)
 {
-    if (factor > 1 && d.distance < 2) {
+    if (factor > 1.0 && d.distance < 2.0) {
         GfVec3d size = d.range.GetSize();
         double maxsize = std::max(size[0], std::max(size[1], size[2]));
         d.distance += std::min(maxsize / 25.0, factor);
@@ -115,6 +125,7 @@ ViewCameraPrivate::distance(double factor)
     else {
         d.distance *= factor;
     }
+
     d.valid = false;
 }
 
@@ -129,6 +140,7 @@ GfMatrix4d
 ViewCameraPrivate::mapToCameraUp()
 {
     GfMatrix4d matrix;
+
     if (d.cameraUp == ViewCamera::Z) {
         matrix.SetRotate(GfRotation(GfVec3d::XAxis(), -90.0));
     }
@@ -138,6 +150,7 @@ ViewCameraPrivate::mapToCameraUp()
     else {
         matrix = GfMatrix4d(1.0);
     }
+
     return matrix.GetInverse();
 }
 
@@ -151,14 +164,17 @@ ViewCameraPrivate::camera()
         matrix *= rotateAxis(GfVec3d().YAxis(), -d.axisroll);
         matrix *= d.inverseUp;
         matrix *= GfMatrix4d().SetTranslate(d.focusPoint);
+
         d.camera.SetTransform(matrix);
         d.camera.SetFocusDistance(d.distance);
         d.camera.SetPerspectiveFromAspectRatioAndFieldOfView(d.aspectRatio, d.fov, GfCamera::FOVVertical);
         d.camera.SetClippingRange(GfRange1f(d.nearClipping, d.farClipping));
+        
         CameraUtilConformWindowPolicy policy = CameraUtilConformWindowPolicy::CameraUtilFit;
         CameraUtilConformWindow(&d.camera, policy, d.aspectRatio);
         d.valid = true;
     }
+
     return d.camera;
 }
 
@@ -168,55 +184,75 @@ ViewCameraPrivate::rotateAxis(const GfVec3d& value, double angle)
     return GfMatrix4d(1.0).SetRotate(GfRotation(value, angle));
 }
 
-ViewCamera::ViewCamera()
-    : p(new ViewCameraPrivate())
+void
+ViewCameraPrivate::reset()
+{
+    const GfBBox3d boundingBox = d.boundingBox;
+    const GfRange3d range = d.range;
+    const ViewCamera::CameraUp cameraUp = d.cameraUp;
+    init();
+    d.boundingBox = boundingBox;
+    d.range = range;
+    d.cameraUp = cameraUp;
+    d.inverseUp = mapToCameraUp();
+    d.center = d.range.GetMidpoint();
+    d.focusPoint = d.center;
+    d.valid = false;
+}
+
+ViewCamera::ViewCamera(QObject* parent)
+    : QObject(parent)
+    , p(new ViewCameraPrivate())
 {
     p->init();
 }
 
 ViewCamera::ViewCamera(double aspectratio, double fov, ViewCamera::FovDirection direction)
-    : p(new ViewCameraPrivate())
+    : QObject(nullptr)
+    , p(new ViewCameraPrivate())
 {
+    p->init();
     p->d.aspectRatio = aspectratio;
     p->d.fov = fov;
     p->d.direction = direction;
-    p->init();
+    p->d.valid = false;
 }
-
-ViewCamera::ViewCamera(const ViewCamera& other)
-    : p(other.p)
-{}
 
 ViewCamera::~ViewCamera() = default;
 
 void
-ViewCamera::frameAll() const
+ViewCamera::frameAll()
 {
     p->frameAll();
+    Q_EMIT cameraChanged(camera());
 }
 
 void
 ViewCamera::resetView()
 {
     p->init();
+    Q_EMIT cameraChanged(camera());
 }
 
 void
 ViewCamera::tumble(double x, double y)
 {
     p->tumble(x, y);
+    Q_EMIT cameraChanged(camera());
 }
 
 void
-ViewCamera::truck(double up, double down)
+ViewCamera::truck(double right, double up)
 {
-    p->truck(up, down);
+    p->truck(right, up);
+    Q_EMIT cameraChanged(camera());
 }
 
 void
 ViewCamera::distance(double factor)
 {
     p->distance(factor);
+    Q_EMIT cameraChanged(camera());
 }
 
 double
@@ -243,6 +279,7 @@ ViewCamera::setAspectRatio(double aspectRatio)
     if (p->d.aspectRatio != aspectRatio) {
         p->d.aspectRatio = aspectRatio;
         p->d.valid = false;
+        Q_EMIT cameraChanged(camera());
     }
 }
 
@@ -255,12 +292,18 @@ ViewCamera::focusPoint() const
 void
 ViewCamera::setFocusPoint(const GfVec3d& point)
 {
+    if (p->d.focusPoint == point)
+        return;
+
     GfCamera cam = p->camera();
     GfVec3d camPos = cam.GetTransform().ExtractTranslation();
+
     p->d.focusPoint = point;
     p->d.center = point;
     p->d.distance = (camPos - point).GetLength();
     p->d.valid = false;
+
+    Q_EMIT cameraChanged(camera());
 }
 
 GfBBox3d
@@ -278,11 +321,12 @@ ViewCamera::setBoundingBox(const GfBBox3d& boundingBox)
         p->d.focusPoint = p->d.center;
         p->d.range = boundingBox.ComputeAlignedRange();
         p->d.valid = false;
+        Q_EMIT cameraChanged(camera());
     }
 }
 
 ViewCamera::CameraMode
-ViewCamera::cameraMode()
+ViewCamera::cameraMode() const
 {
     return p->d.cameraMode;
 }
@@ -293,11 +337,12 @@ ViewCamera::setCameraMode(ViewCamera::CameraMode cameraMode)
     if (p->d.cameraMode != cameraMode) {
         p->d.cameraMode = cameraMode;
         p->d.valid = false;
+        Q_EMIT cameraChanged(camera());
     }
 }
 
 ViewCamera::CameraUp
-ViewCamera::cameraUp()
+ViewCamera::cameraUp() const
 {
     return p->d.cameraUp;
 }
@@ -309,6 +354,7 @@ ViewCamera::setCameraUp(ViewCamera::CameraUp cameraUp)
         p->d.cameraUp = cameraUp;
         p->d.inverseUp = p->mapToCameraUp();
         p->d.valid = false;
+        Q_EMIT cameraChanged(camera());
     }
 }
 
@@ -324,6 +370,7 @@ ViewCamera::setFov(double fov)
     if (p->d.fov != fov) {
         p->d.fov = fov;
         p->d.valid = false;
+        Q_EMIT cameraChanged(camera());
     }
 }
 
@@ -339,6 +386,7 @@ ViewCamera::setFovDirection(ViewCamera::FovDirection direction)
     if (p->d.direction != direction) {
         p->d.direction = direction;
         p->d.valid = false;
+        Q_EMIT cameraChanged(camera());
     }
 }
 
@@ -354,6 +402,7 @@ ViewCamera::setNearClipping(double nearClipping)
     if (p->d.nearClipping != nearClipping) {
         p->d.nearClipping = nearClipping;
         p->d.valid = false;
+        Q_EMIT cameraChanged(camera());
     }
 }
 
@@ -369,15 +418,15 @@ ViewCamera::setFarClipping(double farClipping)
     if (p->d.farClipping != farClipping) {
         p->d.farClipping = farClipping;
         p->d.valid = false;
+        Q_EMIT cameraChanged(camera());
     }
 }
 
-ViewCamera&
-ViewCamera::operator=(const ViewCamera& other)
+void
+ViewCamera::reset()
 {
-    if (this != &other) {
-        p = other.p;
-    }
-    return *this;
+    p->reset();
+    Q_EMIT cameraChanged(camera());
 }
+
 }  // namespace stageviz
