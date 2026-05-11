@@ -7,7 +7,7 @@
     <x>0</x>
     <y>0</y>
     <width>1200</width>
-    <height>600</height>
+    <height>800</height>
    </rect>
   </property>
   <property name="minimumSize">
@@ -393,9 +393,20 @@
      <addaction name="displayRenderShaded"/>
      <addaction name="displayRenderWireframe"/>
     </widget>
+    <widget class="QMenu" name="displayComplexity">
+     <property name="title">
+      <string>Complexity</string>
+     </property>
+     <addaction name="displayComplexityLow"/>
+     <addaction name="displayComplexityMedium"/>
+     <addaction name="displayComplexityHigh"/>
+     <addaction name="displayComplexityVeryHigh"/>
+    </widget>
     <addaction name="displayIsolate"/>
     <addaction name="separator"/>
     <addaction name="displayRender"/>
+    <addaction name="separator"/>
+    <addaction name="displayComplexity"/>
     <addaction name="separator"/>
     <addaction name="displayCameraLight"/>
     <addaction name="displaySceneLights"/>
@@ -407,6 +418,7 @@
     <addaction name="separator"/>
     <addaction name="displayExpand"/>
     <addaction name="displayCollapse"/>
+    <addaction name="separator"/>
     <addaction name="separator"/>
    </widget>
    <widget class="QMenu" name="menuFile">
@@ -426,6 +438,15 @@
      </property>
      <addaction name="actionClear"/>
     </widget>
+    <widget class="QMenu" name="fileState">
+     <property name="title">
+      <string>State</string>
+     </property>
+     <addaction name="fileStateLoad"/>
+     <addaction name="fileStateSave"/>
+     <addaction name="separator"/>
+     <addaction name="fileStateAutoSave"/>
+    </widget>
     <addaction name="fileNew"/>
     <addaction name="fileOpen"/>
     <addaction name="fileMerge"/>
@@ -436,13 +457,15 @@
     <addaction name="fileSaveAs"/>
     <addaction name="fileSaveCopy"/>
     <addaction name="separator"/>
+    <addaction name="fileExportAll"/>
+    <addaction name="fileExportSelected"/>
+    <addaction name="fileExportImage"/>
+    <addaction name="separator"/>
+    <addaction name="fileState"/>
+    <addaction name="separator"/>
     <addaction name="fileReload"/>
     <addaction name="fileClose"/>
     <addaction name="separator"/>
-    <addaction name="fileExportAll"/>
-    <addaction name="fileExportSelected"/>
-    <addaction name="separator"/>
-    <addaction name="fileExportImage"/>
     <addaction name="separator"/>
     <addaction name="fileSaveSettings"/>
     <addaction name="separator"/>
@@ -1117,6 +1140,59 @@
   <action name="helpCheckUpdates">
    <property name="text">
     <string>Check for updates ...</string>
+   </property>
+  </action>
+  <action name="fileStateLoad">
+   <property name="text">
+    <string>Load</string>
+   </property>
+  </action>
+  <action name="fileStateSave">
+   <property name="text">
+    <string>Save</string>
+   </property>
+  </action>
+  <action name="fileStateAutoSave">
+   <property name="checkable">
+    <bool>true</bool>
+   </property>
+   <property name="text">
+    <string>Auto save</string>
+   </property>
+  </action>
+  <action name="displayComplexityLow">
+   <property name="checkable">
+    <bool>true</bool>
+   </property>
+   <property name="checked">
+    <bool>true</bool>
+   </property>
+   <property name="text">
+    <string>Low</string>
+   </property>
+  </action>
+  <action name="displayComplexityMedium">
+   <property name="checkable">
+    <bool>true</bool>
+   </property>
+   <property name="text">
+    <string>Medium</string>
+   </property>
+  </action>
+  <action name="displayComplexityHigh">
+   <property name="checkable">
+    <bool>true</bool>
+   </property>
+   <property name="text">
+    <string>High</string>
+   </property>
+  </action>
+  <action name="displayComplexityVeryHigh">
+   <property name="checkable">
+    <bool>true</bool>
+   </property>
+   <property name="text">
+    <string>Very high</string>
    </property>
   </action>
  </widget>

@@ -209,7 +209,7 @@ StylePrivate::updateTheme()
     map(Style::ColorRole::ButtonAlt, QColor::fromHsl(220, 6, 64));
     map(Style::ColorRole::Item, QColor::fromHsl(220, 6, 50));
     map(Style::ColorRole::ItemAlt, QColor::fromHsl(220, 6, 42));
-    map(Style::ColorRole::Render, QColor::fromHsl(210, 11, 35));
+    map(Style::ColorRole::Render, QColor::fromHsl(210, 27, 25));
     map(Style::ColorRole::RenderAlt, QColor::fromHsl(210, 6, 25));
     map(Style::ColorRole::Selection, QColor::fromHsl(55, 220, 180));
     map(Style::ColorRole::SelectionAlt, QColor::fromHsl(55, 140, 120));

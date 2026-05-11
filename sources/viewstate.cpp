@@ -28,9 +28,7 @@ ViewState::ViewState(QObject* parent)
     p->init();
 }
 
-ViewState::~ViewState()
-{
-}
+ViewState::~ViewState() {}
 
 ViewCamera*
 ViewState::camera() const

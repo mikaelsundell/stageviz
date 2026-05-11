@@ -226,6 +226,21 @@ public:
     bool flattenPathsToFile(const QList<SdfPath>& paths, const QString& filename);
 
     /**
+     * @brief Loads state from file.
+     */
+    bool loadState(const QString& filename);
+
+    /**
+     * @brief Saves state to file.
+     */
+    bool saveState(const QString& filename);
+
+    /**
+     * @brief Enables automatic state saving.
+     */
+    void setAutoSaveState(bool enabled);
+
+    /**
      * @brief Reloads the currently opened stage.
      */
     bool reload();
@@ -316,7 +331,7 @@ public:
      * @brief Emits any buffered prim changes.
      */
     void flushPrimsUpdates();
-    
+
     /** @name Command State */
     ///@{
 
@@ -341,7 +356,7 @@ public:
     ViewState* viewState() const;
 
     ///@}
-    
+
     /**
      * @brief Sets a textual status message.
      */

@@ -23,6 +23,7 @@ public:
     GfCamera camera();
     GfMatrix4d rotateAxis(const GfVec3d& value, double angle);
     void reset();
+
 public:
     struct Data {
         double aspectRatio;
@@ -169,7 +170,7 @@ ViewCameraPrivate::camera()
         d.camera.SetFocusDistance(d.distance);
         d.camera.SetPerspectiveFromAspectRatioAndFieldOfView(d.aspectRatio, d.fov, GfCamera::FOVVertical);
         d.camera.SetClippingRange(GfRange1f(d.nearClipping, d.farClipping));
-        
+
         CameraUtilConformWindowPolicy policy = CameraUtilConformWindowPolicy::CameraUtilFit;
         CameraUtilConformWindow(&d.camera, policy, d.aspectRatio);
         d.valid = true;

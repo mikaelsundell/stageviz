@@ -8,8 +8,8 @@
 #include "selectionlist.h"
 #include "tracelocks.h"
 #include "usdutils.h"
-#include "viewstate.h"
 #include "viewcamera.h"
+#include "viewstate.h"
 #include <QFile>
 #include <QFileInfo>
 #include <QJsonArray>
@@ -148,6 +148,7 @@ public:
         Session::LoadPolicy loadPolicy = Session::LoadPolicy::All;
         Session::PrimsUpdate primsUpdate = Session::PrimsUpdate::Immediate;
         Session::StageStatus stageStatus = Session::StageStatus::Closed;
+        bool autoSaveState = true;
         NoticeBatch pendingNotices;
         QString filename;
         QString changeName;
@@ -316,6 +317,7 @@ SessionPrivate::loadFromFile(const QString& filename, Session::LoadPolicy policy
 {
     QList<SdfPath> mask;
     bool loaded = false;
+    bool autoSaveState = false;
     {
         WRITE_LOCKER(locker, &d.stageLock, "stageLock");
         StageBlocker blocker(d.stageWatcher.data());
@@ -333,30 +335,28 @@ SessionPrivate::loadFromFile(const QString& filename, Session::LoadPolicy policy
         if (d.stage) {
             d.filename = QFileInfo(filename).absoluteFilePath();
             loaded = true;
+            autoSaveState = d.autoSaveState;
         }
         else {
             d.stageStatus = Session::StageStatus::Failed;
             return false;
         }
-
         mask = d.mask;
     }
 
-    if (loaded && policy == Session::LoadPolicy::None) {
-        const QString stateFilename = QFileInfo(d.filename + ".session").absoluteFilePath();
-        if (!loadState(stateFilename)) {
-            WRITE_LOCKER(locker, &d.stageLock, "stageLock");
-            d.stage = nullptr;
-            d.stageStatus = Session::StageStatus::Failed;
-            d.filename.clear();
-            return false;
-        }
-    }
     d.commandStack->clear();
     d.selectionList->clear();
 
     if (loaded)
         initStage();
+
+    if (loaded && autoSaveState) {
+        const QString stateFilename = QFileInfo(d.filename + ".session").absoluteFilePath();
+        if (!loadState(stateFilename)) {
+            close();
+            return false;
+        }
+    }
 
     setMask(mask);
     updateStage();
@@ -451,6 +451,7 @@ SessionPrivate::saveToFile(const QString& filename)
 {
     QString stageFilename;
     Session::LoadPolicy loadPolicy = Session::LoadPolicy::All;
+    bool autoSaveState = false;
     bool saveAs = false;
 
     {
@@ -470,24 +471,25 @@ SessionPrivate::saveToFile(const QString& filename)
                 currentFile = QFileInfo(qt::StringToQString(rootLayer->GetRealPath())).absoluteFilePath();
 
             loadPolicy = d.loadPolicy;
+            autoSaveState = d.autoSaveState;
 
             if (!rootLayer->IsAnonymous() && currentFile == stageFilename) {
                 d.stage->Save();
                 d.filename = stageFilename;
-                return true;
             }
+            else {
+                if (!rootLayer->Export(QStringToString(stageFilename)))
+                    return false;
 
-            if (!rootLayer->Export(QStringToString(stageFilename)))
-                return false;
-
-            d.filename = stageFilename;
-            saveAs = true;
+                d.filename = stageFilename;
+                saveAs = true;
+            }
         } catch (const std::exception&) {
             return false;
         }
     }
 
-    if (loadPolicy == Session::LoadPolicy::None) {
+    if (autoSaveState) {
         const QString stateFilename = QFileInfo(stageFilename + ".session").absoluteFilePath();
         if (!saveState(stateFilename))
             return false;
@@ -499,11 +501,12 @@ SessionPrivate::saveToFile(const QString& filename)
     close();
     return loadFromFile(stageFilename, loadPolicy);
 }
+
 bool
 SessionPrivate::copyToFile(const QString& filename)
 {
     QString stageFilename;
-    Session::LoadPolicy loadPolicy = Session::LoadPolicy::All;
+    bool autoSaveState = false;
     {
         READ_LOCKER(locker, &d.stageLock, "stageLock");
         try {
@@ -519,18 +522,16 @@ SessionPrivate::copyToFile(const QString& filename)
             if (!rootLayer->Export(QStringToString(stageFilename)))
                 return false;
 
-            loadPolicy = d.loadPolicy;
+            autoSaveState = d.autoSaveState;
         } catch (const std::exception&) {
             return false;
         }
     }
-
-    if (loadPolicy == Session::LoadPolicy::None) {
+    if (autoSaveState) {
         const QString stateFilename = QFileInfo(stageFilename + ".session").absoluteFilePath();
         if (!saveState(stateFilename))
             return false;
     }
-
     return true;
 }
 
@@ -571,6 +572,7 @@ SessionPrivate::loadState(const QString& filename)
         return false;
 
     const QJsonObject root = doc.object();
+
     if (d.viewState && d.viewState->camera()) {
         ViewCamera* camera = d.viewState->camera();
         const QJsonObject cameraObject = root.value("viewCamera").toObject();
@@ -608,36 +610,45 @@ SessionPrivate::loadState(const QString& filename)
 
             const QJsonArray focusPoint = cameraObject.value("focusPoint").toArray();
             if (focusPoint.size() == 3) {
-                camera->setFocusPoint(GfVec3d(focusPoint.at(0).toDouble(),
-                                               focusPoint.at(1).toDouble(),
-                                               focusPoint.at(2).toDouble()));
+                camera->setFocusPoint(
+                    GfVec3d(focusPoint.at(0).toDouble(), focusPoint.at(1).toDouble(), focusPoint.at(2).toDouble()));
             }
         }
     }
     const QJsonArray payloads = root.value("loadedPayloads").toArray();
-    WRITE_LOCKER(locker, &d.stageLock, "stageLock");
-    if (!d.stage)
-        return false;
+    {
+        WRITE_LOCKER(locker, &d.stageLock, "stageLock");
+        if (!d.stage)
+            return false;
 
-    for (const QJsonValue& value : payloads) {
-        const QString pathString = value.toString().trimmed();
-        if (pathString.isEmpty())
-            continue;
+        StageBlocker blocker(d.stageWatcher.data());
 
-        const SdfPath path(qt::QStringToString(pathString));
-        if (!path.IsAbsolutePath())
-            continue;
+        for (const QJsonValue& value : payloads) {
+            const QString pathString = value.toString().trimmed();
+            if (pathString.isEmpty())
+                continue;
 
-        const UsdPrim prim = d.stage->GetPrimAtPath(path);
-        if (!prim || !prim.IsValid())
-            continue;
+            const SdfPath path(qt::QStringToString(pathString));
+            if (!path.IsAbsolutePath())
+                continue;
 
-        if (!stage::isPayload(d.stage, path))
-            continue;
+            const UsdPrim prim = d.stage->GetPrimAtPath(path);
+            if (!prim || !prim.IsValid())
+                continue;
 
-        prim.Load();
+            if (!stage::isPayload(d.stage, path))
+                continue;
+
+            if (!prim.IsLoaded())
+                prim.Load();
+        }
     }
-
+    const GfBBox3d bbox = boundingBox();
+    {
+        WRITE_LOCKER(locker, &d.stageLock, "stageLock");
+        d.bbox = bbox;
+    }
+    Q_EMIT d.session->boundingBoxChanged(bbox);
     return true;
 }
 
@@ -868,7 +879,7 @@ SessionPrivate::boundingBox()
         stage = d.stage;
         mask = d.mask;
     }
-    
+
     Q_ASSERT(stage && "stage is not loaded");
     if (!stage)
         return GfBBox3d();
@@ -1071,6 +1082,24 @@ bool
 Session::flattenPathsToFile(const QList<SdfPath>& paths, const QString& filename)
 {
     return p->flattenPathsToFile(paths, filename);
+}
+
+bool
+Session::loadState(const QString& filename)
+{
+    return p->loadState(filename);
+}
+
+bool
+Session::saveState(const QString& filename)
+{
+    return p->saveState(filename);
+}
+
+void
+Session::setAutoSaveState(bool enabled)
+{
+    p->d.autoSaveState = enabled;
 }
 
 bool

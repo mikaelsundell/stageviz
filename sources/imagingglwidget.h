@@ -34,7 +34,7 @@ public:
     /**
      * @brief Rendering complexity levels.
      */
-    enum ComplexityLevel { ComplexityLow, ComplexityMedium, ComplexityHigh, ComplexityVeryHigh };
+    enum ComplexityLevel { Low, Medium, High, VeryHigh };
 
     /**
      * @brief Supported rendering draw modes.
@@ -124,6 +124,18 @@ public:
      * @param drawMode Rendering mode.
      */
     void setDrawMode(DrawMode drawMode);
+
+    /**
+     * @brief Returns the current complecity level.
+     */
+    ComplexityLevel complexityLevel() const;
+
+    /**
+     * @brief Sets the complexity level.
+     *
+     * @param complexityLevel Complecity level.
+     */
+    void setComplexityLevel(ComplexityLevel complexity);
 
     /**
      * @brief Returns the viewport clear color.

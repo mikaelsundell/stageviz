@@ -72,18 +72,20 @@ public Q_SLOTS:
     void save();
     void saveAs();
     void saveCopy();
+    void exportAll();
+    void exportSelected();
+    void exportImage();
     void reload();
     void close();
+    void stateLoad();
+    void stateSave();
+    void autoSave();
+    void saveSettings();
+    void exit();
     void undo();
     void redo();
     void clear();
     void copyImage();
-    void backgroundColor();
-    void exportAll();
-    void exportSelected();
-    void exportImage();
-    void saveSettings();
-    void exit();
     void selectAll();
     void selectInvert();
     void showSelected();
@@ -109,8 +111,12 @@ public Q_SLOTS:
     void cameraLight(bool checked);
     void sceneLights(bool checked);
     void sceneShaders(bool checked);
-    void renderShaded();
     void renderWireframe();
+    void renderShaded();
+    void complexityLow();
+    void complexityMedium();
+    void complexityHigh();
+    void complexityVeryHigh();
     void toggleOutliner(bool checked);
     void toggleProgress(bool checked);
     void togglePython(bool checked);
@@ -119,8 +125,7 @@ public Q_SLOTS:
     void checkUpdates();
     void openGithubReadme();
     void openGithubIssues();
-
-public Q_SLOTS:
+    void backgroundColor();
     void updateBoundingBox(const GfBBox3d& bbox);
     void updateMask(const QList<SdfPath>& paths);
     void updatePrims(const NoticeBatch& batch);
@@ -212,11 +217,14 @@ ViewerPrivate::init()
     connect(d.ui->fileSave, &QAction::triggered, this, &ViewerPrivate::save);
     connect(d.ui->fileSaveAs, &QAction::triggered, this, &ViewerPrivate::saveAs);
     connect(d.ui->fileSaveCopy, &QAction::triggered, this, &ViewerPrivate::saveCopy);
-    connect(d.ui->fileReload, &QAction::triggered, this, &ViewerPrivate::reload);
-    connect(d.ui->fileClose, &QAction::triggered, this, &ViewerPrivate::close);
     connect(d.ui->fileExportAll, &QAction::triggered, this, &ViewerPrivate::exportAll);
     connect(d.ui->fileExportSelected, &QAction::triggered, this, &ViewerPrivate::exportSelected);
     connect(d.ui->fileExportImage, &QAction::triggered, this, &ViewerPrivate::exportImage);
+    connect(d.ui->fileStateLoad, &QAction::triggered, this, &ViewerPrivate::stateLoad);
+    connect(d.ui->fileStateSave, &QAction::triggered, this, &ViewerPrivate::stateSave);
+    connect(d.ui->fileStateAutoSave, &QAction::triggered, this, &ViewerPrivate::autoSave);
+    connect(d.ui->fileReload, &QAction::triggered, this, &ViewerPrivate::reload);
+    connect(d.ui->fileClose, &QAction::triggered, this, &ViewerPrivate::close);
     connect(d.ui->fileSaveSettings, &QAction::triggered, this, &ViewerPrivate::saveSettings);
     connect(d.ui->fileExit, &QAction::triggered, this, &ViewerPrivate::exit);
     connect(d.ui->editUndo, &QAction::triggered, this, &ViewerPrivate::undo);
@@ -255,6 +263,18 @@ ViewerPrivate::init()
         actions->setExclusive(true);
         actions->addAction(d.ui->displayRenderShaded);
         actions->addAction(d.ui->displayRenderWireframe);
+    }
+    connect(d.ui->displayComplexityLow, &QAction::triggered, this, &ViewerPrivate::complexityLow);
+    connect(d.ui->displayComplexityMedium, &QAction::triggered, this, &ViewerPrivate::complexityMedium);
+    connect(d.ui->displayComplexityHigh, &QAction::triggered, this, &ViewerPrivate::complexityHigh);
+    connect(d.ui->displayComplexityVeryHigh, &QAction::triggered, this, &ViewerPrivate::complexityVeryHigh);
+    {
+        QActionGroup* actions = new QActionGroup(this);
+        actions->setExclusive(true);
+        actions->addAction(d.ui->displayComplexityLow);
+        actions->addAction(d.ui->displayComplexityMedium);
+        actions->addAction(d.ui->displayComplexityHigh);
+        actions->addAction(d.ui->displayComplexityVeryHigh);
     }
     connect(d.ui->displayFrameAll, &QAction::triggered, this, &ViewerPrivate::frameAll);
     connect(d.ui->displayFrameSelected, &QAction::triggered, this, &ViewerPrivate::frameSelected);
@@ -336,7 +356,7 @@ ViewerPrivate::initDocks()
     const int total = d.ui->splitter->width() > 0 ? d.ui->splitter->width() : d.viewer->width();
     const int center = std::max(400, total - left - right);
     d.ui->splitter->setSizes({ left, center, right });
-    
+
     d.pythonDialog = new PythonDialog(d.viewer.data());
     d.pythonDialog->setObjectName("pythonDialog");
     d.pythonDialog->setAttribute(Qt::WA_DeleteOnClose, false);
@@ -571,10 +591,14 @@ ViewerPrivate::enable(bool enable)
                                 d.ui->fileSave,
                                 d.ui->fileSaveAs,
                                 d.ui->fileSaveCopy,
+                                d.ui->fileStateLoad,
+                                d.ui->fileStateSave,
+                                d.ui->fileStateAutoSave,
                                 d.ui->fileExportAll,
                                 d.ui->fileExportSelected,
                                 d.ui->fileExportImage,
                                 d.ui->editCopyImage,
+                                d.ui->editSelectAll,
                                 d.ui->editShowSelected,
                                 d.ui->editShowRecursive,
                                 d.ui->editHideSelected,
@@ -589,13 +613,20 @@ ViewerPrivate::enable(bool enable)
                                 d.ui->editPayloadInvertSelected,
                                 d.ui->editDeleteSelected,
                                 d.ui->displayIsolate,
+                                d.ui->displayCameraLight,
+                                d.ui->displaySceneLights,
+                                d.ui->displaySceneShaders,
                                 d.ui->displayFrameAll,
                                 d.ui->displayFrameSelected,
                                 d.ui->displayResetView,
                                 d.ui->displayExpand,
                                 d.ui->displayCollapse,
                                 d.ui->displayRenderShaded,
-                                d.ui->displayRenderWireframe };
+                                d.ui->displayRenderWireframe,
+                                d.ui->displayComplexityLow,
+                                d.ui->displayComplexityMedium,
+                                d.ui->displayComplexityHigh,
+                                d.ui->displayComplexityVeryHigh };
     for (QAction* action : actions) {
         if (action)
             action->setEnabled(enable);
@@ -764,97 +795,6 @@ ViewerPrivate::saveCopy()
 }
 
 void
-ViewerPrivate::reload()
-{
-    if (!session()->isLoaded())
-        return;
-    if (!saveChanges())
-        return;
-
-    QElapsedTimer timer;
-    timer.start();
-
-    if (!session()->reload()) {
-        session()->notifyStatus(Session::Notify::Status::Error, "Failed to reload stage");
-        return;
-    }
-
-    const double elapsedSec = timer.elapsed() / 1000.0;
-    session()->commandStack()->clear();
-    session()->notifyStatus(Session::Notify::Status::Info,
-                            QString("Reloaded stage in %1 seconds").arg(QString::number(elapsedSec, 'f', 2)));
-    clearChanges();
-}
-
-void
-ViewerPrivate::close()
-{
-    if (!session()->isLoaded())
-        return;
-    if (!saveChanges())
-        return;
-
-    session()->commandStack()->clear();
-    session()->close();
-    d.init = false;
-    updateWindowTitle();
-    clearChanges();
-    enable(false);
-}
-
-void
-ViewerPrivate::undo()
-{
-    session()->commandStack()->undo();
-}
-
-void
-ViewerPrivate::redo()
-{
-    session()->commandStack()->redo();
-}
-
-void
-ViewerPrivate::clear()
-{
-    session()->commandStack()->clear();
-}
-
-void
-ViewerPrivate::copyImage()
-{
-    QImage image = renderView()->captureImage();
-    QClipboard* clipboard = QGuiApplication::clipboard();
-    clipboard->setImage(image);
-}
-
-void
-ViewerPrivate::selectAll()
-{
-    session()->commandStack()->run(new Command(stageviz::selectAll()));
-}
-
-void
-ViewerPrivate::selectInvert()
-{
-    if (session()->selectionList()->paths().size())
-        session()->commandStack()->run(new Command(stageviz::selectInvert()));
-}
-
-void
-ViewerPrivate::backgroundColor()
-{
-    QColor color = QColorDialog::getColor(d.backgroundColor, d.viewer.data(), "Select color");
-    if (!color.isValid())
-        return;
-
-    renderView()->setBackgroundColor(color);
-    d.ui->backgroundColor->setStyleSheet("background-color: " + color.name() + ";");
-    settings()->setValue("backgroundColor", color.name());
-    d.backgroundColor = color;
-}
-
-void
 ViewerPrivate::exportAll()
 {
     QString exportDir = settings()->value("exportAllDir", QDir::homePath()).toString();
@@ -983,6 +923,171 @@ ViewerPrivate::exportImage()
         settings()->setValue("exportImageDir", QFileInfo(filename).absolutePath());
     else
         qWarning() << "failed to save image: " << filename;
+}
+
+void
+ViewerPrivate::stateLoad()
+{
+    QString stateDir = settings()->value("stateDir", QDir::homePath()).toString();
+    QString currentFile = session()->filename();
+    QString defaultName;
+
+    if (!currentFile.isEmpty()) {
+        QFileInfo info(currentFile);
+        defaultName = info.fileName() + ".session";
+        stateDir = info.absolutePath();
+    }
+    else {
+        defaultName = "Untitled.usd.session";
+    }
+
+    const QString filter = QStringLiteral("Session Files (*.session)");
+    const QString filename = QFileDialog::getOpenFileName(d.viewer.data(), "Load State",
+                                                          QDir(stateDir).filePath(defaultName), filter);
+
+    if (filename.isEmpty())
+        return;
+
+    QElapsedTimer timer;
+    timer.start();
+
+    if (session()->loadState(filename)) {
+        const double elapsedSec = timer.elapsed() / 1000.0;
+
+        settings()->setValue("stateDir", QFileInfo(filename).absolutePath());
+        session()->notifyStatus(Session::Notify::Status::Info, QString("Loaded state %1 in %2 seconds")
+                                                                   .arg(filename, QString::number(elapsedSec, 'f', 2)));
+    }
+    else {
+        session()->notifyStatus(Session::Notify::Status::Error, QString("Failed to load state: %1").arg(filename));
+    }
+}
+
+void
+ViewerPrivate::stateSave()
+{
+    QString stateDir = settings()->value("stateDir", QDir::homePath()).toString();
+    QString currentFile = session()->filename();
+    QString defaultName;
+
+    if (!currentFile.isEmpty()) {
+        QFileInfo info(currentFile);
+        defaultName = info.fileName() + ".session";
+        stateDir = info.absolutePath();
+    }
+    else {
+        defaultName = "Untitled.usd.session";
+    }
+
+    const QString filter = QStringLiteral("Session Files (*.session)");
+    QString filename = QFileDialog::getSaveFileName(d.viewer.data(), "Save State", QDir(stateDir).filePath(defaultName),
+                                                    filter);
+
+    if (filename.isEmpty())
+        return;
+
+    if (QFileInfo(filename).suffix().isEmpty())
+        filename += ".session";
+
+    QElapsedTimer timer;
+    timer.start();
+
+    if (session()->saveState(filename)) {
+        const double elapsedSec = timer.elapsed() / 1000.0;
+
+        settings()->setValue("stateDir", QFileInfo(filename).absolutePath());
+        session()->notifyStatus(Session::Notify::Status::Info, QString("Saved state %1 in %2 seconds")
+                                                                   .arg(filename, QString::number(elapsedSec, 'f', 2)));
+    }
+    else {
+        session()->notifyStatus(Session::Notify::Status::Error, QString("Failed to save state: %1").arg(filename));
+    }
+}
+
+void
+ViewerPrivate::autoSave()
+{
+    const bool checked = d.ui->fileStateAutoSave->isChecked();
+    session()->setAutoSaveState(checked);
+    settings()->setValue("stateAutoSave", checked);
+}
+
+void
+ViewerPrivate::reload()
+{
+    if (!session()->isLoaded())
+        return;
+    if (!saveChanges())
+        return;
+
+    QElapsedTimer timer;
+    timer.start();
+
+    if (!session()->reload()) {
+        session()->notifyStatus(Session::Notify::Status::Error, "Failed to reload stage");
+        return;
+    }
+
+    const double elapsedSec = timer.elapsed() / 1000.0;
+    session()->commandStack()->clear();
+    session()->notifyStatus(Session::Notify::Status::Info,
+                            QString("Reloaded stage in %1 seconds").arg(QString::number(elapsedSec, 'f', 2)));
+    clearChanges();
+}
+
+void
+ViewerPrivate::close()
+{
+    if (!session()->isLoaded())
+        return;
+    if (!saveChanges())
+        return;
+
+    session()->commandStack()->clear();
+    session()->close();
+    d.init = false;
+    updateWindowTitle();
+    clearChanges();
+    enable(false);
+}
+
+void
+ViewerPrivate::undo()
+{
+    session()->commandStack()->undo();
+}
+
+void
+ViewerPrivate::redo()
+{
+    session()->commandStack()->redo();
+}
+
+void
+ViewerPrivate::clear()
+{
+    session()->commandStack()->clear();
+}
+
+void
+ViewerPrivate::copyImage()
+{
+    QImage image = renderView()->captureImage();
+    QClipboard* clipboard = QGuiApplication::clipboard();
+    clipboard->setImage(image);
+}
+
+void
+ViewerPrivate::selectAll()
+{
+    session()->commandStack()->run(new Command(stageviz::selectAll()));
+}
+
+void
+ViewerPrivate::selectInvert()
+{
+    if (session()->selectionList()->paths().size())
+        session()->commandStack()->run(new Command(stageviz::selectInvert()));
 }
 
 void
@@ -1228,6 +1333,30 @@ ViewerPrivate::renderWireframe()
 }
 
 void
+ViewerPrivate::complexityLow()
+{
+    renderView()->setComplexityLevel(RenderView::ComplexityLevel::Low);
+}
+
+void
+ViewerPrivate::complexityMedium()
+{
+    renderView()->setComplexityLevel(RenderView::ComplexityLevel::Medium);
+}
+
+void
+ViewerPrivate::complexityHigh()
+{
+    renderView()->setComplexityLevel(RenderView::ComplexityLevel::High);
+}
+
+void
+ViewerPrivate::complexityVeryHigh()
+{
+    renderView()->setComplexityLevel(RenderView::ComplexityLevel::VeryHigh);
+}
+
+void
 ViewerPrivate::toggleOutliner(bool checked)
 {
     d.ui->outlinerWidget->setVisible(checked);
@@ -1388,6 +1517,19 @@ void
 ViewerPrivate::openGithubIssues()
 {
     QDesktopServices::openUrl(QUrl("https://github.com/mikaelsundell/stageviz/issues"));
+}
+
+void
+ViewerPrivate::backgroundColor()
+{
+    QColor color = QColorDialog::getColor(d.backgroundColor, d.viewer.data(), "Select color");
+    if (!color.isValid())
+        return;
+
+    renderView()->setBackgroundColor(color);
+    d.ui->backgroundColor->setStyleSheet("background-color: " + color.name() + ";");
+    settings()->setValue("backgroundColor", color.name());
+    d.backgroundColor = color;
 }
 
 void

@@ -39,6 +39,11 @@ public:
         Wireframe,
     };
 
+    /**
+     * @brief Complexity levels supported by the viewport.
+     */
+    enum ComplexityLevel { Low, Medium, High, VeryHigh };
+
 public:
     /**
      * @brief Constructs the render view widget.
@@ -192,6 +197,18 @@ public:
      * @param renderMode Rendering mode.
      */
     void setRenderMode(RenderMode renderMode);
+
+    /**
+     * @brief Returns the current complecity level.
+     */
+    ComplexityLevel complexityLevel() const;
+
+    /**
+     * @brief Sets the complexity level.
+     *
+     * @param renderMode Complexcity level.
+     */
+    void setComplexityLevel(ComplexityLevel renderMode);
 
     ///@}
 

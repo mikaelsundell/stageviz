@@ -687,6 +687,7 @@ QTreeView QHeaderView
 {
     background-color: $color.basealt;
     border: none;
+    font-size: $font.size.medium;
 }
 
 QTreeView QHeaderView:section

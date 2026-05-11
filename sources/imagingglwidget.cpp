@@ -13,8 +13,8 @@
 #include "tracelocks.h"
 #include "usdutils.h"
 #include "viewcamera.h"
-#include "viewstate.h"
 #include "viewcontext.h"
+#include "viewstate.h"
 #include <QApplication>
 #include <QColor>
 #include <QColorSpace>
@@ -78,11 +78,11 @@ public:
     void captureVisible();
     void clearVisibleCapture();
     void rebuildSelectionBBoxes();
-    
+
 public Q_SLOTS:
     void updateCamera(const GfCamera& camera);
     void updateSelection(const QList<SdfPath>& paths);
-    
+
 public:
     QPoint deviceRatio(QPoint value) const;
     double deviceRatio(double value) const;
@@ -121,6 +121,7 @@ public:
         QImage axis;
         GfBBox3d selectionBBox;
         ImagingGLWidget::DrawMode drawMode;
+        ImagingGLWidget::ComplexityLevel complexityLevel;
         UsdStageRefPtr stage;
         UsdImagingGLRenderParams params;
         GfBBox3d bbox;
@@ -163,6 +164,7 @@ ImagingGLWidgetPrivate::init()
     d.drag = false;
     d.sweep = false;
     d.drawMode = ImagingGLWidget::DrawMode::ShadedSmooth;
+    d.complexityLevel = ImagingGLWidget::ComplexityLevel::Low;
     d.context = nullptr;
 }
 
@@ -338,6 +340,17 @@ ImagingGLWidgetPrivate::paintGL()
                 default: mode = UsdImagingGLDrawMode::DRAW_GEOM_SMOOTH;
                 }
                 d.params.drawMode = mode;
+            }
+            {
+                double complexity = 1.0;
+                switch (d.complexityLevel) {
+                case ImagingGLWidget::ComplexityLevel::Low: complexity = 1.0; break;
+                case ImagingGLWidget::ComplexityLevel::Medium: complexity = 1.1; break;
+                case ImagingGLWidget::ComplexityLevel::High: complexity = 1.2; break;
+                case ImagingGLWidget::ComplexityLevel::VeryHigh: complexity = 1.3; break;
+                default: complexity = 1.0; break;
+                }
+                d.params.complexity = complexity;
             }
             d.params.cullStyle = UsdImagingGLCullStyle::CULL_STYLE_NOTHING;
             d.params.enableLighting = true;
@@ -1336,9 +1349,8 @@ ImagingGLWidgetPrivate::updatePerformanceStats()
     p.setRenderHint(QPainter::TextAntialiasing);
     p.setFont(font);
 
-    const QColor textColor = d.stage
-                                 ? style()->color(Style::ColorRole::Text, Style::UIState::Normal)
-                                 : style()->color(Style::ColorRole::Text, Style::UIState::Disabled);
+    const QColor textColor = d.stage ? style()->color(Style::ColorRole::Text, Style::UIState::Normal)
+                                     : style()->color(Style::ColorRole::Text, Style::UIState::Disabled);
 
     const QColor shadowColor(0, 0, 0, 160);
 
@@ -1419,6 +1431,21 @@ ImagingGLWidget::setDrawMode(DrawMode drawMode)
 {
     if (drawMode != p->d.drawMode) {
         p->d.drawMode = drawMode;
+        update();
+    }
+}
+
+ImagingGLWidget::ComplexityLevel
+ImagingGLWidget::complexityLevel() const
+{
+    return p->d.complexityLevel;
+}
+
+void
+ImagingGLWidget::setComplexityLevel(ComplexityLevel complexityLevel)
+{
+    if (complexityLevel != p->d.complexityLevel) {
+        p->d.complexityLevel = complexityLevel;
         update();
     }
 }

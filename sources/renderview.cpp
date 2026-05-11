@@ -204,6 +204,34 @@ RenderView::setRenderMode(RenderMode renderMode)
     p->imageGLWidget()->update();
 }
 
+RenderView::ComplexityLevel
+RenderView::complexityLevel() const
+{
+    ImagingGLWidget::ComplexityLevel complexityLevel = p->imageGLWidget()->complexityLevel();
+    switch (complexityLevel) {
+    case ImagingGLWidget::ComplexityLevel::Low: return ComplexityLevel::Low;
+    case ImagingGLWidget::ComplexityLevel::Medium: return ComplexityLevel::Medium;
+    case ImagingGLWidget::ComplexityLevel::High: return ComplexityLevel::High;
+    case ImagingGLWidget::ComplexityLevel::VeryHigh: return ComplexityLevel::VeryHigh;
+    }
+}
+
+void
+RenderView::setComplexityLevel(ComplexityLevel complexityLevel)
+{
+    switch (complexityLevel) {
+    case ComplexityLevel::Low: p->imageGLWidget()->setComplexityLevel(ImagingGLWidget::ComplexityLevel::Low); break;
+    case ComplexityLevel::Medium:
+        p->imageGLWidget()->setComplexityLevel(ImagingGLWidget::ComplexityLevel::Medium);
+        break;
+    case ComplexityLevel::High: p->imageGLWidget()->setComplexityLevel(ImagingGLWidget::ComplexityLevel::High); break;
+    case ComplexityLevel::VeryHigh:
+        p->imageGLWidget()->setComplexityLevel(ImagingGLWidget::ComplexityLevel::VeryHigh);
+        break;
+    }
+    p->imageGLWidget()->update();
+}
+
 bool
 RenderView::defaultCameraLightEnabled() const
 {

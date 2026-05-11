@@ -248,8 +248,8 @@ public:
      * navigation parameters.
      */
     void reset();
-    
-    
+
+
 Q_SIGNALS:
     /**
      * @brief Emitted when the camera changes.
