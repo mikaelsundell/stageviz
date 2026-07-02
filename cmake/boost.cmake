@@ -9,10 +9,6 @@ set(BOOST_VERSION "" CACHE STRING
 )
 
 function(find_boost_python out_target)
-    if(NOT WIN32)
-        message(FATAL_ERROR "find_boost_python() is intended for WIN32 only")
-    endif()
-
     if(NOT DEFINED Python3_VERSION_MAJOR OR NOT DEFINED Python3_VERSION_MINOR)
         message(FATAL_ERROR "Python3 must be found before calling find_boost_python()")
     endif()
@@ -75,28 +71,69 @@ function(find_boost_python out_target)
     set(boost_python_version_tag "${Python3_VERSION_MAJOR}${Python3_VERSION_MINOR}")
 
     set(boost_arch_tag "")
-    if(CMAKE_VS_PLATFORM_NAME)
-        string(TOLOWER "${CMAKE_VS_PLATFORM_NAME}" boost_arch_tag)
-    elseif(CMAKE_GENERATOR_PLATFORM)
-        string(TOLOWER "${CMAKE_GENERATOR_PLATFORM}" boost_arch_tag)
+    if(WIN32)
+        if(CMAKE_VS_PLATFORM_NAME)
+            string(TOLOWER "${CMAKE_VS_PLATFORM_NAME}" boost_arch_tag)
+        elseif(CMAKE_GENERATOR_PLATFORM)
+            string(TOLOWER "${CMAKE_GENERATOR_PLATFORM}" boost_arch_tag)
+        else()
+            set(boost_arch_tag "x64")
+        endif()
+    elseif(APPLE)
+        if(CMAKE_OSX_ARCHITECTURES MATCHES "arm64|aarch64")
+            set(boost_arch_tag "a64")
+        elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64")
+            set(boost_arch_tag "a64")
+        else()
+            set(boost_arch_tag "x64")
+        endif()
     else()
-        set(boost_arch_tag "x64")
+        if(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|amd64|AMD64")
+            set(boost_arch_tag "x64")
+        elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64")
+            set(boost_arch_tag "a64")
+        endif()
     endif()
-
-    file(GLOB boost_python_debug_candidates
-        "${boost_library_dir}/libboost_python${boost_python_version_tag}-*-gd-${boost_arch_tag}-${boost_version_tag}.lib"
-    )
-    list(SORT boost_python_debug_candidates COMPARE NATURAL ORDER ASCENDING)
-
-    file(GLOB boost_python_release_candidates
-        "${boost_library_dir}/libboost_python${boost_python_version_tag}-*-${boost_arch_tag}-${boost_version_tag}.lib"
-    )
-    list(FILTER boost_python_release_candidates EXCLUDE REGEX "-gd-")
-    list(FILTER boost_python_release_candidates EXCLUDE REGEX "-gyd-")
-    list(SORT boost_python_release_candidates COMPARE NATURAL ORDER ASCENDING)
 
     set(boost_python_lib_debug "")
     set(boost_python_lib_release "")
+
+    if(WIN32)
+        file(GLOB boost_python_debug_candidates
+            "${boost_library_dir}/boost_python${boost_python_version_tag}-*-gyd-${boost_arch_tag}-${boost_version_tag}.lib"
+            "${boost_library_dir}/boost_python${boost_python_version_tag}-*-gd-${boost_arch_tag}-${boost_version_tag}.lib"
+            "${boost_library_dir}/libboost_python${boost_python_version_tag}-*-gyd-${boost_arch_tag}-${boost_version_tag}.lib"
+            "${boost_library_dir}/libboost_python${boost_python_version_tag}-*-gd-${boost_arch_tag}-${boost_version_tag}.lib"
+        )
+
+        file(GLOB boost_python_release_candidates
+            "${boost_library_dir}/boost_python${boost_python_version_tag}-*-${boost_arch_tag}-${boost_version_tag}.lib"
+            "${boost_library_dir}/libboost_python${boost_python_version_tag}-*-${boost_arch_tag}-${boost_version_tag}.lib"
+        )
+
+        list(FILTER boost_python_release_candidates EXCLUDE REGEX "-gd-")
+        list(FILTER boost_python_release_candidates EXCLUDE REGEX "-gyd-")
+    else()
+        file(GLOB boost_python_debug_candidates
+            "${boost_library_dir}/libboost_python${boost_python_version_tag}*-mt-d-${boost_arch_tag}.dylib"
+            "${boost_library_dir}/libboost_python${boost_python_version_tag}*-mt-d-${boost_arch_tag}.a"
+            "${boost_library_dir}/libboost_python${boost_python_version_tag}*-mt-d-${boost_arch_tag}.so"
+            "${boost_library_dir}/libboost_python${boost_python_version_tag}*-d*.dylib"
+            "${boost_library_dir}/libboost_python${boost_python_version_tag}*-d*.a"
+            "${boost_library_dir}/libboost_python${boost_python_version_tag}*-d*.so"
+        )
+
+        file(GLOB boost_python_release_candidates
+            "${boost_library_dir}/libboost_python${boost_python_version_tag}*.dylib"
+            "${boost_library_dir}/libboost_python${boost_python_version_tag}*.a"
+            "${boost_library_dir}/libboost_python${boost_python_version_tag}*.so"
+        )
+
+        list(FILTER boost_python_release_candidates EXCLUDE REGEX "-d")
+    endif()
+
+    list(SORT boost_python_debug_candidates COMPARE NATURAL ORDER ASCENDING)
+    list(SORT boost_python_release_candidates COMPARE NATURAL ORDER ASCENDING)
 
     if(boost_python_debug_candidates)
         list(GET boost_python_debug_candidates 0 boost_python_lib_debug)
@@ -116,6 +153,7 @@ function(find_boost_python out_target)
     else()
         set(config_name "${CMAKE_BUILD_TYPE}")
     endif()
+
     string(TOLOWER "${config_name}" config_name_lower)
 
     set(require_debug_lib OFF)
@@ -191,11 +229,13 @@ function(find_boost_python out_target)
     message(STATUS "Boost lib dir: ${boost_library_dir}")
     message(STATUS "Boost version tag: ${boost_version_tag}")
     message(STATUS "Boost arch tag: ${boost_arch_tag}")
+
     if(boost_python_lib_debug)
         message(STATUS "Boost.Python debug lib: ${boost_python_lib_debug}")
     else()
         message(STATUS "Boost.Python debug lib: <not found>")
     endif()
+
     if(boost_python_lib_release)
         message(STATUS "Boost.Python release lib: ${boost_python_lib_release}")
     else()

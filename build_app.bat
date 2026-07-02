@@ -159,11 +159,14 @@ set "python_cmd=py -3"
 where py >nul 2>&1
 if errorlevel 1 set "python_cmd=python"
 
+REM locate the active python runtime
+for /f "delims=" %%P in ('%python_cmd% -c "import os, sys; print(os.path.dirname(sys.executable))"') do set "python_runtime_dir=%%P"
+
 REM search paths for deploywin.py
-set "deploy_search_paths=%prefix%;%prefix_bin%;%prefix_lib%;%prefix%\python;%prefix_lib%\python;%prefix_plugin_root%;%prefix_plugin_usd%;%prefix_usd_root%"
+set "deploy_search_paths=%prefix%;%prefix_bin%;%prefix_lib%;%prefix%\python;%prefix_lib%\python;%prefix_plugin_root%;%prefix_plugin_usd%;%prefix_usd_root%;%python_runtime_dir%;%python_runtime_dir%\DLLs"
 
 REM directories that deploywin.py should copy as-is
-set "copy_dirs=%prefix_plugin_usd%|plugin\usd|plugins;%prefix_usd_root%|usd"
+set "copy_dirs=%prefix_plugin_usd%|plugin\usd|plugins;%prefix_usd_root%|usd;%python_runtime_dir%\DLLs|DLLs;%python_runtime_dir%\Lib|Lib"
 
 REM python package discovery roots
 set "python_roots=%prefix%\site-packages;%prefix_lib%\site-packages;%prefix%\Lib\site-packages;%prefix%\python;%prefix_lib%\python;%prefix%\python\Lib\site-packages;%prefix%\python\lib\site-packages;%prefix_lib%\python3.9\site-packages;%prefix%\python\lib\python3.9\site-packages"

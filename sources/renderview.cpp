@@ -213,6 +213,7 @@ RenderView::complexityLevel() const
     case ImagingGLWidget::ComplexityLevel::Medium: return ComplexityLevel::Medium;
     case ImagingGLWidget::ComplexityLevel::High: return ComplexityLevel::High;
     case ImagingGLWidget::ComplexityLevel::VeryHigh: return ComplexityLevel::VeryHigh;
+    default: return ComplexityLevel::Medium;
     }
 }
 

@@ -26,7 +26,7 @@ QWidget[DockWidget="true"] {
 
 QCheckBox {
     color: $color.text;
-    background-color: $color.basealt;
+    background-color: transparent;
     font-size: $font.size.medium;
     spacing: 8px;
     padding-right: 10px;
@@ -56,8 +56,17 @@ QComboBox {
     padding-bottom: 2px;
     border-radius: 0px;
     margin-top: 4px;
+    border: 1px solid $color.borderalt;
     outline: none;
-    border: 1px solid $color.border;
+}
+
+QComboBox QAbstractItemView {
+    color: $color.text;
+    background-color: $color.basealt;
+    selection-background-color: $color.highlight;
+    selection-color: $color.text;
+    border: 1px solid $color.borderalt;
+    outline: none;
 }
 
 QComboBox:disabled {
@@ -85,8 +94,18 @@ QComboBox::item {
     border: 8px solid transparent;
 }
 
+QComboBox QAbstractItemView::item {
+    color: $color.text;
+    background-color: $color.basealt;
+}
+
 QComboBox::item:selected {
     background: $color.highlight;
+}
+
+QComboBox QAbstractItemView::item:selected {
+    background-color: $color.highlight;
+    color: $color.text;
 }
 
 QDockWidget {
