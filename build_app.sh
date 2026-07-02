@@ -176,19 +176,32 @@ build_stageviz() {
     mkdir -p "$build_dir"
     cd "$build_dir"
 
-    if ! [ -d "$THIRDPARTY_DIR" ]; then
-        echo "could not find 3rdparty project in: $THIRDPARTY_DIR"
+    if [ -z "$THIRDPARTY_DIR" ]; then
+        echo "THIRDPARTY_DIR is not set."
+        echo "Please set THIRDPARTY_DIR to the root of your 3rdparty project."
         exit 1
     fi
+
+    if [ ! -d "$THIRDPARTY_DIR" ]; then
+        echo "THIRDPARTY_DIR does not point to a valid directory:"
+        echo "  $THIRDPARTY_DIR"
+        exit 1
+    fi
+
     local prefix="$THIRDPARTY_DIR"
 
     local xcode_type
     xcode_type=$(echo "$build_type" | awk '{ print toupper(substr($0, 1, 1)) tolower(substr($0, 2)) }')
 
+    local deploy_build=OFF
+    if [ "$github" == "ON" ]; then
+        deploy_build=ON
+    fi
+
     cmake .. \
         -DCMAKE_MODULE_PATH="$script_dir/modules" \
         -DCMAKE_PREFIX_PATH="$prefix" \
-        -DDEPLOY_BUILD=ON \
+        -DDEPLOY_BUILD="$deploy_build" \
         -G Xcode
 
     cmake --build . --config "$xcode_type" --parallel
