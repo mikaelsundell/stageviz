@@ -282,26 +282,26 @@ PyCommand_newXform(PyObject*, PyObject* args)
 static PyObject*
 PyCommand_movePath(PyObject*, PyObject* args, PyObject* kwargs)
 {
-    PyObject* pyPath = nullptr;
+    PyObject* pyPaths = nullptr;
     PyObject* pyParentPath = nullptr;
     int insertIndex = -1;
 
-    static const char* keywords[] = { "path", "parent_path", "insert_index", nullptr };
-    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "OO|i", const_cast<char**>(keywords), &pyPath, &pyParentPath,
+    static const char* keywords[] = { "paths", "parent_path", "insert_index", nullptr };
+    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "OO|i", const_cast<char**>(keywords), &pyPaths, &pyParentPath,
                                      &insertIndex)) {
         return nullptr;
     }
 
-    SdfPath path;
+    QList<SdfPath> paths;
     SdfPath parentPath;
 
-    if (!parsePathArg(pyPath, "path", &path))
+    if (!parsePathListArg(pyPaths, "paths", &paths))
         return nullptr;
 
     if (!parsePathArg(pyParentPath, "parent_path", &parentPath))
         return nullptr;
 
-    return runCommand(movePath(path, parentPath, insertIndex));
+    return runCommand(movePath(paths, parentPath, insertIndex));
 }
 
 static PyMethodDef PyCommand_methods[] = {
@@ -328,7 +328,7 @@ static PyMethodDef PyCommand_methods[] = {
     { "delete_paths", reinterpret_cast<PyCFunction>(PyCommand_deletePaths), METH_VARARGS, "Delete paths." },
     { "rename_path", reinterpret_cast<PyCFunction>(PyCommand_renamePath), METH_VARARGS, "Rename a path." },
     { "new_xform", reinterpret_cast<PyCFunction>(PyCommand_newXform), METH_VARARGS, "Create a new Xform path." },
-    { "move_path", reinterpret_cast<PyCFunction>(PyCommand_movePath), METH_VARARGS | METH_KEYWORDS, "Move a path." },
+    { "move_path", reinterpret_cast<PyCFunction>(PyCommand_movePath), METH_VARARGS | METH_KEYWORDS, "Move paths." },
 
     { nullptr, nullptr, 0, nullptr }
 };

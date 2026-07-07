@@ -289,22 +289,25 @@ Command
 newXformPath(const SdfPath& parentPath, const QString& nameInput);
 
 /**
- * @brief Creates a command that reparents or reorders a prim.
+ * @brief Creates a command that reparents or reorders one or more prims.
  *
- * Moves a prim from @p fromPath to @p newParentPath. If the parent remains
- * the same, the operation behaves as a reorder using @p insertIndex.
+ * Moves the prims in @p paths to @p newParentPath. When the destination parent
+ * is the same as the current parent, the operation behaves as a reorder using
+ * @p insertIndex. When multiple prims are moved, their relative order is
+ * preserved.
  *
- * Child ordering is preserved and updated for both source and destination
- * parents. Selection and mask are remapped accordingly.
+ * Child ordering is updated for all affected parents. Selection and mask are
+ * remapped to the new paths for every moved prim.
  *
- * Undo restores the original hierarchy and ordering.
+ * Undo restores the original hierarchy, child ordering, selection, and mask.
  *
- * @param fromPath      Prim path to move.
+ * @param paths         Prim paths to move.
  * @param newParentPath Destination parent path.
- * @param insertIndex   Target index in the new parent's child order.
+ * @param insertIndex   Target index for the first moved prim in the destination
+ *                      parent's child order.
  */
 Command
-movePath(const SdfPath& fromPath, const SdfPath& newParentPath, int insertIndex);
+movePath(const QList<SdfPath>& paths, const SdfPath& newParentPath, int insertIndex);
 
 ///@}
 

@@ -117,7 +117,9 @@ StageTreePrivate::init()
     d.tree->setDefaultDropAction(Qt::MoveAction);
     d.tree->setColumnSelectable(PrimItem::Name, true);
     d.tree->setColumnSelectable(PrimItem::Visibility, false);
-
+    d.tree->setSelectionMode(QAbstractItemView::ExtendedSelection);
+    d.tree->setSelectionBehavior(QAbstractItemView::SelectRows);
+    
     connect(d.tree.data(), &StageTree::itemSelectionChanged, this, &StageTreePrivate::itemSelectionChanged);
     connect(d.tree.data(), &StageTree::itemChanged, this, [this](QTreeWidgetItem* item, int column) {
         if (column == PrimItem::Name) {
@@ -1725,20 +1727,35 @@ StageTree::mousePressEvent(QMouseEvent* event)
 void
 StageTree::startDrag(Qt::DropActions supportedActions)
 {
-    qDebug() << "startDrag(Qt::DropActions supportedActions)";
-
-
     Q_UNUSED(supportedActions);
-    auto* item = static_cast<PrimItem*>(currentItem());
-    if (!item)
-        return;
 
-    const QString pathString = item->data(0, PrimItem::Path).toString();
-    if (pathString.isEmpty())
+    QList<SdfPath> paths;
+    QStringList pathStrings;
+
+    for (QTreeWidgetItem* baseItem : selectedItems()) {
+        auto* item = static_cast<PrimItem*>(baseItem);
+        if (!item)
+            continue;
+
+        const QString pathString = item->data(0, PrimItem::Path).toString();
+        if (pathString.isEmpty())
+            continue;
+
+        paths.append(SdfPath(QStringToString(pathString)));
+        pathStrings.append(pathString);
+    }
+
+    paths = path::topLevelPaths(paths);
+
+    pathStrings.clear();
+    for (const SdfPath& path : paths)
+        pathStrings.append(qt::SdfPathToQString(path));
+
+    if (pathStrings.isEmpty())
         return;
 
     auto* mime = new QMimeData();
-    mime->setData(mime::primPath, pathString.toUtf8());
+    mime->setData(mime::primPath, pathStrings.join('\n').toUtf8());
 
     auto* drag = new QDrag(this);
     drag->setMimeData(mime);
@@ -1748,9 +1765,6 @@ StageTree::startDrag(Qt::DropActions supportedActions)
 void
 StageTree::dragEnterEvent(QDragEnterEvent* event)
 {
-    qDebug() << "dragEnterEvent(QDragEnterEvent* event)";
-
-
     if (!event->mimeData()->hasFormat(mime::primPath)) {
         p->clearDropIndicator();
         event->ignore();
@@ -1811,9 +1825,6 @@ StageTree::dragMoveEvent(QDragMoveEvent* event)
 void
 StageTree::dropEvent(QDropEvent* event)
 {
-    qDebug() << "dropEvent(QDropEvent* event)";
-
-
     if (!event->mimeData()->hasFormat(mime::primPath)) {
         p->clearDropIndicator();
         event->ignore();
@@ -1827,16 +1838,30 @@ StageTree::dropEvent(QDropEvent* event)
         return;
     }
 
-    const QString fromPathString = QString::fromUtf8(event->mimeData()->data(mime::primPath));
+    const QString fromPathText = QString::fromUtf8(event->mimeData()->data(mime::primPath));
     const QString targetPathString = targetItem->data(0, PrimItem::Path).toString();
 
-    if (fromPathString.isEmpty() || targetPathString.isEmpty()) {
+    if (fromPathText.isEmpty() || targetPathString.isEmpty()) {
         p->clearDropIndicator();
         event->ignore();
         return;
     }
 
-    const SdfPath fromPath(QStringToString(fromPathString));
+    QList<SdfPath> fromPaths;
+    for (const QString& line : fromPathText.split('\n', Qt::SkipEmptyParts)) {
+        const SdfPath path(QStringToString(line.trimmed()));
+        if (!path.IsEmpty())
+            fromPaths.append(path);
+    }
+
+    fromPaths = path::topLevelPaths(fromPaths);
+
+    if (fromPaths.isEmpty()) {
+        p->clearDropIndicator();
+        event->ignore();
+        return;
+    }
+
     const SdfPath targetPath(QStringToString(targetPathString));
     const int mode = property(mime::dropModeProperty).toInt();
 
@@ -1874,43 +1899,15 @@ StageTree::dropEvent(QDropEvent* event)
         return;
     }
 
-    if (fromPath == newParentPath || newParentPath.HasPrefix(fromPath)) {
-        event->ignore();
-        return;
-    }
-
-    if (fromPath.GetParentPath() == newParentPath) {
-        QTreeWidgetItem* sourceItem = nullptr;
-
-        std::function<QTreeWidgetItem*(QTreeWidgetItem*)> findItem = [&](QTreeWidgetItem* item) -> QTreeWidgetItem* {
-            if (!item)
-                return nullptr;
-
-            if (item->data(0, PrimItem::Path).toString() == fromPathString)
-                return item;
-
-            for (int i = 0; i < item->childCount(); ++i) {
-                if (QTreeWidgetItem* found = findItem(item->child(i)))
-                    return found;
-            }
-            return nullptr;
-        };
-
-        for (int i = 0; i < topLevelItemCount() && !sourceItem; ++i)
-            sourceItem = findItem(topLevelItem(i));
-
-        if (sourceItem) {
-            QTreeWidgetItem* oldParentItem = sourceItem->parent();
-            if (oldParentItem) {
-                const int oldRow = oldParentItem->indexOfChild(sourceItem);
-                if (oldRow >= 0 && oldRow < insertIndex)
-                    --insertIndex;
-            }
+    for (const SdfPath& fromPath : fromPaths) {
+        if (fromPath == newParentPath || newParentPath.HasPrefix(fromPath)) {
+            event->ignore();
+            return;
         }
     }
 
     if (context())
-        context()->run(new Command(movePath(fromPath, newParentPath, insertIndex)));
+        context()->run(new Command(movePath(fromPaths, newParentPath, insertIndex)));
 
     event->acceptProposedAction();
 }

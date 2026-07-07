@@ -390,7 +390,7 @@ selectInvertPayload()
             if (!session)
                 return;
 
-            session->beginProgressBlock("invert payload selection", 1);
+            session->beginProgressBlock("Invert payload selection", 1);
 
             command::runWorker([session, state]() {
                 using Status = Session::Notify::Status;
@@ -443,7 +443,7 @@ selectInvertPayload()
                             command::Result result;
                             result.path = path;
                             result.success = true;
-                            result.message = selectedSet.contains(path) ? "payload skipped" : "payload inverted";
+                            result.message = selectedSet.contains(path) ? "Payload skipped" : "Payload inverted";
                             result.status = Status::Success;
                             pending.append(result);
                             ++completed;
@@ -475,7 +475,7 @@ selectInvertPayload()
                         using Status = Session::Notify::Status;
 
                         if (!hadStage) {
-                            session->updateProgressNotify(Session::Notify("invert payload selection failed", {},
+                            session->updateProgressNotify(Session::Notify("Invert payload selection failed", {},
                                                                           Status::Error),
                                                           1);
                             session->endProgressBlock();
@@ -483,7 +483,7 @@ selectInvertPayload()
                         }
 
                         if (!hadSelectedPayloads) {
-                            session->updateProgressNotify(Session::Notify("invert payload selection skipped", {},
+                            session->updateProgressNotify(Session::Notify("Invert payload selection skipped", {},
                                                                           Status::Success),
                                                           1);
                             session->endProgressBlock();
@@ -492,8 +492,8 @@ selectInvertPayload()
 
                         session->selectionList()->updatePaths(invertedPayloads);
 
-                        session->updateProgressNotify(Session::Notify(total > 0 ? "payload selection inverted"
-                                                                                : "invert payload selection skipped",
+                        session->updateProgressNotify(Session::Notify(total > 0 ? "Payload selection inverted"
+                                                                                : "Invert payload selection skipped",
                                                                       invertedPayloads, Status::Success),
                                                       qMax(1, total));
 
@@ -505,14 +505,14 @@ selectInvertPayload()
             if (!session)
                 return;
 
-            session->beginProgressBlock("undo invert payload selection", 1);
+            session->beginProgressBlock("Undo invert payload selection", 1);
 
             command::queueToSession(
                 session,
                 [session, state]() {
                     using Status = Session::Notify::Status;
                     session->selectionList()->updatePaths(state->previousSelection);
-                    session->updateProgressNotify(Session::Notify("invert payload selection undone",
+                    session->updateProgressNotify(Session::Notify("Invert payload selection undone",
                                                                   state->previousSelection, Status::Success),
                                                   1);
                     session->endProgressBlock();
@@ -1447,6 +1447,7 @@ newXformPath(const SdfPath& parentPath, const QString& nameInput)
         SdfPath createdPath;
         TfTokenVector oldOrder;
         TfTokenVector newOrder;
+        QList<SdfPath> previousSelection;
         QList<SdfPath> previousMask;
     };
 
@@ -1457,6 +1458,7 @@ newXformPath(const SdfPath& parentPath, const QString& nameInput)
             if (!session || parentPath.IsEmpty())
                 return;
 
+            state->previousSelection = session->selectionList()->paths();
             state->previousMask = session->mask();
 
             command::beginDeferred(session, "New xform", 1);
@@ -1602,14 +1604,8 @@ newXformPath(const SdfPath& parentPath, const QString& nameInput)
                             return;
                         }
 
-                        QList<SdfPath> updated;
-                        for (const auto& p : session->selectionList()->paths()) {
-                            if (p != state->createdPath)
-                                updated.append(p);
-                        }
-
-                        session->selectionList()->updatePaths(updated);
-                        session->setMask(path::removeAffectedPaths(state->previousMask, { state->createdPath }));
+                        session->selectionList()->updatePaths(state->previousSelection);
+                        session->setMask(state->previousMask);
 
                         command::finishDeferred(
                             session,
@@ -1622,17 +1618,21 @@ newXformPath(const SdfPath& parentPath, const QString& nameInput)
 }
 
 Command
-movePath(const SdfPath& fromPath, const SdfPath& newParentPath, int insertIndex)
+movePath(const QList<SdfPath>& paths, const SdfPath& newParentPath, int insertIndex)
 {
-    struct MoveState {
+    struct MoveItem {
         SdfPath oldPath;
         SdfPath newPath;
         SdfPath oldParentPath;
+        TfToken name;
+    };
+
+    struct MoveState {
+        QList<MoveItem> items;
         SdfPath newParentPath;
         int insertIndex = -1;
-        TfTokenVector oldParentOrder;
-        TfTokenVector newParentOldOrder;
-        TfTokenVector newParentNewOrder;
+        QHash<SdfPath, TfTokenVector> oldParentOrders;
+        QHash<SdfPath, TfTokenVector> newParentOrders;
         QList<SdfPath> previousSelection;
         QList<SdfPath> previousMask;
     };
@@ -1640,20 +1640,46 @@ movePath(const SdfPath& fromPath, const SdfPath& newParentPath, int insertIndex)
     auto state = std::make_shared<MoveState>();
 
     return Command(
-        [fromPath, newParentPath, insertIndex, state](Session* session) {
-            if (!session || fromPath.IsEmpty() || newParentPath.IsEmpty())
+        [paths, newParentPath, insertIndex, state](Session* session) {
+            if (!session || paths.isEmpty() || newParentPath.IsEmpty())
                 return;
 
             state->previousSelection = session->selectionList()->paths();
             state->previousMask = session->mask();
 
-            command::beginDeferred(session, "Move path", 1);
+            command::beginDeferred(session, "Move paths", 1);
 
             command::runWorker([=]() {
                 bool hadStage = true;
                 bool moved = false;
                 bool noop = false;
                 QString error;
+
+                QList<SdfPath> changed;
+
+                auto removeTokens = [](TfTokenVector order, const TfTokenVector& tokens) {
+                    for (const TfToken& token : tokens) {
+                        order.erase(
+                            std::remove(order.begin(), order.end(), token),
+                            order.end());
+                    }
+                    return order;
+                };
+
+                auto insertTokens = [](TfTokenVector order, const TfTokenVector& tokens, int index) {
+                    if (tokens.empty())
+                        return order;
+
+                    const int safeIndex = qBound(0, index, static_cast<int>(order.size()));
+                    order.insert(order.begin() + safeIndex, tokens.begin(), tokens.end());
+                    return order;
+                };
+
+                auto restoreOrders = [](const UsdStageRefPtr& stage,
+                                        const QHash<SdfPath, TfTokenVector>& orders) {
+                    for (auto it = orders.cbegin(); it != orders.cend(); ++it)
+                        stage::restoreChildOrder(stage, it.key(), it.value());
+                };
 
                 {
                     WRITE_LOCKER(locker, session->stageLock(), "stageLock");
@@ -1663,75 +1689,157 @@ movePath(const SdfPath& fromPath, const SdfPath& newParentPath, int insertIndex)
                         hadStage = false;
                     }
                     else {
-                        const SdfPath oldParentPath = fromPath.GetParentPath();
-                        const SdfPath targetPath = newParentPath.AppendChild(fromPath.GetNameToken());
+                        const QList<SdfPath> movePaths = path::minimalRootPaths(paths);
 
-                        if (oldParentPath.IsEmpty() || oldParentPath == SdfPath::AbsoluteRootPath()) {
+                        if (movePaths.isEmpty()) {
                             noop = true;
                         }
-                        else if (fromPath == SdfPath::AbsoluteRootPath()
-                                 || newParentPath == SdfPath::AbsoluteRootPath()) {
+                        else if (newParentPath == SdfPath::AbsoluteRootPath()) {
                             noop = true;
                         }
-                        else if (stage::isInsideCompositionArc(stage, fromPath)
-                                 || stage::isInsideCompositionArc(stage, newParentPath)) {
+                        else if (stage::isInsideCompositionArc(stage, newParentPath)) {
                             error = "cannot move into or out of composed prims";
                         }
-                        else if (fromPath == targetPath) {
-                            state->oldPath = fromPath;
-                            state->newPath = fromPath;
-                            state->oldParentPath = oldParentPath;
-                            state->newParentPath = newParentPath;
-                            state->insertIndex = insertIndex;
-                            state->oldParentOrder.clear();
-                            state->newParentOldOrder.clear();
-                            state->newParentNewOrder.clear();
-
-                            stage::captureChildOrder(stage, oldParentPath, state->oldParentOrder);
-
-                            const TfToken movedName = fromPath.GetNameToken();
-                            state->newParentOldOrder = state->oldParentOrder;
-                            state->newParentNewOrder =
-                                stage::insertChildOrderToken(state->oldParentOrder, movedName, insertIndex);
-
-                            if (state->newParentNewOrder != state->oldParentOrder) {
-                                stage::restoreChildOrder(stage, oldParentPath, state->newParentNewOrder);
-                                moved = true;
-                            }
-                            else {
-                                noop = true;
-                            }
-                        }
                         else {
-                            state->oldPath = fromPath;
-                            state->newPath = targetPath;
-                            state->oldParentPath = oldParentPath;
+                            state->items.clear();
                             state->newParentPath = newParentPath;
                             state->insertIndex = insertIndex;
-                            state->oldParentOrder.clear();
-                            state->newParentOldOrder.clear();
-                            state->newParentNewOrder.clear();
+                            state->oldParentOrders.clear();
+                            state->newParentOrders.clear();
 
-                            stage::captureChildOrder(stage, oldParentPath, state->oldParentOrder);
-                            stage::captureChildOrder(stage, newParentPath, state->newParentOldOrder);
+                            QSet<SdfPath> sourcePaths;
+                            QSet<SdfPath> targetPaths;
+                            bool valid = true;
 
-                            if (stage::movePrim(stage, fromPath, newParentPath, error)) {
-                                const TfToken movedName = fromPath.GetNameToken();
+                            for (const SdfPath& path : movePaths) {
+                                const SdfPath oldParentPath = path.GetParentPath();
+                                const SdfPath targetPath = newParentPath.AppendChild(path.GetNameToken());
 
-                                if (!state->oldParentOrder.empty()) {
-                                    stage::restoreChildOrder(
-                                        stage,
-                                        oldParentPath,
-                                        stage::removeChildOrderToken(state->oldParentOrder, movedName));
+                                sourcePaths.insert(path);
+
+                                if (path.IsEmpty()
+                                    || path == SdfPath::AbsoluteRootPath()
+                                    || oldParentPath.IsEmpty()
+                                    || oldParentPath == SdfPath::AbsoluteRootPath()) {
+                                    noop = true;
+                                    valid = false;
+                                    break;
                                 }
 
-                                state->newParentNewOrder =
-                                    stage::insertChildOrderToken(state->newParentOldOrder, movedName, insertIndex);
+                                if (newParentPath == path || newParentPath.HasPrefix(path)) {
+                                    error = "cannot move a prim below itself";
+                                    valid = false;
+                                    break;
+                                }
 
-                                if (!state->newParentNewOrder.empty())
-                                    stage::restoreChildOrder(stage, newParentPath, state->newParentNewOrder);
+                                if (stage::isInsideCompositionArc(stage, path)) {
+                                    error = "cannot move into or out of composed prims";
+                                    valid = false;
+                                    break;
+                                }
 
-                                moved = true;
+                                if (targetPaths.contains(targetPath)) {
+                                    error = "multiple moved prims resolve to the same destination";
+                                    valid = false;
+                                    break;
+                                }
+
+                                const UsdPrim targetPrim = stage->GetPrimAtPath(targetPath);
+                                if (targetPrim && targetPath != path && !sourcePaths.contains(targetPath)) {
+                                    error = "destination already exists";
+                                    valid = false;
+                                    break;
+                                }
+
+                                targetPaths.insert(targetPath);
+
+                                MoveItem item;
+                                item.oldPath = path;
+                                item.newPath = targetPath;
+                                item.oldParentPath = oldParentPath;
+                                item.name = path.GetNameToken();
+                                state->items.append(item);
+
+                                if (!state->oldParentOrders.contains(oldParentPath)) {
+                                    TfTokenVector order;
+                                    stage::captureChildOrder(stage, oldParentPath, order);
+                                    state->oldParentOrders.insert(oldParentPath, order);
+                                }
+
+                                if (!state->oldParentOrders.contains(newParentPath)) {
+                                    TfTokenVector order;
+                                    stage::captureChildOrder(stage, newParentPath, order);
+                                    state->oldParentOrders.insert(newParentPath, order);
+                                }
+                            }
+
+                            if (valid && !noop) {
+                                TfTokenVector movedNames;
+                                movedNames.reserve(state->items.size());
+
+                                for (const MoveItem& item : state->items)
+                                    movedNames.push_back(item.name);
+
+                                for (const MoveItem& item : state->items) {
+                                    if (item.oldPath == item.newPath)
+                                        continue;
+
+                                    if (!stage::movePrim(stage, item.oldPath, newParentPath, error)) {
+                                        for (auto it = state->items.crbegin(); it != state->items.crend(); ++it) {
+                                            if (it->oldPath != it->newPath)
+                                                stage::movePrim(stage, it->newPath, it->oldParentPath, error);
+                                        }
+
+                                        restoreOrders(stage, state->oldParentOrders);
+                                        moved = false;
+                                        break;
+                                    }
+                                }
+
+                                if (error.isEmpty()) {
+                                    QSet<SdfPath> affectedParents;
+
+                                    for (const MoveItem& item : state->items)
+                                        affectedParents.insert(item.oldParentPath);
+
+                                    affectedParents.insert(newParentPath);
+
+                                    for (const SdfPath& parentPath : affectedParents) {
+                                        TfTokenVector order = state->oldParentOrders.value(parentPath);
+                                        TfTokenVector newOrder = removeTokens(order, movedNames);
+
+                                        if (parentPath == newParentPath)
+                                            newOrder = insertTokens(newOrder, movedNames, insertIndex);
+
+                                        state->newParentOrders.insert(parentPath, newOrder);
+                                        stage::restoreChildOrder(stage, parentPath, newOrder);
+                                    }
+
+                                    moved = state->newParentOrders != state->oldParentOrders;
+
+                                    for (const MoveItem& item : state->items) {
+                                        if (item.oldPath != item.newPath) {
+                                            moved = true;
+                                            break;
+                                        }
+                                    }
+
+                                    if (!moved) {
+                                        noop = true;
+                                    }
+                                    else {
+                                        QSet<SdfPath> changedSet;
+
+                                        for (const MoveItem& item : state->items) {
+                                            changedSet.insert(item.oldPath);
+                                            changedSet.insert(item.newPath);
+                                            changedSet.insert(item.oldParentPath);
+                                        }
+
+                                        changedSet.insert(newParentPath);
+                                        changed = changedSet.values();
+                                    }
+                                }
                             }
                         }
                     }
@@ -1743,7 +1851,7 @@ movePath(const SdfPath& fromPath, const SdfPath& newParentPath, int insertIndex)
                         using Status = Session::Notify::Status;
 
                         if (!hadStage) {
-                            command::finishDeferred(session, "Move path failed", {}, Status::Error);
+                            command::finishDeferred(session, "Move paths failed", {}, Status::Error);
                             return;
                         }
 
@@ -1756,35 +1864,43 @@ movePath(const SdfPath& fromPath, const SdfPath& newParentPath, int insertIndex)
                             command::finishDeferred(
                                 session,
                                 error.isEmpty()
-                                    ? "Move path failed"
-                                    : QString("Move path failed: %1").arg(error),
+                                    ? "Move paths failed"
+                                    : QString("Move paths failed: %1").arg(error),
                                 {},
                                 Status::Error);
                             return;
                         }
 
-                        session->selectionList()->updatePaths(
-                            path::remapAffectedPaths(state->previousSelection, fromPath, state->newPath));
-                        session->setMask(path::remapAffectedPaths(state->previousMask, fromPath, state->newPath));
+                        QList<SdfPath> selection = state->previousSelection;
+                        QList<SdfPath> mask = state->previousMask;
+
+                        for (const MoveItem& item : state->items) {
+                            selection = path::remapAffectedPaths(selection, item.oldPath, item.newPath);
+                            mask = path::remapAffectedPaths(mask, item.oldPath, item.newPath);
+                        }
+
+                        session->selectionList()->updatePaths(selection);
+                        session->setMask(mask);
 
                         command::finishDeferred(
                             session,
-                            "Path moved",
-                            { state->oldPath, state->newPath },
+                            state->items.size() == 1 ? "Path moved" : "Paths moved",
+                            changed,
                             Status::Success);
                     });
             });
         },
         [state](Session* session) {
-            if (!session || state->oldPath.IsEmpty() || state->newPath.IsEmpty())
+            if (!session || state->items.isEmpty())
                 return;
 
-            command::beginDeferred(session, "Undo move path", 1);
+            command::beginDeferred(session, "Undo move paths", 1);
 
             command::runWorker([=]() {
                 bool hadStage = true;
                 bool restored = false;
                 QString error;
+                QList<SdfPath> changed;
 
                 {
                     WRITE_LOCKER(locker, session->stageLock(), "stageLock");
@@ -1793,21 +1909,36 @@ movePath(const SdfPath& fromPath, const SdfPath& newParentPath, int insertIndex)
                     if (!stage) {
                         hadStage = false;
                     }
-                    else if (state->oldPath == state->newPath) {
-                        if (!state->oldParentOrder.empty()) {
-                            stage::restoreChildOrder(stage, state->oldParentPath, state->oldParentOrder);
-                            restored = true;
-                        }
-                    }
                     else {
-                        if (stage::movePrim(stage, state->newPath, state->oldParentPath, error)) {
-                            if (!state->oldParentOrder.empty())
-                                stage::restoreChildOrder(stage, state->oldParentPath, state->oldParentOrder);
+                        restored = true;
 
-                            if (!state->newParentOldOrder.empty())
-                                stage::restoreChildOrder(stage, state->newParentPath, state->newParentOldOrder);
+                        for (auto it = state->items.crbegin(); it != state->items.crend(); ++it) {
+                            if (it->oldPath == it->newPath)
+                                continue;
 
-                            restored = true;
+                            if (!stage::movePrim(stage, it->newPath, it->oldParentPath, error)) {
+                                restored = false;
+                                break;
+                            }
+                        }
+
+                        if (restored) {
+                            for (auto it = state->oldParentOrders.cbegin();
+                                 it != state->oldParentOrders.cend();
+                                 ++it) {
+                                stage::restoreChildOrder(stage, it.key(), it.value());
+                            }
+
+                            QSet<SdfPath> changedSet;
+
+                            for (const MoveItem& item : state->items) {
+                                changedSet.insert(item.oldPath);
+                                changedSet.insert(item.newPath);
+                                changedSet.insert(item.oldParentPath);
+                            }
+
+                            changedSet.insert(state->newParentPath);
+                            changed = changedSet.values();
                         }
                     }
                 }
@@ -1821,7 +1952,7 @@ movePath(const SdfPath& fromPath, const SdfPath& newParentPath, int insertIndex)
                         session->setMask(state->previousMask);
 
                         if (!hadStage) {
-                            command::finishDeferred(session, "Undo move path failed", {}, Status::Error);
+                            command::finishDeferred(session, "Undo move paths failed", {}, Status::Error);
                             return;
                         }
 
@@ -1829,8 +1960,8 @@ movePath(const SdfPath& fromPath, const SdfPath& newParentPath, int insertIndex)
                             command::finishDeferred(
                                 session,
                                 error.isEmpty()
-                                    ? "Undo move path failed"
-                                    : QString("Undo move path failed: %1").arg(error),
+                                    ? "Undo move paths failed"
+                                    : QString("Undo move paths failed: %1").arg(error),
                                 {},
                                 Status::Error);
                             return;
@@ -1838,8 +1969,8 @@ movePath(const SdfPath& fromPath, const SdfPath& newParentPath, int insertIndex)
 
                         command::finishDeferred(
                             session,
-                            "Move undone",
-                            { state->oldPath },
+                            state->items.size() == 1 ? "Move undone" : "Moves undone",
+                            changed,
                             Status::Success);
                     });
             });
