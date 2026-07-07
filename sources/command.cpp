@@ -9,7 +9,6 @@
 #include "tracelocks.h"
 #include "usdutils.h"
 #include <QPointer>
-#include <QThreadPool>
 #include <pxr/usd/usd/prim.h>
 #include <pxr/usd/usd/primRange.h>
 #include <pxr/usd/usdGeom/imageable.h>
@@ -43,7 +42,7 @@ loadPayloads(const QList<SdfPath>& paths, const QString& variantSet, const QStri
             session->beginProgressBlock("Load payloads", paths.size());
             session->setPrimsUpdate(Session::PrimsUpdate::Deferred);
 
-            QThreadPool::globalInstance()->start([session, paths, variantSet, variantValue, state]() {
+            command::runWorker([session, paths, variantSet, variantValue, state]() {
                 const bool useVariant = !variantSet.isEmpty() && !variantValue.isEmpty();
                 const std::string variantSetName = qt::QStringToString(variantSet);
                 const std::string variantSelection = qt::QStringToString(variantValue);
@@ -132,35 +131,32 @@ loadPayloads(const QList<SdfPath>& paths, const QString& variantSet, const QStri
 
                     if (pending.size() >= 16) {
                         const QList<command::Result> batch = pending;
-                        QMetaObject::invokeMethod(
+                        command::queueToSession(
                             session,
                             [session, batch, completed]() {
                                 command::flushResults(session, batch, completed);
-                            },
-                            Qt::QueuedConnection);
+                            });
                         pending.clear();
                     }
                 }
 
                 if (!pending.isEmpty()) {
                     const QList<command::Result> batch = pending;
-                    QMetaObject::invokeMethod(
+                    command::queueToSession(
                         session,
                         [session, batch, completed]() {
                             command::flushResults(session, batch, completed);
-                        },
-                        Qt::QueuedConnection);
+                        });
                 }
 
                 state->payloadStates = payloadStates;
 
-                QMetaObject::invokeMethod(
+                command::queueToSession(
                     session,
                     [session]() {
                         session->setPrimsUpdate(Session::PrimsUpdate::Immediate);
                         session->endProgressBlock();
-                    },
-                    Qt::QueuedConnection);
+                    });
             });
         },
         [state](Session* session) {
@@ -170,7 +166,7 @@ loadPayloads(const QList<SdfPath>& paths, const QString& variantSet, const QStri
             session->beginProgressBlock("Undo load payloads", state->payloadStates.size());
             session->setPrimsUpdate(Session::PrimsUpdate::Deferred);
 
-            QThreadPool::globalInstance()->start([session, state]() {
+            command::runWorker([session, state]() {
                 QList<command::Result> pending;
                 pending.reserve(16);
 
@@ -207,17 +203,16 @@ loadPayloads(const QList<SdfPath>& paths, const QString& variantSet, const QStri
 
                     if (pending.size() >= 16) {
                         const QList<command::Result> batch = pending;
-                        QMetaObject::invokeMethod(
+                        command::queueToSession(
                             session,
                             [session, batch, completed]() {
                                 command::flushResults(session, batch, completed);
-                            },
-                            Qt::QueuedConnection);
+                            });
                         pending.clear();
                     }
                 }
 
-                QMetaObject::invokeMethod(
+                command::queueToSession(
                     session,
                     [session, state, pending, completed]() {
                         if (!pending.isEmpty())
@@ -227,8 +222,7 @@ loadPayloads(const QList<SdfPath>& paths, const QString& variantSet, const QStri
                         session->setMask(state->previousMask);
                         session->setPrimsUpdate(Session::PrimsUpdate::Immediate);
                         session->endProgressBlock();
-                    },
-                    Qt::QueuedConnection);
+                    });
             });
         });
 }
@@ -249,7 +243,7 @@ unloadPayloads(const QList<SdfPath>& paths)
             session->beginProgressBlock("Unload payloads", paths.size());
             session->setPrimsUpdate(Session::PrimsUpdate::Deferred);
 
-            QThreadPool::globalInstance()->start([session, paths, state]() {
+            command::runWorker([session, paths, state]() {
                 QList<command::Result> pending;
                 pending.reserve(16);
 
@@ -294,24 +288,23 @@ unloadPayloads(const QList<SdfPath>& paths)
 
                     if (pending.size() >= 16) {
                         const QList<command::Result> batch = pending;
-                        QMetaObject::invokeMethod(
+                        command::queueToSession(
                             session,
-                            [session, batch, completed]() { command::flushResults(session, batch, completed); },
-                            Qt::QueuedConnection);
+                            [session, batch, completed]() { command::flushResults(session, batch, completed); });
                         pending.clear();
                     }
                 }
 
                 if (!pending.isEmpty()) {
                     const QList<command::Result> batch = pending;
-                    QMetaObject::invokeMethod(
-                        session, [session, batch, completed]() { command::flushResults(session, batch, completed); },
-                        Qt::QueuedConnection);
+                    command::queueToSession(
+                        session,
+                        [session, batch, completed]() { command::flushResults(session, batch, completed); });
                 }
 
                 state->payloadStates = payloadStates;
 
-                QMetaObject::invokeMethod(
+                command::queueToSession(
                     session,
                     [session, state, unloadedPaths]() {
                         session->selectionList()->updatePaths(
@@ -319,8 +312,7 @@ unloadPayloads(const QList<SdfPath>& paths)
                         session->setMask(path::removeAffectedPaths(state->previousMask, unloadedPaths));
                         session->setPrimsUpdate(Session::PrimsUpdate::Immediate);
                         session->endProgressBlock();
-                    },
-                    Qt::QueuedConnection);
+                    });
             });
         },
         [state](Session* session) {
@@ -330,7 +322,7 @@ unloadPayloads(const QList<SdfPath>& paths)
             session->beginProgressBlock("Undo unload payloads", state->payloadStates.size());
             session->setPrimsUpdate(Session::PrimsUpdate::Deferred);
 
-            QThreadPool::globalInstance()->start([session, state]() {
+            command::runWorker([session, state]() {
                 QList<command::Result> pending;
                 pending.reserve(16);
 
@@ -362,15 +354,14 @@ unloadPayloads(const QList<SdfPath>& paths)
 
                     if (pending.size() >= 16) {
                         const QList<command::Result> batch = pending;
-                        QMetaObject::invokeMethod(
+                        command::queueToSession(
                             session,
-                            [session, batch, completed]() { command::flushResults(session, batch, completed); },
-                            Qt::QueuedConnection);
+                            [session, batch, completed]() { command::flushResults(session, batch, completed); });
                         pending.clear();
                     }
                 }
 
-                QMetaObject::invokeMethod(
+                command::queueToSession(
                     session,
                     [session, state, pending, completed]() {
                         if (!pending.isEmpty())
@@ -380,8 +371,7 @@ unloadPayloads(const QList<SdfPath>& paths)
                         session->setMask(state->previousMask);
                         session->setPrimsUpdate(Session::PrimsUpdate::Immediate);
                         session->endProgressBlock();
-                    },
-                    Qt::QueuedConnection);
+                    });
             });
         });
 }
@@ -402,7 +392,7 @@ selectInvertPayload()
 
             session->beginProgressBlock("invert payload selection", 1);
 
-            QThreadPool::globalInstance()->start([session, state]() {
+            command::runWorker([session, state]() {
                 using Status = Session::Notify::Status;
 
                 QList<SdfPath> previousSelection;
@@ -460,10 +450,9 @@ selectInvertPayload()
 
                             if (pending.size() >= 16) {
                                 const QList<command::Result> batch = pending;
-                                QMetaObject::invokeMethod(
+                                command::queueToSession(
                                     session,
-                                    [session, batch, completed]() { command::flushResults(session, batch, completed); },
-                                    Qt::QueuedConnection);
+                                    [session, batch, completed]() { command::flushResults(session, batch, completed); });
                                 pending.clear();
                             }
 
@@ -475,12 +464,12 @@ selectInvertPayload()
 
                 if (!pending.isEmpty()) {
                     const QList<command::Result> batch = pending;
-                    QMetaObject::invokeMethod(
-                        session, [session, batch, completed]() { command::flushResults(session, batch, completed); },
-                        Qt::QueuedConnection);
+                    command::queueToSession(
+                        session,
+                        [session, batch, completed]() { command::flushResults(session, batch, completed); });
                 }
 
-                QMetaObject::invokeMethod(
+                command::queueToSession(
                     session,
                     [session, hadStage, hadSelectedPayloads, invertedPayloads, total]() {
                         using Status = Session::Notify::Status;
@@ -509,8 +498,7 @@ selectInvertPayload()
                                                       qMax(1, total));
 
                         session->endProgressBlock();
-                    },
-                    Qt::QueuedConnection);
+                    });
             });
         },
         [state](Session* session) {
@@ -519,7 +507,7 @@ selectInvertPayload()
 
             session->beginProgressBlock("undo invert payload selection", 1);
 
-            QMetaObject::invokeMethod(
+            command::queueToSession(
                 session,
                 [session, state]() {
                     using Status = Session::Notify::Status;
@@ -528,8 +516,7 @@ selectInvertPayload()
                                                                   state->previousSelection, Status::Success),
                                                   1);
                     session->endProgressBlock();
-                },
-                Qt::QueuedConnection);
+                });
         });
 }
 
@@ -542,34 +529,32 @@ isolatePaths(const QList<SdfPath>& paths)
         [paths, state](Session* session) {
             session->beginProgressBlock("isolate paths", 1);
 
-            QThreadPool::globalInstance()->start([session, paths, state]() {
+            command::runWorker([session, paths, state]() {
                 *state = session->mask();
                 session->setMask(paths);
 
-                QMetaObject::invokeMethod(
+                command::queueToSession(
                     session,
                     [session, paths]() {
                         using Status = Session::Notify::Status;
                         session->updateProgressNotify(Session::Notify("paths isolated", paths, Status::Success), 1);
                         session->endProgressBlock();
-                    },
-                    Qt::QueuedConnection);
+                    });
             });
         },
         [state](Session* session) {
             session->beginProgressBlock("undo isolate paths", 1);
 
-            QThreadPool::globalInstance()->start([session, state]() {
+            command::runWorker([session, state]() {
                 session->setMask(*state);
 
-                QMetaObject::invokeMethod(
+                command::queueToSession(
                     session,
                     [session, state]() {
                         using Status = Session::Notify::Status;
                         session->updateProgressNotify(Session::Notify("isolate undone", *state, Status::Success), 1);
                         session->endProgressBlock();
-                    },
-                    Qt::QueuedConnection);
+                    });
             });
         });
 }
@@ -583,34 +568,32 @@ selectPaths(const QList<SdfPath>& paths)
         [paths, previous](Session* session) {
             session->beginProgressBlock("Select paths", 1);
 
-            QThreadPool::globalInstance()->start([session, paths, previous]() {
+            command::runWorker([session, paths, previous]() {
                 *previous = session->selectionList()->paths();
                 session->selectionList()->updatePaths(paths);
 
-                QMetaObject::invokeMethod(
+                command::queueToSession(
                     session,
                     [session, paths]() {
                         using Status = Session::Notify::Status;
                         session->updateProgressNotify(Session::Notify("Paths selected", paths, Status::Success), 1);
                         session->endProgressBlock();
-                    },
-                    Qt::QueuedConnection);
+                    });
             });
         },
         [previous](Session* session) {
             session->beginProgressBlock("Undo select paths", 1);
 
-            QThreadPool::globalInstance()->start([session, previous]() {
+            command::runWorker([session, previous]() {
                 session->selectionList()->updatePaths(*previous);
 
-                QMetaObject::invokeMethod(
+                command::queueToSession(
                     session,
                     [session, previous]() {
                         using Status = Session::Notify::Status;
                         session->updateProgressNotify(Session::Notify("Select undone", *previous, Status::Success), 1);
                         session->endProgressBlock();
-                    },
-                    Qt::QueuedConnection);
+                    });
             });
         });
 }
@@ -631,7 +614,7 @@ selectAll()
 
             session->beginProgressBlock("Select all", 1);
 
-            QThreadPool::globalInstance()->start([session, state]() {
+            command::runWorker([session, state]() {
                 QList<SdfPath> selection;
                 QList<SdfPath> previousSelection;
                 QList<SdfPath> mask;
@@ -647,7 +630,7 @@ selectAll()
 
                 state->previousSelection = previousSelection;
 
-                QMetaObject::invokeMethod(
+                command::queueToSession(
                     session,
                     [session, selection]() {
                         using Status = Session::Notify::Status;
@@ -655,8 +638,7 @@ selectAll()
                         session->updateProgressNotify(Session::Notify("Paths selected", selection, Status::Success),
                                                       1);
                         session->endProgressBlock();
-                    },
-                    Qt::QueuedConnection);
+                    });
             });
         },
         [state](Session* session) {
@@ -665,8 +647,8 @@ selectAll()
 
             session->beginProgressBlock("Undo select all", 1);
 
-            QThreadPool::globalInstance()->start([session, state]() {
-                QMetaObject::invokeMethod(
+            command::runWorker([session, state]() {
+                command::queueToSession(
                     session,
                     [session, state]() {
                         using Status = Session::Notify::Status;
@@ -676,8 +658,7 @@ selectAll()
                                                                       Status::Success),
                                                       1);
                         session->endProgressBlock();
-                    },
-                    Qt::QueuedConnection);
+                    });
             });
         });
 }
@@ -698,7 +679,7 @@ selectInvert()
 
             session->beginProgressBlock("Invert selection", 1);
 
-            QThreadPool::globalInstance()->start([session, state]() {
+            command::runWorker([session, state]() {
                 QList<SdfPath> invertedSelection;
                 QList<SdfPath> previousSelection;
                 QList<SdfPath> domain;
@@ -723,7 +704,7 @@ selectInvert()
                         invertedSelection.append(path);
                 }
 
-                QMetaObject::invokeMethod(
+                command::queueToSession(
                     session,
                     [session, invertedSelection]() {
                         using Status = Session::Notify::Status;
@@ -733,8 +714,7 @@ selectInvert()
                                                                       Status::Success),
                                                       1);
                         session->endProgressBlock();
-                    },
-                    Qt::QueuedConnection);
+                    });
             });
         },
         [state](Session* session) {
@@ -743,8 +723,8 @@ selectInvert()
 
             session->beginProgressBlock("Undo invert selection", 1);
 
-            QThreadPool::globalInstance()->start([session, state]() {
-                QMetaObject::invokeMethod(
+            command::runWorker([session, state]() {
+                command::queueToSession(
                     session,
                     [session, state]() {
                         using Status = Session::Notify::Status;
@@ -754,8 +734,7 @@ selectInvert()
                                                                       Status::Success),
                                                       1);
                         session->endProgressBlock();
-                    },
-                    Qt::QueuedConnection);
+                    });
             });
         });
 }
@@ -915,11 +894,11 @@ stageUp(Session::StageUp stageUp)
         [stageUp, state](Session* session) {
             session->beginProgressBlock("Set stage up", 1);
 
-            QThreadPool::globalInstance()->start([session, stageUp, state]() {
+            command::runWorker([session, stageUp, state]() {
                 *state = session->stageUp();
                 session->setStageUp(stageUp);
 
-                QMetaObject::invokeMethod(
+                command::queueToSession(
                     session,
                     [session, stageUp]() {
                         using Status = Session::Notify::Status;
@@ -928,17 +907,16 @@ stageUp(Session::StageUp stageUp)
                                                                       Status::Success),
                                                       1);
                         session->endProgressBlock();
-                    },
-                    Qt::QueuedConnection);
+                    });
             });
         },
         [state](Session* session) {
             session->beginProgressBlock("Undo set stage up", 1);
 
-            QThreadPool::globalInstance()->start([session, state]() {
+            command::runWorker([session, state]() {
                 session->setStageUp(*state);
 
-                QMetaObject::invokeMethod(
+                command::queueToSession(
                     session,
                     [session, state]() {
                         using Status = Session::Notify::Status;
@@ -947,8 +925,7 @@ stageUp(Session::StageUp stageUp)
                                                                       {}, Status::Success),
                                                       1);
                         session->endProgressBlock();
-                    },
-                    Qt::QueuedConnection);
+                    });
             });
         });
 }
@@ -980,7 +957,7 @@ defaultPrimPath(const SdfPath& path)
 
             session->beginProgressBlock("Set default prim", 1);
 
-            QThreadPool::globalInstance()->start([=]() {
+            command::runWorker([=]() {
                 bool hadStage = true;
                 bool success = false;
                 QString error;
@@ -1013,7 +990,7 @@ defaultPrimPath(const SdfPath& path)
                     }
                 }
 
-                QMetaObject::invokeMethod(
+                command::queueToSession(
                     session,
                     [=]() {
                         using Status = Session::Notify::Status;
@@ -1039,8 +1016,7 @@ defaultPrimPath(const SdfPath& path)
                         session->updateProgressNotify(Session::Notify("Default prim set", { path }, Status::Success),
                                                       1);
                         session->endProgressBlock();
-                    },
-                    Qt::QueuedConnection);
+                    });
             });
         },
         [state](Session* session) {
@@ -1049,7 +1025,7 @@ defaultPrimPath(const SdfPath& path)
 
             session->beginProgressBlock("Undo set default prim", 1);
 
-            QThreadPool::globalInstance()->start([=]() {
+            command::runWorker([=]() {
                 bool hadStage = true;
                 bool success = false;
                 QString error;
@@ -1077,7 +1053,7 @@ defaultPrimPath(const SdfPath& path)
                     }
                 }
 
-                QMetaObject::invokeMethod(
+                command::queueToSession(
                     session,
                     [=]() {
                         using Status = Session::Notify::Status;
@@ -1106,8 +1082,7 @@ defaultPrimPath(const SdfPath& path)
                                                                       Status::Success),
                                                       1);
                         session->endProgressBlock();
-                    },
-                    Qt::QueuedConnection);
+                    });
             });
         });
 }
@@ -1125,7 +1100,7 @@ deletePaths(const QList<SdfPath>& inPaths)
 
             command::beginDeferred(session, "Delete paths", 1);
 
-            QThreadPool::globalInstance()->start([session, inPaths, state]() {
+            command::runWorker([session, inPaths, state]() {
                 bool success = false;
                 QList<SdfPath> changed;
                 QList<SdfPath> removedPaths;
@@ -1199,7 +1174,7 @@ deletePaths(const QList<SdfPath>& inPaths)
                     }
                 }
 
-                QMetaObject::invokeMethod(
+                command::queueToSession(
                     session,
                     [session, state, changed, removedPaths, success]() {
                         using Status = Session::Notify::Status;
@@ -1213,14 +1188,13 @@ deletePaths(const QList<SdfPath>& inPaths)
                             success ? "Paths deleted" : "Delete paths failed",
                             changed,
                             success ? Status::Success : Status::Error);
-                    },
-                    Qt::QueuedConnection);
+                    });
             });
         },
         [state](Session* session) {
             command::beginDeferred(session, "Undo delete paths", 1);
 
-            QThreadPool::globalInstance()->start([session, state]() {
+            command::runWorker([session, state]() {
                 bool success = false;
                 QList<SdfPath> changed;
 
@@ -1261,7 +1235,7 @@ deletePaths(const QList<SdfPath>& inPaths)
                     }
                 }
 
-                QMetaObject::invokeMethod(
+                command::queueToSession(
                     session,
                     [session, state, changed, success]() {
                         using Status = Session::Notify::Status;
@@ -1274,8 +1248,7 @@ deletePaths(const QList<SdfPath>& inPaths)
                             success ? "Delete undone" : "Undo delete paths failed",
                             changed,
                             success ? Status::Success : Status::Error);
-                    },
-                    Qt::QueuedConnection);
+                    });
             });
         });
 }
@@ -1305,7 +1278,7 @@ renamePath(const SdfPath& path, const QString& newNameInput)
 
             command::beginDeferred(session, "Rename path", 1);
 
-            QThreadPool::globalInstance()->start([=]() {
+            command::runWorker([=]() {
                 bool hadStage = true;
                 bool renamed = false;
                 bool noop = false;
@@ -1359,7 +1332,7 @@ renamePath(const SdfPath& path, const QString& newNameInput)
                     }
                 }
 
-                QMetaObject::invokeMethod(
+                command::queueToSession(
                     session,
                     [=]() {
                         using Status = Session::Notify::Status;
@@ -1394,8 +1367,7 @@ renamePath(const SdfPath& path, const QString& newNameInput)
                             "Path renamed",
                             { path, newPath },
                             Status::Success);
-                    },
-                    Qt::QueuedConnection);
+                    });
             });
         },
         [state](Session* session) {
@@ -1404,7 +1376,7 @@ renamePath(const SdfPath& path, const QString& newNameInput)
 
             command::beginDeferred(session, "Undo rename path", 1);
 
-            QThreadPool::globalInstance()->start([=]() {
+            command::runWorker([=]() {
                 bool hadStage = true;
                 bool restored = false;
                 QString error;
@@ -1433,7 +1405,7 @@ renamePath(const SdfPath& path, const QString& newNameInput)
                     }
                 }
 
-                QMetaObject::invokeMethod(
+                command::queueToSession(
                     session,
                     [=]() {
                         using Status = Session::Notify::Status;
@@ -1462,8 +1434,7 @@ renamePath(const SdfPath& path, const QString& newNameInput)
                             "Rename undone",
                             { state->oldPath },
                             Status::Success);
-                    },
-                    Qt::QueuedConnection);
+                    });
             });
         });
 }
@@ -1490,7 +1461,7 @@ newXformPath(const SdfPath& parentPath, const QString& nameInput)
 
             command::beginDeferred(session, "New xform", 1);
 
-            QThreadPool::globalInstance()->start([=]() {
+            command::runWorker([=]() {
                 bool hadStage = true;
                 bool created = false;
                 bool noop = false;
@@ -1544,7 +1515,7 @@ newXformPath(const SdfPath& parentPath, const QString& nameInput)
                     }
                 }
 
-                QMetaObject::invokeMethod(
+                command::queueToSession(
                     session,
                     [=]() {
                         using Status = Session::Notify::Status;
@@ -1583,8 +1554,7 @@ newXformPath(const SdfPath& parentPath, const QString& nameInput)
                             "Xform created",
                             { parentPath, newPath },
                             Status::Success);
-                    },
-                    Qt::QueuedConnection);
+                    });
             });
         },
         [state](Session* session) {
@@ -1593,7 +1563,7 @@ newXformPath(const SdfPath& parentPath, const QString& nameInput)
 
             command::beginDeferred(session, "Undo new xform", 1);
 
-            QThreadPool::globalInstance()->start([=]() {
+            command::runWorker([=]() {
                 bool hadStage = true;
                 bool removed = false;
 
@@ -1617,7 +1587,7 @@ newXformPath(const SdfPath& parentPath, const QString& nameInput)
                     }
                 }
 
-                QMetaObject::invokeMethod(
+                command::queueToSession(
                     session,
                     [=]() {
                         using Status = Session::Notify::Status;
@@ -1646,8 +1616,7 @@ newXformPath(const SdfPath& parentPath, const QString& nameInput)
                             "New xform undone",
                             { state->createdPath },
                             Status::Success);
-                    },
-                    Qt::QueuedConnection);
+                    });
             });
         });
 }
@@ -1680,7 +1649,7 @@ movePath(const SdfPath& fromPath, const SdfPath& newParentPath, int insertIndex)
 
             command::beginDeferred(session, "Move path", 1);
 
-            QThreadPool::globalInstance()->start([=]() {
+            command::runWorker([=]() {
                 bool hadStage = true;
                 bool moved = false;
                 bool noop = false;
@@ -1768,7 +1737,7 @@ movePath(const SdfPath& fromPath, const SdfPath& newParentPath, int insertIndex)
                     }
                 }
 
-                QMetaObject::invokeMethod(
+                command::queueToSession(
                     session,
                     [=]() {
                         using Status = Session::Notify::Status;
@@ -1803,8 +1772,7 @@ movePath(const SdfPath& fromPath, const SdfPath& newParentPath, int insertIndex)
                             "Path moved",
                             { state->oldPath, state->newPath },
                             Status::Success);
-                    },
-                    Qt::QueuedConnection);
+                    });
             });
         },
         [state](Session* session) {
@@ -1813,7 +1781,7 @@ movePath(const SdfPath& fromPath, const SdfPath& newParentPath, int insertIndex)
 
             command::beginDeferred(session, "Undo move path", 1);
 
-            QThreadPool::globalInstance()->start([=]() {
+            command::runWorker([=]() {
                 bool hadStage = true;
                 bool restored = false;
                 QString error;
@@ -1844,7 +1812,7 @@ movePath(const SdfPath& fromPath, const SdfPath& newParentPath, int insertIndex)
                     }
                 }
 
-                QMetaObject::invokeMethod(
+                command::queueToSession(
                     session,
                     [=]() {
                         using Status = Session::Notify::Status;
@@ -1873,8 +1841,7 @@ movePath(const SdfPath& fromPath, const SdfPath& newParentPath, int insertIndex)
                             "Move undone",
                             { state->oldPath },
                             Status::Success);
-                    },
-                    Qt::QueuedConnection);
+                    });
             });
         });
 }
