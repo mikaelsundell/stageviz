@@ -208,15 +208,59 @@ loadPayloads(const QList<SdfPath>& paths, const QString& variantSet, const QStri
                     try {
                         WRITE_LOCKER(locker, session->stageLock(), "stageLock");
                         const UsdStageRefPtr stage = session->stageUnsafe();
-                        result.success = payload::applyLoad(stage, path, useVariant, variantSetName, variantSelection,
-                                                            undoItem, error);
+
+                        if (!stage) {
+                            result.success = false;
+                            error = "Stage not available";
+                        }
+                        else {
+                            result.success = payload::applyLoad(
+                                stage,
+                                path,
+                                useVariant,
+                                variantSetName,
+                                variantSelection,
+                                undoItem,
+                                error);
+
+                            if (result.success) {
+                                const QString pathString = qt::SdfPathToQString(path);
+                                const PcpErrorVector errors = stage->GetCompositionErrors();
+
+                                for (const PcpErrorBasePtr& compositionError : errors) {
+                                    if (!compositionError)
+                                        continue;
+
+                                    const QString text = qt::StringToQString(compositionError->ToString());
+
+                                    if (!text.contains(pathString))
+                                        continue;
+
+                                    QString restoreError;
+                                    payload::restoreState(stage, undoItem, restoreError);
+
+                                    result.success = false;
+                                    error = QString("Payload failed to load: %1").arg(pathString);
+
+                                    if (!restoreError.isEmpty())
+                                        error += QString(" (%1)").arg(restoreError);
+
+                                    break;
+                                }
+                            }
+                        }
                     } catch (...) {
                         result.success = false;
                         error = "exception";
                     }
 
-                    result.message = result.success ? "Payload loaded" : "Payload failed";
-                    result.status = result.success ? Session::Notify::Status::Success : Session::Notify::Status::Error;
+                    result.message = result.success
+                                         ? "Payload loaded"
+                                         : (error.isEmpty() ? "Payload failed" : error);
+
+                    result.status = result.success
+                                        ? Session::Notify::Status::Success
+                                        : Session::Notify::Status::Error;
 
                     if (result.success)
                         undoItems.append(undoItem);
@@ -228,7 +272,9 @@ loadPayloads(const QList<SdfPath>& paths, const QString& variantSet, const QStri
                         const QList<payload::Result> batch = pending;
                         QMetaObject::invokeMethod(
                             session,
-                            [session, batch, completed]() { payload::flushResults(session, batch, completed); },
+                            [session, batch, completed]() {
+                                payload::flushResults(session, batch, completed);
+                            },
                             Qt::QueuedConnection);
                         pending.clear();
                     }
@@ -237,7 +283,10 @@ loadPayloads(const QList<SdfPath>& paths, const QString& variantSet, const QStri
                 if (!pending.isEmpty()) {
                     const QList<payload::Result> batch = pending;
                     QMetaObject::invokeMethod(
-                        session, [session, batch, completed]() { payload::flushResults(session, batch, completed); },
+                        session,
+                        [session, batch, completed]() {
+                            payload::flushResults(session, batch, completed);
+                        },
                         Qt::QueuedConnection);
                 }
 
@@ -283,8 +332,13 @@ loadPayloads(const QList<SdfPath>& paths, const QString& variantSet, const QStri
                         error = "exception";
                     }
 
-                    result.message = result.success ? "Payload undone" : "Payload undo failed";
-                    result.status = result.success ? Session::Notify::Status::Success : Session::Notify::Status::Error;
+                    result.message = result.success
+                                         ? "Payload undone"
+                                         : (error.isEmpty() ? "Payload undo failed" : error);
+
+                    result.status = result.success
+                                        ? Session::Notify::Status::Success
+                                        : Session::Notify::Status::Error;
 
                     pending.append(result);
                     ++completed;
@@ -293,7 +347,9 @@ loadPayloads(const QList<SdfPath>& paths, const QString& variantSet, const QStri
                         const QList<payload::Result> batch = pending;
                         QMetaObject::invokeMethod(
                             session,
-                            [session, batch, completed]() { payload::flushResults(session, batch, completed); },
+                            [session, batch, completed]() {
+                                payload::flushResults(session, batch, completed);
+                            },
                             Qt::QueuedConnection);
                         pending.clear();
                     }

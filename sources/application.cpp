@@ -117,6 +117,16 @@ Application::style() const
     return p->d.style.data();
 }
 
+QMainWindow*
+Application::window() const
+{
+    for (QWidget* widget : QApplication::topLevelWidgets()) {
+        if (auto* mainWindow = qobject_cast<QMainWindow*>(widget))
+            return mainWindow;
+    }
+    return nullptr;
+}
+
 Application*
 Application::instance()
 {

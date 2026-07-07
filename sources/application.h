@@ -6,6 +6,7 @@
 
 #include "stageviz.h"
 #include <QApplication>
+#include <QMainWindow>
 #include <QScopedPointer>
 
 namespace stageviz {
@@ -66,6 +67,11 @@ public:
      * @brief Returns the style subsystem.
      */
     Style* style() const;
+    
+    /**
+     * @brief Returns the window subsystem.
+     */
+    QMainWindow* window() const;
 
     ///@}
 

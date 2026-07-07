@@ -4,6 +4,7 @@
 
 #include "pyapplication.h"
 
+#include <QMainWindow>
 #include <QTimer>
 #include <vector>
 
@@ -39,6 +40,141 @@ callMethodNoArgs(PyObject* object, const char* name)
     Py_DECREF(method);
 
     return result;
+}
+
+static PyObject*
+qtClassObject(const char* moduleName, const char* className)
+{
+    PyObject* module = PyImport_ImportModule(moduleName);
+    if (!module) {
+        PyErr_Clear();
+        return nullptr;
+    }
+
+    PyObject* type = PyObject_GetAttrString(module, className);
+    Py_DECREF(module);
+
+    if (!type) {
+        PyErr_Clear();
+        return nullptr;
+    }
+
+    return type;
+}
+
+static PyObject*
+wrapQtObjectWithShiboken(QObject* object, const char* className)
+{
+    PyObject* shiboken = PyImport_ImportModule("shiboken6");
+    if (!shiboken) {
+        PyErr_Clear();
+        return nullptr;
+    }
+
+    PyObject* wrapInstance = PyObject_GetAttrString(shiboken, "wrapInstance");
+    Py_DECREF(shiboken);
+
+    if (!wrapInstance) {
+        PyErr_Clear();
+        return nullptr;
+    }
+
+    if (!PyCallable_Check(wrapInstance)) {
+        Py_DECREF(wrapInstance);
+        return nullptr;
+    }
+
+    PyObject* type = qtClassObject("PySide6.QtWidgets", className);
+    if (!type) {
+        Py_DECREF(wrapInstance);
+        return nullptr;
+    }
+
+    PyObject* address = PyLong_FromVoidPtr(object);
+    if (!address) {
+        Py_DECREF(type);
+        Py_DECREF(wrapInstance);
+        return nullptr;
+    }
+
+    PyObject* result = PyObject_CallFunctionObjArgs(wrapInstance, address, type, nullptr);
+
+    Py_DECREF(address);
+    Py_DECREF(type);
+    Py_DECREF(wrapInstance);
+
+    if (!result)
+        PyErr_Clear();
+
+    return result;
+}
+
+static PyObject*
+wrapQtObjectWithSip(QObject* object, const char* className)
+{
+    PyObject* sip = PyImport_ImportModule("PyQt6.sip");
+    if (!sip) {
+        PyErr_Clear();
+        sip = PyImport_ImportModule("sip");
+    }
+
+    if (!sip) {
+        PyErr_Clear();
+        return nullptr;
+    }
+
+    PyObject* wrapInstance = PyObject_GetAttrString(sip, "wrapinstance");
+    Py_DECREF(sip);
+
+    if (!wrapInstance) {
+        PyErr_Clear();
+        return nullptr;
+    }
+
+    if (!PyCallable_Check(wrapInstance)) {
+        Py_DECREF(wrapInstance);
+        return nullptr;
+    }
+
+    PyObject* type = qtClassObject("PyQt6.QtWidgets", className);
+    if (!type) {
+        Py_DECREF(wrapInstance);
+        return nullptr;
+    }
+
+    PyObject* address = PyLong_FromVoidPtr(object);
+    if (!address) {
+        Py_DECREF(type);
+        Py_DECREF(wrapInstance);
+        return nullptr;
+    }
+
+    PyObject* result = PyObject_CallFunctionObjArgs(wrapInstance, address, type, nullptr);
+
+    Py_DECREF(address);
+    Py_DECREF(type);
+    Py_DECREF(wrapInstance);
+
+    if (!result)
+        PyErr_Clear();
+
+    return result;
+}
+
+static PyObject*
+wrapQtObject(QObject* object, const char* className)
+{
+    if (!object)
+        Py_RETURN_NONE;
+
+    if (PyObject* result = wrapQtObjectWithShiboken(object, className))
+        return result;
+
+    if (PyObject* result = wrapQtObjectWithSip(object, className))
+        return result;
+
+    PyErr_SetString(PyExc_RuntimeError, "Could not wrap Qt object. PySide6/shiboken6 or PyQt6/sip is required.");
+    return nullptr;
 }
 
 static void
@@ -135,11 +271,26 @@ PyApplication_show(PyApplicationObject* self, PyObject* args)
     Py_RETURN_NONE;
 }
 
+static PyObject*
+PyApplication_window(PyApplicationObject* self, PyObject*)
+{
+    if (!checkApplication(self->application))
+        return nullptr;
+
+    QMainWindow* window = self->application->window();
+    if (!window)
+        Py_RETURN_NONE;
+
+    return wrapQtObject(window, "QMainWindow");
+}
+
 static PyMethodDef PyApplication_methods[]
     = { { "invokeLater", reinterpret_cast<PyCFunction>(PyApplication_invokeLater), METH_VARARGS,
           "Invoke a Python callable later on the Qt event loop. Optional delay in milliseconds." },
         { "show", reinterpret_cast<PyCFunction>(PyApplication_show), METH_VARARGS,
           "Show a Python Qt widget later on the Qt event loop." },
+        { "window", reinterpret_cast<PyCFunction>(PyApplication_window), METH_NOARGS,
+          "Return the main Qt window." },
         { nullptr } };
 
 PyTypeObject PyApplicationType = { PyVarObject_HEAD_INIT(nullptr, 0) };
