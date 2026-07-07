@@ -66,7 +66,6 @@ public Q_SLOTS:
 public:
     void updatePrim(const SdfPath& path);
     void invalidatePrim(const SdfPath& path);
-    void invalidatePrimImpl(const SdfPath& path, bool refreshParent);
     void invalidateSubtree(PrimItem* item, const UsdPrim& prim);
     void invalidateChildren(PrimItem* parentItem, const UsdPrim& prim);
     bool remapSubtreePaths(const SdfPath& fromPath, const SdfPath& toPath);
@@ -118,7 +117,7 @@ StageTreePrivate::init()
     d.tree->setDefaultDropAction(Qt::MoveAction);
     d.tree->setColumnSelectable(PrimItem::Name, true);
     d.tree->setColumnSelectable(PrimItem::Visibility, false);
-    
+
     connect(d.tree.data(), &StageTree::itemSelectionChanged, this, &StageTreePrivate::itemSelectionChanged);
     connect(d.tree.data(), &StageTree::itemChanged, this, [this](QTreeWidgetItem* item, int column) {
         if (column == PrimItem::Name) {
@@ -612,11 +611,9 @@ StageTreePrivate::contextMenuEvent(QContextMenuEvent* event)
     else if (paths.size() == 1 && paths.first() == SdfPath::AbsoluteRootPath())
         createParentPath = SdfPath::AbsoluteRootPath();
 
-    const bool canSetDefaultPrim =
-        paths.size() == 1
-        && !paths.first().IsEmpty()
-        && paths.first() != SdfPath::AbsoluteRootPath()
-        && paths.first().GetParentPath() == SdfPath::AbsoluteRootPath();
+    const bool canSetDefaultPrim = paths.size() == 1 && !paths.first().IsEmpty()
+                                   && paths.first() != SdfPath::AbsoluteRootPath()
+                                   && paths.first().GetParentPath() == SdfPath::AbsoluteRootPath();
 
     auto payloadPathsAtSelection = [&]() {
         QList<SdfPath> result;
@@ -678,18 +675,15 @@ StageTreePrivate::contextMenuEvent(QContextMenuEvent* event)
                         if (!variantPrimSpec)
                             continue;
 
-                        const SdfPayloadVector variantItems =
-                            variantPrimSpec->GetPayloadList().GetAppliedItems();
+                        const SdfPayloadVector variantItems = variantPrimSpec->GetPayloadList().GetAppliedItems();
 
                         for (const SdfPayload& payload : variantItems) {
                             const QString assetPath = qt::StringToQString(payload.GetAssetPath());
                             if (assetPath.isEmpty())
                                 continue;
 
-                            const QString key = QString("%1=%2").arg(
-                                qt::StringToQString(setName),
-                                qt::StringToQString(variantName)
-                            );
+                            const QString key = QString("%1=%2").arg(qt::StringToQString(setName),
+                                                                     qt::StringToQString(variantName));
 
                             variantPayloadFiles[key] = QFileInfo(assetPath).fileName();
                         }
@@ -787,8 +781,7 @@ StageTreePrivate::contextMenuEvent(QContextMenuEvent* event)
         if (!d.stage)
             return;
 
-        const QMap<QString, QList<QString>> variantSets =
-            stage::findVariantSets(d.stage, paths, false);
+        const QMap<QString, QList<QString>> variantSets = stage::findVariantSets(d.stage, paths, false);
 
         for (auto it = variantSets.begin(); it != variantSets.end(); ++it) {
             const QString& setName = it.key();
@@ -850,16 +843,16 @@ StageTreePrivate::contextMenuEvent(QContextMenuEvent* event)
     }
 
     menu.addSeparator();
-    
+
     QAction* setDefaultPrim = menu.addAction("Default prim");
     setDefaultPrim->setEnabled(canSetDefaultPrim);
-    
+
     menu.addSeparator();
-    
+
     QAction* newXform = menu.addAction("New xform");
     QAction* deleteSelected = menu.addAction("Delete");
     QAction* chosen = menu.exec(d.tree->mapToGlobal(event->pos()));
-    
+
     if (!chosen)
         return;
 
@@ -948,7 +941,6 @@ StageTreePrivate::contextMenuEvent(QContextMenuEvent* event)
     else if (chosen == deleteSelected)
         d.context->run(new Command(deletePaths(paths)));
 }
-
 
 
 
@@ -1271,61 +1263,6 @@ StageTreePrivate::updatePrim(const SdfPath& path)
 }
 
 void
-StageTreePrivate::invalidatePrimImpl(const SdfPath& path, bool refreshParent)
-{
-    const SdfPath primPath = path.IsPropertyPath() ? path.GetPrimPath() : path;
-    const SdfPath parentPath = primPath.GetParentPath();
-
-    UsdPrim prim;
-    PrimItem* primItem = itemFromPath(primPath);
-
-    {
-        READ_LOCKER(locker, d.context->stageLock(), "stageLock");
-        if (!d.stage)
-            return;
-        prim = d.stage->GetPrimAtPath(primPath);
-    }
-
-    if (!prim) {
-        PrimItem* parentItem = itemFromPath(parentPath);
-
-        if (primItem)
-            delete primItem;
-
-        if (refreshParent && parentItem) {
-            UsdPrim parentPrim;
-            {
-                READ_LOCKER(locker, d.context->stageLock(), "stageLock");
-                if (d.stage)
-                    parentPrim = d.stage->GetPrimAtPath(parentPath);
-            }
-            if (parentPrim) {
-                invalidateChildren(parentItem, parentPrim);
-                parentItem->invalidate();
-            }
-        }
-        return;
-    }
-
-    if (!primItem) {
-        PrimItem* parentItem = itemFromPath(parentPath);
-        if (!parentItem)
-            return;
-
-        primItem = addItem(parentItem, primPath);
-        if (!primItem)
-            return;
-
-        if (refreshParent) {
-            invalidateChildren(parentItem, prim.GetParent());
-            parentItem->invalidate();
-        }
-    }
-
-    invalidateSubtree(primItem, prim);
-}
-
-void
 StageTreePrivate::invalidateSubtree(PrimItem* item, const UsdPrim& prim)
 {
     if (!item || !prim)
@@ -1360,7 +1297,54 @@ StageTreePrivate::invalidateSubtree(PrimItem* item, const UsdPrim& prim)
 void
 StageTreePrivate::invalidatePrim(const SdfPath& path)
 {
-    invalidatePrimImpl(path, true);
+    const SdfPath primPath = path.IsPropertyPath() ? path.GetPrimPath() : path;
+    const SdfPath parentPath = primPath.GetParentPath();
+
+    UsdPrim prim;
+    PrimItem* primItem = itemFromPath(primPath);
+
+    {
+        READ_LOCKER(locker, d.context->stageLock(), "stageLock");
+        if (!d.stage)
+            return;
+        prim = d.stage->GetPrimAtPath(primPath);
+    }
+
+    if (!prim) {
+        PrimItem* parentItem = itemFromPath(parentPath);
+
+        if (primItem)
+            delete primItem;
+
+        if (parentItem) {
+            UsdPrim parentPrim;
+            {
+                READ_LOCKER(locker, d.context->stageLock(), "stageLock");
+                if (d.stage)
+                    parentPrim = d.stage->GetPrimAtPath(parentPath);
+            }
+            if (parentPrim) {
+                invalidateChildren(parentItem, parentPrim);
+                parentItem->invalidate();
+            }
+        }
+        return;
+    }
+
+    if (!primItem) {
+        PrimItem* parentItem = itemFromPath(parentPath);
+        if (!parentItem)
+            return;
+
+        primItem = addItem(parentItem, primPath);
+        if (!primItem)
+            return;
+
+        invalidateChildren(parentItem, prim.GetParent());
+        parentItem->invalidate();
+    }
+
+    invalidateSubtree(primItem, prim);
 }
 
 void
@@ -1742,8 +1726,8 @@ void
 StageTree::startDrag(Qt::DropActions supportedActions)
 {
     qDebug() << "startDrag(Qt::DropActions supportedActions)";
-    
-    
+
+
     Q_UNUSED(supportedActions);
     auto* item = static_cast<PrimItem*>(currentItem());
     if (!item)
@@ -1765,8 +1749,8 @@ void
 StageTree::dragEnterEvent(QDragEnterEvent* event)
 {
     qDebug() << "dragEnterEvent(QDragEnterEvent* event)";
-    
-    
+
+
     if (!event->mimeData()->hasFormat(mime::primPath)) {
         p->clearDropIndicator();
         event->ignore();
@@ -1828,8 +1812,8 @@ void
 StageTree::dropEvent(QDropEvent* event)
 {
     qDebug() << "dropEvent(QDropEvent* event)";
-    
-    
+
+
     if (!event->mimeData()->hasFormat(mime::primPath)) {
         p->clearDropIndicator();
         event->ignore();

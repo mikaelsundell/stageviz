@@ -134,9 +134,7 @@ ProgressViewPrivate::statusLabel(const Session::Notify::Status status) const
 QString
 ProgressViewPrivate::blockToolTip(const QString& name, int childCount) const
 {
-    return QString("%1\n%2 completed update(s) in this command block.")
-        .arg(name)
-        .arg(childCount);
+    return QString("%1\n%2 completed update(s) in this command block.").arg(name).arg(childCount);
 }
 
 QString
@@ -217,9 +215,7 @@ ProgressViewPrivate::progressBlockChanged(const QString& name, Session::Progress
         auto* commandItem = new QTreeWidgetItem();
         commandItem->setText(0, QString("%1 (0)").arg(name));
         commandItem->setText(1, "Running...");
-        commandItem->setToolTip(
-            0,
-            QString("%1\nCommand block with 0 completed update(s).").arg(name));
+        commandItem->setToolTip(0, QString("%1\nCommand block with 0 completed update(s).").arg(name));
         commandItem->setToolTip(1, "Command block is running.");
         commandItem->setExpanded(false);
         commandItem->setData(0, Qt::UserRole, QStringList());
@@ -245,10 +241,7 @@ ProgressViewPrivate::progressBlockChanged(const QString& name, Session::Progress
 
         d.currentItem->setText(0, QString("%1 (%2)").arg(d.currentName).arg(childCount));
         d.currentItem->setToolTip(
-            0,
-            QString("%1\nCommand block with %2 completed update(s).")
-                .arg(d.currentName)
-                .arg(childCount));
+            0, QString("%1\nCommand block with %2 completed update(s).").arg(d.currentName).arg(childCount));
         d.currentItem->setExpanded(false);
 
         if (d.errorCount > 0)
@@ -267,19 +260,15 @@ ProgressViewPrivate::progressBlockChanged(const QString& name, Session::Progress
     d.ui->clear->setEnabled(progressTree()->topLevelItemCount() > 0);
 
     if (d.errorCount > 0) {
-        session()->notifyStatus(
-            Session::Notify::Status::Error,
-            QString("%1 finished with %2 error(s)").arg(name).arg(d.errorCount));
+        session()->notifyStatus(Session::Notify::Status::Error,
+                                QString("%1 finished with %2 error(s)").arg(name).arg(d.errorCount));
     }
     else if (d.warningCount > 0) {
-        session()->notifyStatus(
-            Session::Notify::Status::Warning,
-            QString("%1 finished with %2 warning(s)").arg(name).arg(d.warningCount));
+        session()->notifyStatus(Session::Notify::Status::Warning,
+                                QString("%1 finished with %2 warning(s)").arg(name).arg(d.warningCount));
     }
     else {
-        session()->notifyStatus(
-            Session::Notify::Status::Success,
-            QString("%1 finished successfully").arg(name));
+        session()->notifyStatus(Session::Notify::Status::Success, QString("%1 finished successfully").arg(name));
     }
 
     d.currentItem = nullptr;
@@ -315,9 +304,7 @@ ProgressViewPrivate::progressNotifyChanged(const Session::Notify& notify, size_t
     d.currentItem->setText(0, QString("%1 (%2)").arg(d.currentName).arg(d.currentItem->childCount()));
     d.currentItem->setToolTip(
         0,
-        QString("%1\nCommand block with %2 completed update(s).")
-            .arg(d.currentName)
-            .arg(d.currentItem->childCount()));
+        QString("%1\nCommand block with %2 completed update(s).").arg(d.currentName).arg(d.currentItem->childCount()));
 
     QTreeWidgetItem* item = d.currentItem->child(index);
     if (!item)
@@ -354,8 +341,7 @@ ProgressViewPrivate::progressNotifyChanged(const Session::Notify& notify, size_t
         item->setBackground(1, style()->color(Style::ColorRole::Progress));
         break;
     case Session::Notify::Status::Success:
-    default:
-        break;
+    default: break;
     }
 
     const int pct = int((double(completed) / std::max<size_t>(1, expected)) * 100.0);

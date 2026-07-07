@@ -33,7 +33,7 @@ public:
      * @brief Destroys the tree widget.
      */
     ~TreeWidget() override;
-    
+
     /**
      * @brief Enables or disables row selection from a column.
      *

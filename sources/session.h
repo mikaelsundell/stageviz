@@ -90,7 +90,7 @@ public:
      */
     struct Notify {
         enum class Status { Success, Progress, Warning, Error };
-        
+
         QString message;                  ///< Notification message.
         QList<SdfPath> paths;             ///< Associated prim paths.
         QVariantMap details;              ///< Additional metadata.

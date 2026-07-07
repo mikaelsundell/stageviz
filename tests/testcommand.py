@@ -49,26 +49,32 @@ def _path_list(values):
 
 
 def _process_events():
+    """
+    Flush Qt events for the embedded test script, but avoid unrestricted
+    processEvents(), which can make command tests more re-entrant than needed.
+    """
     try:
-        app = stageviz.application()
-        app.invokeLater(lambda: None, 0)
-    except Exception:
-        pass
-
-    try:
-        from PySide6 import QtWidgets
+        from PySide6 import QtWidgets, QtCore
         qt_app = QtWidgets.QApplication.instance()
         if qt_app:
-            qt_app.processEvents()
+            flags = (
+                QtCore.QEventLoop.ProcessEventsFlag.ExcludeUserInputEvents
+                | QtCore.QEventLoop.ProcessEventsFlag.ExcludeSocketNotifiers
+            )
+            qt_app.processEvents(flags)
             return
     except Exception:
         pass
 
     try:
-        from PyQt6 import QtWidgets
+        from PyQt6 import QtWidgets, QtCore
         qt_app = QtWidgets.QApplication.instance()
         if qt_app:
-            qt_app.processEvents()
+            flags = (
+                QtCore.QEventLoop.ProcessEventsFlag.ExcludeUserInputEvents
+                | QtCore.QEventLoop.ProcessEventsFlag.ExcludeSocketNotifiers
+            )
+            qt_app.processEvents(flags)
             return
     except Exception:
         pass
@@ -203,7 +209,10 @@ def test_select_all_and_invert():
     stageviz.command.select_all()
 
     _assert(
-        _wait_until(lambda: "/World/A/A1" in set(_selection()) and "/World/B/B1" in set(_selection())),
+        _wait_until(
+            lambda: "/World/A/A1" in set(_selection())
+            and "/World/B/B1" in set(_selection())
+        ),
         "select_all includes expected leaf paths",
     )
 
@@ -287,7 +296,10 @@ def test_default_prim():
     stageviz.command.set_default_prim("/World")
 
     _assert(
-        _wait_until(lambda: bool(_stage().GetDefaultPrim()) and str(_stage().GetDefaultPrim().GetPath()) == "/World"),
+        _wait_until(
+            lambda: bool(_stage().GetDefaultPrim())
+            and str(_stage().GetDefaultPrim().GetPath()) == "/World"
+        ),
         "set_default_prim sets /World",
     )
 
@@ -312,14 +324,26 @@ def test_payload_load_unload():
     stageviz.command.load_payloads(["/World/PayloadA"])
 
     _assert(
-        _wait_until(lambda: bool(_prim("/World/PayloadA") and _prim("/World/PayloadA").IsLoaded()), timeout=5.0),
+        _wait_until(
+            lambda: bool(
+                _prim("/World/PayloadA")
+                and _prim("/World/PayloadA").IsLoaded()
+            ),
+            timeout=5.0,
+        ),
         "load_payloads loads payload",
     )
 
     stageviz.command.unload_payloads(["/World/PayloadA"])
 
     _assert(
-        _wait_until(lambda: bool(_prim("/World/PayloadA") and not _prim("/World/PayloadA").IsLoaded()), timeout=5.0),
+        _wait_until(
+            lambda: bool(
+                _prim("/World/PayloadA")
+                and not _prim("/World/PayloadA").IsLoaded()
+            ),
+            timeout=5.0,
+        ),
         "unload_payloads unloads payload",
     )
 
@@ -341,7 +365,12 @@ def run():
     _assert(loaded, "session.load fixture with LoadNone")
 
     _assert(
-        _wait_until(lambda: bool(stageviz.session().stage() and stageviz.session().stage().GetPrimAtPath("/World"))),
+        _wait_until(
+            lambda: bool(
+                stageviz.session().stage()
+                and stageviz.session().stage().GetPrimAtPath("/World")
+            )
+        ),
         "fixture stage is available",
     )
 

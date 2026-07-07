@@ -289,8 +289,7 @@ static PyMethodDef PyApplication_methods[]
           "Invoke a Python callable later on the Qt event loop. Optional delay in milliseconds." },
         { "show", reinterpret_cast<PyCFunction>(PyApplication_show), METH_VARARGS,
           "Show a Python Qt widget later on the Qt event loop." },
-        { "window", reinterpret_cast<PyCFunction>(PyApplication_window), METH_NOARGS,
-          "Return the main Qt window." },
+        { "window", reinterpret_cast<PyCFunction>(PyApplication_window), METH_NOARGS, "Return the main Qt window." },
         { nullptr } };
 
 PyTypeObject PyApplicationType = { PyVarObject_HEAD_INIT(nullptr, 0) };

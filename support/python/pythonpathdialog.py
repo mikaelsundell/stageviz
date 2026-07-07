@@ -8,8 +8,8 @@ import traceback
 from PySide6 import QtCore, QtWidgets
 
 
-DIALOG_OBJECT_NAME = "stagevizPythonPathUtil"
-DIALOG_GLOBAL_NAME = "_stageviz_python_path_util"
+DIALOG_OBJECT_NAME = "stagevizPythonPathDialog"
+DIALOG_GLOBAL_NAME = "_stageviz_python_path_dialog"
 
 
 def find_stageviz_main_window():
@@ -36,12 +36,12 @@ def find_stageviz_main_window():
     return active
 
 
-class PythonPathUtil(QtWidgets.QDialog):
+class PythonPathDialog(QtWidgets.QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
 
         self.setObjectName(DIALOG_OBJECT_NAME)
-        self.setWindowTitle("Stageviz Python Path Util")
+        self.setWindowTitle("Stageviz Python Path Dialog")
         self.resize(900, 520)
 
         self.activated = False
@@ -203,7 +203,7 @@ class PythonPathUtil(QtWidgets.QDialog):
             self.copy_all()
 
 
-def show_python_path_util():
+def show_python_path_dialog():
     app = QtWidgets.QApplication.instance()
     owns_app = False
 
@@ -223,7 +223,7 @@ def show_python_path_util():
 
     parent = find_stageviz_main_window()
 
-    win = PythonPathUtil(parent)
+    win = PythonPathDialog(parent)
     win.show()
     win.raise_()
     win.activateWindow()
@@ -236,4 +236,4 @@ def show_python_path_util():
     return win
 
 
-python_path_util = show_python_path_util()
+python_path_dialog = show_python_path_dialog()

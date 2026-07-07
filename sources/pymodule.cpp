@@ -4,6 +4,7 @@
 
 #include "application.h"
 #include "pyapplication.h"
+#include "pycommand.h"
 #include "pyselectionlist.h"
 #include "pysession.h"
 #include "pystyle.h"
@@ -111,6 +112,11 @@ PyInit_stageviz(void)
     }
 
     if (addPyStyleType(module) < 0) {
+        Py_DECREF(module);
+        return nullptr;
+    }
+
+    if (addPyCommandModule(module) < 0) {
         Py_DECREF(module);
         return nullptr;
     }

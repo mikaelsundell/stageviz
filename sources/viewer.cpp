@@ -786,8 +786,9 @@ ViewerPrivate::saveCopy()
         const double elapsedSec = timer.elapsed() / 1000.0;
 
         settings()->setValue("copyDir", QFileInfo(filename).absolutePath());
-        session()->notifyStatus(Session::Notify::Status::Success, QString("Saved copy %1 in %2 seconds")
-                                                                   .arg(filename, QString::number(elapsedSec, 'f', 2)));
+        session()->notifyStatus(
+            Session::Notify::Status::Success,
+            QString("Saved copy %1 in %2 seconds").arg(filename, QString::number(elapsedSec, 'f', 2)));
     }
     else {
         session()->notifyStatus(Session::Notify::Status::Error, QString("Failed to save copy: %1").arg(filename));
@@ -955,8 +956,9 @@ ViewerPrivate::stateLoad()
         const double elapsedSec = timer.elapsed() / 1000.0;
 
         settings()->setValue("stateDir", QFileInfo(filename).absolutePath());
-        session()->notifyStatus(Session::Notify::Status::Success, QString("Loaded state %1 in %2 seconds")
-                                                                   .arg(filename, QString::number(elapsedSec, 'f', 2)));
+        session()->notifyStatus(
+            Session::Notify::Status::Success,
+            QString("Loaded state %1 in %2 seconds").arg(filename, QString::number(elapsedSec, 'f', 2)));
     }
     else {
         session()->notifyStatus(Session::Notify::Status::Error, QString("Failed to load state: %1").arg(filename));
@@ -996,8 +998,9 @@ ViewerPrivate::stateSave()
         const double elapsedSec = timer.elapsed() / 1000.0;
 
         settings()->setValue("stateDir", QFileInfo(filename).absolutePath());
-        session()->notifyStatus(Session::Notify::Status::Success, QString("Saved state %1 in %2 seconds")
-                                                                   .arg(filename, QString::number(elapsedSec, 'f', 2)));
+        session()->notifyStatus(
+            Session::Notify::Status::Success,
+            QString("Saved state %1 in %2 seconds").arg(filename, QString::number(elapsedSec, 'f', 2)));
     }
     else {
         session()->notifyStatus(Session::Notify::Status::Error, QString("Failed to save state: %1").arg(filename));

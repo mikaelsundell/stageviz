@@ -271,7 +271,7 @@ TreeWidgetPrivate::eventFilter(QObject* watched, QEvent* event)
             auto* mouse = static_cast<QMouseEvent*>(event);
             if (mouse->button() != Qt::LeftButton)
                 break;
-            
+
             if (!d.tree->itemAt(mouse->pos())) {
                 d.tree->clearSelection();
                 Q_EMIT d.tree->itemSelectionChanged();
@@ -617,11 +617,8 @@ TreeWidgetPrivate::drawRow(QPainter* painter, const QStyleOptionViewItem& option
         case TreeWidgetPrivate::DropBelowItem:
             painter->drawLine(rowRect.left(), rowRect.bottom(), rowRect.right(), rowRect.bottom());
             break;
-        case TreeWidgetPrivate::DropOnItem:
-            painter->drawRect(rowRect.adjusted(1, 1, -2, -2));
-            break;
-        default:
-            break;
+        case TreeWidgetPrivate::DropOnItem: painter->drawRect(rowRect.adjusted(1, 1, -2, -2)); break;
+        default: break;
         }
 
         painter->restore();

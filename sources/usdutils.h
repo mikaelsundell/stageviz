@@ -12,483 +12,699 @@
 PXR_NAMESPACE_USING_DIRECTIVE
 
 namespace stageviz {
+namespace identifier {
+
+/**
+ * @brief Creates a valid USD identifier candidate from user-provided text.
+ *
+ * Invalid identifier characters are replaced with underscores. If the
+ * resulting identifier starts with a digit, an underscore is prepended. If
+ * the sanitized result is empty, consists only of underscores, or is still
+ * not a valid USD identifier, the fallback name "Prim" is used.
+ *
+ * The resulting base name is then checked against existing children under
+ * @p parentPath. If a child with the same name already exists, a numeric
+ * suffix is appended using the pattern "_1", "_2", and so on until a
+ * unique child name is found.
+ *
+ * If @p stage is null, @p parentPath is not an absolute path, or the parent
+ * prim does not exist, the sanitized base name is returned without sibling
+ * uniqueness checking.
+ *
+ * @param stage Stage used to inspect existing sibling names.
+ * @param parentPath Absolute path to the parent prim.
+ * @param inputName Source name to sanitize and uniquify.
+ *
+ * @return Valid USD child identifier, unique below @p parentPath when possible.
+ */
+QString makeSafeIdentifier(
+    const UsdStageRefPtr& stage,
+    const SdfPath& parentPath,
+    const QString& inputName);
+
+/**
+ * @brief Creates a valid USD identifier candidate while ignoring one child.
+ *
+ * This overload behaves like makeSafeIdentifier(), but excludes @p ignorePath
+ * from the sibling uniqueness check. This is useful for rename operations
+ * where the prim being renamed already exists below @p parentPath and should
+ * not be treated as a collision with itself.
+ *
+ * Invalid identifier characters are replaced with underscores. If the
+ * resulting identifier starts with a digit, an underscore is prepended. If
+ * the sanitized result is empty, consists only of underscores, or is still
+ * not a valid USD identifier, the fallback name "Prim" is used.
+ *
+ * The resulting base name is then checked against existing children under
+ * @p parentPath, excluding @p ignorePath. If a conflicting child already
+ * exists, a numeric suffix is appended using the pattern "_1", "_2", and
+ * so on until a unique child name is found.
+ *
+ * If @p stage is null, @p parentPath is not an absolute path, or the parent
+ * prim does not exist, the sanitized base name is returned without sibling
+ * uniqueness checking.
+ *
+ * @param stage Stage used to inspect existing sibling names.
+ * @param parentPath Absolute path to the parent prim.
+ * @param inputName Source name to sanitize and uniquify.
+ * @param ignorePath Existing child path to ignore during collision checks.
+ *
+ * @return Valid USD child identifier, unique below @p parentPath when possible.
+ */
+QString makeSafeIdentifier(
+    const UsdStageRefPtr& stage,
+    const SdfPath& parentPath,
+    const QString& inputName,
+    const SdfPath& ignorePath);
+
+} // namespace identifier
+
 namespace path {
-    /**
-     * @brief Filters a list of prim paths to only top-most paths.
-     *
-     * Removes paths that are descendants of other paths in the list.
-     * This prevents redundant traversal when operating recursively
-     * on hierarchies.
-     *
-     * Example:
-     *   /A
-     *   /A/B
-     *   /A/B/C
-     *
-     * Result:
-     *   /A
-     *
-     * @param paths Prim paths to filter.
-     *
-     * @return List of top-most prim paths.
-     */
-    QList<SdfPath> topLevelPaths(const QList<SdfPath>& paths);
+/**
+ * @brief Filters a list of prim paths to only top-most paths.
+ *
+ * Removes paths that are descendants of other paths in the list.
+ * This prevents redundant traversal when operating recursively
+ * on hierarchies.
+ *
+ * Example:
+ *   /A
+ *   /A/B
+ *   /A/B/C
+ *
+ * Result:
+ *   /A
+ *
+ * @param paths Prim paths to filter.
+ *
+ * @return List of top-most prim paths.
+ */
+QList<SdfPath> topLevelPaths(const QList<SdfPath>& paths);
 
-    /**
-     * @brief Removes duplicate prim paths while preserving order.
-     *
-     * Keeps the first occurrence of each non-empty path and skips
-     * subsequent duplicates. Empty paths are ignored.
-     *
-     * Example:
-     *   /A
-     *   /B
-     *   /A
-     *
-     * Result:
-     *   /A
-     *   /B
-     *
-     * @param paths Prim paths to filter.
-     *
-     * @return List of unique, non-empty prim paths.
-     */
-    QList<SdfPath> uniquePaths(const QList<SdfPath>& paths);
+/**
+ * @brief Removes duplicate prim paths while preserving order.
+ *
+ * Keeps the first occurrence of each non-empty path and skips
+ * subsequent duplicates. Empty paths are ignored.
+ *
+ * Example:
+ *   /A
+ *   /B
+ *   /A
+ *
+ * Result:
+ *   /A
+ *   /B
+ *
+ * @param paths Prim paths to filter.
+ *
+ * @return List of unique, non-empty prim paths.
+ */
+QList<SdfPath> uniquePaths(const QList<SdfPath>& paths);
 
-    /**
-     * @brief Filters a list of prim paths to only minimal root paths.
-     *
-     * Sorts the input by hierarchy depth and removes paths that are equal to,
-     * or descendants of, already accepted paths. This is useful when editing
-     * or deleting a hierarchy, where operating on a parent path implicitly
-     * covers all of its descendants.
-     *
-     * @param paths Prim paths to reduce.
-     *
-     * @return List of minimal non-overlapping root paths.
-     */
-    QList<SdfPath> minimalRootPaths(const QList<SdfPath>& paths);
+/**
+ * @brief Filters a list of prim paths to only minimal root paths.
+ *
+ * Sorts the input by hierarchy depth and removes paths that are equal to,
+ * or descendants of, already accepted paths. This is useful when editing
+ * or deleting a hierarchy, where operating on a parent path implicitly
+ * covers all of its descendants.
+ *
+ * @param paths Prim paths to reduce.
+ *
+ * @return List of minimal non-overlapping root paths.
+ */
+QList<SdfPath> minimalRootPaths(const QList<SdfPath>& paths);
 
-    /**
-     * @brief Checks whether a selected path is affected by a root path.
-     *
-     * Property paths are normalized to their owning prim paths before
-     * comparison. The function returns true if the selected path is equal to,
-     * or a descendant of, the root path.
-     *
-     * @param selectedPath Selected prim or property path.
-     * @param rootPath Root prim or property path.
-     *
-     * @return True if the selected path is affected by the root path.
-     */
-    bool isAffectedPath(const SdfPath& selectedPath, const SdfPath& rootPath);
+/**
+ * @brief Checks whether a selected path is affected by a root path.
+ *
+ * Property paths are normalized to their owning prim paths before
+ * comparison. The function returns true if the selected path is equal to,
+ * or a descendant of, the root path.
+ *
+ * @param selectedPath Selected prim or property path.
+ * @param rootPath Root prim or property path.
+ *
+ * @return True if the selected path is affected by the root path.
+ */
+bool isAffectedPath(const SdfPath& selectedPath, const SdfPath& rootPath);
 
-    /**
-     * @brief Removes paths affected by a set of root paths.
-     *
-     * For each path in @p paths, removes it from the result if it is equal to,
-     * or a descendant of, any path in @p removedPaths.
-     *
-     * @param paths Input prim or property paths.
-     * @param removedPaths Root paths whose affected descendants should be removed.
-     *
-     * @return Filtered list with affected paths removed.
-     */
-    QList<SdfPath> removeAffectedPaths(const QList<SdfPath>& paths, const QList<SdfPath>& removedPaths);
+/**
+ * @brief Checks whether a path is affected by the current isolation mask.
+ *
+ * Property paths are normalized to their owning prim paths before
+ * comparison. The function returns true if the path is equal to, or a
+ * descendant of, any path in the isolation mask. An empty mask matches all
+ * paths.
+ *
+ * @param mask Current isolation mask.
+ * @param path Prim or property path to test.
+ *
+ * @return True if the path is affected by the isolation mask.
+ */
+bool isWithinMask(const QList<SdfPath>& mask, const SdfPath& path);
 
-    /**
-     * @brief Remaps affected paths from one hierarchy root to another.
-     *
-     * For each path in @p paths, if it is equal to, or a descendant of,
-     * @p oldPath, it is remapped into the hierarchy under @p newPath while
-     * preserving its relative suffix.
-     *
-     * Example:
-     *   oldPath = /World/A
-     *   newPath = /World/B
-     *   path    = /World/A/Geom/Cube
-     *
-     * Result:
-     *   /World/B/Geom/Cube
-     *
-     * @param paths Input prim or property paths.
-     * @param oldPath Original hierarchy root.
-     * @param newPath New hierarchy root.
-     *
-     * @return Remapped list of paths.
-     */
-    QList<SdfPath> remapAffectedPaths(const QList<SdfPath>& paths, const SdfPath& oldPath, const SdfPath& newPath);
+/**
+ * @brief Checks whether a path is affected by the current selection.
+ *
+ * Property paths are normalized to their owning prim paths before
+ * comparison. The function returns true if the path is equal to, or a
+ * descendant of, any selected path.
+ *
+ * @param selection Current selection.
+ * @param path Prim or property path to test.
+ *
+ * @return True if the path is affected by the current selection.
+ */
+bool isCoveredBySelection(const QList<SdfPath>& selection, const SdfPath& path);
+
+/**
+ * @brief Removes paths affected by a set of root paths.
+ *
+ * For each path in @p paths, removes it from the result if it is equal to,
+ * or a descendant of, any path in @p removedPaths.
+ *
+ * @param paths Input prim or property paths.
+ * @param removedPaths Root paths whose affected descendants should be removed.
+ *
+ * @return Filtered list with affected paths removed.
+ */
+QList<SdfPath> removeAffectedPaths(const QList<SdfPath>& paths, const QList<SdfPath>& removedPaths);
+
+/**
+ * @brief Remaps affected paths from one hierarchy root to another.
+ *
+ * For each path in @p paths, if it is equal to, or a descendant of,
+ * @p oldPath, it is remapped into the hierarchy under @p newPath while
+ * preserving its relative suffix.
+ *
+ * Example:
+ *   oldPath = /World/A
+ *   newPath = /World/B
+ *   path    = /World/A/Geom/Cube
+ *
+ * Result:
+ *   /World/B/Geom/Cube
+ *
+ * @param paths Input prim or property paths.
+ * @param oldPath Original hierarchy root.
+ * @param newPath New hierarchy root.
+ *
+ * @return Remapped list of paths.
+ */
+QList<SdfPath> remapAffectedPaths(const QList<SdfPath>& paths, const SdfPath& oldPath, const SdfPath& newPath);
 }  // namespace path
 
-namespace name {
+namespace payload {
+/**
+ * @brief Captured payload state used to restore load and variant selection.
+ */
+struct PayloadState {
+    SdfPath path;
+    bool wasLoaded = false;
+    bool hadVariantSet = false;
+    std::string variantSetName;
+    std::string previousVariantSelection;
+};
+
+/**
+ * @brief Load a payload prim and optionally switch a variant first.
+ *
+ * The previous loaded state and variant selection are written into @p undoItem.
+ */
+bool applyLoad(UsdStageRefPtr stage, const SdfPath& path, bool useVariant, const std::string& variantSetName,
+               const std::string& variantSelection, PayloadState& payloadState, QString& error);
+
+/**
+ * @brief Unload a payload prim and capture previous loaded state.
+ */
+bool applyUnload(UsdStageRefPtr stage, const SdfPath& path, PayloadState& payloadState, QString& error);
+
+/**
+ * @brief Restore a payload prim to a previously captured loaded/variant state.
+ */
+bool restoreState(UsdStageRefPtr stage, const PayloadState& payloadState, QString& error);
+
+}  // namespace payload
+
+namespace snapshot {
     /**
-     * @brief Creates a valid and unique USD child name for a parent prim.
-     *
-     * The input text is first converted into a valid USD identifier candidate
-     * by replacing invalid characters with underscores. If the identifier
-     * starts with a digit, an underscore is prepended. If the sanitized result
-     * is empty, consists only of underscores, or is still not a valid USD
-     * identifier, the fallback name "Prim" is used.
-     *
-     * The resulting base name is then checked against existing children under
-     * @p parentPath. If a child with the same name already exists, a numeric
-     * suffix is appended using the pattern "_1", "_2", and so on until a
-     * unique name is found.
-     *
-     * If @p stage is null, @p parentPath is not an absolute path, or the parent
-     * prim does not exist, the sanitized base name is returned without sibling
-     * uniqueness checking.
-     *
-     * @param stage Stage used to inspect existing children.
-     * @param parentPath Absolute path to the parent prim.
-     * @param inputName Source name to sanitize and uniquify.
-     *
-     * @return Valid and unique USD child name.
+     * @brief Captured prim spec state used to restore a deleted prim.
      */
-    QString makeSafeName(const UsdStageRefPtr& stage, const SdfPath& parentPath, const QString& inputName);
+    struct PrimState {
+        SdfPath stagePath;
+        SdfPath specPath;
+        SdfLayerRefPtr snapshotLayer;
+    };
+
+    using PrimSnapshot = QVector<PrimState>;
 
     /**
-     * @brief Creates a valid and unique USD child name for a parent prim while
-     *        ignoring one existing child path.
-     *
-     * This overload behaves like the standard makeSafeName() variant, but
-     * excludes @p ignorePath from the sibling uniqueness check. This is useful
-     * for rename operations where the current prim already exists under
-     * @p parentPath and should not be treated as a naming conflict.
-     *
-     * The input text is first converted into a valid USD identifier candidate
-     * by replacing invalid characters with underscores. If the identifier
-     * starts with a digit, an underscore is prepended. If the sanitized result
-     * is empty, consists only of underscores, or is still not a valid USD
-     * identifier, the fallback name "Prim" is used.
-     *
-     * The resulting base name is then checked against existing children under
-     * @p parentPath, excluding @p ignorePath. If a conflicting child already
-     * exists, a numeric suffix is appended using the pattern "_1", "_2", and
-     * so on until a unique name is found.
-     *
-     * If @p stage is null, @p parentPath is not an absolute path, or the parent
-     * prim does not exist, the sanitized base name is returned without sibling
-     * uniqueness checking.
-     *
-     * @param stage Stage used to inspect existing children.
-     * @param parentPath Absolute path to the parent prim.
-     * @param inputName Source name to sanitize and uniquify.
-     * @param ignorePath Existing child path to ignore during collision checks.
-     *
-     * @return Valid and unique USD child name.
+     * @brief Capture the strongest available prim spec for a stage path into an anonymous layer.
      */
-    QString makeSafeName(const UsdStageRefPtr& stage, const SdfPath& parentPath, const QString& inputName,
-                         const SdfPath& ignorePath);
-}  // namespace name
+    bool
+    capturePrimToLayer(UsdStageRefPtr stage, const SdfPath& stagePath, PrimState& out);
+
+    /**
+     * @brief Restore a captured prim spec into a destination layer at its original stage path.
+     */
+    void
+    restorePrimFromSnapshotLayer(const SdfLayerHandle& dstLayer, const PrimState& state);
+
+    /**
+     * @brief Sort captured prims parent-before-child for safe restoration.
+     */
+    void
+    sortByHierarchy(PrimSnapshot& snapshot);
+
+}  // namespace snapshot
 
 namespace stage {
-    /**
-     * @brief Finds variant sets for the specified prim paths.
-     *
-     * Traverses the provided paths and collects variant sets available
-     * on the corresponding prims. The result maps each variant set name
-     * to the list of variant names found across the inspected prims.
-     *
-     * If @p recursive is enabled, child prims are also traversed and
-     * included in the result.
-     *
-     * @param stage USD stage to query.
-     * @param paths Prim paths to inspect.
-     * @param recursive If true, traverse child prims recursively.
-     *
-     * @return Map of variant set names to variant names.
-     */
-    QMap<QString, QList<QString>> findVariantSets(UsdStageRefPtr stage, const QList<SdfPath>& paths,
-                                                  bool recursive = false);
 
-    /**
-     * @brief Collects payload prim paths at the specified prim paths.
-     *
-     * Checks each path in @p paths and returns those whose corresponding
-     * prim directly authors or contains a payload.
-     *
-     * @param stage USD stage to query.
-     * @param paths Prim paths to test.
-     *
-     * @return List of payload prim paths found exactly at @p paths.
-     */
-    QList<SdfPath> payloadPaths(UsdStageRefPtr stage, const QList<SdfPath>& paths);
+/**
+ * @brief Collects nearest payload ancestor paths for the specified prim paths.
+ *
+ * Walks upward from each input path until it finds the nearest prim that
+ * directly authors or contains a payload.
+ *
+ * @param stage USD stage to query.
+ * @param paths Prim paths to resolve upward from.
+ *
+ * @return List of nearest payload ancestor paths.
+ */
+QList<SdfPath> ancestorPayloadPaths(UsdStageRefPtr stage, const QList<SdfPath>& paths);
 
-    /**
-     * @brief Collects nearest payload ancestor prim paths for the specified prim paths.
-     *
-     * For each path in @p paths, walks upward through its parent hierarchy until
-     * the nearest prim that directly authors or contains a payload is found.
-     * At most one payload ancestor is returned per input path.
-     *
-     * @param stage USD stage to query.
-     * @param paths Prim paths to resolve upward from.
-     *
-     * @return List of nearest payload ancestor prim paths.
-     */
-    QList<SdfPath> ancestorPayloadPaths(UsdStageRefPtr stage, const QList<SdfPath>& paths);
+/**
+ * @brief Computes the combined world-space bounding box for prim paths.
+ *
+ * Evaluates each imageable prim and combines its world bound into one
+ * resulting bounding box.
+ *
+ * @param stage USD stage containing the prims.
+ * @param paths Prim paths to include.
+ *
+ * @return Combined bounding box.
+ */
+GfBBox3d boundingBox(UsdStageRefPtr stage, const QList<SdfPath>& paths);
 
-    /**
-     * @brief Collects payload prim paths at and below the specified prim paths.
-     *
-     * Traverses each path in @p paths and recursively visits its descendants,
-     * collecting prims that directly author or contain payloads.
-     *
-     * @param stage USD stage to query.
-     * @param paths Root prim paths to traverse downward from.
-     *
-     * @return List of payload prim paths found in the descendant hierarchies.
-     */
-    QList<SdfPath> descendantsPayloadPaths(UsdStageRefPtr stage, const QList<SdfPath>& paths);
+/**
+ * @brief Builds a valid target path for renaming a prim.
+ *
+ * Sanitizes the input name, validates the rename target, avoids sibling
+ * name collisions, and reports validation errors through @p error.
+ *
+ * @param stage USD stage containing the prim.
+ * @param path Existing prim path.
+ * @param input Requested new name.
+ * @param error Receives a failure reason.
+ *
+ * @return New prim path, or an empty path on failure.
+ */
+SdfPath buildRenamePath(UsdStageRefPtr stage,
+                        const SdfPath& path,
+                        const QString& input,
+                        QString& error);
 
-    /**
-     * @brief Resolves selection paths to payload prim paths for load/unload operations.
-     *
-     * For each path in @p paths, this function first checks whether the path
-     * itself, or any of its ancestors, directly authors or contains a payload.
-     * If so, the nearest such payload ancestor is used as the resolved payload
-     * path for that selection.
-     *
-     * If no payload ancestor is found for a selection path, the path is treated
-     * as a container root and payload prims are collected recursively at and
-     * below that path.
-     *
-     * The final result is deduplicated and reduced to top-most payload paths,
-     * so overlapping selections do not produce redundant nested payload entries.
-     *
-     * This helper is intended for selection-driven load and unload behavior,
-     * where a selection may refer either to a prim inside a payload hierarchy
-     * or to a non-payload container that contains payloads below it.
-     *
-     * @param stage USD stage to query.
-     * @param paths Selected prim paths to resolve.
-     *
-     * @return List of resolved payload prim paths for the selection.
-     */
-    QList<SdfPath> selectionPayloadPaths(UsdStageRefPtr stage, const QList<SdfPath>& paths);
+/**
+ * @brief Builds a valid target path for creating a child prim.
+ *
+ * Sanitizes the input name, validates the parent path, avoids sibling
+ * name collisions, and reports validation errors through @p error.
+ *
+ * @param stage USD stage containing the parent prim.
+ * @param parentPath Parent path where the child should be created.
+ * @param input Requested child name.
+ * @param error Receives a failure reason.
+ *
+ * @return New child prim path, or an empty path on failure.
+ */
+SdfPath buildChildPath(UsdStageRefPtr stage,
+                       const SdfPath& parentPath,
+                       const QString& input,
+                       QString& error);
 
-    /**
-     * @brief Computes the bounding box for the specified prim paths.
-     *
-     * Evaluates the world-space bounding box of the given prims
-     * within the USD stage. The result combines the bounds of
-     * all provided prims into a single @c GfBBox3d.
-     *
-     * @param stage USD stage containing the prims.
-     * @param paths Prim paths to include in the bounding box calculation.
-     *
-     * @return Combined bounding box of the prims.
-     */
-    GfBBox3d boundingBox(UsdStageRefPtr stage, const QList<SdfPath>& paths);
+/**
+ * @brief Captures the current child order for a parent prim.
+ *
+ * Collects the ordered child names of the specified parent prim.
+ *
+ * @param stage USD stage containing the parent.
+ * @param parentPath Parent prim path.
+ * @param out Receives the child-name order.
+ *
+ * @return True if a child order was captured.
+ */
+bool captureChildOrder(UsdStageRefPtr stage, const SdfPath& parentPath, TfTokenVector& out);
 
-    /**
-     * @brief Checks whether a prim has authored specifications.
-     *
-     * Determines if the prim at the given path has any authored
-     * @c SdfPrimSpec entries across the composed layer stack.
-     *
-     * @param stage USD stage containing the prim.
-     * @param path  Prim path to evaluate.
-     *
-     * @return True if the prim has authored specs, false otherwise.
-     */
-    bool isAuthored(UsdStageRefPtr stage, const SdfPath& path);
+/**
+ * @brief Collects payload paths at and below the specified prim paths.
+ *
+ * Traverses each input root and collects descendant prims that directly
+ * author or contain payloads.
+ *
+ * @param stage USD stage to query.
+ * @param paths Root prim paths to traverse.
+ *
+ * @return List of descendant payload paths.
+ */
+QList<SdfPath> descendantsPayloadPaths(UsdStageRefPtr stage, const QList<SdfPath>& paths);
 
-    /**
-     * @brief Checks whether a prim exists in the current edit target.
-     *
-     * Evaluates if the prim has a specification in the active edit
-     * target layer of the stage. This indicates whether edits will
-     * be authored directly in the current layer.
-     *
-     * @param stage USD stage containing the prim.
-     * @param path  Prim path to evaluate.
-     *
-     * @return True if the prim exists in the edit target layer, false otherwise.
-     */
-    bool isEditTarget(UsdStageRefPtr stage, const SdfPath& path);
+/**
+ * @brief Filters paths to those strongest-editable in the current edit target.
+ *
+ * Property paths are normalized to prim paths before testing.
+ *
+ * @param stage USD stage to query.
+ * @param paths Prim or property paths to evaluate.
+ *
+ * @return Strongest-editable prim paths.
+ */
+QList<SdfPath> filterStrongestEditablePaths(UsdStageRefPtr stage, const QList<SdfPath>& paths);
 
-    /**
-     * @brief Checks whether a prim is strongest-editable in the current edit target.
-     *
-     * A prim is considered strongest-editable if its strongest composed prim spec
-     * resides in the current edit target layer. This is useful for destructive
-     * operations that should only act on prims whose strongest opinion is authored
-     * in the editable layer.
-     *
-     * @param stage USD stage containing the prim.
-     * @param path Prim path to evaluate.
-     *
-     * @return True if the strongest prim spec belongs to the current edit target.
-     */
-    bool isStrongestEditable(UsdStageRefPtr stage, const SdfPath& path);
+/**
+ * @brief Finds variant sets for the specified prim paths.
+ *
+ * Collects variant set names and available variant values from the provided
+ * prim paths, optionally including descendants.
+ *
+ * @param stage USD stage to query.
+ * @param paths Prim paths to inspect.
+ * @param recursive If true, include descendants.
+ *
+ * @return Map of variant set names to variant names.
+ */
+QMap<QString, QList<QString>> findVariantSets(UsdStageRefPtr stage,
+                                              const QList<SdfPath>& paths,
+                                              bool recursive = false);
 
-    /**
-     * @brief Filters a list of paths to those that are strongest-editable.
-     *
-     * Property paths are normalized to their owning prim paths before testing.
-     * Only prims whose strongest composed prim spec belongs to the current edit
-     * target layer are included in the result.
-     *
-     * @param stage USD stage to query.
-     * @param paths Prim or property paths to evaluate.
-     *
-     * @return Filtered list of strongest-editable prim paths.
-     */
-    QList<SdfPath> filterStrongestEditablePaths(UsdStageRefPtr stage, const QList<SdfPath>& paths);
+/**
+ * @brief Checks whether a prim authors composition arcs.
+ *
+ * Tests for payloads, references, inherits, specializes, or variant sets on
+ * the given prim. This is used to avoid namespace edits across composed
+ * boundaries.
+ *
+ * @param prim Prim to inspect.
+ *
+ * @return True if the prim has composition arcs.
+ */
+bool hasCompositionArc(const UsdPrim& prim);
 
-    /**
-     * @brief Checks whether payloads at and below a prim path are fully loaded.
-     *
-     * Traverses the prim at the given path and its descendant hierarchy,
-     * evaluating payload prims found at or below that path.
-     *
-     * The function returns true only if one or more payload prims are found
-     * and all such payload prims are currently loaded.
-     *
-     * This is useful when a selected prim may either be a payload prim itself
-     * or a non-payload container that contains payload prims below it.
-     *
-     * @param stage USD stage containing the prim hierarchy.
-     * @param path  Root prim path to evaluate.
-     *
-     * @return True if one or more payload prims are found at or below the path
-     *         and all of them are loaded, false otherwise.
-     */
-    bool isLoaded(UsdStageRefPtr stage, const SdfPath& path);
+/**
+ * @brief Inserts a child name into an existing child order.
+ *
+ * Removes existing occurrences of @p name, clamps @p index to the valid range,
+ * and inserts the name at the requested position.
+ *
+ * @param order Existing child order.
+ * @param name Child name to insert.
+ * @param index Target insert index, or a negative value to append.
+ *
+ * @return Updated child order.
+ */
+TfTokenVector insertChildOrderToken(const TfTokenVector& order,
+                                    const TfToken& name,
+                                    int index);
 
-    /**
-     * @brief Checks whether a prim has a payload.
-     *
-     * Determines if the prim at the given path has an authored
-     * payload, either directly or through its composed prim stack.
-     *
-     * @param stage USD stage containing the prim.
-     * @param path  Prim path to evaluate.
-     *
-     * @return True if the prim has a payload, false otherwise.
-     */
-    bool isPayload(UsdStageRefPtr stage, const SdfPath& path);
+/**
+ * @brief Checks whether a prim has authored specifications.
+ *
+ * Tests whether the composed prim has authored prim specs in its stack.
+ *
+ * @param stage USD stage containing the prim.
+ * @param path Prim path to evaluate.
+ *
+ * @return True if authored specs exist.
+ */
+bool isAuthored(UsdStageRefPtr stage, const SdfPath& path);
 
-    /**
-     * @brief Checks whether a prim is part of a payload hierarchy.
-     *
-     * Evaluates whether the prim or any of its ancestors has a payload.
-     * This effectively determines if the prim is located under a payload
-     * composition boundary.
-     *
-     * @param stage USD stage containing the prim.
-     * @param path  Prim path to evaluate.
-     *
-     * @return True if the prim is under a payload hierarchy, false otherwise.
-     */
-    bool isPayloadHierarchy(UsdStageRefPtr stage, const SdfPath& path);
+/**
+ * @brief Checks whether a prim is editable under the current policy.
+ *
+ * A prim is editable when it is valid, active, authored in the edit target,
+ * and not inside a payload hierarchy.
+ *
+ * @param stage USD stage containing the prim.
+ * @param path Prim path to evaluate.
+ *
+ * @return True if the prim is editable.
+ */
+bool isEditable(UsdStageRefPtr stage, const SdfPath& path);
 
-    /**
-     * @brief Checks whether a prim is editable.
-     *
-     * Determines if the prim can be modified under the current editing
-     * policy. A prim is considered editable if it:
-     * - Is active and valid.
-     * - Is not under a payload hierarchy.
-     * - Has authored specifications.
-     * - Exists in the current edit target layer.
-     *
-     * @param stage USD stage containing the prim.
-     * @param path  Prim path to evaluate.
-     *
-     * @return True if the prim is editable, false otherwise.
-     */
-    bool isEditable(UsdStageRefPtr stage, const SdfPath& path);
+/**
+ * @brief Checks whether a prim exists in the current edit target.
+ *
+ * Tests whether the active edit target layer has a prim spec at @p path.
+ *
+ * @param stage USD stage containing the prim.
+ * @param path Prim path to evaluate.
+ *
+ * @return True if the edit target contains the prim spec.
+ */
+bool isEditTarget(UsdStageRefPtr stage, const SdfPath& path);
 
-    /**
-     * @brief Returns the visibility state of a prim.
-     *
-     * Queries the authored visibility of the specified prim on the stage.
-     * If no visibility is authored, the prim is considered visible (inherited).
-     *
-     * This function evaluates only the prim’s own visibility attribute and
-     * does not account for inherited visibility from parent prims.
-     *
-     * @param stage USD stage containing the prim.
-     * @param path Prim path to query.
-     *
-     * @return True if the prim is visible, false if it is explicitly invisible.
-     */
-    bool isVisible(UsdStageRefPtr stage, const SdfPath& path);
+/**
+ * @brief Checks whether a path is inside a composed hierarchy.
+ *
+ * Walks from @p path upward to the pseudo-root and returns true if the prim or
+ * any ancestor authors composition arcs.
+ *
+ * @param stage USD stage containing the path.
+ * @param path Prim path to evaluate.
+ *
+ * @return True if the path is inside a composed hierarchy.
+ */
+bool isInsideCompositionArc(UsdStageRefPtr stage, const SdfPath& path);
 
-    /**
-     * @brief Sets visibility for the specified prim paths.
-     *
-     * Updates the visibility state of the given prims on the stage.
-     * When @p recursive is enabled, the visibility state is also
-     * applied to all descendant prims.
-     *
-     * @param stage USD stage containing the prims.
-     * @param paths Prim paths to update.
-     * @param visible Visibility state to apply.
-     * @param recursive If true, apply visibility recursively.
-     */
-    void setVisible(UsdStageRefPtr stage, const QList<SdfPath>& paths, bool visible, bool recursive = false);
+/**
+ * @brief Checks whether payloads at and below a path are fully loaded.
+ *
+ * Traverses the path hierarchy and returns true only when at least one
+ * payload is found and every found payload is loaded.
+ *
+ * @param stage USD stage containing the hierarchy.
+ * @param path Root prim path to evaluate.
+ *
+ * @return True if all found payloads are loaded.
+ */
+bool isLoaded(UsdStageRefPtr stage, const SdfPath& path);
 
-    /**
-     * @brief Captures the current child order for a parent prim.
-     *
-     * Collects the ordered child names of the specified parent prim into
-     * @p out. This is useful when preserving hierarchy ordering around
-     * namespace edits such as delete, rename, reparent, or create.
-     *
-     * @param stage USD stage containing the parent prim.
-     * @param parentPath Parent prim path to inspect.
-     * @param out Output child-name order.
-     *
-     * @return True if the parent exists and one or more children were captured.
-     */
-    bool captureChildOrder(UsdStageRefPtr stage, const SdfPath& parentPath, TfTokenVector& out);
+/**
+ * @brief Checks whether a prim has a payload.
+ *
+ * Tests both composed prim state and authored payload list opinions.
+ *
+ * @param stage USD stage containing the prim.
+ * @param path Prim path to evaluate.
+ *
+ * @return True if the prim has a payload.
+ */
+bool isPayload(UsdStageRefPtr stage, const SdfPath& path);
 
-    /**
-     * @brief Restores an authored child order for a parent prim.
-     *
-     * Ensures the necessary parent specs exist in the current edit target layer
-     * and then authors the provided child reorder on the specified parent prim.
-     *
-     * @param stage USD stage containing the parent prim.
-     * @param parentPath Parent prim path to update.
-     * @param childOrder Ordered child names to author.
-     */
-    void restoreChildOrder(UsdStageRefPtr stage, const SdfPath& parentPath, const TfTokenVector& childOrder);
+/**
+ * @brief Checks whether a prim is inside a payload hierarchy.
+ *
+ * Walks from the prim to its ancestors and checks for payload boundaries.
+ *
+ * @param stage USD stage containing the prim.
+ * @param path Prim path to evaluate.
+ *
+ * @return True if the prim or an ancestor has a payload.
+ */
+bool isPayloadHierarchy(UsdStageRefPtr stage, const SdfPath& path);
 
-    /**
-     * @brief Removes a prim specification from a layer.
-     *
-     * Applies a namespace edit that deletes the prim spec at @p specPath from
-     * the provided layer. This operates on the layer directly rather than on
-     * composed stage state.
-     *
-     * @param layer Layer containing the prim spec.
-     * @param specPath Prim spec path to remove.
-     *
-     * @return True if the prim spec was removed successfully.
-     */
-    bool removePrimSpec(const SdfLayerHandle& layer, const SdfPath& specPath);
+/**
+ * @brief Checks whether a prim is strongest-editable in the edit target.
+ *
+ * A prim is strongest-editable when its strongest composed prim spec is in
+ * the current edit target layer.
+ *
+ * @param stage USD stage containing the prim.
+ * @param path Prim path to evaluate.
+ *
+ * @return True if the strongest spec is in the edit target.
+ */
+bool isStrongestEditable(UsdStageRefPtr stage, const SdfPath& path);
 
-    /**
-     * @brief Remaps stage load rules from one hierarchy path to another.
-     *
-     * For every load rule whose path is equal to, or a descendant of,
-     * @p oldPath, a corresponding rule is created under @p newPath while
-     * preserving the relative suffix and rule policy.
-     *
-     * Rules outside the moved hierarchy are copied unchanged.
-     *
-     * @param rules Existing stage load rules.
-     * @param oldPath Original hierarchy root.
-     * @param newPath New hierarchy root.
-     *
-     * @return Remapped stage load rules.
-     */
-    UsdStageLoadRules remapLoadRules(const UsdStageLoadRules& rules, const SdfPath& oldPath, const SdfPath& newPath);
+/**
+ * @brief Returns the authored visibility state of a prim.
+ *
+ * Only the prim’s own visibility attribute is queried; inherited parent
+ * visibility is not evaluated.
+ *
+ * @param stage USD stage containing the prim.
+ * @param path Prim path to query.
+ *
+ * @return True unless the prim is explicitly invisible.
+ */
+bool isVisible(UsdStageRefPtr stage, const SdfPath& path);
+
+/**
+ * @brief Collects leaf prim paths from the stage.
+ *
+ * Traverses the stage and returns prims with no traversable children,
+ * optionally constrained by an isolation mask.
+ *
+ * @param stage USD stage to traverse.
+ * @param mask Optional mask paths.
+ * @param childMustBeWithinMask If true, only masked children affect leaf status.
+ *
+ * @return List of leaf prim paths.
+ */
+QList<SdfPath> leafPaths(UsdStageRefPtr stage,
+                         const QList<SdfPath>& mask = {},
+                         bool childMustBeWithinMask = true);
+
+/**
+ * @brief Moves a prim to a new parent using UsdNamespaceEditor.
+ *
+ * Validates source, destination, hierarchy rules, and composition boundaries
+ * before applying the namespace edit.
+ *
+ * @param stage USD stage containing the prim.
+ * @param from Existing prim path.
+ * @param toParent Destination parent prim path.
+ * @param error Receives a failure reason.
+ *
+ * @return True if the prim was moved.
+ */
+bool movePrim(UsdStageRefPtr stage,
+              const SdfPath& from,
+              const SdfPath& toParent,
+              QString& error);
+
+/**
+ * @brief Collects payload paths exactly at the specified prim paths.
+ *
+ * Checks each input path and returns paths whose prim directly authors
+ * or contains a payload.
+ *
+ * @param stage USD stage to query.
+ * @param paths Prim paths to test.
+ *
+ * @return Payload paths found at the input paths.
+ */
+QList<SdfPath> payloadPaths(UsdStageRefPtr stage, const QList<SdfPath>& paths);
+
+/**
+ * @brief Remaps one child name in an existing child order.
+ *
+ * Replaces the first occurrence of @p oldName with @p newName while
+ * preserving the rest of the order.
+ *
+ * @param order Existing child order.
+ * @param oldName Name to replace.
+ * @param newName Replacement name.
+ *
+ * @return Remapped child order.
+ */
+TfTokenVector remapChildOrder(const TfTokenVector& order,
+                              const TfToken& oldName,
+                              const TfToken& newName);
+
+/**
+ * @brief Remaps stage load rules from one hierarchy path to another.
+ *
+ * Rules at or below @p oldPath are moved under @p newPath while preserving
+ * their relative suffix and policy.
+ *
+ * @param rules Existing stage load rules.
+ * @param oldPath Original hierarchy root.
+ * @param newPath New hierarchy root.
+ *
+ * @return Remapped stage load rules.
+ */
+UsdStageLoadRules remapLoadRules(const UsdStageLoadRules& rules,
+                                 const SdfPath& oldPath,
+                                 const SdfPath& newPath);
+
+/**
+ * @brief Removes a child name from an existing child order.
+ *
+ * Copies @p order while skipping every occurrence of @p name.
+ *
+ * @param order Existing child order.
+ * @param name Child name to remove.
+ *
+ * @return Child order without the specified name.
+ */
+TfTokenVector removeChildOrderToken(const TfTokenVector& order,
+                                    const TfToken& name);
+
+/**
+ * @brief Removes a prim specification from a layer.
+ *
+ * Applies a namespace edit that deletes the prim spec at @p specPath from
+ * the provided layer.
+ *
+ * @param layer Layer containing the prim spec.
+ * @param specPath Prim spec path to remove.
+ *
+ * @return True if the prim spec was removed.
+ */
+bool removePrimSpec(const SdfLayerHandle& layer, const SdfPath& specPath);
+
+/**
+ * @brief Renames a prim using UsdNamespaceEditor.
+ *
+ * Validates the source and target paths, checks whether namespace edits can
+ * be applied, and performs the rename.
+ *
+ * @param stage USD stage containing the prim.
+ * @param from Existing prim path.
+ * @param to Target prim path.
+ * @param error Receives a failure reason.
+ *
+ * @return True if the prim was renamed.
+ */
+bool renamePrim(UsdStageRefPtr stage,
+                const SdfPath& from,
+                const SdfPath& to,
+                QString& error);
+
+/**
+ * @brief Restores an authored child order for a parent prim.
+ *
+ * Ensures parent specs exist in the edit target and authors the provided
+ * child reorder on the parent prim.
+ *
+ * @param stage USD stage containing the parent.
+ * @param parentPath Parent prim path.
+ * @param childOrder Ordered child names to author.
+ */
+void restoreChildOrder(UsdStageRefPtr stage,
+                       const SdfPath& parentPath,
+                       const TfTokenVector& childOrder);
+
+/**
+ * @brief Resolves selection paths to payload paths for load/unload commands.
+ *
+ * Uses payload ancestors when available; otherwise searches descendants.
+ * The result is deduplicated and reduced to top-most paths.
+ *
+ * @param stage USD stage to query.
+ * @param paths Selected prim paths to resolve.
+ *
+ * @return Resolved payload paths.
+ */
+QList<SdfPath> selectionPayloadPaths(UsdStageRefPtr stage, const QList<SdfPath>& paths);
+
+/**
+ * @brief Sets visibility for the specified prim paths.
+ *
+ * Authors visible or invisible state on each path and, when requested,
+ * applies the same state recursively to descendants.
+ *
+ * @param stage USD stage containing the prims.
+ * @param paths Prim paths to update.
+ * @param visible Visibility state to apply.
+ * @param recursive If true, apply visibility recursively.
+ */
+void setVisible(UsdStageRefPtr stage,
+                const QList<SdfPath>& paths,
+                bool visible,
+                bool recursive = false);
 
 }  // namespace stage
 }  // namespace stageviz

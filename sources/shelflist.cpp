@@ -145,8 +145,7 @@ ShelfListPrivate::tileContentSize() const
     const int border = 1;
     const QSize grid = d.list->gridSize();
 
-    return QSize(qMax(1, grid.width() - spacing * 2 - border * 2),
-                 qMax(1, grid.height() - spacing * 2 - border * 2));
+    return QSize(qMax(1, grid.width() - spacing * 2 - border * 2), qMax(1, grid.height() - spacing * 2 - border * 2));
 }
 
 QMimeData*

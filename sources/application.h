@@ -67,7 +67,7 @@ public:
      * @brief Returns the style subsystem.
      */
     Style* style() const;
-    
+
     /**
      * @brief Returns the window subsystem.
      */
