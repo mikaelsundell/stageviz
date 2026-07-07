@@ -483,7 +483,6 @@ StageTreePrivate::updateFilter()
         item->setHidden(!visible);
         return visible;
     };
-
     for (int i = 0; i < d.tree->topLevelItemCount(); ++i)
         matchFilter(d.tree->topLevelItem(i));
 }
@@ -590,10 +589,12 @@ StageTreePrivate::contextMenuEvent(QContextMenuEvent* event)
     for (QTreeWidgetItem* selected : d.tree->selectedItems()) {
         PrimItem* primItem = static_cast<PrimItem*>(selected);
         const QString pathString = primItem->data(0, PrimItem::Path).toString();
+
         if (pathString.isEmpty())
             continue;
 
         const SdfPath path(qt::QStringToString(pathString));
+
         paths.append(path);
         selectedItems.append(primItem);
         pathStrings.append(pathString);
@@ -608,6 +609,14 @@ StageTreePrivate::contextMenuEvent(QContextMenuEvent* event)
     SdfPath createParentPath;
     if (!topLevelPaths.isEmpty())
         createParentPath = topLevelPaths.first();
+    else if (paths.size() == 1 && paths.first() == SdfPath::AbsoluteRootPath())
+        createParentPath = SdfPath::AbsoluteRootPath();
+
+    const bool canSetDefaultPrim =
+        paths.size() == 1
+        && !paths.first().IsEmpty()
+        && paths.first() != SdfPath::AbsoluteRootPath()
+        && paths.first().GetParentPath() == SdfPath::AbsoluteRootPath();
 
     auto payloadPathsAtSelection = [&]() {
         QList<SdfPath> result;
@@ -669,15 +678,19 @@ StageTreePrivate::contextMenuEvent(QContextMenuEvent* event)
                         if (!variantPrimSpec)
                             continue;
 
-                        const SdfPayloadVector variantItems = variantPrimSpec->GetPayloadList().GetAppliedItems();
+                        const SdfPayloadVector variantItems =
+                            variantPrimSpec->GetPayloadList().GetAppliedItems();
 
                         for (const SdfPayload& payload : variantItems) {
                             const QString assetPath = qt::StringToQString(payload.GetAssetPath());
                             if (assetPath.isEmpty())
                                 continue;
 
-                            const QString key = QString("%1=%2").arg(qt::StringToQString(setName),
-                                                                     qt::StringToQString(variantName));
+                            const QString key = QString("%1=%2").arg(
+                                qt::StringToQString(setName),
+                                qt::StringToQString(variantName)
+                            );
+
                             variantPayloadFiles[key] = QFileInfo(assetPath).fileName();
                         }
                     }
@@ -761,7 +774,7 @@ StageTreePrivate::contextMenuEvent(QContextMenuEvent* event)
     };
 
     QMenu menu(d.tree.data());
-    
+
     struct VariantSelection {
         QString setName;
         QString value;
@@ -774,7 +787,9 @@ StageTreePrivate::contextMenuEvent(QContextMenuEvent* event)
         if (!d.stage)
             return;
 
-        const QMap<QString, QList<QString>> variantSets = stage::findVariantSets(d.stage, paths, false);
+        const QMap<QString, QList<QString>> variantSets =
+            stage::findVariantSets(d.stage, paths, false);
+
         for (auto it = variantSets.begin(); it != variantSets.end(); ++it) {
             const QString& setName = it.key();
             const QList<QString>& values = it.value();
@@ -835,11 +850,16 @@ StageTreePrivate::contextMenuEvent(QContextMenuEvent* event)
     }
 
     menu.addSeparator();
-
+    
+    QAction* setDefaultPrim = menu.addAction("Default prim");
+    setDefaultPrim->setEnabled(canSetDefaultPrim);
+    
+    menu.addSeparator();
+    
     QAction* newXform = menu.addAction("New xform");
     QAction* deleteSelected = menu.addAction("Delete");
-
     QAction* chosen = menu.exec(d.tree->mapToGlobal(event->pos()));
+    
     if (!chosen)
         return;
 
@@ -909,6 +929,12 @@ StageTreePrivate::contextMenuEvent(QContextMenuEvent* event)
         return;
     }
 
+    if (chosen == setDefaultPrim) {
+        if (canSetDefaultPrim)
+            d.context->run(new Command(defaultPrimPath(paths.first())));
+        return;
+    }
+
     if (chosen == showSelected)
         d.context->run(new Command(showPaths(paths, false)));
     else if (chosen == showRecursive)
@@ -922,6 +948,9 @@ StageTreePrivate::contextMenuEvent(QContextMenuEvent* event)
     else if (chosen == deleteSelected)
         d.context->run(new Command(deletePaths(paths)));
 }
+
+
+
 
 void
 StageTreePrivate::updateStage(UsdStageRefPtr stage)
@@ -1712,8 +1741,10 @@ StageTree::mousePressEvent(QMouseEvent* event)
 void
 StageTree::startDrag(Qt::DropActions supportedActions)
 {
+    qDebug() << "startDrag(Qt::DropActions supportedActions)";
+    
+    
     Q_UNUSED(supportedActions);
-
     auto* item = static_cast<PrimItem*>(currentItem());
     if (!item)
         return;
@@ -1733,12 +1764,14 @@ StageTree::startDrag(Qt::DropActions supportedActions)
 void
 StageTree::dragEnterEvent(QDragEnterEvent* event)
 {
+    qDebug() << "dragEnterEvent(QDragEnterEvent* event)";
+    
+    
     if (!event->mimeData()->hasFormat(mime::primPath)) {
         p->clearDropIndicator();
         event->ignore();
         return;
     }
-
     event->acceptProposedAction();
 }
 
@@ -1794,6 +1827,9 @@ StageTree::dragMoveEvent(QDragMoveEvent* event)
 void
 StageTree::dropEvent(QDropEvent* event)
 {
+    qDebug() << "dropEvent(QDropEvent* event)";
+    
+    
     if (!event->mimeData()->hasFormat(mime::primPath)) {
         p->clearDropIndicator();
         event->ignore();

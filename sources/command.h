@@ -225,6 +225,23 @@ Command
 stageUp(Session::StageUp stageUp);
 
 /**
+ * @brief Creates a command that sets the stage default prim.
+ *
+ * The path must refer to a valid root prim, for example `/World`.
+ * The pseudo-root `/`, empty paths, child prims such as `/World/Geom`,
+ * and invalid prim paths are rejected.
+ *
+ * The previous default prim is stored so the operation can be undone.
+ * If the stage had no default prim before the command, undo clears the
+ * default prim metadata.
+ *
+ * @param path Root prim path to set as the stage default prim.
+ * @return Command that applies and undoes the default prim change.
+ */
+Command
+defaultPrimPath(const SdfPath& path);
+
+/**
  * @brief Creates a command that deletes prims at the specified paths.
  *
  * Paths are reduced to minimal root paths to avoid redundant edits.
