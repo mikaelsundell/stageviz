@@ -577,16 +577,18 @@ TreeWidgetPrivate::drawRow(QPainter* painter, const QStyleOptionViewItem& option
     rowRect.setLeft(0);
     rowRect.setRight(d.tree->viewport()->width());
 
+    QTreeWidgetItem* item = d.tree->itemFromIndex(index);
+
     const bool alternatingRow = visualRowIndex(index) % 2 == 1;
     const QColor bg = alternatingRow ? app()->style()->color(Style::ColorRole::ItemAlt)
                                      : app()->style()->color(Style::ColorRole::Item);
 
-    painter->fillRect(rowRect, bg);
+    const QBrush background = item ? item->background(0) : QBrush();
+    if (background.style() != Qt::NoBrush && background.color().isValid())
+        painter->fillRect(rowRect, background);
+    else
+        painter->fillRect(rowRect, bg);
 
-    if (opt.state & QStyle::State_Selected)
-        painter->fillRect(rowRect, app()->style()->color(Style::ColorRole::Highlight));
-
-    QTreeWidgetItem* item = d.tree->itemFromIndex(index);
     const bool selected = d.tree->selectionModel() && d.tree->selectionModel()->isSelected(index);
 
     if (selected) {
@@ -615,8 +617,11 @@ TreeWidgetPrivate::drawRow(QPainter* painter, const QStyleOptionViewItem& option
         case TreeWidgetPrivate::DropBelowItem:
             painter->drawLine(rowRect.left(), rowRect.bottom(), rowRect.right(), rowRect.bottom());
             break;
-        case TreeWidgetPrivate::DropOnItem: painter->drawRect(rowRect.adjusted(1, 1, -2, -2)); break;
-        default: break;
+        case TreeWidgetPrivate::DropOnItem:
+            painter->drawRect(rowRect.adjusted(1, 1, -2, -2));
+            break;
+        default:
+            break;
         }
 
         painter->restore();

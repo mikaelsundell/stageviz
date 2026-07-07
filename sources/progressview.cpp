@@ -28,6 +28,8 @@ public:
     bool eventFilter(QObject* obj, QEvent* event);
     void trim();
     QString statusLabel(const Session::Notify::Status status) const;
+    QString blockToolTip(const QString& name, int childCount) const;
+    QString notifyToolTip(const Session::Notify& notify) const;
     QStringList pathStrings(const QList<SdfPath>& paths) const;
     QList<SdfPath> itemPaths(QTreeWidgetItem* item) const;
 
@@ -47,6 +49,8 @@ public:
         UsdStageRefPtr stage;
         int expectedCount = 0;
         int history = 100;
+        int errorCount = 0;
+        int warningCount = 0;
         bool running = false;
         QString currentName;
         QTreeWidgetItem* currentItem = nullptr;
@@ -118,11 +122,34 @@ QString
 ProgressViewPrivate::statusLabel(const Session::Notify::Status status) const
 {
     switch (status) {
-        case Session::Notify::Status::Success: return "Success";
-        case Session::Notify::Status::Progress: return "Running";
-        case Session::Notify::Status::Warning: return "Warning";
-        case Session::Notify::Status::Error: return "Failed";
+    case Session::Notify::Status::Success: return "Success";
+    case Session::Notify::Status::Progress: return "Running";
+    case Session::Notify::Status::Warning: return "Warning";
+    case Session::Notify::Status::Error: return "Failed";
     }
+
+    return QString();
+}
+
+QString
+ProgressViewPrivate::blockToolTip(const QString& name, int childCount) const
+{
+    return QString("%1\n%2 completed update(s) in this command block.")
+        .arg(name)
+        .arg(childCount);
+}
+
+QString
+ProgressViewPrivate::notifyToolTip(const Session::Notify& notify) const
+{
+    QStringList lines;
+    lines << notify.message;
+    lines << QString("%1 path(s)").arg(notify.paths.size());
+
+    for (const QString& path : pathStrings(notify.paths))
+        lines << path;
+
+    return lines.join('\n');
 }
 
 QStringList
@@ -167,6 +194,8 @@ ProgressViewPrivate::clear()
     d.currentItem = nullptr;
     d.currentName.clear();
     d.expectedCount = 0;
+    d.errorCount = 0;
+    d.warningCount = 0;
     d.ui->progress->setValue(0);
     if (!d.running)
         d.ui->status->setText("Idle");
@@ -181,11 +210,17 @@ ProgressViewPrivate::progressBlockChanged(const QString& name, Session::Progress
         d.timer.restart();
         d.running = true;
         d.expectedCount = 0;
+        d.errorCount = 0;
+        d.warningCount = 0;
         d.currentName = name;
 
         auto* commandItem = new QTreeWidgetItem();
         commandItem->setText(0, QString("%1 (0)").arg(name));
         commandItem->setText(1, "Running...");
+        commandItem->setToolTip(
+            0,
+            QString("%1\nCommand block with 0 completed update(s).").arg(name));
+        commandItem->setToolTip(1, "Command block is running.");
         commandItem->setExpanded(false);
         commandItem->setData(0, Qt::UserRole, QStringList());
 
@@ -202,14 +237,28 @@ ProgressViewPrivate::progressBlockChanged(const QString& name, Session::Progress
 
     d.running = false;
 
-    qint64 ms = d.timer.elapsed();
-    QString timeStr = QTime(0, 0).addMSecs(static_cast<int>(ms)).toString("hh:mm:ss");
+    const qint64 ms = d.timer.elapsed();
+    const QString timeStr = QTime(0, 0).addMSecs(static_cast<int>(ms)).toString("hh:mm:ss");
 
     if (d.currentItem) {
         const int childCount = d.currentItem->childCount();
+
         d.currentItem->setText(0, QString("%1 (%2)").arg(d.currentName).arg(childCount));
-        d.currentItem->setText(1, QString("Finished (%1)").arg(timeStr));
+        d.currentItem->setToolTip(
+            0,
+            QString("%1\nCommand block with %2 completed update(s).")
+                .arg(d.currentName)
+                .arg(childCount));
         d.currentItem->setExpanded(false);
+
+        if (d.errorCount > 0)
+            d.currentItem->setText(1, QString("Failed (%1)").arg(timeStr));
+        else if (d.warningCount > 0)
+            d.currentItem->setText(1, QString("Warning (%1)").arg(timeStr));
+        else
+            d.currentItem->setText(1, QString("Finished (%1)").arg(timeStr));
+
+        d.currentItem->setToolTip(1, d.currentItem->text(1));
     }
 
     d.ui->status->setText(QString("Finished: %1 (Time: %2)").arg(name).arg(timeStr));
@@ -217,8 +266,27 @@ ProgressViewPrivate::progressBlockChanged(const QString& name, Session::Progress
     d.ui->cancel->setEnabled(false);
     d.ui->clear->setEnabled(progressTree()->topLevelItemCount() > 0);
 
+    if (d.errorCount > 0) {
+        session()->notifyStatus(
+            Session::Notify::Status::Error,
+            QString("%1 finished with %2 error(s)").arg(name).arg(d.errorCount));
+    }
+    else if (d.warningCount > 0) {
+        session()->notifyStatus(
+            Session::Notify::Status::Warning,
+            QString("%1 finished with %2 warning(s)").arg(name).arg(d.warningCount));
+    }
+    else {
+        session()->notifyStatus(
+            Session::Notify::Status::Success,
+            QString("%1 finished successfully").arg(name));
+    }
+
     d.currentItem = nullptr;
     d.currentName.clear();
+    d.expectedCount = 0;
+    d.errorCount = 0;
+    d.warningCount = 0;
 }
 
 void
@@ -238,35 +306,56 @@ ProgressViewPrivate::progressNotifyChanged(const Session::Notify& notify, size_t
         auto* child = new QTreeWidgetItem();
         child->setText(0, "Pending...");
         child->setText(1, QString());
+        child->setToolTip(0, "Pending update.");
+        child->setToolTip(1, QString());
         child->setData(0, Qt::UserRole, QStringList());
         d.currentItem->addChild(child);
     }
 
     d.currentItem->setText(0, QString("%1 (%2)").arg(d.currentName).arg(d.currentItem->childCount()));
+    d.currentItem->setToolTip(
+        0,
+        QString("%1\nCommand block with %2 completed update(s).")
+            .arg(d.currentName)
+            .arg(d.currentItem->childCount()));
 
     QTreeWidgetItem* item = d.currentItem->child(index);
     if (!item)
         return;
-    
+
+    const QStringList paths = pathStrings(notify.paths);
+    QStringList tooltip;
+    tooltip << notify.message;
+    tooltip << QString("%1 affected path(s).").arg(notify.paths.size());
+    tooltip.append(paths);
+
     item->setText(0, QString("%1 (%2)").arg(notify.message).arg(notify.paths.size()));
     item->setText(1, statusLabel(notify.status));
-    item->setData(0, Qt::UserRole, pathStrings(notify.paths));
+    item->setToolTip(0, tooltip.join('\n'));
+    item->setToolTip(1, statusLabel(notify.status));
+    item->setData(0, Qt::UserRole, paths);
+
+    item->setBackground(0, QBrush());
+    item->setBackground(1, QBrush());
 
     switch (notify.status) {
     case Session::Notify::Status::Error:
-        item->setForeground(0, style()->color(Style::ColorRole::Error));
-        item->setForeground(1, style()->color(Style::ColorRole::Error));
+        ++d.errorCount;
+        item->setBackground(0, style()->color(Style::ColorRole::Error));
+        item->setBackground(1, style()->color(Style::ColorRole::Error));
         break;
     case Session::Notify::Status::Warning:
-        item->setForeground(0, style()->color(Style::ColorRole::Warning));
-        item->setForeground(1, style()->color(Style::ColorRole::Warning));
+        ++d.warningCount;
+        item->setBackground(0, style()->color(Style::ColorRole::Warning));
+        item->setBackground(1, style()->color(Style::ColorRole::Warning));
         break;
     case Session::Notify::Status::Progress:
-        item->setForeground(0, style()->color(Style::ColorRole::Progress));
-        item->setForeground(1, style()->color(Style::ColorRole::Progress));
+        item->setBackground(0, style()->color(Style::ColorRole::Progress));
+        item->setBackground(1, style()->color(Style::ColorRole::Progress));
         break;
     case Session::Notify::Status::Success:
-    default: break;
+    default:
+        break;
     }
 
     const int pct = int((double(completed) / std::max<size_t>(1, expected)) * 100.0);
@@ -280,14 +369,14 @@ ProgressViewPrivate::stageChanged(UsdStageRefPtr stage, Session::LoadPolicy poli
 {
     Q_UNUSED(policy);
     Q_UNUSED(status);
-
     d.stage = stage;
     d.running = false;
     d.expectedCount = 0;
+    d.errorCount = 0;
+    d.warningCount = 0;
     d.currentItem = nullptr;
     d.currentName.clear();
     d.timer.invalidate();
-
     progressTree()->clear();
     d.ui->progress->setValue(0);
     d.ui->cancel->setEnabled(false);

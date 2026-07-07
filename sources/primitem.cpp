@@ -135,7 +135,12 @@ PrimItem::data(int column, int role) const
         if (p->d.name.isEmpty())
             return QVariant();
 
-        return QString("%1 (%2)").arg(StringToQString(path.GetString())).arg(p->d.typeName);
+        const QString pathText = StringToQString(path.GetString());
+        const QString typeText = p->d.typeName.isEmpty() ? "Unknown" : p->d.typeName;
+
+        return QString("Type\n%2\nPath\n%1")
+            .arg(pathText)
+            .arg(typeText);
     }
 
     if (role == Qt::DecorationRole && column == Name) {

@@ -178,7 +178,7 @@ loadPayloads(const QList<SdfPath>& paths, const QString& variantSet, const QStri
             state->previousSelection = session->selectionList()->paths();
             state->previousMask = session->mask();
 
-            session->beginProgressBlock("load payloads", paths.size());
+            session->beginProgressBlock("Load payloads", paths.size());
             session->setPrimsUpdate(Session::PrimsUpdate::Deferred);
 
             QThreadPool::globalInstance()->start([session, paths, variantSet, variantValue, state]() {
@@ -199,7 +199,7 @@ loadPayloads(const QList<SdfPath>& paths, const QString& variantSet, const QStri
 
                     payload::Result result;
                     result.path = path;
-                    result.message = "payload failed";
+                    result.message = "Payload failed";
                     result.status = Session::Notify::Status::Error;
 
                     payload::UndoItem undoItem;
@@ -215,7 +215,7 @@ loadPayloads(const QList<SdfPath>& paths, const QString& variantSet, const QStri
                         error = "exception";
                     }
 
-                    result.message = result.success ? "payload loaded" : "payload failed";
+                    result.message = result.success ? "Payload loaded" : "Payload failed";
                     result.status = result.success ? Session::Notify::Status::Success : Session::Notify::Status::Error;
 
                     if (result.success)
@@ -256,7 +256,7 @@ loadPayloads(const QList<SdfPath>& paths, const QString& variantSet, const QStri
             if (!session || state->undoItems.isEmpty())
                 return;
 
-            session->beginProgressBlock("undo load payloads", state->undoItems.size());
+            session->beginProgressBlock("Undo load payloads", state->undoItems.size());
             session->setPrimsUpdate(Session::PrimsUpdate::Deferred);
 
             QThreadPool::globalInstance()->start([session, state]() {
@@ -270,7 +270,7 @@ loadPayloads(const QList<SdfPath>& paths, const QString& variantSet, const QStri
 
                     payload::Result result;
                     result.path = item.path;
-                    result.message = "payload undo failed";
+                    result.message = "Payload undo failed";
                     result.status = Session::Notify::Status::Error;
 
                     QString error;
@@ -283,7 +283,7 @@ loadPayloads(const QList<SdfPath>& paths, const QString& variantSet, const QStri
                         error = "exception";
                     }
 
-                    result.message = result.success ? "payload undone" : "payload undo failed";
+                    result.message = result.success ? "Payload undone" : "Payload undo failed";
                     result.status = result.success ? Session::Notify::Status::Success : Session::Notify::Status::Error;
 
                     pending.append(result);
@@ -328,7 +328,7 @@ unloadPayloads(const QList<SdfPath>& paths)
             state->previousSelection = session->selectionList()->paths();
             state->previousMask = session->mask();
 
-            session->beginProgressBlock("unload payloads", paths.size());
+            session->beginProgressBlock("Unload payloads", paths.size());
             session->setPrimsUpdate(Session::PrimsUpdate::Deferred);
 
             QThreadPool::globalInstance()->start([session, paths, state]() {
@@ -348,7 +348,7 @@ unloadPayloads(const QList<SdfPath>& paths)
 
                     payload::Result result;
                     result.path = path;
-                    result.message = "payload unload failed";
+                    result.message = "Payload unload failed";
                     result.status = Session::Notify::Status::Error;
 
                     payload::UndoItem undoItem;
@@ -363,7 +363,7 @@ unloadPayloads(const QList<SdfPath>& paths)
                         error = "exception";
                     }
 
-                    result.message = result.success ? "payload unloaded" : "payload unload failed";
+                    result.message = result.success ? "Payload unloaded" : "Payload unload failed";
                     result.status = result.success ? Session::Notify::Status::Success : Session::Notify::Status::Error;
 
                     if (result.success) {
@@ -409,7 +409,7 @@ unloadPayloads(const QList<SdfPath>& paths)
             if (!session || state->undoItems.isEmpty())
                 return;
 
-            session->beginProgressBlock("undo unload payloads", state->undoItems.size());
+            session->beginProgressBlock("Undo unload payloads", state->undoItems.size());
             session->setPrimsUpdate(Session::PrimsUpdate::Deferred);
 
             QThreadPool::globalInstance()->start([session, state]() {
@@ -423,7 +423,7 @@ unloadPayloads(const QList<SdfPath>& paths)
 
                     payload::Result result;
                     result.path = item.path;
-                    result.message = "payload undo failed";
+                    result.message = "Payload undo failed";
                     result.status = Session::Notify::Status::Error;
 
                     QString error;
@@ -436,7 +436,7 @@ unloadPayloads(const QList<SdfPath>& paths)
                         error = "exception";
                     }
 
-                    result.message = result.success ? "payload restored" : "payload undo failed";
+                    result.message = result.success ? "Payload restored" : "Payload undo failed";
                     result.status = result.success ? Session::Notify::Status::Success : Session::Notify::Status::Error;
 
                     pending.append(result);
@@ -753,7 +753,7 @@ selectAll()
             if (!session)
                 return;
 
-            session->beginProgressBlock("select all", 1);
+            session->beginProgressBlock("Select all", 1);
 
             QThreadPool::globalInstance()->start([session, state, collectLeafPaths]() {
                 QList<SdfPath> selection;
@@ -776,7 +776,7 @@ selectAll()
                     [session, selection]() {
                         using Status = Session::Notify::Status;
                         session->selectionList()->updatePaths(selection);
-                        session->updateProgressNotify(Session::Notify("all paths selected", selection, Status::Success),
+                        session->updateProgressNotify(Session::Notify("Paths selected", selection, Status::Success),
                                                       1);
                         session->endProgressBlock();
                     },
@@ -787,7 +787,7 @@ selectAll()
             if (!session)
                 return;
 
-            session->beginProgressBlock("undo select all", 1);
+            session->beginProgressBlock("Undo select all", 1);
 
             QThreadPool::globalInstance()->start([session, state]() {
                 QMetaObject::invokeMethod(
@@ -795,7 +795,7 @@ selectAll()
                     [session, state]() {
                         using Status = Session::Notify::Status;
                         session->selectionList()->updatePaths(state->previousSelection);
-                        session->updateProgressNotify(Session::Notify("select all undone", state->previousSelection,
+                        session->updateProgressNotify(Session::Notify("Select all undone", state->previousSelection,
                                                                       Status::Success),
                                                       1);
                         session->endProgressBlock();
@@ -869,7 +869,7 @@ selectInvert()
             if (!session)
                 return;
 
-            session->beginProgressBlock("invert selection", 1);
+            session->beginProgressBlock("Invert selection", 1);
 
             QThreadPool::globalInstance()->start([session, state, collectLeafPaths, isCoveredBySelection]() {
                 QList<SdfPath> invertedSelection;
@@ -898,7 +898,7 @@ selectInvert()
                     [session, invertedSelection]() {
                         using Status = Session::Notify::Status;
                         session->selectionList()->updatePaths(invertedSelection);
-                        session->updateProgressNotify(Session::Notify("selection inverted", invertedSelection,
+                        session->updateProgressNotify(Session::Notify("Selection inverted", invertedSelection,
                                                                       Status::Success),
                                                       1);
                         session->endProgressBlock();
@@ -910,7 +910,7 @@ selectInvert()
             if (!session)
                 return;
 
-            session->beginProgressBlock("undo invert selection", 1);
+            session->beginProgressBlock("Undo invert selection", 1);
 
             QThreadPool::globalInstance()->start([session, state]() {
                 QMetaObject::invokeMethod(
@@ -918,7 +918,7 @@ selectInvert()
                     [session, state]() {
                         using Status = Session::Notify::Status;
                         session->selectionList()->updatePaths(state->previousSelection);
-                        session->updateProgressNotify(Session::Notify("invert selection undone",
+                        session->updateProgressNotify(Session::Notify("Invert selection undone",
                                                                       state->previousSelection, Status::Success),
                                                       1);
                         session->endProgressBlock();
@@ -935,7 +935,7 @@ showPaths(const QList<SdfPath>& paths, bool recursive)
 
     return Command(
         [paths, recursive, state](Session* session) {
-            session->beginProgressBlock("show paths", 1);
+            session->beginProgressBlock("Show paths", 1);
             session->setPrimsUpdate(Session::PrimsUpdate::Deferred);
 
             QThreadPool::globalInstance()->start([session, paths, recursive, state]() {
@@ -958,7 +958,7 @@ showPaths(const QList<SdfPath>& paths, bool recursive)
                     [session, paths, success]() {
                         using Status = Session::Notify::Status;
                         session->setPrimsUpdate(Session::PrimsUpdate::Immediate);
-                        session->updateProgressNotify(Session::Notify(success ? "paths shown" : "show paths failed",
+                        session->updateProgressNotify(Session::Notify(success ? "Paths shown" : "Show paths failed",
                                                                       paths, success ? Status::Success : Status::Error),
                                                       1);
                         session->endProgressBlock();
@@ -967,7 +967,7 @@ showPaths(const QList<SdfPath>& paths, bool recursive)
             });
         },
         [state, recursive](Session* session) {
-            session->beginProgressBlock("undo show paths", 1);
+            session->beginProgressBlock("Undo show paths", 1);
             session->setPrimsUpdate(Session::PrimsUpdate::Deferred);
 
             QThreadPool::globalInstance()->start([session, state, recursive]() {
@@ -989,7 +989,7 @@ showPaths(const QList<SdfPath>& paths, bool recursive)
                     [session, restoredPaths, success]() {
                         using Status = Session::Notify::Status;
                         session->setPrimsUpdate(Session::PrimsUpdate::Immediate);
-                        session->updateProgressNotify(Session::Notify(success ? "show undone" : "undo show paths failed",
+                        session->updateProgressNotify(Session::Notify(success ? "Show undone" : "Undo show paths failed",
                                                                       restoredPaths,
                                                                       success ? Status::Success : Status::Error),
                                                       1);
@@ -1007,7 +1007,7 @@ hidePaths(const QList<SdfPath>& paths, bool recursive)
 
     return Command(
         [paths, recursive, state](Session* session) {
-            session->beginProgressBlock("hide paths", 1);
+            session->beginProgressBlock("Hide paths", 1);
             session->setPrimsUpdate(Session::PrimsUpdate::Deferred);
 
             QThreadPool::globalInstance()->start([session, paths, recursive, state]() {
@@ -1030,7 +1030,7 @@ hidePaths(const QList<SdfPath>& paths, bool recursive)
                     [session, paths, success]() {
                         using Status = Session::Notify::Status;
                         session->setPrimsUpdate(Session::PrimsUpdate::Immediate);
-                        session->updateProgressNotify(Session::Notify(success ? "paths hidden" : "hide paths failed",
+                        session->updateProgressNotify(Session::Notify(success ? "Paths hidden" : "Hide paths failed",
                                                                       paths, success ? Status::Success : Status::Error),
                                                       1);
                         session->endProgressBlock();
@@ -1039,7 +1039,7 @@ hidePaths(const QList<SdfPath>& paths, bool recursive)
             });
         },
         [state, recursive](Session* session) {
-            session->beginProgressBlock("undo hide paths", 1);
+            session->beginProgressBlock("Undo hide paths", 1);
             session->setPrimsUpdate(Session::PrimsUpdate::Deferred);
 
             QThreadPool::globalInstance()->start([session, state, recursive]() {
@@ -1061,7 +1061,7 @@ hidePaths(const QList<SdfPath>& paths, bool recursive)
                     [session, restoredPaths, success]() {
                         using Status = Session::Notify::Status;
                         session->setPrimsUpdate(Session::PrimsUpdate::Immediate);
-                        session->updateProgressNotify(Session::Notify(success ? "hide undone" : "undo hide paths failed",
+                        session->updateProgressNotify(Session::Notify(success ? "Hide undone" : "Undo hide paths failed",
                                                                       restoredPaths,
                                                                       success ? Status::Success : Status::Error),
                                                       1);
@@ -1079,7 +1079,7 @@ stageUp(Session::StageUp stageUp)
 
     return Command(
         [stageUp, state](Session* session) {
-            session->beginProgressBlock("set stage up", 1);
+            session->beginProgressBlock("Set stage up", 1);
 
             QThreadPool::globalInstance()->start([session, stageUp, state]() {
                 *state = session->stageUp();
@@ -1090,7 +1090,7 @@ stageUp(Session::StageUp stageUp)
                     [session, stageUp]() {
                         using Status = Session::Notify::Status;
                         const QString axis = (stageUp == Session::StageUp::Z) ? "Z" : "Y";
-                        session->updateProgressNotify(Session::Notify(QString("stage up set to %1").arg(axis), {},
+                        session->updateProgressNotify(Session::Notify(QString("Stage up set to %1").arg(axis), {},
                                                                       Status::Success),
                                                       1);
                         session->endProgressBlock();
@@ -1099,7 +1099,7 @@ stageUp(Session::StageUp stageUp)
             });
         },
         [state](Session* session) {
-            session->beginProgressBlock("undo set stage up", 1);
+            session->beginProgressBlock("Undo set stage up", 1);
 
             QThreadPool::globalInstance()->start([session, state]() {
                 session->setStageUp(*state);
@@ -1109,7 +1109,7 @@ stageUp(Session::StageUp stageUp)
                     [session, state]() {
                         using Status = Session::Notify::Status;
                         const QString axis = (*state == Session::StageUp::Z) ? "Z" : "Y";
-                        session->updateProgressNotify(Session::Notify(QString("set stage up undone to %1").arg(axis),
+                        session->updateProgressNotify(Session::Notify(QString("Set stage up undone to %1").arg(axis),
                                                                       {}, Status::Success),
                                                       1);
                         session->endProgressBlock();
@@ -1223,7 +1223,7 @@ deletePaths(const QList<SdfPath>& inPaths)
             state->previousSelection = session->selectionList()->paths();
             state->previousMask = session->mask();
 
-            session->beginProgressBlock("delete paths", 1);
+            session->beginProgressBlock("Delete paths", 1);
             session->setPrimsUpdate(Session::PrimsUpdate::Deferred);
 
             QThreadPool::globalInstance()->start([session, inPaths, state]() {
@@ -1291,7 +1291,7 @@ deletePaths(const QList<SdfPath>& inPaths)
                             path::removeAffectedPaths(state->previousSelection, removedPaths));
                         session->setMask(path::removeAffectedPaths(state->previousMask, removedPaths));
                         session->setPrimsUpdate(Session::PrimsUpdate::Immediate);
-                        session->updateProgressNotify(Session::Notify(success ? "paths deleted" : "delete paths failed",
+                        session->updateProgressNotify(Session::Notify(success ? "Paths deleted" : "Delete paths failed",
                                                                       changed, success ? Status::Success : Status::Error),
                                                       1);
                         session->endProgressBlock();
@@ -1300,7 +1300,7 @@ deletePaths(const QList<SdfPath>& inPaths)
             });
         },
         [state](Session* session) {
-            session->beginProgressBlock("undo delete paths", 1);
+            session->beginProgressBlock("Undo delete paths", 1);
             session->setPrimsUpdate(Session::PrimsUpdate::Deferred);
 
             QThreadPool::globalInstance()->start([session, state]() {
@@ -1345,8 +1345,8 @@ deletePaths(const QList<SdfPath>& inPaths)
                         session->selectionList()->updatePaths(state->previousSelection);
                         session->setMask(state->previousMask);
                         session->setPrimsUpdate(Session::PrimsUpdate::Immediate);
-                        session->updateProgressNotify(Session::Notify(success ? "delete undone"
-                                                                              : "undo delete paths failed",
+                        session->updateProgressNotify(Session::Notify(success ? "Delete undone"
+                                                                              : "Undo delete paths failed",
                                                                       changed, success ? Status::Success : Status::Error),
                                                       1);
                         session->endProgressBlock();
@@ -1468,7 +1468,7 @@ renamePath(const SdfPath& path, const QString& newNameInput)
             state->previousSelection = session->selectionList()->paths();
             state->previousMask = session->mask();
 
-            session->beginProgressBlock("rename path", 1);
+            session->beginProgressBlock("Rename path", 1);
             session->setPrimsUpdate(Session::PrimsUpdate::Deferred);
 
             QThreadPool::globalInstance()->start([=]() {
@@ -1527,22 +1527,22 @@ renamePath(const SdfPath& path, const QString& newNameInput)
                         session->setPrimsUpdate(Session::PrimsUpdate::Immediate);
 
                         if (!hadStage) {
-                            session->updateProgressNotify(Session::Notify("rename path failed", { path }, Status::Error),
+                            session->updateProgressNotify(Session::Notify("Rename path failed", { path }, Status::Error),
                                                           1);
                             session->endProgressBlock();
                             return;
                         }
 
                         if (noop) {
-                            session->updateProgressNotify(Session::Notify("rename skipped", { path }, Status::Success), 1);
+                            session->updateProgressNotify(Session::Notify("Rename skipped", { path }, Status::Success), 1);
                             session->endProgressBlock();
                             return;
                         }
 
                         if (!renamed) {
                             session->updateProgressNotify(
-                                Session::Notify(error.isEmpty() ? "rename path failed"
-                                                                : QString("rename path failed: %1").arg(error),
+                                Session::Notify(error.isEmpty() ? "Rename path failed"
+                                                                : QString("Rename path failed: %1").arg(error),
                                                 { path }, Status::Error),
                                 1);
                             session->endProgressBlock();
@@ -1552,7 +1552,7 @@ renamePath(const SdfPath& path, const QString& newNameInput)
                         session->selectionList()->updatePaths(
                             path::remapAffectedPaths(state->previousSelection, path, newPath));
                         session->setMask(path::remapAffectedPaths(state->previousMask, path, newPath));
-                        session->updateProgressNotify(Session::Notify("path renamed", { path, newPath }, Status::Success),
+                        session->updateProgressNotify(Session::Notify("Path renamed", { path, newPath }, Status::Success),
                                                       1);
                         session->endProgressBlock();
                     },
@@ -1563,7 +1563,7 @@ renamePath(const SdfPath& path, const QString& newNameInput)
             if (!session || state->oldPath.IsEmpty() || state->newPath.IsEmpty())
                 return;
 
-            session->beginProgressBlock("undo rename path", 1);
+            session->beginProgressBlock("Undo rename path", 1);
             session->setPrimsUpdate(Session::PrimsUpdate::Deferred);
 
             QThreadPool::globalInstance()->start([=]() {
@@ -1604,7 +1604,7 @@ renamePath(const SdfPath& path, const QString& newNameInput)
                         session->setPrimsUpdate(Session::PrimsUpdate::Immediate);
 
                         if (!hadStage) {
-                            session->updateProgressNotify(Session::Notify("undo rename path failed", {}, Status::Error),
+                            session->updateProgressNotify(Session::Notify("Undo rename path failed", {}, Status::Error),
                                                           1);
                             session->endProgressBlock();
                             return;
@@ -1612,15 +1612,15 @@ renamePath(const SdfPath& path, const QString& newNameInput)
 
                         if (!restored) {
                             session->updateProgressNotify(
-                                Session::Notify(error.isEmpty() ? "undo rename path failed"
-                                                                : QString("undo rename path failed: %1").arg(error),
+                                Session::Notify(error.isEmpty() ? "Undo rename path failed"
+                                                                : QString("Undo rename path failed: %1").arg(error),
                                                 {}, Status::Error),
                                 1);
                             session->endProgressBlock();
                             return;
                         }
 
-                        session->updateProgressNotify(Session::Notify("rename undone", { state->oldPath }, Status::Success),
+                        session->updateProgressNotify(Session::Notify("Rename undone", { state->oldPath }, Status::Success),
                                                       1);
                         session->endProgressBlock();
                     },
@@ -1668,7 +1668,7 @@ newXformPath(const SdfPath& parentPath, const QString& nameInput)
 
             state->previousMask = session->mask();
 
-            session->beginProgressBlock("new xform", 1);
+            session->beginProgressBlock("New xform", 1);
             session->setPrimsUpdate(Session::PrimsUpdate::Deferred);
 
             QThreadPool::globalInstance()->start([=]() {
@@ -1735,21 +1735,21 @@ newXformPath(const SdfPath& parentPath, const QString& nameInput)
                         session->setPrimsUpdate(Session::PrimsUpdate::Immediate);
 
                         if (!hadStage) {
-                            session->updateProgressNotify(Session::Notify("new xform failed", {}, Status::Error), 1);
+                            session->updateProgressNotify(Session::Notify("New xform failed", {}, Status::Error), 1);
                             session->endProgressBlock();
                             return;
                         }
 
                         if (noop) {
-                            session->updateProgressNotify(Session::Notify("new xform skipped", {}, Status::Success), 1);
+                            session->updateProgressNotify(Session::Notify("New xform skipped", {}, Status::Success), 1);
                             session->endProgressBlock();
                             return;
                         }
 
                         if (!created) {
                             session->updateProgressNotify(
-                                Session::Notify(error.isEmpty() ? "new xform failed"
-                                                                : QString("new xform failed: %1").arg(error),
+                                Session::Notify(error.isEmpty() ? "New xform failed"
+                                                                : QString("New xform failed: %1").arg(error),
                                                 {}, Status::Error),
                                 1);
                             session->endProgressBlock();
@@ -1757,7 +1757,7 @@ newXformPath(const SdfPath& parentPath, const QString& nameInput)
                         }
 
                         session->selectionList()->updatePaths({ newPath });
-                        session->updateProgressNotify(Session::Notify("xform created", { parentPath, newPath },
+                        session->updateProgressNotify(Session::Notify("Xform created", { parentPath, newPath },
                                                                       Status::Success),
                                                       1);
                         session->endProgressBlock();
@@ -1769,7 +1769,7 @@ newXformPath(const SdfPath& parentPath, const QString& nameInput)
             if (!session || state->createdPath.IsEmpty())
                 return;
 
-            session->beginProgressBlock("undo new xform", 1);
+            session->beginProgressBlock("Undo new xform", 1);
             session->setPrimsUpdate(Session::PrimsUpdate::Deferred);
 
             QThreadPool::globalInstance()->start([=]() {
@@ -1804,14 +1804,14 @@ newXformPath(const SdfPath& parentPath, const QString& nameInput)
                         session->setPrimsUpdate(Session::PrimsUpdate::Immediate);
 
                         if (!hadStage) {
-                            session->updateProgressNotify(Session::Notify("undo new xform failed", {}, Status::Error),
+                            session->updateProgressNotify(Session::Notify("Undo new xform failed", {}, Status::Error),
                                                           1);
                             session->endProgressBlock();
                             return;
                         }
 
                         if (!removed) {
-                            session->updateProgressNotify(Session::Notify("undo new xform failed", {}, Status::Error),
+                            session->updateProgressNotify(Session::Notify("Undo new xform failed", {}, Status::Error),
                                                           1);
                             session->endProgressBlock();
                             return;
@@ -1825,7 +1825,7 @@ newXformPath(const SdfPath& parentPath, const QString& nameInput)
 
                         session->selectionList()->updatePaths(updated);
                         session->setMask(path::removeAffectedPaths(state->previousMask, { state->createdPath }));
-                        session->updateProgressNotify(Session::Notify("new xform undone", { state->createdPath },
+                        session->updateProgressNotify(Session::Notify("New xform undone", { state->createdPath },
                                                                       Status::Success),
                                                       1);
                         session->endProgressBlock();
@@ -1936,7 +1936,7 @@ movePath(const SdfPath& fromPath, const SdfPath& newParentPath, int insertIndex)
             state->previousSelection = session->selectionList()->paths();
             state->previousMask = session->mask();
 
-            session->beginProgressBlock("move path", 1);
+            session->beginProgressBlock("Move path", 1);
             session->setPrimsUpdate(Session::PrimsUpdate::Deferred);
 
             QThreadPool::globalInstance()->start([=]() {
@@ -2023,21 +2023,21 @@ movePath(const SdfPath& fromPath, const SdfPath& newParentPath, int insertIndex)
                         session->setPrimsUpdate(Session::PrimsUpdate::Immediate);
 
                         if (!hadStage) {
-                            session->updateProgressNotify(Session::Notify("move path failed", {}, Status::Error), 1);
+                            session->updateProgressNotify(Session::Notify("Move path failed", {}, Status::Error), 1);
                             session->endProgressBlock();
                             return;
                         }
 
                         if (noop) {
-                            session->updateProgressNotify(Session::Notify("move skipped", {}, Status::Success), 1);
+                            session->updateProgressNotify(Session::Notify("Move skipped", {}, Status::Success), 1);
                             session->endProgressBlock();
                             return;
                         }
 
                         if (!moved) {
                             session->updateProgressNotify(
-                                Session::Notify(error.isEmpty() ? "move path failed"
-                                                                : QString("move path failed: %1").arg(error),
+                                Session::Notify(error.isEmpty() ? "Move path failed"
+                                                                : QString("Move path failed: %1").arg(error),
                                                 {}, Status::Error),
                                 1);
                             session->endProgressBlock();
@@ -2047,7 +2047,7 @@ movePath(const SdfPath& fromPath, const SdfPath& newParentPath, int insertIndex)
                         session->selectionList()->updatePaths(
                             path::remapAffectedPaths(state->previousSelection, fromPath, state->newPath));
                         session->setMask(path::remapAffectedPaths(state->previousMask, fromPath, state->newPath));
-                        session->updateProgressNotify(Session::Notify("path moved", { state->oldPath, state->newPath },
+                        session->updateProgressNotify(Session::Notify("Path moved", { state->oldPath, state->newPath },
                                                                       Status::Success),
                                                       1);
                         session->endProgressBlock();
@@ -2059,7 +2059,7 @@ movePath(const SdfPath& fromPath, const SdfPath& newParentPath, int insertIndex)
             if (!session || state->oldPath.IsEmpty() || state->newPath.IsEmpty())
                 return;
 
-            session->beginProgressBlock("undo move path", 1);
+            session->beginProgressBlock("Undo move path", 1);
             session->setPrimsUpdate(Session::PrimsUpdate::Deferred);
 
             QThreadPool::globalInstance()->start([=]() {
@@ -2103,7 +2103,7 @@ movePath(const SdfPath& fromPath, const SdfPath& newParentPath, int insertIndex)
                         session->setPrimsUpdate(Session::PrimsUpdate::Immediate);
 
                         if (!hadStage) {
-                            session->updateProgressNotify(Session::Notify("undo move path failed", {}, Status::Error),
+                            session->updateProgressNotify(Session::Notify("Undo move path failed", {}, Status::Error),
                                                           1);
                             session->endProgressBlock();
                             return;
@@ -2111,15 +2111,15 @@ movePath(const SdfPath& fromPath, const SdfPath& newParentPath, int insertIndex)
 
                         if (!restored) {
                             session->updateProgressNotify(
-                                Session::Notify(error.isEmpty() ? "undo move path failed"
-                                                                : QString("undo move path failed: %1").arg(error),
+                                Session::Notify(error.isEmpty() ? "Undo move path failed"
+                                                                : QString("Undo move path failed: %1").arg(error),
                                                 {}, Status::Error),
                                 1);
                             session->endProgressBlock();
                             return;
                         }
 
-                        session->updateProgressNotify(Session::Notify("move undone", { state->oldPath }, Status::Success),
+                        session->updateProgressNotify(Session::Notify("Move undone", { state->oldPath }, Status::Success),
                                                       1);
                         session->endProgressBlock();
                     },
