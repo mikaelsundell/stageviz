@@ -639,7 +639,6 @@ ImagingGLWidgetPrivate::mousePressEvent(QMouseEvent* event)
         if (event->modifiers() & (Qt::AltModifier | Qt::MetaModifier)) {
             d.drag = true;
             d.sweep = false;
-
             if (event->button() == Qt::LeftButton) {
                 viewCamera()->setCameraMode(ViewCamera::Tumble);
             }
@@ -657,7 +656,6 @@ ImagingGLWidgetPrivate::mousePressEvent(QMouseEvent* event)
             d.end = event->pos();
             d.glwidget->update();
         }
-
         d.mousepos = event->pos();
     }
 }
@@ -667,10 +665,8 @@ ImagingGLWidgetPrivate::mouseMoveEvent(QMouseEvent* event)
 {
     if (d.stage) {
         QPoint pos = event->pos();
-
         if (d.drag) {
             QPoint delta = deviceRatio(pos) - deviceRatio(d.mousepos);
-
             if (viewCamera()->cameraMode() == ViewCamera::Truck) {
                 double height = widgetSize()[1];
                 double factor = viewCamera()->mapToFrustumHeight(height);
@@ -683,14 +679,12 @@ ImagingGLWidgetPrivate::mouseMoveEvent(QMouseEvent* event)
                 double factor = -.002 * (delta.x() + delta.y());
                 viewCamera()->distance(1 + factor);
             }
-
             d.glwidget->update();
         }
         else if (d.sweep) {
             d.end = event->pos();
             d.glwidget->update();
         }
-
         d.mousepos = event->pos();
     }
 }
@@ -709,7 +703,6 @@ ImagingGLWidgetPrivate::mouseReleaseEvent(QMouseEvent* event)
 
             QRect rect(d.start, d.end);
             sweepEvent(rect, event);
-
             d.sweep = false;
             d.glwidget->update();
         }

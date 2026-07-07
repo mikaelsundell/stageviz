@@ -33,6 +33,26 @@ public:
      * @brief Destroys the tree widget.
      */
     ~TreeWidget() override;
+    
+    /**
+     * @brief Enables or disables row selection from a column.
+     *
+     * When enabled, clicking the column's selectable content (text or
+     * decoration) selects the corresponding row. Disabled columns do not
+     * participate in row selection.
+     *
+     * @param column Column index.
+     * @param selectable True to enable selection, false to disable it.
+     */
+    void setColumnSelectable(int column, bool selectable);
+
+    /**
+     * @brief Returns whether a column participates in row selection.
+     *
+     * @param column Column index.
+     * @return True if the column's selectable content may select the row.
+     */
+    bool columnSelectable(int column) const;
 
     /**
      * @brief Builds a view option for a specific model index.

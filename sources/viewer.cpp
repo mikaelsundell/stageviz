@@ -480,7 +480,7 @@ ViewerPrivate::loadFile(const QString& fileName)
     const double elapsedSec = timer.elapsed() / 1000.0;
 
     settings()->setValue("openDir", fileInfo.absolutePath());
-    session()->notifyStatus(Session::Notify::Status::Info,
+    session()->notifyStatus(Session::Notify::Status::Success,
                             QString("Loaded %1 in %2 seconds").arg(fileName).arg(QString::number(elapsedSec, 'f', 2)));
     updateWindowTitle();
     updateRecentFiles(QFileInfo(fileName).absoluteFilePath());
@@ -510,7 +510,7 @@ ViewerPrivate::mergeFile(const QString& fileName)
     const double elapsedSec = timer.elapsed() / 1000.0;
 
     settings()->setValue("openDir", fileInfo.absolutePath());
-    session()->notifyStatus(Session::Notify::Status::Info,
+    session()->notifyStatus(Session::Notify::Status::Success,
                             QString("Merge %1 in %2 seconds").arg(fileName).arg(QString::number(elapsedSec, 'f', 2)));
     clearChanges();
     return true;
@@ -740,7 +740,7 @@ ViewerPrivate::saveAs()
         updateWindowTitle();
         updateRecentFiles(QFileInfo(filename).absoluteFilePath());
         clearChanges();
-        session()->notifyStatus(Session::Notify::Status::Info,
+        session()->notifyStatus(Session::Notify::Status::Success,
                                 QString("Saved %1 in %2 seconds").arg(filename, QString::number(elapsedSec, 'f', 2)));
     }
     else {
@@ -786,7 +786,7 @@ ViewerPrivate::saveCopy()
         const double elapsedSec = timer.elapsed() / 1000.0;
 
         settings()->setValue("copyDir", QFileInfo(filename).absolutePath());
-        session()->notifyStatus(Session::Notify::Status::Info, QString("Saved copy %1 in %2 seconds")
+        session()->notifyStatus(Session::Notify::Status::Success, QString("Saved copy %1 in %2 seconds")
                                                                    .arg(filename, QString::number(elapsedSec, 'f', 2)));
     }
     else {
@@ -831,7 +831,7 @@ ViewerPrivate::exportAll()
         const double elapsedSec = timer.elapsed() / 1000.0;
         settings()->setValue("exportAllDir", QFileInfo(fileName).absolutePath());
         session()->notifyStatus(
-            Session::Notify::Status::Info,
+            Session::Notify::Status::Success,
             QString("Exported all to %1 in %2 seconds").arg(fileName).arg(QString::number(elapsedSec, 'f', 2)));
     }
     else {
@@ -876,7 +876,7 @@ ViewerPrivate::exportSelected()
         const double elapsedSec = timer.elapsed() / 1000.0;
         settings()->setValue("exportSelectedDir", QFileInfo(fileName).absolutePath());
         session()->notifyStatus(
-            Session::Notify::Status::Info,
+            Session::Notify::Status::Success,
             QString("Exported selected to %1 in %2 seconds").arg(fileName).arg(QString::number(elapsedSec, 'f', 2)));
     }
     else {
@@ -955,7 +955,7 @@ ViewerPrivate::stateLoad()
         const double elapsedSec = timer.elapsed() / 1000.0;
 
         settings()->setValue("stateDir", QFileInfo(filename).absolutePath());
-        session()->notifyStatus(Session::Notify::Status::Info, QString("Loaded state %1 in %2 seconds")
+        session()->notifyStatus(Session::Notify::Status::Success, QString("Loaded state %1 in %2 seconds")
                                                                    .arg(filename, QString::number(elapsedSec, 'f', 2)));
     }
     else {
@@ -996,7 +996,7 @@ ViewerPrivate::stateSave()
         const double elapsedSec = timer.elapsed() / 1000.0;
 
         settings()->setValue("stateDir", QFileInfo(filename).absolutePath());
-        session()->notifyStatus(Session::Notify::Status::Info, QString("Saved state %1 in %2 seconds")
+        session()->notifyStatus(Session::Notify::Status::Success, QString("Saved state %1 in %2 seconds")
                                                                    .arg(filename, QString::number(elapsedSec, 'f', 2)));
     }
     else {
@@ -1030,7 +1030,7 @@ ViewerPrivate::reload()
 
     const double elapsedSec = timer.elapsed() / 1000.0;
     session()->commandStack()->clear();
-    session()->notifyStatus(Session::Notify::Status::Info,
+    session()->notifyStatus(Session::Notify::Status::Success,
                             QString("Reloaded stage in %1 seconds").arg(QString::number(elapsedSec, 'f', 2)));
     clearChanges();
 }
@@ -1758,7 +1758,7 @@ ViewerPrivate::saveFile()
         const double elapsedSec = timer.elapsed() / 1000.0;
         updateWindowTitle();
         clearChanges();
-        session()->notifyStatus(Session::Notify::Status::Info,
+        session()->notifyStatus(Session::Notify::Status::Success,
                                 QString("Saved %1 in %2 seconds").arg(filename, QString::number(elapsedSec, 'f', 2)));
         return true;
     }

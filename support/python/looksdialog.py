@@ -68,6 +68,11 @@ MATERIALS = {
         "transmission": 0.75,
         "opacity": 0.35,
     },
+    "UV Checker": {
+        "path": "/World/Looks/UVChecker",
+        "type": "uv_checker",
+        "uv_name": "st",
+    },
 }
 
 
@@ -121,11 +126,69 @@ def iter_bindable_prims(prim, recursive=True):
             yield from iter_bindable_prims(child, recursive=True)
 
 
+def connect_input(shader_input, source_shader, source_output_name):
+    shader_input.ConnectToSource(source_shader.ConnectableAPI(), source_output_name)
+
+
+def ensure_uv_checker_material(stage, material_name):
+    spec = MATERIALS[material_name]
+    material_path = Sdf.Path(spec["path"])
+    uv_name = spec.get("uv_name", "st")
+
+    ensure_looks_scope(stage)
+
+    material = UsdShade.Material.Define(stage, material_path)
+
+    uv = UsdShade.Shader.Define(stage, material_path.AppendChild("UV"))
+    uv.CreateIdAttr("ND_geompropvalue_vector2")
+    uv.CreateInput("geomprop", Sdf.ValueTypeNames.String).Set(uv_name)
+    uv.CreateOutput("out", Sdf.ValueTypeNames.Float2)
+
+    checker = UsdShade.Shader.Define(stage, material_path.AppendChild("Checker"))
+    checker.CreateIdAttr("ND_checkerboard_color3")
+
+    connect_input(
+        checker.CreateInput("texcoord", Sdf.ValueTypeNames.Float2),
+        uv,
+        "out",
+    )
+
+    checker.CreateInput("color1", Sdf.ValueTypeNames.Color3f).Set(
+        Gf.Vec3f(1.0, 1.0, 1.0)
+    )
+    checker.CreateInput("color2", Sdf.ValueTypeNames.Color3f).Set(
+        Gf.Vec3f(0.0, 0.0, 0.0)
+    )
+    checker.CreateOutput("out", Sdf.ValueTypeNames.Color3f)
+
+    surface = UsdShade.Shader.Define(stage, material_path.AppendChild("Surface"))
+    surface.CreateIdAttr("ND_standard_surface_surfaceshader")
+
+    surface.CreateInput("base", Sdf.ValueTypeNames.Float).Set(1.0)
+    connect_input(
+        surface.CreateInput("base_color", Sdf.ValueTypeNames.Color3f),
+        checker,
+        "out",
+    )
+    surface.CreateInput("metalness", Sdf.ValueTypeNames.Float).Set(0.0)
+    surface.CreateInput("roughness", Sdf.ValueTypeNames.Float).Set(0.45)
+    surface.CreateInput("specular", Sdf.ValueTypeNames.Float).Set(0.35)
+
+    surface.CreateOutput("out", Sdf.ValueTypeNames.Token)
+    material.CreateSurfaceOutput().ConnectToSource(surface.ConnectableAPI(), "out")
+
+    return material
+
+
 def ensure_standard_surface_material(stage, material_name):
     if material_name not in MATERIALS:
         raise RuntimeError(f"Unknown material: {material_name}")
 
     spec = MATERIALS[material_name]
+
+    if spec.get("type") == "uv_checker":
+        return ensure_uv_checker_material(stage, material_name)
+
     material_path = Sdf.Path(spec["path"])
 
     ensure_looks_scope(stage)
@@ -137,12 +200,20 @@ def ensure_standard_surface_material(stage, material_name):
 
     surface.CreateInput("base", Sdf.ValueTypeNames.Float).Set(1.0)
     surface.CreateInput("base_color", Sdf.ValueTypeNames.Color3f).Set(spec["base_color"])
-    surface.CreateInput("metalness", Sdf.ValueTypeNames.Float).Set(spec.get("metalness", 0.0))
-    surface.CreateInput("specular", Sdf.ValueTypeNames.Float).Set(spec.get("specular", 0.5))
-    surface.CreateInput("roughness", Sdf.ValueTypeNames.Float).Set(spec.get("roughness", 0.4))
+    surface.CreateInput("metalness", Sdf.ValueTypeNames.Float).Set(
+        spec.get("metalness", 0.0)
+    )
+    surface.CreateInput("specular", Sdf.ValueTypeNames.Float).Set(
+        spec.get("specular", 0.5)
+    )
+    surface.CreateInput("roughness", Sdf.ValueTypeNames.Float).Set(
+        spec.get("roughness", 0.4)
+    )
 
     if "transmission" in spec:
-        surface.CreateInput("transmission", Sdf.ValueTypeNames.Float).Set(spec["transmission"])
+        surface.CreateInput("transmission", Sdf.ValueTypeNames.Float).Set(
+            spec["transmission"]
+        )
 
     if "opacity" in spec:
         surface.CreateInput("opacity", Sdf.ValueTypeNames.Float).Set(spec["opacity"])
@@ -213,6 +284,7 @@ class LooksDialog(QtWidgets.QDialog):
 
         self.setWindowModality(QtCore.Qt.WindowModality.NonModal)
         self.setWindowFlag(QtCore.Qt.WindowType.Tool, True)
+        self.setWindowFlag(QtCore.Qt.WindowType.WindowStaysOnTopHint, True)
         self.setAttribute(QtCore.Qt.WidgetAttribute.WA_DeleteOnClose, True)
 
         app = QtWidgets.QApplication.instance()

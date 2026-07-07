@@ -116,7 +116,9 @@ StageTreePrivate::init()
     d.tree->setDropIndicatorShown(false);
     d.tree->setDragDropMode(QAbstractItemView::DragDrop);
     d.tree->setDefaultDropAction(Qt::MoveAction);
-
+    d.tree->setColumnSelectable(PrimItem::Name, true);
+    d.tree->setColumnSelectable(PrimItem::Visibility, false);
+    
     connect(d.tree.data(), &StageTree::itemSelectionChanged, this, &StageTreePrivate::itemSelectionChanged);
     connect(d.tree.data(), &StageTree::itemChanged, this, [this](QTreeWidgetItem* item, int column) {
         if (column == PrimItem::Name) {
@@ -759,6 +761,7 @@ StageTreePrivate::contextMenuEvent(QContextMenuEvent* event)
     };
 
     QMenu menu(d.tree.data());
+    
     struct VariantSelection {
         QString setName;
         QString value;
@@ -1695,19 +1698,14 @@ void
 StageTree::mousePressEvent(QMouseEvent* event)
 {
     QTreeWidgetItem* item = itemAt(event->pos());
-    const int column = columnAt(event->pos().x());
-    if (!item) {
-        clearSelection();
-        Q_EMIT itemSelectionChanged();
-        return;
+    if (item) {
+        const int column = columnAt(event->pos().x());
+        if (column == PrimItem::Visibility) {
+            p->toggleVisible(static_cast<PrimItem*>(item));
+            event->accept();
+            return;
+        }
     }
-
-    if (column == PrimItem::Vis) {
-        p->toggleVisible(static_cast<PrimItem*>(item));
-        event->accept();
-        return;
-    }
-
     QTreeWidget::mousePressEvent(event);
 }
 

@@ -31,7 +31,7 @@ public:
      */
     enum Column {
         Name = 0,  ///< Name column.
-        Vis = 1    ///< Visibility state column.
+        Visibility = 1    ///< Visibility state column.
     };
 
     /**

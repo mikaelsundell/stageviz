@@ -122,7 +122,7 @@ void
 RenderViewPrivate::captureReady(qint64 elapsed)
 {
     const QString msg = QStringLiteral("Capture finished in %1 ms").arg(elapsed);
-    session()->notifyStatus(Session::Notify::Status::Info, msg);
+    session()->notifyStatus(Session::Notify::Status::Success, msg);
 }
 
 void
@@ -131,7 +131,7 @@ RenderViewPrivate::renderReady(qint64 elapsed)
     const qint64 thresholdMs = 500;
     if (elapsed > thresholdMs) {
         const QString msg = QStringLiteral("Render finished in %1 ms").arg(elapsed);
-        session()->notifyStatus(Session::Notify::Status::Info, msg);
+        session()->notifyStatus(Session::Notify::Status::Success, msg);
     }
 }
 

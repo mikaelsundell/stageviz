@@ -398,7 +398,7 @@ PySession_setStatus(PySessionObject* self, PyObject* args)
     if (!PyArg_ParseTuple(args, "s", &status))
         return nullptr;
 
-    self->session->notifyStatus(Session::Notify::Status::Info, QString::fromUtf8(status));
+    self->session->notifyStatus(Session::Notify::Status::Success, QString::fromUtf8(status));
     Py_RETURN_NONE;
 }
 

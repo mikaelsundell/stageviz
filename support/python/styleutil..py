@@ -168,6 +168,7 @@ class StyleEditor(QtWidgets.QDialog):
 
         self.setWindowModality(QtCore.Qt.WindowModality.NonModal)
         self.setWindowFlag(QtCore.Qt.WindowType.Tool, True)
+        self.setWindowFlag(QtCore.Qt.WindowType.WindowStaysOnTopHint, True)
         self.setAttribute(QtCore.Qt.WidgetAttribute.WA_DeleteOnClose, True)
 
         app = QtWidgets.QApplication.instance()

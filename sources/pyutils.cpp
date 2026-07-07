@@ -61,7 +61,7 @@ toNotifyStatus(long value)
     case 2: return Session::Notify::Status::Warning;
     case 3: return Session::Notify::Status::Error;
     case 0:
-    default: return Session::Notify::Status::Info;
+    default: return Session::Notify::Status::Success;
     }
 }
 

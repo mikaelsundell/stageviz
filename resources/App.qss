@@ -219,6 +219,11 @@ QMenu::item {
     padding: 4px 20px 4px 20px;
 }
 
+QMenu::item:disabled {
+    color: $color.text.disabled;
+    background-color: transparent;
+}
+
 QMenu::item:selected {
     background-color: $color.highlight;
 }

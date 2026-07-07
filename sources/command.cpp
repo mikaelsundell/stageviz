@@ -40,7 +40,7 @@ namespace payload {
         SdfPath path;
         bool success = false;
         QString message;
-        Session::Notify::Status status = Session::Notify::Status::Info;
+        Session::Notify::Status status = Session::Notify::Status::Success;
     };
 
     inline void flushResults(Session* session, const QList<payload::Result>& results, int completed)
@@ -216,7 +216,7 @@ loadPayloads(const QList<SdfPath>& paths, const QString& variantSet, const QStri
                     }
 
                     result.message = result.success ? "payload loaded" : "payload failed";
-                    result.status = result.success ? Session::Notify::Status::Info : Session::Notify::Status::Error;
+                    result.status = result.success ? Session::Notify::Status::Success : Session::Notify::Status::Error;
 
                     if (result.success)
                         undoItems.append(undoItem);
@@ -284,7 +284,7 @@ loadPayloads(const QList<SdfPath>& paths, const QString& variantSet, const QStri
                     }
 
                     result.message = result.success ? "payload undone" : "payload undo failed";
-                    result.status = result.success ? Session::Notify::Status::Info : Session::Notify::Status::Error;
+                    result.status = result.success ? Session::Notify::Status::Success : Session::Notify::Status::Error;
 
                     pending.append(result);
                     ++completed;
@@ -364,7 +364,7 @@ unloadPayloads(const QList<SdfPath>& paths)
                     }
 
                     result.message = result.success ? "payload unloaded" : "payload unload failed";
-                    result.status = result.success ? Session::Notify::Status::Info : Session::Notify::Status::Error;
+                    result.status = result.success ? Session::Notify::Status::Success : Session::Notify::Status::Error;
 
                     if (result.success) {
                         undoItems.append(undoItem);
@@ -437,7 +437,7 @@ unloadPayloads(const QList<SdfPath>& paths)
                     }
 
                     result.message = result.success ? "payload restored" : "payload undo failed";
-                    result.status = result.success ? Session::Notify::Status::Info : Session::Notify::Status::Error;
+                    result.status = result.success ? Session::Notify::Status::Success : Session::Notify::Status::Error;
 
                     pending.append(result);
                     ++completed;
@@ -536,7 +536,7 @@ selectInvertPayload()
                             result.path = path;
                             result.success = true;
                             result.message = selectedSet.contains(path) ? "payload skipped" : "payload inverted";
-                            result.status = Status::Info;
+                            result.status = Status::Success;
                             pending.append(result);
                             ++completed;
 
@@ -577,7 +577,7 @@ selectInvertPayload()
 
                         if (!hadSelectedPayloads) {
                             session->updateProgressNotify(Session::Notify("invert payload selection skipped", {},
-                                                                          Status::Info),
+                                                                          Status::Success),
                                                           1);
                             session->endProgressBlock();
                             return;
@@ -587,7 +587,7 @@ selectInvertPayload()
 
                         session->updateProgressNotify(Session::Notify(total > 0 ? "payload selection inverted"
                                                                                 : "invert payload selection skipped",
-                                                                      invertedPayloads, Status::Info),
+                                                                      invertedPayloads, Status::Success),
                                                       qMax(1, total));
 
                         session->endProgressBlock();
@@ -607,7 +607,7 @@ selectInvertPayload()
                     using Status = Session::Notify::Status;
                     session->selectionList()->updatePaths(state->previousSelection);
                     session->updateProgressNotify(Session::Notify("invert payload selection undone",
-                                                                  state->previousSelection, Status::Info),
+                                                                  state->previousSelection, Status::Success),
                                                   1);
                     session->endProgressBlock();
                 },
@@ -632,7 +632,7 @@ isolatePaths(const QList<SdfPath>& paths)
                     session,
                     [session, paths]() {
                         using Status = Session::Notify::Status;
-                        session->updateProgressNotify(Session::Notify("paths isolated", paths, Status::Info), 1);
+                        session->updateProgressNotify(Session::Notify("paths isolated", paths, Status::Success), 1);
                         session->endProgressBlock();
                     },
                     Qt::QueuedConnection);
@@ -648,7 +648,7 @@ isolatePaths(const QList<SdfPath>& paths)
                     session,
                     [session, state]() {
                         using Status = Session::Notify::Status;
-                        session->updateProgressNotify(Session::Notify("isolate undone", *state, Status::Info), 1);
+                        session->updateProgressNotify(Session::Notify("isolate undone", *state, Status::Success), 1);
                         session->endProgressBlock();
                     },
                     Qt::QueuedConnection);
@@ -663,7 +663,7 @@ selectPaths(const QList<SdfPath>& paths)
 
     return Command(
         [paths, previous](Session* session) {
-            session->beginProgressBlock("select paths", 1);
+            session->beginProgressBlock("Select paths", 1);
 
             QThreadPool::globalInstance()->start([session, paths, previous]() {
                 *previous = session->selectionList()->paths();
@@ -673,14 +673,14 @@ selectPaths(const QList<SdfPath>& paths)
                     session,
                     [session, paths]() {
                         using Status = Session::Notify::Status;
-                        session->updateProgressNotify(Session::Notify("paths selected", paths, Status::Info), 1);
+                        session->updateProgressNotify(Session::Notify("Paths selected", paths, Status::Success), 1);
                         session->endProgressBlock();
                     },
                     Qt::QueuedConnection);
             });
         },
         [previous](Session* session) {
-            session->beginProgressBlock("undo select paths", 1);
+            session->beginProgressBlock("Undo select paths", 1);
 
             QThreadPool::globalInstance()->start([session, previous]() {
                 session->selectionList()->updatePaths(*previous);
@@ -689,7 +689,7 @@ selectPaths(const QList<SdfPath>& paths)
                     session,
                     [session, previous]() {
                         using Status = Session::Notify::Status;
-                        session->updateProgressNotify(Session::Notify("select undone", *previous, Status::Info), 1);
+                        session->updateProgressNotify(Session::Notify("Select undone", *previous, Status::Success), 1);
                         session->endProgressBlock();
                     },
                     Qt::QueuedConnection);
@@ -776,7 +776,7 @@ selectAll()
                     [session, selection]() {
                         using Status = Session::Notify::Status;
                         session->selectionList()->updatePaths(selection);
-                        session->updateProgressNotify(Session::Notify("all paths selected", selection, Status::Info),
+                        session->updateProgressNotify(Session::Notify("all paths selected", selection, Status::Success),
                                                       1);
                         session->endProgressBlock();
                     },
@@ -796,7 +796,7 @@ selectAll()
                         using Status = Session::Notify::Status;
                         session->selectionList()->updatePaths(state->previousSelection);
                         session->updateProgressNotify(Session::Notify("select all undone", state->previousSelection,
-                                                                      Status::Info),
+                                                                      Status::Success),
                                                       1);
                         session->endProgressBlock();
                     },
@@ -899,7 +899,7 @@ selectInvert()
                         using Status = Session::Notify::Status;
                         session->selectionList()->updatePaths(invertedSelection);
                         session->updateProgressNotify(Session::Notify("selection inverted", invertedSelection,
-                                                                      Status::Info),
+                                                                      Status::Success),
                                                       1);
                         session->endProgressBlock();
                     },
@@ -919,7 +919,7 @@ selectInvert()
                         using Status = Session::Notify::Status;
                         session->selectionList()->updatePaths(state->previousSelection);
                         session->updateProgressNotify(Session::Notify("invert selection undone",
-                                                                      state->previousSelection, Status::Info),
+                                                                      state->previousSelection, Status::Success),
                                                       1);
                         session->endProgressBlock();
                     },
@@ -959,7 +959,7 @@ showPaths(const QList<SdfPath>& paths, bool recursive)
                         using Status = Session::Notify::Status;
                         session->setPrimsUpdate(Session::PrimsUpdate::Immediate);
                         session->updateProgressNotify(Session::Notify(success ? "paths shown" : "show paths failed",
-                                                                      paths, success ? Status::Info : Status::Error),
+                                                                      paths, success ? Status::Success : Status::Error),
                                                       1);
                         session->endProgressBlock();
                     },
@@ -991,7 +991,7 @@ showPaths(const QList<SdfPath>& paths, bool recursive)
                         session->setPrimsUpdate(Session::PrimsUpdate::Immediate);
                         session->updateProgressNotify(Session::Notify(success ? "show undone" : "undo show paths failed",
                                                                       restoredPaths,
-                                                                      success ? Status::Info : Status::Error),
+                                                                      success ? Status::Success : Status::Error),
                                                       1);
                         session->endProgressBlock();
                     },
@@ -1031,7 +1031,7 @@ hidePaths(const QList<SdfPath>& paths, bool recursive)
                         using Status = Session::Notify::Status;
                         session->setPrimsUpdate(Session::PrimsUpdate::Immediate);
                         session->updateProgressNotify(Session::Notify(success ? "paths hidden" : "hide paths failed",
-                                                                      paths, success ? Status::Info : Status::Error),
+                                                                      paths, success ? Status::Success : Status::Error),
                                                       1);
                         session->endProgressBlock();
                     },
@@ -1063,7 +1063,7 @@ hidePaths(const QList<SdfPath>& paths, bool recursive)
                         session->setPrimsUpdate(Session::PrimsUpdate::Immediate);
                         session->updateProgressNotify(Session::Notify(success ? "hide undone" : "undo hide paths failed",
                                                                       restoredPaths,
-                                                                      success ? Status::Info : Status::Error),
+                                                                      success ? Status::Success : Status::Error),
                                                       1);
                         session->endProgressBlock();
                     },
@@ -1091,7 +1091,7 @@ stageUp(Session::StageUp stageUp)
                         using Status = Session::Notify::Status;
                         const QString axis = (stageUp == Session::StageUp::Z) ? "Z" : "Y";
                         session->updateProgressNotify(Session::Notify(QString("stage up set to %1").arg(axis), {},
-                                                                      Status::Info),
+                                                                      Status::Success),
                                                       1);
                         session->endProgressBlock();
                     },
@@ -1110,7 +1110,7 @@ stageUp(Session::StageUp stageUp)
                         using Status = Session::Notify::Status;
                         const QString axis = (*state == Session::StageUp::Z) ? "Z" : "Y";
                         session->updateProgressNotify(Session::Notify(QString("set stage up undone to %1").arg(axis),
-                                                                      {}, Status::Info),
+                                                                      {}, Status::Success),
                                                       1);
                         session->endProgressBlock();
                     },
@@ -1292,7 +1292,7 @@ deletePaths(const QList<SdfPath>& inPaths)
                         session->setMask(path::removeAffectedPaths(state->previousMask, removedPaths));
                         session->setPrimsUpdate(Session::PrimsUpdate::Immediate);
                         session->updateProgressNotify(Session::Notify(success ? "paths deleted" : "delete paths failed",
-                                                                      changed, success ? Status::Info : Status::Error),
+                                                                      changed, success ? Status::Success : Status::Error),
                                                       1);
                         session->endProgressBlock();
                     },
@@ -1347,7 +1347,7 @@ deletePaths(const QList<SdfPath>& inPaths)
                         session->setPrimsUpdate(Session::PrimsUpdate::Immediate);
                         session->updateProgressNotify(Session::Notify(success ? "delete undone"
                                                                               : "undo delete paths failed",
-                                                                      changed, success ? Status::Info : Status::Error),
+                                                                      changed, success ? Status::Success : Status::Error),
                                                       1);
                         session->endProgressBlock();
                     },
@@ -1534,7 +1534,7 @@ renamePath(const SdfPath& path, const QString& newNameInput)
                         }
 
                         if (noop) {
-                            session->updateProgressNotify(Session::Notify("rename skipped", { path }, Status::Info), 1);
+                            session->updateProgressNotify(Session::Notify("rename skipped", { path }, Status::Success), 1);
                             session->endProgressBlock();
                             return;
                         }
@@ -1552,7 +1552,7 @@ renamePath(const SdfPath& path, const QString& newNameInput)
                         session->selectionList()->updatePaths(
                             path::remapAffectedPaths(state->previousSelection, path, newPath));
                         session->setMask(path::remapAffectedPaths(state->previousMask, path, newPath));
-                        session->updateProgressNotify(Session::Notify("path renamed", { path, newPath }, Status::Info),
+                        session->updateProgressNotify(Session::Notify("path renamed", { path, newPath }, Status::Success),
                                                       1);
                         session->endProgressBlock();
                     },
@@ -1620,7 +1620,7 @@ renamePath(const SdfPath& path, const QString& newNameInput)
                             return;
                         }
 
-                        session->updateProgressNotify(Session::Notify("rename undone", { state->oldPath }, Status::Info),
+                        session->updateProgressNotify(Session::Notify("rename undone", { state->oldPath }, Status::Success),
                                                       1);
                         session->endProgressBlock();
                     },
@@ -1741,7 +1741,7 @@ newXformPath(const SdfPath& parentPath, const QString& nameInput)
                         }
 
                         if (noop) {
-                            session->updateProgressNotify(Session::Notify("new xform skipped", {}, Status::Info), 1);
+                            session->updateProgressNotify(Session::Notify("new xform skipped", {}, Status::Success), 1);
                             session->endProgressBlock();
                             return;
                         }
@@ -1758,7 +1758,7 @@ newXformPath(const SdfPath& parentPath, const QString& nameInput)
 
                         session->selectionList()->updatePaths({ newPath });
                         session->updateProgressNotify(Session::Notify("xform created", { parentPath, newPath },
-                                                                      Status::Info),
+                                                                      Status::Success),
                                                       1);
                         session->endProgressBlock();
                     },
@@ -1826,7 +1826,7 @@ newXformPath(const SdfPath& parentPath, const QString& nameInput)
                         session->selectionList()->updatePaths(updated);
                         session->setMask(path::removeAffectedPaths(state->previousMask, { state->createdPath }));
                         session->updateProgressNotify(Session::Notify("new xform undone", { state->createdPath },
-                                                                      Status::Info),
+                                                                      Status::Success),
                                                       1);
                         session->endProgressBlock();
                     },
@@ -2029,7 +2029,7 @@ movePath(const SdfPath& fromPath, const SdfPath& newParentPath, int insertIndex)
                         }
 
                         if (noop) {
-                            session->updateProgressNotify(Session::Notify("move skipped", {}, Status::Info), 1);
+                            session->updateProgressNotify(Session::Notify("move skipped", {}, Status::Success), 1);
                             session->endProgressBlock();
                             return;
                         }
@@ -2048,7 +2048,7 @@ movePath(const SdfPath& fromPath, const SdfPath& newParentPath, int insertIndex)
                             path::remapAffectedPaths(state->previousSelection, fromPath, state->newPath));
                         session->setMask(path::remapAffectedPaths(state->previousMask, fromPath, state->newPath));
                         session->updateProgressNotify(Session::Notify("path moved", { state->oldPath, state->newPath },
-                                                                      Status::Info),
+                                                                      Status::Success),
                                                       1);
                         session->endProgressBlock();
                     },
@@ -2119,7 +2119,7 @@ movePath(const SdfPath& fromPath, const SdfPath& newParentPath, int insertIndex)
                             return;
                         }
 
-                        session->updateProgressNotify(Session::Notify("move undone", { state->oldPath }, Status::Info),
+                        session->updateProgressNotify(Session::Notify("move undone", { state->oldPath }, Status::Success),
                                                       1);
                         session->endProgressBlock();
                     },

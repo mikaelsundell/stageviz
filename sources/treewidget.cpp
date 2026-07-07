@@ -93,14 +93,29 @@ public:
                 return l;
             }
 
-            if (l.hasDecoration) {
+            const bool hasText = !opt.text.isEmpty();
+
+            if (l.hasDecoration && hasText) {
+                int x = l.contentRect.left();
+
+                l.iconRect = QRect(x, l.contentRect.center().y() - iconSize / 2 + yOffset, iconSize, iconSize);
+                l.iconHitRect = l.iconRect;
+
+                l.textRect = l.contentRect;
+                l.textRect.setLeft(l.iconRect.right() + 1 + textSpacing);
+            }
+            else if (l.hasDecoration) {
                 const int x = l.contentRect.center().x() - iconSize / 2;
                 const int y = l.contentRect.center().y() - iconSize / 2 + yOffset;
+
                 l.iconRect = QRect(x, y, iconSize, iconSize);
                 l.iconHitRect = l.iconRect;
+                l.textRect = QRect();
+            }
+            else {
+                l.textRect = l.contentRect;
             }
 
-            l.textRect = l.contentRect;
             return l;
         }
 
@@ -172,7 +187,7 @@ public:
                                (opt.state & QStyle::State_Enabled) ? QIcon::Normal : QIcon::Disabled);
             }
 
-            if (index.column() == 0) {
+            if (!l.textRect.isNull() && !opt.text.isEmpty()) {
                 painter->setPen(opt.palette.color(QPalette::Text));
                 painter->setFont(opt.font);
                 painter->drawText(l.textRect, opt.displayAlignment | Qt::AlignVCenter,
@@ -180,7 +195,7 @@ public:
             }
 
 #ifdef STAGEVIZ_DEBUG_TREE_HITREGIONS
-            if (index.column() == 0) {
+            {
                 painter->setBrush(Qt::NoBrush);
 
                 if (!l.checkRect.isNull()) {
@@ -227,6 +242,7 @@ public:
     struct Data {
         bool suppressSelection = false;
         bool branchExpanded = false;
+        QSet<int> selectableColumns { 0 };
         QPersistentModelIndex branchIndex;
         QPersistentModelIndex checkboxIndex;
         QPointer<ItemDelegate> delegate;
@@ -255,6 +271,13 @@ TreeWidgetPrivate::eventFilter(QObject* watched, QEvent* event)
             auto* mouse = static_cast<QMouseEvent*>(event);
             if (mouse->button() != Qt::LeftButton)
                 break;
+            
+            if (!d.tree->itemAt(mouse->pos())) {
+                d.tree->clearSelection();
+                Q_EMIT d.tree->itemSelectionChanged();
+                clearHit();
+                return true;
+            }
 
             QModelIndex index;
             if (hitBranch(mouse->pos(), &index)) {
@@ -355,7 +378,6 @@ TreeWidgetPrivate::hasSelectedChildren(QTreeWidgetItem* item) const
         if (child->isSelected() || hasSelectedChildren(child))
             return true;
     }
-
     return false;
 }
 
@@ -364,7 +386,6 @@ TreeWidgetPrivate::visualRowIndex(const QModelIndex& index) const
 {
     int row = 0;
     QModelIndex current = index.siblingAtColumn(0);
-
     while (true) {
         QModelIndex above = d.tree->indexAbove(current);
         if (!above.isValid())
@@ -373,7 +394,6 @@ TreeWidgetPrivate::visualRowIndex(const QModelIndex& index) const
         current = above;
         ++row;
     }
-
     return row;
 }
 
@@ -395,11 +415,9 @@ QRect
 TreeWidgetPrivate::branchRect(const QRect& rect, const QModelIndex& index) const
 {
     Q_UNUSED(index);
-
     const int size = style()->iconSize(Style::UIScale::Small);
     const int x = 6;
     const int y = rect.center().y() - size / 2 + 1;
-
     return QRect(x, y, size, size);
 }
 
@@ -407,12 +425,10 @@ QRect
 TreeWidgetPrivate::branchHitRect(const QRect& rect, const QModelIndex& index) const
 {
     const QRect r = branchRect(rect, index);
-
     const int padLeft = 2;
     const int padRight = 2;
     const int padTop = 2;
     const int padBottom = 2;
-
     return r.adjusted(-padLeft, -padTop, padRight, padBottom);
 }
 
@@ -481,8 +497,10 @@ TreeWidgetPrivate::hitSelectableContent(const QPoint& pos, QModelIndex* outIndex
     if (layout.isCheckable && layout.checkHitRect.contains(pos))
         return false;
 
-    const bool inIcon = !layout.iconHitRect.isNull() && layout.iconHitRect.contains(pos);
-    const bool inText = index.column() == 0 && layout.textRect.contains(pos);
+    const bool selectableColumn = d.selectableColumns.contains(index.column());
+
+    const bool inIcon = selectableColumn && !layout.iconHitRect.isNull() && layout.iconHitRect.contains(pos);
+    const bool inText = selectableColumn && !layout.textRect.isNull() && layout.textRect.contains(pos);
 
     if (!inIcon && !inText)
         return false;
@@ -617,6 +635,21 @@ TreeWidget::TreeWidget(QWidget* parent)
 }
 
 TreeWidget::~TreeWidget() = default;
+
+void
+TreeWidget::setColumnSelectable(int column, bool selectable)
+{
+    if (selectable)
+        p->d.selectableColumns.insert(column);
+    else
+        p->d.selectableColumns.remove(column);
+}
+
+bool
+TreeWidget::columnSelectable(int column) const
+{
+    return p->d.selectableColumns.contains(column);
+}
 
 QStyleOptionViewItem
 TreeWidget::itemViewOption(const QModelIndex& index) const

@@ -126,7 +126,7 @@ PrimItem::data(int column, int role) const
 
     if (role == Qt::DisplayRole || role == Qt::EditRole) {
         switch (column) {
-        case Vis: return QString();
+        case Visibility: return QString();
         default: break;
         }
     }
@@ -152,7 +152,7 @@ PrimItem::data(int column, int role) const
         return QIcon(style()->icon(iconRole, Style::UIScale::Medium));
     }
 
-    if (role == Qt::DecorationRole && column == Vis) {
+    if (role == Qt::DecorationRole && column == Visibility) {
         if (!p->d.active || p->d.isRoot)
             return QVariant();
 

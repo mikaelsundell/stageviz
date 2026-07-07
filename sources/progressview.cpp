@@ -21,19 +21,13 @@
 
 namespace stageviz {
 
-namespace {
-    constexpr int kNotifyPathsRole = Qt::UserRole + 1;
-    constexpr int kNotifyMessageRole = Qt::UserRole + 2;
-}  // namespace
-
 class ProgressViewPrivate : public QObject {
 public:
     void init();
     QTreeWidget* progressTree();
     bool eventFilter(QObject* obj, QEvent* event);
-    void trimHistory();
-    QString pathLabel(const Session::Notify& notify) const;
-    QString statusLabel(const Session::Notify& notify) const;
+    void trim();
+    QString statusLabel(const Session::Notify::Status status) const;
     QStringList pathStrings(const QList<SdfPath>& paths) const;
     QList<SdfPath> itemPaths(QTreeWidgetItem* item) const;
 
@@ -42,7 +36,6 @@ public Q_SLOTS:
     void clear();
     void progressBlockChanged(const QString& name, Session::ProgressMode mode);
     void progressNotifyChanged(const Session::Notify& notify, size_t completed, size_t expected);
-    void progressItemSelectionChanged();
     void maskChanged(const QList<SdfPath>& paths);
     void selectionChanged(const QList<SdfPath>& paths);
     void stageChanged(UsdStageRefPtr stage, Session::LoadPolicy policy, Session::StageStatus status);
@@ -84,8 +77,6 @@ ProgressViewPrivate::init()
     // connect
     connect(d.ui->clear, &QPushButton::clicked, this, &ProgressViewPrivate::clear);
     connect(d.ui->cancel, &QPushButton::clicked, this, &ProgressViewPrivate::cancel);
-    connect(progressTree(), &QTreeWidget::itemSelectionChanged, this,
-            &ProgressViewPrivate::progressItemSelectionChanged);
     connect(session(), &Session::progressBlockChanged, this, &ProgressViewPrivate::progressBlockChanged);
     connect(session(), &Session::progressNotifyChanged, this, &ProgressViewPrivate::progressNotifyChanged);
     connect(session(), &Session::stageChanged, this, &ProgressViewPrivate::stageChanged);
@@ -108,7 +99,7 @@ ProgressViewPrivate::eventFilter(QObject* obj, QEvent* event)
                 header->setStretchLastSection(false);
                 header->setSectionResizeMode(0, QHeaderView::Stretch);
                 header->setSectionResizeMode(1, QHeaderView::Fixed);
-                tree->setColumnWidth(1, 80);
+                tree->setColumnWidth(1, 140);
             }
         }
     }
@@ -116,7 +107,7 @@ ProgressViewPrivate::eventFilter(QObject* obj, QEvent* event)
 }
 
 void
-ProgressViewPrivate::trimHistory()
+ProgressViewPrivate::trim()
 {
     QTreeWidget* tree = progressTree();
     while (tree->topLevelItemCount() > d.history)
@@ -124,32 +115,14 @@ ProgressViewPrivate::trimHistory()
 }
 
 QString
-ProgressViewPrivate::pathLabel(const Session::Notify& notify) const
+ProgressViewPrivate::statusLabel(const Session::Notify::Status status) const
 {
-    if (notify.paths.isEmpty())
-        return "No paths";
-
-    const SdfPath& firstPath = notify.paths.first();
-    QString first = StringToQString(firstPath.GetName());
-    if (first.isEmpty())
-        first = StringToQString(firstPath.GetString());
-
-    const qsizetype count = notify.paths.size();
-    return QString("%1 (%2)").arg(first).arg(count);
-}
-
-QString
-ProgressViewPrivate::statusLabel(const Session::Notify& notify) const
-{
-    switch (notify.status) {
-    case Session::Notify::Status::Error: return "Failed";
-    case Session::Notify::Status::Warning: return "Warning";
-    case Session::Notify::Status::Progress: return "Running";
-    case Session::Notify::Status::Info:
-    default: break;
+    switch (status) {
+        case Session::Notify::Status::Success: return "Success";
+        case Session::Notify::Status::Progress: return "Running";
+        case Session::Notify::Status::Warning: return "Warning";
+        case Session::Notify::Status::Error: return "Failed";
     }
-
-    return "Success";
 }
 
 QStringList
@@ -171,14 +144,13 @@ ProgressViewPrivate::itemPaths(QTreeWidgetItem* item) const
     if (!item)
         return paths;
 
-    const QStringList values = item->data(0, kNotifyPathsRole).toStringList();
+    const QStringList values = item->data(0, Qt::UserRole).toStringList();
     paths.reserve(values.size());
 
     for (const QString& value : values) {
         if (!value.isEmpty())
             paths.append(SdfPath(QStringToString(value)));
     }
-
     return paths;
 }
 
@@ -215,12 +187,12 @@ ProgressViewPrivate::progressBlockChanged(const QString& name, Session::Progress
         commandItem->setText(0, QString("%1 (0)").arg(name));
         commandItem->setText(1, "Running...");
         commandItem->setExpanded(false);
-        commandItem->setData(0, kNotifyPathsRole, QStringList());
+        commandItem->setData(0, Qt::UserRole, QStringList());
 
         progressTree()->insertTopLevelItem(0, commandItem);
         d.currentItem = commandItem;
 
-        trimHistory();
+        trim();
 
         d.ui->status->setText(QString("Running: %1").arg(name));
         d.ui->cancel->setEnabled(true);
@@ -266,7 +238,7 @@ ProgressViewPrivate::progressNotifyChanged(const Session::Notify& notify, size_t
         auto* child = new QTreeWidgetItem();
         child->setText(0, "Pending...");
         child->setText(1, QString());
-        child->setData(0, kNotifyPathsRole, QStringList());
+        child->setData(0, Qt::UserRole, QStringList());
         d.currentItem->addChild(child);
     }
 
@@ -275,15 +247,10 @@ ProgressViewPrivate::progressNotifyChanged(const Session::Notify& notify, size_t
     QTreeWidgetItem* item = d.currentItem->child(index);
     if (!item)
         return;
-
-    item->setText(0, statusLabel(notify));
-    item->setText(1, pathLabel(notify));
-    item->setData(0, kNotifyPathsRole, pathStrings(notify.paths));
-    item->setData(0, kNotifyMessageRole, notify.message);
-
-    item->setForeground(0, QBrush());
-    item->setForeground(1, QBrush());
-    item->setIcon(0, QIcon());
+    
+    item->setText(0, QString("%1 (%2)").arg(notify.message).arg(notify.paths.size()));
+    item->setText(1, statusLabel(notify.status));
+    item->setData(0, Qt::UserRole, pathStrings(notify.paths));
 
     switch (notify.status) {
     case Session::Notify::Status::Error:
@@ -298,7 +265,7 @@ ProgressViewPrivate::progressNotifyChanged(const Session::Notify& notify, size_t
         item->setForeground(0, style()->color(Style::ColorRole::Progress));
         item->setForeground(1, style()->color(Style::ColorRole::Progress));
         break;
-    case Session::Notify::Status::Info:
+    case Session::Notify::Status::Success:
     default: break;
     }
 
@@ -306,23 +273,6 @@ ProgressViewPrivate::progressNotifyChanged(const Session::Notify& notify, size_t
     d.ui->progress->setValue(pct);
     d.ui->status->setText(updateStatus(completed, expected));
     d.ui->clear->setEnabled(progressTree()->topLevelItemCount() > 0);
-}
-
-void
-ProgressViewPrivate::progressItemSelectionChanged()
-{
-    QTreeWidgetItem* item = progressTree()->currentItem();
-    if (!item)
-        return;
-
-    if (!item->parent())
-        return;
-
-    const QList<SdfPath> paths = itemPaths(item);
-    if (paths.isEmpty())
-        return;
-
-    session()->selectionList()->updatePaths(paths);
 }
 
 void
