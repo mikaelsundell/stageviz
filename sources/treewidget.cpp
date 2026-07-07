@@ -677,13 +677,11 @@ TreeWidget::viewportEvent(QEvent* event)
 QItemSelectionModel::SelectionFlags
 TreeWidget::selectionCommand(const QModelIndex& index, const QEvent* event) const
 {
-    Q_UNUSED(index);
-
     if (p->d.suppressSelection)
         return QItemSelectionModel::NoUpdate;
 
     if (!event)
-        return QItemSelectionModel::NoUpdate;
+        return QTreeWidget::selectionCommand(index, event);
 
     switch (event->type()) {
     case QEvent::MouseButtonPress:
@@ -698,14 +696,18 @@ TreeWidget::selectionCommand(const QModelIndex& index, const QEvent* event) cons
         if (p->hitCheckbox(mouse->pos()))
             return QItemSelectionModel::NoUpdate;
 
+        if (mouse->modifiers() & (Qt::ShiftModifier | Qt::ControlModifier | Qt::MetaModifier))
+            return QTreeWidget::selectionCommand(index, event);
+
         QModelIndex contentIndex;
         if (p->hitSelectableContent(mouse->pos(), &contentIndex))
-            return QTreeWidget::selectionCommand(contentIndex, event);
+            return QTreeWidget::selectionCommand(index, event);
 
         return QItemSelectionModel::NoUpdate;
     }
 
-    default: break;
+    default:
+        break;
     }
 
     return QTreeWidget::selectionCommand(index, event);

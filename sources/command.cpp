@@ -1549,13 +1549,13 @@ newXformPath(const SdfPath& parentPath, const QString& nameInput)
                             return;
                         }
 
-                        session->selectionList()->updatePaths({ newPath });
-
                         command::finishDeferred(
                             session,
                             "Xform created",
                             { parentPath, newPath },
                             Status::Success);
+
+                        session->selectionList()->updatePaths({ newPath });
                     });
             });
         },
@@ -1692,9 +1692,6 @@ movePath(const QList<SdfPath>& paths, const SdfPath& newParentPath, int insertIn
                         const QList<SdfPath> movePaths = path::minimalRootPaths(paths);
 
                         if (movePaths.isEmpty()) {
-                            noop = true;
-                        }
-                        else if (newParentPath == SdfPath::AbsoluteRootPath()) {
                             noop = true;
                         }
                         else if (stage::isInsideCompositionArc(stage, newParentPath)) {
