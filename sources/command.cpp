@@ -1480,6 +1480,11 @@ newXformPath(const SdfPath& parentPath, const QString& nameInput)
                 QList<SdfPath> movePaths;
                 QList<SdfPath> changed;
 
+                auto appendChanged = [](QList<SdfPath>& paths, const SdfPath& path) {
+                    if (!path.IsEmpty() && !paths.contains(path))
+                        paths.append(path);
+                };
+
                 auto restoreOrders = [](const UsdStageRefPtr& stage,
                                         const QHash<SdfPath, TfTokenVector>& orders) {
                     for (auto it = orders.cbegin(); it != orders.cend(); ++it) {
@@ -1594,13 +1599,14 @@ newXformPath(const SdfPath& parentPath, const QString& nameInput)
                                                 for (auto it = state->movedItems.crbegin();
                                                      it != state->movedItems.crend();
                                                      ++it) {
-                                                    for (auto it = state->movedItems.crbegin(); it != state->movedItems.crend(); ++it) {
-                                                        if (it->oldPath == item.oldPath)
-                                                            break;
+                                                    if (it->oldPath == item.oldPath)
+                                                        break;
 
-                                                        QString rollbackError;
-                                                        stage::movePrim(stage, it->newPath, it->oldParentPath, rollbackError);
-                                                    }
+                                                    QString rollbackError;
+                                                    stage::movePrim(stage,
+                                                                    it->newPath,
+                                                                    it->oldParentPath,
+                                                                    rollbackError);
                                                 }
 
                                                 restoreOrders(stage, state->oldMoveParentOrders);
@@ -1618,17 +1624,15 @@ newXformPath(const SdfPath& parentPath, const QString& nameInput)
                                     }
 
                                     if (movedSelection && error.isEmpty()) {
-                                        QSet<SdfPath> changedSet;
-                                        changedSet.insert(parentPath);
-                                        changedSet.insert(newPath);
+                                        appendChanged(changed, parentPath);
+                                        appendChanged(changed, newPath);
 
                                         for (const MoveItem& item : state->movedItems) {
-                                            changedSet.insert(item.oldPath);
-                                            changedSet.insert(item.newPath);
-                                            changedSet.insert(item.oldParentPath);
+                                            appendChanged(changed, item.oldParentPath);
+                                            appendChanged(changed, item.oldPath);
+                                            appendChanged(changed, item.newPath);
                                         }
 
-                                        changed = changedSet.values();
                                         created = true;
                                     }
                                 }
@@ -1669,8 +1673,6 @@ newXformPath(const SdfPath& parentPath, const QString& nameInput)
                             return;
                         }
 
-                        session->selectionList()->updatePaths({ newPath });
-
                         command::finishDeferred(
                             session,
                             state->movedItems.isEmpty()
@@ -1678,6 +1680,8 @@ newXformPath(const SdfPath& parentPath, const QString& nameInput)
                                 : "Xform created and paths moved",
                             changed,
                             Status::Success);
+
+                        session->selectionList()->updatePaths({ newPath });
                     });
             });
         },
@@ -1692,6 +1696,11 @@ newXformPath(const SdfPath& parentPath, const QString& nameInput)
                 bool restored = false;
                 QString error;
                 QList<SdfPath> changed;
+
+                auto appendChanged = [](QList<SdfPath>& paths, const SdfPath& path) {
+                    if (!path.IsEmpty() && !paths.contains(path))
+                        paths.append(path);
+                };
 
                 {
                     WRITE_LOCKER(locker, session->stageLock(), "stageLock");
@@ -1744,17 +1753,14 @@ newXformPath(const SdfPath& parentPath, const QString& nameInput)
                             }
 
                             if (restored) {
-                                QSet<SdfPath> changedSet;
-                                changedSet.insert(state->parentPath);
-                                changedSet.insert(state->createdPath);
+                                appendChanged(changed, state->parentPath);
+                                appendChanged(changed, state->createdPath);
 
                                 for (const MoveItem& item : state->movedItems) {
-                                    changedSet.insert(item.oldPath);
-                                    changedSet.insert(item.newPath);
-                                    changedSet.insert(item.oldParentPath);
+                                    appendChanged(changed, item.oldParentPath);
+                                    appendChanged(changed, item.oldPath);
+                                    appendChanged(changed, item.newPath);
                                 }
-
-                                changed = changedSet.values();
                             }
                         }
                     }
@@ -1781,19 +1787,18 @@ newXformPath(const SdfPath& parentPath, const QString& nameInput)
                             return;
                         }
 
-                        session->selectionList()->updatePaths(state->previousSelection);
-                        session->setMask(state->previousMask);
-
                         command::finishDeferred(
                             session,
                             "New xform undone",
                             changed,
                             Status::Success);
+
+                        session->selectionList()->updatePaths(state->previousSelection);
+                        session->setMask(state->previousMask);
                     });
             });
         });
 }
-
 Command
 movePath(const QList<SdfPath>& paths, const SdfPath& newParentPath, int insertIndex)
 {
