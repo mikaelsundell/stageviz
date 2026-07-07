@@ -768,11 +768,6 @@ movePrim(UsdStageRefPtr stage, const SdfPath& from, const SdfPath& toParent, QSt
         return false;
     }
 
-    if (from == SdfPath::AbsoluteRootPath() || toParent == SdfPath::AbsoluteRootPath()) {
-        error = "invalid root move";
-        return false;
-    }
-
     if (isInsideCompositionArc(stage, from) || isInsideCompositionArc(stage, toParent)) {
         error = "cannot move into or out of composed prims";
         return false;

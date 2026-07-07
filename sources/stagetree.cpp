@@ -1136,9 +1136,10 @@ StageTreePrivate::updatePrims(const NoticeBatch& batch)
         const SdfPath oldParent = oldPath.GetParentPath();
         const SdfPath newParent = newPath.GetParentPath();
 
-        if (!oldParent.IsEmpty() && oldParent != SdfPath::AbsoluteRootPath())
+        if (!oldParent.IsEmpty())
             handledParents.insert(oldParent);
-        if (!newParent.IsEmpty() && newParent != SdfPath::AbsoluteRootPath())
+
+        if (!newParent.IsEmpty())
             handledParents.insert(newParent);
 
         PrimItem* renamedItem = itemFromPath(newPath);
@@ -1156,7 +1157,10 @@ StageTreePrivate::updatePrims(const NoticeBatch& batch)
             READ_LOCKER(locker, d.context->stageLock(), "stageLock");
             if (!d.stage)
                 continue;
-            parentPrim = d.stage->GetPrimAtPath(parentPath);
+
+            parentPrim = parentPath == SdfPath::AbsoluteRootPath()
+                ? d.stage->GetPseudoRoot()
+                : d.stage->GetPrimAtPath(parentPath);
         }
 
         if (!parentPrim)
@@ -1205,7 +1209,8 @@ StageTreePrivate::updatePrims(const NoticeBatch& batch)
         case UsdNotice::ObjectsChanged::PrimResyncType::RenameAndReparentSource:
         case UsdNotice::ObjectsChanged::PrimResyncType::RenameDestination:
         case UsdNotice::ObjectsChanged::PrimResyncType::ReparentDestination:
-        case UsdNotice::ObjectsChanged::PrimResyncType::RenameAndReparentDestination: break;
+        case UsdNotice::ObjectsChanged::PrimResyncType::RenameAndReparentDestination:
+            break;
 
         case UsdNotice::ObjectsChanged::PrimResyncType::Delete:
             invalidatePrim(entry.path);
@@ -1219,7 +1224,9 @@ StageTreePrivate::updatePrims(const NoticeBatch& batch)
 
         case UsdNotice::ObjectsChanged::PrimResyncType::Other:
         case UsdNotice::ObjectsChanged::PrimResyncType::Invalid:
-        default: invalidatePrim(entry.path); break;
+        default:
+            invalidatePrim(entry.path);
+            break;
         }
     }
 
@@ -1498,7 +1505,8 @@ StageTreePrivate::refreshParentBranch(const SdfPath& path)
 {
     const SdfPath primPath = path.IsPropertyPath() ? path.GetPrimPath() : path;
     const SdfPath parentPath = primPath.GetParentPath();
-    if (parentPath.IsEmpty() || parentPath == SdfPath::AbsoluteRootPath())
+
+    if (parentPath.IsEmpty())
         return;
 
     PrimItem* parentItem = itemFromPath(parentPath);
@@ -1510,13 +1518,16 @@ StageTreePrivate::refreshParentBranch(const SdfPath& path)
         READ_LOCKER(locker, d.context->stageLock(), "stageLock");
         if (!d.stage)
             return;
-        parentPrim = d.stage->GetPrimAtPath(parentPath);
+
+        parentPrim = parentPath == SdfPath::AbsoluteRootPath()
+            ? d.stage->GetPseudoRoot()
+            : d.stage->GetPrimAtPath(parentPath);
     }
 
     if (!parentPrim)
         return;
 
-    invalidateChildren(parentItem, parentPrim);
+    syncDirectChildrenOnly(parentItem, parentPrim);
     parentItem->invalidate();
 }
 
@@ -1894,7 +1905,7 @@ StageTree::dropEvent(QDropEvent* event)
 
     p->clearDropIndicator();
 
-    if (newParentPath.IsEmpty() || newParentPath == SdfPath::AbsoluteRootPath()) {
+    if (newParentPath.IsEmpty()) {
         event->ignore();
         return;
     }

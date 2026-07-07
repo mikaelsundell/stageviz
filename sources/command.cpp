@@ -1654,15 +1654,11 @@ movePath(const QList<SdfPath>& paths, const SdfPath& newParentPath, int insertIn
                 bool moved = false;
                 bool noop = false;
                 QString error;
-
                 QList<SdfPath> changed;
 
                 auto removeTokens = [](TfTokenVector order, const TfTokenVector& tokens) {
-                    for (const TfToken& token : tokens) {
-                        order.erase(
-                            std::remove(order.begin(), order.end(), token),
-                            order.end());
-                    }
+                    for (const TfToken& token : tokens)
+                        order.erase(std::remove(order.begin(), order.end(), token), order.end());
                     return order;
                 };
 
@@ -1677,8 +1673,12 @@ movePath(const QList<SdfPath>& paths, const SdfPath& newParentPath, int insertIn
 
                 auto restoreOrders = [](const UsdStageRefPtr& stage,
                                         const QHash<SdfPath, TfTokenVector>& orders) {
-                    for (auto it = orders.cbegin(); it != orders.cend(); ++it)
+                    for (auto it = orders.cbegin(); it != orders.cend(); ++it) {
+                        if (it.key() == SdfPath::AbsoluteRootPath())
+                            continue;
+
                         stage::restoreChildOrder(stage, it.key(), it.value());
+                    }
                 };
 
                 {
@@ -1694,7 +1694,8 @@ movePath(const QList<SdfPath>& paths, const SdfPath& newParentPath, int insertIn
                         if (movePaths.isEmpty()) {
                             noop = true;
                         }
-                        else if (stage::isInsideCompositionArc(stage, newParentPath)) {
+                        else if (newParentPath != SdfPath::AbsoluteRootPath()
+                                 && stage::isInsideCompositionArc(stage, newParentPath)) {
                             error = "cannot move into or out of composed prims";
                         }
                         else {
@@ -1716,9 +1717,8 @@ movePath(const QList<SdfPath>& paths, const SdfPath& newParentPath, int insertIn
 
                                 if (path.IsEmpty()
                                     || path == SdfPath::AbsoluteRootPath()
-                                    || oldParentPath.IsEmpty()
-                                    || oldParentPath == SdfPath::AbsoluteRootPath()) {
-                                    noop = true;
+                                    || oldParentPath.IsEmpty()) {
+                                    error = "invalid source path";
                                     valid = false;
                                     break;
                                 }
@@ -1743,7 +1743,8 @@ movePath(const QList<SdfPath>& paths, const SdfPath& newParentPath, int insertIn
 
                                 const UsdPrim targetPrim = stage->GetPrimAtPath(targetPath);
                                 if (targetPrim && targetPath != path && !sourcePaths.contains(targetPath)) {
-                                    error = "destination already exists";
+                                    error = QString("destination already exists: %1")
+                                                .arg(qt::SdfPathToQString(targetPath));
                                     valid = false;
                                     break;
                                 }
@@ -1757,13 +1758,15 @@ movePath(const QList<SdfPath>& paths, const SdfPath& newParentPath, int insertIn
                                 item.name = path.GetNameToken();
                                 state->items.append(item);
 
-                                if (!state->oldParentOrders.contains(oldParentPath)) {
+                                if (!state->oldParentOrders.contains(oldParentPath)
+                                    && oldParentPath != SdfPath::AbsoluteRootPath()) {
                                     TfTokenVector order;
                                     stage::captureChildOrder(stage, oldParentPath, order);
                                     state->oldParentOrders.insert(oldParentPath, order);
                                 }
 
-                                if (!state->oldParentOrders.contains(newParentPath)) {
+                                if (!state->oldParentOrders.contains(newParentPath)
+                                    && newParentPath != SdfPath::AbsoluteRootPath()) {
                                     TfTokenVector order;
                                     stage::captureChildOrder(stage, newParentPath, order);
                                     state->oldParentOrders.insert(newParentPath, order);
@@ -1781,10 +1784,20 @@ movePath(const QList<SdfPath>& paths, const SdfPath& newParentPath, int insertIn
                                     if (item.oldPath == item.newPath)
                                         continue;
 
-                                    if (!stage::movePrim(stage, item.oldPath, newParentPath, error)) {
+                                    QString moveError;
+                                    if (!stage::movePrim(stage, item.oldPath, newParentPath, moveError)) {
+                                        error = QString("failed to move %1 to %2")
+                                                    .arg(qt::SdfPathToQString(item.oldPath),
+                                                         qt::SdfPathToQString(newParentPath));
+
+                                        if (!moveError.isEmpty())
+                                            error += QString(": %1").arg(moveError);
+
                                         for (auto it = state->items.crbegin(); it != state->items.crend(); ++it) {
-                                            if (it->oldPath != it->newPath)
-                                                stage::movePrim(stage, it->newPath, it->oldParentPath, error);
+                                            if (it->oldPath != it->newPath) {
+                                                QString rollbackError;
+                                                stage::movePrim(stage, it->newPath, it->oldParentPath, rollbackError);
+                                            }
                                         }
 
                                         restoreOrders(stage, state->oldParentOrders);
@@ -1802,6 +1815,9 @@ movePath(const QList<SdfPath>& paths, const SdfPath& newParentPath, int insertIn
                                     affectedParents.insert(newParentPath);
 
                                     for (const SdfPath& parentPath : affectedParents) {
+                                        if (parentPath == SdfPath::AbsoluteRootPath())
+                                            continue;
+
                                         TfTokenVector order = state->oldParentOrders.value(parentPath);
                                         TfTokenVector newOrder = removeTokens(order, movedNames);
 
@@ -1863,7 +1879,7 @@ movePath(const QList<SdfPath>& paths, const SdfPath& newParentPath, int insertIn
                                 error.isEmpty()
                                     ? "Move paths failed"
                                     : QString("Move paths failed: %1").arg(error),
-                                {},
+                                changed,
                                 Status::Error);
                             return;
                         }
@@ -1913,7 +1929,15 @@ movePath(const QList<SdfPath>& paths, const SdfPath& newParentPath, int insertIn
                             if (it->oldPath == it->newPath)
                                 continue;
 
-                            if (!stage::movePrim(stage, it->newPath, it->oldParentPath, error)) {
+                            QString moveError;
+                            if (!stage::movePrim(stage, it->newPath, it->oldParentPath, moveError)) {
+                                error = QString("failed to restore %1 to %2")
+                                            .arg(qt::SdfPathToQString(it->newPath),
+                                                 qt::SdfPathToQString(it->oldParentPath));
+
+                                if (!moveError.isEmpty())
+                                    error += QString(": %1").arg(moveError);
+
                                 restored = false;
                                 break;
                             }
@@ -1923,6 +1947,9 @@ movePath(const QList<SdfPath>& paths, const SdfPath& newParentPath, int insertIn
                             for (auto it = state->oldParentOrders.cbegin();
                                  it != state->oldParentOrders.cend();
                                  ++it) {
+                                if (it.key() == SdfPath::AbsoluteRootPath())
+                                    continue;
+
                                 stage::restoreChildOrder(stage, it.key(), it.value());
                             }
 
@@ -1959,7 +1986,7 @@ movePath(const QList<SdfPath>& paths, const SdfPath& newParentPath, int insertIn
                                 error.isEmpty()
                                     ? "Undo move paths failed"
                                     : QString("Undo move paths failed: %1").arg(error),
-                                {},
+                                changed,
                                 Status::Error);
                             return;
                         }
