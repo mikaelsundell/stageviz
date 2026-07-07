@@ -273,7 +273,7 @@ def test_new_rename_move_delete():
         "rename_path remaps selection",
     )
 
-    stageviz.command.move_path("/World/Renamed", "/World/B", insert_index=-1)
+    stageviz.command.move_path(["/World/Renamed"], "/World/B", insert_index=-1)
 
     _assert(
         _wait_until(lambda: not _exists("/World/Renamed") and _exists("/World/B/Renamed")),
@@ -289,6 +289,33 @@ def test_new_rename_move_delete():
     _assert(
         _wait_until(lambda: not _exists("/World/B/Renamed")),
         "delete_paths removes prim",
+    )
+
+
+def test_new_xform_wraps_multiple_selection():
+    stageviz.command.select_paths(["/World/A", "/World/B"])
+
+    _assert(
+        _wait_until(lambda: _selection() == ["/World/A", "/World/B"]),
+        "selection prepared for multi-new_xform",
+    )
+
+    stageviz.command.new_xform("/World", "Group")
+
+    _assert(
+        _wait_until(
+            lambda: _exists("/World/Group")
+            and _exists("/World/Group/A")
+            and _exists("/World/Group/B")
+            and not _exists("/World/A")
+            and not _exists("/World/B")
+        ),
+        "new_xform wraps selected siblings",
+    )
+
+    _assert(
+        _wait_until(lambda: _selection() == ["/World/Group"]),
+        "new_xform selects wrapper prim",
     )
 
 
@@ -380,6 +407,7 @@ def run():
         ("isolate paths", test_isolate_paths),
         ("show/hide paths", test_show_hide_paths),
         ("new/rename/move/delete", test_new_rename_move_delete),
+        ("new_xform wraps multiple selection", test_new_xform_wraps_multiple_selection),
         ("default prim", test_default_prim),
         ("stage up", test_stage_up),
         ("payload load/unload", test_payload_load_unload),
