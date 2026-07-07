@@ -1442,11 +1442,19 @@ renamePath(const SdfPath& path, const QString& newNameInput)
 Command
 newXformPath(const SdfPath& parentPath, const QString& nameInput)
 {
+    struct MoveItem {
+        SdfPath oldPath;
+        SdfPath newPath;
+        SdfPath oldParentPath;
+    };
+
     struct NewXformState {
         SdfPath parentPath;
         SdfPath createdPath;
-        TfTokenVector oldOrder;
-        TfTokenVector newOrder;
+        TfTokenVector oldParentOrder;
+        TfTokenVector newParentOrder;
+        QHash<SdfPath, TfTokenVector> oldMoveParentOrders;
+        QList<MoveItem> movedItems;
         QList<SdfPath> previousSelection;
         QList<SdfPath> previousMask;
     };
@@ -1469,6 +1477,18 @@ newXformPath(const SdfPath& parentPath, const QString& nameInput)
                 bool noop = false;
                 QString error;
                 SdfPath newPath;
+                QList<SdfPath> movePaths;
+                QList<SdfPath> changed;
+
+                auto restoreOrders = [](const UsdStageRefPtr& stage,
+                                        const QHash<SdfPath, TfTokenVector>& orders) {
+                    for (auto it = orders.cbegin(); it != orders.cend(); ++it) {
+                        if (it.key() == SdfPath::AbsoluteRootPath())
+                            continue;
+
+                        stage::restoreChildOrder(stage, it.key(), it.value());
+                    }
+                };
 
                 {
                     WRITE_LOCKER(locker, session->stageLock(), "stageLock");
@@ -1478,6 +1498,12 @@ newXformPath(const SdfPath& parentPath, const QString& nameInput)
                         hadStage = false;
                     }
                     else {
+                        const QList<SdfPath> selection =
+                            path::minimalRootPaths(state->previousSelection);
+
+                        if (selection.size() > 1)
+                            movePaths = selection;
+
                         newPath = stage::buildChildPath(stage, parentPath, nameInput, error);
 
                         if (newPath.IsEmpty()) {
@@ -1486,18 +1512,21 @@ newXformPath(const SdfPath& parentPath, const QString& nameInput)
                         else {
                             state->parentPath = parentPath;
                             state->createdPath = newPath;
-                            state->oldOrder.clear();
-                            state->newOrder.clear();
+                            state->oldParentOrder.clear();
+                            state->newParentOrder.clear();
+                            state->oldMoveParentOrders.clear();
+                            state->movedItems.clear();
 
                             const SdfLayerHandle editLayer = stage->GetEditTarget().GetLayer();
                             if (!editLayer) {
                                 error = "no edit layer";
                             }
                             else {
-                                const bool parentIsRoot = parentPath == SdfPath::AbsoluteRootPath();
+                                const bool parentIsRoot =
+                                    parentPath == SdfPath::AbsoluteRootPath();
 
                                 if (!parentIsRoot)
-                                    stage::captureChildOrder(stage, parentPath, state->oldOrder);
+                                    stage::captureChildOrder(stage, parentPath, state->oldParentOrder);
 
                                 const UsdGeomXform xform = UsdGeomXform::Define(stage, newPath);
                                 if (!xform || !xform.GetPrim()) {
@@ -1505,12 +1534,103 @@ newXformPath(const SdfPath& parentPath, const QString& nameInput)
                                 }
                                 else {
                                     if (!parentIsRoot) {
-                                        state->newOrder = state->oldOrder;
-                                        state->newOrder.push_back(newPath.GetNameToken());
-                                        stage::restoreChildOrder(stage, parentPath, state->newOrder);
+                                        state->newParentOrder = state->oldParentOrder;
+                                        state->newParentOrder.push_back(newPath.GetNameToken());
+                                        stage::restoreChildOrder(stage,
+                                                                 parentPath,
+                                                                 state->newParentOrder);
                                     }
 
-                                    created = true;
+                                    bool movedSelection = true;
+
+                                    for (const SdfPath& movePath : movePaths) {
+                                        if (movePath.IsEmpty()
+                                            || movePath == SdfPath::AbsoluteRootPath()
+                                            || movePath == newPath
+                                            || newPath.HasPrefix(movePath)) {
+                                            error = "invalid move path";
+                                            movedSelection = false;
+                                            break;
+                                        }
+
+                                        if (stage::isInsideCompositionArc(stage, movePath)) {
+                                            error = "cannot move into or out of composed prims";
+                                            movedSelection = false;
+                                            break;
+                                        }
+
+                                        const SdfPath oldParentPath = movePath.GetParentPath();
+                                        if (oldParentPath.IsEmpty()) {
+                                            error = "invalid source parent";
+                                            movedSelection = false;
+                                            break;
+                                        }
+
+                                        if (!state->oldMoveParentOrders.contains(oldParentPath)
+                                            && oldParentPath != SdfPath::AbsoluteRootPath()) {
+                                            TfTokenVector order;
+                                            stage::captureChildOrder(stage, oldParentPath, order);
+                                            state->oldMoveParentOrders.insert(oldParentPath, order);
+                                        }
+
+                                        MoveItem item;
+                                        item.oldPath = movePath;
+                                        item.oldParentPath = oldParentPath;
+                                        item.newPath = newPath.AppendChild(movePath.GetNameToken());
+                                        state->movedItems.append(item);
+                                    }
+
+                                    if (movedSelection) {
+                                        for (const MoveItem& item : state->movedItems) {
+                                            QString moveError;
+                                            if (!stage::movePrim(stage, item.oldPath, newPath, moveError)) {
+                                                error = QString("failed to move %1 to %2")
+                                                            .arg(qt::SdfPathToQString(item.oldPath),
+                                                                 qt::SdfPathToQString(newPath));
+
+                                                if (!moveError.isEmpty())
+                                                    error += QString(": %1").arg(moveError);
+
+                                                for (auto it = state->movedItems.crbegin();
+                                                     it != state->movedItems.crend();
+                                                     ++it) {
+                                                    for (auto it = state->movedItems.crbegin(); it != state->movedItems.crend(); ++it) {
+                                                        if (it->oldPath == item.oldPath)
+                                                            break;
+
+                                                        QString rollbackError;
+                                                        stage::movePrim(stage, it->newPath, it->oldParentPath, rollbackError);
+                                                    }
+                                                }
+
+                                                restoreOrders(stage, state->oldMoveParentOrders);
+
+                                                if (!parentIsRoot && !state->oldParentOrder.empty())
+                                                    stage::restoreChildOrder(stage,
+                                                                             parentPath,
+                                                                             state->oldParentOrder);
+
+                                                stage::removePrimSpec(editLayer, newPath);
+                                                movedSelection = false;
+                                                break;
+                                            }
+                                        }
+                                    }
+
+                                    if (movedSelection && error.isEmpty()) {
+                                        QSet<SdfPath> changedSet;
+                                        changedSet.insert(parentPath);
+                                        changedSet.insert(newPath);
+
+                                        for (const MoveItem& item : state->movedItems) {
+                                            changedSet.insert(item.oldPath);
+                                            changedSet.insert(item.newPath);
+                                            changedSet.insert(item.oldParentPath);
+                                        }
+
+                                        changed = changedSet.values();
+                                        created = true;
+                                    }
                                 }
                             }
                         }
@@ -1544,18 +1664,20 @@ newXformPath(const SdfPath& parentPath, const QString& nameInput)
                                 error.isEmpty()
                                     ? "New xform failed"
                                     : QString("New xform failed: %1").arg(error),
-                                {},
+                                changed,
                                 Status::Error);
                             return;
                         }
 
+                        session->selectionList()->updatePaths({ newPath });
+
                         command::finishDeferred(
                             session,
-                            "Xform created",
-                            { parentPath, newPath },
+                            state->movedItems.isEmpty()
+                                ? "Xform created"
+                                : "Xform created and paths moved",
+                            changed,
                             Status::Success);
-
-                        session->selectionList()->updatePaths({ newPath });
                     });
             });
         },
@@ -1567,7 +1689,9 @@ newXformPath(const SdfPath& parentPath, const QString& nameInput)
 
             command::runWorker([=]() {
                 bool hadStage = true;
-                bool removed = false;
+                bool restored = false;
+                QString error;
+                QList<SdfPath> changed;
 
                 {
                     WRITE_LOCKER(locker, session->stageLock(), "stageLock");
@@ -1579,11 +1703,58 @@ newXformPath(const SdfPath& parentPath, const QString& nameInput)
                     else {
                         const SdfLayerHandle editLayer = stage->GetEditTarget().GetLayer();
                         if (editLayer) {
-                            removed = stage::removePrimSpec(editLayer, state->createdPath);
+                            restored = true;
 
-                            if (removed && !state->oldOrder.empty() && !state->parentPath.IsEmpty()
-                                && state->parentPath != SdfPath::AbsoluteRootPath()) {
-                                stage::restoreChildOrder(stage, state->parentPath, state->oldOrder);
+                            for (auto it = state->movedItems.crbegin();
+                                 it != state->movedItems.crend();
+                                 ++it) {
+                                QString moveError;
+                                if (!stage::movePrim(stage, it->newPath, it->oldParentPath, moveError)) {
+                                    error = QString("failed to restore %1 to %2")
+                                                .arg(qt::SdfPathToQString(it->newPath),
+                                                     qt::SdfPathToQString(it->oldParentPath));
+
+                                    if (!moveError.isEmpty())
+                                        error += QString(": %1").arg(moveError);
+
+                                    restored = false;
+                                    break;
+                                }
+                            }
+
+                            if (restored) {
+                                for (auto it = state->oldMoveParentOrders.cbegin();
+                                     it != state->oldMoveParentOrders.cend();
+                                     ++it) {
+                                    if (it.key() == SdfPath::AbsoluteRootPath())
+                                        continue;
+
+                                    stage::restoreChildOrder(stage, it.key(), it.value());
+                                }
+
+                                if (!state->oldParentOrder.empty()
+                                    && !state->parentPath.IsEmpty()
+                                    && state->parentPath != SdfPath::AbsoluteRootPath()) {
+                                    stage::restoreChildOrder(stage,
+                                                             state->parentPath,
+                                                             state->oldParentOrder);
+                                }
+
+                                restored = stage::removePrimSpec(editLayer, state->createdPath);
+                            }
+
+                            if (restored) {
+                                QSet<SdfPath> changedSet;
+                                changedSet.insert(state->parentPath);
+                                changedSet.insert(state->createdPath);
+
+                                for (const MoveItem& item : state->movedItems) {
+                                    changedSet.insert(item.oldPath);
+                                    changedSet.insert(item.newPath);
+                                    changedSet.insert(item.oldParentPath);
+                                }
+
+                                changed = changedSet.values();
                             }
                         }
                     }
@@ -1599,8 +1770,14 @@ newXformPath(const SdfPath& parentPath, const QString& nameInput)
                             return;
                         }
 
-                        if (!removed) {
-                            command::finishDeferred(session, "Undo new xform failed", {}, Status::Error);
+                        if (!restored) {
+                            command::finishDeferred(
+                                session,
+                                error.isEmpty()
+                                    ? "Undo new xform failed"
+                                    : QString("Undo new xform failed: %1").arg(error),
+                                changed,
+                                Status::Error);
                             return;
                         }
 
@@ -1610,7 +1787,7 @@ newXformPath(const SdfPath& parentPath, const QString& nameInput)
                         command::finishDeferred(
                             session,
                             "New xform undone",
-                            { state->createdPath },
+                            changed,
                             Status::Success);
                     });
             });

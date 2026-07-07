@@ -608,10 +608,12 @@ StageTreePrivate::contextMenuEvent(QContextMenuEvent* event)
     const QList<SdfPath> topLevelPaths = path::topLevelPaths(paths);
 
     SdfPath createParentPath;
-    if (!topLevelPaths.isEmpty())
-        createParentPath = topLevelPaths.first();
-    else if (paths.size() == 1 && paths.first() == SdfPath::AbsoluteRootPath())
-        createParentPath = SdfPath::AbsoluteRootPath();
+    if (paths.size() == 1) {
+        createParentPath = paths.first();
+    }
+    else if (!paths.isEmpty()) {
+        createParentPath = paths.first().GetParentPath();
+    }
 
     const bool canSetDefaultPrim = paths.size() == 1 && !paths.first().IsEmpty()
                                    && paths.first() != SdfPath::AbsoluteRootPath()
@@ -943,8 +945,6 @@ StageTreePrivate::contextMenuEvent(QContextMenuEvent* event)
     else if (chosen == deleteSelected)
         d.context->run(new Command(deletePaths(paths)));
 }
-
-
 
 void
 StageTreePrivate::updateStage(UsdStageRefPtr stage)
