@@ -225,6 +225,7 @@ StylePrivate::updateTheme()
     d.icons[roleName(Style::IconRole::Clear)] = ":/icons/resources/Clear.png";
     d.icons[roleName(Style::IconRole::Code)] = ":/icons/resources/Code.png";
     d.icons[roleName(Style::IconRole::Collapse)] = ":/icons/resources/Collapse.png";
+    d.icons[roleName(Style::IconRole::Down)] = ":/icons/resources/Down.png";
     d.icons[roleName(Style::IconRole::DropDown)] = ":/icons/resources/DropDown.png";
     d.icons[roleName(Style::IconRole::Expand)] = ":/icons/resources/Expand.png";
     d.icons[roleName(Style::IconRole::Export)] = ":/icons/resources/Export.png";
@@ -244,6 +245,7 @@ StylePrivate::updateTheme()
     d.icons[roleName(Style::IconRole::Run)] = ":/icons/resources/Run.png";
     d.icons[roleName(Style::IconRole::Shaded)] = ":/icons/resources/Shaded.png";
     d.icons[roleName(Style::IconRole::Undo)] = ":/icons/resources/Undo.png";
+    d.icons[roleName(Style::IconRole::Up)] = ":/icons/resources/Up.png";
     d.icons[roleName(Style::IconRole::Visible)] = ":/icons/resources/Visible.png";
     d.icons[roleName(Style::IconRole::Wireframe)] = ":/icons/resources/Wireframe.png";
 

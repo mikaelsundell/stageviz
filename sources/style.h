@@ -55,6 +55,7 @@ public:
         Clear,
         Code,
         Collapse,
+        Down,
         DropDown,
         Expand,
         Export,
@@ -74,6 +75,7 @@ public:
         Run,
         Shaded,
         Undo,
+        Up,
         Visible,
         Wireframe
     };

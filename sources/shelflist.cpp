@@ -13,6 +13,8 @@
 #include <QBuffer>
 #include <QDrag>
 #include <QDragEnterEvent>
+#include <QFile>
+#include <QFileInfo>
 #include <QImageReader>
 #include <QMimeData>
 #include <QMouseEvent>
@@ -29,7 +31,9 @@ public:
     void init();
     QMimeData* mimeData(const QList<QListWidgetItem*>& items) const;
     bool hasImageMime(const QMimeData* mime) const;
+    bool hasScriptFileMime(const QMimeData* mime) const;
     QImage imageMimeData(const QMimeData* mime);
+    QString scriptFileMimeData(const QMimeData* mime) const;
     QImage iconImage(const QImage& image) const;
     QImage centerCrop(const QImage& image) const;
     QString scriptTitle(const QString& code) const;
@@ -188,6 +192,28 @@ ShelfListPrivate::hasImageMime(const QMimeData* mime) const
     return false;
 }
 
+bool
+ShelfListPrivate::hasScriptFileMime(const QMimeData* mime) const
+{
+    if (!mime || !mime->hasUrls())
+        return false;
+
+    const QList<QUrl> urls = mime->urls();
+    for (const QUrl& url : urls) {
+        if (!url.isLocalFile())
+            continue;
+
+        const QFileInfo info(url.toLocalFile());
+        if (!info.isFile())
+            continue;
+
+        if (info.suffix().compare(QStringLiteral("py"), Qt::CaseInsensitive) == 0)
+            return true;
+    }
+
+    return false;
+}
+
 QImage
 ShelfListPrivate::imageMimeData(const QMimeData* mime)
 {
@@ -214,6 +240,36 @@ ShelfListPrivate::imageMimeData(const QMimeData* mime)
     }
 
     return QImage();
+}
+
+QString
+ShelfListPrivate::scriptFileMimeData(const QMimeData* mime) const
+{
+    if (!mime || !mime->hasUrls())
+        return QString();
+
+    const QList<QUrl> urls = mime->urls();
+    for (const QUrl& url : urls) {
+        if (!url.isLocalFile())
+            continue;
+
+        const QString filePath = url.toLocalFile();
+        const QFileInfo info(filePath);
+
+        if (!info.isFile())
+            continue;
+
+        if (info.suffix().compare(QStringLiteral("py"), Qt::CaseInsensitive) != 0)
+            continue;
+
+        QFile file(filePath);
+        if (!file.open(QIODevice::ReadOnly | QIODevice::Text))
+            continue;
+
+        return QString::fromUtf8(file.readAll());
+    }
+
+    return QString();
 }
 
 QImage
@@ -336,7 +392,11 @@ ShelfList::pressedIndex() const
 QStringList
 ShelfList::mimeTypes() const
 {
-    return { QString::fromLatin1(mime::script), QStringLiteral("text/plain") };
+    return {
+        QString::fromLatin1(mime::script),
+        QStringLiteral("text/plain"),
+        QStringLiteral("text/uri-list")
+    };
 }
 
 QMimeData*
@@ -361,7 +421,7 @@ ShelfList::dragEnterEvent(QDragEnterEvent* event)
     }
 
     if (event->mimeData()->hasFormat(mime::script) || event->mimeData()->hasText()
-        || p->hasImageMime(event->mimeData())) {
+        || p->hasScriptFileMime(event->mimeData()) || p->hasImageMime(event->mimeData())) {
         event->acceptProposedAction();
         return;
     }
@@ -379,7 +439,7 @@ ShelfList::dragMoveEvent(QDragMoveEvent* event)
     }
 
     if (event->mimeData()->hasFormat(mime::script) || event->mimeData()->hasText()
-        || p->hasImageMime(event->mimeData())) {
+        || p->hasScriptFileMime(event->mimeData()) || p->hasImageMime(event->mimeData())) {
         event->acceptProposedAction();
         return;
     }
@@ -430,6 +490,8 @@ ShelfList::dropEvent(QDropEvent* event)
     QString code;
     if (event->mimeData()->hasFormat(mime::script))
         code = QString::fromUtf8(event->mimeData()->data(mime::script));
+    else if (p->hasScriptFileMime(event->mimeData()))
+        code = p->scriptFileMimeData(event->mimeData());
     else if (event->mimeData()->hasText())
         code = event->mimeData()->text();
 
@@ -489,7 +551,7 @@ ShelfList::mouseMoveEvent(QMouseEvent* event)
     if (!mime)
         return;
 
-auto* drag = new QDrag(this);
+    auto* drag = new QDrag(this);
     drag->setMimeData(mime);
     drag->setPixmap(item->icon().pixmap(iconSize()));
     drag->exec(Qt::CopyAction | Qt::MoveAction, Qt::MoveAction);

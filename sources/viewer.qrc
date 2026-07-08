@@ -10,6 +10,7 @@
     <file>../resources/Code.png</file>
     <file>../resources/Collapse.png</file>
     <file>../resources/DropDown.png</file>
+    <file>../resources/Down.png</file>
     <file>../resources/Expand.png</file>
     <file>../resources/Export.png</file>
     <file>../resources/ExportImage.png</file>
@@ -28,6 +29,7 @@
     <file>../resources/Run.png</file>
     <file>../resources/Shaded.png</file>
     <file>../resources/Undo.png</file>
+    <file>../resources/Up.png</file>
     <file>../resources/Visible.png</file>
     <file>../resources/Wireframe.png</file>
   </qresource>

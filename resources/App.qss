@@ -416,65 +416,48 @@ QAbstractScrollArea::corner {
     background: $color.basealt;
 }
 
-QSpinBox
-{
-    color: $color.text;
-    font-size: $font.size.medium;
-    background-color: $color.basealt;
-    selection-background-color: $color.highlight;
-    min-height: 20px;
-    border: 1px solid $color.borderalt;
-    border-radius: 0px;
-    padding: 2px 22px 2px 6px;
-}
-
-QSpinBox:disabled
-{
-    color: $color.text.disabled;
-}
-
-QSpinBox::up-button,
-QSpinBox::down-button
-{
-    subcontrol-origin: border;
-    width: 16px;
-    border: 0px;
-    background-color: $color.basealt;
-}
-
-QSpinBox::up-button
-{
-    subcontrol-position: top right;
-}
-
-QSpinBox::down-button
-{
-    subcontrol-position: bottom right;
-}
-
-QSpinBox::up-arrow
-{
-    width: 10px;
-    height: 10px;
-    image: url("$icon.right");
-    transform: rotate(-90deg);
-}
-
-QSpinBox::down-arrow
-{
-    width: 10px;
-    height: 10px;
-    image: url("$icon.right");
-    transform: rotate(90deg);
-}
-
+QSpinBox,
+QDoubleSpinBox,
 QAbstractSpinBox
 {
     color: $color.text;
     font-size: $font.size.medium;
     background-color: $color.basealt;
     selection-background-color: $color.highlight;
+    height: 24px;
+    min-height: 24px;
     border: 1px solid $color.borderalt;
+    border-radius: 0px;
+    margin-top: 4px;
+    padding-left: 10px;
+    padding-right: 20px;
+}
+
+QSpinBox::up-button,
+QSpinBox::down-button,
+QDoubleSpinBox::up-button,
+QDoubleSpinBox::down-button
+{
+    subcontrol-origin: border;
+    width: 28px;
+    border: 0px;
+    background: transparent;
+}
+
+QSpinBox::up-arrow,
+QDoubleSpinBox::up-arrow
+{
+    width: 10px;
+    height: 10px;
+    image: url("$icon.up");
+}
+
+QSpinBox::down-arrow,
+QDoubleSpinBox::down-arrow
+{
+    width: 10px;
+    height: 10px;
+    image: url("$icon.down");
 }
 
 QSplitter::handle {
