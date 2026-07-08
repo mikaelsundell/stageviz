@@ -438,15 +438,6 @@
      </property>
      <addaction name="actionClear"/>
     </widget>
-    <widget class="QMenu" name="fileState">
-     <property name="title">
-      <string>State</string>
-     </property>
-     <addaction name="fileStateLoad"/>
-     <addaction name="fileStateSave"/>
-     <addaction name="separator"/>
-     <addaction name="fileStateAutoSave"/>
-    </widget>
     <addaction name="fileNew"/>
     <addaction name="fileOpen"/>
     <addaction name="fileMerge"/>
@@ -461,11 +452,10 @@
     <addaction name="fileExportSelected"/>
     <addaction name="fileExportImage"/>
     <addaction name="separator"/>
-    <addaction name="fileState"/>
+    <addaction name="filePreserveState"/>
     <addaction name="separator"/>
     <addaction name="fileReload"/>
     <addaction name="fileClose"/>
-    <addaction name="separator"/>
     <addaction name="separator"/>
     <addaction name="fileSaveSettings"/>
     <addaction name="separator"/>
@@ -1142,24 +1132,6 @@
     <string>Check for updates ...</string>
    </property>
   </action>
-  <action name="fileStateLoad">
-   <property name="text">
-    <string>Load</string>
-   </property>
-  </action>
-  <action name="fileStateSave">
-   <property name="text">
-    <string>Save</string>
-   </property>
-  </action>
-  <action name="fileStateAutoSave">
-   <property name="checkable">
-    <bool>true</bool>
-   </property>
-   <property name="text">
-    <string>Auto save</string>
-   </property>
-  </action>
   <action name="displayComplexityLow">
    <property name="checkable">
     <bool>true</bool>
@@ -1193,6 +1165,17 @@
    </property>
    <property name="text">
     <string>Very high</string>
+   </property>
+  </action>
+  <action name="filePreserveState">
+   <property name="checkable">
+    <bool>true</bool>
+   </property>
+   <property name="checked">
+    <bool>false</bool>
+   </property>
+   <property name="text">
+    <string>Preserve state</string>
    </property>
   </action>
  </widget>

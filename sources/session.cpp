@@ -148,7 +148,7 @@ public:
         Session::LoadPolicy loadPolicy = Session::LoadPolicy::All;
         Session::PrimsUpdate primsUpdate = Session::PrimsUpdate::Immediate;
         Session::StageStatus stageStatus = Session::StageStatus::Closed;
-        bool autoSaveState = true;
+        bool preserveState = true;
         NoticeBatch pendingNotices;
         QString filename;
         QString changeName;
@@ -203,12 +203,20 @@ SessionPrivate::initStage()
         d.bbox = bbox;
         d.pendingNotices.entries.clear();
     }
+
     if (d.viewState && d.viewState->camera()) {
         ViewCamera* camera = d.viewState->camera();
-        camera->setBoundingBox(bbox);
-        camera->setCameraUp(up == Session::StageUp::Y ? ViewCamera::Y : ViewCamera::Z);
-        camera->reset();
+
+        if (camera->isIdentity()) {
+            
+            qDebug() << "camera will be reset";
+            
+            camera->setBoundingBox(bbox);
+            camera->setCameraUp(up == Session::StageUp::Y ? ViewCamera::Y : ViewCamera::Z);
+            camera->reset();
+        }
     }
+
     d.stageWatcher->watch(stage);
 }
 
@@ -315,42 +323,55 @@ SessionPrivate::newStage(Session::LoadPolicy policy)
 bool
 SessionPrivate::loadFromFile(const QString& filename, Session::LoadPolicy policy)
 {
+    const QString absFilename = QFileInfo(filename).absoluteFilePath();
+    const std::string identifier = QStringToString(absFilename);
+
+    close();
+
     QList<SdfPath> mask;
     bool loaded = false;
-    bool autoSaveState = false;
+    bool preserveState = false;
+
     {
         WRITE_LOCKER(locker, &d.stageLock, "stageLock");
         StageBlocker blocker(d.stageWatcher.data());
         d.stageWatcher->init();
 
+        if (SdfLayerHandle existingLayer = SdfLayer::Find(identifier))
+            existingLayer->Reload(true);
+
         if (policy == Session::LoadPolicy::All)
-            d.stage = UsdStage::Open(QStringToString(filename), UsdStage::LoadAll);
+            d.stage = UsdStage::Open(identifier, UsdStage::LoadAll);
         else
-            d.stage = UsdStage::Open(QStringToString(filename), UsdStage::LoadNone);
+            d.stage = UsdStage::Open(identifier, UsdStage::LoadNone);
 
         d.loadPolicy = policy;
         d.mask.clear();
         d.pendingNotices.entries.clear();
 
         if (d.stage) {
-            d.filename = QFileInfo(filename).absoluteFilePath();
+            d.filename = absFilename;
             loaded = true;
-            autoSaveState = d.autoSaveState;
+            preserveState = d.preserveState;
         }
         else {
             d.stageStatus = Session::StageStatus::Failed;
             return false;
         }
+
         mask = d.mask;
     }
 
     d.commandStack->clear();
     d.selectionList->clear();
 
+    if (loaded && !preserveState && d.viewState && d.viewState->camera())
+        d.viewState->camera()->resetView();
+
     if (loaded)
         initStage();
 
-    if (loaded && autoSaveState) {
+    if (loaded && preserveState) {
         const QString stateFilename = QFileInfo(d.filename + ".session").absoluteFilePath();
         if (!loadState(stateFilename)) {
             close();
@@ -451,7 +472,7 @@ SessionPrivate::saveToFile(const QString& filename)
 {
     QString stageFilename;
     Session::LoadPolicy loadPolicy = Session::LoadPolicy::All;
-    bool autoSaveState = false;
+    bool preserveState = false;
     bool saveAs = false;
 
     {
@@ -471,7 +492,7 @@ SessionPrivate::saveToFile(const QString& filename)
                 currentFile = QFileInfo(qt::StringToQString(rootLayer->GetRealPath())).absoluteFilePath();
 
             loadPolicy = d.loadPolicy;
-            autoSaveState = d.autoSaveState;
+            preserveState = d.preserveState;
 
             if (!rootLayer->IsAnonymous() && currentFile == stageFilename) {
                 d.stage->Save();
@@ -489,7 +510,7 @@ SessionPrivate::saveToFile(const QString& filename)
         }
     }
 
-    if (autoSaveState) {
+    if (preserveState) {
         const QString stateFilename = QFileInfo(stageFilename + ".session").absoluteFilePath();
         if (!saveState(stateFilename))
             return false;
@@ -506,7 +527,7 @@ bool
 SessionPrivate::copyToFile(const QString& filename)
 {
     QString stageFilename;
-    bool autoSaveState = false;
+    bool preserveState = false;
     {
         READ_LOCKER(locker, &d.stageLock, "stageLock");
         try {
@@ -522,12 +543,12 @@ SessionPrivate::copyToFile(const QString& filename)
             if (!rootLayer->Export(QStringToString(stageFilename)))
                 return false;
 
-            autoSaveState = d.autoSaveState;
+            preserveState = d.preserveState;
         } catch (const std::exception&) {
             return false;
         }
     }
-    if (autoSaveState) {
+    if (preserveState) {
         const QString stateFilename = QFileInfo(stageFilename + ".session").absoluteFilePath();
         if (!saveState(stateFilename))
             return false;
@@ -572,50 +593,9 @@ SessionPrivate::loadState(const QString& filename)
         return false;
 
     const QJsonObject root = doc.object();
-
-    if (d.viewState && d.viewState->camera()) {
-        ViewCamera* camera = d.viewState->camera();
-        const QJsonObject cameraObject = root.value("viewCamera").toObject();
-
-        if (!cameraObject.isEmpty()) {
-            if (cameraObject.contains("aspectRatio"))
-                camera->setAspectRatio(cameraObject.value("aspectRatio").toDouble());
-
-            if (cameraObject.contains("fov"))
-                camera->setFov(cameraObject.value("fov").toDouble());
-
-            if (cameraObject.contains("nearClipping"))
-                camera->setNearClipping(cameraObject.value("nearClipping").toDouble());
-
-            if (cameraObject.contains("farClipping"))
-                camera->setFarClipping(cameraObject.value("farClipping").toDouble());
-
-            if (cameraObject.contains("cameraUp")) {
-                const QString value = cameraObject.value("cameraUp").toString();
-                if (value == "X")
-                    camera->setCameraUp(ViewCamera::X);
-                else if (value == "Y")
-                    camera->setCameraUp(ViewCamera::Y);
-                else if (value == "Z")
-                    camera->setCameraUp(ViewCamera::Z);
-            }
-
-            if (cameraObject.contains("fovDirection")) {
-                const QString value = cameraObject.value("fovDirection").toString();
-                if (value == "Horizontal")
-                    camera->setFovDirection(ViewCamera::Horizontal);
-                else if (value == "Vertical")
-                    camera->setFovDirection(ViewCamera::Vertical);
-            }
-
-            const QJsonArray focusPoint = cameraObject.value("focusPoint").toArray();
-            if (focusPoint.size() == 3) {
-                camera->setFocusPoint(
-                    GfVec3d(focusPoint.at(0).toDouble(), focusPoint.at(1).toDouble(), focusPoint.at(2).toDouble()));
-            }
-        }
-    }
+    const QJsonObject cameraObject = root.value("viewCamera").toObject();
     const QJsonArray payloads = root.value("loadedPayloads").toArray();
+
     {
         WRITE_LOCKER(locker, &d.stageLock, "stageLock");
         if (!d.stage)
@@ -643,11 +623,88 @@ SessionPrivate::loadState(const QString& filename)
                 prim.Load();
         }
     }
+
     const GfBBox3d bbox = boundingBox();
     {
         WRITE_LOCKER(locker, &d.stageLock, "stageLock");
         d.bbox = bbox;
     }
+
+    if (d.viewState && d.viewState->camera()) {
+        ViewCamera* camera = d.viewState->camera();
+
+        camera->setBoundingBox(bbox);
+
+        if (!cameraObject.isEmpty()) {
+            if (cameraObject.contains("aspectRatio"))
+                camera->setAspectRatio(cameraObject.value("aspectRatio").toDouble(camera->aspectRatio()));
+
+            if (cameraObject.contains("fov"))
+                camera->setFov(cameraObject.value("fov").toDouble(camera->fov()));
+
+            if (cameraObject.contains("fovDirection")) {
+                const QString value = cameraObject.value("fovDirection").toString();
+                if (value == "Horizontal")
+                    camera->setFovDirection(ViewCamera::Horizontal);
+                else if (value == "Vertical")
+                    camera->setFovDirection(ViewCamera::Vertical);
+            }
+
+            if (cameraObject.contains("nearClipping"))
+                camera->setNearClipping(cameraObject.value("nearClipping").toDouble(camera->nearClipping()));
+
+            if (cameraObject.contains("farClipping"))
+                camera->setFarClipping(cameraObject.value("farClipping").toDouble(camera->farClipping()));
+
+            if (cameraObject.contains("fit"))
+                camera->setFit(cameraObject.value("fit").toDouble(camera->fit()));
+
+            if (cameraObject.contains("cameraMode")) {
+                const QString value = cameraObject.value("cameraMode").toString();
+                if (value == "None")
+                    camera->setCameraMode(ViewCamera::None);
+                else if (value == "Truck")
+                    camera->setCameraMode(ViewCamera::Truck);
+                else if (value == "Tumble")
+                    camera->setCameraMode(ViewCamera::Tumble);
+                else if (value == "Zoom")
+                    camera->setCameraMode(ViewCamera::Zoom);
+                else if (value == "Pick")
+                    camera->setCameraMode(ViewCamera::Pick);
+            }
+
+            if (cameraObject.contains("cameraUp")) {
+                const QString value = cameraObject.value("cameraUp").toString();
+                if (value == "X")
+                    camera->setCameraUp(ViewCamera::X);
+                else if (value == "Y")
+                    camera->setCameraUp(ViewCamera::Y);
+                else if (value == "Z")
+                    camera->setCameraUp(ViewCamera::Z);
+            }
+
+            const QJsonArray focusPoint = cameraObject.value("focusPoint").toArray();
+            if (focusPoint.size() == 3) {
+                camera->setFocusPoint(
+                    GfVec3d(focusPoint.at(0).toDouble(),
+                            focusPoint.at(1).toDouble(),
+                            focusPoint.at(2).toDouble()));
+            }
+
+            if (cameraObject.contains("axisYaw"))
+                camera->setAxisYaw(cameraObject.value("axisYaw").toDouble(camera->axisYaw()));
+
+            if (cameraObject.contains("axisPitch"))
+                camera->setAxisPitch(cameraObject.value("axisPitch").toDouble(camera->axisPitch()));
+
+            if (cameraObject.contains("axisRoll"))
+                camera->setAxisRoll(cameraObject.value("axisRoll").toDouble(camera->axisRoll()));
+
+            if (cameraObject.contains("cameraDistance"))
+                camera->setCameraDistance(cameraObject.value("cameraDistance").toDouble(camera->cameraDistance()));
+        }
+    }
+
     Q_EMIT d.session->boundingBoxChanged(bbox);
     return true;
 }
@@ -682,13 +739,16 @@ SessionPrivate::saveState(const QString& filename)
                 stack.push(child);
         }
     }
+
     QJsonObject root;
     root["version"] = 1;
     root["stageFile"] = stageFilename;
     root["loadedPayloads"] = payloads;
+
     if (d.viewState && d.viewState->camera()) {
         ViewCamera* camera = d.viewState->camera();
-        auto cameraUpToString = [](ViewCamera::CameraUp value) {
+
+        auto cameraUp = [](ViewCamera::CameraUp value) {
             switch (value) {
             case ViewCamera::X: return QStringLiteral("X");
             case ViewCamera::Y: return QStringLiteral("Y");
@@ -697,7 +757,18 @@ SessionPrivate::saveState(const QString& filename)
             return QStringLiteral("Y");
         };
 
-        auto fovDirectionToString = [](ViewCamera::FovDirection value) {
+        auto cameraMode = [](ViewCamera::CameraMode value) {
+            switch (value) {
+            case ViewCamera::None: return QStringLiteral("None");
+            case ViewCamera::Truck: return QStringLiteral("Truck");
+            case ViewCamera::Tumble: return QStringLiteral("Tumble");
+            case ViewCamera::Zoom: return QStringLiteral("Zoom");
+            case ViewCamera::Pick: return QStringLiteral("Pick");
+            }
+            return QStringLiteral("None");
+        };
+
+        auto fovDirection = [](ViewCamera::FovDirection value) {
             switch (value) {
             case ViewCamera::Horizontal: return QStringLiteral("Horizontal");
             case ViewCamera::Vertical: return QStringLiteral("Vertical");
@@ -715,11 +786,18 @@ SessionPrivate::saveState(const QString& filename)
         QJsonObject cameraObject;
         cameraObject["aspectRatio"] = camera->aspectRatio();
         cameraObject["fov"] = camera->fov();
+        cameraObject["fovDirection"] = fovDirection(camera->fovDirection());
         cameraObject["nearClipping"] = camera->nearClipping();
         cameraObject["farClipping"] = camera->farClipping();
-        cameraObject["cameraUp"] = cameraUpToString(camera->cameraUp());
-        cameraObject["fovDirection"] = fovDirectionToString(camera->fovDirection());
+        cameraObject["fit"] = camera->fit();
+        cameraObject["cameraMode"] = cameraMode(camera->cameraMode());
+        cameraObject["cameraUp"] = cameraUp(camera->cameraUp());
         cameraObject["focusPoint"] = focusPointArray;
+        cameraObject["axisYaw"] = camera->axisYaw();
+        cameraObject["axisPitch"] = camera->axisPitch();
+        cameraObject["axisRoll"] = camera->axisRoll();
+        cameraObject["cameraDistance"] = camera->cameraDistance();
+
         root["viewCamera"] = cameraObject;
     }
 
@@ -1097,9 +1175,9 @@ Session::saveState(const QString& filename)
 }
 
 void
-Session::setAutoSaveState(bool enabled)
+Session::setPreserveState(bool enabled)
 {
-    p->d.autoSaveState = enabled;
+    p->d.preserveState = enabled;
 }
 
 bool

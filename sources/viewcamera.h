@@ -65,6 +65,19 @@ public:
      * @brief Destroys the ViewCamera instance.
      */
     ~ViewCamera();
+    
+    /**
+     * @brief Returns whether the camera is in its default state.
+     *
+     * A camera is considered to be in its identity state if it has not
+     * been manipulated or configured since construction or the last call
+     * to reset(). This is primarily used during stage initialization to
+     * determine whether the camera should be initialized from the stage
+     * bounding box or whether an existing camera state should be preserved.
+     *
+     * @return True if the camera is in its default state.
+     */
+    bool isIdentity() const;
 
     /** @name Framing and Navigation */
     ///@{
@@ -82,8 +95,8 @@ public:
     /**
      * @brief Rotates the camera around the focus point.
      *
-     * @param x Horizontal rotation.
-     * @param y Vertical rotation.
+     * @param x Horizontal rotation delta.
+     * @param y Vertical rotation delta.
      */
     void tumble(double x, double y);
 
@@ -184,6 +197,21 @@ public:
      */
     void setBoundingBox(const GfBBox3d& boundingBox);
 
+    /**
+     * @brief Returns the framing fit multiplier.
+     *
+     * The fit value is used by frameAll() to leave additional space
+     * around the scene bounding box.
+     */
+    double fit() const;
+
+    /**
+     * @brief Sets the framing fit multiplier.
+     *
+     * @param fit Fit multiplier used by frameAll().
+     */
+    void setFit(double fit);
+
     ///@}
 
     /** @name Orientation */
@@ -198,6 +226,45 @@ public:
      * @brief Sets the camera up-axis.
      */
     void setCameraUp(ViewCamera::CameraUp cameraUp);
+
+    /**
+     * @brief Returns the camera yaw angle in degrees.
+     */
+    double axisYaw() const;
+
+    /**
+     * @brief Sets the camera yaw angle in degrees.
+     *
+     * This value is part of the orbit transform used to construct
+     * the final USD camera transform.
+     */
+    void setAxisYaw(double yaw);
+
+    /**
+     * @brief Returns the camera pitch angle in degrees.
+     */
+    double axisPitch() const;
+
+    /**
+     * @brief Sets the camera pitch angle in degrees.
+     *
+     * This value is part of the orbit transform used to construct
+     * the final USD camera transform.
+     */
+    void setAxisPitch(double pitch);
+
+    /**
+     * @brief Returns the camera roll/orbit angle in degrees.
+     */
+    double axisRoll() const;
+
+    /**
+     * @brief Sets the camera roll/orbit angle in degrees.
+     *
+     * This value is part of the orbit transform used to construct
+     * the final USD camera transform.
+     */
+    void setAxisRoll(double roll);
 
     ///@}
 
@@ -237,7 +304,25 @@ public:
     /**
      * @brief Sets the far clipping plane distance.
      */
-    void setFarClipping(double near);
+    void setFarClipping(double far);
+
+    ///@}
+
+    /** @name Distance */
+    ///@{
+
+    /**
+     * @brief Returns the camera distance from the focus point.
+     */
+    double cameraDistance() const;
+
+    /**
+     * @brief Sets the camera distance from the focus point.
+     *
+     * This distance is used when constructing the orbit camera
+     * transform and is required to restore the exact view.
+     */
+    void setCameraDistance(double distance);
 
     ///@}
 
@@ -245,10 +330,10 @@ public:
      * @brief Resets the camera to its default state.
      *
      * Restores default projection, clipping, orientation, focus, and
-     * navigation parameters.
+     * navigation parameters while preserving the current bounding box,
+     * range, and up-axis.
      */
     void reset();
-
 
 Q_SIGNALS:
     /**

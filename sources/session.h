@@ -236,9 +236,9 @@ public:
     bool saveState(const QString& filename);
 
     /**
-     * @brief Enables automatic state saving.
+     * @brief Enables preservation of state.
      */
-    void setAutoSaveState(bool enabled);
+    void setPreserveState(bool enabled);
 
     /**
      * @brief Reloads the currently opened stage.

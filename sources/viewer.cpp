@@ -23,6 +23,8 @@
 #include "style.h"
 #include "tracelocks.h"
 #include "usdutils.h"
+#include "viewcamera.h"
+#include "viewstate.h"
 #include <QActionGroup>
 #include <QClipboard>
 #include <QColorDialog>
@@ -72,17 +74,13 @@ public Q_SLOTS:
     void save();
     void saveAs();
     void saveCopy();
+    void preserveState();
     void exportAll();
     void exportSelected();
     void exportImage();
     void reload();
     void close();
-    void stateLoad();
-    void stateSave();
-    void autoSave();
     void saveSettings();
-    void restoreWindowSettings();
-    void saveWindowSettings();
     void exit();
     void undo();
     void redo();
@@ -219,12 +217,10 @@ ViewerPrivate::init()
     connect(d.ui->fileSave, &QAction::triggered, this, &ViewerPrivate::save);
     connect(d.ui->fileSaveAs, &QAction::triggered, this, &ViewerPrivate::saveAs);
     connect(d.ui->fileSaveCopy, &QAction::triggered, this, &ViewerPrivate::saveCopy);
+    connect(d.ui->filePreserveState, &QAction::triggered, this, &ViewerPrivate::preserveState);
     connect(d.ui->fileExportAll, &QAction::triggered, this, &ViewerPrivate::exportAll);
     connect(d.ui->fileExportSelected, &QAction::triggered, this, &ViewerPrivate::exportSelected);
     connect(d.ui->fileExportImage, &QAction::triggered, this, &ViewerPrivate::exportImage);
-    connect(d.ui->fileStateLoad, &QAction::triggered, this, &ViewerPrivate::stateLoad);
-    connect(d.ui->fileStateSave, &QAction::triggered, this, &ViewerPrivate::stateSave);
-    connect(d.ui->fileStateAutoSave, &QAction::triggered, this, &ViewerPrivate::autoSave);
     connect(d.ui->fileReload, &QAction::triggered, this, &ViewerPrivate::reload);
     connect(d.ui->fileClose, &QAction::triggered, this, &ViewerPrivate::close);
     connect(d.ui->fileSaveSettings, &QAction::triggered, this, &ViewerPrivate::saveSettings);
@@ -320,7 +316,6 @@ ViewerPrivate::init()
     connect(d.ui->viewConsole, &QAction::toggled, this, &ViewerPrivate::toggleConsole);
     renderView()->setFocus();
     initSettings();
-    restoreWindowSettings();
     newFile();
 }
 
@@ -446,7 +441,12 @@ ViewerPrivate::initSettings()
         d.loadPolicy = Session::LoadPolicy::None;
         d.ui->policyPayload->setChecked(true);
     }
-    bool sceneStats = settings()->value("sceneTree", true).toBool();
+
+    const bool preserveState = settings()->value("preserveState", true).toBool();
+    d.ui->filePreserveState->setChecked(preserveState);
+    session()->setPreserveState(preserveState);
+    
+    bool sceneStats = settings()->value("sceneStats", true).toBool();
     d.ui->hudSceneStats->setChecked(sceneStats);
     renderView()->setSceneStatsEnabled(sceneStats);
 
@@ -460,6 +460,26 @@ ViewerPrivate::initSettings()
 
     d.recentFiles = settings()->value("recentFiles", QStringList()).toStringList();
     initRecentFiles();
+    
+    const QByteArray geometry = settings()->value("viewer/windowGeometry").toByteArray();
+    if (!geometry.isEmpty())
+        d.viewer->restoreGeometry(geometry);
+
+    if (d.ui->splitter) {
+        const QByteArray splitterState = settings()->value("viewer/splitterState").toByteArray();
+        if (!splitterState.isEmpty())
+            d.ui->splitter->restoreState(splitterState);
+    }
+
+    const Qt::WindowStates windowState =
+        Qt::WindowStates(settings()->value("viewer/windowState", int(Qt::WindowNoState)).toInt())
+        & ~Qt::WindowMinimized;
+
+    if (windowState != Qt::WindowNoState)
+        QTimer::singleShot(0, d.viewer, [viewer = d.viewer, windowState]() {
+            if (viewer)
+                viewer->setWindowState(windowState);
+        });
 }
 
 bool
@@ -594,9 +614,7 @@ ViewerPrivate::enable(bool enable)
                                 d.ui->fileSave,
                                 d.ui->fileSaveAs,
                                 d.ui->fileSaveCopy,
-                                d.ui->fileStateLoad,
-                                d.ui->fileStateSave,
-                                d.ui->fileStateAutoSave,
+                                d.ui->filePreserveState,
                                 d.ui->fileExportAll,
                                 d.ui->fileExportSelected,
                                 d.ui->fileExportImage,
@@ -799,6 +817,14 @@ ViewerPrivate::saveCopy()
 }
 
 void
+ViewerPrivate::preserveState()
+{
+    const bool checked = d.ui->filePreserveState->isChecked();
+    session()->setPreserveState(checked);
+    settings()->setValue("preserveState", checked);
+}
+
+void
 ViewerPrivate::exportAll()
 {
     QString exportDir = settings()->value("exportAllDir", QDir::homePath()).toString();
@@ -930,95 +956,6 @@ ViewerPrivate::exportImage()
 }
 
 void
-ViewerPrivate::stateLoad()
-{
-    QString stateDir = settings()->value("stateDir", QDir::homePath()).toString();
-    QString currentFile = session()->filename();
-    QString defaultName;
-
-    if (!currentFile.isEmpty()) {
-        QFileInfo info(currentFile);
-        defaultName = info.fileName() + ".session";
-        stateDir = info.absolutePath();
-    }
-    else {
-        defaultName = "Untitled.usd.session";
-    }
-
-    const QString filter = QStringLiteral("Session Files (*.session)");
-    const QString filename = QFileDialog::getOpenFileName(d.viewer.data(), "Load State",
-                                                          QDir(stateDir).filePath(defaultName), filter);
-
-    if (filename.isEmpty())
-        return;
-
-    QElapsedTimer timer;
-    timer.start();
-
-    if (session()->loadState(filename)) {
-        const double elapsedSec = timer.elapsed() / 1000.0;
-
-        settings()->setValue("stateDir", QFileInfo(filename).absolutePath());
-        session()->notifyStatus(
-            Session::Notify::Status::Success,
-            QString("Loaded state %1 in %2 seconds").arg(filename, QString::number(elapsedSec, 'f', 2)));
-    }
-    else {
-        session()->notifyStatus(Session::Notify::Status::Error, QString("Failed to load state: %1").arg(filename));
-    }
-}
-
-void
-ViewerPrivate::stateSave()
-{
-    QString stateDir = settings()->value("stateDir", QDir::homePath()).toString();
-    QString currentFile = session()->filename();
-    QString defaultName;
-
-    if (!currentFile.isEmpty()) {
-        QFileInfo info(currentFile);
-        defaultName = info.fileName() + ".session";
-        stateDir = info.absolutePath();
-    }
-    else {
-        defaultName = "Untitled.usd.session";
-    }
-
-    const QString filter = QStringLiteral("Session Files (*.session)");
-    QString filename = QFileDialog::getSaveFileName(d.viewer.data(), "Save State", QDir(stateDir).filePath(defaultName),
-                                                    filter);
-
-    if (filename.isEmpty())
-        return;
-
-    if (QFileInfo(filename).suffix().isEmpty())
-        filename += ".session";
-
-    QElapsedTimer timer;
-    timer.start();
-
-    if (session()->saveState(filename)) {
-        const double elapsedSec = timer.elapsed() / 1000.0;
-
-        settings()->setValue("stateDir", QFileInfo(filename).absolutePath());
-        session()->notifyStatus(
-            Session::Notify::Status::Success,
-            QString("Saved state %1 in %2 seconds").arg(filename, QString::number(elapsedSec, 'f', 2)));
-    }
-    else {
-        session()->notifyStatus(Session::Notify::Status::Error, QString("Failed to save state: %1").arg(filename));
-    }
-}
-
-void
-ViewerPrivate::autoSave()
-{
-    const bool checked = d.ui->fileStateAutoSave->isChecked();
-    session()->setAutoSaveState(checked);
-    settings()->setValue("stateAutoSave", checked);
-}
-
-void
 ViewerPrivate::reload()
 {
     if (!session()->isLoaded())
@@ -1099,53 +1036,17 @@ ViewerPrivate::selectInvert()
 void
 ViewerPrivate::saveSettings()
 {
-    saveWindowSettings();
+    Qt::WindowStates windowState = d.viewer->windowState();
+    windowState &= ~Qt::WindowMinimized;
     settings()->setValue("recentFiles", d.recentFiles);
     settings()->setValue("sceneStats", d.ui->hudSceneStats->isChecked());
     settings()->setValue("performanceStats", d.ui->hudPerformanceStats->isChecked());
     settings()->setValue("cameraAxis", d.ui->hudCameraAxis->isChecked());
     settings()->setValue("viewer/outlinerVisible", d.ui->outlinerWidget->isVisible());
     settings()->setValue("viewer/progressVisible", d.ui->progressWidget->isVisible());
-}
-
-void
-ViewerPrivate::restoreWindowSettings()
-{
-    const QByteArray geometry = settings()->value("viewer/windowGeometry").toByteArray();
-    if (!geometry.isEmpty())
-        d.viewer->restoreGeometry(geometry);
-
-    if (d.ui->splitter) {
-        const QByteArray splitterState = settings()->value("viewer/splitterState").toByteArray();
-        if (!splitterState.isEmpty())
-            d.ui->splitter->restoreState(splitterState);
-    }
-
-    const Qt::WindowStates windowState =
-        Qt::WindowStates(settings()->value("viewer/windowState", int(Qt::WindowNoState)).toInt())
-        & ~Qt::WindowMinimized;
-
-    if (windowState != Qt::WindowNoState)
-        QTimer::singleShot(0, d.viewer, [viewer = d.viewer, windowState]() {
-            if (viewer)
-                viewer->setWindowState(windowState);
-        });
-}
-
-void
-ViewerPrivate::saveWindowSettings()
-{
-    if (!d.viewer)
-        return;
-
-    Qt::WindowStates windowState = d.viewer->windowState();
-    windowState &= ~Qt::WindowMinimized;
-
     settings()->setValue("viewer/windowGeometry", d.viewer->saveGeometry());
     settings()->setValue("viewer/windowState", int(windowState));
-
-    if (d.ui && d.ui->splitter)
-        settings()->setValue("viewer/splitterState", d.ui->splitter->saveState());
+    settings()->setValue("viewer/splitterState", d.ui->splitter->saveState());
 }
 
 void
@@ -1582,10 +1483,22 @@ ViewerPrivate::backgroundColor()
 void
 ViewerPrivate::updateBoundingBox(const GfBBox3d& bbox)
 {
-    if (!d.init && !bbox.GetRange().IsEmpty()) {
-        frameAll();
+    if (d.init)
+        return;
+
+    if (bbox.GetRange().IsEmpty())
+        return;
+
+    ViewCamera* camera = session()->viewState() ? session()->viewState()->camera() : nullptr;
+    if (!camera) {
         d.init = true;
+        return;
     }
+
+    if (camera->isIdentity())
+        frameAll();
+
+    d.init = true;
 }
 
 void
@@ -1685,12 +1598,22 @@ ViewerPrivate::updatePrims(const NoticeBatch& batch)
 }
 
 void
-ViewerPrivate::updateStage(UsdStageRefPtr stage, Session::LoadPolicy policy, Session::StageStatus status)
+ViewerPrivate::updateStage(UsdStageRefPtr stage,
+                           Session::LoadPolicy policy,
+                           Session::StageStatus status)
 {
     Q_UNUSED(stage);
-    Q_UNUSED(policy);
 
     d.init = false;
+
+    d.loadPolicy = policy;
+    d.ui->policyAll->setChecked(policy == Session::LoadPolicy::All);
+    d.ui->policyPayload->setChecked(policy == Session::LoadPolicy::None);
+
+    settings()->setValue(
+        "loadType",
+        policy == Session::LoadPolicy::All ? "all" : "payload");
+
     if (status == Session::StageStatus::Loaded)
         enable(true);
 }
