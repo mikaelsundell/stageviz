@@ -51,9 +51,9 @@ QComboBox {
     color: $color.text;
     font-size: $font.size.medium;
     background-color: $color.basealt;
+    height: 24px;
     padding-left: 10px;
-    padding-right: 10px;
-    padding-bottom: 2px;
+    padding-right: 28px;
     border-radius: 0px;
     margin-top: 4px;
     border: 1px solid $color.borderalt;
@@ -73,18 +73,18 @@ QComboBox:disabled {
     color: $color.text.disabled;
 }
 
+QComboBox::drop-down {
+    subcontrol-origin: border;
+    subcontrol-position: top right;
+    width: 24px;
+    border: 0px;
+    background-color: transparent;
+}
+
 QComboBox::down-arrow {
     image: url("$icon.dropdown");
     width: 12px;
     height: 12px;
-}
-
-QComboBox::drop-down {
-    subcontrol-origin: padding;
-    subcontrol-position: top right;
-    width: 16px;
-    right: 4px;
-    border: 0px;
 }
 
 QComboBox::item {

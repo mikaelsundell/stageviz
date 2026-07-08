@@ -4,7 +4,6 @@
 
 #include "pyapplication.h"
 
-#include <QMainWindow>
 #include <QTimer>
 #include <vector>
 
@@ -277,11 +276,11 @@ PyApplication_window(PyApplicationObject* self, PyObject*)
     if (!checkApplication(self->application))
         return nullptr;
 
-    QMainWindow* window = self->application->window();
+    QWidget* window = self->application->window();
     if (!window)
         Py_RETURN_NONE;
 
-    return wrapQtObject(window, "QMainWindow");
+    return wrapQtObject(window, "QWidget");
 }
 
 static PyMethodDef PyApplication_methods[]

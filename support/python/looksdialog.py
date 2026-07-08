@@ -16,6 +16,10 @@ except Exception:
     qt_name = "PyQt6"
 
 
+DIALOG_OBJECT_NAME = "stagevizLooksDialog"
+DIALOG_GLOBAL_NAME = "_stageviz_looks_dialog"
+
+
 MATERIALS = {
     "Car Paint - Red": {
         "path": "/World/Looks/CarPaint_Red",
@@ -248,48 +252,33 @@ def apply_look(material_name, recursive=True):
 
 
 def find_stageviz_main_window():
-    app = QtWidgets.QApplication.instance()
-    if app is None:
+    try:
+        app = stageviz.application()
+        if hasattr(app, "window"):
+            window = app.window()
+            if window is not None:
+                return window
+    except Exception:
+        traceback.print_exc()
+
+    qt_app = QtWidgets.QApplication.instance()
+    if qt_app is None:
         return None
 
-    active = app.activeWindow()
-    if active and active.objectName() != "stagevizLooksDialog":
-        return active
-
-    for widget in app.topLevelWidgets():
-        if not widget.isWindow():
-            continue
-        if not widget.isVisible():
-            continue
-        if widget.objectName() == "stagevizLooksDialog":
-            continue
-        if isinstance(widget, QtWidgets.QDialog):
-            continue
-
-        return widget
-
-    return active
+    return qt_app.activeWindow()
 
 
 class LooksDialog(QtWidgets.QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
 
-        self.setObjectName("stagevizLooksDialog")
+        self.setObjectName(DIALOG_OBJECT_NAME)
         self.setWindowTitle(f"Stageviz Looks - {qt_name}")
         self.resize(420, 180)
 
-        self.activated = False
-        self.last_pos = None
-
         self.setWindowModality(QtCore.Qt.WindowModality.NonModal)
         self.setWindowFlag(QtCore.Qt.WindowType.Tool, True)
-        self.setWindowFlag(QtCore.Qt.WindowType.WindowStaysOnTopHint, True)
         self.setAttribute(QtCore.Qt.WidgetAttribute.WA_DeleteOnClose, True)
-
-        app = QtWidgets.QApplication.instance()
-        if app is not None:
-            app.applicationStateChanged.connect(self._application_state_changed)
 
         layout = QtWidgets.QVBoxLayout(self)
 
@@ -320,25 +309,6 @@ class LooksDialog(QtWidgets.QDialog):
         self.apply_button.clicked.connect(self.apply_material)
         self.close_button.clicked.connect(self.close)
 
-    def _application_state_changed(self, state):
-        if state == QtCore.Qt.ApplicationState.ApplicationInactive:
-            self.activated = self.isVisible()
-            self.last_pos = self.pos()
-            self.hide()
-            return
-
-        if state == QtCore.Qt.ApplicationState.ApplicationActive:
-            if self.activated:
-                if self.last_pos is not None:
-                    self.move(self.last_pos)
-
-                self.show()
-
-                if self.last_pos is not None:
-                    self.move(self.last_pos)
-
-                self.raise_()
-
     def apply_material(self):
         material_name = self.material_combo.currentText()
         recursive = self.recursive_check.isChecked()
@@ -362,7 +332,7 @@ def show_looks_dialog():
         app = QtWidgets.QApplication(sys.argv)
         owns_app = True
 
-    old_win = globals().get("_stageviz_looks_dialog")
+    old_win = globals().get(DIALOG_GLOBAL_NAME)
     if old_win is not None:
         try:
             old_win.close()
@@ -370,7 +340,7 @@ def show_looks_dialog():
         except Exception:
             pass
 
-        globals()["_stageviz_looks_dialog"] = None
+        globals()[DIALOG_GLOBAL_NAME] = None
 
     parent = find_stageviz_main_window()
 
@@ -379,10 +349,12 @@ def show_looks_dialog():
     win.raise_()
     win.activateWindow()
 
-    globals()["_stageviz_looks_dialog"] = win
+    globals()[DIALOG_GLOBAL_NAME] = win
 
     if owns_app:
         app.exec()
 
+    return win
 
-show_looks_dialog()
+
+looks_dialog = show_looks_dialog()

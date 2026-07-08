@@ -6,6 +6,7 @@ import sys
 import traceback
 
 from PySide6 import QtCore, QtWidgets
+import stageviz
 
 
 DIALOG_OBJECT_NAME = "stagevizPythonPathDialog"
@@ -13,27 +14,20 @@ DIALOG_GLOBAL_NAME = "_stageviz_python_path_dialog"
 
 
 def find_stageviz_main_window():
-    app = QtWidgets.QApplication.instance()
-    if app is None:
+    try:
+        app = stageviz.application()
+        if hasattr(app, "window"):
+            window = app.window()
+            if window is not None:
+                return window
+    except Exception:
+        traceback.print_exc()
+
+    qt_app = QtWidgets.QApplication.instance()
+    if qt_app is None:
         return None
 
-    active = app.activeWindow()
-    if active and active.objectName() != DIALOG_OBJECT_NAME:
-        return active
-
-    for widget in app.topLevelWidgets():
-        if not widget.isWindow():
-            continue
-        if not widget.isVisible():
-            continue
-        if widget.objectName() == DIALOG_OBJECT_NAME:
-            continue
-        if isinstance(widget, QtWidgets.QDialog):
-            continue
-
-        return widget
-
-    return active
+    return qt_app.activeWindow()
 
 
 class PythonPathDialog(QtWidgets.QDialog):
@@ -44,17 +38,9 @@ class PythonPathDialog(QtWidgets.QDialog):
         self.setWindowTitle("Stageviz Python Path Dialog")
         self.resize(900, 520)
 
-        self.activated = False
-        self.last_pos = None
-
         self.setWindowModality(QtCore.Qt.WindowModality.NonModal)
         self.setWindowFlag(QtCore.Qt.WindowType.Tool, True)
-        self.setWindowFlag(QtCore.Qt.WindowType.WindowStaysOnTopHint, True)
         self.setAttribute(QtCore.Qt.WidgetAttribute.WA_DeleteOnClose, True)
-
-        app = QtWidgets.QApplication.instance()
-        if app is not None:
-            app.applicationStateChanged.connect(self._application_state_changed)
 
         layout = QtWidgets.QVBoxLayout(self)
 
@@ -87,25 +73,6 @@ class PythonPathDialog(QtWidgets.QDialog):
         self.close_button.clicked.connect(self.close)
 
         self.populate()
-
-    def _application_state_changed(self, state):
-        if state == QtCore.Qt.ApplicationState.ApplicationInactive:
-            self.activated = self.isVisible()
-            self.last_pos = self.pos()
-            self.hide()
-            return
-
-        if state == QtCore.Qt.ApplicationState.ApplicationActive:
-            if self.activated:
-                if self.last_pos is not None:
-                    self.move(self.last_pos)
-
-                self.show()
-
-                if self.last_pos is not None:
-                    self.move(self.last_pos)
-
-                self.raise_()
 
     def populate(self):
         self.list_widget.clear()

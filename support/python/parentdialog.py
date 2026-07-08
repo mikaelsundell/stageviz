@@ -31,7 +31,7 @@ def find_stageviz_main_window():
     return qt_app.activeWindow()
 
 
-class ParentTestDialog(QtWidgets.QDialog):
+class ParentDialog(QtWidgets.QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
 
@@ -67,7 +67,7 @@ class ParentTestDialog(QtWidgets.QDialog):
         layout.addWidget(close_button)
 
 
-def show_parent_test_dialog():
+def show_parent_dialog():
     app = QtWidgets.QApplication.instance()
     owns_app = False
 
@@ -75,7 +75,7 @@ def show_parent_test_dialog():
         app = QtWidgets.QApplication(sys.argv)
         owns_app = True
 
-    old_dialog = globals().get("_stageviz_parent_test_dialog")
+    old_dialog = globals().get("_stageviz_parent_dialog")
     if old_dialog is not None:
         try:
             old_dialog.close()
@@ -86,15 +86,15 @@ def show_parent_test_dialog():
     parent = find_stageviz_main_window()
     print("[Stageviz Parent Test] parent:", parent)
 
-    dialog = ParentTestDialog(parent)
+    dialog = ParentDialog(parent)
     dialog.show()
     dialog.raise_()
     dialog.activateWindow()
 
-    globals()["_stageviz_parent_test_dialog"] = dialog
+    globals()["_stageviz_parent_dialog"] = dialog
 
     if owns_app:
         app.exec()
 
 
-show_parent_test_dialog()
+show_parent_dialog()

@@ -489,10 +489,10 @@ ShelfList::mouseMoveEvent(QMouseEvent* event)
     if (!mime)
         return;
 
-    auto* drag = new QDrag(this);
+auto* drag = new QDrag(this);
     drag->setMimeData(mime);
     drag->setPixmap(item->icon().pixmap(iconSize()));
-    drag->exec(Qt::CopyAction | Qt::MoveAction, Qt::CopyAction);
+    drag->exec(Qt::CopyAction | Qt::MoveAction, Qt::MoveAction);
 }
 
 void
@@ -531,9 +531,13 @@ ShelfList::mouseReleaseEvent(QMouseEvent* event)
 void
 ShelfList::leaveEvent(QEvent* event)
 {
+    if (p->d.dragStarted) {
+        QListWidget::leaveEvent(event);
+        return;
+    }
+
     if (p->d.pressedIndex.isValid()) {
         p->d.pressedIndex = QModelIndex();
-        p->d.dragStarted = false;
         p->d.dragSourceRow = -1;
         viewport()->update();
     }

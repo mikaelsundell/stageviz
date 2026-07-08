@@ -81,6 +81,8 @@ public Q_SLOTS:
     void stateSave();
     void autoSave();
     void saveSettings();
+    void restoreWindowSettings();
+    void saveWindowSettings();
     void exit();
     void undo();
     void redo();
@@ -318,6 +320,7 @@ ViewerPrivate::init()
     connect(d.ui->viewConsole, &QAction::toggled, this, &ViewerPrivate::toggleConsole);
     renderView()->setFocus();
     initSettings();
+    restoreWindowSettings();
     newFile();
 }
 
@@ -1096,12 +1099,53 @@ ViewerPrivate::selectInvert()
 void
 ViewerPrivate::saveSettings()
 {
+    saveWindowSettings();
     settings()->setValue("recentFiles", d.recentFiles);
     settings()->setValue("sceneStats", d.ui->hudSceneStats->isChecked());
     settings()->setValue("performanceStats", d.ui->hudPerformanceStats->isChecked());
     settings()->setValue("cameraAxis", d.ui->hudCameraAxis->isChecked());
     settings()->setValue("viewer/outlinerVisible", d.ui->outlinerWidget->isVisible());
     settings()->setValue("viewer/progressVisible", d.ui->progressWidget->isVisible());
+}
+
+void
+ViewerPrivate::restoreWindowSettings()
+{
+    const QByteArray geometry = settings()->value("viewer/windowGeometry").toByteArray();
+    if (!geometry.isEmpty())
+        d.viewer->restoreGeometry(geometry);
+
+    if (d.ui->splitter) {
+        const QByteArray splitterState = settings()->value("viewer/splitterState").toByteArray();
+        if (!splitterState.isEmpty())
+            d.ui->splitter->restoreState(splitterState);
+    }
+
+    const Qt::WindowStates windowState =
+        Qt::WindowStates(settings()->value("viewer/windowState", int(Qt::WindowNoState)).toInt())
+        & ~Qt::WindowMinimized;
+
+    if (windowState != Qt::WindowNoState)
+        QTimer::singleShot(0, d.viewer, [viewer = d.viewer, windowState]() {
+            if (viewer)
+                viewer->setWindowState(windowState);
+        });
+}
+
+void
+ViewerPrivate::saveWindowSettings()
+{
+    if (!d.viewer)
+        return;
+
+    Qt::WindowStates windowState = d.viewer->windowState();
+    windowState &= ~Qt::WindowMinimized;
+
+    settings()->setValue("viewer/windowGeometry", d.viewer->saveGeometry());
+    settings()->setValue("viewer/windowState", int(windowState));
+
+    if (d.ui && d.ui->splitter)
+        settings()->setValue("viewer/splitterState", d.ui->splitter->saveState());
 }
 
 void

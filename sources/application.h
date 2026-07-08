@@ -71,7 +71,7 @@ public:
     /**
      * @brief Returns the window subsystem.
      */
-    QMainWindow* window() const;
+    QWidget* window() const;
 
     ///@}
 

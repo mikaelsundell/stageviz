@@ -313,27 +313,20 @@ def metadata_to_lines(prim):
 
 
 def find_stageviz_main_window():
-    app = QtWidgets.QApplication.instance()
-    if app is None:
+    try:
+        app = stageviz.application()
+        if hasattr(app, "window"):
+            window = app.window()
+            if window is not None:
+                return window
+    except Exception:
+        traceback.print_exc()
+
+    qt_app = QtWidgets.QApplication.instance()
+    if qt_app is None:
         return None
 
-    active = app.activeWindow()
-    if active and active.objectName() != DIALOG_OBJECT_NAME:
-        return active
-
-    for widget in app.topLevelWidgets():
-        if not widget.isWindow():
-            continue
-        if not widget.isVisible():
-            continue
-        if widget.objectName() == DIALOG_OBJECT_NAME:
-            continue
-        if isinstance(widget, QtWidgets.QDialog):
-            continue
-
-        return widget
-
-    return active
+    return qt_app.activeWindow()
 
 
 class MetadataDialog(QtWidgets.QDialog):
@@ -344,17 +337,9 @@ class MetadataDialog(QtWidgets.QDialog):
         self.setWindowTitle(f"Stageviz Metadata - {qt_name}")
         self.resize(1000, 700)
 
-        self.activated = False
-        self.last_pos = None
-
         self.setWindowModality(QtCore.Qt.WindowModality.NonModal)
         self.setWindowFlag(QtCore.Qt.WindowType.Tool, True)
-        self.setWindowFlag(QtCore.Qt.WindowType.WindowStaysOnTopHint, True)
         self.setAttribute(QtCore.Qt.WidgetAttribute.WA_DeleteOnClose, True)
-
-        app = QtWidgets.QApplication.instance()
-        if app is not None:
-            app.applicationStateChanged.connect(self._application_state_changed)
 
         self._session = stageviz.session()
         self._last_paths = None
@@ -395,25 +380,6 @@ class MetadataDialog(QtWidgets.QDialog):
         self.timer.start()
 
         self.refresh()
-
-    def _application_state_changed(self, state):
-        if state == QtCore.Qt.ApplicationState.ApplicationInactive:
-            self.activated = self.isVisible()
-            self.last_pos = self.pos()
-            self.hide()
-            return
-
-        if state == QtCore.Qt.ApplicationState.ApplicationActive:
-            if self.activated:
-                if self.last_pos is not None:
-                    self.move(self.last_pos)
-
-                self.show()
-
-                if self.last_pos is not None:
-                    self.move(self.last_pos)
-
-                self.raise_()
 
     def selected_paths(self):
         try:
@@ -520,5 +486,7 @@ def show_metadata_dialog():
     if owns_app:
         app.exec()
 
+    return win
 
-show_metadata_dialog()
+
+metadata_dialog = show_metadata_dialog()

@@ -21,27 +21,27 @@ public:
      * @brief Semantic color roles.
      */
     enum ColorRole {
-        Base,
-        BaseAlt,
         Accent,
         AccentAlt,
-        Text,
-        Highlight,
-        HighlightAlt,
+        Base,
+        BaseAlt,
         Border,
         BorderAlt,
-        Handle,
-        Progress,
         Button,
         ButtonAlt,
+        Error,
+        Handle,
+        Highlight,
+        HighlightAlt,
         Item,
         ItemAlt,
+        Progress,
         Render,
         RenderAlt,
         Selection,
         SelectionAlt,
-        Warning,
-        Error
+        Text,
+        Warning
     };
     Q_ENUM(ColorRole)
 
@@ -49,25 +49,24 @@ public:
      * @brief Semantic icon roles.
      */
     enum IconRole {
-        BranchOpen,
         BranchClosed,
+        BranchOpen,
+        Checked,
         Clear,
         Code,
         Collapse,
+        DropDown,
         Expand,
         Export,
         ExportImage,
-        FrameAll,
         Follow,
+        FrameAll,
         Hidden,
-        Visible,
-        Checked,
-        Dropdown,
         Left,
         Material,
         Mesh,
-        PartiallyChecked,
         Open,
+        PartiallyChecked,
         Payload,
         Prim,
         Redo,
@@ -75,6 +74,7 @@ public:
         Run,
         Shaded,
         Undo,
+        Visible,
         Wireframe
     };
     Q_ENUM(IconRole)

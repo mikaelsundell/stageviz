@@ -177,7 +177,7 @@ PyInit_stageviz(void)
     PyModule_AddIntConstant(module, "IconHidden", static_cast<int>(Style::IconRole::Hidden));
     PyModule_AddIntConstant(module, "IconVisible", static_cast<int>(Style::IconRole::Visible));
     PyModule_AddIntConstant(module, "IconChecked", static_cast<int>(Style::IconRole::Checked));
-    PyModule_AddIntConstant(module, "IconDropdown", static_cast<int>(Style::IconRole::Dropdown));
+    PyModule_AddIntConstant(module, "IconDropdown", static_cast<int>(Style::IconRole::DropDown));
     PyModule_AddIntConstant(module, "IconLeft", static_cast<int>(Style::IconRole::Left));
     PyModule_AddIntConstant(module, "IconMaterial", static_cast<int>(Style::IconRole::Material));
     PyModule_AddIntConstant(module, "IconMesh", static_cast<int>(Style::IconRole::Mesh));

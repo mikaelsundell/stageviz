@@ -186,6 +186,9 @@ StylePrivate::updateStylesheet()
     }
 
     result.append(styleSheet.mid(lastIndex));
+    
+    qDebug().noquote() << result;
+    
     qApp->setStyleSheet(result);
 }
 
@@ -194,42 +197,41 @@ StylePrivate::updateTheme()
 {
     d.palette.clear();
     auto map = [&](Style::ColorRole role, QColor color) { d.palette[roleName(role)] = color; };
-    map(Style::ColorRole::Base, QColor::fromHsl(220, 6, 56));
-    map(Style::ColorRole::BaseAlt, QColor::fromHsl(220, 6, 42));
     map(Style::ColorRole::Accent, QColor::fromHsl(220, 6, 20));
     map(Style::ColorRole::AccentAlt, QColor::fromHsl(220, 6, 24));
-    map(Style::ColorRole::Text, QColor::fromHsl(0, 0, 220));
-    map(Style::ColorRole::Highlight, QColor::fromHsl(216, 82, 80));
-    map(Style::ColorRole::HighlightAlt, QColor::fromHsl(216, 60, 60));
+    map(Style::ColorRole::Base, QColor::fromHsl(220, 6, 56));
+    map(Style::ColorRole::BaseAlt, QColor::fromHsl(220, 6, 42));
     map(Style::ColorRole::Border, QColor::fromHsl(220, 3, 32));
     map(Style::ColorRole::BorderAlt, QColor::fromHsl(220, 3, 64));
-    map(Style::ColorRole::Handle, QColor::fromHsl(0, 0, 150));
-    map(Style::ColorRole::Progress, QColor::fromHsl(216, 82, 20));
     map(Style::ColorRole::Button, QColor::fromHsl(220, 6, 36));
     map(Style::ColorRole::ButtonAlt, QColor::fromHsl(220, 6, 64));
+    map(Style::ColorRole::Error, QColor(150, 35, 50));
+    map(Style::ColorRole::Handle, QColor::fromHsl(0, 0, 150));
+    map(Style::ColorRole::Highlight, QColor::fromHsl(216, 82, 80));
+    map(Style::ColorRole::HighlightAlt, QColor::fromHsl(216, 60, 60));
     map(Style::ColorRole::Item, QColor::fromHsl(220, 6, 50));
     map(Style::ColorRole::ItemAlt, QColor::fromHsl(220, 6, 42));
+    map(Style::ColorRole::Progress, QColor::fromHsl(216, 82, 20));
     map(Style::ColorRole::Render, QColor::fromHsl(210, 27, 25));
     map(Style::ColorRole::RenderAlt, QColor::fromHsl(210, 6, 25));
     map(Style::ColorRole::Selection, QColor::fromHsl(55, 220, 180));
     map(Style::ColorRole::SelectionAlt, QColor::fromHsl(55, 140, 120));
+    map(Style::ColorRole::Text, QColor::fromHsl(0, 0, 220));
     map(Style::ColorRole::Warning, QColor(220, 170, 40));
-    map(Style::ColorRole::Error, QColor(150, 35, 50));
 
-    d.icons[roleName(Style::IconRole::BranchOpen)] = ":/icons/resources/BranchOpen.png";
     d.icons[roleName(Style::IconRole::BranchClosed)] = ":/icons/resources/BranchClosed.png";
+    d.icons[roleName(Style::IconRole::BranchOpen)] = ":/icons/resources/BranchOpen.png";
+    d.icons[roleName(Style::IconRole::Checked)] = ":/icons/resources/Checked.png";
     d.icons[roleName(Style::IconRole::Clear)] = ":/icons/resources/Clear.png";
     d.icons[roleName(Style::IconRole::Code)] = ":/icons/resources/Code.png";
     d.icons[roleName(Style::IconRole::Collapse)] = ":/icons/resources/Collapse.png";
+    d.icons[roleName(Style::IconRole::DropDown)] = ":/icons/resources/DropDown.png";
+    d.icons[roleName(Style::IconRole::Expand)] = ":/icons/resources/Expand.png";
     d.icons[roleName(Style::IconRole::Export)] = ":/icons/resources/Export.png";
     d.icons[roleName(Style::IconRole::ExportImage)] = ":/icons/resources/ExportImage.png";
-    d.icons[roleName(Style::IconRole::Expand)] = ":/icons/resources/Expand.png";
-    d.icons[roleName(Style::IconRole::FrameAll)] = ":/icons/resources/FrameAll.png";
     d.icons[roleName(Style::IconRole::Follow)] = ":/icons/resources/Follow.png";
-    d.icons[roleName(Style::IconRole::Visible)] = ":/icons/resources/Visible.png";
+    d.icons[roleName(Style::IconRole::FrameAll)] = ":/icons/resources/FrameAll.png";
     d.icons[roleName(Style::IconRole::Hidden)] = ":/icons/resources/Hidden.png";
-    d.icons[roleName(Style::IconRole::Checked)] = ":/icons/resources/Checked.png";
-    d.icons[roleName(Style::IconRole::Dropdown)] = ":/icons/resources/Dropdown.png";
     d.icons[roleName(Style::IconRole::Left)] = ":/icons/resources/Left.png";
     d.icons[roleName(Style::IconRole::Material)] = ":/icons/resources/Material.png";
     d.icons[roleName(Style::IconRole::Mesh)] = ":/icons/resources/Mesh.png";
@@ -240,9 +242,10 @@ StylePrivate::updateTheme()
     d.icons[roleName(Style::IconRole::Redo)] = ":/icons/resources/Redo.png";
     d.icons[roleName(Style::IconRole::Right)] = ":/icons/resources/Right.png";
     d.icons[roleName(Style::IconRole::Run)] = ":/icons/resources/Run.png";
-    d.icons[roleName(Style::IconRole::Undo)] = ":/icons/resources/Undo.png";
-    d.icons[roleName(Style::IconRole::Wireframe)] = ":/icons/resources/Wireframe.png";
     d.icons[roleName(Style::IconRole::Shaded)] = ":/icons/resources/Shaded.png";
+    d.icons[roleName(Style::IconRole::Undo)] = ":/icons/resources/Undo.png";
+    d.icons[roleName(Style::IconRole::Visible)] = ":/icons/resources/Visible.png";
+    d.icons[roleName(Style::IconRole::Wireframe)] = ":/icons/resources/Wireframe.png";
 
 #ifdef Q_OS_WIN
     d.fontSizes[roleName(Style::UIScale::Small)] = 11;
