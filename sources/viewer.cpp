@@ -133,7 +133,7 @@ public Q_SLOTS:
     void updateStageUp(Session::StageUp stageUp);
     void updateSelection(const QList<SdfPath>& paths);
     void updatePreserveState(bool enabled);
-    void notifyStatusChanged(Session::Notify::Status status, const QString& message);
+    void notifyStatusChanged(Session::Notify::Status status, const QString& message, const QString& details);
 
 public:
     void updateDockAction(QAction* action, bool checked);
@@ -1635,13 +1635,30 @@ ViewerPrivate::updateStageUp(Session::StageUp stageUp)
 }
 
 void
-ViewerPrivate::notifyStatusChanged(Session::Notify::Status status, const QString& message)
+ViewerPrivate::notifyStatusChanged(Session::Notify::Status status, const QString& message, const QString& details)
 {
     QStatusBar* bar = d.ui->statusbar;
     if (!bar)
         return;
 
     const bool hasError = (status == Session::Notify::Status::Error);
+    const bool hasWarning = (status == Session::Notify::Status::Warning);
+
+    const char* level = hasError ? "Error" : hasWarning ? "Warning" : "Info";
+
+    QString logText = QString("[%1] %2").arg(QString::fromLatin1(level), message);
+    if (!details.isEmpty())
+        logText += QString("\n%1").arg(details);
+
+    if (hasError || hasWarning) {
+        std::fprintf(stderr, "%s\n", logText.toUtf8().constData());
+        std::fflush(stderr);
+    }
+    else {
+        std::fprintf(stdout, "%s\n", logText.toUtf8().constData());
+        std::fflush(stdout);
+    }
+
     const QString text = hasError ? QString(" Error: %1").arg(message) : QString(" %1").arg(message);
     const int timeoutMs = hasError ? 8000 : 4000;
 

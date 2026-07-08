@@ -360,7 +360,7 @@ public:
     /**
      * @brief Sets a textual status message.
      */
-    void notifyStatus(Notify::Status status, const QString& message);
+    void notifyStatus(Notify::Status status, const QString& message, const QString& details = QString());
 
 Q_SIGNALS:
     /**
@@ -406,7 +406,7 @@ Q_SIGNALS:
     /**
      * @brief Emitted when the status message changes.
      */
-    void notifyStatusChanged(Notify::Status status, const QString& message);
+    void notifyStatusChanged(Notify::Status status, const QString& message, const QString& details);
 
 private:
     QExplicitlySharedDataPointer<SessionPrivate> p;

@@ -236,8 +236,25 @@ ProgressViewPrivate::progressBlockChanged(const QString& name, Session::Progress
     const qint64 ms = d.timer.elapsed();
     const QString timeStr = QTime(0, 0).addMSecs(static_cast<int>(ms)).toString("hh:mm:ss");
 
+    QStringList errorDetails;
+    QStringList warningDetails;
+
     if (d.currentItem) {
         const int childCount = d.currentItem->childCount();
+
+        for (int i = 0; i < childCount; ++i) {
+            QTreeWidgetItem* child = d.currentItem->child(i);
+            if (!child)
+                continue;
+
+            const QString status = child->text(1);
+            const QString detail = child->toolTip(0).isEmpty() ? child->text(0) : child->toolTip(0);
+
+            if (status == statusLabel(Session::Notify::Status::Error))
+                errorDetails.append(detail);
+            else if (status == statusLabel(Session::Notify::Status::Warning))
+                warningDetails.append(detail);
+        }
 
         d.currentItem->setText(0, QString("%1 (%2)").arg(d.currentName).arg(childCount));
         d.currentItem->setToolTip(
@@ -260,15 +277,21 @@ ProgressViewPrivate::progressBlockChanged(const QString& name, Session::Progress
     d.ui->clear->setEnabled(progressTree()->topLevelItemCount() > 0);
 
     if (d.errorCount > 0) {
-        session()->notifyStatus(Session::Notify::Status::Error,
-                                QString("%1 finished with %2 error(s)").arg(name).arg(d.errorCount));
+        session()->notifyStatus(
+            Session::Notify::Status::Error,
+            QString("%1 finished with %2 error(s)").arg(name).arg(d.errorCount),
+            errorDetails.join("\n\n"));
     }
     else if (d.warningCount > 0) {
-        session()->notifyStatus(Session::Notify::Status::Warning,
-                                QString("%1 finished with %2 warning(s)").arg(name).arg(d.warningCount));
+        session()->notifyStatus(
+            Session::Notify::Status::Warning,
+            QString("%1 finished with %2 warning(s)").arg(name).arg(d.warningCount),
+            warningDetails.join("\n\n"));
     }
     else {
-        session()->notifyStatus(Session::Notify::Status::Success, QString("%1 finished successfully").arg(name));
+        session()->notifyStatus(
+            Session::Notify::Status::Success,
+            QString("%1 finished successfully").arg(name));
     }
 
     d.currentItem = nullptr;

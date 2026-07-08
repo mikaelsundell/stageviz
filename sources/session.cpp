@@ -1235,9 +1235,9 @@ Session::setMask(const QList<SdfPath>& paths)
 }
 
 void
-Session::notifyStatus(Notify::Status status, const QString& message)
+Session::notifyStatus(Notify::Status status, const QString& message, const QString& details)
 {
-    Q_EMIT notifyStatusChanged(status, message);
+    Q_EMIT notifyStatusChanged(status, message, details);
 }
 
 GfBBox3d

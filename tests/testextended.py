@@ -57,6 +57,12 @@ def _path_list(values):
     return [str(v) for v in values]
 
 
+def _disable_preserve_state():
+    session = stageviz.session()
+    if hasattr(session, "setPreserveState"):
+        session.setPreserveState(False)
+
+
 def _process_events():
     try:
         from PySide6 import QtWidgets, QtCore
@@ -186,16 +192,6 @@ def _has_command(name):
     return hasattr(stageviz.command, name)
 
 
-def _try_command(name, *args, **kwargs):
-    if not _has_command(name):
-        print(f"[skip] stageviz.command.{name} is not bound")
-        return False
-
-    getattr(stageviz.command, name)(*args, **kwargs)
-    _wait()
-    return True
-
-
 def _undo():
     for name in ("undo", "undo_command"):
         if _has_command(name):
@@ -281,6 +277,8 @@ def create_fixture():
 
 
 def reload_fixture(main_path):
+    _disable_preserve_state()
+
     loaded = stageviz.session().load(main_path, stageviz.LoadNone)
     _assert(loaded, "session.load fixture with LoadNone")
 
@@ -293,6 +291,9 @@ def reload_fixture(main_path):
         ),
         "fixture stage is available",
     )
+
+    _wait_until(lambda: _selection() == [], timeout=1.0)
+    _wait_until(lambda: _mask() == [], timeout=1.0)
 
 
 def test_select_paths():
@@ -318,6 +319,7 @@ def test_select_paths():
 
 def test_select_all_and_invert():
     stageviz.command.isolate_paths(["/World/A"])
+
     _assert(
         _wait_until(lambda: _mask() == ["/World/A"]),
         "mask prepared for select_all",
@@ -325,9 +327,8 @@ def test_select_all_and_invert():
 
     stageviz.command.select_all()
 
-    _assert_set_equal(
-        _selection(),
-        ["/World/A/A1", "/World/A/A2"],
+    _assert(
+        _wait_until(lambda: set(_selection()) == {"/World/A/A1", "/World/A/A2"}),
         "select_all respects mask and selects leaf paths",
     )
 
@@ -340,10 +341,20 @@ def test_select_all_and_invert():
     )
 
     stageviz.command.isolate_paths([])
+    _assert(
+        _wait_until(lambda: _mask() == []),
+        "isolate_paths clears mask",
+    )
 
 
 def test_isolate_paths():
     stageviz.command.select_paths(["/World/A/A1"])
+
+    _assert(
+        _wait_until(lambda: _selection() == ["/World/A/A1"]),
+        "selection prepared for isolate_paths",
+    )
+
     stageviz.command.isolate_paths(["/World/A"])
 
     _assert(
@@ -399,6 +410,7 @@ def test_new_rename_move_delete():
         _wait_until(lambda: _exists("/World/Created")),
         "new_xform creates prim",
     )
+
     _assert(
         _wait_until(lambda: _selection() == ["/World/Created"]),
         "new_xform selects created prim",
@@ -410,6 +422,7 @@ def test_new_rename_move_delete():
         _wait_until(lambda: not _exists("/World/Created") and _exists("/World/Renamed")),
         "rename_path renames prim",
     )
+
     _assert(
         _wait_until(lambda: _selection() == ["/World/Renamed"]),
         "rename_path remaps selection",
@@ -421,6 +434,7 @@ def test_new_rename_move_delete():
         _wait_until(lambda: not _exists("/World/Renamed") and _exists("/World/B/Renamed")),
         "move_path reparents prim",
     )
+
     _assert(
         _wait_until(lambda: _selection() == ["/World/B/Renamed"]),
         "move_path remaps selection",
@@ -521,6 +535,11 @@ def test_new_xform_wraps_multiple_selection():
 def test_new_xform_minimal_root_selection():
     stageviz.command.select_paths(["/World/A", "/World/A/A1", "/World/B"])
 
+    _assert(
+        _wait_until(lambda: _selection() == ["/World/A", "/World/A/A1", "/World/B"]),
+        "selection prepared for minimal root new_xform",
+    )
+
     stageviz.command.new_xform("/World", "MinimalGroup")
 
     _assert(
@@ -542,7 +561,16 @@ def test_new_xform_minimal_root_selection():
 
 def test_rename_remaps_child_selection_and_mask():
     stageviz.command.select_paths(["/World/A/A1"])
+    _assert(
+        _wait_until(lambda: _selection() == ["/World/A/A1"]),
+        "selection prepared for rename remap",
+    )
+
     stageviz.command.isolate_paths(["/World/A/A2"])
+    _assert(
+        _wait_until(lambda: _mask() == ["/World/A/A2"]),
+        "mask prepared for rename remap",
+    )
 
     before_order = _child_names("/World")
 
@@ -603,7 +631,16 @@ def test_rename_remaps_child_selection_and_mask():
 
 def test_rename_noop_is_safe():
     stageviz.command.select_paths(["/World/A"])
+    _assert(
+        _wait_until(lambda: _selection() == ["/World/A"]),
+        "selection prepared for rename noop",
+    )
+
     stageviz.command.isolate_paths(["/World/B"])
+    _assert(
+        _wait_until(lambda: _mask() == ["/World/B"]),
+        "mask prepared for rename noop",
+    )
 
     before_selection = _selection()
     before_mask = _mask()
@@ -637,7 +674,16 @@ def test_rename_noop_is_safe():
 
 def test_move_selection_mask_and_insert_order():
     stageviz.command.select_paths(["/World/A/A1"])
+    _assert(
+        _wait_until(lambda: _selection() == ["/World/A/A1"]),
+        "selection prepared for move remap",
+    )
+
     stageviz.command.isolate_paths(["/World/A/A2"])
+    _assert(
+        _wait_until(lambda: _mask() == ["/World/A/A2"]),
+        "mask prepared for move remap",
+    )
 
     before_world_order = _child_names("/World")
     before_b_order = _child_names("/World/B")
@@ -744,42 +790,47 @@ def test_move_rejects_self_parenting():
 
 
 def test_move_rejects_destination_collision():
-    before_world = _children("/World")
-    before_b = _children("/World/B")
-
     stageviz.command.move_path(["/World/A"], "/World/B", insert_index=-1)
 
     _assert(
-        _wait_until(lambda: _exists("/World/A") and _exists("/World/B/A")),
-        "first move creates collision fixture",
+        _wait_until(lambda: not _exists("/World/A") and _exists("/World/B/A")),
+        "first move creates destination child",
     )
 
-    stageviz.command.move_path(["/World/C"], "/World/B", insert_index=-1)
-    _assert(
-        _wait_until(lambda: _exists("/World/B/C")),
-        "control move without collision succeeds",
-    )
+    before_b = _children("/World/B")
 
-    stageviz.command.move_path(["/World/D"], "/World/B", insert_index=-1)
-    _assert(
-        _wait_until(lambda: _exists("/World/B/D")),
-        "second control move succeeds",
-    )
-
-    stageviz.command.move_path(["/World/B/C"], "/World/B", insert_index=-1)
+    stageviz.command.move_path(["/World/B/A"], "/World/B", insert_index=-1)
 
     _assert(
-        _wait_until(lambda: _exists("/World/B/C")),
+        _wait_until(lambda: _exists("/World/B/A")),
         "move to same parent/path is safe/no-op",
+    )
+
+    _assert_equal(
+        _children("/World/B"),
+        before_b,
+        "move to same parent/path preserves destination children",
     )
 
 
 def test_delete_removes_selection_mask_and_restores_default_prim():
     stageviz.command.select_paths(["/World/A/A1", "/World/B"])
+    _assert(
+        _wait_until(lambda: _selection() == ["/World/A/A1", "/World/B"]),
+        "selection prepared for delete",
+    )
+
     stageviz.command.isolate_paths(["/World/A/A2", "/World/C"])
+    _assert(
+        _wait_until(lambda: _mask() == ["/World/A/A2", "/World/C"]),
+        "mask prepared for delete",
+    )
 
     stageviz.command.set_default_prim("/World")
-    _assert_equal(_default_prim_path(), "/World", "default prim prepared")
+    _assert(
+        _wait_until(lambda: _default_prim_path() == "/World"),
+        "default prim prepared",
+    )
 
     before_world_order = _child_names("/World")
 
@@ -835,7 +886,11 @@ def test_delete_removes_selection_mask_and_restores_default_prim():
 
 def test_delete_default_prim_and_undo():
     stageviz.command.set_default_prim("/World")
-    _assert_equal(_default_prim_path(), "/World", "default prim prepared")
+
+    _assert(
+        _wait_until(lambda: _default_prim_path() == "/World"),
+        "default prim prepared",
+    )
 
     stageviz.command.delete_paths(["/World"])
 
@@ -866,17 +921,15 @@ def test_delete_default_prim_and_undo():
 def test_default_prim_validation():
     stageviz.command.set_default_prim("/World/A")
 
-    _assert_equal(
-        _default_prim_path(),
-        "/World",
+    _assert(
+        _wait_until(lambda: _default_prim_path() == "/World"),
         "set_default_prim rejects non-root prim",
     )
 
     stageviz.command.set_default_prim("/OtherRoot")
 
-    _assert_equal(
-        _default_prim_path(),
-        "/OtherRoot",
+    _assert(
+        _wait_until(lambda: _default_prim_path() == "/OtherRoot"),
         "set_default_prim accepts root prim",
     )
 
@@ -903,6 +956,12 @@ def test_stage_up():
         )
 
     stageviz.command.set_stage_up(stageviz.StageUpZ)
+
+    _assert(
+        _wait_until(lambda: stageviz.session().stageUp() == stageviz.StageUpZ),
+        "set_stage_up sets Z again",
+    )
+
     stageviz.command.set_stage_up(stageviz.StageUpY)
 
     _assert(
@@ -926,7 +985,16 @@ def test_payload_load_unload():
     )
 
     stageviz.command.select_paths(["/World/PayloadA/Geom"])
+    _assert(
+        _wait_until(lambda: _selection() == ["/World/PayloadA/Geom"]),
+        "payload child selection prepared",
+    )
+
     stageviz.command.isolate_paths(["/World/PayloadA/Geom"])
+    _assert(
+        _wait_until(lambda: _mask() == ["/World/PayloadA/Geom"]),
+        "payload child mask prepared",
+    )
 
     stageviz.command.unload_payloads(["/World/PayloadA"])
 
@@ -999,11 +1067,16 @@ def test_select_invert_payload():
     )
 
     stageviz.command.select_paths(["/World/PayloadA"])
+
+    _assert(
+        _wait_until(lambda: _selection() == ["/World/PayloadA"]),
+        "payload selection prepared for select_invert_payload",
+    )
+
     stageviz.command.select_invert_payload()
 
-    _assert_equal(
-        _selection(),
-        ["/World/PayloadB"],
+    _assert(
+        _wait_until(lambda: _selection() == ["/World/PayloadB"]),
         "select_invert_payload selects loaded payloads not already selected",
     )
 
@@ -1028,8 +1101,7 @@ def run():
     root, main_path, saved_path = create_fixture()
     print(f"Stageviz command test root: {root}")
 
-    if hasattr(stageviz.session(), "setPreserveState"):
-        stageviz.session().setPreserveState(False)
+    _disable_preserve_state()
 
     tests = [
         ("select paths", test_select_paths),

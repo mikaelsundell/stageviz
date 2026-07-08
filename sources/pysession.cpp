@@ -475,11 +475,16 @@ PySession_notifyStatus(PySessionObject* self, PyObject* args)
 
     long status = static_cast<long>(Session::Notify::Status::Success);
     const char* message = nullptr;
+    const char* details = "";
 
-    if (!PyArg_ParseTuple(args, "ls", &status, &message))
+    if (!PyArg_ParseTuple(args, "ls|s", &status, &message, &details))
         return nullptr;
 
-    self->session->notifyStatus(toNotifyStatus(status), QString::fromUtf8(message));
+    self->session->notifyStatus(
+        toNotifyStatus(status),
+        QString::fromUtf8(message),
+        QString::fromUtf8(details));
+
     Py_RETURN_NONE;
 }
 
@@ -490,10 +495,16 @@ PySession_setStatus(PySessionObject* self, PyObject* args)
         return nullptr;
 
     const char* message = nullptr;
-    if (!PyArg_ParseTuple(args, "s", &message))
+    const char* details = "";
+
+    if (!PyArg_ParseTuple(args, "s|s", &message, &details))
         return nullptr;
 
-    self->session->notifyStatus(Session::Notify::Status::Success, QString::fromUtf8(message));
+    self->session->notifyStatus(
+        Session::Notify::Status::Success,
+        QString::fromUtf8(message),
+        QString::fromUtf8(details));
+
     Py_RETURN_NONE;
 }
 
