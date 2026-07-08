@@ -48,6 +48,7 @@ public:
     bool isLoaded() const;
     void setMask(const QList<SdfPath>& paths);
     void setPayloads(const QList<SdfPath>& paths, bool loaded);
+    void setPreserveState(bool enabled);
     Session::StageUp stageUp();
     void setStageUp(Session::StageUp stageUp);
     GfBBox3d boundingBox();
@@ -899,6 +900,16 @@ SessionPrivate::setPayloads(const QList<SdfPath>& paths, bool loaded)
                 prim.Unload();
         }
     }
+}
+
+void
+SessionPrivate::setPreserveState(bool enabled)
+{
+    {
+        WRITE_LOCKER(locker, &d.stageLock, "stageLock");
+        d.preserveState = enabled;
+    }
+    Q_EMIT d.session->preserveStateChanged(enabled);
 }
 
 Session::StageUp

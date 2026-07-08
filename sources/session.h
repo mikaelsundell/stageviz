@@ -397,6 +397,11 @@ Q_SIGNALS:
      * @brief Emitted when the stage up axis changes.
      */
     void stageUpChanged(StageUp stageUp);
+    
+    /**
+     * @brief Emitted preservation of state changes.
+     */
+    void preserveStateChanged(bool enabled);
 
     /**
      * @brief Emitted when the status message changes.

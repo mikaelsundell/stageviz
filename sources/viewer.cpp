@@ -132,6 +132,7 @@ public Q_SLOTS:
     void updateStage(UsdStageRefPtr stage, Session::LoadPolicy policy, Session::StageStatus status);
     void updateStageUp(Session::StageUp stageUp);
     void updateSelection(const QList<SdfPath>& paths);
+    void updatePreserveState(bool enabled);
     void notifyStatusChanged(Session::Notify::Status status, const QString& message);
 
 public:
@@ -299,6 +300,7 @@ ViewerPrivate::init()
     connect(session(), &Session::primsChanged, this, &ViewerPrivate::updatePrims);
     connect(session(), &Session::stageChanged, this, &ViewerPrivate::updateStage);
     connect(session(), &Session::stageUpChanged, this, &ViewerPrivate::updateStageUp);
+    connect(session(), &Session::preserveStateChanged, this, &ViewerPrivate::updatePreserveState);
     connect(session(), &Session::notifyStatusChanged, this, &ViewerPrivate::notifyStatusChanged);
     connect(session()->selectionList(), &SelectionList::selectionChanged, this, &ViewerPrivate::updateSelection);
     connect(session()->commandStack(), &CommandStack::canUndoChanged, d.ui->editUndo, &QAction::setEnabled);
@@ -819,9 +821,7 @@ ViewerPrivate::saveCopy()
 void
 ViewerPrivate::preserveState()
 {
-    const bool checked = d.ui->filePreserveState->isChecked();
-    session()->setPreserveState(checked);
-    settings()->setValue("preserveState", checked);
+    session()->setPreserveState(d.ui->filePreserveState->isChecked());
 }
 
 void
@@ -1579,6 +1579,15 @@ ViewerPrivate::updateSelection(const QList<SdfPath>& paths)
             ++index;
         }
     }
+}
+
+void
+ViewerPrivate::updatePreserveState(bool enabled)
+{
+    d.ui->filePreserveState->blockSignals(true);
+    d.ui->filePreserveState->setChecked(enabled);
+    d.ui->filePreserveState->blockSignals(false);
+    settings()->setValue("preserveState", enabled);
 }
 
 void

@@ -388,6 +388,9 @@ def run():
     root, main_path, saved_path = create_fixture()
     print(f"Stageviz command test root: {root}")
 
+    if hasattr(stageviz.session(), "setPreserveState"):
+        stageviz.session().setPreserveState(False)
+
     loaded = stageviz.session().load(main_path, stageviz.LoadNone)
     _assert(loaded, "session.load fixture with LoadNone")
 

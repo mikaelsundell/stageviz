@@ -135,6 +135,19 @@ PySession_load(PySessionObject* self, PyObject* args, PyObject* kwargs)
 }
 
 static PyObject*
+PySession_merge(PySessionObject* self, PyObject* args)
+{
+    if (!checkSession(self->session))
+        return nullptr;
+
+    const char* filename = nullptr;
+    if (!PyArg_ParseTuple(args, "s", &filename))
+        return nullptr;
+
+    return PyBool_FromLong(self->session->mergeFromFile(QString::fromUtf8(filename)));
+}
+
+static PyObject*
 PySession_save(PySessionObject* self, PyObject* args)
 {
     if (!checkSession(self->session))
@@ -189,6 +202,46 @@ PySession_flattenPaths(PySessionObject* self, PyObject* args)
         return nullptr;
 
     return PyBool_FromLong(self->session->flattenPathsToFile(paths, QString::fromUtf8(filename)));
+}
+
+static PyObject*
+PySession_loadState(PySessionObject* self, PyObject* args)
+{
+    if (!checkSession(self->session))
+        return nullptr;
+
+    const char* filename = nullptr;
+    if (!PyArg_ParseTuple(args, "s", &filename))
+        return nullptr;
+
+    return PyBool_FromLong(self->session->loadState(QString::fromUtf8(filename)));
+}
+
+static PyObject*
+PySession_saveState(PySessionObject* self, PyObject* args)
+{
+    if (!checkSession(self->session))
+        return nullptr;
+
+    const char* filename = nullptr;
+    if (!PyArg_ParseTuple(args, "s", &filename))
+        return nullptr;
+
+    return PyBool_FromLong(self->session->saveState(QString::fromUtf8(filename)));
+}
+
+static PyObject*
+PySession_setPreserveState(PySessionObject* self, PyObject* args)
+{
+    if (!checkSession(self->session))
+        return nullptr;
+
+    int enabled = 0;
+    if (!PyArg_ParseTuple(args, "p", &enabled))
+        return nullptr;
+
+    self->session->setPreserveState(enabled != 0);
+    Py_RETURN_NONE;
 }
 
 static PyObject*
@@ -328,34 +381,6 @@ PySession_stageLock(PySessionObject* self)
 }
 
 static PyObject*
-PySession_selectionList(PySessionObject* self)
-{
-    if (!checkSession(self->session))
-        return nullptr;
-
-    return createPySelectionList(self->session->selectionList());
-}
-
-static PyObject*
-PySession_selection(PySessionObject* self)
-{
-    return PySession_selectionList(self);
-}
-
-static PyObject*
-PySession_paths(PySessionObject* self)
-{
-    if (!checkSession(self->session))
-        return nullptr;
-
-    SelectionList* selection = self->session->selectionList();
-    if (!checkSelectionList(selection))
-        return nullptr;
-
-    return pathListToPyList(selection->paths());
-}
-
-static PyObject*
 PySession_primsUpdate(PySessionObject* self)
 {
     if (!checkSession(self->session))
@@ -389,16 +414,86 @@ PySession_flushPrimsUpdates(PySessionObject* self)
 }
 
 static PyObject*
+PySession_commandStack(PySessionObject* self)
+{
+    if (!checkSession(self->session))
+        return nullptr;
+
+    CommandStack* stack = self->session->commandStack();
+    if (!stack)
+        Py_RETURN_NONE;
+
+    return PyLong_FromVoidPtr(stack);
+}
+
+static PyObject*
+PySession_selectionList(PySessionObject* self)
+{
+    if (!checkSession(self->session))
+        return nullptr;
+
+    return createPySelectionList(self->session->selectionList());
+}
+
+static PyObject*
+PySession_selection(PySessionObject* self)
+{
+    return PySession_selectionList(self);
+}
+
+static PyObject*
+PySession_paths(PySessionObject* self)
+{
+    if (!checkSession(self->session))
+        return nullptr;
+
+    SelectionList* selection = self->session->selectionList();
+    if (!checkSelectionList(selection))
+        return nullptr;
+
+    return pathListToPyList(selection->paths());
+}
+
+static PyObject*
+PySession_viewState(PySessionObject* self)
+{
+    if (!checkSession(self->session))
+        return nullptr;
+
+    ViewState* viewState = self->session->viewState();
+    if (!viewState)
+        Py_RETURN_NONE;
+
+    return PyLong_FromVoidPtr(viewState);
+}
+
+static PyObject*
+PySession_notifyStatus(PySessionObject* self, PyObject* args)
+{
+    if (!checkSession(self->session))
+        return nullptr;
+
+    long status = static_cast<long>(Session::Notify::Status::Success);
+    const char* message = nullptr;
+
+    if (!PyArg_ParseTuple(args, "ls", &status, &message))
+        return nullptr;
+
+    self->session->notifyStatus(toNotifyStatus(status), QString::fromUtf8(message));
+    Py_RETURN_NONE;
+}
+
+static PyObject*
 PySession_setStatus(PySessionObject* self, PyObject* args)
 {
     if (!checkSession(self->session))
         return nullptr;
 
-    const char* status = nullptr;
-    if (!PyArg_ParseTuple(args, "s", &status))
+    const char* message = nullptr;
+    if (!PyArg_ParseTuple(args, "s", &message))
         return nullptr;
 
-    self->session->notifyStatus(Session::Notify::Status::Success, QString::fromUtf8(status));
+    self->session->notifyStatus(Session::Notify::Status::Success, QString::fromUtf8(message));
     Py_RETURN_NONE;
 }
 
@@ -418,11 +513,28 @@ static PyMethodDef PySession_methods[] = {
       "Create a new stage" },
     { "load", reinterpret_cast<PyCFunction>(PySession_load), METH_VARARGS | METH_KEYWORDS,
       "Load a USD stage from file" },
+    { "loadFromFile", reinterpret_cast<PyCFunction>(PySession_load), METH_VARARGS | METH_KEYWORDS,
+      "Load a USD stage from file" },
+    { "merge", reinterpret_cast<PyCFunction>(PySession_merge), METH_VARARGS,
+      "Merge a USD stage or session state file into the current stage" },
+    { "mergeFromFile", reinterpret_cast<PyCFunction>(PySession_merge), METH_VARARGS,
+      "Merge a USD stage or session state file into the current stage" },
     { "save", reinterpret_cast<PyCFunction>(PySession_save), METH_VARARGS, "Save the current stage to file" },
+    { "saveToFile", reinterpret_cast<PyCFunction>(PySession_save), METH_VARARGS, "Save the current stage to file" },
     { "copy", reinterpret_cast<PyCFunction>(PySession_copy), METH_VARARGS, "Copy the current stage to file" },
+    { "copyToFile", reinterpret_cast<PyCFunction>(PySession_copy), METH_VARARGS, "Copy the current stage to file" },
     { "flatten", reinterpret_cast<PyCFunction>(PySession_flatten), METH_VARARGS, "Flatten the stage to file" },
+    { "flattenToFile", reinterpret_cast<PyCFunction>(PySession_flatten), METH_VARARGS, "Flatten the stage to file" },
     { "flattenPaths", reinterpret_cast<PyCFunction>(PySession_flattenPaths), METH_VARARGS,
       "Flatten specific paths to file" },
+    { "flattenPathsToFile", reinterpret_cast<PyCFunction>(PySession_flattenPaths), METH_VARARGS,
+      "Flatten specific paths to file" },
+    { "loadState", reinterpret_cast<PyCFunction>(PySession_loadState), METH_VARARGS,
+      "Load session state from file" },
+    { "saveState", reinterpret_cast<PyCFunction>(PySession_saveState), METH_VARARGS,
+      "Save session state to file" },
+    { "setPreserveState", reinterpret_cast<PyCFunction>(PySession_setPreserveState), METH_VARARGS,
+      "Enable or disable state preservation" },
     { "reload", reinterpret_cast<PyCFunction>(PySession_reload), METH_NOARGS, "Reload the current stage" },
     { "close", reinterpret_cast<PyCFunction>(PySession_close), METH_NOARGS, "Close the current stage" },
     { "isLoaded", reinterpret_cast<PyCFunction>(PySession_isLoaded), METH_NOARGS, "Check if a stage is loaded" },
@@ -440,17 +552,27 @@ static PyMethodDef PySession_methods[] = {
     { "stageLock", reinterpret_cast<PyCFunction>(PySession_stageLock), METH_NOARGS,
       "Get the native stage lock address" },
 
-    { "selectionList", reinterpret_cast<PyCFunction>(PySession_selectionList), METH_NOARGS,
-      "Get the selection list wrapper" },
-    { "selection", reinterpret_cast<PyCFunction>(PySession_selection), METH_NOARGS, "Get the selection list wrapper" },
-    { "paths", reinterpret_cast<PyCFunction>(PySession_paths), METH_NOARGS, "Get selected paths" },
-
     { "primsUpdate", reinterpret_cast<PyCFunction>(PySession_primsUpdate), METH_NOARGS, "Get the prim update policy" },
     { "setPrimsUpdate", reinterpret_cast<PyCFunction>(PySession_setPrimsUpdate), METH_VARARGS,
       "Set the prim update policy" },
     { "flushPrimsUpdates", reinterpret_cast<PyCFunction>(PySession_flushPrimsUpdates), METH_NOARGS,
       "Flush buffered prim updates" },
-    { "setStatus", reinterpret_cast<PyCFunction>(PySession_setStatus), METH_VARARGS, "Set the session status string" },
+
+    { "commandStack", reinterpret_cast<PyCFunction>(PySession_commandStack), METH_NOARGS,
+      "Get the native command stack address" },
+
+    { "selectionList", reinterpret_cast<PyCFunction>(PySession_selectionList), METH_NOARGS,
+      "Get the selection list wrapper" },
+    { "selection", reinterpret_cast<PyCFunction>(PySession_selection), METH_NOARGS, "Get the selection list wrapper" },
+    { "paths", reinterpret_cast<PyCFunction>(PySession_paths), METH_NOARGS, "Get selected paths" },
+
+    { "viewState", reinterpret_cast<PyCFunction>(PySession_viewState), METH_NOARGS,
+      "Get the native view state address" },
+
+    { "notifyStatus", reinterpret_cast<PyCFunction>(PySession_notifyStatus), METH_VARARGS,
+      "Set the session status with severity" },
+    { "setStatus", reinterpret_cast<PyCFunction>(PySession_setStatus), METH_VARARGS,
+      "Set the session status string as success" },
 
     { nullptr }
 };
