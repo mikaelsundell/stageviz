@@ -472,12 +472,11 @@ bool
 SessionPrivate::saveToFile(const QString& filename)
 {
     QString stageFilename;
-    Session::LoadPolicy loadPolicy = Session::LoadPolicy::All;
     bool preserveState = false;
-    bool saveAs = false;
 
     {
         WRITE_LOCKER(locker, &d.stageLock, "stageLock");
+
         try {
             if (!d.stage)
                 return false;
@@ -487,25 +486,41 @@ SessionPrivate::saveToFile(const QString& filename)
                 return false;
 
             stageFilename = QFileInfo(filename).absoluteFilePath();
-
-            QString currentFile;
-            if (!rootLayer->IsAnonymous())
-                currentFile = QFileInfo(qt::StringToQString(rootLayer->GetRealPath())).absoluteFilePath();
-
-            loadPolicy = d.loadPolicy;
             preserveState = d.preserveState;
 
-            if (!rootLayer->IsAnonymous() && currentFile == stageFilename) {
-                d.stage->Save();
-                d.filename = stageFilename;
+            // export rewrites the root layer into a fresh file without flattening
+            // composition, avoiding stale USDC/crate storage after destructive edits.
+            const QString absFilename = QFileInfo(d.filename).absoluteFilePath();
+            if (!absFilename.isEmpty() && absFilename == stageFilename
+                && !rootLayer->IsAnonymous()) {
+                const QString tempFilename = stageFilename + ".stageviz.tmp";
+
+                QFile::remove(tempFilename);
+
+                if (!rootLayer->Export(QStringToString(tempFilename)))
+                    return false;
+
+                if (!QFile::remove(stageFilename)) {
+                    QFile::remove(tempFilename);
+                    return false;
+                }
+
+                if (!QFile::rename(tempFilename, stageFilename)) {
+                    QFile::remove(tempFilename);
+                    return false;
+                }
             }
             else {
                 if (!rootLayer->Export(QStringToString(stageFilename)))
                     return false;
 
-                d.filename = stageFilename;
-                saveAs = true;
+                // retarget the live layer to the new file. Block stage notices to
+                // avoid unnecessary updates for this identity-only change.  
+                StageBlocker blocker(d.stageWatcher.data());
+                rootLayer->SetIdentifier(QStringToString(stageFilename));
             }
+
+            d.filename = stageFilename;
         } catch (const std::exception&) {
             return false;
         }
@@ -517,11 +532,7 @@ SessionPrivate::saveToFile(const QString& filename)
             return false;
     }
 
-    if (!saveAs)
-        return true;
-
-    close();
-    return loadFromFile(stageFilename, loadPolicy);
+    return true;
 }
 
 bool
@@ -529,8 +540,10 @@ SessionPrivate::copyToFile(const QString& filename)
 {
     QString stageFilename;
     bool preserveState = false;
+
     {
         READ_LOCKER(locker, &d.stageLock, "stageLock");
+
         try {
             if (!d.stage)
                 return false;
@@ -549,11 +562,13 @@ SessionPrivate::copyToFile(const QString& filename)
             return false;
         }
     }
+
     if (preserveState) {
         const QString stateFilename = QFileInfo(stageFilename + ".session").absoluteFilePath();
         if (!saveState(stateFilename))
             return false;
     }
+
     return true;
 }
 
