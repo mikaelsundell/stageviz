@@ -1238,16 +1238,16 @@ deletePaths(const QList<SdfPath>& inPaths)
                 command::queueToSession(session, [session, state, changed, removedPaths, success, error]() {
                     using Status = Session::Notify::Status;
 
-                    session->selectionList()->updatePaths(
-                        path::removeAffectedPaths(state->previousSelection, removedPaths));
-                    session->setMask(path::removeAffectedPaths(state->previousMask, removedPaths));
-
                     command::finishDeferred(session,
                                             success ? (error.isEmpty() ? "Paths deleted"
                                                                        : QString("Paths deleted (%1)").arg(error))
                                                     : appendError("Delete paths failed", error),
                                             success ? changed : removedPaths,
                                             success ? Status::Success : Status::Error);
+
+                    session->selectionList()->updatePaths(
+                        path::removeAffectedPaths(state->previousSelection, removedPaths));
+                    session->setMask(path::removeAffectedPaths(state->previousMask, removedPaths));
                 });
             });
         },
@@ -1307,12 +1307,12 @@ deletePaths(const QList<SdfPath>& inPaths)
                 command::queueToSession(session, [session, state, changed, success, error]() {
                     using Status = Session::Notify::Status;
 
-                    session->selectionList()->updatePaths(state->previousSelection);
-                    session->setMask(state->previousMask);
-
                     command::finishDeferred(session,
                                             success ? "Delete undone" : appendError("Undo delete paths failed", error),
                                             changed, success ? Status::Success : Status::Error);
+
+                    session->selectionList()->updatePaths(state->previousSelection);
+                    session->setMask(state->previousMask);
                 });
             });
         });
@@ -1831,6 +1831,7 @@ newXformPath(const SdfPath& parentPath, const QString& nameInput)
             });
         });
 }
+
 Command
 movePath(const QList<SdfPath>& paths, const SdfPath& newParentPath, int insertIndex)
 {
@@ -2087,6 +2088,7 @@ movePath(const QList<SdfPath>& paths, const SdfPath& newParentPath, int insertIn
                         }
                     }
                 }
+
                 command::queueToSession(session, [=]() {
                     using Status = Session::Notify::Status;
 
@@ -2108,6 +2110,9 @@ movePath(const QList<SdfPath>& paths, const SdfPath& newParentPath, int insertIn
                         return;
                     }
 
+                    command::finishDeferred(session, state->items.size() == 1 ? "Path moved" : "Paths moved", changed,
+                                            Status::Success);
+
                     QList<SdfPath> selection = state->previousSelection;
                     QList<SdfPath> mask = state->previousMask;
 
@@ -2118,9 +2123,6 @@ movePath(const QList<SdfPath>& paths, const SdfPath& newParentPath, int insertIn
 
                     session->selectionList()->updatePaths(selection);
                     session->setMask(mask);
-
-                    command::finishDeferred(session, state->items.size() == 1 ? "Path moved" : "Paths moved", changed,
-                                            Status::Success);
                 });
             });
         },
@@ -2194,11 +2196,9 @@ movePath(const QList<SdfPath>& paths, const SdfPath& newParentPath, int insertIn
                         }
                     }
                 }
+
                 command::queueToSession(session, [=]() {
                     using Status = Session::Notify::Status;
-
-                    session->selectionList()->updatePaths(state->previousSelection);
-                    session->setMask(state->previousMask);
 
                     if (!hadStage) {
                         command::finishDeferred(session, "Undo move paths failed", {}, Status::Error);
@@ -2215,6 +2215,9 @@ movePath(const QList<SdfPath>& paths, const SdfPath& newParentPath, int insertIn
 
                     command::finishDeferred(session, state->items.size() == 1 ? "Move undone" : "Moves undone", changed,
                                             Status::Success);
+
+                    session->selectionList()->updatePaths(state->previousSelection);
+                    session->setMask(state->previousMask);
                 });
             });
         });
