@@ -209,9 +209,8 @@ SessionPrivate::initStage()
         ViewCamera* camera = d.viewState->camera();
 
         if (camera->isIdentity()) {
-            
             qDebug() << "camera will be reset";
-            
+
             camera->setBoundingBox(bbox);
             camera->setCameraUp(up == Session::StageUp::Y ? ViewCamera::Y : ViewCamera::Z);
             camera->reset();
@@ -491,8 +490,7 @@ SessionPrivate::saveToFile(const QString& filename)
             // export rewrites the root layer into a fresh file without flattening
             // composition, avoiding stale USDC/crate storage after destructive edits.
             const QString absFilename = QFileInfo(d.filename).absoluteFilePath();
-            if (!absFilename.isEmpty() && absFilename == stageFilename
-                && !rootLayer->IsAnonymous()) {
+            if (!absFilename.isEmpty() && absFilename == stageFilename && !rootLayer->IsAnonymous()) {
                 const QString tempFilename = stageFilename + ".stageviz.tmp";
 
                 QFile::remove(tempFilename);
@@ -515,7 +513,7 @@ SessionPrivate::saveToFile(const QString& filename)
                     return false;
 
                 // retarget the live layer to the new file. Block stage notices to
-                // avoid unnecessary updates for this identity-only change.  
+                // avoid unnecessary updates for this identity-only change.
                 StageBlocker blocker(d.stageWatcher.data());
                 rootLayer->SetIdentifier(QStringToString(stageFilename));
             }
@@ -702,9 +700,7 @@ SessionPrivate::loadState(const QString& filename)
             const QJsonArray focusPoint = cameraObject.value("focusPoint").toArray();
             if (focusPoint.size() == 3) {
                 camera->setFocusPoint(
-                    GfVec3d(focusPoint.at(0).toDouble(),
-                            focusPoint.at(1).toDouble(),
-                            focusPoint.at(2).toDouble()));
+                    GfVec3d(focusPoint.at(0).toDouble(), focusPoint.at(1).toDouble(), focusPoint.at(2).toDouble()));
             }
 
             if (cameraObject.contains("axisYaw"))

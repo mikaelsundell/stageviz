@@ -186,9 +186,9 @@ StylePrivate::updateStylesheet()
     }
 
     result.append(styleSheet.mid(lastIndex));
-    
+
     qDebug().noquote() << result;
-    
+
     qApp->setStyleSheet(result);
 }
 

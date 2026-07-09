@@ -477,10 +477,7 @@ PySession_notifyStatus(PySessionObject* self, PyObject* args)
     if (!PyArg_ParseTuple(args, "ls|s", &status, &message, &details))
         return nullptr;
 
-    self->session->notifyStatus(
-        toNotifyStatus(status),
-        QString::fromUtf8(message),
-        QString::fromUtf8(details));
+    self->session->notifyStatus(toNotifyStatus(status), QString::fromUtf8(message), QString::fromUtf8(details));
 
     Py_RETURN_NONE;
 }
@@ -497,10 +494,8 @@ PySession_setStatus(PySessionObject* self, PyObject* args)
     if (!PyArg_ParseTuple(args, "s|s", &message, &details))
         return nullptr;
 
-    self->session->notifyStatus(
-        Session::Notify::Status::Success,
-        QString::fromUtf8(message),
-        QString::fromUtf8(details));
+    self->session->notifyStatus(Session::Notify::Status::Success, QString::fromUtf8(message),
+                                QString::fromUtf8(details));
 
     Py_RETURN_NONE;
 }
@@ -537,10 +532,8 @@ static PyMethodDef PySession_methods[] = {
       "Flatten specific paths to file" },
     { "flattenPathsToFile", reinterpret_cast<PyCFunction>(PySession_flattenPaths), METH_VARARGS,
       "Flatten specific paths to file" },
-    { "loadState", reinterpret_cast<PyCFunction>(PySession_loadState), METH_VARARGS,
-      "Load session state from file" },
-    { "saveState", reinterpret_cast<PyCFunction>(PySession_saveState), METH_VARARGS,
-      "Save session state to file" },
+    { "loadState", reinterpret_cast<PyCFunction>(PySession_loadState), METH_VARARGS, "Load session state from file" },
+    { "saveState", reinterpret_cast<PyCFunction>(PySession_saveState), METH_VARARGS, "Save session state to file" },
     { "setPreserveState", reinterpret_cast<PyCFunction>(PySession_setPreserveState), METH_VARARGS,
       "Enable or disable state preservation" },
     { "reload", reinterpret_cast<PyCFunction>(PySession_reload), METH_NOARGS, "Reload the current stage" },
@@ -574,8 +567,7 @@ static PyMethodDef PySession_methods[] = {
     { "selection", reinterpret_cast<PyCFunction>(PySession_selection), METH_NOARGS, "Get the selection list wrapper" },
     { "paths", reinterpret_cast<PyCFunction>(PySession_paths), METH_NOARGS, "Get selected paths" },
 
-    { "viewState", reinterpret_cast<PyCFunction>(PySession_viewState), METH_NOARGS,
-      "Get the view state wrapper" },
+    { "viewState", reinterpret_cast<PyCFunction>(PySession_viewState), METH_NOARGS, "Get the view state wrapper" },
 
     { "notifyStatus", reinterpret_cast<PyCFunction>(PySession_notifyStatus), METH_VARARGS,
       "Set the session status with severity" },

@@ -113,7 +113,7 @@ PyInit_stageviz(void)
         Py_DECREF(module);
         return nullptr;
     }
-    
+
     if (addPyViewCameraType(module) < 0) {
         Py_DECREF(module);
         return nullptr;
@@ -159,7 +159,7 @@ PyInit_stageviz(void)
     PyModule_AddIntConstant(module, "NotifyProgress", 1);
     PyModule_AddIntConstant(module, "NotifyWarning", 2);
     PyModule_AddIntConstant(module, "NotifyError", 3);
-    
+
     PyModule_AddIntConstant(module, "CameraUpX", static_cast<int>(ViewCamera::CameraUp::X));
     PyModule_AddIntConstant(module, "CameraUpY", static_cast<int>(ViewCamera::CameraUp::Y));
     PyModule_AddIntConstant(module, "CameraUpZ", static_cast<int>(ViewCamera::CameraUp::Z));

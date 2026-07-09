@@ -447,7 +447,7 @@ ViewerPrivate::initSettings()
     const bool preserveState = settings()->value("preserveState", true).toBool();
     d.ui->filePreserveState->setChecked(preserveState);
     session()->setPreserveState(preserveState);
-    
+
     bool sceneStats = settings()->value("sceneStats", true).toBool();
     d.ui->hudSceneStats->setChecked(sceneStats);
     renderView()->setSceneStatsEnabled(sceneStats);
@@ -462,7 +462,7 @@ ViewerPrivate::initSettings()
 
     d.recentFiles = settings()->value("recentFiles", QStringList()).toStringList();
     initRecentFiles();
-    
+
     const QByteArray geometry = settings()->value("viewer/windowGeometry").toByteArray();
     if (!geometry.isEmpty())
         d.viewer->restoreGeometry(geometry);
@@ -473,9 +473,9 @@ ViewerPrivate::initSettings()
             d.ui->splitter->restoreState(splitterState);
     }
 
-    const Qt::WindowStates windowState =
-        Qt::WindowStates(settings()->value("viewer/windowState", int(Qt::WindowNoState)).toInt())
-        & ~Qt::WindowMinimized;
+    const Qt::WindowStates windowState = Qt::WindowStates(
+                                             settings()->value("viewer/windowState", int(Qt::WindowNoState)).toInt())
+                                         & ~Qt::WindowMinimized;
 
     if (windowState != Qt::WindowNoState)
         QTimer::singleShot(0, d.viewer, [viewer = d.viewer, windowState]() {
@@ -1607,9 +1607,7 @@ ViewerPrivate::updatePrims(const NoticeBatch& batch)
 }
 
 void
-ViewerPrivate::updateStage(UsdStageRefPtr stage,
-                           Session::LoadPolicy policy,
-                           Session::StageStatus status)
+ViewerPrivate::updateStage(UsdStageRefPtr stage, Session::LoadPolicy policy, Session::StageStatus status)
 {
     Q_UNUSED(stage);
 
@@ -1619,9 +1617,7 @@ ViewerPrivate::updateStage(UsdStageRefPtr stage,
     d.ui->policyAll->setChecked(policy == Session::LoadPolicy::All);
     d.ui->policyPayload->setChecked(policy == Session::LoadPolicy::None);
 
-    settings()->setValue(
-        "loadType",
-        policy == Session::LoadPolicy::All ? "all" : "payload");
+    settings()->setValue("loadType", policy == Session::LoadPolicy::All ? "all" : "payload");
 
     if (status == Session::StageStatus::Loaded)
         enable(true);

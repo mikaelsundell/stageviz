@@ -706,8 +706,7 @@ TreeWidget::selectionCommand(const QModelIndex& index, const QEvent* event) cons
         return QItemSelectionModel::NoUpdate;
     }
 
-    default:
-        break;
+    default: break;
     }
 
     return QTreeWidget::selectionCommand(index, event);

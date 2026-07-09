@@ -119,7 +119,7 @@ StageTreePrivate::init()
     d.tree->setColumnSelectable(PrimItem::Visibility, false);
     d.tree->setSelectionMode(QAbstractItemView::ExtendedSelection);
     d.tree->setSelectionBehavior(QAbstractItemView::SelectRows);
-    
+
     connect(d.tree.data(), &StageTree::itemSelectionChanged, this, &StageTreePrivate::itemSelectionChanged);
     connect(d.tree.data(), &StageTree::itemChanged, this, [this](QTreeWidgetItem* item, int column) {
         if (column == PrimItem::Name) {
@@ -1158,9 +1158,8 @@ StageTreePrivate::updatePrims(const NoticeBatch& batch)
             if (!d.stage)
                 continue;
 
-            parentPrim = parentPath == SdfPath::AbsoluteRootPath()
-                ? d.stage->GetPseudoRoot()
-                : d.stage->GetPrimAtPath(parentPath);
+            parentPrim = parentPath == SdfPath::AbsoluteRootPath() ? d.stage->GetPseudoRoot()
+                                                                   : d.stage->GetPrimAtPath(parentPath);
         }
 
         if (!parentPrim)
@@ -1209,8 +1208,7 @@ StageTreePrivate::updatePrims(const NoticeBatch& batch)
         case UsdNotice::ObjectsChanged::PrimResyncType::RenameAndReparentSource:
         case UsdNotice::ObjectsChanged::PrimResyncType::RenameDestination:
         case UsdNotice::ObjectsChanged::PrimResyncType::ReparentDestination:
-        case UsdNotice::ObjectsChanged::PrimResyncType::RenameAndReparentDestination:
-            break;
+        case UsdNotice::ObjectsChanged::PrimResyncType::RenameAndReparentDestination: break;
 
         case UsdNotice::ObjectsChanged::PrimResyncType::Delete:
             invalidatePrim(entry.path);
@@ -1224,9 +1222,7 @@ StageTreePrivate::updatePrims(const NoticeBatch& batch)
 
         case UsdNotice::ObjectsChanged::PrimResyncType::Other:
         case UsdNotice::ObjectsChanged::PrimResyncType::Invalid:
-        default:
-            invalidatePrim(entry.path);
-            break;
+        default: invalidatePrim(entry.path); break;
         }
     }
 
@@ -1519,9 +1515,8 @@ StageTreePrivate::refreshParentBranch(const SdfPath& path)
         if (!d.stage)
             return;
 
-        parentPrim = parentPath == SdfPath::AbsoluteRootPath()
-            ? d.stage->GetPseudoRoot()
-            : d.stage->GetPrimAtPath(parentPath);
+        parentPrim = parentPath == SdfPath::AbsoluteRootPath() ? d.stage->GetPseudoRoot()
+                                                               : d.stage->GetPrimAtPath(parentPath);
     }
 
     if (!parentPrim)

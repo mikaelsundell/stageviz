@@ -41,11 +41,9 @@ PyViewState_camera(PyViewStateObject* self)
     return createPyViewCamera(self->viewState->camera());
 }
 
-static PyMethodDef PyViewState_methods[] = {
-    { "camera", reinterpret_cast<PyCFunction>(PyViewState_camera), METH_NOARGS,
-      "Get the view camera wrapper" },
-    { nullptr }
-};
+static PyMethodDef PyViewState_methods[]
+    = { { "camera", reinterpret_cast<PyCFunction>(PyViewState_camera), METH_NOARGS, "Get the view camera wrapper" },
+        { nullptr } };
 
 PyTypeObject PyViewStateType = { PyVarObject_HEAD_INIT(nullptr, 0) };
 

@@ -18,8 +18,7 @@ namespace stageviz::python {
  * The ViewState pointer is non-owning and managed by Session.
  */
 typedef struct PyViewStateObject {
-    PyObject_HEAD
-    ViewState* viewState;
+    PyObject_HEAD ViewState* viewState;
 } PyViewStateObject;
 
 /** CPython type for `stageviz.ViewState`. */

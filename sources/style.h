@@ -170,6 +170,21 @@ public:
 
     ///@}
 
+    /** @name Stylesheet */
+    ///@{
+
+    /**
+     * @brief Sets rendering color space.
+     */
+    void setStyleSheet(const QString& styleSheet);
+
+    /**
+     * @brief Returns rendering color space.
+     */
+    QColorSpace styleSheet() const;
+
+    ///@}
+    
 Q_SIGNALS:
 
     /**

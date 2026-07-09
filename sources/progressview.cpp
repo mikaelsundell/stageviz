@@ -277,21 +277,17 @@ ProgressViewPrivate::progressBlockChanged(const QString& name, Session::Progress
     d.ui->clear->setEnabled(progressTree()->topLevelItemCount() > 0);
 
     if (d.errorCount > 0) {
-        session()->notifyStatus(
-            Session::Notify::Status::Error,
-            QString("%1 finished with %2 error(s)").arg(name).arg(d.errorCount),
-            errorDetails.join("\n\n"));
+        session()->notifyStatus(Session::Notify::Status::Error,
+                                QString("%1 finished with %2 error(s)").arg(name).arg(d.errorCount),
+                                errorDetails.join("\n\n"));
     }
     else if (d.warningCount > 0) {
-        session()->notifyStatus(
-            Session::Notify::Status::Warning,
-            QString("%1 finished with %2 warning(s)").arg(name).arg(d.warningCount),
-            warningDetails.join("\n\n"));
+        session()->notifyStatus(Session::Notify::Status::Warning,
+                                QString("%1 finished with %2 warning(s)").arg(name).arg(d.warningCount),
+                                warningDetails.join("\n\n"));
     }
     else {
-        session()->notifyStatus(
-            Session::Notify::Status::Success,
-            QString("%1 finished successfully").arg(name));
+        session()->notifyStatus(Session::Notify::Status::Success, QString("%1 finished successfully").arg(name));
     }
 
     d.currentItem = nullptr;

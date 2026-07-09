@@ -19,8 +19,7 @@ namespace stageviz::python {
  * The ViewCamera pointer is non-owning and managed on the C++ side.
  */
 typedef struct PyViewCameraObject {
-    PyObject_HEAD
-    ViewCamera* camera;
+    PyObject_HEAD ViewCamera* camera;
 } PyViewCameraObject;
 
 /** CPython type for `stageviz.ViewCamera`. */

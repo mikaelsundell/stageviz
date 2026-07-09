@@ -392,11 +392,7 @@ ShelfList::pressedIndex() const
 QStringList
 ShelfList::mimeTypes() const
 {
-    return {
-        QString::fromLatin1(mime::script),
-        QStringLiteral("text/plain"),
-        QStringLiteral("text/uri-list")
-    };
+    return { QString::fromLatin1(mime::script), QStringLiteral("text/plain"), QStringLiteral("text/uri-list") };
 }
 
 QMimeData*

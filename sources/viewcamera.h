@@ -65,7 +65,7 @@ public:
      * @brief Destroys the ViewCamera instance.
      */
     ~ViewCamera();
-    
+
     /**
      * @brief Returns whether the camera is in its default state.
      *
