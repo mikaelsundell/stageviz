@@ -1421,11 +1421,11 @@ renamePath(const SdfPath& path, const QString& newNameInput)
                         return;
                     }
 
+                    command::finishDeferred(session, "Path renamed", { path, newPath }, Status::Success);
+
                     session->selectionList()->updatePaths(
                         path::remapAffectedPaths(state->previousSelection, path, newPath));
                     session->setMask(path::remapAffectedPaths(state->previousMask, path, newPath));
-
-                    command::finishDeferred(session, "Path renamed", { path, newPath }, Status::Success);
                 });
             });
         },
@@ -1474,9 +1474,6 @@ renamePath(const SdfPath& path, const QString& newNameInput)
                 command::queueToSession(session, [=]() {
                     using Status = Session::Notify::Status;
 
-                    session->selectionList()->updatePaths(state->previousSelection);
-                    session->setMask(state->previousMask);
-
                     if (!hadStage) {
                         command::finishDeferred(session, "Undo rename path failed: stage missing", {}, Status::Error);
                         return;
@@ -1489,6 +1486,9 @@ renamePath(const SdfPath& path, const QString& newNameInput)
                     }
 
                     command::finishDeferred(session, "Rename undone", { state->oldPath }, Status::Success);
+
+                    session->selectionList()->updatePaths(state->previousSelection);
+                    session->setMask(state->previousMask);
                 });
             });
         });
