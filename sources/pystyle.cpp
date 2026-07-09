@@ -165,6 +165,30 @@ PyStyle_setIconSize(PyStyleObject* self, PyObject* args)
 }
 
 static PyObject*
+PyStyle_styleSheet(PyStyleObject* self)
+{
+    if (!checkStyle(self->style))
+        return nullptr;
+
+    const QString styleSheet = self->style->styleSheet();
+    return PyUnicode_FromString(styleSheet.toUtf8().constData());
+}
+
+static PyObject*
+PyStyle_setStyleSheet(PyStyleObject* self, PyObject* args)
+{
+    if (!checkStyle(self->style))
+        return nullptr;
+
+    const char* styleSheet = nullptr;
+    if (!PyArg_ParseTuple(args, "s", &styleSheet))
+        return nullptr;
+
+    self->style->setStyleSheet(QString::fromUtf8(styleSheet));
+    Py_RETURN_NONE;
+}
+
+static PyObject*
 PyStyle_refresh(PyStyleObject* self)
 {
     if (!checkStyle(self->style))
@@ -252,6 +276,11 @@ static PyMethodDef PyStyle_methods[] = {
 
     { "iconSize", reinterpret_cast<PyCFunction>(PyStyle_iconSize), METH_VARARGS, "Get icon size for a UI scale" },
     { "setIconSize", reinterpret_cast<PyCFunction>(PyStyle_setIconSize), METH_VARARGS, "Set icon size for a UI scale" },
+
+    { "styleSheet", reinterpret_cast<PyCFunction>(PyStyle_styleSheet), METH_NOARGS,
+      "Get the unresolved application stylesheet template" },
+    { "setStyleSheet", reinterpret_cast<PyCFunction>(PyStyle_setStyleSheet), METH_VARARGS,
+      "Set the unresolved application stylesheet template and refresh" },
 
     { "refresh", reinterpret_cast<PyCFunction>(PyStyle_refresh), METH_NOARGS,
       "Refresh and reapply the application stylesheet" },

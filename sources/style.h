@@ -174,14 +174,14 @@ public:
     ///@{
 
     /**
-     * @brief Sets rendering color space.
+     * @brief Sets rrendering stylesheet.
      */
     void setStyleSheet(const QString& styleSheet);
 
     /**
-     * @brief Returns rendering color space.
+     * @brief Returns rendering stylesheet.
      */
-    QColorSpace styleSheet() const;
+    QString styleSheet() const;
 
     ///@}
     

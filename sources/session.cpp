@@ -331,6 +331,7 @@ SessionPrivate::loadFromFile(const QString& filename, Session::LoadPolicy policy
     QList<SdfPath> mask;
     bool loaded = false;
     bool preserveState = false;
+    QString stateFilename;
 
     {
         WRITE_LOCKER(locker, &d.stageLock, "stageLock");
@@ -353,6 +354,7 @@ SessionPrivate::loadFromFile(const QString& filename, Session::LoadPolicy policy
             d.filename = absFilename;
             loaded = true;
             preserveState = d.preserveState;
+            stateFilename = QFileInfo(d.filename + ".session").absoluteFilePath();
         }
         else {
             d.stageStatus = Session::StageStatus::Failed;
@@ -365,14 +367,15 @@ SessionPrivate::loadFromFile(const QString& filename, Session::LoadPolicy policy
     d.commandStack->clear();
     d.selectionList->clear();
 
-    if (loaded && !preserveState && d.viewState && d.viewState->camera())
+    const bool hasStateFile = preserveState && QFileInfo::exists(stateFilename);
+
+    if (loaded && !hasStateFile && d.viewState && d.viewState->camera())
         d.viewState->camera()->resetView();
 
     if (loaded)
         initStage();
 
-    if (loaded && preserveState) {
-        const QString stateFilename = QFileInfo(d.filename + ".session").absoluteFilePath();
+    if (loaded && hasStateFile) {
         if (!loadState(stateFilename)) {
             close();
             return false;

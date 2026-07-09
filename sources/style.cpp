@@ -47,6 +47,7 @@ public:
     };
 
     struct Data {
+        QString styleSheet;
         QHash<QString, QColor> palette;
         QHash<QString, QString> icons;
         QHash<QString, int> fontSizes;
@@ -74,6 +75,9 @@ StylePrivate::~StylePrivate() = default;
 void
 StylePrivate::init()
 {
+    QFile file(":/style/resources/App.qss");
+    if (file.open(QFile::ReadOnly))
+        d.styleSheet = QString::fromUtf8(file.readAll());
     updateTheme();
     updateColorSpace(QColorSpace::SRgb);
     updateStylesheet();
@@ -90,13 +94,10 @@ StylePrivate::updateColorSpace(const QColorSpace& colorSpace)
 void
 StylePrivate::updateStylesheet()
 {
-    QFile file(":/style/resources/App.qss");
-    if (!file.open(QFile::ReadOnly)) {
-        qWarning() << "Failed to open QSS";
+    if (d.styleSheet.isEmpty())
         return;
-    }
 
-    QString styleSheet = QString::fromUtf8(file.readAll());
+    const QString styleSheet = d.styleSheet;
 
     QRegularExpression regex(
         R"(\$([a-z0-9_]+(?:\.(?!(?:lightness|saturation)\()[a-z0-9_]+){0,2})(?:\.(lightness|saturation)\((\d+)\))?)",
@@ -455,6 +456,22 @@ QColorSpace
 Style::colorSpace() const
 {
     return p->colorSpace();
+}
+
+void
+Style::setStyleSheet(const QString& styleSheet)
+{
+    if (p->d.styleSheet == styleSheet)
+        return;
+
+    p->d.styleSheet = styleSheet;
+    refresh();
+}
+
+QString
+Style::styleSheet() const
+{
+    return p->d.styleSheet;
 }
 
 }  // namespace stageviz
