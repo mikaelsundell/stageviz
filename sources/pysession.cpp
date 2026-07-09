@@ -5,6 +5,7 @@
 #include "pysession.h"
 #include "pyselectionlist.h"
 #include "pyutils.h"
+#include "pyviewstate.h"
 #include <QReadWriteLock>
 
 namespace stageviz::python {
@@ -460,11 +461,7 @@ PySession_viewState(PySessionObject* self)
     if (!checkSession(self->session))
         return nullptr;
 
-    ViewState* viewState = self->session->viewState();
-    if (!viewState)
-        Py_RETURN_NONE;
-
-    return PyLong_FromVoidPtr(viewState);
+    return createPyViewState(self->session->viewState());
 }
 
 static PyObject*
@@ -578,7 +575,7 @@ static PyMethodDef PySession_methods[] = {
     { "paths", reinterpret_cast<PyCFunction>(PySession_paths), METH_NOARGS, "Get selected paths" },
 
     { "viewState", reinterpret_cast<PyCFunction>(PySession_viewState), METH_NOARGS,
-      "Get the native view state address" },
+      "Get the view state wrapper" },
 
     { "notifyStatus", reinterpret_cast<PyCFunction>(PySession_notifyStatus), METH_VARARGS,
       "Set the session status with severity" },

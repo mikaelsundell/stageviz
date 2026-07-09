@@ -9,6 +9,8 @@
 #include "pysession.h"
 #include "pystyle.h"
 #include "pyutils.h"
+#include "pyviewcamera.h"
+#include "pyviewstate.h"
 
 using namespace stageviz;
 using namespace stageviz::python;
@@ -86,6 +88,12 @@ PyInit_stageviz(void)
     if (!initPySelectionListType())
         return nullptr;
 
+    if (!initPyViewCameraType())
+        return nullptr;
+
+    if (!initPyViewStateType())
+        return nullptr;
+
     if (!initPySessionType())
         return nullptr;
 
@@ -102,6 +110,16 @@ PyInit_stageviz(void)
     }
 
     if (addPySelectionListType(module) < 0) {
+        Py_DECREF(module);
+        return nullptr;
+    }
+    
+    if (addPyViewCameraType(module) < 0) {
+        Py_DECREF(module);
+        return nullptr;
+    }
+
+    if (addPyViewStateType(module) < 0) {
         Py_DECREF(module);
         return nullptr;
     }
@@ -141,6 +159,19 @@ PyInit_stageviz(void)
     PyModule_AddIntConstant(module, "NotifyProgress", 1);
     PyModule_AddIntConstant(module, "NotifyWarning", 2);
     PyModule_AddIntConstant(module, "NotifyError", 3);
+    
+    PyModule_AddIntConstant(module, "CameraUpX", static_cast<int>(ViewCamera::CameraUp::X));
+    PyModule_AddIntConstant(module, "CameraUpY", static_cast<int>(ViewCamera::CameraUp::Y));
+    PyModule_AddIntConstant(module, "CameraUpZ", static_cast<int>(ViewCamera::CameraUp::Z));
+
+    PyModule_AddIntConstant(module, "CameraModeNone", static_cast<int>(ViewCamera::CameraMode::None));
+    PyModule_AddIntConstant(module, "CameraModeTruck", static_cast<int>(ViewCamera::CameraMode::Truck));
+    PyModule_AddIntConstant(module, "CameraModeTumble", static_cast<int>(ViewCamera::CameraMode::Tumble));
+    PyModule_AddIntConstant(module, "CameraModeZoom", static_cast<int>(ViewCamera::CameraMode::Zoom));
+    PyModule_AddIntConstant(module, "CameraModePick", static_cast<int>(ViewCamera::CameraMode::Pick));
+
+    PyModule_AddIntConstant(module, "FovVertical", static_cast<int>(ViewCamera::FovDirection::Vertical));
+    PyModule_AddIntConstant(module, "FovHorizontal", static_cast<int>(ViewCamera::FovDirection::Horizontal));
 
     PyModule_AddIntConstant(module, "ColorBase", static_cast<int>(Style::ColorRole::Base));
     PyModule_AddIntConstant(module, "ColorBaseAlt", static_cast<int>(Style::ColorRole::BaseAlt));

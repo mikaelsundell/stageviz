@@ -4,6 +4,7 @@
 
 #include "pyutils.h"
 #include "application.h"
+#include <pxr/base/gf/range3d.h>
 #include <pxr/external/boost/python.hpp>
 
 namespace stageviz::python {
@@ -251,6 +252,36 @@ pyToVariant(PyObject* object)
 }
 
 PyObject*
+vec3dToPyTuple(const GfVec3d& value)
+{
+    return Py_BuildValue("(ddd)", value[0], value[1], value[2]);
+}
+
+bool
+pyToVec3d(PyObject* object, GfVec3d* value)
+{
+    if (!value) {
+        PyErr_SetString(PyExc_RuntimeError, "Internal error: null GfVec3d output");
+        return false;
+    }
+
+    if (!object || object == Py_None) {
+        PyErr_SetString(PyExc_TypeError, "Expected a tuple of three floats");
+        return false;
+    }
+
+    double x = 0.0;
+    double y = 0.0;
+    double z = 0.0;
+
+    if (!PyArg_ParseTuple(object, "ddd", &x, &y, &z))
+        return false;
+
+    *value = GfVec3d(x, y, z);
+    return true;
+}
+
+PyObject*
 bboxToPyTuple(const GfBBox3d& bbox)
 {
     const GfRange3d range = bbox.GetRange();
@@ -258,6 +289,38 @@ bboxToPyTuple(const GfBBox3d& bbox)
     const GfVec3d max = range.GetMax();
 
     return Py_BuildValue("((ddd)(ddd))", min[0], min[1], min[2], max[0], max[1], max[2]);
+}
+
+bool
+pyToBBox(PyObject* object, GfBBox3d* bbox)
+{
+    if (!bbox) {
+        PyErr_SetString(PyExc_RuntimeError, "Internal error: null GfBBox3d output");
+        return false;
+    }
+
+    if (!object || object == Py_None) {
+        PyErr_SetString(PyExc_TypeError, "Expected bounding box as ((min), (max))");
+        return false;
+    }
+
+    PyObject* pyMin = nullptr;
+    PyObject* pyMax = nullptr;
+
+    if (!PyArg_ParseTuple(object, "OO", &pyMin, &pyMax))
+        return false;
+
+    GfVec3d min;
+    GfVec3d max;
+
+    if (!pyToVec3d(pyMin, &min))
+        return false;
+
+    if (!pyToVec3d(pyMax, &max))
+        return false;
+
+    *bbox = GfBBox3d(GfRange3d(min, max));
+    return true;
 }
 
 PyObject*
