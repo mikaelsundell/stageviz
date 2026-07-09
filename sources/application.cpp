@@ -16,6 +16,7 @@
 #include <pxr/base/plug/plugin.h>
 #include <pxr/base/plug/registry.h>
 #include <pxr/base/tf/setenv.h>
+#include <pxr/usd/usd/schemaRegistry.h>
 
 PXR_NAMESPACE_USING_DIRECTIVE
 

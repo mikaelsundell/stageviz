@@ -300,16 +300,16 @@ StageTreePrivate::expandDepth(int targetDepth, const SdfPath& path)
         return;
 
     d.tree->setUpdatesEnabled(false);
-
+    
     if (path.IsEmpty()) {
-        QTreeWidgetItem* root = d.tree->topLevelItem(0);
-
         std::function<void(QTreeWidgetItem*, int)> expandNode = [&](QTreeWidgetItem* item, int depthValue) {
-            item->setExpanded(depthValue < targetDepth);
+            item->setExpanded(depthValue <= targetDepth);
             for (int i = 0; i < item->childCount(); ++i)
                 expandNode(item->child(i), depthValue + 1);
         };
-        expandNode(root, 0);
+        for (int i = 0; i < d.tree->topLevelItemCount(); ++i) {
+            expandNode(d.tree->topLevelItem(i), 1);
+        }
     }
     else {
         QTreeWidgetItem* item = itemFromPath(path);
@@ -319,17 +319,16 @@ StageTreePrivate::expandDepth(int targetDepth, const SdfPath& path)
         }
 
         const int selectedDepth = depth(path);
-
         QTreeWidgetItem* parent = item->parent();
         int parentDepthValue = selectedDepth - 1;
         while (parent) {
-            parent->setExpanded(parentDepthValue < targetDepth);
+            parent->setExpanded(parentDepthValue <= targetDepth);
             parent = parent->parent();
             parentDepthValue--;
         }
 
         std::function<void(QTreeWidgetItem*, int)> expandNode = [&](QTreeWidgetItem* node, int depthValue) {
-            node->setExpanded(depthValue < targetDepth);
+            node->setExpanded(depthValue <= targetDepth);
             for (int i = 0; i < node->childCount(); ++i)
                 expandNode(node->child(i), depthValue + 1);
         };
@@ -669,7 +668,7 @@ StageTreePrivate::contextMenuEvent(QContextMenuEvent* event)
                         continue;
 
                     const auto variants = setSpec->GetVariants();
-                    for (const SdfVariantSpecHandle& variantSpec : variants) {
+                    for (const auto& variantSpec : variants) {
                         if (!variantSpec)
                             continue;
 
@@ -773,33 +772,41 @@ StageTreePrivate::contextMenuEvent(QContextMenuEvent* event)
 
     QMenu menu(d.tree.data());
 
-    struct VariantSelection {
-        QString setName;
-        QString value;
-    };
-
     QMenu* loadVariantMenu = menu.addMenu("Load Variant");
-    QMap<QAction*, VariantSelection> variantActions;
+    payload::PayloadVariantTargets variantTargets;
     {
         READ_LOCKER(locker, d.context->stageLock(), "stageLock");
-        if (!d.stage)
-            return;
+        if (d.stage) {
+            variantTargets = payload::selectionPayloadVariantTargets(d.stage, paths);
+        }
+    }
 
-        const QMap<QString, QList<QString>> variantSets = stage::findVariantSets(d.stage, paths, false);
-
-        for (auto it = variantSets.begin(); it != variantSets.end(); ++it) {
-            const QString& setName = it.key();
-            const QList<QString>& values = it.value();
-
+    if (variantTargets.isEmpty()) {
+        loadVariantMenu->setEnabled(false);
+    } else {
+        for (auto setIt = variantTargets.cbegin(); setIt != variantTargets.cend(); ++setIt) {
+            const QString& setName = setIt.key();
             QMenu* setMenu = loadVariantMenu->addMenu(setName);
-            for (const QString& value : values) {
+
+            for (auto valueIt = setIt.value().cbegin(); valueIt != setIt.value().cend(); ++valueIt) {
+                const QString& value = valueIt.key();
+                const QList<SdfPath> targetPaths = valueIt.value();
+                
                 QAction* action = setMenu->addAction(value);
-                variantActions[action] = { setName, value };
+                QObject::connect(action, &QAction::triggered, this, [this, setName, value, targetPaths]() {
+                    QList<SdfPath> payloadPaths;
+                    {
+                        READ_LOCKER(locker, d.context->stageLock(), "stageLock");
+                        if (d.stage) {
+                            payloadPaths = stage::payloadPaths(d.stage, targetPaths);
+                        }
+                    }
+                    if (!payloadPaths.isEmpty()) {
+                        d.context->run(new Command(loadPayloads(payloadPaths, setName, value)));
+                    }
+                });
             }
         }
-
-        if (variantActions.isEmpty())
-            loadVariantMenu->setEnabled(false);
     }
 
     menu.addSeparator();
@@ -907,15 +914,6 @@ StageTreePrivate::contextMenuEvent(QContextMenuEvent* event)
             const QList<SdfPath> payloadPaths = payloadPathsAtSelection();
             if (!payloadPaths.isEmpty())
                 d.context->run(new Command(unloadPayloads(payloadPaths)));
-        }
-        return;
-    }
-
-    if (variantActions.contains(chosen)) {
-        const QList<SdfPath> payloadPaths = payloadPathsAtSelection();
-        if (!payloadPaths.isEmpty()) {
-            const VariantSelection& sel = variantActions[chosen];
-            d.context->run(new Command(loadPayloads(payloadPaths, sel.setName, sel.value)));
         }
         return;
     }

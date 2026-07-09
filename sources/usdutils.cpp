@@ -331,6 +331,88 @@ namespace payload {
         return true;
     }
 
+    PayloadVariantTargets
+    selectionPayloadVariantTargets(UsdStageRefPtr stage, const QList<SdfPath>& paths)
+    {
+        PayloadVariantTargets result;
+        if (!stage || paths.isEmpty()) {
+            return result;
+        }
+        
+        std::unordered_set<SdfPath, SdfPath::Hash> visitedRoots;
+        std::unordered_set<SdfPath, SdfPath::Hash> visitedPayloads;
+        QList<SdfPath> roots;
+
+        auto appendRoot = [&](const SdfPath& path) {
+            if (path.IsEmpty())
+                return;
+
+            if (visitedRoots.find(path) != visitedRoots.end()) {
+                return;
+            }
+
+            visitedRoots.insert(path);
+            roots.append(path);
+        };
+
+        for (const SdfPath& inputPath : path::topLevelPaths(paths)) {
+            SdfPath payloadRootPath;
+            SdfPath currentPath = inputPath;
+
+            while (!currentPath.IsEmpty() && currentPath != SdfPath::AbsoluteRootPath()) {
+                if (stage::isPayload(stage, currentPath)) {
+                    payloadRootPath = currentPath;
+                }
+                currentPath = currentPath.GetParentPath();
+            }
+
+            appendRoot(payloadRootPath.IsEmpty() ? inputPath : payloadRootPath);
+        }
+
+        roots = path::minimalRootPaths(roots);
+        auto addPayloadVariants = [&](const UsdPrim& prim) {
+            if (!prim)
+                return;
+
+            const SdfPath primPath = prim.GetPath();
+
+            if (!stage::isPayload(stage, primPath))
+                return;
+
+            if (visitedPayloads.find(primPath) != visitedPayloads.end()) {
+                return;
+            }
+            visitedPayloads.insert(primPath);
+            UsdVariantSets variantSets = prim.GetVariantSets();
+            std::vector<std::string> setNames = variantSets.GetNames();
+
+            for (const std::string& setName : setNames) {
+                UsdVariantSet variantSet = variantSets.GetVariantSet(setName);
+                std::vector<std::string> variantNames = variantSet.GetVariantNames();
+
+                // Cache the converted set name so we don't convert it multiple times per variant value
+                QString qSetName = QString::fromStdString(setName);
+
+                for (const std::string& variantName : variantNames) {
+                    // Map out directly into our nested Qt container
+                    result[qSetName][QString::fromStdString(variantName)].append(primPath);
+                }
+            }
+        };
+
+        for (const SdfPath& rootPath : roots) {
+            const UsdPrim root = (rootPath == SdfPath::AbsoluteRootPath())
+                                     ? stage->GetPseudoRoot()
+                                     : stage->GetPrimAtPath(rootPath);
+
+            if (!root) continue;
+
+            for (const UsdPrim& prim : UsdPrimRange(root))
+                addPayloadVariants(prim);
+        }
+        return result;
+    }
+
 }  // namespace payload
 
 namespace snapshot {

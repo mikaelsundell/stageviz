@@ -184,7 +184,7 @@ public:
     QString styleSheet() const;
 
     ///@}
-    
+
 Q_SIGNALS:
 
     /**

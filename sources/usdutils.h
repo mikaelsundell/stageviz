@@ -240,6 +240,22 @@ namespace payload {
  */
     bool restoreState(UsdStageRefPtr stage, const PayloadState& payloadState, QString& error);
 
+    using PayloadVariantTargets = QMap<QString, QMap<QString, QList<SdfPath>>>;
+
+    /**
+ * @brief Collects payload variant targets below selected paths.
+ *
+ * Traverses the selected roots, finds payload prims, and groups only
+ * variant sets authored on those payload prims. Duplicate payload prims are
+ * ignored, and duplicate menu names are naturally merged by the map.
+ *
+ * @param stage USD stage to query.
+ * @param paths Selected prim paths to scan recursively.
+ *
+ * @return Map of variant set name to variant value to compatible payload paths.
+ */
+    PayloadVariantTargets selectionPayloadVariantTargets(UsdStageRefPtr stage, const QList<SdfPath>& paths);
+
 }  // namespace payload
 
 namespace snapshot {

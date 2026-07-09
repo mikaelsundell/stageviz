@@ -100,7 +100,6 @@ public Q_SLOTS:
     void payloadLoad();
     void payloadUnload();
     void payloadSelectInvert();
-    void payloadVariant(int variant);
     void deleteSelected();
     void isolate(bool checked);
     void frameAll();
@@ -1140,42 +1139,6 @@ ViewerPrivate::payloadLoad()
 }
 
 void
-ViewerPrivate::payloadVariant(int variant)
-{
-    const QList<SdfPath> selectedPaths = session()->selectionList()->paths();
-    if (selectedPaths.isEmpty() || variant < 0)
-        return;
-
-    QList<SdfPath> payloadPaths;
-    QMap<QString, QList<QString>> variantSets;
-    {
-        READ_LOCKER(locker, session()->stageLock(), "stageLock");
-        const UsdStageRefPtr stage = session()->stageUnsafe();
-        if (!stage)
-            return;
-
-        payloadPaths = stage::selectionPayloadPaths(stage, selectedPaths);
-        variantSets = stage::findVariantSets(stage, payloadPaths, true);
-    }
-
-    if (payloadPaths.isEmpty() || variantSets.isEmpty())
-        return;
-
-    int index = 0;
-    for (auto it = variantSets.cbegin(); it != variantSets.cend(); ++it) {
-        const QString& setName = it.key();
-        const QList<QString>& values = it.value();
-        for (const QString& value : values) {
-            if (index == variant) {
-                session()->commandStack()->run(new Command(loadPayloads(payloadPaths, setName, value)));
-                return;
-            }
-            ++index;
-        }
-    }
-}
-
-void
 ViewerPrivate::payloadUnload()
 {
     const QList<SdfPath> selectedPaths = session()->selectionList()->paths();
@@ -1509,14 +1472,24 @@ ViewerPrivate::updateSelection(const QList<SdfPath>& paths)
     d.ui->editSelectInvert->setEnabled(hasSelection);
     d.ui->editPayloadInvertSelected->setEnabled(hasSelection);
 
-    QList<QMenu*> staleMenus;
-    for (QObject* child : d.ui->editPayloadLoad->children()) {
-        QMenu* menu = qobject_cast<QMenu*>(child);
-        if (menu && menu->property("variantMenu").toBool())
-            staleMenus.append(menu);
+    QList<QAction*> staleActions;
+    for (QAction* action : d.ui->menuPayloads->actions()) {
+        if (action && action->property("variantMenu").toBool())
+            staleActions.append(action);
     }
-    for (QMenu* menu : staleMenus)
-        delete menu;
+    for (QAction* action : staleActions) {
+        if (QMenu* menu = action->menu()) {
+            for (QAction* childAction : menu->actions()) {
+                childAction->setShortcut(QKeySequence());
+            }
+            d.ui->menuPayloads->removeAction(action);
+            menu->deleteLater();
+        } else {
+            action->setShortcut(QKeySequence());
+            d.ui->menuPayloads->removeAction(action);
+            action->deleteLater();
+        }
+    }
 
     d.ui->editPayloadLoad->setEnabled(false);
     d.ui->editPayloadUnload->setEnabled(false);
@@ -1525,24 +1498,28 @@ ViewerPrivate::updateSelection(const QList<SdfPath>& paths)
         return;
 
     QList<SdfPath> payloadPaths;
-    QMap<QString, QList<QString>> variantSets;
+    payload::PayloadVariantTargets variantTargets;
     bool canLoadSelected = false;
     bool canUnloadSelected = false;
+
     {
         READ_LOCKER(locker, session()->stageLock(), "stageLock");
+
         const UsdStageRefPtr stage = session()->stageUnsafe();
         if (!stage)
             return;
 
         payloadPaths = stage::selectionPayloadPaths(stage, paths);
-        variantSets = stage::findVariantSets(stage, payloadPaths, true);
+        variantTargets = payload::selectionPayloadVariantTargets(stage, paths);
 
         for (const SdfPath& payloadPath : payloadPaths) {
             const bool loaded = stage::isLoaded(stage, payloadPath);
+
             if (loaded)
                 canUnloadSelected = true;
             else
                 canLoadSelected = true;
+
             if (canLoadSelected && canUnloadSelected)
                 break;
         }
@@ -1551,31 +1528,40 @@ ViewerPrivate::updateSelection(const QList<SdfPath>& paths)
     d.ui->editPayloadLoad->setEnabled(canLoadSelected);
     d.ui->editPayloadUnload->setEnabled(canUnloadSelected);
 
-    if (payloadPaths.isEmpty() || variantSets.isEmpty())
+    if (variantTargets.isEmpty())
         return;
 
-    d.ui->menuPayloads->addSeparator();
+    QAction* separator = d.ui->menuPayloads->addSeparator();
+    separator->setProperty("variantMenu", true);
 
     int index = 0;
-    for (auto it = variantSets.cbegin(); it != variantSets.cend(); ++it) {
-        const QString& setName = it.key();
-        const QList<QString>& values = it.value();
+    for (auto setIt = variantTargets.cbegin(); setIt != variantTargets.cend(); ++setIt) {
+        const QString& setName = setIt.key();
 
         QMenu* setMenu = d.ui->menuPayloads->addMenu(setName);
-        setMenu->setProperty("variantMenu", true);
+        setMenu->menuAction()->setProperty("variantMenu", true);
 
-        for (const QString& value : values) {
+        d.viewer->addAction(setMenu->menuAction());
+
+        for (auto valueIt = setIt.value().cbegin(); valueIt != setIt.value().cend(); ++valueIt) {
+            const QString& value = valueIt.key();
+            const QList<SdfPath> targets = valueIt.value();
+
             QAction* action = setMenu->addAction(value);
+
             if (index < 10) {
                 const int key = (index == 9) ? Qt::Key_0 : (Qt::Key_1 + index);
                 action->setShortcut(QKeySequence(key));
+                action->setShortcutContext(Qt::WidgetWithChildrenShortcut);
+                action->setAutoRepeat(false);
+                d.viewer->addAction(action);
             }
 
-            QObject::connect(action, &QAction::triggered, d.viewer, [this, payloadPaths, setName, value]() {
-                if (!payloadPaths.isEmpty())
-                    session()->commandStack()->run(new Command(loadPayloads(payloadPaths, setName, value)));
+            QObject::connect(action, &QAction::triggered, d.viewer, [this, targets, setName, value]() {
+                if (!targets.isEmpty()) {
+                    session()->commandStack()->run(new Command(loadPayloads(targets, setName, value)));
+                }
             });
-
             ++index;
         }
     }
