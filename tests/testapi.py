@@ -234,7 +234,15 @@ def _create_payload_file(path, name):
     stage.GetRootLayer().Save()
 
 
-def _create_main_file(path, payload_a, payload_b):
+def _create_external_file(path):
+    stage = Usd.Stage.CreateNew(path)
+    root = _define_xform(stage, "/ExternalRoot")
+    _define_xform(stage, "/ExternalRoot/Child")
+    stage.SetDefaultPrim(root)
+    stage.GetRootLayer().Save()
+
+
+def _create_main_file(path, payload_a, payload_b, external):
     stage = Usd.Stage.CreateNew(path)
 
     world = _define_xform(stage, "/World")
@@ -253,6 +261,11 @@ def _create_main_file(path, payload_a, payload_b):
 
     _define_xform(stage, "/OtherRoot")
 
+    referenced = _define_xform(stage, "/World/Referenced")
+    referenced.GetReferences().AddReference(os.path.basename(external), "/ExternalRoot")
+
+    stage.GetRootLayer().subLayerPaths.append(os.path.basename(external))
+
     p1 = _define_xform(stage, "/World/PayloadA")
     p1.GetPayloads().AddPayload(os.path.basename(payload_a), "/PayloadA")
 
@@ -266,12 +279,14 @@ def create_fixture():
     root = tempfile.mkdtemp(prefix="stageviz_command_tests_")
     payload_a = os.path.join(root, "payload_a.usda")
     payload_b = os.path.join(root, "payload_b.usda")
+    external = os.path.join(root, "external.usda")
     main = os.path.join(root, "command_test.usda")
     saved = os.path.join(root, "command_test_saved.usda")
 
     _create_payload_file(payload_a, "PayloadA")
     _create_payload_file(payload_b, "PayloadB")
-    _create_main_file(main, payload_a, payload_b)
+    _create_external_file(external)
+    _create_main_file(main, payload_a, payload_b, external)
 
     return root, main, saved
 
@@ -1088,6 +1103,88 @@ def test_select_invert_payload():
         )
 
 
+def test_root_prim_order_create_move_and_undo():
+    before = _child_names("/")
+
+    stageviz.command.new_xform("/", "RootGroup")
+
+    _assert(
+        _wait_until(lambda: _exists("/RootGroup")),
+        "root-level xform is created",
+    )
+
+    _assert(
+        _wait_until(lambda: _child_names("/") == before + ["RootGroup"]),
+        "root-level create appends root prim order",
+    )
+
+    stageviz.command.move_path(["/RootGroup"], "/", insert_index=0)
+
+    _assert(
+        _wait_until(
+            lambda: bool(_child_names("/"))
+            and _child_names("/")[0] == "RootGroup"
+        ),
+        "root-level move authors requested root prim order",
+    )
+
+    if _undo():
+        _assert(
+            _wait_until(lambda: _child_names("/") == before + ["RootGroup"]),
+            "undo root-level move restores root prim order",
+        )
+
+
+def test_root_layer_policy_rejects_sublayer_prim():
+    _assert(_exists("/ExternalRoot"), "sublayer prim is composed")
+    before_roots = _child_names("/")
+
+    stageviz.command.rename_path("/ExternalRoot", "ExternalRenamed")
+    _wait()
+
+    _assert(_exists("/ExternalRoot"), "rename rejects prim authored only in sublayer")
+    _assert(not _exists("/ExternalRenamed"), "rejected sublayer rename authors no root override")
+    _assert_equal(_child_names("/"), before_roots, "rejected sublayer rename preserves root order")
+
+    stageviz.command.delete_paths(["/ExternalRoot"])
+    _wait()
+    _assert(_exists("/ExternalRoot"), "delete rejects prim authored only in sublayer")
+
+
+def test_composition_boundary_rejects_namespace_edit():
+    _assert(_exists("/World/Referenced/Child"), "referenced child is composed")
+
+    stageviz.command.move_path(["/World/Referenced/Child"], "/World/B", insert_index=-1)
+    _wait()
+
+    _assert(
+        _exists("/World/Referenced/Child"),
+        "move rejects prim below reference composition arc",
+    )
+    _assert(
+        not _exists("/World/B/Child"),
+        "composition-boundary rejection does not author relocates or destination prim",
+    )
+
+
+def test_multi_move_is_transactional_on_collision():
+    stage = _stage()
+    _define_xform(stage, "/World/B/A2")
+    stage.GetRootLayer().Save()
+
+    before_a = _child_names("/World/A")
+    before_b = _child_names("/World/B")
+
+    stageviz.command.move_path(["/World/A/A1", "/World/A/A2"], "/World/B", insert_index=0)
+    _wait()
+
+    _assert(_exists("/World/A/A1"), "failed batch move keeps first source")
+    _assert(_exists("/World/A/A2"), "failed batch move keeps colliding source")
+    _assert(not _exists("/World/B/A1"), "failed batch move does not partially move first prim")
+    _assert_equal(_child_names("/World/A"), before_a, "failed batch move preserves source order")
+    _assert_equal(_child_names("/World/B"), before_b, "failed batch move preserves destination order")
+
+
 def test_save_reload(saved_path):
     ok = stageviz.session().save(saved_path)
     _assert(ok, "session.save writes test stage")
@@ -1125,6 +1222,10 @@ def run():
         ("stage up", test_stage_up),
         ("payload load/unload", test_payload_load_unload),
         ("select invert payload", test_select_invert_payload),
+        ("root prim order", test_root_prim_order_create_move_and_undo),
+        ("root layer policy", test_root_layer_policy_rejects_sublayer_prim),
+        ("composition boundary", test_composition_boundary_rejects_namespace_edit),
+        ("transactional multi move", test_multi_move_is_transactional_on_collision),
         ("save/reopen", lambda: test_save_reload(saved_path)),
     ]
 

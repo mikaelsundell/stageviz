@@ -28,10 +28,6 @@
 #include <QStyledItemDelegate>
 #include <QTimer>
 #include <functional>
-#include <pxr/usd/sdf/payload.h>
-#include <pxr/usd/sdf/primSpec.h>
-#include <pxr/usd/sdf/variantSetSpec.h>
-#include <pxr/usd/sdf/variantSpec.h>
 #include <pxr/usd/usd/prim.h>
 
 PXR_NAMESPACE_USING_DIRECTIVE
@@ -300,7 +296,7 @@ StageTreePrivate::expandDepth(int targetDepth, const SdfPath& path)
         return;
 
     d.tree->setUpdatesEnabled(false);
-    
+
     if (path.IsEmpty()) {
         std::function<void(QTreeWidgetItem*, int)> expandNode = [&](QTreeWidgetItem* item, int depthValue) {
             item->setExpanded(depthValue <= targetDepth);
@@ -627,85 +623,27 @@ StageTreePrivate::contextMenuEvent(QContextMenuEvent* event)
     };
 
     auto payloadClipboardText = [&]() {
-        QStringList lines;
-
-        READ_LOCKER(locker, d.context->stageLock(), "stageLock");
-        if (!d.stage)
-            return QString();
-
-        for (const SdfPath& path : paths) {
-            if (!stage::isPayload(d.stage, path))
-                continue;
-
-            const UsdPrim prim = d.stage->GetPrimAtPath(path);
-            if (!prim || !prim.IsValid())
-                continue;
-
-            QStringList payloadFiles;
-            QMap<QString, QString> variantPayloadFiles;
-
-            const SdfPrimSpecHandleVector primStack = prim.GetPrimStack();
-            for (const SdfPrimSpecHandle& spec : primStack) {
-                if (!spec)
-                    continue;
-
-                auto appendPayloadFiles = [&](const SdfPayloadVector& items) {
-                    for (const SdfPayload& payload : items) {
-                        const QString assetPath = qt::StringToQString(payload.GetAssetPath());
-                        if (assetPath.isEmpty())
-                            continue;
-                        payloadFiles.append(QFileInfo(assetPath).fileName());
-                    }
-                };
-
-                appendPayloadFiles(spec->GetPayloadList().GetAppliedItems());
-
-                const auto variantSets = spec->GetVariantSets();
-                for (const auto& setIt : variantSets) {
-                    const std::string& setName = setIt.first;
-                    const SdfVariantSetSpecHandle& setSpec = setIt.second;
-                    if (!setSpec)
-                        continue;
-
-                    const auto variants = setSpec->GetVariants();
-                    for (const auto& variantSpec : variants) {
-                        if (!variantSpec)
-                            continue;
-
-                        const std::string variantName = variantSpec->GetName();
-
-                        const SdfPrimSpecHandle variantPrimSpec = variantSpec->GetPrimSpec();
-                        if (!variantPrimSpec)
-                            continue;
-
-                        const SdfPayloadVector variantItems = variantPrimSpec->GetPayloadList().GetAppliedItems();
-
-                        for (const SdfPayload& payload : variantItems) {
-                            const QString assetPath = qt::StringToQString(payload.GetAssetPath());
-                            if (assetPath.isEmpty())
-                                continue;
-
-                            const QString key = QString("%1=%2").arg(qt::StringToQString(setName),
-                                                                     qt::StringToQString(variantName));
-
-                            variantPayloadFiles[key] = QFileInfo(assetPath).fileName();
-                        }
-                    }
-                }
-            }
-
-            payloadFiles.removeDuplicates();
-
-            if (!variantPayloadFiles.isEmpty()) {
-                for (auto it = variantPayloadFiles.begin(); it != variantPayloadFiles.end(); ++it)
-                    lines.append(QString("%1:%2").arg(it.key(), it.value()));
-            }
-            else {
-                for (const QString& file : payloadFiles)
-                    lines.append(file);
-            }
+        QList<payload::AssetEntry> entries;
+        {
+            READ_LOCKER(locker, d.context->stageLock(), "stageLock");
+            if (!d.stage)
+                return QString();
+            entries = payload::assetEntries(d.stage, paths);
         }
 
+        QStringList lines;
+        for (const payload::AssetEntry& entry : entries) {
+            const QString filename = QFileInfo(entry.assetPath).fileName();
+            if (filename.isEmpty())
+                continue;
+
+            if (!entry.variantSet.isEmpty())
+                lines.append(QString("%1=%2:%3").arg(entry.variantSet, entry.variantValue, filename));
+            else
+                lines.append(filename);
+        }
+
+        lines.removeDuplicates();
         return lines.join('\n');
     };
 
@@ -772,18 +710,19 @@ StageTreePrivate::contextMenuEvent(QContextMenuEvent* event)
 
     QMenu menu(d.tree.data());
 
-    QMenu* loadVariantMenu = menu.addMenu("Load Variant");
+    QMenu* loadVariantMenu = menu.addMenu("Variant");
     payload::PayloadVariantTargets variantTargets;
     {
         READ_LOCKER(locker, d.context->stageLock(), "stageLock");
         if (d.stage) {
-            variantTargets = payload::selectionPayloadVariantTargets(d.stage, paths);
+            variantTargets = payload::payloadVariantTargets(d.stage, paths);
         }
     }
 
     if (variantTargets.isEmpty()) {
         loadVariantMenu->setEnabled(false);
-    } else {
+    }
+    else {
         for (auto setIt = variantTargets.cbegin(); setIt != variantTargets.cend(); ++setIt) {
             const QString& setName = setIt.key();
             QMenu* setMenu = loadVariantMenu->addMenu(setName);
@@ -791,7 +730,7 @@ StageTreePrivate::contextMenuEvent(QContextMenuEvent* event)
             for (auto valueIt = setIt.value().cbegin(); valueIt != setIt.value().cend(); ++valueIt) {
                 const QString& value = valueIt.key();
                 const QList<SdfPath> targetPaths = valueIt.value();
-                
+
                 QAction* action = setMenu->addAction(value);
                 QObject::connect(action, &QAction::triggered, this, [this, setName, value, targetPaths]() {
                     QList<SdfPath> payloadPaths;

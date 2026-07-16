@@ -33,85 +33,22 @@ namespace {
 
     QString pathText(const SdfPath& path) { return qt::SdfPathToQString(path); }
 
-    SdfLayerHandle openedRootLayer(UsdStageRefPtr stage, QString& error)
-    {
-        if (!stage) {
-            error = "stage missing";
-            return SdfLayerHandle();
-        }
-
-        const SdfLayerHandle rootLayer = stage->GetRootLayer();
-        if (!rootLayer) {
-            error = "opened root layer missing";
-            return SdfLayerHandle();
-        }
-
-        return rootLayer;
-    }
-
-    bool isRootLayerAuthoredPrim(UsdStageRefPtr stage, const SdfPath& path, QString& error,
-                                 bool requireStrongest = true)
-    {
-        if (path.IsEmpty() || path == SdfPath::AbsoluteRootPath()) {
-            error = "invalid prim path";
-            return false;
-        }
-
-        const SdfLayerHandle rootLayer = openedRootLayer(stage, error);
-        if (!rootLayer)
-            return false;
-
-        const UsdPrim prim = stage->GetPrimAtPath(path);
-        if (!prim || !prim.IsValid()) {
-            error = QString("prim missing: %1").arg(pathText(path));
-            return false;
-        }
-
-        if (!rootLayer->GetPrimAtPath(path)) {
-            error = QString("prim is not authored in opened root layer: %1").arg(pathText(path));
-            return false;
-        }
-
-        if (requireStrongest) {
-            const auto& stack = prim.GetPrimStack();
-            if (stack.empty() || !stack.front() || stack.front()->GetLayer() != rootLayer) {
-                error = QString("prim strongest opinion is not in opened root layer: %1").arg(pathText(path));
-                return false;
-            }
-        }
-
-        return true;
-    }
-
-    bool isRootLayerParent(UsdStageRefPtr stage, const SdfPath& parentPath, QString& error)
-    {
-        if (parentPath == SdfPath::AbsoluteRootPath())
-            return true;
-
-        return isRootLayerAuthoredPrim(stage, parentPath, error);
-    }
-
     QString appendError(const QString& message, const QString& error)
     {
-        if (error.isEmpty())
-            return message;
-
-        return QString("%1: %2").arg(message, error);
+        return error.isEmpty() ? message : QString("%1: %2").arg(message, error);
     }
 
     QString summarizeErrors(const QStringList& errors, int maxCount = 3)
     {
         if (errors.isEmpty())
-            return QString();
+            return {};
 
-        QStringList out;
+        QStringList result;
         for (int i = 0; i < errors.size() && i < maxCount; ++i)
-            out.append(errors.at(i));
-
+            result.append(errors.at(i));
         if (errors.size() > maxCount)
-            out.append(QString("%1 more").arg(errors.size() - maxCount));
-
-        return out.join("; ");
+            result.append(QString("%1 more").arg(errors.size() - maxCount));
+        return result.join("; ");
     }
 
 }  // namespace
@@ -477,7 +414,7 @@ selectInvertPayload()
                     }
                     else {
                         previousSelection = session->selectionList()->paths();
-                        const QList<SdfPath> selectedPayloads = stage::selectionPayloadPaths(stage, previousSelection);
+                        const QList<SdfPath> selectedPayloads = stage::resolvePayloadPaths(stage, previousSelection);
 
                         state->previousSelection = previousSelection;
                         hadSelectedPayloads = !selectedPayloads.isEmpty();
@@ -745,7 +682,7 @@ selectInvert()
                 state->previousSelection = previousSelection;
 
                 for (const SdfPath& path : domain) {
-                    if (!path::isCoveredBySelection(previousSelection, path))
+                    if (!path::isCoveredByRoots(previousSelection, path))
                         invertedSelection.append(path);
                 }
 
@@ -991,7 +928,7 @@ defaultPrimPath(const SdfPath& path)
                             state->previousDefaultPrimPath = SdfPath();
 
                         QString rootError;
-                        const SdfLayerHandle rootLayer = openedRootLayer(stage, rootError);
+                        const SdfLayerHandle rootLayer = rootlayer::opened(stage, rootError);
                         const UsdPrim prim = stage->GetPrimAtPath(path);
                         if (!rootLayer) {
                             error = rootError;
@@ -1002,7 +939,7 @@ defaultPrimPath(const SdfPath& path)
                         else if (path.GetParentPath() != SdfPath::AbsoluteRootPath()) {
                             error = "default prim must be a root prim";
                         }
-                        else if (!isRootLayerAuthoredPrim(stage, path, error)) {}
+                        else if (!rootlayer::validatePrim(stage, path, error)) {}
                         else {
                             UsdEditContext context(stage, UsdEditTarget(rootLayer));
                             stage->SetDefaultPrim(prim);
@@ -1058,7 +995,7 @@ defaultPrimPath(const SdfPath& path)
                     }
                     else {
                         QString rootError;
-                        const SdfLayerHandle rootLayer = openedRootLayer(stage, rootError);
+                        const SdfLayerHandle rootLayer = rootlayer::opened(stage, rootError);
                         if (!rootLayer) {
                             error = rootError;
                         }
@@ -1135,7 +1072,7 @@ deletePaths(const QList<SdfPath>& inPaths)
                     const UsdStageRefPtr stage = session->stageUnsafe();
                     if (stage) {
                         QString rootError;
-                        const SdfLayerHandle rootLayer = openedRootLayer(stage, rootError);
+                        const SdfLayerHandle rootLayer = rootlayer::opened(stage, rootError);
                         if (!rootLayer) {
                             error = rootError;
                         }
@@ -1151,7 +1088,7 @@ deletePaths(const QList<SdfPath>& inPaths)
                                                                                     : candidate;
 
                                 QString pathError;
-                                if (isRootLayerAuthoredPrim(stage, primPath, pathError)) {
+                                if (rootlayer::validatePrim(stage, primPath, pathError)) {
                                     editable.append(primPath);
                                 }
                                 else {
@@ -1184,7 +1121,7 @@ deletePaths(const QList<SdfPath>& inPaths)
                                 changedSet.insert(path);
 
                                 const SdfPath parentPath = path.GetParentPath();
-                                if (!parentPath.IsEmpty() && parentPath != SdfPath::AbsoluteRootPath()) {
+                                if (!parentPath.IsEmpty()) {
                                     changedSet.insert(parentPath);
 
                                     if (!state->parentOrders.contains(parentPath)) {
@@ -1265,7 +1202,7 @@ deletePaths(const QList<SdfPath>& inPaths)
                     const UsdStageRefPtr stage = session->stageUnsafe();
                     if (stage) {
                         QString rootError;
-                        const SdfLayerHandle rootLayer = openedRootLayer(stage, rootError);
+                        const SdfLayerHandle rootLayer = rootlayer::opened(stage, rootError);
                         if (!rootLayer) {
                             error = rootError;
                         }
@@ -1359,11 +1296,11 @@ renamePath(const SdfPath& path, const QString& newNameInput)
                     }
                     else {
                         QString rootError;
-                        const SdfLayerHandle rootLayer = openedRootLayer(stage, rootError);
+                        const SdfLayerHandle rootLayer = rootlayer::opened(stage, rootError);
                         if (!rootLayer) {
                             error = rootError;
                         }
-                        else if (!isRootLayerAuthoredPrim(stage, path, error)) {}
+                        else if (!rootlayer::validatePrim(stage, path, error)) {}
                         else {
                             newPath = stage::buildRenamePath(stage, path, newNameInput, error);
 
@@ -1378,9 +1315,8 @@ renamePath(const SdfPath& path, const QString& newNameInput)
                                 state->oldOrder.clear();
                                 state->newOrder.clear();
 
-                                if (!state->parentPath.IsEmpty() && state->parentPath != SdfPath::AbsoluteRootPath()) {
+                                if (!state->parentPath.IsEmpty())
                                     stage::captureChildOrder(stage, state->parentPath, state->oldOrder);
-                                }
 
                                 const UsdStageLoadRules rules = stage->GetLoadRules();
                                 UsdEditContext context(stage, UsdEditTarget(rootLayer));
@@ -1449,7 +1385,7 @@ renamePath(const SdfPath& path, const QString& newNameInput)
                     }
                     else {
                         QString rootError;
-                        const SdfLayerHandle rootLayer = openedRootLayer(stage, rootError);
+                        const SdfLayerHandle rootLayer = rootlayer::opened(stage, rootError);
                         if (!rootLayer) {
                             error = rootError;
                         }
@@ -1535,20 +1471,6 @@ newXformPath(const SdfPath& parentPath, const QString& nameInput)
                 QList<SdfPath> movePaths;
                 QList<SdfPath> changed;
 
-                auto appendChanged = [](QList<SdfPath>& paths, const SdfPath& path) {
-                    if (!path.IsEmpty() && !paths.contains(path))
-                        paths.append(path);
-                };
-
-                auto restoreOrders = [](const UsdStageRefPtr& stage, const QHash<SdfPath, TfTokenVector>& orders) {
-                    for (auto it = orders.cbegin(); it != orders.cend(); ++it) {
-                        if (it.key() == SdfPath::AbsoluteRootPath())
-                            continue;
-
-                        stage::restoreChildOrder(stage, it.key(), it.value());
-                    }
-                };
-
                 {
                     WRITE_LOCKER(locker, session->stageLock(), "stageLock");
                     const UsdStageRefPtr stage = session->stageUnsafe();
@@ -1576,16 +1498,14 @@ newXformPath(const SdfPath& parentPath, const QString& nameInput)
                             state->movedItems.clear();
 
                             QString rootError;
-                            const SdfLayerHandle rootLayer = openedRootLayer(stage, rootError);
+                            const SdfLayerHandle rootLayer = rootlayer::opened(stage, rootError);
                             if (!rootLayer) {
                                 error = rootError;
                             }
-                            else if (!isRootLayerParent(stage, parentPath, error)) {}
+                            else if (!rootlayer::validateParent(stage, parentPath, error)) {}
                             else {
                                 const bool parentIsRoot = parentPath == SdfPath::AbsoluteRootPath();
-
-                                if (!parentIsRoot)
-                                    stage::captureChildOrder(stage, parentPath, state->oldParentOrder);
+                                stage::captureChildOrder(stage, parentPath, state->oldParentOrder);
 
                                 UsdEditContext context(stage, UsdEditTarget(rootLayer));
                                 const UsdGeomXform xform = UsdGeomXform::Define(stage, newPath);
@@ -1593,11 +1513,9 @@ newXformPath(const SdfPath& parentPath, const QString& nameInput)
                                     error = "define failed";
                                 }
                                 else {
-                                    if (!parentIsRoot) {
-                                        state->newParentOrder = state->oldParentOrder;
-                                        state->newParentOrder.push_back(newPath.GetNameToken());
-                                        stage::restoreChildOrder(stage, parentPath, state->newParentOrder);
-                                    }
+                                    state->newParentOrder = state->oldParentOrder;
+                                    state->newParentOrder.push_back(newPath.GetNameToken());
+                                    stage::restoreChildOrder(stage, parentPath, state->newParentOrder);
 
                                     bool movedSelection = true;
 
@@ -1616,7 +1534,7 @@ newXformPath(const SdfPath& parentPath, const QString& nameInput)
                                         }
 
                                         QString authoredError;
-                                        if (!isRootLayerAuthoredPrim(stage, movePath, authoredError)) {
+                                        if (!rootlayer::validatePrim(stage, movePath, authoredError)) {
                                             error = authoredError;
                                             movedSelection = false;
                                             break;
@@ -1629,8 +1547,7 @@ newXformPath(const SdfPath& parentPath, const QString& nameInput)
                                             break;
                                         }
 
-                                        if (!state->oldMoveParentOrders.contains(oldParentPath)
-                                            && oldParentPath != SdfPath::AbsoluteRootPath()) {
+                                        if (!state->oldMoveParentOrders.contains(oldParentPath)) {
                                             TfTokenVector order;
                                             stage::captureChildOrder(stage, oldParentPath, order);
                                             state->oldMoveParentOrders.insert(oldParentPath, order);
@@ -1644,46 +1561,29 @@ newXformPath(const SdfPath& parentPath, const QString& nameInput)
                                     }
 
                                     if (movedSelection) {
-                                        for (const MoveItem& item : state->movedItems) {
-                                            QString moveError;
-                                            if (!stage::movePrim(stage, item.oldPath, newPath, moveError)) {
-                                                error = QString("failed to move %1 to %2")
-                                                            .arg(qt::SdfPathToQString(item.oldPath),
-                                                                 qt::SdfPathToQString(newPath));
+                                        QList<QPair<SdfPath, SdfPath>> moves;
+                                        moves.reserve(state->movedItems.size());
+                                        for (const MoveItem& item : state->movedItems)
+                                            moves.append(qMakePair(item.oldPath, item.newPath));
 
-                                                if (!moveError.isEmpty())
-                                                    error += QString(": %1").arg(moveError);
-
-                                                for (auto it = state->movedItems.crbegin();
-                                                     it != state->movedItems.crend(); ++it) {
-                                                    if (it->oldPath == item.oldPath)
-                                                        break;
-
-                                                    QString rollbackError;
-                                                    stage::movePrim(stage, it->newPath, it->oldParentPath,
-                                                                    rollbackError);
-                                                }
-
-                                                restoreOrders(stage, state->oldMoveParentOrders);
-
-                                                if (!parentIsRoot && !state->oldParentOrder.empty())
-                                                    stage::restoreChildOrder(stage, parentPath, state->oldParentOrder);
-
-                                                stage::removePrimSpec(rootLayer, newPath);
-                                                movedSelection = false;
-                                                break;
-                                            }
+                                        QString moveError;
+                                        if (!stage::movePrims(stage, moves, moveError)) {
+                                            error = moveError.isEmpty() ? "failed to move selected paths" : moveError;
+                                            stage::restoreChildOrders(stage, state->oldMoveParentOrders);
+                                            stage::restoreChildOrder(stage, parentPath, state->oldParentOrder);
+                                            stage::removePrimSpec(rootLayer, newPath);
+                                            movedSelection = false;
                                         }
                                     }
 
                                     if (movedSelection && error.isEmpty()) {
-                                        appendChanged(changed, parentPath);
-                                        appendChanged(changed, newPath);
+                                        path::appendUnique(changed, parentPath);
+                                        path::appendUnique(changed, newPath);
 
                                         for (const MoveItem& item : state->movedItems) {
-                                            appendChanged(changed, item.oldParentPath);
-                                            appendChanged(changed, item.oldPath);
-                                            appendChanged(changed, item.newPath);
+                                            path::appendUnique(changed, item.oldParentPath);
+                                            path::appendUnique(changed, item.oldPath);
+                                            path::appendUnique(changed, item.newPath);
                                         }
 
                                         created = true;
@@ -1739,11 +1639,6 @@ newXformPath(const SdfPath& parentPath, const QString& nameInput)
                 QString error;
                 QList<SdfPath> changed;
 
-                auto appendChanged = [](QList<SdfPath>& paths, const SdfPath& path) {
-                    if (!path.IsEmpty() && !paths.contains(path))
-                        paths.append(path);
-                };
-
                 {
                     WRITE_LOCKER(locker, session->stageLock(), "stageLock");
                     const UsdStageRefPtr stage = session->stageUnsafe();
@@ -1753,54 +1648,39 @@ newXformPath(const SdfPath& parentPath, const QString& nameInput)
                     }
                     else {
                         QString rootError;
-                        const SdfLayerHandle rootLayer = openedRootLayer(stage, rootError);
+                        const SdfLayerHandle rootLayer = rootlayer::opened(stage, rootError);
                         if (!rootLayer) {
                             error = rootError;
                         }
                         else {
                             UsdEditContext context(stage, UsdEditTarget(rootLayer));
-                            restored = true;
+                            QList<QPair<SdfPath, SdfPath>> reverseMoves;
+                            reverseMoves.reserve(state->movedItems.size());
+                            for (auto it = state->movedItems.crbegin(); it != state->movedItems.crend(); ++it)
+                                reverseMoves.append(qMakePair(it->newPath, it->oldPath));
 
-                            for (auto it = state->movedItems.crbegin(); it != state->movedItems.crend(); ++it) {
-                                QString moveError;
-                                if (!stage::movePrim(stage, it->newPath, it->oldParentPath, moveError)) {
-                                    error = QString("failed to restore %1 to %2")
-                                                .arg(qt::SdfPathToQString(it->newPath),
-                                                     qt::SdfPathToQString(it->oldParentPath));
-
-                                    if (!moveError.isEmpty())
-                                        error += QString(": %1").arg(moveError);
-
-                                    restored = false;
-                                    break;
-                                }
-                            }
+                            restored = stage::movePrims(stage, reverseMoves, error);
 
                             if (restored) {
                                 for (auto it = state->oldMoveParentOrders.cbegin();
                                      it != state->oldMoveParentOrders.cend(); ++it) {
-                                    if (it.key() == SdfPath::AbsoluteRootPath())
-                                        continue;
-
                                     stage::restoreChildOrder(stage, it.key(), it.value());
                                 }
 
-                                if (!state->oldParentOrder.empty() && !state->parentPath.IsEmpty()
-                                    && state->parentPath != SdfPath::AbsoluteRootPath()) {
+                                if (!state->parentPath.IsEmpty())
                                     stage::restoreChildOrder(stage, state->parentPath, state->oldParentOrder);
-                                }
 
                                 restored = stage::removePrimSpec(rootLayer, state->createdPath);
                             }
 
                             if (restored) {
-                                appendChanged(changed, state->parentPath);
-                                appendChanged(changed, state->createdPath);
+                                path::appendUnique(changed, state->parentPath);
+                                path::appendUnique(changed, state->createdPath);
 
                                 for (const MoveItem& item : state->movedItems) {
-                                    appendChanged(changed, item.oldParentPath);
-                                    appendChanged(changed, item.oldPath);
-                                    appendChanged(changed, item.newPath);
+                                    path::appendUnique(changed, item.oldParentPath);
+                                    path::appendUnique(changed, item.oldPath);
+                                    path::appendUnique(changed, item.newPath);
                                 }
                             }
                         }
@@ -1871,30 +1751,6 @@ movePath(const QList<SdfPath>& paths, const SdfPath& newParentPath, int insertIn
                 QString error;
                 QList<SdfPath> changed;
 
-                auto removeTokens = [](TfTokenVector order, const TfTokenVector& tokens) {
-                    for (const TfToken& token : tokens)
-                        order.erase(std::remove(order.begin(), order.end(), token), order.end());
-                    return order;
-                };
-
-                auto insertTokens = [](TfTokenVector order, const TfTokenVector& tokens, int index) {
-                    if (tokens.empty())
-                        return order;
-
-                    const int safeIndex = qBound(0, index, static_cast<int>(order.size()));
-                    order.insert(order.begin() + safeIndex, tokens.begin(), tokens.end());
-                    return order;
-                };
-
-                auto restoreOrders = [](const UsdStageRefPtr& stage, const QHash<SdfPath, TfTokenVector>& orders) {
-                    for (auto it = orders.cbegin(); it != orders.cend(); ++it) {
-                        if (it.key() == SdfPath::AbsoluteRootPath())
-                            continue;
-
-                        stage::restoreChildOrder(stage, it.key(), it.value());
-                    }
-                };
-
                 {
                     WRITE_LOCKER(locker, session->stageLock(), "stageLock");
                     const UsdStageRefPtr stage = session->stageUnsafe();
@@ -1914,11 +1770,11 @@ movePath(const QList<SdfPath>& paths, const SdfPath& newParentPath, int insertIn
                         }
                         else {
                             QString rootError;
-                            const SdfLayerHandle rootLayer = openedRootLayer(stage, rootError);
+                            const SdfLayerHandle rootLayer = rootlayer::opened(stage, rootError);
                             if (!rootLayer) {
                                 error = rootError;
                             }
-                            else if (!isRootLayerParent(stage, newParentPath, error)) {}
+                            else if (!rootlayer::validateParent(stage, newParentPath, error)) {}
                             else {
                                 state->items.clear();
                                 state->newParentPath = newParentPath;
@@ -1956,7 +1812,7 @@ movePath(const QList<SdfPath>& paths, const SdfPath& newParentPath, int insertIn
                                     }
 
                                     QString authoredError;
-                                    if (!isRootLayerAuthoredPrim(stage, path, authoredError)) {
+                                    if (!rootlayer::validatePrim(stage, path, authoredError)) {
                                         error = authoredError;
                                         valid = false;
                                         break;
@@ -1985,15 +1841,13 @@ movePath(const QList<SdfPath>& paths, const SdfPath& newParentPath, int insertIn
                                     item.name = path.GetNameToken();
                                     state->items.append(item);
 
-                                    if (!state->oldParentOrders.contains(oldParentPath)
-                                        && oldParentPath != SdfPath::AbsoluteRootPath()) {
+                                    if (!state->oldParentOrders.contains(oldParentPath)) {
                                         TfTokenVector order;
                                         stage::captureChildOrder(stage, oldParentPath, order);
                                         state->oldParentOrders.insert(oldParentPath, order);
                                     }
 
-                                    if (!state->oldParentOrders.contains(newParentPath)
-                                        && newParentPath != SdfPath::AbsoluteRootPath()) {
+                                    if (!state->oldParentOrders.contains(newParentPath)) {
                                         TfTokenVector order;
                                         stage::captureChildOrder(stage, newParentPath, order);
                                         state->oldParentOrders.insert(newParentPath, order);
@@ -2009,31 +1863,18 @@ movePath(const QList<SdfPath>& paths, const SdfPath& newParentPath, int insertIn
 
                                     UsdEditContext context(stage, UsdEditTarget(rootLayer));
 
+                                    QList<QPair<SdfPath, SdfPath>> moves;
+                                    moves.reserve(state->items.size());
                                     for (const MoveItem& item : state->items) {
-                                        if (item.oldPath == item.newPath)
-                                            continue;
+                                        if (item.oldPath != item.newPath)
+                                            moves.append(qMakePair(item.oldPath, item.newPath));
+                                    }
 
-                                        QString moveError;
-                                        if (!stage::movePrim(stage, item.oldPath, newParentPath, moveError)) {
-                                            error = QString("failed to move %1 to %2")
-                                                        .arg(qt::SdfPathToQString(item.oldPath),
-                                                             qt::SdfPathToQString(newParentPath));
-
-                                            if (!moveError.isEmpty())
-                                                error += QString(": %1").arg(moveError);
-
-                                            for (auto it = state->items.crbegin(); it != state->items.crend(); ++it) {
-                                                if (it->oldPath != it->newPath) {
-                                                    QString rollbackError;
-                                                    stage::movePrim(stage, it->newPath, it->oldParentPath,
-                                                                    rollbackError);
-                                                }
-                                            }
-
-                                            restoreOrders(stage, state->oldParentOrders);
-                                            moved = false;
-                                            break;
-                                        }
+                                    QString moveError;
+                                    if (!stage::movePrims(stage, moves, moveError)) {
+                                        error = moveError.isEmpty() ? "failed to move paths" : moveError;
+                                        stage::restoreChildOrders(stage, state->oldParentOrders);
+                                        moved = false;
                                     }
 
                                     if (error.isEmpty()) {
@@ -2045,14 +1886,11 @@ movePath(const QList<SdfPath>& paths, const SdfPath& newParentPath, int insertIn
                                         affectedParents.insert(newParentPath);
 
                                         for (const SdfPath& parentPath : affectedParents) {
-                                            if (parentPath == SdfPath::AbsoluteRootPath())
-                                                continue;
-
                                             TfTokenVector order = state->oldParentOrders.value(parentPath);
-                                            TfTokenVector newOrder = removeTokens(order, movedNames);
+                                            TfTokenVector newOrder = path::removeTokens(order, movedNames);
 
                                             if (parentPath == newParentPath)
-                                                newOrder = insertTokens(newOrder, movedNames, insertIndex);
+                                                newOrder = path::insertTokens(newOrder, movedNames, insertIndex);
 
                                             state->newParentOrders.insert(parentPath, newOrder);
                                             stage::restoreChildOrder(stage, parentPath, newOrder);
@@ -2147,38 +1985,24 @@ movePath(const QList<SdfPath>& paths, const SdfPath& newParentPath, int insertIn
                     }
                     else {
                         QString rootError;
-                        const SdfLayerHandle rootLayer = openedRootLayer(stage, rootError);
+                        const SdfLayerHandle rootLayer = rootlayer::opened(stage, rootError);
                         if (!rootLayer) {
                             error = rootError;
                         }
                         else {
                             UsdEditContext context(stage, UsdEditTarget(rootLayer));
-                            restored = true;
-
+                            QList<QPair<SdfPath, SdfPath>> reverseMoves;
+                            reverseMoves.reserve(state->items.size());
                             for (auto it = state->items.crbegin(); it != state->items.crend(); ++it) {
-                                if (it->oldPath == it->newPath)
-                                    continue;
-
-                                QString moveError;
-                                if (!stage::movePrim(stage, it->newPath, it->oldParentPath, moveError)) {
-                                    error = QString("failed to restore %1 to %2")
-                                                .arg(qt::SdfPathToQString(it->newPath),
-                                                     qt::SdfPathToQString(it->oldParentPath));
-
-                                    if (!moveError.isEmpty())
-                                        error += QString(": %1").arg(moveError);
-
-                                    restored = false;
-                                    break;
-                                }
+                                if (it->oldPath != it->newPath)
+                                    reverseMoves.append(qMakePair(it->newPath, it->oldPath));
                             }
+
+                            restored = stage::movePrims(stage, reverseMoves, error);
 
                             if (restored) {
                                 for (auto it = state->oldParentOrders.cbegin(); it != state->oldParentOrders.cend();
                                      ++it) {
-                                    if (it.key() == SdfPath::AbsoluteRootPath())
-                                        continue;
-
                                     stage::restoreChildOrder(stage, it.key(), it.value());
                                 }
 

@@ -1131,7 +1131,7 @@ ViewerPrivate::payloadLoad()
         const UsdStageRefPtr stage = session()->stageUnsafe();
         if (!stage)
             return;
-        payloadPaths = stage::selectionPayloadPaths(stage, selectedPaths);
+        payloadPaths = stage::resolvePayloadPaths(stage, selectedPaths);
     }
 
     if (!payloadPaths.isEmpty())
@@ -1151,7 +1151,7 @@ ViewerPrivate::payloadUnload()
         const UsdStageRefPtr stage = session()->stageUnsafe();
         if (!stage)
             return;
-        payloadPaths = stage::selectionPayloadPaths(stage, selectedPaths);
+        payloadPaths = stage::resolvePayloadPaths(stage, selectedPaths);
     }
 
     if (!payloadPaths.isEmpty())
@@ -1484,7 +1484,8 @@ ViewerPrivate::updateSelection(const QList<SdfPath>& paths)
             }
             d.ui->menuPayloads->removeAction(action);
             menu->deleteLater();
-        } else {
+        }
+        else {
             action->setShortcut(QKeySequence());
             d.ui->menuPayloads->removeAction(action);
             action->deleteLater();
@@ -1509,17 +1510,15 @@ ViewerPrivate::updateSelection(const QList<SdfPath>& paths)
         if (!stage)
             return;
 
-        payloadPaths = stage::selectionPayloadPaths(stage, paths);
-        variantTargets = payload::selectionPayloadVariantTargets(stage, paths);
+        payloadPaths = stage::resolvePayloadPaths(stage, paths);
+        variantTargets = payload::payloadVariantTargets(stage, paths);
 
         for (const SdfPath& payloadPath : payloadPaths) {
             const bool loaded = stage::isLoaded(stage, payloadPath);
-
             if (loaded)
                 canUnloadSelected = true;
             else
                 canLoadSelected = true;
-
             if (canLoadSelected && canUnloadSelected)
                 break;
         }
