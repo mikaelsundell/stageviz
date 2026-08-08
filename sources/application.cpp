@@ -46,7 +46,9 @@ void
 ApplicationPrivate::init()
 {
     d.console.reset(new Console());
+#ifdef NDEBUG
     d.console->start();
+#endif
     d.session.reset(new Session());
     d.settings.reset(new Settings());
     d.style.reset(new Style());

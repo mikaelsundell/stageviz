@@ -15,6 +15,9 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QMetaObject>
+#include <QMutex>
+#include <QMutexLocker>
 #include <QPointer>
 #include <pxr/base/tf/weakBase.h>
 #include <pxr/usd/usd/notice.h>
@@ -60,15 +63,18 @@ public:
 public:
     class StageWatcher : public TfWeakBase {
     public:
-        StageWatcher(SessionPrivate* parent)
-            : d { false, TfNotice::Key(), parent, UsdStageRefPtr() }
-        {}
+        explicit StageWatcher(SessionPrivate* parent) { d.parent = parent; }
 
         void init()
         {
             if (d.key.IsValid())
                 TfNotice::Revoke(d.key);
+
             d.stage = nullptr;
+
+            QMutexLocker locker(&d.pendingMutex);
+            d.pending.entries.clear();
+            d.dispatchQueued = false;
         }
 
         void watch(const UsdStageRefPtr& stage)
@@ -77,6 +83,22 @@ public:
             d.stage = stage;
             if (stage)
                 d.key = TfNotice::Register(TfWeakPtr<StageWatcher>(this), &StageWatcher::objectsChanged, stage);
+        }
+
+        NoticeBatch takePending()
+        {
+            QMutexLocker locker(&d.pendingMutex);
+            const NoticeBatch batch = d.pending;
+            d.pending.entries.clear();
+            d.dispatchQueued = false;
+            return batch;
+        }
+
+        void dispatchPending()
+        {
+            const NoticeBatch batch = takePending();
+            if (!batch.entries.isEmpty())
+                d.parent->updatePrims(batch);
         }
 
         void objectsChanged(const UsdNotice::ObjectsChanged& notice, const UsdStageWeakPtr& sender)
@@ -112,15 +134,33 @@ public:
             if (batch.entries.isEmpty())
                 return;
 
-            QMetaObject::invokeMethod(d.parent->d.session, [this, batch]() { d.parent->updatePrims(batch); });
+            bool queueDispatch = false;
+            {
+                QMutexLocker locker(&d.pendingMutex);
+                d.pending.entries.append(batch.entries);
+                if (!d.dispatchQueued) {
+                    d.dispatchQueued = true;
+                    queueDispatch = true;
+                }
+            }
+
+            if (!queueDispatch || !d.parent->d.session)
+                return;
+
+            QMetaObject::invokeMethod(d.parent->d.session, [this]() { dispatchPending(); }, Qt::QueuedConnection);
         }
+
         void blockSignals(bool block) { d.suppress.store(block); }
         bool signalsBlocked() const { return d.suppress.load(); }
+
         struct Data {
             std::atomic<bool> suppress { false };
             TfNotice::Key key;
-            SessionPrivate* parent;
+            SessionPrivate* parent = nullptr;
             UsdStageRefPtr stage;
+            QMutex pendingMutex;
+            NoticeBatch pending;
+            bool dispatchQueued = false;
         };
         Data d;
     };
@@ -264,11 +304,10 @@ SessionPrivate::endProgressBlock()
 
     if (cancelled) {
         d.pendingNotices.entries.clear();
+        if (d.stageWatcher)
+            d.stageWatcher->takePending();
         return;
     }
-
-    if (d.pendingNotices.entries.isEmpty())
-        return;
 
     flushPrims();
 }
@@ -1042,6 +1081,12 @@ SessionPrivate::updatePrims(const NoticeBatch& batch)
 void
 SessionPrivate::flushPrims()
 {
+    if (d.stageWatcher) {
+        const NoticeBatch watcherBatch = d.stageWatcher->takePending();
+        if (!watcherBatch.entries.isEmpty())
+            d.pendingNotices.entries.append(watcherBatch.entries);
+    }
+
     if (d.pendingNotices.entries.isEmpty())
         return;
 

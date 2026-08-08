@@ -3,10 +3,9 @@
 # https://github.com/mikaelsundell/stageviz
 
 """
-Stageviz command smoke/regression tests.
+Stageviz smoke/regression tests.
 
-Run from the Stageviz Python console after pycommand.cpp has been registered as
-stageviz.command.
+Run from the Stageviz Python editor.
 """
 
 import os

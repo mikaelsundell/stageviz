@@ -11,9 +11,9 @@
 int
 main(int argc, char* argv[])
 {
-    QFuture<void> schemaWarmup = QtConcurrent::run([]() { pxr::UsdSchemaRegistry::GetInstance(); });
+    QFuture<void> schemas = QtConcurrent::run([]() { pxr::UsdSchemaRegistry::GetInstance(); });
     stageviz::Application app(argc, argv);
-    schemaWarmup.waitForFinished();
+    schemas.waitForFinished();
     stageviz::Viewer viewer;
     viewer.show();
     return app.exec();
