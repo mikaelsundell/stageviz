@@ -147,7 +147,8 @@ public:
             if (!queueDispatch || !d.parent->d.session)
                 return;
 
-            QMetaObject::invokeMethod(d.parent->d.session, [this]() { dispatchPending(); }, Qt::QueuedConnection);
+            QMetaObject::invokeMethod(
+                d.parent->d.session, [this]() { dispatchPending(); }, Qt::QueuedConnection);
         }
 
         void blockSignals(bool block) { d.suppress.store(block); }

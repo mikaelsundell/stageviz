@@ -7,7 +7,6 @@
 #include "mime.h"
 #include "style.h"
 #include "treeitem.h"
-#include <QDebug>
 #include <QEvent>
 #include <QMouseEvent>
 #include <QPainter>

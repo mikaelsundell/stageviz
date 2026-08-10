@@ -951,9 +951,6 @@ void
 ImagingGLWidgetPrivate::updatePrims(const NoticeBatch& batch)
 {
     Q_UNUSED(batch);
-
-    qDebug() << "ImagingGLWidgetPrivate::updatePrims(const NoticeBatch& batch)";
-    
     SignalGuard::Scope guard(this);
     rebuildSelectionBBoxes();
     if (d.sceneStatsEnabled) {

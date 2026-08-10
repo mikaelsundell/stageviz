@@ -62,8 +62,7 @@ namespace rootlayer {
      *
      * @return True when the prim is valid for root-layer editing.
      */
-    bool validatePrim(const UsdStageRefPtr& stage, const SdfPath& path, QString& error,
-                      bool requireStrongest = true);
+    bool validatePrim(const UsdStageRefPtr& stage, const SdfPath& path, QString& error, bool requireStrongest = true);
 
     /**
      * @brief Validates a destination parent for root-layer structural edits.

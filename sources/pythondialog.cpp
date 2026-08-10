@@ -15,6 +15,7 @@
 #include <QApplication>
 #include <QDrag>
 #include <QDropEvent>
+#include <QFile>
 #include <QFileDialog>
 #include <QJsonDocument>
 #include <QKeyEvent>
@@ -32,6 +33,7 @@
 #include <QTextCursor>
 #include <QTextDocument>
 #include <QToolButton>
+#include <QUrl>
 #include <QVariantMap>
 
 // generated files
@@ -119,6 +121,7 @@ PythonDialogPrivate::init()
         bar->setMinimumWidth(0);
         bar->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
     }
+
     // connect
     QObject::connect(d.ui->run, &QToolButton::clicked, this, &PythonDialogPrivate::run);
     QObject::connect(d.ui->clear, &QToolButton::clicked, this, &PythonDialogPrivate::clear);
@@ -215,6 +218,7 @@ PythonDialogPrivate::eventFilter(QObject* object, QEvent* event)
                 d.dragStartPos = mouseEvent->pos();
                 d.dragCandidate = false;
                 d.dragSourceEdit = nullptr;
+
                 if (isPointInSelection(edit, mouseEvent->pos())) {
                     d.dragCandidate = true;
                     d.dragSourceEdit = edit;
@@ -247,7 +251,9 @@ PythonDialogPrivate::eventFilter(QObject* object, QEvent* event)
 
         case QEvent::DragEnter: {
             auto* dragEvent = static_cast<QDragEnterEvent*>(event);
-            if (dragEvent->mimeData()->hasFormat(mime::script) || dragEvent->mimeData()->hasText()) {
+            const QMimeData* mimeData = dragEvent->mimeData();
+
+            if (mimeData->hasFormat(mime::script) || mimeData->hasUrls() || mimeData->hasText()) {
                 dragEvent->acceptProposedAction();
                 return true;
             }
@@ -256,7 +262,9 @@ PythonDialogPrivate::eventFilter(QObject* object, QEvent* event)
 
         case QEvent::DragMove: {
             auto* dragEvent = static_cast<QDragMoveEvent*>(event);
-            if (dragEvent->mimeData()->hasFormat(mime::script) || dragEvent->mimeData()->hasText()) {
+            const QMimeData* mimeData = dragEvent->mimeData();
+
+            if (mimeData->hasFormat(mime::script) || mimeData->hasUrls() || mimeData->hasText()) {
                 dragEvent->acceptProposedAction();
                 return true;
             }
@@ -265,23 +273,46 @@ PythonDialogPrivate::eventFilter(QObject* object, QEvent* event)
 
         case QEvent::Drop: {
             auto* dropEvent = static_cast<QDropEvent*>(event);
-            if (dropEvent->mimeData()->hasFormat(mime::script) || dropEvent->mimeData()->hasText()) {
-                QString code;
-                if (dropEvent->mimeData()->hasFormat(mime::script))
-                    code = QString::fromUtf8(dropEvent->mimeData()->data(mime::script));
-                else
-                    code = dropEvent->mimeData()->text();
+            const QMimeData* mimeData = dropEvent->mimeData();
 
-                code = qt::normalizeNewlines(code).trimmed();
-                if (!code.isEmpty()) {
-                    QTextCursor cursor = d.ui->editor->cursorForPosition(dropEvent->position().toPoint());
-                    d.ui->editor->setTextCursor(cursor);
-                    d.ui->editor->insertPlainText(code);
-                    dropEvent->acceptProposedAction();
-                    updateClearButton();
-                    return true;
+            QString code;
+
+            if (mimeData->hasFormat(mime::script)) {
+                code = QString::fromUtf8(mimeData->data(mime::script));
+            }
+            else if (mimeData->hasUrls()) {
+                for (const QUrl& url : mimeData->urls()) {
+                    if (!url.isLocalFile())
+                        continue;
+
+                    QFile file(url.toLocalFile());
+                    if (!file.open(QIODevice::ReadOnly | QIODevice::Text))
+                        continue;
+
+                    const QString contents = QString::fromUtf8(file.readAll());
+                    if (contents.isEmpty())
+                        continue;
+
+                    if (!code.isEmpty())
+                        code += QLatin1Char('\n');
+
+                    code += contents;
                 }
             }
+            else if (mimeData->hasText()) {
+                code = mimeData->text();
+            }
+
+            code = qt::normalizeNewlines(code).trimmed();
+            if (!code.isEmpty()) {
+                QTextCursor cursor = d.ui->editor->cursorForPosition(dropEvent->position().toPoint());
+                d.ui->editor->setTextCursor(cursor);
+                d.ui->editor->insertPlainText(code);
+                dropEvent->acceptProposedAction();
+                updateClearButton();
+                return true;
+            }
+
             break;
         }
 
@@ -323,6 +354,7 @@ PythonDialogPrivate::createShelfTab(const QString& name, const QVariantList& scr
     shelf->fromVariantList(scripts);
 
     QObject::connect(shelf, &ShelfWidget::itemActivated, this, [this](const QString& code) { executeCode(code); });
+
     QObject::connect(shelf, &ShelfWidget::itemContextMenuRequested, this,
                      [this, shelf](const QPoint& pos, QListWidgetItem* item) {
                          QMenu menu(shelf);
@@ -364,6 +396,7 @@ PythonDialogPrivate::createShelfTab(const QString& name, const QVariantList& scr
                                  = QFileDialog::getSaveFileName(d.dialog.data(), tr("Export Script"),
                                                                 item->text() + QStringLiteral(".py"),
                                                                 tr("Python Files (*.py);;Text Files (*.txt)"));
+
                              if (!fileName.isEmpty()) {
                                  QSaveFile file(fileName);
                                  if (file.open(QIODevice::WriteOnly | QIODevice::Text)) {
@@ -479,6 +512,7 @@ PythonDialogPrivate::exportTab(int index)
 
     const QString fileName = QFileDialog::getSaveFileName(d.dialog.data(), tr("Export Shelf"), defaultName,
                                                           tr("JSON Files (*.json)"));
+
     if (fileName.isEmpty())
         return;
 
@@ -498,6 +532,7 @@ PythonDialogPrivate::loadShelves()
 
     const QVariant value = settings()->value("python/shelves");
     const QVariantList tabs = value.toList();
+
     for (const QVariant& tabValue : tabs) {
         const QVariantMap tabMap = tabValue.toMap();
         const QString name = tabMap.value("name").toString();
@@ -510,6 +545,7 @@ void
 PythonDialogPrivate::saveShelves() const
 {
     QVariantList tabs;
+
     for (int i = 0; i < d.ui->tabWidget->count(); ++i) {
         const ShelfWidget* shelf = shelfAt(i);
         if (!shelf)
@@ -634,6 +670,7 @@ PythonDialogPrivate::stageChanged(UsdStageRefPtr stage, Session::LoadPolicy poli
 {
     Q_UNUSED(stage);
     Q_UNUSED(policy);
+
     const bool enabled = (status == Session::StageStatus::Loaded);
     d.ui->run->setEnabled(enabled);
     d.ui->editor->setEnabled(enabled);
@@ -653,6 +690,7 @@ PythonDialogPrivate::showLogContextMenu(const QPoint& pos)
 
     QAction* clearAction = menu->addAction(style()->icon(Style::IconRole::Clear), tr("Clear"));
     clearAction->setEnabled(!d.ui->log->toPlainText().isEmpty());
+
     QObject::connect(clearAction, &QAction::triggered, this, [this]() { d.ui->log->clear(); });
 
     menu->exec(d.ui->log->viewport()->mapToGlobal(pos));
