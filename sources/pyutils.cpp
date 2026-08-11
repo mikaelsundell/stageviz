@@ -35,6 +35,16 @@ checkSelectionList(SelectionList* selection)
     return false;
 }
 
+bool
+checkViewState(ViewState* viewState)
+{
+    if (viewState)
+        return true;
+
+    PyErr_SetString(PyExc_RuntimeError, "stageviz view state is not available");
+    return false;
+}
+
 Session::LoadPolicy
 toLoadPolicy(long value)
 {
@@ -148,8 +158,8 @@ pyToPath(PyObject* object, SdfPath* path)
     }
 
     if (!object || object == Py_None) {
-        PyErr_SetString(PyExc_TypeError, "Expected a path string");
-        return false;
+        *path = SdfPath();
+        return true;
     }
 
     if (!PyUnicode_Check(object)) {
@@ -161,6 +171,11 @@ pyToPath(PyObject* object, SdfPath* path)
     if (!utf8)
         return false;
 
+    if (!*utf8) {
+        *path = SdfPath();
+        return true;
+    }
+
     const SdfPath value(utf8);
     if (!value.IsAbsolutePath()) {
         PyErr_Format(PyExc_ValueError, "Expected absolute SdfPath, got '%s'", utf8);
@@ -168,6 +183,52 @@ pyToPath(PyObject* object, SdfPath* path)
     }
 
     *path = value;
+    return true;
+}
+
+PyObject*
+colorToPyTuple(const QColor& color)
+{
+    return Py_BuildValue("(dddd)", color.redF(), color.greenF(), color.blueF(), color.alphaF());
+}
+
+bool
+pyToColor(PyObject* object, QColor* color)
+{
+    if (!color) {
+        PyErr_SetString(PyExc_RuntimeError, "Internal error: null QColor output");
+        return false;
+    }
+
+    if (!object || object == Py_None) {
+        PyErr_SetString(PyExc_TypeError, "Expected RGB or RGBA sequence");
+        return false;
+    }
+
+    PyObject* seq = PySequence_Fast(object, "Expected RGB or RGBA sequence");
+    if (!seq)
+        return false;
+
+    const Py_ssize_t count = PySequence_Fast_GET_SIZE(seq);
+    if (count != 3 && count != 4) {
+        Py_DECREF(seq);
+        PyErr_SetString(PyExc_ValueError, "Expected RGB or RGBA sequence");
+        return false;
+    }
+
+    PyObject** items = PySequence_Fast_ITEMS(seq);
+    double values[4] = { 0.0, 0.0, 0.0, 1.0 };
+
+    for (Py_ssize_t i = 0; i < count; ++i) {
+        values[i] = PyFloat_AsDouble(items[i]);
+        if (PyErr_Occurred()) {
+            Py_DECREF(seq);
+            return false;
+        }
+    }
+
+    Py_DECREF(seq);
+    *color = QColor::fromRgbF(values[0], values[1], values[2], values[3]);
     return true;
 }
 

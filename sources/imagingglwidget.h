@@ -7,7 +7,6 @@
 #include "notice.h"
 #include "selectionlist.h"
 #include "stageviz.h"
-#include "viewcamera.h"
 #include <QOpenGLFunctions>
 #include <QOpenGLWidget>
 
@@ -23,7 +22,8 @@ class ViewContext;
  * Provides a GPU accelerated rendering widget built on
  * QOpenGLWidget. The widget renders USD stages using the
  * USD ImagingGL renderer and supports interactive camera
- * navigation, draw modes, lighting options, and scene updates.
+ * navigation, draw modes, lighting options, grid display,
+ * and scene updates.
  *
  * The widget integrates with Session and SelectionList
  * to reflect scene data and selection changes.
@@ -31,16 +31,6 @@ class ViewContext;
 class ImagingGLWidget : public QOpenGLWidget, protected QOpenGLFunctions {
     Q_OBJECT
 public:
-    /**
-     * @brief Rendering complexity levels.
-     */
-    enum ComplexityLevel { Low, Medium, High, VeryHigh };
-
-    /**
-     * @brief Supported rendering draw modes.
-     */
-    enum DrawMode { Points, Wireframe, WireframeOnSurface, ShadedFlat, ShadedSmooth, GeomOnly, GeomFlat, GeomSmooth };
-
 public:
     /**
      * @brief Constructs the OpenGL imaging widget.
@@ -110,119 +100,6 @@ public:
 
     ///@}
 
-    /** @name Rendering Options */
-    ///@{
-
-    /**
-     * @brief Returns the current draw mode.
-     */
-    DrawMode drawMode() const;
-
-    /**
-     * @brief Sets the draw mode.
-     *
-     * @param drawMode Rendering mode.
-     */
-    void setDrawMode(DrawMode drawMode);
-
-    /**
-     * @brief Returns the current complecity level.
-     */
-    ComplexityLevel complexityLevel() const;
-
-    /**
-     * @brief Sets the complexity level.
-     *
-     * @param complexityLevel Complecity level.
-     */
-    void setComplexityLevel(ComplexityLevel complexity);
-
-    /**
-     * @brief Returns the viewport clear color.
-     */
-    QColor clearColor() const;
-
-    /**
-     * @brief Sets the viewport clear color.
-     *
-     * @param color Background color.
-     */
-    void setClearColor(const QColor& color);
-
-    /**
-     * @brief Returns whether the default camera light is enabled.
-     */
-    bool defaultCameraLightEnabled() const;
-
-    /**
-     * @brief Enables or disables the default camera light.
-     *
-     * @param enabled Light state.
-     */
-    void setDefaultCameraLightEnabled(bool enabled);
-
-    /**
-     * @brief Returns whether scene lights are enabled.
-     */
-    bool sceneLightsEnabled() const;
-
-    /**
-     * @brief Enables or disables lights defined in the USD scene.
-     *
-     * @param enabled Light state.
-     */
-    void setSceneLightsEnabled(bool enabled);
-
-    /**
-     * @brief Returns whether scene materials are enabled.
-     */
-    bool sceneShadersEnabled() const;
-
-    /**
-     * @brief Enables or disables USD materials during rendering.
-     *
-     * @param enabled Material state.
-     */
-    void setSceneShadersEnabled(bool enabled);
-
-    /**
-     * @brief Returns whether  scene tree hud is displayed.
-     */
-    bool sceneStatsEnabled() const;
-
-    /**
-     * @brief Enables or disables scene tree hud.
-     *
-     * @param enabled Scene tree statistics display state.
-     */
-    void setSceneStatsEnabled(bool enabled);
-
-    /**
-     * @brief Returns whether rendering gpu performance hud are displayed.
-     */
-    bool performanceStatsEnabled() const;
-
-    /**
-     * @brief Enables or disables performance stats hud.
-     *
-     * @param enabled performance stats hud display state.
-     */
-    void setPerformanceStatsEnabled(bool enabled);
-
-    /**
-     * @brief Returns whether rendering camera axis hud are displayed.
-     */
-    bool cameraAxisEnabled() const;
-
-    /**
-     * @brief Enables or disables camera axis hud.
-     *
-     * @param enabled Camera axis hud display state.
-     */
-    void setCameraAxisEnabled(bool enabled);
-
-    ///@}
-
     /** @name Renderer Outputs */
     ///@{
 
@@ -230,13 +107,6 @@ public:
      * @brief Returns available renderer AOVs.
      */
     QList<QString> rendererAovs() const;
-
-    /**
-     * @brief Sets the active renderer AOV.
-     *
-     * @param aov Name of the AOV to display.
-     */
-    void setRendererAov(const QString& aov);
 
     ///@}
 
@@ -265,7 +135,6 @@ public:
 
     ///@}
 
-
     /** @name Scene Updates */
     ///@{
 
@@ -291,19 +160,18 @@ public:
     void updateMask(const QList<SdfPath>& paths);
 
     /**
-    * @brief Updates prims using a USD notice batch.
-    *
-    * Entries follow UsdNotice::ObjectsChanged semantics:
-    * info-only changes, asset resyncs, and structural resyncs.
-    *
-    * @param batch Batched USD change entries.
-    */
+     * @brief Updates prims using a USD notice batch.
+     *
+     * Entries follow UsdNotice::ObjectsChanged semantics:
+     * info-only changes, asset resyncs, and structural resyncs.
+     *
+     * @param batch Batched USD change entries.
+     */
     void updatePrims(const NoticeBatch& batch);
 
     ///@}
 
 Q_SIGNALS:
-
     /**
      * @brief Emitted when a frame has finished rendering.
      *

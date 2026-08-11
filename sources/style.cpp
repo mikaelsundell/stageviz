@@ -203,6 +203,7 @@ StylePrivate::updateTheme()
     map(Style::ColorRole::Button, QColor::fromHsl(220, 6, 36));
     map(Style::ColorRole::ButtonAlt, QColor::fromHsl(220, 6, 64));
     map(Style::ColorRole::Error, QColor(150, 35, 50));
+    map(Style::ColorRole::Error, QColor(180, 180, 180));
     map(Style::ColorRole::Handle, QColor::fromHsl(0, 0, 150));
     map(Style::ColorRole::Highlight, QColor::fromHsl(216, 82, 80));
     map(Style::ColorRole::HighlightAlt, QColor::fromHsl(216, 60, 60));

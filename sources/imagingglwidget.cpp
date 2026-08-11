@@ -5,6 +5,8 @@
 #include "imagingglwidget.h"
 #include "application.h"
 #include "command.h"
+#include "gridsceneindex.h"
+#include "materialoverridesceneindex.h"
 #include "notice.h"
 #include "os.h"
 #include "qtutils.h"
@@ -36,6 +38,7 @@
 #include <pxr/imaging/hd/driver.h>
 #include <pxr/imaging/hd/engine.h>
 #include <pxr/imaging/hd/renderIndex.h>
+#include <pxr/imaging/hd/sceneIndexPluginRegistry.h>
 #include <pxr/imaging/hgi/hgi.h>
 #include <pxr/imaging/hgi/tokens.h>
 #include <pxr/usd/usd/primRange.h>
@@ -51,14 +54,80 @@
 PXR_NAMESPACE_USING_DIRECTIVE
 
 namespace stageviz {
+
+class StagevizImagingGLEngine final : public UsdImagingGLEngine {
+public:
+    explicit StagevizImagingGLEngine(const UsdImagingGLEngine::Parameters& params)
+        : UsdImagingGLEngine(prepareParameters(params))
+    {}
+
+    bool insertSceneIndex(const HdSceneIndexBaseRefPtr& sceneIndex, const SdfPath& prefix)
+    {
+        if (!sceneIndex)
+            return false;
+
+        HdRenderIndex* renderIndex = _GetRenderIndex();
+        if (!renderIndex)
+            return false;
+
+        renderIndex->InsertSceneIndex(sceneIndex, prefix);
+        return true;
+    }
+
+    TfRefPtr<MaterialOverrideSceneIndex> materialOverrideSceneIndex() const
+    {
+        return materialOverrideSceneIndexInstance();
+    }
+
+private:
+    static TfRefPtr<MaterialOverrideSceneIndex>& materialOverrideSceneIndexInstance()
+    {
+        static TfRefPtr<MaterialOverrideSceneIndex> instance;
+        return instance;
+    }
+
+    static void registerStagevizSceneIndexFilters()
+    {
+        static bool registered = false;
+        if (registered)
+            return;
+
+        HdSceneIndexPluginRegistry::SceneIndexAppendCallback callback =
+            [](const std::string& renderInstanceId, const HdSceneIndexBaseRefPtr& inputScene,
+               const HdContainerDataSourceHandle& inputArgs) -> HdSceneIndexBaseRefPtr {
+            Q_UNUSED(renderInstanceId);
+            Q_UNUSED(inputArgs);
+
+            TfRefPtr<MaterialOverrideSceneIndex> sceneIndex = MaterialOverrideSceneIndex::New(inputScene);
+            materialOverrideSceneIndexInstance() = sceneIndex;
+            return sceneIndex;
+        };
+
+        HdSceneIndexPluginRegistry::GetInstance().RegisterSceneIndexForRenderer(
+            std::string(), callback, nullptr, 0, HdSceneIndexPluginRegistry::InsertionOrderAtStart);
+
+        registered = true;
+    }
+
+    static UsdImagingGLEngine::Parameters prepareParameters(UsdImagingGLEngine::Parameters params)
+    {
+        registerStagevizSceneIndexFilters();
+        return params;
+    }
+};
+
 class ImagingGLWidgetPrivate : public QObject, public SignalGuard {
 public:
     void init();
     void initGL();
     void initCamera();
     void initContext();
+    void ensureGridSceneIndex();
+    void ensureMaterialOverrideSceneIndex();
+    void updateMaterialOverrideSceneIndex();
     SelectionList* selectionList();
     ViewCamera* viewCamera();
+    ViewState* viewState();
     void close();
     void frame(const GfBBox3d& bbox);
     void resetView();
@@ -75,6 +144,7 @@ public:
     void updateBoundingBox(const GfBBox3d& bbox);
     void updateMask(const QList<SdfPath>& paths);
     void updatePrims(const NoticeBatch& batch);
+    void updateGridSceneIndex();
     void captureVisible();
     void clearVisibleCapture();
     void rebuildSelectionBBoxes();
@@ -99,18 +169,11 @@ public:
     struct Data {
         size_t count;
         qint64 frame;
-        QString aov;
-        QColor clearColor;
         float defaultAmbient;
         float defaultSpecular;
         float defaultShininess;
         double gpuPerformanceMs;
-        bool defaultCameraLightEnabled;
-        bool sceneLightsEnabled;
-        bool sceneShadersEnabled;
-        bool sceneStatsEnabled;
-        bool performanceStatsEnabled;
-        bool cameraAxisEnabled;
+        bool gridSceneIndexInserted;
         bool drag;
         bool sweep;
         QPoint start;
@@ -120,8 +183,6 @@ public:
         QImage performanceStats;
         QImage axis;
         GfBBox3d selectionBBox;
-        ImagingGLWidget::DrawMode drawMode;
-        ImagingGLWidget::ComplexityLevel complexityLevel;
         UsdStageRefPtr stage;
         UsdImagingGLRenderParams params;
         GfBBox3d bbox;
@@ -130,7 +191,9 @@ public:
         QList<SdfPath> visibleCapture;
         std::vector<GfBBox3d> selectionBBoxes;
         HgiUniquePtr hgi;
-        QScopedPointer<UsdImagingGLEngine> glEngine;
+        TfRefPtr<GridSceneIndex> gridSceneIndex;
+        TfRefPtr<MaterialOverrideSceneIndex> materialOverrideSceneIndex;
+        QScopedPointer<StagevizImagingGLEngine> glEngine;
         QPointer<ViewContext> context;
         QPointer<ImagingGLWidget> glwidget;
     };
@@ -150,21 +213,13 @@ ImagingGLWidgetPrivate::init()
     d.glwidget->setFormat(format);
     d.count = 0;
     d.frame = 0;
-    d.aov = "color";
     d.defaultAmbient = 0.4f;
     d.defaultSpecular = 0.5f;
     d.defaultShininess = 32.0f;
     d.gpuPerformanceMs = 0.0;
-    d.defaultCameraLightEnabled = true;
-    d.sceneLightsEnabled = true;
-    d.sceneShadersEnabled = false;
-    d.sceneStatsEnabled = true;
-    d.performanceStatsEnabled = false;
-    d.cameraAxisEnabled = true;
+    d.gridSceneIndexInserted = false;
     d.drag = false;
     d.sweep = false;
-    d.drawMode = ImagingGLWidget::DrawMode::ShadedSmooth;
-    d.complexityLevel = ImagingGLWidget::ComplexityLevel::Low;
     d.context = nullptr;
 }
 
@@ -182,7 +237,9 @@ ImagingGLWidgetPrivate::initGL()
     UsdImagingGLEngine::Parameters params {};
     params.displayUnloadedPrimsWithBounds = false;
     params.allowAsynchronousSceneProcessing = true;
-    d.glEngine.reset(new UsdImagingGLEngine(params));
+    d.glEngine.reset(new StagevizImagingGLEngine(params));
+
+
     Hgi* hgi = d.glEngine->GetHgi();
     if (!hgi) {
         qWarning() << "could not initialize gl engine, no hydra driver found.";
@@ -192,6 +249,83 @@ ImagingGLWidgetPrivate::initGL()
         d.axis = QImage();
         return;
     }
+
+    ensureMaterialOverrideSceneIndex();
+    ensureGridSceneIndex();
+}
+
+void
+ImagingGLWidgetPrivate::updateMaterialOverrideSceneIndex()
+{
+    if (!d.materialOverrideSceneIndex || !d.context)
+        return;
+
+    ViewState* state = viewState();
+    if (!state)
+        return;
+
+    d.materialOverrideSceneIndex->setSceneMaterialsEnabled(state->sceneMaterialsEnabled());
+    d.materialOverrideSceneIndex->setMaterialPath(state->overrideMaterial());
+
+    MaterialOverrideSceneIndex::Mode mode = MaterialOverrideSceneIndex::None;
+    switch (state->materialMode()) {
+    case ViewState::Clay: mode = MaterialOverrideSceneIndex::Clay; break;
+    case ViewState::Override: mode = MaterialOverrideSceneIndex::Custom; break;
+    case ViewState::All:
+    default: mode = MaterialOverrideSceneIndex::None; break;
+    }
+
+    d.materialOverrideSceneIndex->setMode(mode);
+}
+
+void
+ImagingGLWidgetPrivate::ensureMaterialOverrideSceneIndex()
+{
+    if (!d.glEngine || d.materialOverrideSceneIndex)
+        return;
+
+    d.materialOverrideSceneIndex = d.glEngine->materialOverrideSceneIndex();
+    if (!d.materialOverrideSceneIndex) {
+        qWarning() << "could not find material override scene index";
+        return;
+    }
+
+    updateMaterialOverrideSceneIndex();
+}
+
+void
+ImagingGLWidgetPrivate::updateGridSceneIndex()
+{
+    if (!d.gridSceneIndex)
+        return;
+
+    d.gridSceneIndex->setEnabled(viewState() ? viewState()->gridEnabled() : true);
+    if (ViewState* state = viewState()) {
+        const QColor color = state->gridColor();
+        if (color.isValid()) {
+            d.gridSceneIndex->setColor(GfVec3f(color.redF(), color.greenF(), color.blueF()));
+        }
+    }
+
+    if (d.stage)
+        d.gridSceneIndex->setUpAxis(UsdGeomGetStageUpAxis(d.stage));
+}
+
+void
+ImagingGLWidgetPrivate::ensureGridSceneIndex()
+{
+    if (!d.glEngine || d.gridSceneIndexInserted)
+        return;
+
+    if (!d.gridSceneIndex)
+        d.gridSceneIndex = GridSceneIndex::New();
+
+    updateGridSceneIndex();
+
+    d.gridSceneIndexInserted = d.glEngine->insertSceneIndex(d.gridSceneIndex, SdfPath("/__stageviz"));
+
+    if (!d.gridSceneIndexInserted)
+        qWarning() << "could not insert grid scene index";
 }
 
 void
@@ -199,6 +333,59 @@ ImagingGLWidgetPrivate::initContext()
 {
     connect(selectionList(), &SelectionList::selectionChanged, this, &ImagingGLWidgetPrivate::updateSelection);
     connect(viewCamera(), &ViewCamera::cameraChanged, this, &ImagingGLWidgetPrivate::updateCamera);
+
+    if (ViewState* state = viewState()) {
+        connect(state, &ViewState::backgroundColorChanged, this, [this](const QColor&) { d.glwidget->update(); });
+        connect(state, &ViewState::gridColorChanged, this, [this](const QColor&) {
+            updateGridSceneIndex();
+            d.glwidget->update();
+        });
+        connect(state, &ViewState::gridEnabledChanged, this, [this](bool) {
+            updateGridSceneIndex();
+            d.glwidget->update();
+        });
+        connect(state, &ViewState::materialModeChanged, this, [this](ViewState::MaterialMode) {
+            updateMaterialOverrideSceneIndex();
+            d.glwidget->update();
+        });
+        connect(state, &ViewState::overrideMaterialChanged, this, [this](const SdfPath&) {
+            updateMaterialOverrideSceneIndex();
+            d.glwidget->update();
+        });
+        connect(state, &ViewState::sceneMaterialsEnabledChanged, this, [this](bool) {
+            updateMaterialOverrideSceneIndex();
+            d.glwidget->update();
+        });
+        connect(state, &ViewState::defaultCameraLightEnabledChanged, d.glwidget, qOverload<>(&QWidget::update));
+        connect(state, &ViewState::sceneLightsEnabledChanged, d.glwidget, qOverload<>(&QWidget::update));
+        connect(state, &ViewState::renderModeChanged, d.glwidget, qOverload<>(&QWidget::update));
+        connect(state, &ViewState::complexityLevelChanged, d.glwidget, qOverload<>(&QWidget::update));
+        connect(state, &ViewState::rendererAovChanged, d.glwidget, qOverload<>(&QWidget::update));
+        connect(state, &ViewState::sceneStatsEnabledChanged, this, [this](bool enabled) {
+            if (enabled)
+                updateSceneStats();
+            else
+                d.sceneStats = QImage();
+            d.glwidget->update();
+        });
+        connect(state, &ViewState::performanceStatsEnabledChanged, this, [this](bool enabled) {
+            if (enabled)
+                updatePerformanceStats();
+            else
+                d.performanceStats = QImage();
+            d.glwidget->update();
+        });
+        connect(state, &ViewState::cameraAxisEnabledChanged, this, [this](bool enabled) {
+            if (enabled)
+                updateAxis();
+            else
+                d.axis = QImage();
+            d.glwidget->update();
+        });
+    }
+
+    updateGridSceneIndex();
+    updateMaterialOverrideSceneIndex();
 }
 
 SelectionList*
@@ -207,11 +394,16 @@ ImagingGLWidgetPrivate::selectionList()
     return d.context->selectionList();
 }
 
-
 ViewCamera*
 ImagingGLWidgetPrivate::viewCamera()
 {
     return d.context->viewState()->camera();
+}
+
+ViewState*
+ImagingGLWidgetPrivate::viewState()
+{
+    return d.context ? d.context->viewState() : nullptr;
 }
 
 void
@@ -226,12 +418,14 @@ ImagingGLWidgetPrivate::close()
     d.selectionBBox = GfBBox3d();
     d.drag = false;
     d.sweep = false;
+    d.gridSceneIndexInserted = false;
+    d.materialOverrideSceneIndex = nullptr;
     d.glEngine.reset();
     d.hgi.reset();
-    if (d.sceneStatsEnabled) {
+    if (viewState() && viewState()->sceneStatsEnabled()) {
         updateSceneStats();
     }
-    if (d.performanceStatsEnabled) {
+    if (viewState() && viewState()->performanceStatsEnabled()) {
         updatePerformanceStats();
     }
     d.glwidget->update();
@@ -266,7 +460,6 @@ ImagingGLWidgetPrivate::rebuildSelectionBBoxes()
     }
 }
 
-
 void
 ImagingGLWidgetPrivate::frame(const GfBBox3d& bbox)
 {
@@ -286,7 +479,9 @@ ImagingGLWidgetPrivate::paintGL()
     if (!d.glEngine)
         initGL();
 
-    glClearColor(d.clearColor.redF(), d.clearColor.greenF(), d.clearColor.blueF(), d.clearColor.alphaF());
+    const QColor clearColor = viewState() && viewState()->backgroundColor().isValid() ? viewState()->backgroundColor()
+                                                                                      : QColor(Qt::black);
+    glClearColor(clearColor.redF(), clearColor.greenF(), clearColor.blueF(), clearColor.alphaF());
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     if (d.stage) {
         if (d.glEngine) {
@@ -298,8 +493,9 @@ ImagingGLWidgetPrivate::paintGL()
             else {
                 glDisable(GL_FRAMEBUFFER_SRGB);
             }
-            Q_ASSERT("aov is not set and is required" && d.aov.size());
-            TfToken aovtoken(QStringToTfToken(d.aov));
+            const QString aov = viewState() ? viewState()->rendererAov() : QStringLiteral("color");
+            Q_ASSERT("aov is not set and is required" && !aov.isEmpty());
+            TfToken aovtoken(QStringToTfToken(aov));
             d.glEngine->SetRendererAov(aovtoken);
 
             GfVec4d viewport = widgetViewport();
@@ -315,40 +511,27 @@ ImagingGLWidgetPrivate::paintGL()
             glDepthMask(GL_TRUE);
             glDepthFunc(GL_LESS);
             glViewport(viewport[0], viewport[1], viewport[2], viewport[3]);
-#endif
-
+#endif  // WIN32
             viewCamera()->setAspectRatio(widgetAspectRatio());
             GfCamera camera = viewCamera()->camera();
             GfFrustum frustum = camera.GetFrustum();
             GfMatrix4d viewModel = frustum.ComputeViewMatrix();
             GfMatrix4d projectionMatrix = frustum.ComputeProjectionMatrix();
             d.glEngine->SetCameraState(viewModel, projectionMatrix);
-            d.params.clearColor = QColorToGfVec4f(d.clearColor);
+            d.params.clearColor = QColorToGfVec4f(clearColor);
             {
-                UsdImagingGLDrawMode mode;
-                switch (d.drawMode) {
-                case ImagingGLWidget::DrawMode::Points: mode = UsdImagingGLDrawMode::DRAW_POINTS; break;
-                case ImagingGLWidget::DrawMode::Wireframe: mode = UsdImagingGLDrawMode::DRAW_WIREFRAME; break;
-                case ImagingGLWidget::DrawMode::WireframeOnSurface:
-                    mode = UsdImagingGLDrawMode::DRAW_WIREFRAME_ON_SURFACE;
-                    break;
-                case ImagingGLWidget::DrawMode::ShadedFlat: mode = UsdImagingGLDrawMode::DRAW_SHADED_FLAT; break;
-                case ImagingGLWidget::DrawMode::ShadedSmooth: mode = UsdImagingGLDrawMode::DRAW_SHADED_SMOOTH; break;
-                case ImagingGLWidget::DrawMode::GeomOnly: mode = UsdImagingGLDrawMode::DRAW_GEOM_ONLY; break;
-                case ImagingGLWidget::DrawMode::GeomFlat: mode = UsdImagingGLDrawMode::DRAW_GEOM_FLAT; break;
-                case ImagingGLWidget::DrawMode::GeomSmooth: mode = UsdImagingGLDrawMode::DRAW_GEOM_SMOOTH; break;
-                default: mode = UsdImagingGLDrawMode::DRAW_GEOM_SMOOTH;
-                }
-                d.params.drawMode = mode;
+                const ViewState::RenderMode renderMode = viewState() ? viewState()->renderMode() : ViewState::Shaded;
+                d.params.drawMode = renderMode == ViewState::Wireframe ? UsdImagingGLDrawMode::DRAW_WIREFRAME_ON_SURFACE
+                                                                       : UsdImagingGLDrawMode::DRAW_SHADED_SMOOTH;
             }
             {
                 double complexity = 1.0;
-                switch (d.complexityLevel) {
-                case ImagingGLWidget::ComplexityLevel::Low: complexity = 1.0; break;
-                case ImagingGLWidget::ComplexityLevel::Medium: complexity = 1.1; break;
-                case ImagingGLWidget::ComplexityLevel::High: complexity = 1.2; break;
-                case ImagingGLWidget::ComplexityLevel::VeryHigh: complexity = 1.3; break;
-                default: complexity = 1.0; break;
+                const ViewState::ComplexityLevel level = viewState() ? viewState()->complexityLevel() : ViewState::Low;
+                switch (level) {
+                case ViewState::Low: complexity = 1.0; break;
+                case ViewState::Medium: complexity = 1.1; break;
+                case ViewState::High: complexity = 1.2; break;
+                case ViewState::VeryHigh: complexity = 1.3; break;
                 }
                 d.params.complexity = complexity;
             }
@@ -356,7 +539,7 @@ ImagingGLWidgetPrivate::paintGL()
             d.params.enableLighting = true;
             {
                 std::vector<GlfSimpleLight> lights;
-                if (d.defaultCameraLightEnabled) {
+                if (!viewState() || viewState()->defaultCameraLightEnabled()) {
                     GfCamera lightCamera = viewCamera()->camera();
                     GfMatrix4d viewInverse = lightCamera.GetTransform();
                     GfVec3d camPos = viewInverse.ExtractTranslation();
@@ -376,8 +559,11 @@ ImagingGLWidgetPrivate::paintGL()
                 d.glEngine->SetLightingState(lights, material, defaultAmbient);
             }
             d.params.enableSampleAlphaToCoverage = true;
-            d.params.enableSceneLights = d.sceneLightsEnabled;
-            d.params.enableSceneMaterials = d.sceneShadersEnabled;
+            d.params.enableSceneLights = !viewState() || viewState()->sceneLightsEnabled();
+            // Material evaluation remains enabled so Stageviz-owned viewport
+            // materials, such as the grid and clay override, always render.
+            // MaterialOverrideSceneIndex controls authored USD material bindings.
+            d.params.enableSceneMaterials = true;
             d.params.flipFrontFacing = true;
             d.params.showGuides = false;
             d.params.showProxy = true;
@@ -403,6 +589,9 @@ ImagingGLWidgetPrivate::paintGL()
                         qWarning() << "gl engine has no Hgi, render pass will be skipped";
                     }
                     else {
+                        ensureMaterialOverrideSceneIndex();
+                        ensureGridSceneIndex();
+
                         hgi->StartFrame();
 
                         UsdPrim root = d.stage->GetPseudoRoot();
@@ -429,7 +618,7 @@ ImagingGLWidgetPrivate::paintGL()
             d.count++;
             Q_EMIT d.glwidget->renderReady(timer.elapsed());
 
-            if (d.performanceStatsEnabled) {
+            if (viewState() && viewState()->performanceStatsEnabled()) {
                 updatePerformanceStats();
             }
         }
@@ -459,14 +648,14 @@ ImagingGLWidgetPrivate::paintEvent(QPaintEvent* event)
         painter.drawRect(rect);
         painter.restore();
     }
-    if (d.sceneStatsEnabled) {
+    if (viewState() && viewState()->sceneStatsEnabled()) {
         painter.drawImage(QPoint(0, 0), d.sceneStats);
     }
-    if (d.performanceStatsEnabled) {
+    if (viewState() && viewState()->performanceStatsEnabled()) {
         QPoint pos(d.glwidget->width() - d.performanceStats.width() / d.performanceStats.devicePixelRatio(), 0);
         painter.drawImage(pos, d.performanceStats);
     }
-    if (d.cameraAxisEnabled) {
+    if (viewState() && viewState()->cameraAxisEnabled()) {
         const int margin = 8;
         const int axisHeight = qRound(d.axis.height() / d.axis.devicePixelRatio());
         painter.drawImage(QPoint(margin, d.glwidget->height() - margin - axisHeight), d.axis);
@@ -893,7 +1082,7 @@ ImagingGLWidgetPrivate::captureVisible()
         }
     }
 
-    if (changed && d.sceneStatsEnabled)
+    if (changed && viewState() && viewState()->sceneStatsEnabled())
         updateSceneStats();
 
     if (changed)
@@ -909,7 +1098,7 @@ ImagingGLWidgetPrivate::clearVisibleCapture()
         return;
 
     d.visibleCapture.clear();
-    if (d.sceneStatsEnabled)
+    if (viewState() && viewState()->sceneStatsEnabled())
         updateSceneStats();
     d.glwidget->update();
 }
@@ -921,15 +1110,19 @@ ImagingGLWidgetPrivate::updateStage(UsdStageRefPtr stage)
     d.stage = stage;
     d.visibleCapture.clear();
     d.selectionBBoxes.clear();
+    d.gridSceneIndexInserted = false;
+    d.materialOverrideSceneIndex = nullptr;
     d.glEngine.reset();
     d.hgi.reset();
+    updateGridSceneIndex();
     rebuildSelectionBBoxes();
-    if (d.sceneStatsEnabled) {
+    if (viewState() && viewState()->sceneStatsEnabled()) {
         updateSceneStats();
     }
     d.glwidget->update();
     updateAxis();
 }
+
 
 void
 ImagingGLWidgetPrivate::updateBoundingBox(const GfBBox3d& bbox)
@@ -952,8 +1145,9 @@ ImagingGLWidgetPrivate::updatePrims(const NoticeBatch& batch)
 {
     Q_UNUSED(batch);
     SignalGuard::Scope guard(this);
+    updateGridSceneIndex();
     rebuildSelectionBBoxes();
-    if (d.sceneStatsEnabled) {
+    if (viewState() && viewState()->sceneStatsEnabled()) {
         updateSceneStats();
     }
     d.glwidget->update();
@@ -962,6 +1156,8 @@ ImagingGLWidgetPrivate::updatePrims(const NoticeBatch& batch)
 void
 ImagingGLWidgetPrivate::updateCamera(const GfCamera& camera)
 {
+    Q_UNUSED(camera);
+
     d.glwidget->update();
     updateAxis();
 }
@@ -975,7 +1171,7 @@ ImagingGLWidgetPrivate::updateSelection(const QList<SdfPath>& paths)
         d.glEngine->SetSelected(QListToSdfPathVector(paths));
     }
     rebuildSelectionBBoxes();
-    if (d.sceneStatsEnabled) {
+    if (viewState() && viewState()->sceneStatsEnabled()) {
         updateSceneStats();
     }
     d.glwidget->update();
@@ -1427,141 +1623,6 @@ ImagingGLWidget::resetView()
     p->resetView();
 }
 
-ImagingGLWidget::DrawMode
-ImagingGLWidget::drawMode() const
-{
-    return p->d.drawMode;
-}
-
-void
-ImagingGLWidget::setDrawMode(DrawMode drawMode)
-{
-    if (drawMode != p->d.drawMode) {
-        p->d.drawMode = drawMode;
-        update();
-    }
-}
-
-ImagingGLWidget::ComplexityLevel
-ImagingGLWidget::complexityLevel() const
-{
-    return p->d.complexityLevel;
-}
-
-void
-ImagingGLWidget::setComplexityLevel(ComplexityLevel complexityLevel)
-{
-    if (complexityLevel != p->d.complexityLevel) {
-        p->d.complexityLevel = complexityLevel;
-        update();
-    }
-}
-
-QColor
-ImagingGLWidget::clearColor() const
-{
-    return p->d.clearColor;
-}
-
-void
-ImagingGLWidget::setClearColor(const QColor& color)
-{
-    if (color != p->d.clearColor) {
-        p->d.clearColor = color;
-        update();
-    }
-}
-
-bool
-ImagingGLWidget::defaultCameraLightEnabled() const
-{
-    return p->d.defaultCameraLightEnabled;
-}
-
-void
-ImagingGLWidget::setDefaultCameraLightEnabled(bool enabled)
-{
-    if (enabled != p->d.defaultCameraLightEnabled) {
-        p->d.defaultCameraLightEnabled = enabled;
-        update();
-    }
-}
-
-bool
-ImagingGLWidget::sceneLightsEnabled() const
-{
-    return p->d.sceneLightsEnabled;
-}
-
-void
-ImagingGLWidget::setSceneLightsEnabled(bool enabled)
-{
-    if (enabled != p->d.sceneLightsEnabled) {
-        p->d.sceneLightsEnabled = enabled;
-        update();
-    }
-}
-
-bool
-ImagingGLWidget::sceneShadersEnabled() const
-{
-    return p->d.sceneShadersEnabled;
-}
-
-void
-ImagingGLWidget::setSceneShadersEnabled(bool enabled)
-{
-    if (enabled != p->d.sceneShadersEnabled) {
-        p->d.sceneShadersEnabled = enabled;
-        update();
-    }
-}
-
-bool
-ImagingGLWidget::sceneStatsEnabled() const
-{
-    return p->d.sceneStatsEnabled;
-}
-
-void
-ImagingGLWidget::setSceneStatsEnabled(bool enabled)
-{
-    if (enabled != p->d.sceneStatsEnabled) {
-        p->d.sceneStatsEnabled = enabled;
-        p->updateSceneStats();
-        update();
-    }
-}
-
-bool
-ImagingGLWidget::performanceStatsEnabled() const
-{
-    return p->d.performanceStatsEnabled;
-}
-
-void
-ImagingGLWidget::setPerformanceStatsEnabled(bool enabled)
-{
-    if (enabled != p->d.performanceStatsEnabled) {
-        p->d.performanceStatsEnabled = enabled;
-        update();
-    }
-}
-
-bool
-ImagingGLWidget::cameraAxisEnabled() const
-{
-    return p->d.cameraAxisEnabled;
-}
-
-void
-ImagingGLWidget::setCameraAxisEnabled(bool enabled)
-{
-    if (enabled != p->d.cameraAxisEnabled) {
-        p->d.cameraAxisEnabled = enabled;
-        update();
-    }
-}
 
 QList<QString>
 ImagingGLWidget::rendererAovs() const
@@ -1571,14 +1632,6 @@ ImagingGLWidget::rendererAovs() const
     return TfTokenVectorToQList(p->d.glEngine->GetRendererAovs());
 }
 
-void
-ImagingGLWidget::setRendererAov(const QString& aov)
-{
-    if (p->d.aov != aov) {
-        p->d.aov = aov;
-        update();
-    }
-}
 
 void
 ImagingGLWidget::captureVisible()

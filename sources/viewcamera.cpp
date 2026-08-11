@@ -4,7 +4,9 @@
 
 #include "viewcamera.h"
 #include "qtutils.h"
+#include <QDebug>
 #include <algorithm>
+#include <cmath>
 #include <pxr/base/gf/frustum.h>
 #include <pxr/base/gf/range1d.h>
 #include <pxr/base/gf/rotation.h>
@@ -24,6 +26,7 @@ public:
     GfCamera camera();
     GfMatrix4d rotateAxis(const GfVec3d& value, double angle);
     void reset();
+    void debug(const char* action);
 
 public:
     struct Data {
@@ -58,7 +61,7 @@ ViewCameraPrivate::init()
     d.fov = 60.0;
     d.nearClipping = 1.0;
     d.farClipping = 2000000.0;
-    d.fit = 1.1;
+    d.fit = 1.25;
     d.distance = 1.0;
     d.inverseUp = GfMatrix4d(1.0);
     d.boundingBox = GfBBox3d();
@@ -79,15 +82,38 @@ ViewCameraPrivate::init()
 void
 ViewCameraPrivate::frameAll()
 {
-    GfVec3d size = d.range.GetSize();
-    double maxsize = std::max(size[0], std::max(size[1], size[2]));
+    //
+    // Nothing to frame. Keep the existing camera unchanged.
+    //
+    if (d.range.IsEmpty())
+        return;
+
+    const GfVec3d size = d.range.GetSize();
+    const double maxsize = std::max(size[0], std::max(size[1], size[2]));
+
+    //
+    // A valid but degenerate bounding box should also leave the camera alone.
+    //
+    if (maxsize <= 0.0)
+        return;
 
     double fovangle = d.fov * 0.5;
     if (fovangle == 0.0)
         fovangle = 0.5;
 
-    double length = maxsize * d.fit * 0.5;
-    d.distance = length / std::atan(fovangle * M_PI / 180.0);
+    const double length = maxsize * d.fit * 0.5;
+    const double radians = fovangle * M_PI / 180.0;
+
+    //
+    // Perspective fit:
+    //
+    //     tan(fov / 2) = halfSize / distance
+    //
+    // therefore:
+    //
+    //     distance = halfSize / tan(fov / 2)
+    //
+    d.distance = length / std::tan(radians);
 
     if (d.distance < d.nearClipping + maxsize * 0.5)
         d.distance = d.nearClipping + length;
@@ -96,6 +122,8 @@ ViewCameraPrivate::frameAll()
     d.focusPoint = d.center;
     d.valid = false;
     d.identity = false;
+
+    debug("frameAll");
 }
 
 void
@@ -105,6 +133,8 @@ ViewCameraPrivate::tumble(double x, double y)
     d.axispitch += y;
     d.valid = false;
     d.identity = false;
+
+    debug("tumble");
 }
 
 void
@@ -119,22 +149,36 @@ ViewCameraPrivate::truck(double right, double up)
     d.focusPoint += delta;
     d.valid = false;
     d.identity = false;
+
+    debug("truck");
 }
 
 void
 ViewCameraPrivate::distance(double factor)
 {
-    if (factor > 1.0 && d.distance < 2.0) {
-        GfVec3d size = d.range.GetSize();
-        double maxsize = std::max(size[0], std::max(size[1], size[2]));
-        d.distance += std::min(maxsize / 25.0, factor);
+    if (!std::isfinite(factor) || factor <= 0.0)
+        return;
+
+    double newDistance = d.distance * factor;
+
+    if (factor > 1.0 && d.distance < 2.0 && !d.range.IsEmpty()) {
+        const GfVec3d size = d.range.GetSize();
+        const double maxsize = std::max(size[0], std::max(size[1], size[2]));
+
+        if (std::isfinite(maxsize) && maxsize > 0.0)
+            newDistance = d.distance + std::min(maxsize / 25.0, factor);
     }
-    else {
-        d.distance *= factor;
-    }
+
+    if (!std::isfinite(newDistance))
+        return;
+
+    constexpr double minDistance = 0.01;
+    d.distance = std::max(minDistance, newDistance);
 
     d.valid = false;
     d.identity = false;
+
+    debug("distance");
 }
 
 double
@@ -184,7 +228,9 @@ ViewCameraPrivate::camera()
         d.camera.SetClippingRange(GfRange1f(d.nearClipping, d.farClipping));
 
         CameraUtilConformWindowPolicy policy = CameraUtilConformWindowPolicy::CameraUtilFit;
+
         CameraUtilConformWindow(&d.camera, policy, d.aspectRatio);
+
         d.valid = true;
     }
 
@@ -195,6 +241,22 @@ GfMatrix4d
 ViewCameraPrivate::rotateAxis(const GfVec3d& value, double angle)
 {
     return GfMatrix4d(1.0).SetRotate(GfRotation(value, angle));
+}
+
+void
+ViewCameraPrivate::debug(const char* action)
+{
+    /*
+    const GfCamera currentCamera = camera();
+    const GfVec3d position = currentCamera.GetTransform().ExtractTranslation();
+
+    qDebug().nospace() << "camera [" << action << "]"
+                       << " position=(" << position[0] << ", " << position[1] << ", " << position[2] << ")"
+                       << " focus=(" << d.focusPoint[0] << ", " << d.focusPoint[1] << ", " << d.focusPoint[2] << ")"
+                       << " center=(" << d.center[0] << ", " << d.center[1] << ", " << d.center[2] << ")"
+                       << " distance=" << d.distance << " yaw=" << d.axisyaw << " pitch=" << d.axispitch
+                       << " roll=" << d.axisroll << " fov=" << d.fov << " aspect=" << d.aspectRatio << " clip=("
+                       << d.nearClipping << ", " << d.farClipping << ")";*/
 }
 
 void
@@ -210,10 +272,41 @@ ViewCameraPrivate::reset()
     d.range = range;
     d.cameraUp = cameraUp;
     d.inverseUp = mapToCameraUp();
-    d.center = d.range.GetMidpoint();
-    d.focusPoint = d.center;
+
+    // Maya-like elevated three-quarter perspective.
+    d.axispitch = 30.0;
+    d.axisroll = -45.0;
+    d.axisyaw = 0.0;
+
+    if (!d.range.IsEmpty()) {
+        d.center = d.range.GetMidpoint();
+        d.focusPoint = d.center;
+
+        const GfVec3d size = d.range.GetSize();
+        const double maxsize = std::max(size[0], std::max(size[1], size[2]));
+
+        if (std::isfinite(maxsize) && maxsize > 0.0) {
+            const double halfFov = d.fov * 0.5 * M_PI / 180.0;
+            const double length = maxsize * d.fit * 0.5;
+            d.distance = length / std::tan(halfFov);
+
+            if (d.distance < d.nearClipping + maxsize * 0.5)
+                d.distance = d.nearClipping + length;
+        }
+        else {
+            d.distance = 20.0;
+        }
+    }
+    else {
+        d.center = GfVec3d(0.0);
+        d.focusPoint = d.center;
+        d.distance = 20.0;
+    }
+
     d.valid = false;
     d.identity = true;
+
+    debug("reset");
 }
 
 ViewCamera::ViewCamera(QObject* parent)

@@ -110,8 +110,10 @@ public Q_SLOTS:
     void cameraLight(bool checked);
     void sceneLights(bool checked);
     void sceneShaders(bool checked);
+    void grid(bool checked);
     void renderWireframe();
     void renderShaded();
+    void renderClay(bool checked);
     void complexityLow();
     void complexityMedium();
     void complexityHigh();
@@ -132,6 +134,7 @@ public Q_SLOTS:
     void updateStageUp(Session::StageUp stageUp);
     void updateSelection(const QList<SdfPath>& paths);
     void updatePreserveState(bool enabled);
+    void updateMaterialMode(ViewState::MaterialMode mode);
     void notifyStatusChanged(Session::Notify::Status status, const QString& message, const QString& details);
 
 public:
@@ -152,7 +155,6 @@ public:
         QStringList arguments;
         QStringList extensions;
         QStringList recentFiles;
-        QColor backgroundColor;
         QScopedPointer<MouseEvent> backgroundColorFilter;
         QScopedPointer<Ui_Viewer> ui;
         QPointer<Viewer> viewer;
@@ -181,13 +183,15 @@ ViewerPrivate::init()
     d.ui->setupUi(d.viewer.data());
     attach(d.ui->displayIsolate);
     initDocks();
-    d.backgroundColor = QColor(
+    ViewState* viewState = session()->viewState();
+    const QColor backgroundColor(
         settings()->value("backgroundColor", style()->color(Style::ColorRole::Render)).toString());
-    d.ui->backgroundColor->setStyleSheet("background-color: " + d.backgroundColor.name() + ";");
+    viewState->setBackgroundColor(backgroundColor);
+    viewState->setGridColor(style()->color(Style::ColorRole::Grid));
+    d.ui->backgroundColor->setStyleSheet("background-color: " + backgroundColor.name() + ";");
     d.backgroundColorFilter.reset(new MouseEvent);
     d.ui->backgroundColor->installEventFilter(d.backgroundColorFilter.data());
     d.viewer->installEventFilter(this);
-    renderView()->setBackgroundColor(d.backgroundColor);
     d.ui->fileOpen->setIcon(style()->icon(Style::IconRole::Open));
     d.ui->fileExportAll->setIcon(style()->icon(Style::IconRole::Export));
     d.ui->fileExportImage->setIcon(style()->icon(Style::IconRole::ExportImage));
@@ -254,8 +258,10 @@ ViewerPrivate::init()
     connect(d.ui->displayCameraLight, &QAction::toggled, this, &ViewerPrivate::cameraLight);
     connect(d.ui->displaySceneLights, &QAction::toggled, this, &ViewerPrivate::sceneLights);
     connect(d.ui->displaySceneShaders, &QAction::toggled, this, &ViewerPrivate::sceneShaders);
+    connect(d.ui->displayGrid, &QAction::toggled, this, &ViewerPrivate::grid);
     connect(d.ui->displayRenderShaded, &QAction::triggered, this, &ViewerPrivate::renderShaded);
     connect(d.ui->displayRenderWireframe, &QAction::triggered, this, &ViewerPrivate::renderWireframe);
+    connect(d.ui->displayRenderClay, &QAction::toggled, this, &ViewerPrivate::renderClay);
     {
         QActionGroup* actions = new QActionGroup(this);
         actions->setExclusive(true);
@@ -290,8 +296,8 @@ ViewerPrivate::init()
         d.ui->frameAll->setDefaultAction(d.ui->displayFrameAll);
         d.ui->redo->setDefaultAction(d.ui->editRedo);
         d.ui->undo->setDefaultAction(d.ui->editUndo);
-        d.ui->wireframe->setDefaultAction(d.ui->displayRenderShaded);
-        d.ui->shaded->setDefaultAction(d.ui->displayRenderWireframe);
+        d.ui->wireframe->setDefaultAction(d.ui->displayRenderWireframe);
+        d.ui->shaded->setDefaultAction(d.ui->displayRenderShaded);
     }
     connect(d.backgroundColorFilter.data(), &MouseEvent::pressed, this, &ViewerPrivate::backgroundColor);
     connect(session(), &Session::boundingBoxChanged, this, &ViewerPrivate::updateBoundingBox);
@@ -305,16 +311,52 @@ ViewerPrivate::init()
     connect(session()->commandStack(), &CommandStack::canUndoChanged, d.ui->editUndo, &QAction::setEnabled);
     connect(session()->commandStack(), &CommandStack::canRedoChanged, d.ui->editRedo, &QAction::setEnabled);
     connect(session()->commandStack(), &CommandStack::canClearChanged, d.ui->editClear, &QAction::setEnabled);
-    connect(d.ui->hudSceneStats, &QAction::toggled, this,
-            [=](bool checked) { renderView()->setSceneStatsEnabled(checked); });
-    connect(d.ui->hudPerformanceStats, &QAction::toggled, this,
-            [=](bool checked) { renderView()->setPerformanceStatsEnabled(checked); });
-    connect(d.ui->hudCameraAxis, &QAction::toggled, this,
-            [=](bool checked) { renderView()->setCameraAxisEnabled(checked); });
+    connect(d.ui->hudSceneStats, &QAction::toggled, viewState, &ViewState::setSceneStatsEnabled);
+    connect(d.ui->hudPerformanceStats, &QAction::toggled, viewState, &ViewState::setPerformanceStatsEnabled);
+    connect(d.ui->hudCameraAxis, &QAction::toggled, viewState, &ViewState::setCameraAxisEnabled);
     connect(d.ui->viewOutliner, &QAction::toggled, this, &ViewerPrivate::toggleOutliner);
     connect(d.ui->viewProgress, &QAction::toggled, this, &ViewerPrivate::toggleProgress);
     connect(d.ui->viewPython, &QAction::toggled, this, &ViewerPrivate::togglePython);
     connect(d.ui->viewConsole, &QAction::toggled, this, &ViewerPrivate::toggleConsole);
+    connect(viewState, &ViewState::materialModeChanged, this, &ViewerPrivate::updateMaterialMode);
+    connect(viewState, &ViewState::backgroundColorChanged, this, [this](const QColor& color) {
+        d.ui->backgroundColor->setStyleSheet("background-color: " + color.name() + ";");
+    });
+    connect(viewState, &ViewState::defaultCameraLightEnabledChanged, this,
+            [this](bool enabled) { updateDockAction(d.ui->displayCameraLight, enabled); });
+    connect(viewState, &ViewState::sceneLightsEnabledChanged, this,
+            [this](bool enabled) { updateDockAction(d.ui->displaySceneLights, enabled); });
+    connect(viewState, &ViewState::sceneMaterialsEnabledChanged, this,
+            [this](bool enabled) { updateDockAction(d.ui->displaySceneShaders, enabled); });
+    connect(viewState, &ViewState::gridEnabledChanged, this,
+            [this](bool enabled) { updateDockAction(d.ui->displayGrid, enabled); });
+    connect(viewState, &ViewState::renderModeChanged, this, [this](ViewState::RenderMode mode) {
+        updateDockAction(d.ui->displayRenderShaded, mode == ViewState::Shaded);
+        updateDockAction(d.ui->displayRenderWireframe, mode == ViewState::Wireframe);
+    });
+    connect(viewState, &ViewState::complexityLevelChanged, this, [this](ViewState::ComplexityLevel level) {
+        updateDockAction(d.ui->displayComplexityLow, level == ViewState::Low);
+        updateDockAction(d.ui->displayComplexityMedium, level == ViewState::Medium);
+        updateDockAction(d.ui->displayComplexityHigh, level == ViewState::High);
+        updateDockAction(d.ui->displayComplexityVeryHigh, level == ViewState::VeryHigh);
+    });
+    connect(viewState, &ViewState::sceneStatsEnabledChanged, this,
+            [this](bool enabled) { updateDockAction(d.ui->hudSceneStats, enabled); });
+    connect(viewState, &ViewState::performanceStatsEnabledChanged, this,
+            [this](bool enabled) { updateDockAction(d.ui->hudPerformanceStats, enabled); });
+    connect(viewState, &ViewState::cameraAxisEnabledChanged, this,
+            [this](bool enabled) { updateDockAction(d.ui->hudCameraAxis, enabled); });
+
+    updateMaterialMode(viewState->materialMode());
+    updateDockAction(d.ui->displayRenderShaded, viewState->renderMode() == ViewState::Shaded);
+    updateDockAction(d.ui->displayRenderWireframe, viewState->renderMode() == ViewState::Wireframe);
+    updateDockAction(d.ui->displayComplexityLow, viewState->complexityLevel() == ViewState::Low);
+    updateDockAction(d.ui->displayComplexityMedium, viewState->complexityLevel() == ViewState::Medium);
+    updateDockAction(d.ui->displayComplexityHigh, viewState->complexityLevel() == ViewState::High);
+    updateDockAction(d.ui->displayComplexityVeryHigh, viewState->complexityLevel() == ViewState::VeryHigh);
+    viewState->setDefaultCameraLightEnabled(d.ui->displayCameraLight->isChecked());
+    viewState->setSceneLightsEnabled(d.ui->displaySceneLights->isChecked());
+    viewState->setSceneMaterialsEnabled(d.ui->displaySceneShaders->isChecked());
     renderView()->setFocus();
     initSettings();
     newFile();
@@ -449,15 +491,19 @@ ViewerPrivate::initSettings()
 
     bool sceneStats = settings()->value("sceneStats", true).toBool();
     d.ui->hudSceneStats->setChecked(sceneStats);
-    renderView()->setSceneStatsEnabled(sceneStats);
+    session()->viewState()->setSceneStatsEnabled(sceneStats);
 
-    bool performanceStats = settings()->value("gpuPerformance", false).toBool();
+    bool performanceStats = settings()->value("performanceStats", false).toBool();
     d.ui->hudPerformanceStats->setChecked(performanceStats);
-    renderView()->setPerformanceStatsEnabled(performanceStats);
+    session()->viewState()->setPerformanceStatsEnabled(performanceStats);
 
     bool cameraAxis = settings()->value("cameraAxis", true).toBool();
     d.ui->hudCameraAxis->setChecked(cameraAxis);
-    renderView()->setCameraAxisEnabled(cameraAxis);
+    session()->viewState()->setCameraAxisEnabled(cameraAxis);
+
+    const bool grid = settings()->value("grid", true).toBool();
+    d.ui->displayGrid->setChecked(grid);
+    session()->viewState()->setGridEnabled(grid);
 
     d.recentFiles = settings()->value("recentFiles", QStringList()).toStringList();
     initRecentFiles();
@@ -638,6 +684,7 @@ ViewerPrivate::enable(bool enable)
                                 d.ui->displayCameraLight,
                                 d.ui->displaySceneLights,
                                 d.ui->displaySceneShaders,
+                                d.ui->displayGrid,
                                 d.ui->displayFrameAll,
                                 d.ui->displayFrameSelected,
                                 d.ui->displayResetView,
@@ -645,6 +692,7 @@ ViewerPrivate::enable(bool enable)
                                 d.ui->displayCollapse,
                                 d.ui->displayRenderShaded,
                                 d.ui->displayRenderWireframe,
+                                d.ui->displayRenderClay,
                                 d.ui->displayComplexityLow,
                                 d.ui->displayComplexityMedium,
                                 d.ui->displayComplexityHigh,
@@ -1041,6 +1089,7 @@ ViewerPrivate::saveSettings()
     settings()->setValue("sceneStats", d.ui->hudSceneStats->isChecked());
     settings()->setValue("performanceStats", d.ui->hudPerformanceStats->isChecked());
     settings()->setValue("cameraAxis", d.ui->hudCameraAxis->isChecked());
+    settings()->setValue("grid", d.ui->displayGrid->isChecked());
     settings()->setValue("viewer/outlinerVisible", d.ui->outlinerWidget->isVisible());
     settings()->setValue("viewer/progressVisible", d.ui->progressWidget->isVisible());
     settings()->setValue("viewer/windowGeometry", d.viewer->saveGeometry());
@@ -1216,55 +1265,73 @@ ViewerPrivate::expand()
 void
 ViewerPrivate::cameraLight(bool checked)
 {
-    renderView()->setDefaultCameraLightEnabled(checked);
+    session()->viewState()->setDefaultCameraLightEnabled(checked);
 }
 
 void
 ViewerPrivate::sceneLights(bool checked)
 {
-    renderView()->setSceneLightsEnabled(checked);
+    session()->viewState()->setSceneLightsEnabled(checked);
 }
 
 void
 ViewerPrivate::sceneShaders(bool checked)
 {
-    renderView()->setSceneMaterialsEnabled(checked);
+    session()->viewState()->setSceneMaterialsEnabled(checked);
+}
+
+void
+ViewerPrivate::grid(bool checked)
+{
+    session()->viewState()->setGridEnabled(checked);
 }
 
 void
 ViewerPrivate::renderShaded()
 {
-    renderView()->setRenderMode(RenderView::RenderMode::Shaded);
+    session()->viewState()->setRenderMode(ViewState::Shaded);
 }
 
 void
 ViewerPrivate::renderWireframe()
 {
-    renderView()->setRenderMode(RenderView::RenderMode::Wireframe);
+    session()->viewState()->setRenderMode(ViewState::Wireframe);
+}
+
+void
+ViewerPrivate::renderClay(bool checked)
+{
+    ViewState* state = session()->viewState();
+    if (checked) {
+        state->setMaterialMode(ViewState::Clay);
+    }
+    else if (state->materialMode() == ViewState::Clay) {
+        state->setMaterialMode(ViewState::All);
+    }
 }
 
 void
 ViewerPrivate::complexityLow()
 {
-    renderView()->setComplexityLevel(RenderView::ComplexityLevel::Low);
+    session()->viewState()->setComplexityLevel(ViewState::Low);
 }
 
 void
 ViewerPrivate::complexityMedium()
 {
-    renderView()->setComplexityLevel(RenderView::ComplexityLevel::Medium);
+    session()->viewState()->setComplexityLevel(ViewState::Medium);
 }
 
 void
 ViewerPrivate::complexityHigh()
 {
-    renderView()->setComplexityLevel(RenderView::ComplexityLevel::High);
+    session()->viewState()->setComplexityLevel(ViewState::High);
 }
 
 void
 ViewerPrivate::complexityVeryHigh()
 {
-    renderView()->setComplexityLevel(RenderView::ComplexityLevel::VeryHigh);
+    session()->viewState()->setComplexityLevel(ViewState::VeryHigh);
 }
 
 void
@@ -1433,14 +1500,16 @@ ViewerPrivate::openGithubIssues()
 void
 ViewerPrivate::backgroundColor()
 {
-    QColor color = QColorDialog::getColor(d.backgroundColor, d.viewer.data(), "Select color");
+    ViewState* state = session()->viewState();
+    if (!state)
+        return;
+
+    QColor color = QColorDialog::getColor(state->backgroundColor(), d.viewer.data(), "Select color");
     if (!color.isValid())
         return;
 
-    renderView()->setBackgroundColor(color);
-    d.ui->backgroundColor->setStyleSheet("background-color: " + color.name() + ";");
+    state->setBackgroundColor(color);
     settings()->setValue("backgroundColor", color.name());
-    d.backgroundColor = color;
 }
 
 void
@@ -1573,6 +1642,14 @@ ViewerPrivate::updatePreserveState(bool enabled)
     d.ui->filePreserveState->setChecked(enabled);
     d.ui->filePreserveState->blockSignals(false);
     settings()->setValue("preserveState", enabled);
+}
+
+void
+ViewerPrivate::updateMaterialMode(ViewState::MaterialMode mode)
+{
+    d.ui->displayRenderClay->blockSignals(true);
+    d.ui->displayRenderClay->setChecked(mode == ViewState::Clay);
+    d.ui->displayRenderClay->blockSignals(false);
 }
 
 void

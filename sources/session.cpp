@@ -250,8 +250,6 @@ SessionPrivate::initStage()
         ViewCamera* camera = d.viewState->camera();
 
         if (camera->isIdentity()) {
-            qDebug() << "camera will be reset";
-
             camera->setBoundingBox(bbox);
             camera->setCameraUp(up == Session::StageUp::Y ? ViewCamera::Y : ViewCamera::Z);
             camera->reset();

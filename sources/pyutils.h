@@ -6,6 +6,7 @@
 
 #include "selectionlist.h"
 #include "session.h"
+#include "viewstate.h"
 
 #undef slots
 #include <Python.h>
@@ -16,6 +17,7 @@
 #include <pxr/usd/sdf/path.h>
 #include <pxr/usd/usd/stage.h>
 
+#include <QColor>
 #include <QVariant>
 #include <QVariantMap>
 
@@ -34,6 +36,10 @@ checkSession(Session* session);
 /** Validate a SelectionList pointer for Python calls. */
 bool
 checkSelectionList(SelectionList* selection);
+
+/** Validate a ViewState pointer for Python calls. */
+bool
+checkViewState(ViewState* viewState);
 
 /** Convert an integer to Session::LoadPolicy. */
 Session::LoadPolicy
@@ -66,6 +72,14 @@ pyToPathList(PyObject* object, QList<SdfPath>* paths);
 /** Convert a Python path string to SdfPath. */
 bool
 pyToPath(PyObject* object, SdfPath* path);
+
+/** Convert a QColor to a Python RGBA tuple. */
+PyObject*
+colorToPyTuple(const QColor& color);
+
+/** Convert a Python RGB/RGBA sequence to QColor. */
+bool
+pyToColor(PyObject* object, QColor* color);
 
 /** Convert a Python object to QVariant. */
 QVariant

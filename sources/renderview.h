@@ -23,7 +23,7 @@ class RenderViewPrivate;
  * Provides a real-time rendering widget used to display the USD stage.
  * The view supports camera navigation, framing operations, rendering
  * modes, and scene visualization options such as lighting, materials,
- * and statistics overlays.
+ * grid display, and statistics overlays.
  *
  * The view integrates with a Session for scene content and a
  * SelectionList for prim selection synchronization.
@@ -31,30 +31,14 @@ class RenderViewPrivate;
 class RenderView : public QWidget {
     Q_OBJECT
 public:
-    /**
-     * @brief Rendering modes supported by the viewport.
-     */
-    enum RenderMode {
-        Shaded,
-        Wireframe,
-    };
-
-    /**
-     * @brief Complexity levels supported by the viewport.
-     */
-    enum ComplexityLevel { Low, Medium, High, VeryHigh };
-
 public:
     /**
      * @brief Constructs the render view widget.
-     *
      * @param parent Optional parent widget.
      */
     RenderView(QWidget* parent = nullptr);
 
-    /**
-     * @brief Destroys the RenderView instance.
-     */
+    /** @brief Destroys the RenderView instance. */
     virtual ~RenderView();
 
     /** @name Capture */
@@ -62,7 +46,6 @@ public:
 
     /**
      * @brief Captures the current viewport image.
-     *
      * @return Image of the rendered viewport.
      */
     QImage captureImage();
@@ -72,143 +55,14 @@ public:
     /** @name Camera Control */
     ///@{
 
-    /**
-     * @brief Frames the entire scene.
-     */
+    /** @brief Frames the entire scene. */
     void frameAll();
 
-    /**
-     * @brief Frames the currently selected prims.
-     */
+    /** @brief Frames the currently selected prims. */
     void frameSelected();
 
-    /**
-     * @brief Resets the camera to its default view.
-     */
+    /** @brief Resets the camera to its default view. */
     void resetView();
-
-    ///@}
-
-    /** @name Appearance */
-    ///@{
-
-    /**
-     * @brief Returns the viewport background color.
-     */
-    QColor backgroundColor() const;
-
-    /**
-     * @brief Sets the viewport background color.
-     *
-     * @param color Background color.
-     */
-    void setBackgroundColor(const QColor& color);
-
-    ///@}
-
-    /** @name Lighting and Materials */
-    ///@{
-
-    /**
-     * @brief Returns whether the default camera light is enabled.
-     */
-    bool defaultCameraLightEnabled() const;
-
-    /**
-     * @brief Enables or disables the default camera light.
-     *
-     * @param enabled Light state.
-     */
-    void setDefaultCameraLightEnabled(bool enabled);
-
-    /**
-     * @brief Returns whether scene lights are enabled.
-     */
-    bool sceneLightsEnabled() const;
-
-    /**
-     * @brief Enables or disables lights defined in the USD scene.
-     *
-     * @param enabled Light state.
-     */
-    void setSceneLightsEnabled(bool enabled);
-
-    /**
-     * @brief Returns whether scene materials are enabled.
-     */
-    bool sceneMaterialsEnabled() const;
-
-    /**
-     * @brief Enables or disables USD materials during rendering.
-     *
-     * @param enabled Material state.
-     */
-    void setSceneMaterialsEnabled(bool enabled);
-
-    ///@}
-
-    /** @name View Options */
-    ///@{
-
-    /**
-     * @brief Returns whether scene stats hud is displayed.
-     */
-    bool sceneStatsEnabled() const;
-
-    /**
-     * @brief Enables or disables scene stats hud.
-     *
-     * @param enabled Scene tree statistics display state.
-     */
-    void setSceneStatsEnabled(bool enabled);
-
-    /**
-     * @brief Returns whether rendering performance stats hud are displayed.
-     */
-    bool performanceStatsEnabled() const;
-
-    /**
-     * @brief Enables or disables performance stats hud.
-     *
-     * @param enabled performance stats hud display state.
-     */
-    void setPerformanceStatsEnabled(bool enabled);
-
-    /**
-     * @brief Returns whether rendering camera axis hud are displayed.
-     */
-    bool cameraAxisEnabled() const;
-
-    /**
-     * @brief Enables or disables camera axis hud.
-     *
-     * @param enabled Camera axis hud display state.
-     */
-    void setCameraAxisEnabled(bool enabled);
-
-    /**
-     * @brief Returns the current render mode.
-     */
-    RenderMode renderMode() const;
-
-    /**
-     * @brief Sets the render mode.
-     *
-     * @param renderMode Rendering mode.
-     */
-    void setRenderMode(RenderMode renderMode);
-
-    /**
-     * @brief Returns the current complecity level.
-     */
-    ComplexityLevel complexityLevel() const;
-
-    /**
-     * @brief Sets the complexity level.
-     *
-     * @param renderMode Complexcity level.
-     */
-    void setComplexityLevel(ComplexityLevel renderMode);
 
     ///@}
 
@@ -223,14 +77,11 @@ public:
      */
     void captureVisible();
 
-    /**
-     * @brief Clears the captured visible prim paths.
-     */
+    /** @brief Clears the captured visible prim paths. */
     void clearVisibleCapture();
 
     /**
      * @brief Returns the currently captured visible prim paths.
-     *
      * @return Accumulated visible prim paths captured from one or more views.
      */
     QList<SdfPath> visibleCapturePaths() const;
