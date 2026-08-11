@@ -47,7 +47,6 @@ public:
 
         GfVec3f clayColor;
         HdSceneIndexPrim clayMaterialPrim;
-
     };
 
     Data d;
@@ -174,7 +173,6 @@ MaterialOverrideSceneIndexPrivate::createClayMaterialPrim() const
 
     return { HdPrimTypeTokens->material, material };
 }
-
 
 
 

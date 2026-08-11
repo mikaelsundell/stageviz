@@ -333,57 +333,53 @@ ImagingGLWidgetPrivate::initContext()
 {
     connect(selectionList(), &SelectionList::selectionChanged, this, &ImagingGLWidgetPrivate::updateSelection);
     connect(viewCamera(), &ViewCamera::cameraChanged, this, &ImagingGLWidgetPrivate::updateCamera);
-
-    if (ViewState* state = viewState()) {
-        connect(state, &ViewState::backgroundColorChanged, this, [this](const QColor&) { d.glwidget->update(); });
-        connect(state, &ViewState::gridColorChanged, this, [this](const QColor&) {
-            updateGridSceneIndex();
-            d.glwidget->update();
-        });
-        connect(state, &ViewState::gridEnabledChanged, this, [this](bool) {
-            updateGridSceneIndex();
-            d.glwidget->update();
-        });
-        connect(state, &ViewState::materialModeChanged, this, [this](ViewState::MaterialMode) {
-            updateMaterialOverrideSceneIndex();
-            d.glwidget->update();
-        });
-        connect(state, &ViewState::overrideMaterialChanged, this, [this](const SdfPath&) {
-            updateMaterialOverrideSceneIndex();
-            d.glwidget->update();
-        });
-        connect(state, &ViewState::sceneMaterialsEnabledChanged, this, [this](bool) {
-            updateMaterialOverrideSceneIndex();
-            d.glwidget->update();
-        });
-        connect(state, &ViewState::defaultCameraLightEnabledChanged, d.glwidget, qOverload<>(&QWidget::update));
-        connect(state, &ViewState::sceneLightsEnabledChanged, d.glwidget, qOverload<>(&QWidget::update));
-        connect(state, &ViewState::renderModeChanged, d.glwidget, qOverload<>(&QWidget::update));
-        connect(state, &ViewState::complexityLevelChanged, d.glwidget, qOverload<>(&QWidget::update));
-        connect(state, &ViewState::rendererAovChanged, d.glwidget, qOverload<>(&QWidget::update));
-        connect(state, &ViewState::sceneStatsEnabledChanged, this, [this](bool enabled) {
-            if (enabled)
-                updateSceneStats();
-            else
-                d.sceneStats = QImage();
-            d.glwidget->update();
-        });
-        connect(state, &ViewState::performanceStatsEnabledChanged, this, [this](bool enabled) {
-            if (enabled)
-                updatePerformanceStats();
-            else
-                d.performanceStats = QImage();
-            d.glwidget->update();
-        });
-        connect(state, &ViewState::cameraAxisEnabledChanged, this, [this](bool enabled) {
-            if (enabled)
-                updateAxis();
-            else
-                d.axis = QImage();
-            d.glwidget->update();
-        });
-    }
-
+    connect(viewState(), &ViewState::backgroundColorChanged, this, [this](const QColor&) { d.glwidget->update(); });
+    connect(viewState(), &ViewState::gridColorChanged, this, [this](const QColor&) {
+        updateGridSceneIndex();
+        d.glwidget->update();
+    });
+    connect(viewState(), &ViewState::gridEnabledChanged, this, [this](bool) {
+        updateGridSceneIndex();
+        d.glwidget->update();
+    });
+    connect(viewState(), &ViewState::materialModeChanged, this, [this](ViewState::MaterialMode) {
+        updateMaterialOverrideSceneIndex();
+        d.glwidget->update();
+    });
+    connect(viewState(), &ViewState::overrideMaterialChanged, this, [this](const SdfPath&) {
+        updateMaterialOverrideSceneIndex();
+        d.glwidget->update();
+    });
+    connect(viewState(), &ViewState::sceneMaterialsEnabledChanged, this, [this](bool) {
+        updateMaterialOverrideSceneIndex();
+        d.glwidget->update();
+    });
+    connect(viewState(), &ViewState::defaultCameraLightEnabledChanged, d.glwidget, qOverload<>(&QWidget::update));
+    connect(viewState(), &ViewState::sceneLightsEnabledChanged, d.glwidget, qOverload<>(&QWidget::update));
+    connect(viewState(), &ViewState::renderModeChanged, d.glwidget, qOverload<>(&QWidget::update));
+    connect(viewState(), &ViewState::complexityLevelChanged, d.glwidget, qOverload<>(&QWidget::update));
+    connect(viewState(), &ViewState::rendererAovChanged, d.glwidget, qOverload<>(&QWidget::update));
+    connect(viewState(), &ViewState::sceneStatsEnabledChanged, this, [this](bool enabled) {
+        if (enabled)
+            updateSceneStats();
+        else
+            d.sceneStats = QImage();
+        d.glwidget->update();
+    });
+    connect(viewState(), &ViewState::performanceStatsEnabledChanged, this, [this](bool enabled) {
+        if (enabled)
+            updatePerformanceStats();
+        else
+            d.performanceStats = QImage();
+        d.glwidget->update();
+    });
+    connect(viewState(), &ViewState::cameraAxisEnabledChanged, this, [this](bool enabled) {
+        if (enabled)
+            updateAxis();
+        else
+            d.axis = QImage();
+        d.glwidget->update();
+    });
     updateGridSceneIndex();
     updateMaterialOverrideSceneIndex();
 }

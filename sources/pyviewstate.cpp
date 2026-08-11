@@ -300,7 +300,8 @@ PyViewState_rendererAov(PyViewStateObject* self)
     if (!checkViewState(self->viewState))
         return nullptr;
 
-    return PyUnicode_FromString(self->viewState->rendererAov().toUtf8().constData());
+    const QByteArray value = self->viewState->rendererAov().toUtf8();
+    return PyUnicode_FromString(value.constData());
 }
 
 static PyObject*
@@ -472,7 +473,6 @@ initPyViewStateType()
     PyViewStateType.tp_new = PyViewState_new;
     PyViewStateType.tp_dealloc = reinterpret_cast<destructor>(PyViewState_dealloc);
     PyViewStateType.tp_methods = PyViewState_methods;
-
     return PyType_Ready(&PyViewStateType) >= 0;
 }
 
@@ -500,7 +500,6 @@ createPyViewState(ViewState* viewState)
         return nullptr;
 
     PyObject* object = PyObject_CallObject(reinterpret_cast<PyObject*>(&PyViewStateType), args);
-
     Py_DECREF(args);
 
     if (!object)
