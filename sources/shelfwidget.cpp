@@ -102,7 +102,7 @@ ShelfWidgetPrivate::addScript(const QString& code, const QString& name, const QB
     const QString title = uniqueTitle(
         name.isEmpty() ? titleFromText(trimmed, 12, QStringLiteral("Script"), QStringLiteral(">>>")) : name.trimmed());
 
-    auto* item = new QListWidgetItem(style()->icon(Style::IconRole::Code, Style::UIScale::Large), QString());
+    auto* item = new QListWidgetItem(style()->icon(Style::IconRole::Code, Style::UIScale::Medium), QString());
     item->setSizeHint(d.list->gridSize());
     item->setData(Qt::UserRole, trimmed);
     item->setData(roles::shelf::scriptName, title);
@@ -331,18 +331,20 @@ ShelfWidget::fromVariantList(const QVariantList& scripts)
 QSize
 ShelfWidget::sizeHint() const
 {
-    const int iconSize = stageviz::style()->iconSize(Style::UIScale::Large);
-    const int tilePadding = 10;
-    const int height = iconSize + tilePadding * 2 + 2;
+    const int iconSize = stageviz::style()->iconSize(Style::UIScale::Medium);
+    const int padding = 6;
+    const int spacing = 3;
+    const int height = iconSize + padding * 2 + spacing * 2;
     return QSize(QWidget::sizeHint().width(), height);
 }
 
 QSize
 ShelfWidget::minimumSizeHint() const
 {
-    const int iconSize = stageviz::style()->iconSize(Style::UIScale::Large);
-    const int tilePadding = 10;
-    const int height = iconSize + tilePadding * 2 + 2;
+    const int iconSize = stageviz::style()->iconSize(Style::UIScale::Medium);
+    const int padding = 6;
+    const int spacing = 3;
+    const int height = iconSize + padding * 2 + spacing * 2;
     return QSize(0, height);
 }
 

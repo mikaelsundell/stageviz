@@ -26,7 +26,6 @@ public:
     GfCamera camera();
     GfMatrix4d rotateAxis(const GfVec3d& value, double angle);
     void reset();
-    void debug(const char* action);
 
 public:
     struct Data {
@@ -82,18 +81,12 @@ ViewCameraPrivate::init()
 void
 ViewCameraPrivate::frameAll()
 {
-    //
-    // Nothing to frame. Keep the existing camera unchanged.
-    //
     if (d.range.IsEmpty())
         return;
 
     const GfVec3d size = d.range.GetSize();
     const double maxsize = std::max(size[0], std::max(size[1], size[2]));
 
-    //
-    // A valid but degenerate bounding box should also leave the camera alone.
-    //
     if (maxsize <= 0.0)
         return;
 
@@ -104,15 +97,6 @@ ViewCameraPrivate::frameAll()
     const double length = maxsize * d.fit * 0.5;
     const double radians = fovangle * M_PI / 180.0;
 
-    //
-    // Perspective fit:
-    //
-    //     tan(fov / 2) = halfSize / distance
-    //
-    // therefore:
-    //
-    //     distance = halfSize / tan(fov / 2)
-    //
     d.distance = length / std::tan(radians);
 
     if (d.distance < d.nearClipping + maxsize * 0.5)
@@ -122,8 +106,6 @@ ViewCameraPrivate::frameAll()
     d.focusPoint = d.center;
     d.valid = false;
     d.identity = false;
-
-    debug("frameAll");
 }
 
 void
@@ -133,8 +115,6 @@ ViewCameraPrivate::tumble(double x, double y)
     d.axispitch += y;
     d.valid = false;
     d.identity = false;
-
-    debug("tumble");
 }
 
 void
@@ -149,8 +129,6 @@ ViewCameraPrivate::truck(double right, double up)
     d.focusPoint += delta;
     d.valid = false;
     d.identity = false;
-
-    debug("truck");
 }
 
 void
@@ -177,8 +155,6 @@ ViewCameraPrivate::distance(double factor)
 
     d.valid = false;
     d.identity = false;
-
-    debug("distance");
 }
 
 double
@@ -216,24 +192,17 @@ ViewCameraPrivate::camera()
         matrix *= rotateAxis(GfVec3d().YAxis(), -d.axisroll);
         matrix *= d.inverseUp;
         matrix *= GfMatrix4d().SetTranslate(d.focusPoint);
-
         d.camera.SetTransform(matrix);
         d.camera.SetFocusDistance(d.distance);
-
         const GfCamera::FOVDirection direction = d.direction == ViewCamera::Horizontal ? GfCamera::FOVHorizontal
                                                                                        : GfCamera::FOVVertical;
 
         d.camera.SetPerspectiveFromAspectRatioAndFieldOfView(d.aspectRatio, d.fov, direction);
-
         d.camera.SetClippingRange(GfRange1f(d.nearClipping, d.farClipping));
-
         CameraUtilConformWindowPolicy policy = CameraUtilConformWindowPolicy::CameraUtilFit;
-
         CameraUtilConformWindow(&d.camera, policy, d.aspectRatio);
-
         d.valid = true;
     }
-
     return d.camera;
 }
 
@@ -241,22 +210,6 @@ GfMatrix4d
 ViewCameraPrivate::rotateAxis(const GfVec3d& value, double angle)
 {
     return GfMatrix4d(1.0).SetRotate(GfRotation(value, angle));
-}
-
-void
-ViewCameraPrivate::debug(const char* action)
-{
-    /*
-    const GfCamera currentCamera = camera();
-    const GfVec3d position = currentCamera.GetTransform().ExtractTranslation();
-
-    qDebug().nospace() << "camera [" << action << "]"
-                       << " position=(" << position[0] << ", " << position[1] << ", " << position[2] << ")"
-                       << " focus=(" << d.focusPoint[0] << ", " << d.focusPoint[1] << ", " << d.focusPoint[2] << ")"
-                       << " center=(" << d.center[0] << ", " << d.center[1] << ", " << d.center[2] << ")"
-                       << " distance=" << d.distance << " yaw=" << d.axisyaw << " pitch=" << d.axispitch
-                       << " roll=" << d.axisroll << " fov=" << d.fov << " aspect=" << d.aspectRatio << " clip=("
-                       << d.nearClipping << ", " << d.farClipping << ")";*/
 }
 
 void
@@ -273,7 +226,6 @@ ViewCameraPrivate::reset()
     d.cameraUp = cameraUp;
     d.inverseUp = mapToCameraUp();
 
-    // Maya-like elevated three-quarter perspective.
     d.axispitch = 30.0;
     d.axisroll = -45.0;
     d.axisyaw = 0.0;
@@ -294,19 +246,17 @@ ViewCameraPrivate::reset()
                 d.distance = d.nearClipping + length;
         }
         else {
-            d.distance = 20.0;
+            d.distance = 30.0;
         }
     }
     else {
         d.center = GfVec3d(0.0);
         d.focusPoint = d.center;
-        d.distance = 20.0;
+        d.distance = 30.0;
     }
 
     d.valid = false;
     d.identity = true;
-
-    debug("reset");
 }
 
 ViewCamera::ViewCamera(QObject* parent)

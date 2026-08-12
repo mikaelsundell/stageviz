@@ -9,17 +9,22 @@
 #include "roles.h"
 #include "shelfwidget.h"
 #include "style.h"
+#include <QAbstractScrollArea>
 #include <QApplication>
 #include <QBuffer>
 #include <QDrag>
 #include <QDragEnterEvent>
 #include <QFile>
 #include <QFileInfo>
+#include <QFrame>
 #include <QImageReader>
 #include <QMimeData>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPointer>
+#include <QScrollBar>
+#include <QSizePolicy>
+#include <QStyle>
 #include <QStyledItemDelegate>
 
 namespace stageviz {
@@ -36,8 +41,6 @@ public:
     QString scriptFileMimeData(const QMimeData* mime) const;
     QImage iconImage(const QImage& image) const;
     QImage centerCrop(const QImage& image) const;
-    QString scriptTitle(const QString& code) const;
-    QSize tileContentSize() const;
     int dropRow(const QPoint& pos) const;
     void moveItem(int fromRow, int toRow);
 
@@ -62,7 +65,7 @@ public:
             opt.icon = QIcon();
             opt.text.clear();
 
-            const int spacing = 4;
+            const int spacing = 2;
             QRect tileRect = opt.rect.adjusted(spacing, spacing, -spacing, -spacing);
 
             const QColor fill = isPressed ? style()->color(Style::ColorRole::ButtonAlt)
@@ -112,10 +115,9 @@ ShelfListPrivate::init()
     d.list->setViewMode(QListView::IconMode);
     d.list->setEditTriggers(QAbstractItemView::NoEditTriggers);
     d.list->setFlow(QListView::LeftToRight);
-    d.list->setWrapping(true);
+    d.list->setWrapping(false);
     d.list->setResizeMode(QListView::Adjust);
     d.list->setMovement(QListView::Static);
-    d.list->setSpacing(6);
     d.list->setUniformItemSizes(true);
     d.list->setItemDelegate(new ShelfItemDelegate(d.list.data()));
 
@@ -128,28 +130,34 @@ ShelfListPrivate::init()
     d.list->setSelectionMode(QAbstractItemView::NoSelection);
     d.list->setContextMenuPolicy(Qt::CustomContextMenu);
 
+    d.list->setFrameShape(QFrame::NoFrame);
+    d.list->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    d.list->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    d.list->setSizeAdjustPolicy(QAbstractScrollArea::AdjustIgnored);
+    d.list->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+
     const int iconSize = stageviz::style()->iconSize(Style::UIScale::Medium);
+    const int padding = 6;
+    const int spacing = 3;
+    const int tileSize = iconSize + padding * 2;
+
+    d.list->setSpacing(spacing);
     d.list->setIconSize(QSize(iconSize, iconSize));
+    d.list->setGridSize(QSize(tileSize, tileSize));
 
-    const int pad = 12;
-    const int width = iconSize + pad * 2;
-    const int height = iconSize + pad * 2;
+    auto updateHeight = [this, tileSize, spacing]() {
+        const bool hasHorizontalScroll = d.list->horizontalScrollBar()->maximum() > 0;
+        const int scrollHeight = hasHorizontalScroll
+                                     ? d.list->style()->pixelMetric(QStyle::PM_ScrollBarExtent, nullptr, d.list)
+                                     : 0;
+        d.list->setFixedHeight(tileSize + spacing * 2 + scrollHeight);
+    };
 
-    d.list->setGridSize(QSize(width, height));
+    QObject::connect(d.list->horizontalScrollBar(), &QScrollBar::rangeChanged, d.list.data(),
+                     [updateHeight](int, int) { updateHeight(); });
+
+    updateHeight();
     d.list->viewport()->setAcceptDrops(true);
-}
-
-QSize
-ShelfListPrivate::tileContentSize() const
-{
-    if (!d.list)
-        return QSize(64, 64);
-
-    const int spacing = 4;
-    const int border = 1;
-    const QSize grid = d.list->gridSize();
-
-    return QSize(qMax(1, grid.width() - spacing * 2 - border * 2), qMax(1, grid.height() - spacing * 2 - border * 2));
 }
 
 QMimeData*
@@ -278,8 +286,8 @@ ShelfListPrivate::iconImage(const QImage& image) const
     if (image.isNull())
         return QImage();
 
-    const int iconSize = stageviz::style()->iconSize(Style::UIScale::Large);
-    const int tilePadding = 10;
+    const int iconSize = stageviz::style()->iconSize(Style::UIScale::Medium);
+    const int tilePadding = 6;
     const int logicalSize = iconSize + tilePadding * 2;
 
     if (logicalSize <= 0)
@@ -302,25 +310,6 @@ ShelfListPrivate::centerCrop(const QImage& image) const
     return image.copy(x, y, side, side);
 }
 
-QString
-ShelfListPrivate::scriptTitle(const QString& code) const
-{
-    const QStringList lines = code.split('\n');
-    for (QString line : lines) {
-        line = line.trimmed();
-        if (!line.isEmpty()) {
-            if (line.startsWith(">>>"))
-                line = line.mid(3).trimmed();
-
-            if (line.length() > 12)
-                line = line.left(12).trimmed() + "...";
-
-            return line.isEmpty() ? QStringLiteral("Script") : line;
-        }
-    }
-
-    return QStringLiteral("Script");
-}
 
 int
 ShelfListPrivate::dropRow(const QPoint& pos) const

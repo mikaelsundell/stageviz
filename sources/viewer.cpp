@@ -14,6 +14,7 @@
 #include "outlinerview.h"
 #include "progressview.h"
 #include "pythondialog.h"
+#include "pythonshelf.h"
 #include "qtutils.h"
 #include "renderview.h"
 #include "selectionlist.h"
@@ -160,6 +161,7 @@ public:
         QPointer<Viewer> viewer;
         QPointer<OutlinerView> outlinerView;
         QPointer<ProgressView> progressView;
+        QPointer<PythonShelf> pythonShelf;
         QPointer<PythonDialog> pythonDialog;
         QPointer<ConsoleDialog> consoleDialog;
     };
@@ -383,6 +385,11 @@ ViewerPrivate::initDocks()
     d.progressView->setObjectName("progressView");
     d.progressView->setAttribute(Qt::WA_DeleteOnClose, false);
     addPanelView(d.ui->progressWidget, d.progressView, QMargins(0, 4, 4, 4));
+
+    d.pythonShelf = new PythonShelf(d.ui->pythonShelfWidget);
+    d.pythonShelf->setObjectName("pythonShelf");
+    d.pythonShelf->setAttribute(Qt::WA_DeleteOnClose, false);
+    addPanelView(d.ui->pythonShelfWidget, d.pythonShelf, QMargins(0, 0, 0, 0));
 
     d.ui->splitter->setChildrenCollapsible(false);
     d.ui->splitter->setCollapsible(0, true);
