@@ -161,7 +161,7 @@ PyViewState_setOverrideMaterial(PyViewStateObject* self, PyObject* args)
         return nullptr;
 
     if (!path.IsEmpty() && !path.IsPrimPath()) {
-        PyErr_SetString(PyExc_ValueError, "Material path must be an absolute prim path");
+        PyErr_SetString(PyExc_ValueError, "Override material must be an absolute prim path on the auxiliary stage");
         return nullptr;
     }
 

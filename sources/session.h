@@ -257,6 +257,37 @@ public:
 
     ///@}
 
+    /** @name Auxiliary Stage */
+    ///@{
+
+    /**
+     * @brief Returns the Stageviz-owned auxiliary USD stage.
+     *
+     * The auxiliary stage is an in-memory stage kept separate from the
+     * primary document stage returned by stage(). It is intended for
+     * Stageviz-owned scene content such as override materials, guides,
+     * helpers, diagnostics, manipulators, and other non-document data.
+     *
+     * Content on the auxiliary stage is not part of the document layer stack
+     * and is therefore not included in normal document save, export, outliner,
+     * bounding-box, or change-tracking operations.
+     */
+    UsdStageRefPtr auxiliary() const;
+
+    /**
+     * @brief Returns the auxiliary USD stage without acquiring the auxiliary lock.
+     *
+     * The caller must already hold auxiliaryLock().
+     */
+    UsdStageRefPtr auxiliaryUnsafe() const;
+
+    /**
+     * @brief Returns the lock used for thread-safe access to the auxiliary stage.
+     */
+    QReadWriteLock* auxiliaryLock() const;
+
+    ///@}
+
     /** @name Scene State */
     ///@{
 
@@ -392,6 +423,15 @@ Q_SIGNALS:
      * @brief Emitted when the stage changes.
      */
     void stageChanged(UsdStageRefPtr stage, LoadPolicy policy, StageStatus status);
+
+    /**
+     * @brief Emitted when the Stageviz-owned auxiliary USD stage changes.
+     *
+     * This signal represents replacement of the auxiliary stage object. Edits
+     * authored within the existing auxiliary stage are handled by USD/Hydra
+     * change propagation and do not require replacing the stage.
+     */
+    void auxiliaryChanged(UsdStageRefPtr auxiliary);
 
     /**
      * @brief Emitted when the stage up axis changes.

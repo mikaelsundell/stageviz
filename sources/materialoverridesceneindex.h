@@ -6,7 +6,6 @@
 
 #include <memory>
 
-#include <pxr/base/gf/vec3f.h>
 #include <pxr/base/tf/refPtr.h>
 #include <pxr/imaging/hd/filteringSceneIndex.h>
 #include <pxr/usd/sdf/path.h>
@@ -19,13 +18,13 @@ class MaterialOverrideSceneIndexPrivate;
  * @class MaterialOverrideSceneIndex
  * @brief Hydra filtering scene index for viewport material presentation.
  *
- * Filters the composed Hydra scene after scene-index merging and before the
- * render delegate. Authored USD material bindings can be blocked so renderer
- * fallback display colors are used, replaced with a built-in clay material,
- * or replaced with a caller-provided material path.
+ * Filters material bindings on document gprims after scene-index processing
+ * and before the render delegate.
  *
- * Stageviz-owned viewport content under /__stageviz is passed through
- * unchanged so viewport materials such as the grid remain active.
+ * The filter does not create or own materials. Stageviz-owned materials live
+ * on Session::auxiliary() and are presented to Hydra by ImagingGLWidget.
+ * Auxiliary display geometry below /Display is always passed through
+ * unchanged.
  */
 class MaterialOverrideSceneIndex final : public pxr::HdSingleInputFilteringSceneIndexBase {
 public:
@@ -40,33 +39,24 @@ public:
 
     /**
      * @brief Creates a material override filter around an input scene index.
-     *
-     * @param inputSceneIndex Scene index to filter.
-     * @return Reference-counted material override scene index.
      */
     static pxr::TfRefPtr<MaterialOverrideSceneIndex> New(const pxr::HdSceneIndexBaseRefPtr& inputSceneIndex);
 
-    /**
-     * @brief Destroys the material override scene index.
-     */
     ~MaterialOverrideSceneIndex() override;
 
     /** @name Scene Materials */
     ///@{
 
     /**
-     * @brief Returns whether authored scene material bindings are enabled.
+     * @brief Returns whether authored document material bindings are enabled.
      */
     bool sceneMaterialsEnabled() const;
 
     /**
-     * @brief Enables or disables authored scene material bindings.
+     * @brief Enables or disables authored document material bindings.
      *
-     * When disabled and no explicit override is active, material bindings on
-     * non-Stageviz gprims are blocked so renderer fallback display colors can
-     * be used.
-     *
-     * @param enabled Scene material state.
+     * When disabled and no explicit override mode is active, document material
+     * bindings are blocked so renderer fallback/display color can be used.
      */
     void setSceneMaterialsEnabled(bool enabled);
 
@@ -81,25 +71,22 @@ public:
     Mode mode() const;
 
     /**
-     * @brief Sets the material override mode.
-     *
-     * @param mode Override mode.
+     * @brief Sets the current material override mode.
      */
     void setMode(Mode mode);
 
     /**
-     * @brief Returns the custom material path.
+     * @brief Returns the custom material path used by Custom mode.
+     *
+     * The path is an absolute prim path on Session::auxiliary().
      */
     pxr::SdfPath materialPath() const;
 
     /**
-     * @brief Sets the custom material used by Custom mode.
+     * @brief Sets the custom material path used by Custom mode.
      *
-     * The material must exist in the composed Hydra scene. This allows Python
-     * to author a material in the USD session layer and pass its prim path to
-     * the viewport.
-     *
-     * @param materialPath Material prim path.
+     * The path must identify a material already presented from
+     * Session::auxiliary().
      */
     void setMaterialPath(const pxr::SdfPath& materialPath);
 
@@ -116,22 +103,17 @@ public:
 protected:
     void _PrimsAdded(const pxr::HdSceneIndexBase& sender,
                      const pxr::HdSceneIndexObserver::AddedPrimEntries& entries) override;
-
     void _PrimsRemoved(const pxr::HdSceneIndexBase& sender,
                        const pxr::HdSceneIndexObserver::RemovedPrimEntries& entries) override;
-
     void _PrimsDirtied(const pxr::HdSceneIndexBase& sender,
                        const pxr::HdSceneIndexObserver::DirtiedPrimEntries& entries) override;
-
     void _PrimsRenamed(const pxr::HdSceneIndexBase& sender,
                        const pxr::HdSceneIndexObserver::RenamedPrimEntries& entries) override;
 
 private:
-    void dirtyMaterialBindings();
-    void updateClayTopology(bool wasUsingClay);
-
-private:
     explicit MaterialOverrideSceneIndex(const pxr::HdSceneIndexBaseRefPtr& inputSceneIndex);
+
+    void dirtyMaterialBindings();
 
 private:
     std::unique_ptr<MaterialOverrideSceneIndexPrivate> p;

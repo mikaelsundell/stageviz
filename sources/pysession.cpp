@@ -351,6 +351,37 @@ PySession_filename(PySessionObject* self)
 }
 
 static PyObject*
+PySession_auxiliary(PySessionObject* self)
+{
+    if (!checkSession(self->session))
+        return nullptr;
+
+    return wrapUsdStage(self->session->auxiliary());
+}
+
+static PyObject*
+PySession_auxiliaryUnsafe(PySessionObject* self)
+{
+    if (!checkSession(self->session))
+        return nullptr;
+
+    return wrapUsdStage(self->session->auxiliaryUnsafe());
+}
+
+static PyObject*
+PySession_auxiliaryLock(PySessionObject* self)
+{
+    if (!checkSession(self->session))
+        return nullptr;
+
+    QReadWriteLock* lock = self->session->auxiliaryLock();
+    if (!lock)
+        Py_RETURN_NONE;
+
+    return PyLong_FromVoidPtr(lock);
+}
+
+static PyObject*
 PySession_stage(PySessionObject* self)
 {
     if (!checkSession(self->session))
@@ -547,6 +578,14 @@ static PyMethodDef PySession_methods[] = {
     { "loadPolicy", reinterpret_cast<PyCFunction>(PySession_loadPolicy), METH_NOARGS, "Get the current load policy" },
     { "boundingBox", reinterpret_cast<PyCFunction>(PySession_boundingBox), METH_NOARGS, "Get the current bounding box" },
     { "filename", reinterpret_cast<PyCFunction>(PySession_filename), METH_NOARGS, "Get the current filename" },
+
+    { "auxiliary", reinterpret_cast<PyCFunction>(PySession_auxiliary), METH_NOARGS,
+      "Get the Stageviz-owned auxiliary USD stage" },
+    { "auxiliaryUnsafe", reinterpret_cast<PyCFunction>(PySession_auxiliaryUnsafe), METH_NOARGS,
+      "Get the auxiliary USD stage without locking" },
+    { "auxiliaryLock", reinterpret_cast<PyCFunction>(PySession_auxiliaryLock), METH_NOARGS,
+      "Get the native auxiliary stage lock address" },
+
     { "stage", reinterpret_cast<PyCFunction>(PySession_stage), METH_NOARGS, "Get the native USD stage" },
     { "stageUnsafe", reinterpret_cast<PyCFunction>(PySession_stageUnsafe), METH_NOARGS,
       "Get the native USD stage without locking" },

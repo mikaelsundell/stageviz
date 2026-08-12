@@ -5,7 +5,6 @@
 #include "renderview.h"
 #include "application.h"
 #include "notice.h"
-#include "usdutils.h"
 #include "viewcontext.h"
 #include <QPointer>
 
@@ -17,9 +16,6 @@ class RenderViewPrivate : public QObject {
 public:
     void init();
     ImagingGLWidget* imageGLWidget();
-    void frameAll();
-    void frameSelected();
-    void resetView();
 
 public Q_SLOTS:
     void updateBoundingBox(const GfBBox3d& bbox);
@@ -27,6 +23,7 @@ public Q_SLOTS:
     void updatePrims(const NoticeBatch& batch);
     void updateSelection(const QList<SdfPath>& paths);
     void updateStage(UsdStageRefPtr stage, Session::LoadPolicy policy, Session::StageStatus status);
+    void updateAuxiliary(UsdStageRefPtr auxiliary);
     void captureReady(qint64 elapsed);
     void renderReady(qint64 elapsed);
 
@@ -66,30 +63,6 @@ RenderViewPrivate::imageGLWidget()
 }
 
 void
-RenderViewPrivate::frameAll()
-{
-    if (session()->isLoaded()) {
-        imageGLWidget()->frame(session()->boundingBox());
-    }
-}
-
-void
-RenderViewPrivate::frameSelected()
-{
-    if (session()->selectionList()->paths().size()) {
-        imageGLWidget()->frame(stage::boundingBox(session()->stage(), session()->selectionList()->paths()));
-    }
-}
-
-void
-RenderViewPrivate::resetView()
-{
-    if (session()->isLoaded()) {
-        imageGLWidget()->resetView();
-    }
-}
-
-void
 RenderViewPrivate::updateBoundingBox(const GfBBox3d& bbox)
 {
     imageGLWidget()->updateBoundingBox(bbox);
@@ -116,6 +89,12 @@ RenderViewPrivate::updateStage(UsdStageRefPtr stage, Session::LoadPolicy policy,
     else {
         imageGLWidget()->close();
     }
+}
+
+void
+RenderViewPrivate::updateAuxiliary(UsdStageRefPtr auxiliary)
+{
+    imageGLWidget()->updateAuxiliary(auxiliary);
 }
 
 void
@@ -152,25 +131,6 @@ RenderView::captureImage()
 }
 
 void
-RenderView::frameAll()
-{
-    p->frameAll();
-}
-
-void
-RenderView::frameSelected()
-{
-    p->frameSelected();
-}
-
-void
-RenderView::resetView()
-{
-    p->resetView();
-}
-
-
-void
 RenderView::captureVisible()
 {
     p->imageGLWidget()->captureVisible();
@@ -186,6 +146,12 @@ QList<SdfPath>
 RenderView::visibleCapturePaths() const
 {
     return p->imageGLWidget()->visibleCapturePaths();
+}
+
+void
+RenderView::updateAuxiliary(UsdStageRefPtr auxiliary)
+{
+    p->updateAuxiliary(auxiliary);
 }
 
 }  // namespace stageviz

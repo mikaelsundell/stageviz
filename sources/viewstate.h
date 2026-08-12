@@ -119,10 +119,10 @@ public:
     /**
      * @brief Sets the viewport override material path.
      *
-     * The material is expected to exist in the composed stage, typically
-     * authored in the USD session layer. Setting a non-empty path activates
-     * the Override material mode. Clearing the path restores All materials
-     * when Override is active.
+     * The path identifies a material authored on Session::auxiliary().
+     * It must be an absolute prim path within the auxiliary stage
+     * Setting a non-empty path activates Override mode. Clearing the
+     * path restores All materials when Override is active.
      */
     void setOverrideMaterial(const pxr::SdfPath& materialPath);
 

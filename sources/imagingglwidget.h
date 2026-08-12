@@ -31,7 +31,6 @@ class ViewContext;
 class ImagingGLWidget : public QOpenGLWidget, protected QOpenGLFunctions {
     Q_OBJECT
 public:
-public:
     /**
      * @brief Constructs the OpenGL imaging widget.
      *
@@ -58,23 +57,6 @@ public:
      * @param context View context for stage locking and command execution.
      */
     void setContext(ViewContext* context);
-
-    ///@}
-
-    /** @name Camera */
-    ///@{
-
-    /**
-     * @brief Frames the specified bounding box.
-     *
-     * @param bbox Bounding box to frame.
-     */
-    void frame(const GfBBox3d& bbox);
-
-    /**
-     * @brief Resets the camera view.
-     */
-    void resetView();
 
     ///@}
 
@@ -144,6 +126,17 @@ public:
      * @param stage USD stage to render.
      */
     void updateStage(UsdStageRefPtr stage);
+
+    /**
+     * @brief Updates the Stageviz-owned auxiliary USD stage used by the renderer.
+     *
+     * The auxiliary stage is separate from the document stage and may contain
+     * application-owned render content such as override materials, guides,
+     * helpers, diagnostics, or other non-document scene data.
+     *
+     * @param auxiliary Auxiliary USD stage to present.
+     */
+    void updateAuxiliary(UsdStageRefPtr auxiliary);
 
     /**
      * @brief Updates the scene bounding box.

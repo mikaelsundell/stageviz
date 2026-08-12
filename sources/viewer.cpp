@@ -128,10 +128,10 @@ public Q_SLOTS:
     void openGithubReadme();
     void openGithubIssues();
     void backgroundColor();
-    void updateBoundingBox(const GfBBox3d& bbox);
     void updateMask(const QList<SdfPath>& paths);
     void updatePrims(const NoticeBatch& batch);
     void updateStage(UsdStageRefPtr stage, Session::LoadPolicy policy, Session::StageStatus status);
+    void updateAuxiliary(UsdStageRefPtr auxiliary);
     void updateStageUp(Session::StageUp stageUp);
     void updateSelection(const QList<SdfPath>& paths);
     void updatePreserveState(bool enabled);
@@ -150,7 +150,6 @@ public:
 
     struct Data {
         Session::LoadPolicy loadPolicy;
-        bool init;
         bool modified;
         int changes;
         QStringList arguments;
@@ -171,7 +170,6 @@ public:
 ViewerPrivate::ViewerPrivate()
 {
     d.loadPolicy = Session::LoadPolicy::All;
-    d.init = false;
     d.modified = false;
     d.changes = 0;
     d.extensions = { "usd", "usda", "usdc", "usdz" };
@@ -302,10 +300,10 @@ ViewerPrivate::init()
         d.ui->shaded->setDefaultAction(d.ui->displayRenderShaded);
     }
     connect(d.backgroundColorFilter.data(), &MouseEvent::pressed, this, &ViewerPrivate::backgroundColor);
-    connect(session(), &Session::boundingBoxChanged, this, &ViewerPrivate::updateBoundingBox);
     connect(session(), &Session::maskChanged, this, &ViewerPrivate::updateMask);
     connect(session(), &Session::primsChanged, this, &ViewerPrivate::updatePrims);
     connect(session(), &Session::stageChanged, this, &ViewerPrivate::updateStage);
+    connect(session(), &Session::auxiliaryChanged, this, &ViewerPrivate::updateAuxiliary);
     connect(session(), &Session::stageUpChanged, this, &ViewerPrivate::updateStageUp);
     connect(session(), &Session::preserveStateChanged, this, &ViewerPrivate::updatePreserveState);
     connect(session(), &Session::notifyStatusChanged, this, &ViewerPrivate::notifyStatusChanged);
@@ -361,6 +359,7 @@ ViewerPrivate::init()
     viewState->setSceneMaterialsEnabled(d.ui->displaySceneShaders->isChecked());
     renderView()->setFocus();
     initSettings();
+    updateAuxiliary(session()->auxiliary());
     newFile();
 }
 
@@ -725,7 +724,6 @@ ViewerPrivate::newFile()
         return;
     }
 
-    d.init = false;
     updateWindowTitle();
     clearChanges();
     enable(true);
@@ -1042,7 +1040,6 @@ ViewerPrivate::close()
 
     session()->commandStack()->clear();
     session()->close();
-    d.init = false;
     updateWindowTitle();
     clearChanges();
     enable(false);
@@ -1239,23 +1236,49 @@ ViewerPrivate::isolate(bool checked)
 void
 ViewerPrivate::frameAll()
 {
-    if (session()->isLoaded())
-        renderView()->frameAll();
+    if (!session()->isLoaded())
+        return;
+
+    ViewCamera* camera = session()->viewState()->camera();
+    if (camera)
+        camera->frameAll();
 }
 
 void
 ViewerPrivate::frameSelected()
 {
-    if (session()->selectionList()->paths().size())
-        renderView()->frameSelected();
+    const QList<SdfPath> paths = session()->selectionList()->paths();
+    if (paths.isEmpty())
+        return;
+
+    GfBBox3d bbox;
+    {
+        READ_LOCKER(locker, session()->stageLock(), "stageLock");
+        const UsdStageRefPtr stage = session()->stageUnsafe();
+        if (!stage)
+            return;
+
+        bbox = stageviz::stage::boundingBox(stage, paths);
+    }
+
+    if (bbox.GetRange().IsEmpty())
+        return;
+
+    ViewCamera* camera = session()->viewState()->camera();
+    if (camera)
+        camera->frame(bbox);
 }
 
 void
 ViewerPrivate::resetView()
 {
-    renderView()->resetView();
-}
+    if (!session()->isLoaded())
+        return;
 
+    ViewCamera* camera = session()->viewState()->camera();
+    if (camera)
+        camera->resetView();
+}
 void
 ViewerPrivate::collapse()
 {
@@ -1520,27 +1543,6 @@ ViewerPrivate::backgroundColor()
 }
 
 void
-ViewerPrivate::updateBoundingBox(const GfBBox3d& bbox)
-{
-    if (d.init)
-        return;
-
-    if (bbox.GetRange().IsEmpty())
-        return;
-
-    ViewCamera* camera = session()->viewState() ? session()->viewState()->camera() : nullptr;
-    if (!camera) {
-        d.init = true;
-        return;
-    }
-
-    if (camera->isIdentity())
-        frameAll();
-
-    d.init = true;
-}
-
-void
 ViewerPrivate::updateSelection(const QList<SdfPath>& paths)
 {
     const bool hasSelection = !paths.isEmpty();
@@ -1680,7 +1682,6 @@ ViewerPrivate::updateStage(UsdStageRefPtr stage, Session::LoadPolicy policy, Ses
 {
     Q_UNUSED(stage);
 
-    d.init = false;
 
     d.loadPolicy = policy;
     d.ui->policyAll->setChecked(policy == Session::LoadPolicy::All);
@@ -1690,6 +1691,12 @@ ViewerPrivate::updateStage(UsdStageRefPtr stage, Session::LoadPolicy policy, Ses
 
     if (status == Session::StageStatus::Loaded)
         enable(true);
+}
+
+void
+ViewerPrivate::updateAuxiliary(UsdStageRefPtr auxiliary)
+{
+    renderView()->updateAuxiliary(auxiliary);
 }
 
 void

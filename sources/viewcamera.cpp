@@ -3,13 +3,14 @@
 // https://github.com/mikaelsundell/stageviz
 
 #include "viewcamera.h"
-#include "qtutils.h"
-#include <QDebug>
+
 #include <algorithm>
 #include <cmath>
 #include <pxr/base/gf/frustum.h>
 #include <pxr/base/gf/range1d.h>
+#include <pxr/base/gf/range3d.h>
 #include <pxr/base/gf/rotation.h>
+#include <pxr/imaging/cameraUtil/conformWindow.h>
 #include <pxr/usd/usdGeom/bboxCache.h>
 
 namespace stageviz {
@@ -17,6 +18,7 @@ namespace stageviz {
 class ViewCameraPrivate {
 public:
     void init();
+    void frame(const GfRange3d& range);
     void frameAll();
     void tumble(double x, double y);
     void truck(double right, double up);
@@ -50,6 +52,7 @@ public:
         bool valid = false;
         bool identity = true;
     };
+
     Data d;
 };
 
@@ -57,7 +60,7 @@ void
 ViewCameraPrivate::init()
 {
     d.aspectRatio = 1.0;
-    d.fov = 60.0;
+    d.fov = 40.0;
     d.nearClipping = 1.0;
     d.farClipping = 2000000.0;
     d.fit = 1.25;
@@ -79,32 +82,45 @@ ViewCameraPrivate::init()
 }
 
 void
-ViewCameraPrivate::frameAll()
+ViewCameraPrivate::frame(const GfRange3d& range)
 {
-    if (d.range.IsEmpty())
+    if (range.IsEmpty())
         return;
 
-    const GfVec3d size = d.range.GetSize();
+    const GfVec3d size = range.GetSize();
     const double maxsize = std::max(size[0], std::max(size[1], size[2]));
 
-    if (maxsize <= 0.0)
+    if (!std::isfinite(maxsize) || maxsize <= 0.0)
         return;
 
     double fovangle = d.fov * 0.5;
-    if (fovangle == 0.0)
+    if (!std::isfinite(fovangle) || fovangle <= 0.0)
         fovangle = 0.5;
 
-    const double length = maxsize * d.fit * 0.5;
     const double radians = fovangle * M_PI / 180.0;
+    const double tangent = std::tan(radians);
+    if (!std::isfinite(tangent) || tangent <= 0.0)
+        return;
 
-    d.distance = length / std::tan(radians);
+    const double length = maxsize * d.fit * 0.5;
+    double distance = length / tangent;
 
-    if (d.distance < d.nearClipping + maxsize * 0.5)
-        d.distance = d.nearClipping + length;
+    if (!std::isfinite(distance))
+        return;
 
-    d.center = d.range.GetMidpoint();
+    if (distance < d.nearClipping + maxsize * 0.5)
+        distance = d.nearClipping + length;
+
+    d.distance = distance;
+    d.center = range.GetMidpoint();
     d.focusPoint = d.center;
     d.valid = false;
+}
+
+void
+ViewCameraPrivate::frameAll()
+{
+    frame(d.range);
     d.identity = false;
 }
 
@@ -121,9 +137,9 @@ void
 ViewCameraPrivate::truck(double right, double up)
 {
     const GfFrustum frustum = camera().GetFrustum();
-    GfVec3d cameraUp = frustum.ComputeUpVector();
-    GfVec3d cameraRight = GfCross(frustum.ComputeViewDirection(), cameraUp);
-    GfVec3d delta = right * cameraRight + up * cameraUp;
+    const GfVec3d cameraUp = frustum.ComputeUpVector();
+    const GfVec3d cameraRight = GfCross(frustum.ComputeViewDirection(), cameraUp);
+    const GfVec3d delta = right * cameraRight + up * cameraUp;
 
     d.center += delta;
     d.focusPoint += delta;
@@ -152,7 +168,6 @@ ViewCameraPrivate::distance(double factor)
 
     constexpr double minDistance = 0.01;
     d.distance = std::max(minDistance, newDistance);
-
     d.valid = false;
     d.identity = false;
 }
@@ -160,23 +175,23 @@ ViewCameraPrivate::distance(double factor)
 double
 ViewCameraPrivate::mapToFrustumHeight(int height)
 {
+    if (height <= 0)
+        return 0.0;
+
     const GfFrustum frustum = camera().GetFrustum();
-    return frustum.GetWindow().GetSize()[1] * d.distance / height;
+    return frustum.GetWindow().GetSize()[1] * d.distance / static_cast<double>(height);
 }
 
 GfMatrix4d
 ViewCameraPrivate::mapToCameraUp()
 {
-    GfMatrix4d matrix;
+    GfMatrix4d matrix(1.0);
 
     if (d.cameraUp == ViewCamera::Z) {
         matrix.SetRotate(GfRotation(GfVec3d::XAxis(), -90.0));
     }
     else if (d.cameraUp == ViewCamera::X) {
         matrix.SetRotate(GfRotation(GfVec3d::YAxis(), -90.0));
-    }
-    else {
-        matrix = GfMatrix4d(1.0);
     }
 
     return matrix.GetInverse();
@@ -192,17 +207,28 @@ ViewCameraPrivate::camera()
         matrix *= rotateAxis(GfVec3d().YAxis(), -d.axisroll);
         matrix *= d.inverseUp;
         matrix *= GfMatrix4d().SetTranslate(d.focusPoint);
+
         d.camera.SetTransform(matrix);
         d.camera.SetFocusDistance(d.distance);
-        const GfCamera::FOVDirection direction = d.direction == ViewCamera::Horizontal ? GfCamera::FOVHorizontal
-                                                                                       : GfCamera::FOVVertical;
 
-        d.camera.SetPerspectiveFromAspectRatioAndFieldOfView(d.aspectRatio, d.fov, direction);
+        const GfCamera::FOVDirection direction
+            = d.direction == ViewCamera::Horizontal
+                  ? GfCamera::FOVHorizontal
+                  : GfCamera::FOVVertical;
+
+        d.camera.SetPerspectiveFromAspectRatioAndFieldOfView(
+            d.aspectRatio,
+            d.fov,
+            direction);
+
         d.camera.SetClippingRange(GfRange1f(d.nearClipping, d.farClipping));
+
         CameraUtilConformWindowPolicy policy = CameraUtilConformWindowPolicy::CameraUtilFit;
         CameraUtilConformWindow(&d.camera, policy, d.aspectRatio);
+
         d.valid = true;
     }
+
     return d.camera;
 }
 
@@ -215,46 +241,14 @@ ViewCameraPrivate::rotateAxis(const GfVec3d& value, double angle)
 void
 ViewCameraPrivate::reset()
 {
-    const GfBBox3d boundingBox = d.boundingBox;
-    const GfRange3d range = d.range;
-    const ViewCamera::CameraUp cameraUp = d.cameraUp;
-
-    init();
-
-    d.boundingBox = boundingBox;
-    d.range = range;
-    d.cameraUp = cameraUp;
-    d.inverseUp = mapToCameraUp();
-
+    d.cameraMode = ViewCamera::None;
+    d.axisyaw = 0.0;
     d.axispitch = 30.0;
     d.axisroll = -45.0;
-    d.axisyaw = 0.0;
-
-    if (!d.range.IsEmpty()) {
-        d.center = d.range.GetMidpoint();
-        d.focusPoint = d.center;
-
-        const GfVec3d size = d.range.GetSize();
-        const double maxsize = std::max(size[0], std::max(size[1], size[2]));
-
-        if (std::isfinite(maxsize) && maxsize > 0.0) {
-            const double halfFov = d.fov * 0.5 * M_PI / 180.0;
-            const double length = maxsize * d.fit * 0.5;
-            d.distance = length / std::tan(halfFov);
-
-            if (d.distance < d.nearClipping + maxsize * 0.5)
-                d.distance = d.nearClipping + length;
-        }
-        else {
-            d.distance = 30.0;
-        }
-    }
-    else {
-        d.center = GfVec3d(0.0);
-        d.focusPoint = d.center;
-        d.distance = 30.0;
-    }
-
+    d.inverseUp = mapToCameraUp();
+    d.center = GfVec3d(0.0);
+    d.focusPoint = d.center;
+    d.distance = 60.0;
     d.valid = false;
     d.identity = true;
 }
@@ -287,6 +281,14 @@ ViewCamera::isIdentity() const
 }
 
 void
+ViewCamera::frame(const GfBBox3d& bbox)
+{
+    p->frame(bbox.ComputeAlignedRange());
+    p->d.identity = false;
+    Q_EMIT cameraChanged(camera());
+}
+
+void
 ViewCamera::frameAll()
 {
     p->frameAll();
@@ -296,7 +298,7 @@ ViewCamera::frameAll()
 void
 ViewCamera::resetView()
 {
-    p->init();
+    p->reset();
     Q_EMIT cameraChanged(camera());
 }
 
@@ -342,12 +344,13 @@ ViewCamera::aspectRatio() const
 void
 ViewCamera::setAspectRatio(double aspectRatio)
 {
-    if (p->d.aspectRatio != aspectRatio) {
-        p->d.aspectRatio = aspectRatio;
-        p->d.valid = false;
-        p->d.identity = false;
-        Q_EMIT cameraChanged(camera());
-    }
+    if (p->d.aspectRatio == aspectRatio)
+        return;
+
+    p->d.aspectRatio = aspectRatio;
+    p->d.valid = false;
+    p->d.identity = false;
+    Q_EMIT cameraChanged(camera());
 }
 
 double
@@ -359,12 +362,13 @@ ViewCamera::fov() const
 void
 ViewCamera::setFov(double fov)
 {
-    if (p->d.fov != fov) {
-        p->d.fov = fov;
-        p->d.valid = false;
-        p->d.identity = false;
-        Q_EMIT cameraChanged(camera());
-    }
+    if (p->d.fov == fov)
+        return;
+
+    p->d.fov = fov;
+    p->d.valid = false;
+    p->d.identity = false;
+    Q_EMIT cameraChanged(camera());
 }
 
 ViewCamera::FovDirection
@@ -376,12 +380,13 @@ ViewCamera::fovDirection() const
 void
 ViewCamera::setFovDirection(ViewCamera::FovDirection direction)
 {
-    if (p->d.direction != direction) {
-        p->d.direction = direction;
-        p->d.valid = false;
-        p->d.identity = false;
-        Q_EMIT cameraChanged(camera());
-    }
+    if (p->d.direction == direction)
+        return;
+
+    p->d.direction = direction;
+    p->d.valid = false;
+    p->d.identity = false;
+    Q_EMIT cameraChanged(camera());
 }
 
 GfVec3d
@@ -396,8 +401,8 @@ ViewCamera::setFocusPoint(const GfVec3d& point)
     if (p->d.focusPoint == point)
         return;
 
-    GfCamera cam = p->camera();
-    GfVec3d camPos = cam.GetTransform().ExtractTranslation();
+    const GfCamera cam = p->camera();
+    const GfVec3d camPos = cam.GetTransform().ExtractTranslation();
 
     p->d.focusPoint = point;
     p->d.center = point;
@@ -417,15 +422,17 @@ ViewCamera::boundingBox() const
 void
 ViewCamera::setBoundingBox(const GfBBox3d& boundingBox)
 {
-    if (p->d.boundingBox != boundingBox) {
-        p->d.boundingBox = boundingBox;
-        p->d.center = boundingBox.ComputeCentroid();
-        p->d.focusPoint = p->d.center;
-        p->d.range = boundingBox.ComputeAlignedRange();
-        p->d.valid = false;
-        p->d.identity = false;
-        Q_EMIT cameraChanged(camera());
-    }
+    if (p->d.boundingBox == boundingBox)
+        return;
+
+    p->d.boundingBox = boundingBox;
+    p->d.center = boundingBox.ComputeCentroid();
+    p->d.focusPoint = p->d.center;
+    p->d.range = boundingBox.ComputeAlignedRange();
+    p->d.valid = false;
+    p->d.identity = false;
+
+    Q_EMIT cameraChanged(camera());
 }
 
 double
@@ -437,12 +444,13 @@ ViewCamera::fit() const
 void
 ViewCamera::setFit(double fit)
 {
-    if (p->d.fit != fit) {
-        p->d.fit = fit;
-        p->d.valid = false;
-        p->d.identity = false;
-        Q_EMIT cameraChanged(camera());
-    }
+    if (p->d.fit == fit)
+        return;
+
+    p->d.fit = fit;
+    p->d.valid = false;
+    p->d.identity = false;
+    Q_EMIT cameraChanged(camera());
 }
 
 ViewCamera::CameraUp
@@ -454,13 +462,14 @@ ViewCamera::cameraUp() const
 void
 ViewCamera::setCameraUp(ViewCamera::CameraUp cameraUp)
 {
-    if (p->d.cameraUp != cameraUp) {
-        p->d.cameraUp = cameraUp;
-        p->d.inverseUp = p->mapToCameraUp();
-        p->d.valid = false;
-        p->d.identity = false;
-        Q_EMIT cameraChanged(camera());
-    }
+    if (p->d.cameraUp == cameraUp)
+        return;
+
+    p->d.cameraUp = cameraUp;
+    p->d.inverseUp = p->mapToCameraUp();
+    p->d.valid = false;
+    p->d.identity = false;
+    Q_EMIT cameraChanged(camera());
 }
 
 double
@@ -472,12 +481,13 @@ ViewCamera::axisYaw() const
 void
 ViewCamera::setAxisYaw(double yaw)
 {
-    if (p->d.axisyaw != yaw) {
-        p->d.axisyaw = yaw;
-        p->d.valid = false;
-        p->d.identity = false;
-        Q_EMIT cameraChanged(camera());
-    }
+    if (p->d.axisyaw == yaw)
+        return;
+
+    p->d.axisyaw = yaw;
+    p->d.valid = false;
+    p->d.identity = false;
+    Q_EMIT cameraChanged(camera());
 }
 
 double
@@ -489,12 +499,13 @@ ViewCamera::axisPitch() const
 void
 ViewCamera::setAxisPitch(double pitch)
 {
-    if (p->d.axispitch != pitch) {
-        p->d.axispitch = pitch;
-        p->d.valid = false;
-        p->d.identity = false;
-        Q_EMIT cameraChanged(camera());
-    }
+    if (p->d.axispitch == pitch)
+        return;
+
+    p->d.axispitch = pitch;
+    p->d.valid = false;
+    p->d.identity = false;
+    Q_EMIT cameraChanged(camera());
 }
 
 double
@@ -506,12 +517,13 @@ ViewCamera::axisRoll() const
 void
 ViewCamera::setAxisRoll(double roll)
 {
-    if (p->d.axisroll != roll) {
-        p->d.axisroll = roll;
-        p->d.valid = false;
-        p->d.identity = false;
-        Q_EMIT cameraChanged(camera());
-    }
+    if (p->d.axisroll == roll)
+        return;
+
+    p->d.axisroll = roll;
+    p->d.valid = false;
+    p->d.identity = false;
+    Q_EMIT cameraChanged(camera());
 }
 
 ViewCamera::CameraMode
@@ -523,12 +535,13 @@ ViewCamera::cameraMode() const
 void
 ViewCamera::setCameraMode(ViewCamera::CameraMode cameraMode)
 {
-    if (p->d.cameraMode != cameraMode) {
-        p->d.cameraMode = cameraMode;
-        p->d.valid = false;
-        p->d.identity = false;
-        Q_EMIT cameraChanged(camera());
-    }
+    if (p->d.cameraMode == cameraMode)
+        return;
+
+    p->d.cameraMode = cameraMode;
+    p->d.valid = false;
+    p->d.identity = false;
+    Q_EMIT cameraChanged(camera());
 }
 
 double
@@ -540,12 +553,13 @@ ViewCamera::nearClipping() const
 void
 ViewCamera::setNearClipping(double nearClipping)
 {
-    if (p->d.nearClipping != nearClipping) {
-        p->d.nearClipping = nearClipping;
-        p->d.valid = false;
-        p->d.identity = false;
-        Q_EMIT cameraChanged(camera());
-    }
+    if (p->d.nearClipping == nearClipping)
+        return;
+
+    p->d.nearClipping = nearClipping;
+    p->d.valid = false;
+    p->d.identity = false;
+    Q_EMIT cameraChanged(camera());
 }
 
 double
@@ -557,12 +571,13 @@ ViewCamera::farClipping() const
 void
 ViewCamera::setFarClipping(double farClipping)
 {
-    if (p->d.farClipping != farClipping) {
-        p->d.farClipping = farClipping;
-        p->d.valid = false;
-        p->d.identity = false;
-        Q_EMIT cameraChanged(camera());
-    }
+    if (p->d.farClipping == farClipping)
+        return;
+
+    p->d.farClipping = farClipping;
+    p->d.valid = false;
+    p->d.identity = false;
+    Q_EMIT cameraChanged(camera());
 }
 
 double
@@ -574,19 +589,19 @@ ViewCamera::cameraDistance() const
 void
 ViewCamera::setCameraDistance(double distance)
 {
-    if (p->d.distance != distance) {
-        p->d.distance = distance;
-        p->d.valid = false;
-        p->d.identity = false;
-        Q_EMIT cameraChanged(camera());
-    }
+    if (p->d.distance == distance)
+        return;
+
+    p->d.distance = distance;
+    p->d.valid = false;
+    p->d.identity = false;
+    Q_EMIT cameraChanged(camera());
 }
 
 void
 ViewCamera::reset()
 {
-    p->reset();
-    Q_EMIT cameraChanged(camera());
+    resetView();
 }
 
 }  // namespace stageviz

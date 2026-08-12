@@ -187,6 +187,7 @@ public:
 
     struct Data {
         UsdStageRefPtr stage;
+        UsdStageRefPtr auxiliary;
         Session::LoadPolicy loadPolicy = Session::LoadPolicy::All;
         Session::PrimsUpdate primsUpdate = Session::PrimsUpdate::Immediate;
         Session::StageStatus stageStatus = Session::StageStatus::Closed;
@@ -201,6 +202,7 @@ public:
         GfBBox3d bbox;
         QList<SdfPath> mask;
         mutable QReadWriteLock stageLock;
+        mutable QReadWriteLock auxiliaryLock;
         QScopedPointer<CommandStack> commandStack;
         QScopedPointer<SelectionList> selectionList;
         QScopedPointer<ViewState> viewState;
@@ -222,6 +224,7 @@ SessionPrivate::init()
     d.commandStack.reset(new CommandStack());
     d.selectionList.reset(new SelectionList());
     d.viewState.reset(new ViewState());
+    d.auxiliary = UsdStage::CreateInMemory("stageviz_auxiliary.usda");
 }
 
 void
@@ -248,12 +251,9 @@ SessionPrivate::initStage()
 
     if (d.viewState && d.viewState->camera()) {
         ViewCamera* camera = d.viewState->camera();
-
-        if (camera->isIdentity()) {
-            camera->setBoundingBox(bbox);
-            camera->setCameraUp(up == Session::StageUp::Y ? ViewCamera::Y : ViewCamera::Z);
-            camera->reset();
-        }
+        camera->setBoundingBox(bbox);
+        camera->setCameraUp(up == Session::StageUp::Y ? ViewCamera::Y : ViewCamera::Z);
+        camera->resetView();
     }
 
     d.stageWatcher->watch(stage);
@@ -406,9 +406,6 @@ SessionPrivate::loadFromFile(const QString& filename, Session::LoadPolicy policy
     d.selectionList->clear();
 
     const bool hasStateFile = preserveState && QFileInfo::exists(stateFilename);
-
-    if (loaded && !hasStateFile && d.viewState && d.viewState->camera())
-        d.viewState->camera()->resetView();
 
     if (loaded)
         initStage();
@@ -1316,6 +1313,25 @@ Session::filename() const
 {
     READ_LOCKER(locker, stageLock(), "stageLock");
     return p->d.filename;
+}
+
+UsdStageRefPtr
+Session::auxiliary() const
+{
+    READ_LOCKER(locker, auxiliaryLock(), "auxiliaryLock");
+    return p->d.auxiliary;
+}
+
+UsdStageRefPtr
+Session::auxiliaryUnsafe() const
+{
+    return p->d.auxiliary;
+}
+
+QReadWriteLock*
+Session::auxiliaryLock() const
+{
+    return &p->d.auxiliaryLock;
 }
 
 UsdStageRefPtr

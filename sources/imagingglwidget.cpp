@@ -5,7 +5,6 @@
 #include "imagingglwidget.h"
 #include "application.h"
 #include "command.h"
-#include "gridsceneindex.h"
 #include "materialoverridesceneindex.h"
 #include "notice.h"
 #include "os.h"
@@ -37,17 +36,26 @@
 #include <pxr/imaging/glf/diagnostic.h>
 #include <pxr/imaging/hd/driver.h>
 #include <pxr/imaging/hd/engine.h>
+#include <pxr/imaging/hd/mergingSceneIndex.h>
 #include <pxr/imaging/hd/renderIndex.h>
 #include <pxr/imaging/hd/sceneIndexPluginRegistry.h>
 #include <pxr/imaging/hgi/hgi.h>
 #include <pxr/imaging/hgi/tokens.h>
 #include <pxr/usd/usd/primRange.h>
+#include <pxr/usd/usd/attribute.h>
 #include <pxr/usd/usd/stage.h>
 #include <pxr/usd/usdGeom/bboxCache.h>
+#include <pxr/usd/usdGeom/basisCurves.h>
+#include <pxr/usd/usdGeom/scope.h>
 #include <pxr/usd/usdGeom/camera.h>
 #include <pxr/usd/usdGeom/metrics.h>
 #include <pxr/usd/usdGeom/xform.h>
+#include <pxr/usd/usdShade/material.h>
+#include <pxr/usd/usdShade/materialBindingAPI.h>
+#include <pxr/usd/usdShade/shader.h>
 #include <pxr/usdImaging/usdImaging/delegate.h>
+#include <pxr/usdImaging/usdImaging/sceneIndices.h>
+#include <pxr/usdImaging/usdImaging/stageSceneIndex.h>
 #include <pxr/usdImaging/usdImagingGL/engine.h>
 #include <vector>
 
@@ -61,25 +69,24 @@ public:
         : UsdImagingGLEngine(prepareParameters(params))
     {}
 
-    bool insertSceneIndex(const HdSceneIndexBaseRefPtr& sceneIndex, const SdfPath& prefix)
-    {
-        if (!sceneIndex)
-            return false;
-
-        HdRenderIndex* renderIndex = _GetRenderIndex();
-        if (!renderIndex)
-            return false;
-
-        renderIndex->InsertSceneIndex(sceneIndex, prefix);
-        return true;
-    }
 
     TfRefPtr<MaterialOverrideSceneIndex> materialOverrideSceneIndex() const
     {
         return materialOverrideSceneIndexInstance();
     }
 
+    HdMergingSceneIndexRefPtr mergingSceneIndex() const
+    {
+        return mergingSceneIndexInstance();
+    }
+
 private:
+    static HdMergingSceneIndexRefPtr& mergingSceneIndexInstance()
+    {
+        static HdMergingSceneIndexRefPtr instance;
+        return instance;
+    }
+
     static TfRefPtr<MaterialOverrideSceneIndex>& materialOverrideSceneIndexInstance()
     {
         static TfRefPtr<MaterialOverrideSceneIndex> instance;
@@ -98,7 +105,13 @@ private:
             Q_UNUSED(renderInstanceId);
             Q_UNUSED(inputArgs);
 
-            TfRefPtr<MaterialOverrideSceneIndex> sceneIndex = MaterialOverrideSceneIndex::New(inputScene);
+            HdMergingSceneIndexRefPtr mergingSceneIndex = HdMergingSceneIndex::New();
+            mergingSceneIndex->AddInputScene(inputScene, SdfPath::AbsoluteRootPath());
+
+            TfRefPtr<MaterialOverrideSceneIndex> sceneIndex
+                = MaterialOverrideSceneIndex::New(mergingSceneIndex);
+
+            mergingSceneIndexInstance() = mergingSceneIndex;
             materialOverrideSceneIndexInstance() = sceneIndex;
             return sceneIndex;
         };
@@ -122,15 +135,19 @@ public:
     void initGL();
     void initCamera();
     void initContext();
-    void ensureGridSceneIndex();
+    void ensureAuxiliarySceneIndex();
+    void refreshAuxiliarySceneIndex();
+    void updateAuxiliaryGrid();
+    void ensureAuxiliaryMaterials();
+    void authorAuxiliaryGridMaterial(const SdfPath& materialPath, const GfVec3f& color);
+    void authorAuxiliaryStandardSurface(const SdfPath& materialPath, const GfVec3f& baseColor,
+                                        float metalness, float roughness, float specular);
     void ensureMaterialOverrideSceneIndex();
     void updateMaterialOverrideSceneIndex();
     SelectionList* selectionList();
     ViewCamera* viewCamera();
     ViewState* viewState();
     void close();
-    void frame(const GfBBox3d& bbox);
-    void resetView();
     void paintGL();
     void paintEvent(QPaintEvent* event);
     void focusEvent(QMouseEvent* event);
@@ -141,10 +158,10 @@ public:
     void sweepEvent(const QRect& rect, QMouseEvent* event);
     void wheelEvent(QWheelEvent* event);
     void updateStage(UsdStageRefPtr stage);
+    void updateAuxiliary(UsdStageRefPtr auxiliary);
     void updateBoundingBox(const GfBBox3d& bbox);
     void updateMask(const QList<SdfPath>& paths);
     void updatePrims(const NoticeBatch& batch);
-    void updateGridSceneIndex();
     void captureVisible();
     void clearVisibleCapture();
     void rebuildSelectionBBoxes();
@@ -173,7 +190,7 @@ public:
         float defaultSpecular;
         float defaultShininess;
         double gpuPerformanceMs;
-        bool gridSceneIndexInserted;
+        bool auxiliarySceneIndexInserted;
         bool drag;
         bool sweep;
         QPoint start;
@@ -184,6 +201,7 @@ public:
         QImage axis;
         GfBBox3d selectionBBox;
         UsdStageRefPtr stage;
+        UsdStageRefPtr auxiliary;
         UsdImagingGLRenderParams params;
         GfBBox3d bbox;
         QList<SdfPath> mask;
@@ -191,7 +209,7 @@ public:
         QList<SdfPath> visibleCapture;
         std::vector<GfBBox3d> selectionBBoxes;
         HgiUniquePtr hgi;
-        TfRefPtr<GridSceneIndex> gridSceneIndex;
+        UsdImagingSceneIndices auxiliarySceneIndices;
         TfRefPtr<MaterialOverrideSceneIndex> materialOverrideSceneIndex;
         QScopedPointer<StagevizImagingGLEngine> glEngine;
         QPointer<ViewContext> context;
@@ -217,7 +235,7 @@ ImagingGLWidgetPrivate::init()
     d.defaultSpecular = 0.5f;
     d.defaultShininess = 32.0f;
     d.gpuPerformanceMs = 0.0;
-    d.gridSceneIndexInserted = false;
+    d.auxiliarySceneIndexInserted = false;
     d.drag = false;
     d.sweep = false;
     d.context = nullptr;
@@ -251,7 +269,7 @@ ImagingGLWidgetPrivate::initGL()
     }
 
     ensureMaterialOverrideSceneIndex();
-    ensureGridSceneIndex();
+    ensureAuxiliarySceneIndex();
 }
 
 void
@@ -275,6 +293,7 @@ ImagingGLWidgetPrivate::updateMaterialOverrideSceneIndex()
     default: mode = MaterialOverrideSceneIndex::None; break;
     }
 
+
     d.materialOverrideSceneIndex->setMode(mode);
 }
 
@@ -291,41 +310,231 @@ ImagingGLWidgetPrivate::ensureMaterialOverrideSceneIndex()
     }
 
     updateMaterialOverrideSceneIndex();
+    updateAuxiliaryGrid();
 }
 
 void
-ImagingGLWidgetPrivate::updateGridSceneIndex()
+ImagingGLWidgetPrivate::ensureAuxiliarySceneIndex()
 {
-    if (!d.gridSceneIndex)
+    if (!d.glEngine || d.auxiliarySceneIndexInserted || !d.auxiliary)
         return;
 
-    d.gridSceneIndex->setEnabled(viewState() ? viewState()->gridEnabled() : true);
-    if (ViewState* state = viewState()) {
-        const QColor color = state->gridColor();
-        if (color.isValid()) {
-            d.gridSceneIndex->setColor(GfVec3f(color.redF(), color.greenF(), color.blueF()));
-        }
+    HdMergingSceneIndexRefPtr mergingSceneIndex = d.glEngine->mergingSceneIndex();
+    if (!mergingSceneIndex) {
+        qWarning() << "could not find Stageviz merging scene index";
+        return;
     }
 
-    if (d.stage)
-        d.gridSceneIndex->setUpAxis(UsdGeomGetStageUpAxis(d.stage));
+    UsdImagingCreateSceneIndicesInfo createInfo;
+    createInfo.stage = d.auxiliary;
+    createInfo.displayUnloadedPrimsWithBounds = false;
+    createInfo.addDrawModeSceneIndex = true;
+
+    d.auxiliarySceneIndices = UsdImagingCreateSceneIndices(createInfo);
+
+    if (!d.auxiliarySceneIndices.stageSceneIndex || !d.auxiliarySceneIndices.finalSceneIndex) {
+        qWarning() << "could not create auxiliary USD Imaging scene-index chain";
+        d.auxiliarySceneIndices = {};
+        return;
+    }
+
+    // Merge the fully processed USD Imaging output, not the raw
+    // UsdImagingStageSceneIndex. The processing chain resolves USD semantics
+    // such as material bindings into the Hydra schemas expected downstream.
+    mergingSceneIndex->AddInputScene(
+        d.auxiliarySceneIndices.finalSceneIndex,
+        SdfPath::AbsoluteRootPath());
+
+    d.auxiliarySceneIndexInserted = true;
 }
 
 void
-ImagingGLWidgetPrivate::ensureGridSceneIndex()
+ImagingGLWidgetPrivate::refreshAuxiliarySceneIndex()
 {
-    if (!d.glEngine || d.gridSceneIndexInserted)
+    if (!d.auxiliarySceneIndices.stageSceneIndex)
         return;
 
-    if (!d.gridSceneIndex)
-        d.gridSceneIndex = GridSceneIndex::New();
+    // UsdImagingStageSceneIndex queues USD edits while it is being queried.
+    // Flush those edits so they propagate through the complete auxiliary
+    // USD Imaging chain and into the Stageviz merge.
+    d.auxiliarySceneIndices.stageSceneIndex->ApplyPendingUpdates();
+}
 
-    updateGridSceneIndex();
+void
+ImagingGLWidgetPrivate::authorAuxiliaryGridMaterial(const SdfPath& materialPath, const GfVec3f& color)
+{
+    if (!d.auxiliary)
+        return;
 
-    d.gridSceneIndexInserted = d.glEngine->insertSceneIndex(d.gridSceneIndex, SdfPath("/__stageviz"));
+    UsdShadeMaterial material = UsdShadeMaterial::Define(d.auxiliary, materialPath);
+    UsdShadeShader surface
+        = UsdShadeShader::Define(d.auxiliary, materialPath.AppendChild(TfToken("Surface")));
 
-    if (!d.gridSceneIndexInserted)
-        qWarning() << "could not insert grid scene index";
+    // Use the same MaterialX Standard Surface path as the working viewport
+    // overrides. The grid is intentionally emission-only so its appearance is
+    // stable and independent of viewport lighting, matching the old direct
+    // Hydra grid material.
+    surface.CreateIdAttr(VtValue(TfToken("ND_standard_surface_surfaceshader")));
+    surface.CreateInput(TfToken("base"), SdfValueTypeNames->Float).Set(0.0f);
+    surface.CreateInput(TfToken("base_color"), SdfValueTypeNames->Color3f).Set(GfVec3f(0.0f));
+    surface.CreateInput(TfToken("emission"), SdfValueTypeNames->Float).Set(1.0f);
+    surface.CreateInput(TfToken("emission_color"), SdfValueTypeNames->Color3f).Set(color);
+    surface.CreateInput(TfToken("metalness"), SdfValueTypeNames->Float).Set(0.0f);
+    surface.CreateInput(TfToken("roughness"), SdfValueTypeNames->Float).Set(1.0f);
+    surface.CreateInput(TfToken("specular"), SdfValueTypeNames->Float).Set(0.0f);
+
+    UsdShadeOutput output = surface.CreateOutput(TfToken("out"), SdfValueTypeNames->Token);
+    material.CreateSurfaceOutput().ConnectToSource(output);
+}
+
+void
+ImagingGLWidgetPrivate::authorAuxiliaryStandardSurface(const SdfPath& materialPath,
+                                                       const GfVec3f& baseColor,
+                                                       float metalness,
+                                                       float roughness,
+                                                       float specular)
+{
+    if (!d.auxiliary)
+        return;
+
+    UsdShadeMaterial material = UsdShadeMaterial::Define(d.auxiliary, materialPath);
+    UsdShadeShader surface
+        = UsdShadeShader::Define(d.auxiliary, materialPath.AppendChild(TfToken("Surface")));
+
+    surface.CreateIdAttr(VtValue(TfToken("ND_standard_surface_surfaceshader")));
+    surface.CreateInput(TfToken("base"), SdfValueTypeNames->Float).Set(1.0f);
+    surface.CreateInput(TfToken("base_color"), SdfValueTypeNames->Color3f).Set(baseColor);
+    surface.CreateInput(TfToken("metalness"), SdfValueTypeNames->Float).Set(metalness);
+    surface.CreateInput(TfToken("roughness"), SdfValueTypeNames->Float).Set(roughness);
+    surface.CreateInput(TfToken("specular"), SdfValueTypeNames->Float).Set(specular);
+
+    UsdShadeOutput output = surface.CreateOutput(TfToken("out"), SdfValueTypeNames->Token);
+    material.CreateSurfaceOutput().ConnectToSource(output);
+}
+
+void
+ImagingGLWidgetPrivate::ensureAuxiliaryMaterials()
+{
+    if (!d.auxiliary)
+        return;
+
+    WRITE_LOCKER(locker, session()->auxiliaryLock(), "auxiliaryLock");
+
+    const SdfPath materialsPath("/Materials");
+    const SdfPath clayPath("/Materials/Clay");
+
+    UsdGeomScope::Define(d.auxiliary, materialsPath);
+
+    // Built-in Stageviz clay lives on the shared auxiliary stage just like any
+    // other render-support material.
+    authorAuxiliaryStandardSurface(
+        clayPath,
+        GfVec3f(0.55f, 0.18f, 0.16f),
+        0.0f,
+        0.68f,
+        0.35f);
+
+}
+
+void
+ImagingGLWidgetPrivate::updateAuxiliaryGrid()
+{
+    if (!d.auxiliary)
+        return;
+
+    ViewState* state = viewState();
+    if (!state)
+        return;
+
+    WRITE_LOCKER(locker, session()->auxiliaryLock(), "auxiliaryLock");
+
+    const SdfPath displayPath("/Display");
+    const SdfPath gridRootPath("/Display/Grid");
+    const SdfPath gridPath("/Display/Grid/Lines");
+    const SdfPath centerPath("/Display/Grid/Center");
+    const SdfPath materialsPath("/Materials");
+    const SdfPath gridMaterialPath("/Materials/Grid");
+    const SdfPath centerMaterialPath("/Materials/GridCenter");
+
+    if (!state->gridEnabled()) {
+        d.auxiliary->RemovePrim(gridRootPath);
+        return;
+    }
+
+    UsdGeomScope::Define(d.auxiliary, displayPath);
+    UsdGeomScope::Define(d.auxiliary, gridRootPath);
+    UsdGeomScope::Define(d.auxiliary, materialsPath);
+
+    const TfToken upAxis = d.stage ? UsdGeomGetStageUpAxis(d.stage) : UsdGeomTokens->y;
+
+    constexpr int lines = 12;
+    constexpr float spacing = 1.0f;
+    constexpr float extent = lines * spacing;
+
+    auto point = [&](float a, float b) {
+        return upAxis == UsdGeomTokens->z ? GfVec3f(a, b, 0.0f) : GfVec3f(a, 0.0f, b);
+    };
+
+    VtVec3fArray points;
+    VtIntArray counts;
+
+    for (int i = 1; i <= lines; ++i) {
+        const float offset = spacing * static_cast<float>(i);
+
+        points.push_back(point(-offset, -extent));
+        points.push_back(point(-offset, extent));
+        points.push_back(point(offset, -extent));
+        points.push_back(point(offset, extent));
+        points.push_back(point(-extent, -offset));
+        points.push_back(point(extent, -offset));
+        points.push_back(point(-extent, offset));
+        points.push_back(point(extent, offset));
+
+        for (int j = 0; j < 4; ++j)
+            counts.push_back(2);
+    }
+
+    UsdGeomBasisCurves grid = UsdGeomBasisCurves::Define(d.auxiliary, gridPath);
+    grid.CreateTypeAttr(VtValue(UsdGeomTokens->linear));
+    grid.CreateBasisAttr(VtValue(UsdGeomTokens->bezier));
+    grid.CreateWrapAttr(VtValue(UsdGeomTokens->nonperiodic));
+    grid.CreatePointsAttr(VtValue(points));
+    grid.CreateCurveVertexCountsAttr(VtValue(counts));
+    UsdAttribute gridWidths = grid.CreateWidthsAttr(VtValue(VtFloatArray { 1.0f }));
+    gridWidths.SetMetadata(TfToken("interpolation"), VtValue(UsdGeomTokens->constant));
+
+    VtVec3fArray centerPoints;
+    VtIntArray centerCounts;
+    centerPoints.push_back(point(0.0f, -extent));
+    centerPoints.push_back(point(0.0f, extent));
+    centerCounts.push_back(2);
+    centerPoints.push_back(point(-extent, 0.0f));
+    centerPoints.push_back(point(extent, 0.0f));
+    centerCounts.push_back(2);
+
+    UsdGeomBasisCurves center = UsdGeomBasisCurves::Define(d.auxiliary, centerPath);
+    center.CreateTypeAttr(VtValue(UsdGeomTokens->linear));
+    center.CreateBasisAttr(VtValue(UsdGeomTokens->bezier));
+    center.CreateWrapAttr(VtValue(UsdGeomTokens->nonperiodic));
+    center.CreatePointsAttr(VtValue(centerPoints));
+    center.CreateCurveVertexCountsAttr(VtValue(centerCounts));
+    UsdAttribute centerWidths = center.CreateWidthsAttr(VtValue(VtFloatArray { 1.0f }));
+    centerWidths.SetMetadata(TfToken("interpolation"), VtValue(UsdGeomTokens->constant));
+
+    const QColor gridColor = state->gridColor();
+    const GfVec3f color = gridColor.isValid()
+                              ? GfVec3f(gridColor.redF(), gridColor.greenF(), gridColor.blueF())
+                              : GfVec3f(0.34f);
+
+
+    authorAuxiliaryGridMaterial(gridMaterialPath, color);
+    authorAuxiliaryGridMaterial(centerMaterialPath, GfVec3f(0.0f));
+
+    UsdShadeMaterial gridMaterial(d.auxiliary->GetPrimAtPath(gridMaterialPath));
+    UsdShadeMaterial centerMaterial(d.auxiliary->GetPrimAtPath(centerMaterialPath));
+
+    UsdShadeMaterialBindingAPI::Apply(grid.GetPrim()).Bind(gridMaterial);
+    UsdShadeMaterialBindingAPI::Apply(center.GetPrim()).Bind(centerMaterial);
 }
 
 void
@@ -335,11 +544,13 @@ ImagingGLWidgetPrivate::initContext()
     connect(viewCamera(), &ViewCamera::cameraChanged, this, &ImagingGLWidgetPrivate::updateCamera);
     connect(viewState(), &ViewState::backgroundColorChanged, this, [this](const QColor&) { d.glwidget->update(); });
     connect(viewState(), &ViewState::gridColorChanged, this, [this](const QColor&) {
-        updateGridSceneIndex();
+        updateAuxiliaryGrid();
+        refreshAuxiliarySceneIndex();
         d.glwidget->update();
     });
     connect(viewState(), &ViewState::gridEnabledChanged, this, [this](bool) {
-        updateGridSceneIndex();
+        updateAuxiliaryGrid();
+        refreshAuxiliarySceneIndex();
         d.glwidget->update();
     });
     connect(viewState(), &ViewState::materialModeChanged, this, [this](ViewState::MaterialMode) {
@@ -347,6 +558,7 @@ ImagingGLWidgetPrivate::initContext()
         d.glwidget->update();
     });
     connect(viewState(), &ViewState::overrideMaterialChanged, this, [this](const SdfPath&) {
+        refreshAuxiliarySceneIndex();
         updateMaterialOverrideSceneIndex();
         d.glwidget->update();
     });
@@ -380,7 +592,7 @@ ImagingGLWidgetPrivate::initContext()
             d.axis = QImage();
         d.glwidget->update();
     });
-    updateGridSceneIndex();
+    ensureAuxiliaryMaterials();
     updateMaterialOverrideSceneIndex();
 }
 
@@ -414,7 +626,8 @@ ImagingGLWidgetPrivate::close()
     d.selectionBBox = GfBBox3d();
     d.drag = false;
     d.sweep = false;
-    d.gridSceneIndexInserted = false;
+    d.auxiliarySceneIndexInserted = false;
+    d.auxiliarySceneIndices = {};
     d.materialOverrideSceneIndex = nullptr;
     d.glEngine.reset();
     d.hgi.reset();
@@ -454,19 +667,6 @@ ImagingGLWidgetPrivate::rebuildSelectionBBoxes()
         if (!bbox.GetRange().IsEmpty())
             d.selectionBBoxes.push_back(bbox);
     }
-}
-
-void
-ImagingGLWidgetPrivate::frame(const GfBBox3d& bbox)
-{
-    viewCamera()->setBoundingBox(bbox);
-    viewCamera()->frameAll();
-}
-
-void
-ImagingGLWidgetPrivate::resetView()
-{
-    viewCamera()->reset();
 }
 
 void
@@ -586,7 +786,7 @@ ImagingGLWidgetPrivate::paintGL()
                     }
                     else {
                         ensureMaterialOverrideSceneIndex();
-                        ensureGridSceneIndex();
+                        ensureAuxiliarySceneIndex();
 
                         hgi->StartFrame();
 
@@ -1106,19 +1306,43 @@ ImagingGLWidgetPrivate::updateStage(UsdStageRefPtr stage)
     d.stage = stage;
     d.visibleCapture.clear();
     d.selectionBBoxes.clear();
-    d.gridSceneIndexInserted = false;
+    d.auxiliarySceneIndexInserted = false;
+    d.auxiliarySceneIndices = {};
     d.materialOverrideSceneIndex = nullptr;
     d.glEngine.reset();
     d.hgi.reset();
-    updateGridSceneIndex();
     rebuildSelectionBBoxes();
+    ensureAuxiliaryMaterials();
     if (viewState() && viewState()->sceneStatsEnabled()) {
         updateSceneStats();
     }
+    updateAuxiliaryGrid();
     d.glwidget->update();
     updateAxis();
 }
 
+void
+ImagingGLWidgetPrivate::updateAuxiliary(UsdStageRefPtr auxiliary)
+{
+    SignalGuard::Scope guard(this);
+
+    if (auxiliary == d.auxiliary)
+        return;
+
+    d.auxiliary = auxiliary;
+    ensureAuxiliaryMaterials();
+    updateAuxiliaryGrid();
+    d.auxiliarySceneIndices = {};
+    d.auxiliarySceneIndexInserted = false;
+
+    // Recreate the render engine so the render index no longer retains an
+    // auxiliary scene index backed by the previous stage.
+    d.materialOverrideSceneIndex = nullptr;
+    d.glEngine.reset();
+    d.hgi.reset();
+
+    d.glwidget->update();
+}
 
 void
 ImagingGLWidgetPrivate::updateBoundingBox(const GfBBox3d& bbox)
@@ -1141,7 +1365,6 @@ ImagingGLWidgetPrivate::updatePrims(const NoticeBatch& batch)
 {
     Q_UNUSED(batch);
     SignalGuard::Scope guard(this);
-    updateGridSceneIndex();
     rebuildSelectionBBoxes();
     if (viewState() && viewState()->sceneStatsEnabled()) {
         updateSceneStats();
@@ -1607,19 +1830,6 @@ ImagingGLWidget::close()
     p->close();
 }
 
-void
-ImagingGLWidget::frame(const GfBBox3d& bbox)
-{
-    p->frame(bbox);
-}
-
-void
-ImagingGLWidget::resetView()
-{
-    p->resetView();
-}
-
-
 QList<QString>
 ImagingGLWidget::rendererAovs() const
 {
@@ -1651,6 +1861,12 @@ void
 ImagingGLWidget::updateStage(UsdStageRefPtr stage)
 {
     p->updateStage(stage);
+}
+
+void
+ImagingGLWidget::updateAuxiliary(UsdStageRefPtr auxiliary)
+{
+    p->updateAuxiliary(auxiliary);
 }
 
 void

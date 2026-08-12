@@ -52,20 +52,6 @@ public:
 
     ///@}
 
-    /** @name Camera Control */
-    ///@{
-
-    /** @brief Frames the entire scene. */
-    void frameAll();
-
-    /** @brief Frames the currently selected prims. */
-    void frameSelected();
-
-    /** @brief Resets the camera to its default view. */
-    void resetView();
-
-    ///@}
-
     /** @name Visible Capture */
     ///@{
 
@@ -85,6 +71,18 @@ public:
      * @return Accumulated visible prim paths captured from one or more views.
      */
     QList<SdfPath> visibleCapturePaths() const;
+
+    ///@}
+
+    /** @name Scene Updates */
+    ///@{
+
+    /**
+     * @brief Updates the Stageviz-owned auxiliary USD stage presented by the viewport.
+     *
+     * @param auxiliary Auxiliary USD stage to present.
+     */
+    void updateAuxiliary(UsdStageRefPtr auxiliary);
 
     ///@}
 

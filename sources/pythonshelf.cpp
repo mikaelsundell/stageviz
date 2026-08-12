@@ -106,7 +106,7 @@ void
 PythonShelfPrivate::createDefaultTabIfNeeded()
 {
     if (d.tabs && d.tabs->count() == 0)
-        createShelfTab(tr("Default"));
+        createShelfTab(tr("Shelf"));
 }
 
 int
@@ -119,7 +119,6 @@ PythonShelfPrivate::createShelfTab(const QString& name, const QVariantList& scri
     shelf->fromVariantList(scripts);
 
     QObject::connect(shelf, &ShelfWidget::itemActivated, this, [this](const QString& code) { executeCode(code); });
-
     QObject::connect(shelf, &ShelfWidget::itemContextMenuRequested, this,
                      [this, shelf](const QPoint& pos, QListWidgetItem* item) {
                          QMenu menu(shelf);
@@ -173,7 +172,7 @@ PythonShelfPrivate::createShelfTab(const QString& name, const QVariantList& scri
 
     QObject::connect(shelf, &ShelfWidget::changed, this, [this]() { saveShelves(); });
 
-    const int index = d.tabs->addTab(shelf, name.trimmed().isEmpty() ? tr("Default") : name);
+    const int index = d.tabs->addTab(shelf, name.trimmed().isEmpty() ? tr("Shelf") : name);
     d.tabs->setCurrentIndex(index);
     return index;
 }
@@ -217,7 +216,7 @@ PythonShelfPrivate::commitTabRename()
 
     const QString name = d.tabRenameEditor->text().trimmed();
     if (d.tabRenameIndex >= 0 && d.tabRenameIndex < d.tabs->count())
-        d.tabs->setTabText(d.tabRenameIndex, name.isEmpty() ? tr("Default") : name);
+        d.tabs->setTabText(d.tabRenameIndex, name.isEmpty() ? tr("Shelf") : name);
 
     d.tabRenameEditor->deleteLater();
     d.tabRenameEditor = nullptr;

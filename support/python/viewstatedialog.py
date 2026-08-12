@@ -218,7 +218,7 @@ class ViewStateDialog(QtWidgets.QDialog):
 
         self.override_material = QtWidgets.QLineEdit()
         self.override_material.setPlaceholderText(
-            "/__stageviz/Materials/MyMaterial"
+            "/Materials/MyMaterial"
         )
 
         self.renderer_aov = QtWidgets.QLineEdit()

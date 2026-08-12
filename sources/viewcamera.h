@@ -5,8 +5,11 @@
 #pragma once
 
 #include "stageviz.h"
+
 #include <QObject>
-#include <pxr/usd/usdGeom/camera.h>
+#include <pxr/base/gf/bbox3d.h>
+#include <pxr/base/gf/camera.h>
+#include <pxr/base/gf/vec3d.h>
 
 PXR_NAMESPACE_USING_DIRECTIVE
 
@@ -23,8 +26,8 @@ class ViewCameraPrivate;
  * such as focus point, clipping planes, field of view, and
  * navigation modes like tumble, truck, and zoom.
  *
- * Internally the camera state can be converted to a USD
- * compatible @c GfCamera for rendering.
+ * Internally the camera state can be converted to a USD-compatible
+ * @c GfCamera for rendering.
  */
 class ViewCamera : public QObject {
     Q_OBJECT
@@ -67,15 +70,12 @@ public:
     ~ViewCamera();
 
     /**
-     * @brief Returns whether the camera is in its default state.
+     * @brief Returns whether the camera is in its default view state.
      *
-     * A camera is considered to be in its identity state if it has not
-     * been manipulated or configured since construction or the last call
-     * to reset(). This is primarily used during stage initialization to
-     * determine whether the camera should be initialized from the stage
-     * bounding box or whether an existing camera state should be preserved.
+     * A camera is considered to be in its identity state after construction
+     * or resetView()/reset(), until it is otherwise manipulated.
      *
-     * @return True if the camera is in its default state.
+     * @return True if the camera is in its default view state.
      */
     bool isIdentity() const;
 
@@ -83,12 +83,31 @@ public:
     ///@{
 
     /**
-     * @brief Frames the entire scene bounding box.
+     * @brief Frames the specified bounding box.
+     *
+     * Frames arbitrary bounds while preserving the current camera
+     * orientation. The stored scene bounding box is not changed, so
+     * frameAll() and resetView() continue to operate on the complete
+     * scene bounds.
+     *
+     * @param bbox Bounding box to frame.
+     */
+    void frame(const GfBBox3d& bbox);
+
+    /**
+     * @brief Frames the entire stored scene bounding box.
+     *
+     * Preserves the current camera orientation and fits the stored
+     * scene bounds in view.
      */
     void frameAll();
 
     /**
-     * @brief Resets the camera view to default orientation.
+     * @brief Resets the camera to the default quarter view.
+     *
+     * Restores the default orbit orientation and frames the stored
+     * scene bounds. Projection, clipping, fit, scene bounds, and
+     * up-axis are preserved.
      */
     void resetView();
 
@@ -122,7 +141,6 @@ public:
      * camera adjustments.
      *
      * @param height Screen-space height.
-     *
      * @return Frustum-space height.
      */
     double mapToFrustumHeight(int height);
@@ -188,27 +206,27 @@ public:
     void setFocusPoint(const GfVec3d& point);
 
     /**
-     * @brief Returns the scene bounding box.
+     * @brief Returns the stored scene bounding box.
      */
     GfBBox3d boundingBox() const;
 
     /**
-     * @brief Sets the scene bounding box used for framing.
+     * @brief Sets the stored scene bounding box used by frameAll() and resetView().
      */
     void setBoundingBox(const GfBBox3d& boundingBox);
 
     /**
      * @brief Returns the framing fit multiplier.
      *
-     * The fit value is used by frameAll() to leave additional space
-     * around the scene bounding box.
+     * The fit value is used by frame(), frameAll(), and resetView()
+     * to leave additional space around framed bounds.
      */
     double fit() const;
 
     /**
      * @brief Sets the framing fit multiplier.
      *
-     * @param fit Fit multiplier used by frameAll().
+     * @param fit Fit multiplier used for framing.
      */
     void setFit(double fit);
 
@@ -234,9 +252,6 @@ public:
 
     /**
      * @brief Sets the camera yaw angle in degrees.
-     *
-     * This value is part of the orbit transform used to construct
-     * the final USD camera transform.
      */
     void setAxisYaw(double yaw);
 
@@ -247,9 +262,6 @@ public:
 
     /**
      * @brief Sets the camera pitch angle in degrees.
-     *
-     * This value is part of the orbit transform used to construct
-     * the final USD camera transform.
      */
     void setAxisPitch(double pitch);
 
@@ -260,9 +272,6 @@ public:
 
     /**
      * @brief Sets the camera roll/orbit angle in degrees.
-     *
-     * This value is part of the orbit transform used to construct
-     * the final USD camera transform.
      */
     void setAxisRoll(double roll);
 
@@ -327,11 +336,7 @@ public:
     ///@}
 
     /**
-     * @brief Resets the camera to its default state.
-     *
-     * Restores default projection, clipping, orientation, focus, and
-     * navigation parameters while preserving the current bounding box,
-     * range, and up-axis.
+     * @brief Compatibility alias for resetView().
      */
     void reset();
 

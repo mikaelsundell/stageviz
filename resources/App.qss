@@ -170,7 +170,7 @@ QListWidget {
 QListWidget::item {
     color: $color.text;
     background-color: $color.basealt;
-    border: 1px solid $color.borderalt;
+    border: 0px;
     margin: 4px;
     padding: 0px;
 }
