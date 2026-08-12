@@ -68,16 +68,15 @@ PythonShelfPrivate::init()
     d.tabs->setTabsClosable(false);
     d.tabs->setMovable(true);
     d.tabs->setUsesScrollButtons(true);
-    d.tabs->setElideMode(Qt::ElideRight);
+    d.tabs->setElideMode(Qt::ElideNone);
     layout->addWidget(d.tabs);
 
     if (QTabBar* bar = d.tabs->tabBar()) {
         bar->setContextMenuPolicy(Qt::CustomContextMenu);
         bar->setExpanding(false);
         bar->setUsesScrollButtons(true);
-        bar->setElideMode(Qt::ElideRight);
-        bar->setMinimumWidth(0);
-        bar->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+        bar->setElideMode(Qt::ElideNone);
+        bar->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
 
         QObject::connect(bar, &QWidget::customContextMenuRequested, this, &PythonShelfPrivate::showTabContextMenu);
         QObject::connect(bar, &QTabBar::tabMoved, this, [this](int, int) { saveShelves(); });
