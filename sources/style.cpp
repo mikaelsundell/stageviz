@@ -230,10 +230,10 @@ StylePrivate::updateTheme()
     d.icons[roleName(Style::IconRole::ExportImage)] = ":/icons/resources/ExportImage.png";
     d.icons[roleName(Style::IconRole::Follow)] = ":/icons/resources/Follow.png";
     d.icons[roleName(Style::IconRole::FrameAll)] = ":/icons/resources/FrameAll.png";
+    d.icons[roleName(Style::IconRole::Geometry)] = ":/icons/resources/Geometry.png";
     d.icons[roleName(Style::IconRole::Hidden)] = ":/icons/resources/Hidden.png";
     d.icons[roleName(Style::IconRole::Left)] = ":/icons/resources/Left.png";
     d.icons[roleName(Style::IconRole::Material)] = ":/icons/resources/Material.png";
-    d.icons[roleName(Style::IconRole::Mesh)] = ":/icons/resources/Mesh.png";
     d.icons[roleName(Style::IconRole::Open)] = ":/icons/resources/Open.png";
     d.icons[roleName(Style::IconRole::PartiallyChecked)] = ":/icons/resources/PartiallyChecked.png";
     d.icons[roleName(Style::IconRole::Payload)] = ":/icons/resources/Payload.png";

@@ -195,25 +195,24 @@ PyInit_stageviz(void)
     PyModule_AddIntConstant(module, "ColorWarning", static_cast<int>(Style::ColorRole::Warning));
     PyModule_AddIntConstant(module, "ColorError", static_cast<int>(Style::ColorRole::Error));
 
-    PyModule_AddIntConstant(module, "IconBranchOpen", static_cast<int>(Style::IconRole::BranchOpen));
     PyModule_AddIntConstant(module, "IconBranchClosed", static_cast<int>(Style::IconRole::BranchClosed));
+    PyModule_AddIntConstant(module, "IconBranchOpen", static_cast<int>(Style::IconRole::BranchOpen));
+    PyModule_AddIntConstant(module, "IconChecked", static_cast<int>(Style::IconRole::Checked));
     PyModule_AddIntConstant(module, "IconClear", static_cast<int>(Style::IconRole::Clear));
     PyModule_AddIntConstant(module, "IconCode", static_cast<int>(Style::IconRole::Code));
     PyModule_AddIntConstant(module, "IconCollapse", static_cast<int>(Style::IconRole::Collapse));
+    PyModule_AddIntConstant(module, "IconDropdown", static_cast<int>(Style::IconRole::DropDown));
     PyModule_AddIntConstant(module, "IconExpand", static_cast<int>(Style::IconRole::Expand));
     PyModule_AddIntConstant(module, "IconExport", static_cast<int>(Style::IconRole::Export));
     PyModule_AddIntConstant(module, "IconExportImage", static_cast<int>(Style::IconRole::ExportImage));
-    PyModule_AddIntConstant(module, "IconFrameAll", static_cast<int>(Style::IconRole::FrameAll));
     PyModule_AddIntConstant(module, "IconFollow", static_cast<int>(Style::IconRole::Follow));
+    PyModule_AddIntConstant(module, "IconFrameAll", static_cast<int>(Style::IconRole::FrameAll));
+    PyModule_AddIntConstant(module, "IconGeometry", static_cast<int>(Style::IconRole::Geometry));
     PyModule_AddIntConstant(module, "IconHidden", static_cast<int>(Style::IconRole::Hidden));
-    PyModule_AddIntConstant(module, "IconVisible", static_cast<int>(Style::IconRole::Visible));
-    PyModule_AddIntConstant(module, "IconChecked", static_cast<int>(Style::IconRole::Checked));
-    PyModule_AddIntConstant(module, "IconDropdown", static_cast<int>(Style::IconRole::DropDown));
     PyModule_AddIntConstant(module, "IconLeft", static_cast<int>(Style::IconRole::Left));
     PyModule_AddIntConstant(module, "IconMaterial", static_cast<int>(Style::IconRole::Material));
-    PyModule_AddIntConstant(module, "IconMesh", static_cast<int>(Style::IconRole::Mesh));
-    PyModule_AddIntConstant(module, "IconPartiallyChecked", static_cast<int>(Style::IconRole::PartiallyChecked));
     PyModule_AddIntConstant(module, "IconOpen", static_cast<int>(Style::IconRole::Open));
+    PyModule_AddIntConstant(module, "IconPartiallyChecked", static_cast<int>(Style::IconRole::PartiallyChecked));
     PyModule_AddIntConstant(module, "IconPayload", static_cast<int>(Style::IconRole::Payload));
     PyModule_AddIntConstant(module, "IconPrim", static_cast<int>(Style::IconRole::Prim));
     PyModule_AddIntConstant(module, "IconRedo", static_cast<int>(Style::IconRole::Redo));
@@ -221,6 +220,7 @@ PyInit_stageviz(void)
     PyModule_AddIntConstant(module, "IconRun", static_cast<int>(Style::IconRole::Run));
     PyModule_AddIntConstant(module, "IconShaded", static_cast<int>(Style::IconRole::Shaded));
     PyModule_AddIntConstant(module, "IconUndo", static_cast<int>(Style::IconRole::Undo));
+    PyModule_AddIntConstant(module, "IconVisible", static_cast<int>(Style::IconRole::Visible));
     PyModule_AddIntConstant(module, "IconWireframe", static_cast<int>(Style::IconRole::Wireframe));
 
     PyModule_AddIntConstant(module, "UIScaleSmall", static_cast<int>(Style::UIScale::Small));

@@ -12,6 +12,7 @@
 #include <QPixmap>
 #include <QPointer>
 #include <pxr/usd/usd/prim.h>
+#include <pxr/usd/usdGeom/gprim.h>
 #include <pxr/usd/usdGeom/imageable.h>
 #include <pxr/usd/usdGeom/tokens.h>
 
@@ -23,20 +24,25 @@ class PrimItemPrivate {
 public:
     void init();
     void updateCache();
+
     struct Data {
         UsdStageRefPtr stage;
         SdfPath path;
         PrimItem* item = nullptr;
+
         bool dirty = true;
         bool visible = true;
         bool active = true;
         bool hasPayload = false;
         bool isEditTarget = true;
         bool isRoot = false;
+        bool isGprim = false;
+
         QString editName;
         QString name;
         QString typeName;
     };
+
     Data d;
 };
 
@@ -53,13 +59,16 @@ PrimItemPrivate::updateCache()
 {
     if (!d.dirty)
         return;
+
     d.visible = true;
     d.active = false;
     d.hasPayload = false;
     d.isEditTarget = true;
     d.isRoot = false;
+    d.isGprim = false;
     d.name.clear();
     d.typeName.clear();
+
     if (!d.stage) {
         d.dirty = false;
         return;
@@ -74,6 +83,7 @@ PrimItemPrivate::updateCache()
         d.name = StringToQString(prim.GetName().GetString());
         d.typeName = StringToQString(prim.GetTypeName().GetString());
         d.isEditTarget = stage::isEditTarget(d.stage, d.path);
+        d.isGprim = prim.IsA<UsdGeomGprim>();
 
         if (d.active && prim != d.stage->GetPseudoRoot())
             d.visible = stage::isVisible(d.stage, d.path);
@@ -146,8 +156,8 @@ PrimItem::data(int column, int role) const
 
         if (p->d.typeName == "Material" || p->d.typeName == "Shader")
             iconRole = Style::IconRole::Material;
-        else if (p->d.typeName == "Mesh")
-            iconRole = Style::IconRole::Mesh;
+        else if (p->d.isGprim)
+            iconRole = Style::IconRole::Geometry;
 
         if (p->d.hasPayload)
             iconRole = Style::IconRole::Payload;
@@ -159,7 +169,8 @@ PrimItem::data(int column, int role) const
         if (!p->d.active || p->d.isRoot)
             return QVariant();
 
-        return style()->icon(p->d.visible ? Style::IconRole::Visible : Style::IconRole::Hidden, Style::UIScale::Medium);
+        return style()->icon(p->d.visible ? Style::IconRole::Visible : Style::IconRole::Hidden,
+                             Style::UIScale::Medium);
     }
 
     if (role == PrimItem::Path)
