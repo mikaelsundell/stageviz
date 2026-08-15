@@ -1194,7 +1194,7 @@
     <bool>false</bool>
    </property>
    <property name="text">
-    <string>Property editor</string>
+    <string>Properties</string>
    </property>
   </action>
   <action name="viewPython">
@@ -1205,7 +1205,7 @@
     <bool>false</bool>
    </property>
    <property name="text">
-    <string>Python editor</string>
+    <string>Python</string>
    </property>
   </action>
   <action name="displayCameraLight">

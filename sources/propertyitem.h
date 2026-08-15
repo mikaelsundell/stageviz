@@ -6,6 +6,7 @@
 
 #include "stageviz.h"
 #include "treeitem.h"
+#include <QStringList>
 #include <pxr/usd/sdf/path.h>
 
 PXR_NAMESPACE_USING_DIRECTIVE
@@ -16,10 +17,10 @@ class PropertyItemPrivate;
 
 /**
  * @class PropertyItem
- * @brief Tree item representing a USD property or an editable value element.
+ * @brief Tree item representing a USD property or an editable array element.
  *
- * PropertyItem stores lightweight UI metadata only. USD reads/writes are
- * performed by PropertyTree and the command system.
+ * The item stores lightweight presentation/editor metadata only. USD reads and
+ * writes remain owned by PropertyTree and the command system.
  */
 class PropertyItem : public TreeItem {
 public:
@@ -33,6 +34,23 @@ public:
         Attribute,
         ArrayChunk,
         ArrayElement
+    };
+
+    enum Editor {
+        NoEditor = 0,
+        TextEditor,
+        BoolEditor,
+        TokenEditor,
+        IntegerEditor,
+        FloatingEditor
+    };
+
+    enum Role {
+        EditorRole = Qt::UserRole + 100,
+        EditorOptionsRole,
+        EditorMinimumRole,
+        EditorMaximumRole,
+        EditorDecimalsRole
     };
 
     PropertyItem(QTreeWidget* parent);
@@ -59,6 +77,19 @@ public:
 
     bool valueEditable() const;
     void setValueEditable(bool editable);
+
+    Editor editor() const;
+    void setEditor(Editor editor);
+
+    QStringList editorOptions() const;
+    void setEditorOptions(const QStringList& options);
+
+    void setNumericRange(double minimum, double maximum);
+    double editorMinimum() const;
+    double editorMaximum() const;
+
+    void setEditorDecimals(int decimals);
+    int editorDecimals() const;
 
 private:
     QScopedPointer<PropertyItemPrivate> p;

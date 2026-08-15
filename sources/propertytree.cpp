@@ -9,6 +9,7 @@
 #include "notice.h"
 #include "messagebox.h"
 #include "propertyitem.h"
+#include "propertydelegate.h"
 #include "qtutils.h"
 #include "selectionlist.h"
 #include "signalguard.h"
@@ -22,6 +23,7 @@
 #include <QSet>
 #include <algorithm>
 #include <cstdint>
+#include <climits>
 #include <functional>
 #include <limits>
 #include <sstream>
@@ -45,6 +47,9 @@
 #include <pxr/base/vt/value.h>
 #include <pxr/usd/sdf/assetPath.h>
 #include <pxr/usd/usd/attribute.h>
+#include <pxr/usd/usd/modelAPI.h>
+#include <pxr/usd/usd/relationship.h>
+#include <pxr/usd/usd/variantSets.h>
 #include <pxr/usd/usd/prim.h>
 #include <pxr/usd/usd/stage.h>
 #include <pxr/usd/usdGeom/metrics.h>
@@ -137,6 +142,11 @@ public:
     static QString scalarText(const VtValue& value);
     static bool scalarEditable(const VtValue& value);
 
+    static QString attributeBaseName(const UsdAttribute& attr);
+    static QStringList tokenOptions(const UsdAttribute& attr);
+    static PropertyItem::Editor editorForValue(const UsdAttribute& attr, const VtValue& value);
+    static void configureEditor(PropertyItem* item, const UsdAttribute& attr, const VtValue& value);
+
     struct TreeState {
         QSet<QString> expanded;
         QString current;
@@ -146,6 +156,17 @@ public:
     QString itemKey(const PropertyItem* item) const;
     TreeState captureTreeState() const;
     void restoreTreeState(const TreeState& state);
+
+    PropertyItem* addSection(const QString& name, const QString& value = QString());
+    PropertyItem* addInfo(PropertyItem* parent, const QString& name, const QString& value,
+                          const QString& toolTip = QString());
+    void setReadOnlyValueStyle(PropertyItem* item, bool readOnly = true);
+    void addPrimSection(const UsdPrim& prim);
+    void addCompositionSection(const UsdPrim& prim);
+    void addAttributesSection(const UsdPrim& prim);
+    void addRelationshipsSection(const UsdPrim& prim);
+    QString payloadAncestorPath(const UsdPrim& prim) const;
+    static QString metadataText(const VtValue& value);
 
     void addAttribute(PropertyItem* parent, const UsdAttribute& attr);
     void addArrayElements(PropertyItem* parent, const SdfPath& propertyPath,
@@ -791,13 +812,12 @@ PropertyTreePrivate::itemKey(const PropertyItem* item) const
             .arg(item->arrayIndex());
 
     case PropertyItem::Group:
-    default:
-        if (!item->parent())
-            return QString("root:%1").arg(item->text(PropertyItem::Name));
-
-        return QString("group:%1:%2")
-            .arg(item->parent()->text(PropertyItem::Name))
-            .arg(item->text(PropertyItem::Name));
+    default: {
+        const QString own = QString("group:%1").arg(item->text(PropertyItem::Name));
+        if (auto* parent = dynamic_cast<PropertyItem*>(item->parent()))
+            return QString("%1/%2").arg(itemKey(parent), own);
+        return QString("root:%1").arg(own);
+    }
     }
 }
 
@@ -863,13 +883,11 @@ PropertyTreePrivate::restoreTreeState(const TreeState& state)
                 if (!state.current.isEmpty() && key == state.current)
                     currentItem = item;
 
-                if (state.expanded.contains(key)) {
-                    if (item->kind() == PropertyItem::ArrayChunk)
-                        populateChunk(item);
+                const bool expanded = state.expanded.contains(key);
+                if (expanded && item->kind() == PropertyItem::ArrayChunk)
+                    populateChunk(item);
 
-                    item->setExpanded(true);
-                }
-
+                item->setExpanded(expanded);
                 restore(item);
             }
         };
@@ -881,6 +899,295 @@ PropertyTreePrivate::restoreTreeState(const TreeState& state)
 
     if (QScrollBar* scrollBar = d.tree->verticalScrollBar())
         scrollBar->setValue(state.scrollValue);
+}
+
+QString
+PropertyTreePrivate::metadataText(const VtValue& value)
+{
+    if (value.IsEmpty())
+        return {};
+
+    std::ostringstream stream;
+    stream << value;
+    return QString::fromStdString(stream.str()).trimmed();
+}
+
+QString
+PropertyTreePrivate::attributeBaseName(const UsdAttribute& attr)
+{
+    QString name = StringToQString(attr.GetName().GetString());
+    qsizetype colon = name.lastIndexOf(':');
+    if (colon >= 0)
+        name = name.mid(colon + 1);
+    return name;
+}
+
+QStringList
+PropertyTreePrivate::tokenOptions(const UsdAttribute& attr)
+{
+    const QString name = attributeBaseName(attr);
+
+    if (name == "visibility")
+        return { "inherited", "invisible" };
+
+    if (name == "orientation")
+        return { "rightHanded", "leftHanded" };
+
+    if (name == "purpose")
+        return { "default", "render", "proxy", "guide" };
+
+    if (name == "projection")
+        return { "perspective", "orthographic" };
+
+    if (name == "subdivisionScheme")
+        return { "catmullClark", "loop", "bilinear", "none" };
+
+    if (name == "interpolateBoundary")
+        return { "none", "edgeAndCorner", "edgeOnly" };
+
+    if (name == "faceVaryingLinearInterpolation")
+        return { "all", "none", "cornersOnly", "cornersPlus1", "cornersPlus2",
+                 "boundaries", "edgeAndCorner" };
+
+    if (name == "familyType")
+        return { "nonOverlapping", "unrestricted", "partition" };
+
+    if (name == "specifier")
+        return { "def", "over", "class" };
+
+    if (name == "kind")
+        return { "model", "group", "assembly", "component", "subcomponent" };
+
+    return {};
+}
+
+PropertyItem::Editor
+PropertyTreePrivate::editorForValue(const UsdAttribute& attr, const VtValue& value)
+{
+    if (value.IsHolding<bool>())
+        return PropertyItem::BoolEditor;
+
+    if (value.IsHolding<TfToken>()) {
+        if (!tokenOptions(attr).isEmpty())
+            return PropertyItem::TokenEditor;
+        return PropertyItem::TextEditor;
+    }
+
+    if (value.IsHolding<int>() || value.IsHolding<unsigned int>())
+        return PropertyItem::IntegerEditor;
+
+    if (value.IsHolding<float>() || value.IsHolding<double>())
+        return PropertyItem::FloatingEditor;
+
+    if (value.IsHolding<std::string>() || value.IsHolding<SdfAssetPath>())
+        return PropertyItem::TextEditor;
+
+    if (scalarEditable(value))
+        return PropertyItem::TextEditor;
+
+    return PropertyItem::NoEditor;
+}
+
+void
+PropertyTreePrivate::configureEditor(PropertyItem* item, const UsdAttribute& attr,
+                                     const VtValue& value)
+{
+    if (!item)
+        return;
+
+    const PropertyItem::Editor editor = editorForValue(attr, value);
+    item->setEditor(editor);
+
+    if (editor == PropertyItem::TokenEditor)
+        item->setEditorOptions(tokenOptions(attr));
+
+    if (editor == PropertyItem::IntegerEditor)
+        item->setNumericRange(double(INT_MIN), double(INT_MAX));
+
+    if (editor == PropertyItem::FloatingEditor) {
+        item->setNumericRange(-1.0e12, 1.0e12);
+        item->setEditorDecimals(6);
+
+        const QString name = attributeBaseName(attr);
+        if (name == "opacity" || name == "metallic" || name == "roughness")
+            item->setNumericRange(0.0, 1.0);
+    }
+}
+
+void
+PropertyTreePrivate::setReadOnlyValueStyle(PropertyItem* item, bool readOnly)
+{
+    if (!item)
+        return;
+
+    QFont font = item->font(PropertyItem::Value);
+    font.setItalic(readOnly);
+    item->setFont(PropertyItem::Value, font);
+}
+
+PropertyItem*
+PropertyTreePrivate::addSection(const QString& name, const QString& value)
+{
+    PropertyItem* item = new PropertyItem(d.tree.data());
+    item->setKind(PropertyItem::Group);
+    item->setText(PropertyItem::Name, name);
+    item->setText(PropertyItem::Value, value);
+    setReadOnlyValueStyle(item);
+    item->setExpanded(true);
+    return item;
+}
+
+PropertyItem*
+PropertyTreePrivate::addInfo(PropertyItem* parent, const QString& name, const QString& value,
+                             const QString& toolTip)
+{
+    if (!parent)
+        return nullptr;
+
+    PropertyItem* item = new PropertyItem(parent);
+    item->setKind(PropertyItem::Group);
+    item->setText(PropertyItem::Name, name);
+    item->setText(PropertyItem::Value, value);
+    setReadOnlyValueStyle(item);
+
+    if (!toolTip.isEmpty()) {
+        item->setToolTip(PropertyItem::Name, toolTip);
+        item->setToolTip(PropertyItem::Value, toolTip);
+    }
+
+    return item;
+}
+
+QString
+PropertyTreePrivate::payloadAncestorPath(const UsdPrim& prim) const
+{
+    for (UsdPrim ancestor = prim.GetParent(); ancestor && !ancestor.IsPseudoRoot(); ancestor = ancestor.GetParent()) {
+        if (ancestor.HasPayload())
+            return qt::SdfPathToQString(ancestor.GetPath());
+    }
+
+    return {};
+}
+
+void
+PropertyTreePrivate::addPrimSection(const UsdPrim& prim)
+{
+    PropertyItem* section = addSection("Prim");
+
+    const QString name = StringToQString(prim.GetName().GetString());
+    const QString type = prim.GetTypeName().IsEmpty()
+                             ? QStringLiteral("<untyped>")
+                             : StringToQString(prim.GetTypeName().GetString());
+
+    addInfo(section, "Name", name);
+    addInfo(section, "Type", type);
+    addInfo(section, "Path", qt::SdfPathToQString(prim.GetPath()));
+    addInfo(section, "Active", prim.IsActive() ? "true" : "false");
+    addInfo(section, "Defined", prim.IsDefined() ? "true" : "false");
+    addInfo(section, "Loaded", prim.IsLoaded() ? "true" : "false");
+    addInfo(section, "Instanceable", prim.IsInstanceable() ? "true" : "false");
+    addInfo(section, "Instance", prim.IsInstance() ? "true" : "false");
+
+    TfToken kind;
+    if (UsdModelAPI(prim).GetKind(&kind) && !kind.IsEmpty())
+        addInfo(section, "Kind", StringToQString(kind.GetString()));
+}
+
+void
+PropertyTreePrivate::addCompositionSection(const UsdPrim& prim)
+{
+    PropertyItem* section = addSection("Composition");
+    bool hasComposition = false;
+
+    if (prim.HasPayload()) {
+        PropertyItem* payload = addInfo(section, "Payload", "Yes");
+        hasComposition = true;
+
+        VtValue metadata;
+        if (prim.GetMetadata(SdfFieldKeys->Payload, &metadata) && !metadata.IsEmpty()) {
+            const QString text = metadataText(metadata);
+            if (!text.isEmpty())
+                addInfo(payload, "Metadata", text, text);
+        }
+    }
+
+    const QString payloadAncestor = payloadAncestorPath(prim);
+    if (!payloadAncestor.isEmpty()) {
+        addInfo(section, "Composed via Payload", payloadAncestor);
+        hasComposition = true;
+    }
+
+    VtValue references;
+    if (prim.GetMetadata(SdfFieldKeys->References, &references) && !references.IsEmpty()) {
+        const QString text = metadataText(references);
+        addInfo(section, "References", text.isEmpty() ? QStringLiteral("Yes") : text, text);
+        hasComposition = true;
+    }
+
+    UsdVariantSets variantSets = prim.GetVariantSets();
+    const std::vector<std::string> names = variantSets.GetNames();
+    if (!names.empty()) {
+        PropertyItem* variants = addInfo(section, "Variant Sets", QString::number(names.size()));
+        variants->setExpanded(true);
+
+        for (const std::string& name : names) {
+            UsdVariantSet variantSet = prim.GetVariantSet(name);
+            const QString selection = StringToQString(variantSet.GetVariantSelection());
+            const std::vector<std::string> values = variantSet.GetVariantNames();
+
+            QStringList available;
+            available.reserve(static_cast<int>(values.size()));
+            for (const std::string& value : values)
+                available.append(StringToQString(value));
+
+            const QString toolTip = available.isEmpty()
+                                        ? QString()
+                                        : QString("Available: %1").arg(available.join(", "));
+
+            addInfo(variants, StringToQString(name),
+                    selection.isEmpty() ? QStringLiteral("<none>") : selection,
+                    toolTip);
+        }
+
+        hasComposition = true;
+    }
+
+    if (!hasComposition)
+        addInfo(section, "Status", "No payloads, references, or variants");
+}
+
+void
+PropertyTreePrivate::addAttributesSection(const UsdPrim& prim)
+{
+    const std::vector<UsdAttribute> attributes = prim.GetAttributes();
+    PropertyItem* section = addSection("Attributes", QString::number(attributes.size()));
+
+    for (const UsdAttribute& attr : attributes)
+        addAttribute(section, attr);
+}
+
+void
+PropertyTreePrivate::addRelationshipsSection(const UsdPrim& prim)
+{
+    const std::vector<UsdRelationship> relationships = prim.GetRelationships();
+    PropertyItem* section = addSection("Relationships", QString::number(relationships.size()));
+
+    for (const UsdRelationship& relationship : relationships) {
+        SdfPathVector targets;
+        relationship.GetTargets(&targets);
+
+        PropertyItem* item = addInfo(section,
+                                     StringToQString(relationship.GetName().GetString()),
+                                     targets.empty() ? QStringLiteral("<no targets>")
+                                                     : targets.size() == 1
+                                                           ? qt::SdfPathToQString(targets.front())
+                                                           : QString("%1 targets").arg(targets.size()));
+
+        if (targets.size() > 1) {
+            for (size_t index = 0; index < targets.size(); ++index)
+                addInfo(item, QString("[%1]").arg(index), qt::SdfPathToQString(targets[index]));
+        }
+    }
 }
 
 void
@@ -1038,6 +1345,8 @@ PropertyTreePrivate::addArrayElements(PropertyItem* parent, const SdfPath& prope
         child->setText(PropertyItem::Name, QString("[%1]").arg(index));
         child->setText(PropertyItem::Value, text);
         child->setValueEditable(true);
+        child->setEditor(PropertyItem::TextEditor);
+        setReadOnlyValueStyle(child, false);
     }
 }
 
@@ -1054,6 +1363,7 @@ PropertyTreePrivate::addAttribute(PropertyItem* parent, const UsdAttribute& attr
     if (!attr.Get(&value)) {
         item->setText(PropertyItem::Value, "<no default>");
         item->setToolTip(PropertyItem::Value, "No composed default value");
+        setReadOnlyValueStyle(item);
         return;
     }
 
@@ -1061,6 +1371,7 @@ PropertyTreePrivate::addAttribute(PropertyItem* parent, const UsdAttribute& attr
     if (arrayInfo(value, arraySize)) {
         item->setText(PropertyItem::Value, QString("%1 values").arg(arraySize));
         item->setToolTip(PropertyItem::Value, QString::fromStdString(value.GetTypeName()));
+        setReadOnlyValueStyle(item);
 
         if (arraySize <= d.chunkSize) {
             addArrayElements(item, attr.GetPath(), value, 0, arraySize);
@@ -1075,6 +1386,7 @@ PropertyTreePrivate::addAttribute(PropertyItem* parent, const UsdAttribute& attr
                 chunk->setText(PropertyItem::Name,
                                QString("[%1..%2]").arg(start).arg(start + count - 1));
                 chunk->setText(PropertyItem::Value, QString("%1 values").arg(count));
+                setReadOnlyValueStyle(chunk);
 
                 // Dummy child gives the chunk an expansion arrow. It is replaced lazily.
                 PropertyItem* dummy = new PropertyItem(chunk);
@@ -1087,7 +1399,11 @@ PropertyTreePrivate::addAttribute(PropertyItem* parent, const UsdAttribute& attr
 
     item->setText(PropertyItem::Value, scalarText(value));
     item->setToolTip(PropertyItem::Value, QString::fromStdString(value.GetTypeName()));
-    item->setValueEditable(scalarEditable(value));
+
+    const bool editable = scalarEditable(value);
+    item->setValueEditable(editable);
+    configureEditor(item, attr, value);
+    setReadOnlyValueStyle(item, !editable);
 }
 
 void
@@ -1133,15 +1449,12 @@ PropertyTreePrivate::updateSelection(const QList<SdfPath>& paths)
             return;
         }
 
-        PropertyItem* primItem = new PropertyItem(d.tree.data());
-        primItem->setKind(PropertyItem::Group);
-        primItem->setText(PropertyItem::Name, StringToQString(path.GetString()));
-        primItem->setExpanded(true);
-
         {
             READ_LOCKER(locker, d.context ? d.context->stageLock() : session()->stageLock(), "stageLock");
-            for (const UsdAttribute& attr : prim.GetAttributes())
-                addAttribute(primItem, attr);
+            addPrimSection(prim);
+            addCompositionSection(prim);
+            addAttributesSection(prim);
+            addRelationshipsSection(prim);
         }
 
         d.path = path;
@@ -1186,6 +1499,7 @@ PropertyTreePrivate::populateChunk(PropertyItem* item)
         return;
 
     QSignalBlocker blocker(d.tree.data());
+    const bool previousUpdate = d.update;
     d.update = true;
 
     while (item->childCount() > 0)
@@ -1194,7 +1508,7 @@ PropertyTreePrivate::populateChunk(PropertyItem* item)
     addArrayElements(item, item->propertyPath(), value, item->chunkStart(), item->chunkCount());
     item->setChunkPopulated(true);
 
-    d.update = false;
+    d.update = previousUpdate;
 }
 
 void
@@ -1276,8 +1590,14 @@ PropertyTree::PropertyTree(QWidget* parent)
     p->d.tree = this;
     p->init();
 
-    setEditTriggers(QAbstractItemView::DoubleClicked | QAbstractItemView::EditKeyPressed
-                    | QAbstractItemView::SelectedClicked);
+    setItemDelegate(new PropertyDelegate(this));
+
+    setColumnSelectable(PropertyItem::Name, true);
+    setColumnSelectable(PropertyItem::Value, true);
+
+    setSelectionBehavior(QAbstractItemView::SelectRows);
+    setSelectionMode(QAbstractItemView::SingleSelection);
+    setEditTriggers(QAbstractItemView::DoubleClicked | QAbstractItemView::EditKeyPressed);
 }
 
 PropertyTree::~PropertyTree() = default;

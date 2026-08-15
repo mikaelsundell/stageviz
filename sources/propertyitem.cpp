@@ -13,13 +13,19 @@ public:
     struct Data {
         PropertyItem* item = nullptr;
         PropertyItem::Kind kind = PropertyItem::Group;
+        PropertyItem::Editor editor = PropertyItem::NoEditor;
         SdfPath propertyPath;
+        QStringList editorOptions;
         int arrayIndex = -1;
         int chunkStart = 0;
         int chunkCount = 0;
         bool chunkPopulated = false;
         bool valueEditable = false;
+        double editorMinimum = -1.0e12;
+        double editorMaximum = 1.0e12;
+        int editorDecimals = 6;
     };
+
     Data d;
 };
 
@@ -139,8 +145,67 @@ PropertyItem::setValueEditable(bool editable)
         flags |= Qt::ItemIsEditable;
     else
         flags &= ~Qt::ItemIsEditable;
-
     setFlags(flags);
+}
+
+PropertyItem::Editor
+PropertyItem::editor() const
+{
+    return p->d.editor;
+}
+
+void
+PropertyItem::setEditor(Editor editor)
+{
+    p->d.editor = editor;
+    setData(PropertyItem::Value, EditorRole, int(editor));
+}
+
+QStringList
+PropertyItem::editorOptions() const
+{
+    return p->d.editorOptions;
+}
+
+void
+PropertyItem::setEditorOptions(const QStringList& options)
+{
+    p->d.editorOptions = options;
+    setData(PropertyItem::Value, EditorOptionsRole, options);
+}
+
+void
+PropertyItem::setNumericRange(double minimum, double maximum)
+{
+    p->d.editorMinimum = minimum;
+    p->d.editorMaximum = maximum;
+    setData(PropertyItem::Value, EditorMinimumRole, minimum);
+    setData(PropertyItem::Value, EditorMaximumRole, maximum);
+}
+
+double
+PropertyItem::editorMinimum() const
+{
+    return p->d.editorMinimum;
+}
+
+double
+PropertyItem::editorMaximum() const
+{
+    return p->d.editorMaximum;
+}
+
+void
+PropertyItem::setEditorDecimals(int decimals)
+{
+    p->d.editorDecimals = decimals;
+    setData(PropertyItem::Value, EditorDecimalsRole, decimals);
+}
+
+int
+PropertyItem::editorDecimals() const
+{
+    return p->d.editorDecimals;
 }
 
 }  // namespace stageviz
