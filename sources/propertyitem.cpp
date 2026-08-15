@@ -20,7 +20,6 @@ public:
         bool chunkPopulated = false;
         bool valueEditable = false;
     };
-
     Data d;
 };
 
