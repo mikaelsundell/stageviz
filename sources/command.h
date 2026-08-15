@@ -6,6 +6,7 @@
 
 #include "session.h"
 #include "stageviz.h"
+#include <pxr/base/vt/value.h>
 #include <pxr/usd/sdf/path.h>
 
 PXR_NAMESPACE_USING_DIRECTIVE
@@ -308,6 +309,24 @@ newXformPath(const SdfPath& parentPath, const QString& nameInput);
  */
 Command
 movePath(const QList<SdfPath>& paths, const SdfPath& newParentPath, int insertIndex);
+
+
+/**
+ * @brief Creates a command that authors the default value of a USD attribute.
+ *
+ * The value is authored into the root layer edit target. Undo restores the
+ * previous root-layer default opinion exactly; if there was no root-layer
+ * default opinion, undo clears the newly authored default.
+ *
+ * This command accepts scalar, vector, matrix, token/string, asset-path and
+ * VtArray values. Array element editing in PropertyTree reconstructs the typed
+ * array and submits it through this same command.
+ *
+ * @param attributePath USD property path identifying an attribute.
+ * @param value Typed value to author.
+ */
+Command
+setAttributeValue(const SdfPath& attributePath, const VtValue& value);
 
 ///@}
 

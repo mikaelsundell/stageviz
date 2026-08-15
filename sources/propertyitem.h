@@ -6,6 +6,9 @@
 
 #include "stageviz.h"
 #include "treeitem.h"
+#include <pxr/usd/sdf/path.h>
+
+PXR_NAMESPACE_USING_DIRECTIVE
 
 namespace stageviz {
 
@@ -13,49 +16,49 @@ class PropertyItemPrivate;
 
 /**
  * @class PropertyItem
- * @brief Tree item representing a USD property entry.
+ * @brief Tree item representing a USD property or an editable value element.
  *
- * Used by PropertyTree to display property data such as
- * attribute names and values. Each item corresponds to
- * a row in the property tree and typically represents
- * attributes, relationships, or metadata of a USD prim.
+ * PropertyItem stores lightweight UI metadata only. USD reads/writes are
+ * performed by PropertyTree and the command system.
  */
 class PropertyItem : public TreeItem {
 public:
-    /**
-     * @brief Column indices used by the property tree.
-     */
     enum Column {
-        Name = 0,  ///< Property name column.
-        Value      ///< Property value column.
+        Name = 0,
+        Value
     };
 
-    /**
-     * @brief Constructs a property item attached to a tree widget.
-     *
-     * @param parent Parent tree widget.
-     */
+    enum Kind {
+        Group,
+        Attribute,
+        ArrayChunk,
+        ArrayElement
+    };
+
     PropertyItem(QTreeWidget* parent);
-
-    /**
-     * @brief Constructs a property item attached to another item.
-     *
-     * @param parent Parent tree item.
-     */
     PropertyItem(QTreeWidgetItem* parent);
-
-    /**
-     * @brief Destroys the PropertyItem instance.
-     */
     virtual ~PropertyItem();
 
-    /**
-     * @brief Returns semantic state flags for the item.
-     *
-     * Used by the base class or delegates to derive Qt roles
-     * (e.g. font, color, enabled state).
-     */
     TreeItem::ItemStates itemStates() const;
+
+    Kind kind() const;
+    void setKind(Kind kind);
+
+    SdfPath propertyPath() const;
+    void setPropertyPath(const SdfPath& path);
+
+    int arrayIndex() const;
+    void setArrayIndex(int index);
+
+    int chunkStart() const;
+    int chunkCount() const;
+    void setChunkRange(int start, int count);
+
+    bool chunkPopulated() const;
+    void setChunkPopulated(bool populated);
+
+    bool valueEditable() const;
+    void setValueEditable(bool editable);
 
 private:
     QScopedPointer<PropertyItemPrivate> p;

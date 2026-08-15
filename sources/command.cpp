@@ -13,6 +13,7 @@
 #include <pxr/usd/sdf/layer.h>
 #include <pxr/usd/usd/editContext.h>
 #include <pxr/usd/usd/editTarget.h>
+#include <pxr/usd/usd/attribute.h>
 #include <pxr/usd/usd/prim.h>
 #include <pxr/usd/usd/primRange.h>
 #include <pxr/usd/usdGeom/imageable.h>
@@ -2042,6 +2043,125 @@ movePath(const QList<SdfPath>& paths, const SdfPath& newParentPath, int insertIn
 
                     session->selectionList()->updatePaths(state->previousSelection);
                     session->setMask(state->previousMask);
+                });
+            });
+        });
+}
+
+
+Command
+setAttributeValue(const SdfPath& attributePath, const VtValue& value)
+{
+    struct AttributeValueState {
+        bool captured = false;
+        bool hadRootDefault = false;
+        VtValue previousRootDefault;
+    };
+
+    auto state = std::make_shared<AttributeValueState>();
+
+    return Command(
+        [attributePath, value, state](Session* session) {
+            if (!session || attributePath.IsEmpty() || !attributePath.IsPropertyPath() || value.IsEmpty())
+                return;
+
+            command::beginDeferred(session, "Set attribute value", 1);
+
+            command::runWorker([=]() {
+                bool success = false;
+                QString error;
+                SdfPath primPath = attributePath.GetPrimPath();
+
+                {
+                    WRITE_LOCKER(locker, session->stageLock(), "stageLock");
+                    const UsdStageRefPtr stage = session->stageUnsafe();
+
+                    if (!stage) {
+                        error = "stage missing";
+                    }
+                    else {
+                        QString rootError;
+                        const SdfLayerHandle rootLayer = rootlayer::opened(stage, rootError);
+
+                        if (!rootLayer) {
+                            error = rootError;
+                        }
+                        else {
+                            const UsdAttribute attr = stage->GetAttributeAtPath(attributePath);
+                            if (!attr) {
+                                error = "attribute missing";
+                            }
+                            else {
+                                if (!state->captured) {
+                                    state->hadRootDefault = rootLayer->HasField(attributePath, SdfFieldKeys->Default);
+                                    if (state->hadRootDefault)
+                                        state->previousRootDefault = rootLayer->GetField(attributePath,
+                                                                                        SdfFieldKeys->Default);
+                                    state->captured = true;
+                                }
+
+                                UsdEditContext context(stage, UsdEditTarget(rootLayer));
+                                success = attr.Set(value);
+                                if (!success)
+                                    error = "USD rejected the value for this attribute type";
+                            }
+                        }
+                    }
+                }
+
+                command::queueToSession(session, [=]() {
+                    using Status = Session::Notify::Status;
+                    command::finishDeferred(session,
+                                            success ? "Attribute value set"
+                                                    : appendError("Set attribute value failed", error),
+                                            { primPath },
+                                            success ? Status::Success : Status::Error);
+                });
+            });
+        },
+        [attributePath, state](Session* session) {
+            if (!session || !state->captured || attributePath.IsEmpty())
+                return;
+
+            command::beginDeferred(session, "Undo set attribute value", 1);
+
+            command::runWorker([=]() {
+                bool success = false;
+                QString error;
+                const SdfPath primPath = attributePath.GetPrimPath();
+
+                {
+                    WRITE_LOCKER(locker, session->stageLock(), "stageLock");
+                    const UsdStageRefPtr stage = session->stageUnsafe();
+
+                    if (!stage) {
+                        error = "stage missing";
+                    }
+                    else {
+                        QString rootError;
+                        const SdfLayerHandle rootLayer = rootlayer::opened(stage, rootError);
+
+                        if (!rootLayer) {
+                            error = rootError;
+                        }
+                        else {
+                            if (state->hadRootDefault)
+                                rootLayer->SetField(attributePath, SdfFieldKeys->Default, state->previousRootDefault);
+                            else
+                                rootLayer->EraseField(attributePath, SdfFieldKeys->Default);
+
+                            success = true;
+                        }
+                    }
+                }
+
+                command::queueToSession(session, [=]() {
+                    using Status = Session::Notify::Status;
+                    command::finishDeferred(session,
+                                            success ? "Attribute value undone"
+                                                    : appendError("Undo attribute value failed", error),
+                                            { primPath },
+                                            success ? Status::Success : Status::Error);
                 });
             });
         });

@@ -5,7 +5,6 @@
 #include "outlinerview.h"
 #include "application.h"
 #include "notice.h"
-#include "propertytree.h"
 #include "signalguard.h"
 #include "stagetree.h"
 #include "style.h"
@@ -25,7 +24,6 @@ class OutlinerViewPrivate : public QObject, public SignalGuard {
 public:
     OutlinerViewPrivate();
     void init();
-    PropertyTree* propertyTree();
     StageTree* stageTree();
     bool eventFilter(QObject* obj, QEvent* event);
 
@@ -44,6 +42,7 @@ public Q_SLOTS:
 
 public:
     void updateDepth(const SdfPath& path = SdfPath());
+
     struct Data {
         bool followEnabled;
         QScopedPointer<ViewContext> context;
@@ -53,32 +52,34 @@ public:
     Data d;
 };
 
-OutlinerViewPrivate::OutlinerViewPrivate() { d.followEnabled = true; }
+OutlinerViewPrivate::OutlinerViewPrivate()
+{
+    d.followEnabled = true;
+}
 
 void
 OutlinerViewPrivate::init()
 {
     d.ui.reset(new Ui_OutlinerView());
     d.ui->setupUi(d.view.data());
+
     d.context.reset(new ViewContext(d.view.data()));
     d.context->setStageLock(session()->stageLock());
     d.context->setCommandStack(session()->commandStack());
+
     attach(d.ui->depth);
+
     stageTree()->setHeaderLabels(QStringList() << "Name"
                                                << "");
-    propertyTree()->setHeaderLabels(QStringList() << "Name"
-                                                  << "Value");
     stageTree()->setContext(d.context.data());
-    propertyTree()->setContext(d.context.data());
-    // event filter
+
     stageTree()->installEventFilter(this);
-    propertyTree()->installEventFilter(this);
-    // actions
+
     d.ui->clear->setIcon(style()->icon(Style::IconRole::Clear));
     d.ui->collapse->setIcon(style()->icon(Style::IconRole::Collapse));
     d.ui->expand->setIcon(style()->icon(Style::IconRole::Expand));
     d.ui->follow->setIcon(style()->icon(Style::IconRole::Follow));
-    // connect
+
     connect(d.ui->filter, &QLineEdit::textChanged, this, &OutlinerViewPrivate::filterChanged);
     connect(d.ui->clear, &QToolButton::clicked, this, &OutlinerViewPrivate::clearFilter);
     connect(d.ui->collapse, &QToolButton::clicked, this, &OutlinerViewPrivate::collapse);
@@ -88,13 +89,8 @@ OutlinerViewPrivate::init()
     connect(session(), &Session::maskChanged, this, &OutlinerViewPrivate::maskChanged);
     connect(session(), &Session::stageChanged, this, &OutlinerViewPrivate::stageChanged);
     connect(session(), &Session::primsChanged, this, &OutlinerViewPrivate::primsChanged);
-    connect(session()->selectionList(), &SelectionList::selectionChanged, this, &OutlinerViewPrivate::selectionChanged);
-}
-
-PropertyTree*
-OutlinerViewPrivate::propertyTree()
-{
-    return d.ui->propertyTree;
+    connect(session()->selectionList(), &SelectionList::selectionChanged, this,
+            &OutlinerViewPrivate::selectionChanged);
 }
 
 StageTree*
@@ -114,10 +110,6 @@ OutlinerViewPrivate::eventFilter(QObject* obj, QEvent* event)
                 header->setSectionResizeMode(0, QHeaderView::Stretch);
                 header->setSectionResizeMode(1, QHeaderView::Fixed);
                 tree->setColumnWidth(1, 60);
-            }
-            else if (tree == propertyTree()) {
-                tree->setColumnWidth(0, 200);
-                tree->header()->setSectionResizeMode(1, QHeaderView::Stretch);
             }
         }
     }
@@ -142,9 +134,8 @@ OutlinerViewPrivate::clearDepth()
 void
 OutlinerViewPrivate::collapse()
 {
-    if (session()->selectionList()->paths().size()) {
+    if (session()->selectionList()->paths().size())
         d.ui->stageTree->collapse();
-    }
 }
 
 void
@@ -165,18 +156,12 @@ void
 OutlinerViewPrivate::filterChanged(const QString& filter)
 {
     stageTree()->setFilter(filter);
-    if (filter.size()) {
-        d.ui->clear->setEnabled(true);
-    }
-    else {
-        d.ui->clear->setEnabled(false);
-    }
+    d.ui->clear->setEnabled(!filter.isEmpty());
 }
 
 void
 OutlinerViewPrivate::primsChanged(const NoticeBatch& batch)
 {
-    propertyTree()->updatePrims(batch);
     stageTree()->updatePrims(batch);
 }
 
@@ -190,17 +175,17 @@ void
 OutlinerViewPrivate::selectionChanged(const QList<SdfPath>& paths)
 {
     SignalGuard::Scope guard(this);
-    propertyTree()->updateSelection(paths);
+
     stageTree()->updateSelection(paths);
-    if (paths.size() > 0 && d.followEnabled) {
+
+    if (!paths.isEmpty() && d.followEnabled)
         expand();
-    }
-    if (paths.size() == 1) {
+
+    if (paths.size() == 1)
         updateDepth(paths.first());
-    }
-    else {
+    else
         updateDepth();
-    }
+
     d.ui->collapse->setEnabled(true);
     d.ui->expand->setEnabled(true);
 }
@@ -217,12 +202,10 @@ OutlinerViewPrivate::stageChanged(UsdStageRefPtr stage, Session::LoadPolicy poli
     if (loaded) {
         stageTree()->setPayloadEnabled(policy == Session::LoadPolicy::None);
         stageTree()->updateStage(stage);
-        propertyTree()->updateStage(stage);
         updateDepth();
         return;
     }
 
-    propertyTree()->close();
     stageTree()->close();
     d.ui->clear->setEnabled(false);
     clearFilter();
@@ -232,19 +215,18 @@ OutlinerViewPrivate::stageChanged(UsdStageRefPtr stage, Session::LoadPolicy poli
 void
 OutlinerViewPrivate::depthChanged(int value)
 {
-    QList<SdfPath> paths = session()->selectionList()->paths();
-    if (paths.size() == 1) {
+    const QList<SdfPath> paths = session()->selectionList()->paths();
+    if (paths.size() == 1)
         stageTree()->expandDepth(value, paths.first());
-    }
-    else {
+    else
         stageTree()->expandDepth(value);
-    }
 }
 
 void
 OutlinerViewPrivate::updateDepth(const SdfPath& path)
 {
     SignalGuard::Scope guard(this);
+
     d.ui->depth->setEnabled(true);
     d.ui->depth->setMinimum(0);
     d.ui->depth->setMaximum(stageTree()->maxDepth(path));
@@ -266,6 +248,7 @@ OutlinerView::collapse()
 {
     p->collapse();
 }
+
 void
 OutlinerView::expand()
 {

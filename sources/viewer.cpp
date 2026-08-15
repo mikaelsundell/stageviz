@@ -13,6 +13,7 @@
 #include "os.h"
 #include "outlinerview.h"
 #include "progressview.h"
+#include "propertydialog.h"
 #include "pythondialog.h"
 #include "pythonshelf.h"
 #include "qtutils.h"
@@ -62,6 +63,7 @@ public:
     bool mergeFile(const QString& fileName);
     OutlinerView* outlinerView();
     ProgressView* progressView();
+    PropertyDialog* propertyDialog();
     PythonDialog* pythonDialog();
     ConsoleDialog* consoleDialog();
     RenderView* renderView();
@@ -121,6 +123,7 @@ public Q_SLOTS:
     void complexityVeryHigh();
     void toggleOutliner(bool checked);
     void toggleProgress(bool checked);
+    void toggleProperty(bool checked);
     void togglePython(bool checked);
     void toggleConsole(bool checked);
     void openAbout();
@@ -161,6 +164,7 @@ public:
         QPointer<OutlinerView> outlinerView;
         QPointer<ProgressView> progressView;
         QPointer<PythonShelf> pythonShelf;
+        QPointer<PropertyDialog> propertyDialog;
         QPointer<PythonDialog> pythonDialog;
         QPointer<ConsoleDialog> consoleDialog;
     };
@@ -316,6 +320,7 @@ ViewerPrivate::init()
     connect(d.ui->hudCameraAxis, &QAction::toggled, viewState, &ViewState::setCameraAxisEnabled);
     connect(d.ui->viewOutliner, &QAction::toggled, this, &ViewerPrivate::toggleOutliner);
     connect(d.ui->viewProgress, &QAction::toggled, this, &ViewerPrivate::toggleProgress);
+    connect(d.ui->viewProperty, &QAction::toggled, this, &ViewerPrivate::toggleProperty);
     connect(d.ui->viewPython, &QAction::toggled, this, &ViewerPrivate::togglePython);
     connect(d.ui->viewConsole, &QAction::toggled, this, &ViewerPrivate::toggleConsole);
     connect(viewState, &ViewState::materialModeChanged, this, &ViewerPrivate::updateMaterialMode);
@@ -404,6 +409,17 @@ ViewerPrivate::initDocks()
     const int center = std::max(400, total - left - right);
     d.ui->splitter->setSizes({ left, center, right });
 
+    d.propertyDialog = new PropertyDialog(d.viewer.data());
+    d.propertyDialog->setObjectName("propertyDialog");
+    d.propertyDialog->setAttribute(Qt::WA_DeleteOnClose, false);
+    d.propertyDialog->setWindowFlags(Qt::Tool | Qt::WindowTitleHint | Qt::WindowCloseButtonHint);
+#ifdef Q_OS_MAC
+    d.propertyDialog->setAttribute(Qt::WA_MacAlwaysShowToolWindow, true);
+#endif
+    d.propertyDialog->setWindowTitle("Property editor");
+    d.propertyDialog->installEventFilter(this);
+    d.propertyDialog->hide();
+
     d.pythonDialog = new PythonDialog(d.viewer.data());
     d.pythonDialog->setObjectName("pythonDialog");
     d.pythonDialog->setAttribute(Qt::WA_DeleteOnClose, false);
@@ -436,6 +452,7 @@ ViewerPrivate::initDocks()
 
     updateDockAction(d.ui->viewOutliner, outlinerVisible);
     updateDockAction(d.ui->viewProgress, progressVisible);
+    updateDockAction(d.ui->viewProperty, false);
     updateDockAction(d.ui->viewPython, false);
     updateDockAction(d.ui->viewConsole, false);
 }
@@ -604,6 +621,12 @@ ViewerPrivate::progressView()
     return d.progressView.data();
 }
 
+PropertyDialog*
+ViewerPrivate::propertyDialog()
+{
+    return d.propertyDialog.data();
+}
+
 PythonDialog*
 ViewerPrivate::pythonDialog()
 {
@@ -625,6 +648,13 @@ ViewerPrivate::renderView()
 bool
 ViewerPrivate::eventFilter(QObject* object, QEvent* event)
 {
+    if (object == d.propertyDialog) {
+        switch (event->type()) {
+        case QEvent::Show: updateDockAction(d.ui->viewProperty, true); break;
+        case QEvent::Hide: updateDockAction(d.ui->viewProperty, false); break;
+        default: break;
+        }
+    }
     if (object == d.pythonDialog) {
         switch (event->type()) {
         case QEvent::Show: updateDockAction(d.ui->viewPython, true); break;
@@ -644,6 +674,10 @@ ViewerPrivate::eventFilter(QObject* object, QEvent* event)
         const Qt::WindowStates state = d.viewer->windowState();
         if (!(state & Qt::WindowMinimized) && d.viewer->isActiveWindow()) {
             QTimer::singleShot(0, d.viewer, [this]() {
+                if (d.ui->viewProperty->isChecked() && d.propertyDialog) {
+                    d.propertyDialog->show();
+                    d.propertyDialog->raise();
+                }
                 if (d.ui->viewPython->isChecked() && d.pythonDialog) {
                     d.pythonDialog->show();
                     d.pythonDialog->raise();
@@ -1381,6 +1415,21 @@ ViewerPrivate::toggleProgress(bool checked)
 }
 
 void
+ViewerPrivate::toggleProperty(bool checked)
+{
+    if (!d.propertyDialog)
+        return;
+    if (checked) {
+        d.propertyDialog->show();
+        d.propertyDialog->raise();
+        d.propertyDialog->activateWindow();
+    }
+    else {
+        d.propertyDialog->hide();
+    }
+}
+
+void
 ViewerPrivate::togglePython(bool checked)
 {
     if (!d.pythonDialog)
@@ -1911,6 +1960,11 @@ Viewer::closeEvent(QCloseEvent* event)
     }
 
     p->saveSettings();
+
+    if (p->d.propertyDialog) {
+        p->d.propertyDialog->hide();
+        p->d.propertyDialog->close();
+    }
 
     if (p->d.pythonDialog) {
         p->d.pythonDialog->hide();

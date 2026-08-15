@@ -3,250 +3,51 @@
  <class>OutlinerView</class>
  <widget class="QWidget" name="OutlinerView">
   <property name="geometry">
-   <rect>
-    <x>0</x>
-    <y>0</y>
-    <width>400</width>
-    <height>800</height>
-   </rect>
+   <rect><x>0</x><y>0</y><width>400</width><height>800</height></rect>
   </property>
-  <property name="windowTitle">
-   <string>Form</string>
-  </property>
+  <property name="windowTitle"><string>Form</string></property>
   <layout class="QVBoxLayout" name="verticalLayout_4">
-   <property name="leftMargin">
-    <number>6</number>
-   </property>
-   <property name="topMargin">
-    <number>6</number>
-   </property>
-   <property name="rightMargin">
-    <number>6</number>
-   </property>
-   <property name="bottomMargin">
-    <number>6</number>
-   </property>
+   <property name="leftMargin"><number>6</number></property>
+   <property name="topMargin"><number>6</number></property>
+   <property name="rightMargin"><number>6</number></property>
+   <property name="bottomMargin"><number>6</number></property>
    <item>
     <widget class="QWidget" name="filterWidget" native="true">
      <layout class="QHBoxLayout" name="horizontalLayout_4">
-      <property name="leftMargin">
-       <number>0</number>
-      </property>
-      <property name="topMargin">
-       <number>0</number>
-      </property>
-      <property name="rightMargin">
-       <number>0</number>
-      </property>
-      <property name="bottomMargin">
-       <number>8</number>
-      </property>
-      <item>
-       <widget class="QLabel" name="label_4">
-        <property name="font">
-         <font>
-          <pointsize>9</pointsize>
-         </font>
-        </property>
-        <property name="text">
-         <string>Filter </string>
-        </property>
-       </widget>
-      </item>
-      <item>
-       <widget class="QLineEdit" name="filter">
-        <property name="font">
-         <font>
-          <pointsize>11</pointsize>
-         </font>
-        </property>
-       </widget>
-      </item>
-      <item>
-       <widget class="QToolButton" name="clear">
-        <property name="enabled">
-         <bool>false</bool>
-        </property>
-        <property name="text">
-         <string>...</string>
-        </property>
-       </widget>
-      </item>
-      <item>
-       <widget class="QToolButton" name="collapse">
-        <property name="enabled">
-         <bool>false</bool>
-        </property>
-        <property name="text">
-         <string>...</string>
-        </property>
-        <property name="shortcut">
-         <string/>
-        </property>
-       </widget>
-      </item>
-      <item>
-       <widget class="QToolButton" name="expand">
-        <property name="enabled">
-         <bool>false</bool>
-        </property>
-        <property name="text">
-         <string>...</string>
-        </property>
-        <property name="shortcut">
-         <string/>
-        </property>
-       </widget>
-      </item>
-      <item>
-       <widget class="QToolButton" name="follow">
-        <property name="enabled">
-         <bool>false</bool>
-        </property>
-        <property name="text">
-         <string>...</string>
-        </property>
-        <property name="checkable">
-         <bool>true</bool>
-        </property>
-        <property name="checked">
-         <bool>true</bool>
-        </property>
-       </widget>
-      </item>
+      <property name="leftMargin"><number>0</number></property>
+      <property name="topMargin"><number>0</number></property>
+      <property name="rightMargin"><number>0</number></property>
+      <property name="bottomMargin"><number>8</number></property>
+      <item><widget class="QLabel" name="label_4"><property name="font"><font><pointsize>9</pointsize></font></property><property name="text"><string>Filter </string></property></widget></item>
+      <item><widget class="QLineEdit" name="filter"><property name="font"><font><pointsize>11</pointsize></font></property></widget></item>
+      <item><widget class="QToolButton" name="clear"><property name="enabled"><bool>false</bool></property><property name="text"><string>...</string></property></widget></item>
+      <item><widget class="QToolButton" name="collapse"><property name="enabled"><bool>false</bool></property><property name="text"><string>...</string></property><property name="shortcut"><string/></property></widget></item>
+      <item><widget class="QToolButton" name="expand"><property name="enabled"><bool>false</bool></property><property name="text"><string>...</string></property><property name="shortcut"><string/></property></widget></item>
+      <item><widget class="QToolButton" name="follow"><property name="enabled"><bool>false</bool></property><property name="text"><string>...</string></property><property name="checkable"><bool>true</bool></property><property name="checked"><bool>true</bool></property></widget></item>
      </layout>
     </widget>
    </item>
    <item>
-    <widget class="QWidget" name="dockWidget" native="true">
-     <property name="minimumSize">
-      <size>
-       <width>0</width>
-       <height>0</height>
-      </size>
-     </property>
-     <layout class="QVBoxLayout" name="verticalLayout_3">
-      <property name="leftMargin">
-       <number>0</number>
-      </property>
-      <property name="topMargin">
-       <number>0</number>
-      </property>
-      <property name="rightMargin">
-       <number>0</number>
-      </property>
-      <property name="bottomMargin">
-       <number>0</number>
-      </property>
+    <widget class="stageviz::StageTree" name="stageTree">
+     <property name="alternatingRowColors"><bool>false</bool></property>
+     <property name="selectionMode"><enum>QAbstractItemView::SelectionMode::ExtendedSelection</enum></property>
+     <column><property name="text"><string notr="true">1</string></property></column>
+    </widget>
+   </item>
+   <item>
+    <widget class="QWidget" name="depthWidget" native="true">
+     <layout class="QVBoxLayout" name="verticalLayout_2">
+      <property name="leftMargin"><number>8</number></property>
+      <property name="topMargin"><number>6</number></property>
+      <property name="rightMargin"><number>8</number></property>
+      <property name="bottomMargin"><number>2</number></property>
       <item>
-       <widget class="QSplitter" name="splitter">
-        <property name="orientation">
-         <enum>Qt::Orientation::Vertical</enum>
-        </property>
-        <widget class="QWidget" name="widget" native="true">
-         <layout class="QVBoxLayout" name="verticalLayout">
-          <property name="spacing">
-           <number>0</number>
-          </property>
-          <property name="leftMargin">
-           <number>0</number>
-          </property>
-          <property name="topMargin">
-           <number>0</number>
-          </property>
-          <property name="rightMargin">
-           <number>0</number>
-          </property>
-          <property name="bottomMargin">
-           <number>0</number>
-          </property>
-          <item>
-           <widget class="stageviz::StageTree" name="stageTree">
-            <property name="alternatingRowColors">
-             <bool>false</bool>
-            </property>
-            <property name="selectionMode">
-             <enum>QAbstractItemView::SelectionMode::ExtendedSelection</enum>
-            </property>
-            <column>
-             <property name="text">
-              <string notr="true">1</string>
-             </property>
-            </column>
-           </widget>
-          </item>
-          <item>
-           <widget class="QWidget" name="widget_2" native="true">
-            <property name="minimumSize">
-             <size>
-              <width>0</width>
-              <height>0</height>
-             </size>
-            </property>
-            <layout class="QVBoxLayout" name="verticalLayout_2">
-             <property name="leftMargin">
-              <number>8</number>
-             </property>
-             <property name="topMargin">
-              <number>6</number>
-             </property>
-             <property name="rightMargin">
-              <number>8</number>
-             </property>
-             <property name="bottomMargin">
-              <number>2</number>
-             </property>
-             <item>
-              <widget class="stageviz::Slider" name="depth">
-               <property name="maximum">
-                <number>10</number>
-               </property>
-               <property name="singleStep">
-                <number>1</number>
-               </property>
-               <property name="pageStep">
-                <number>1</number>
-               </property>
-               <property name="orientation">
-                <enum>Qt::Orientation::Horizontal</enum>
-               </property>
-               <property name="tickPosition">
-                <enum>QSlider::TickPosition::TicksAbove</enum>
-               </property>
-              </widget>
-             </item>
-            </layout>
-           </widget>
-          </item>
-         </layout>
-        </widget>
-        <widget class="stageviz::PropertyTree" name="propertyTree">
-         <property name="sizePolicy">
-          <sizepolicy hsizetype="Expanding" vsizetype="MinimumExpanding">
-           <horstretch>0</horstretch>
-           <verstretch>0</verstretch>
-          </sizepolicy>
-         </property>
-         <property name="maximumSize">
-          <size>
-           <width>16777215</width>
-           <height>16777215</height>
-          </size>
-         </property>
-         <property name="font">
-          <font>
-           <pointsize>11</pointsize>
-          </font>
-         </property>
-         <property name="alternatingRowColors">
-          <bool>false</bool>
-         </property>
-         <column>
-          <property name="text">
-           <string notr="true">1</string>
-          </property>
-         </column>
-        </widget>
+       <widget class="stageviz::Slider" name="depth">
+        <property name="maximum"><number>10</number></property>
+        <property name="singleStep"><number>1</number></property>
+        <property name="pageStep"><number>1</number></property>
+        <property name="orientation"><enum>Qt::Orientation::Horizontal</enum></property>
+        <property name="tickPosition"><enum>QSlider::TickPosition::TicksAbove</enum></property>
        </widget>
       </item>
      </layout>
@@ -255,24 +56,9 @@
   </layout>
  </widget>
  <customwidgets>
-  <customwidget>
-   <class>stageviz::StageTree</class>
-   <extends>QTreeWidget</extends>
-   <header>../../../sources/stagetree.h</header>
-  </customwidget>
-  <customwidget>
-   <class>stageviz::PropertyTree</class>
-   <extends>QTreeWidget</extends>
-   <header>../../../sources/propertytree.h</header>
-  </customwidget>
-  <customwidget>
-   <class>stageviz::Slider</class>
-   <extends>QSlider</extends>
-   <header>../../../sources/slider.h</header>
-  </customwidget>
+  <customwidget><class>stageviz::StageTree</class><extends>QTreeWidget</extends><header>../../../sources/stagetree.h</header></customwidget>
+  <customwidget><class>stageviz::Slider</class><extends>QSlider</extends><header>../../../sources/slider.h</header></customwidget>
  </customwidgets>
- <resources>
-  <include location="viewer.qrc"/>
- </resources>
+ <resources><include location="viewer.qrc"/></resources>
  <connections/>
 </ui>

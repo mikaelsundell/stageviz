@@ -841,6 +841,7 @@
     <addaction name="viewOutliner" />
     <addaction name="viewProgress" />
     <addaction name="separator" />
+    <addaction name="viewProperty" />
     <addaction name="viewPython" />
     <addaction name="separator" />
     <addaction name="viewConsole" />
@@ -1183,6 +1184,17 @@
   <action name="fileExit">
    <property name="text">
     <string>Exit</string>
+   </property>
+  </action>
+  <action name="viewProperty">
+   <property name="checkable">
+    <bool>true</bool>
+   </property>
+   <property name="checked">
+    <bool>false</bool>
+   </property>
+   <property name="text">
+    <string>Property editor</string>
    </property>
   </action>
   <action name="viewPython">
