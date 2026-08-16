@@ -7,11 +7,25 @@
 #include "notice.h"
 #include "viewcontext.h"
 #include <QPointer>
+#include <pxr/usd/usdGeom/tokens.h>
 
 // generated files
 #include "ui_renderview.h"
 
 namespace stageviz {
+namespace {
+
+    TfToken stageUpToken(Session::StageUp stageUp)
+    {
+        switch (stageUp) {
+        case Session::StageUp::Z: return UsdGeomTokens->z;
+        case Session::StageUp::Y:
+        default: return UsdGeomTokens->y;
+        }
+    }
+
+}  // namespace
+
 class RenderViewPrivate : public QObject {
 public:
     void init();
@@ -24,6 +38,7 @@ public Q_SLOTS:
     void updateSelection(const QList<SdfPath>& paths);
     void updateStage(UsdStageRefPtr stage, Session::LoadPolicy policy, Session::StageStatus status);
     void updateAuxiliary(UsdStageRefPtr auxiliary);
+    void updateStageUp(Session::StageUp stageUp);
     void captureReady(qint64 elapsed);
     void renderReady(qint64 elapsed);
 
@@ -54,6 +69,7 @@ RenderViewPrivate::init()
     connect(session(), &Session::maskChanged, this, &RenderViewPrivate::updateMask);
     connect(session(), &Session::primsChanged, this, &RenderViewPrivate::updatePrims);
     connect(session(), &Session::stageChanged, this, &RenderViewPrivate::updateStage);
+    connect(session(), &Session::stageUpChanged, this, &RenderViewPrivate::updateStageUp);
 }
 
 ImagingGLWidget*
@@ -83,7 +99,13 @@ RenderViewPrivate::updatePrims(const NoticeBatch& batch)
 void
 RenderViewPrivate::updateStage(UsdStageRefPtr stage, Session::LoadPolicy policy, Session::StageStatus status)
 {
+    Q_UNUSED(stage);
+    Q_UNUSED(policy);
+
     if (status == Session::StageStatus::Loaded) {
+        // Resolve the application-level stage-up enum here at the RenderView
+        // boundary. ImagingGLWidget only needs to know the USD/render-space token.
+        imageGLWidget()->updateStageUp(stageUpToken(session()->stageUp()));
         imageGLWidget()->updateStage(session()->stage());
     }
     else {
@@ -95,6 +117,12 @@ void
 RenderViewPrivate::updateAuxiliary(UsdStageRefPtr auxiliary)
 {
     imageGLWidget()->updateAuxiliary(auxiliary);
+}
+
+void
+RenderViewPrivate::updateStageUp(Session::StageUp stageUp)
+{
+    imageGLWidget()->updateStageUp(stageUpToken(stageUp));
 }
 
 void

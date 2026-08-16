@@ -9,6 +9,7 @@
 #include "stageviz.h"
 #include <QOpenGLFunctions>
 #include <QOpenGLWidget>
+#include <pxr/base/tf/token.h>
 
 namespace stageviz {
 
@@ -57,6 +58,23 @@ public:
      * @param context View context for stage locking and command execution.
      */
     void setContext(ViewContext* context);
+
+    ///@}
+
+    /** @name Camera */
+    ///@{
+
+    /**
+     * @brief Frames the specified bounding box.
+     *
+     * @param bbox Bounding box to frame.
+     */
+    void frame(const GfBBox3d& bbox);
+
+    /**
+     * @brief Resets the camera view.
+     */
+    void resetView();
 
     ///@}
 
@@ -130,13 +148,20 @@ public:
     /**
      * @brief Updates the Stageviz-owned auxiliary USD stage used by the renderer.
      *
-     * The auxiliary stage is separate from the document stage and may contain
-     * application-owned render content such as override materials, guides,
-     * helpers, diagnostics, or other non-document scene data.
-     *
      * @param auxiliary Auxiliary USD stage to present.
      */
     void updateAuxiliary(UsdStageRefPtr auxiliary);
+
+    /**
+     * @brief Updates the render-space stage up axis.
+     *
+     * The caller is responsible for translating application-level stage-up
+     * state to the corresponding USD token.
+     *
+     * @param upAxis USD up-axis token, normally UsdGeomTokens->y or
+     * UsdGeomTokens->z.
+     */
+    void updateStageUp(const TfToken& upAxis);
 
     /**
      * @brief Updates the scene bounding box.
@@ -183,19 +208,8 @@ protected:
     /** @name OpenGL Events */
     ///@{
 
-    /**
-     * @brief Initializes OpenGL resources.
-     */
     void initializeGL() override;
-
-    /**
-     * @brief Performs OpenGL rendering.
-     */
     void paintGL() override;
-
-    /**
-     * @brief Handles Qt paint events.
-     */
     void paintEvent(QPaintEvent* event) override;
 
     ///@}
@@ -203,29 +217,10 @@ protected:
     /** @name Mouse Interaction */
     ///@{
 
-    /**
-     * @brief Handles mouse double-click events.
-     */
     void mouseDoubleClickEvent(QMouseEvent* event) override;
-
-    /**
-     * @brief Handles mouse press events.
-     */
     void mousePressEvent(QMouseEvent* event) override;
-
-    /**
-     * @brief Handles mouse move events.
-     */
     void mouseMoveEvent(QMouseEvent* event) override;
-
-    /**
-     * @brief Handles mouse release events.
-     */
     void mouseReleaseEvent(QMouseEvent* event) override;
-
-    /**
-     * @brief Handles mouse wheel events.
-     */
     void wheelEvent(QWheelEvent* event) override;
 
     ///@}

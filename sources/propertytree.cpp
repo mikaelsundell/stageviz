@@ -1546,8 +1546,8 @@ PropertyTreePrivate::itemChanged(QTreeWidgetItem* baseItem, int column)
     if (!parsed || updated.IsEmpty()) {
         restoreItemText(item);
         MessageDialog::warning(d.tree.data(), tr("Invalid property value"),
-                            error.isEmpty() ? tr("The value could not be converted to the USD attribute type.")
-                                            : error);
+                               error.isEmpty() ? tr("The value could not be converted to the USD attribute type.")
+                                               : error);
         return;
     }
 

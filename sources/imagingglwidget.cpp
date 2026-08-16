@@ -155,6 +155,7 @@ public:
     void wheelEvent(QWheelEvent* event);
     void updateStage(UsdStageRefPtr stage);
     void updateAuxiliary(UsdStageRefPtr auxiliary);
+    void updateStageUp(const TfToken& upAxis);
     void updateBoundingBox(const GfBBox3d& bbox);
     void updateMask(const QList<SdfPath>& paths);
     void updatePrims(const NoticeBatch& batch);
@@ -198,6 +199,7 @@ public:
         GfBBox3d selectionBBox;
         UsdStageRefPtr stage;
         UsdStageRefPtr auxiliary;
+        TfToken stageUpAxis;
         UsdImagingGLRenderParams params;
         GfBBox3d bbox;
         QList<SdfPath> mask;
@@ -235,6 +237,7 @@ ImagingGLWidgetPrivate::init()
     d.drag = false;
     d.sweep = false;
     d.context = nullptr;
+    d.stageUpAxis = UsdGeomTokens->y;
 }
 
 void
@@ -448,7 +451,7 @@ ImagingGLWidgetPrivate::updateAuxiliaryGrid()
     UsdGeomScope::Define(d.auxiliary, gridRootPath);
     UsdGeomScope::Define(d.auxiliary, materialsPath);
 
-    const TfToken upAxis = d.stage ? UsdGeomGetStageUpAxis(d.stage) : UsdGeomTokens->y;
+    const TfToken& upAxis = d.stageUpAxis;
 
     constexpr int lines = 12;
     constexpr float spacing = 1.0f;
@@ -1327,6 +1330,19 @@ ImagingGLWidgetPrivate::updateAuxiliary(UsdStageRefPtr auxiliary)
 }
 
 void
+ImagingGLWidgetPrivate::updateStageUp(const TfToken& upAxis)
+{
+    const TfToken normalizedAxis = (upAxis == UsdGeomTokens->z) ? UsdGeomTokens->z : UsdGeomTokens->y;
+    if (d.stageUpAxis == normalizedAxis)
+        return;
+
+    d.stageUpAxis = normalizedAxis;
+    updateAuxiliaryGrid();
+    refreshAuxiliarySceneIndex();
+    d.glwidget->update();
+}
+
+void
 ImagingGLWidgetPrivate::updateBoundingBox(const GfBBox3d& bbox)
 {
     SignalGuard::Scope guard(this);
@@ -1849,6 +1865,12 @@ void
 ImagingGLWidget::updateAuxiliary(UsdStageRefPtr auxiliary)
 {
     p->updateAuxiliary(auxiliary);
+}
+
+void
+ImagingGLWidget::updateStageUp(const TfToken& upAxis)
+{
+    p->updateStageUp(upAxis);
 }
 
 void

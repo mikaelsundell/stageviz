@@ -153,7 +153,7 @@ MessageDialog::question(QWidget* parent, const QString& title, const QString& te
 
 bool
 MessageDialog::about(QWidget* parent, const QString& title, const QString& heading, const QString& details,
-                  const QString& url)
+                     const QString& url)
 {
     MessageDialog box(parent);
     box.p->d.type = title;
@@ -168,7 +168,7 @@ MessageDialog::about(QWidget* parent, const QString& title, const QString& headi
 
 bool
 MessageDialog::update(QWidget* parent, const QString& title, const QString& heading, const QString& details,
-                   const QString& url)
+                      const QString& url)
 {
     MessageDialog box(parent);
     box.p->d.type = "Update";

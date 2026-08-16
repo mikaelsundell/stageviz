@@ -246,7 +246,7 @@ PythonShelfPrivate::removeTab(int index)
     const QString displayName = shelfName.isEmpty() ? tr("Shelf") : shelfName;
 
     if (!MessageDialog::question(d.shelf.data(), tr("Remove Shelf"),
-                              tr("Remove the shelf \"%1\" and all scripts it contains?").arg(displayName)))
+                                 tr("Remove the shelf \"%1\" and all scripts it contains?").arg(displayName)))
         return;
 
     QWidget* widget = d.tabs->widget(index);

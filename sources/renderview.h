@@ -31,7 +31,6 @@ class RenderViewPrivate;
 class RenderView : public QWidget {
     Q_OBJECT
 public:
-public:
     /**
      * @brief Constructs the render view widget.
      * @param parent Optional parent widget.

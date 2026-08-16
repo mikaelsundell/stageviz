@@ -1451,7 +1451,7 @@ ViewerPrivate::openAbout()
         details = in.readAll();
     }
     MessageDialog::about(d.viewer.data(), QString("%1 %2").arg(PROJECT_NAME).arg(PROJECT_VERSION), PROJECT_COPYRIGHT,
-                      details, GITHUB_URL);
+                         details, GITHUB_URL);
 }
 
 void
@@ -1516,7 +1516,7 @@ ViewerPrivate::checkUpdates()
                     const QString details = latest.notes;
 
                     const bool download = MessageDialog::update(d.viewer.data(), title, heading, details,
-                                                             latest.url.toString());
+                                                                latest.url.toString());
 
                     if (download) {
                         const Github::Asset& asset = latest.assets.first();
