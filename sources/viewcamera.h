@@ -95,14 +95,6 @@ public:
     void frame(const GfBBox3d& bbox);
 
     /**
-     * @brief Frames the entire stored scene bounding box.
-     *
-     * Preserves the current camera orientation and fits the stored
-     * scene bounds in view.
-     */
-    void frameAll();
-
-    /**
      * @brief Resets the camera to the default quarter view.
      *
      * Restores the default orbit orientation and frames the stored

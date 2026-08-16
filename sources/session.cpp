@@ -926,29 +926,52 @@ SessionPrivate::setMask(const QList<SdfPath>& paths)
 void
 SessionPrivate::setPayloads(const QList<SdfPath>& paths, bool loaded)
 {
-    WRITE_LOCKER(locker, &d.stageLock, "stageLock");
-    if (!d.stage)
-        return;
+    bool changed = false;
 
-    StageBlocker blocker(d.stageWatcher.data());
+    {
+        WRITE_LOCKER(locker, &d.stageLock, "stageLock");
+        if (!d.stage)
+            return;
 
-    for (const SdfPath& path : paths) {
-        const SdfPath primPath = path.IsPropertyPath() ? path.GetPrimPath() : path;
-        UsdPrim prim = d.stage->GetPrimAtPath(primPath);
-        if (!prim || !prim.IsValid())
-            continue;
-        if (!stage::isPayload(d.stage, primPath))
-            continue;
+        StageBlocker blocker(d.stageWatcher.data());
 
-        if (loaded) {
-            if (!prim.IsLoaded())
-                prim.Load();
-        }
-        else {
-            if (prim.IsLoaded())
-                prim.Unload();
+        for (const SdfPath& path : paths) {
+            const SdfPath primPath = path.IsPropertyPath() ? path.GetPrimPath() : path;
+            UsdPrim prim = d.stage->GetPrimAtPath(primPath);
+            if (!prim || !prim.IsValid())
+                continue;
+            if (!stage::isPayload(d.stage, primPath))
+                continue;
+
+            if (loaded) {
+                if (!prim.IsLoaded()) {
+                    prim.Load();
+                    changed = true;
+                }
+            }
+            else {
+                if (prim.IsLoaded()) {
+                    prim.Unload();
+                    changed = true;
+                }
+            }
         }
     }
+
+    if (!changed)
+        return;
+
+    const GfBBox3d bbox = boundingBox();
+
+    {
+        WRITE_LOCKER(locker, &d.stageLock, "stageLock");
+        d.bbox = bbox;
+    }
+
+    if (d.viewState && d.viewState->camera())
+        d.viewState->camera()->setBoundingBox(bbox);
+
+    Q_EMIT d.session->boundingBoxChanged(bbox);
 }
 
 void

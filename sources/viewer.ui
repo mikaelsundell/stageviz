@@ -840,6 +840,7 @@
     <addaction name="separator"/>
     <addaction name="viewPython"/>
     <addaction name="viewProgress"/>
+    <addaction name="separator"/>
     <addaction name="viewConsole"/>
     <addaction name="separator"/>
    </widget>

@@ -19,7 +19,6 @@ class ViewCameraPrivate {
 public:
     void init();
     void frame(const GfRange3d& range);
-    void frameAll();
     void tumble(double x, double y);
     void truck(double right, double up);
     void distance(double factor);
@@ -115,13 +114,6 @@ ViewCameraPrivate::frame(const GfRange3d& range)
     d.center = range.GetMidpoint();
     d.focusPoint = d.center;
     d.valid = false;
-}
-
-void
-ViewCameraPrivate::frameAll()
-{
-    frame(d.range);
-    d.identity = false;
 }
 
 void
@@ -280,13 +272,6 @@ ViewCamera::frame(const GfBBox3d& bbox)
 {
     p->frame(bbox.ComputeAlignedRange());
     p->d.identity = false;
-    Q_EMIT cameraChanged(camera());
-}
-
-void
-ViewCamera::frameAll()
-{
-    p->frameAll();
     Q_EMIT cameraChanged(camera());
 }
 

@@ -4,6 +4,7 @@
 
 #include "pythonshelf.h"
 #include "application.h"
+#include "messagebox.h"
 #include "pythoninterpreter.h"
 #include "roles.h"
 #include "settings.h"
@@ -239,6 +240,13 @@ void
 PythonShelfPrivate::removeTab(int index)
 {
     if (!d.tabs || index < 0 || index >= d.tabs->count())
+        return;
+
+    const QString shelfName = d.tabs->tabText(index).trimmed();
+    const QString displayName = shelfName.isEmpty() ? tr("Shelf") : shelfName;
+
+    if (!MessageBox::question(d.shelf.data(), tr("Remove Shelf"),
+                              tr("Remove the shelf \"%1\" and all scripts it contains?").arg(displayName)))
         return;
 
     QWidget* widget = d.tabs->widget(index);

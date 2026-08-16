@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
 // Copyright (c) 2025 - present Mikael Sundell
-// https://github.com/mikaelsundell/stageviz
+// https\://github.com/mikaelsundell/stageviz
 
 #include "viewer.h"
 #include "application.h"
@@ -1262,9 +1262,13 @@ ViewerPrivate::frameAll()
     if (!session()->isLoaded())
         return;
 
+    const GfBBox3d bbox = session()->boundingBox();
+    if (bbox.GetRange().IsEmpty())
+        return;
+
     ViewCamera* camera = session()->viewState()->camera();
     if (camera)
-        camera->frameAll();
+        camera->frame(bbox);
 }
 
 void
@@ -1541,13 +1545,13 @@ ViewerPrivate::checkUpdates()
 void
 ViewerPrivate::openGithubReadme()
 {
-    QDesktopServices::openUrl(QUrl("https://github.com/mikaelsundell/stageviz/blob/master/README.md"));
+    QDesktopServices::openUrl(QUrl("https\://github.com/mikaelsundell/stageviz/blob/master/README.md"));
 }
 
 void
 ViewerPrivate::openGithubIssues()
 {
-    QDesktopServices::openUrl(QUrl("https://github.com/mikaelsundell/stageviz/issues"));
+    QDesktopServices::openUrl(QUrl("https\://github.com/mikaelsundell/stageviz/issues"));
 }
 
 void
@@ -1704,7 +1708,6 @@ void
 ViewerPrivate::updateStage(UsdStageRefPtr stage, Session::LoadPolicy policy, Session::StageStatus status)
 {
     Q_UNUSED(stage);
-
 
     d.loadPolicy = policy;
     d.ui->policyAll->setChecked(policy == Session::LoadPolicy::All);
