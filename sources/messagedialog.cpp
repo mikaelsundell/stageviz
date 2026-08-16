@@ -2,17 +2,17 @@
 // Copyright (c) 2025 - present Mikael Sundell
 // https://github.com/mikaelsundell/stageviz
 
-#include "messagebox.h"
+#include "messagedialog.h"
 #include <QPointer>
 
 // generated files
-#include "ui_messagebox.h"
+#include "ui_messagedialog.h"
 
 namespace stageviz {
-class MessageBoxPrivate : public QObject {
+class MessageDialogPrivate : public QObject {
     Q_OBJECT
 public:
-    MessageBoxPrivate();
+    MessageDialogPrivate();
     void init();
     bool exec();
 
@@ -28,13 +28,13 @@ public:
         int iconSize;
         bool showIcon;
         bool showReject;
-        QPointer<MessageBox> dialog;
-        QScopedPointer<Ui_MessageBox> ui;
+        QPointer<MessageDialog> dialog;
+        QScopedPointer<Ui_MessageDialog> ui;
     };
     Data d;
 };
 
-MessageBoxPrivate::MessageBoxPrivate()
+MessageDialogPrivate::MessageDialogPrivate()
 {
     d.iconSize = 128;
     d.showIcon = true;
@@ -42,10 +42,10 @@ MessageBoxPrivate::MessageBoxPrivate()
 }
 
 void
-MessageBoxPrivate::init()
+MessageDialogPrivate::init()
 {
     // ui
-    d.ui.reset(new Ui_MessageBox());
+    d.ui.reset(new Ui_MessageDialog());
     d.ui->setupUi(d.dialog.data());
     // connect
     connect(d.ui->accept, &QPushButton::clicked, this, [this]() { d.dialog->done(QDialog::Accepted); });
@@ -53,7 +53,7 @@ MessageBoxPrivate::init()
 }
 
 bool
-MessageBoxPrivate::exec()
+MessageDialogPrivate::exec()
 {
     d.dialog->setWindowTitle(d.type);
     d.ui->icon->setFixedSize(d.iconSize, d.iconSize);
@@ -101,20 +101,20 @@ MessageBoxPrivate::exec()
     return d.dialog->exec() == QDialog::Accepted;
 }
 
-MessageBox::MessageBox(QWidget* parent)
+MessageDialog::MessageDialog(QWidget* parent)
     : QDialog(parent)
-    , p(new MessageBoxPrivate())
+    , p(new MessageDialogPrivate())
 {
     p->d.dialog = this;
     p->init();
 }
 
-MessageBox::~MessageBox() {}
+MessageDialog::~MessageDialog() {}
 
 bool
-MessageBox::information(QWidget* parent, const QString& title, const QString& text)
+MessageDialog::information(QWidget* parent, const QString& title, const QString& text)
 {
-    MessageBox box(parent);
+    MessageDialog box(parent);
     box.p->d.type = "Information";
     box.p->d.title = title;
     box.p->d.text = text;
@@ -125,9 +125,9 @@ MessageBox::information(QWidget* parent, const QString& title, const QString& te
 }
 
 bool
-MessageBox::warning(QWidget* parent, const QString& title, const QString& text)
+MessageDialog::warning(QWidget* parent, const QString& title, const QString& text)
 {
-    MessageBox box(parent);
+    MessageDialog box(parent);
     box.p->d.type = "Warning";
     box.p->d.title = title;
     box.p->d.text = text;
@@ -138,9 +138,9 @@ MessageBox::warning(QWidget* parent, const QString& title, const QString& text)
 }
 
 bool
-MessageBox::question(QWidget* parent, const QString& title, const QString& text)
+MessageDialog::question(QWidget* parent, const QString& title, const QString& text)
 {
-    MessageBox box(parent);
+    MessageDialog box(parent);
     box.p->d.type = "Question";
     box.p->d.title = title;
     box.p->d.text = text;
@@ -152,10 +152,10 @@ MessageBox::question(QWidget* parent, const QString& title, const QString& text)
 }
 
 bool
-MessageBox::about(QWidget* parent, const QString& title, const QString& heading, const QString& details,
+MessageDialog::about(QWidget* parent, const QString& title, const QString& heading, const QString& details,
                   const QString& url)
 {
-    MessageBox box(parent);
+    MessageDialog box(parent);
     box.p->d.type = title;
     box.p->d.title = title;
     box.p->d.url = url;
@@ -167,10 +167,10 @@ MessageBox::about(QWidget* parent, const QString& title, const QString& heading,
 }
 
 bool
-MessageBox::update(QWidget* parent, const QString& title, const QString& heading, const QString& details,
+MessageDialog::update(QWidget* parent, const QString& title, const QString& heading, const QString& details,
                    const QString& url)
 {
-    MessageBox box(parent);
+    MessageDialog box(parent);
     box.p->d.type = "Update";
     box.p->d.title = title;
     box.p->d.url = url;
@@ -184,4 +184,4 @@ MessageBox::update(QWidget* parent, const QString& title, const QString& heading
 
 }  // namespace stageviz
 
-#include "messagebox.moc"
+#include "messagedialog.moc"

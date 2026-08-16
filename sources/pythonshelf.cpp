@@ -4,7 +4,7 @@
 
 #include "pythonshelf.h"
 #include "application.h"
-#include "messagebox.h"
+#include "messagedialog.h"
 #include "pythoninterpreter.h"
 #include "roles.h"
 #include "settings.h"
@@ -245,7 +245,7 @@ PythonShelfPrivate::removeTab(int index)
     const QString shelfName = d.tabs->tabText(index).trimmed();
     const QString displayName = shelfName.isEmpty() ? tr("Shelf") : shelfName;
 
-    if (!MessageBox::question(d.shelf.data(), tr("Remove Shelf"),
+    if (!MessageDialog::question(d.shelf.data(), tr("Remove Shelf"),
                               tr("Remove the shelf \"%1\" and all scripts it contains?").arg(displayName)))
         return;
 

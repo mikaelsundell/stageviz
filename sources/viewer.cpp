@@ -7,7 +7,7 @@
 #include "commandstack.h"
 #include "consoledialog.h"
 #include "githubclient.h"
-#include "messagebox.h"
+#include "messagedialog.h"
 #include "mouseevent.h"
 #include "notice.h"
 #include "os.h"
@@ -1450,7 +1450,7 @@ ViewerPrivate::openAbout()
         QTextStream in(&file);
         details = in.readAll();
     }
-    MessageBox::about(d.viewer.data(), QString("%1 %2").arg(PROJECT_NAME).arg(PROJECT_VERSION), PROJECT_COPYRIGHT,
+    MessageDialog::about(d.viewer.data(), QString("%1 %2").arg(PROJECT_NAME).arg(PROJECT_VERSION), PROJECT_COPYRIGHT,
                       details, GITHUB_URL);
 }
 
@@ -1515,7 +1515,7 @@ ViewerPrivate::checkUpdates()
                     const QString heading = tr("What's new in version %1").arg(latest.tag);
                     const QString details = latest.notes;
 
-                    const bool download = MessageBox::update(d.viewer.data(), title, heading, details,
+                    const bool download = MessageDialog::update(d.viewer.data(), title, heading, details,
                                                              latest.url.toString());
 
                     if (download) {
@@ -1529,7 +1529,7 @@ ViewerPrivate::checkUpdates()
                     return;
                 }
 
-                MessageBox::information(
+                MessageDialog::information(
                     d.viewer.data(), QString("%1 is up to date").arg(PROJECT_NAME),
                     tr("You are running the latest version of %1 %2.").arg(PROJECT_NAME).arg(PROJECT_VERSION));
             });
@@ -1868,7 +1868,7 @@ ViewerPrivate::saveChanges()
 
     const QString name = session()->filename().isEmpty() ? "Untitled" : QFileInfo(session()->filename()).fileName();
 
-    if (MessageBox::question(d.viewer.data(), tr("Save changes?"), tr("Save changes to %1?").arg(name))) {
+    if (MessageDialog::question(d.viewer.data(), tr("Save changes?"), tr("Save changes to %1?").arg(name))) {
         return saveFile();
     }
     return true;

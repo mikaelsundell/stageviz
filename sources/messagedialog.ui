@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <ui version="4.0">
- <class>MessageBox</class>
- <widget class="QDialog" name="MessageBox">
+ <class>MessageDialog</class>
+ <widget class="QDialog" name="MessageDialog">
   <property name="windowModality">
    <enum>Qt::WindowModality::WindowModal</enum>
   </property>
@@ -239,7 +239,7 @@
   <connection>
    <sender>reject</sender>
    <signal>clicked()</signal>
-   <receiver>MessageBox</receiver>
+   <receiver>MessageDialog</receiver>
    <slot>close()</slot>
    <hints>
     <hint type="sourcelabel">

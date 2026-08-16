@@ -7,24 +7,18 @@
 #include <QDialog>
 #include <QUrl>
 
-#ifdef Q_OS_WIN
-#    ifdef MessageBox
-#        undef MessageBox
-#    endif
-#endif
-
 namespace stageviz {
 
-class MessageBoxPrivate;
+class MessageDialogPrivate;
 
 /**
  * @brief Application-styled modal message dialog.
  *
- * MessageBox provides convenience entry points for common dialog types while
+ * MessageDialog provides convenience entry points for common dialog types while
  * keeping construction private. Use the static functions instead of creating
- * MessageBox instances directly.
+ * MessageDialog instances directly.
  */
-class MessageBox : public QDialog {
+class MessageDialog : public QDialog {
 public:
     /**
      * @brief Shows an informational message.
@@ -59,11 +53,11 @@ public:
                        const QString& url = QString());
 
 private:
-    MessageBox(QWidget* parent = nullptr);
-    ~MessageBox();
+    MessageDialog(QWidget* parent = nullptr);
+    ~MessageDialog();
 
 private:
-    QScopedPointer<MessageBoxPrivate> p;
+    QScopedPointer<MessageDialogPrivate> p;
 };
 
 }  // namespace stageviz

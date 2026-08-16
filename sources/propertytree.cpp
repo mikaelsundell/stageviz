@@ -6,7 +6,7 @@
 #include "application.h"
 #include "command.h"
 #include "commandstack.h"
-#include "messagebox.h"
+#include "messagedialog.h"
 #include "notice.h"
 #include "propertydelegate.h"
 #include "propertyitem.h"
@@ -1545,7 +1545,7 @@ PropertyTreePrivate::itemChanged(QTreeWidgetItem* baseItem, int column)
 
     if (!parsed || updated.IsEmpty()) {
         restoreItemText(item);
-        MessageBox::warning(d.tree.data(), tr("Invalid property value"),
+        MessageDialog::warning(d.tree.data(), tr("Invalid property value"),
                             error.isEmpty() ? tr("The value could not be converted to the USD attribute type.")
                                             : error);
         return;
