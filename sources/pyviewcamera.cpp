@@ -83,16 +83,6 @@ PyViewCamera_isIdentity(PyViewCameraObject* self)
 }
 
 static PyObject*
-PyViewCamera_frameAll(PyViewCameraObject* self)
-{
-    if (!checkViewCamera(self->camera))
-        return nullptr;
-
-    self->camera->frameAll();
-    Py_RETURN_NONE;
-}
-
-static PyObject*
 PyViewCamera_resetView(PyViewCameraObject* self)
 {
     if (!checkViewCamera(self->camera))
@@ -528,9 +518,6 @@ PyViewCamera_reset(PyViewCameraObject* self)
 static PyMethodDef PyViewCamera_methods[] = {
     { "isIdentity", reinterpret_cast<PyCFunction>(PyViewCamera_isIdentity), METH_NOARGS,
       "Return whether the camera is in its identity state" },
-
-    { "frameAll", reinterpret_cast<PyCFunction>(PyViewCamera_frameAll), METH_NOARGS,
-      "Frame the whole scene bounding box" },
     { "resetView", reinterpret_cast<PyCFunction>(PyViewCamera_resetView), METH_NOARGS,
       "Reset the camera view orientation" },
     { "tumble", reinterpret_cast<PyCFunction>(PyViewCamera_tumble), METH_VARARGS,

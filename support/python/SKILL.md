@@ -349,6 +349,34 @@ def iter_bindable_prims(prim, recursive=True):
 
 Expose an `Apply recursively to children` checkbox by default for material tools unless recursion would be unsafe or misleading.
 
+## Batch scene changes and deferred updates
+
+When a tool will author many USD changes in one operation, temporarily defer Stageviz prim updates so Stageviz does not repeatedly process notices, refresh UI state, or recompute scene bounds after every individual edit. This is especially important for tools that create or modify many prims, payloads, materials, bindings, transforms, or attributes.
+
+Prefer this pattern when the Python bindings expose the corresponding Session API:
+
+```python
+session = get_session()
+previous_update = session.primsUpdate()
+
+session.setPrimsUpdate(stageviz.Session.PrimsUpdate.Deferred)
+
+try:
+    # Perform the complete batch of USD edits here.
+    ...
+finally:
+    session.setPrimsUpdate(previous_update)
+
+    # Restoring Immediate already flushes queued updates in the current Session API.
+    # Flush explicitly only if the previous mode was not Immediate.
+    if previous_update != stageviz.Session.PrimsUpdate.Immediate:
+        session.flushPrimsUpdates()
+```
+
+Always restore the previous update mode in `finally`, including when authoring raises an exception. Do not permanently force `Immediate` mode, because the caller or another Stageviz workflow may already be using deferred updates.
+
+For small edits such as changing one shader input or one prim property, deferred updates are unnecessary. Use them when batching enough edits that repeated Stageviz notice handling would be wasteful.
+
 ## Dialog UI conventions
 
 For look/material dialogs, prefer this layout:
@@ -428,6 +456,7 @@ Before returning a Stageviz dialog script, verify:
 - No `QtCore.Qt.GlobalColor` value is treated as a `QColor` object.
 - `Sdf.ValueTypeNames.Int` is used for integer shader inputs.
 - The current Stageviz stage is used.
+- Large scene-authoring operations use deferred prim updates and restore the previous update mode in `finally`.
 - Empty selection is handled.
 - Material binding uses `UsdShade.MaterialBindingAPI`.
 - Material paths are valid absolute `Sdf.Path` values.

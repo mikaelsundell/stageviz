@@ -1545,13 +1545,13 @@ ViewerPrivate::checkUpdates()
 void
 ViewerPrivate::openGithubReadme()
 {
-    QDesktopServices::openUrl(QUrl("https\://github.com/mikaelsundell/stageviz/blob/master/README.md"));
+    QDesktopServices::openUrl(QUrl("https://github.com/mikaelsundell/stageviz/blob/master/README.md"));
 }
 
 void
 ViewerPrivate::openGithubIssues()
 {
-    QDesktopServices::openUrl(QUrl("https\://github.com/mikaelsundell/stageviz/issues"));
+    QDesktopServices::openUrl(QUrl("https://github.com/mikaelsundell/stageviz/issues"));
 }
 
 void
