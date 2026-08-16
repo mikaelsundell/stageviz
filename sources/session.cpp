@@ -335,8 +335,9 @@ SessionPrivate::newStage(Session::LoadPolicy policy)
             endProgressBlock();
             return false;
         }
-
         d.stage = stage;
+        UsdGeomSetStageMetersPerUnit(d.stage, UsdGeomLinearUnits::millimeters);
+        
         UsdGeomXform root = UsdGeomXform::Define(d.stage, SdfPath("/World"));
         d.stage->SetDefaultPrim(root.GetPrim());
         d.filename.clear();
