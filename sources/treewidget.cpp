@@ -10,11 +10,202 @@
 #include <QEvent>
 #include <QMouseEvent>
 #include <QPainter>
+#include <QPalette>
 #include <QPersistentModelIndex>
 #include <QPointer>
 #include <QStyledItemDelegate>
 
 namespace stageviz {
+
+TreeWidget::ItemDelegate::ItemDelegate(QObject* parent)
+    : QStyledItemDelegate(parent)
+{}
+
+TreeWidget::ItemDelegate::~ItemDelegate() = default;
+
+TreeWidget::ItemDelegate::Layout
+TreeWidget::ItemDelegate::layout(const QStyleOptionViewItem& option, const QModelIndex& index) const
+{
+    QStyleOptionViewItem opt(option);
+    initStyleOption(&opt, index);
+
+    const int leftMargin = 8;
+    const int rightMargin = 8;
+    const int iconSpacing = 6;
+    const int textSpacing = 8;
+    const int iconSize = stageviz::style()->iconSize(Style::UIScale::Small);
+    const int xOffset = 10;
+    const int yOffset = 2;
+
+    Layout l;
+    l.contentRect = opt.rect.adjusted(leftMargin, 0, -rightMargin, 0);
+    l.hasDecoration = !opt.icon.isNull();
+
+    if (index.column() == 0) {
+        int x = l.contentRect.left() + xOffset;
+
+        l.isCheckable = (index.flags() & Qt::ItemIsUserCheckable) && index.data(Qt::CheckStateRole).isValid();
+
+        if (l.isCheckable) {
+            l.checkRect = QRect(x, l.contentRect.center().y() - iconSize / 2 + yOffset, iconSize, iconSize);
+            l.checkHitRect = l.checkRect;
+            x = l.checkRect.right() + 1 + iconSpacing;
+        }
+
+        if (l.hasDecoration) {
+            l.iconRect = QRect(x, l.contentRect.center().y() - iconSize / 2 + yOffset, iconSize, iconSize);
+            l.iconHitRect = l.iconRect;
+            x = l.iconRect.right() + 1 + textSpacing;
+        }
+
+        l.textRect = l.contentRect;
+        l.textRect.setLeft(x);
+        return l;
+    }
+
+    const bool hasText = !opt.text.isEmpty();
+
+    if (l.hasDecoration && hasText) {
+        int x = l.contentRect.left();
+
+        l.iconRect = QRect(x, l.contentRect.center().y() - iconSize / 2 + yOffset, iconSize, iconSize);
+        l.iconHitRect = l.iconRect;
+
+        l.textRect = l.contentRect;
+        l.textRect.setLeft(l.iconRect.right() + 1 + textSpacing);
+    }
+    else if (l.hasDecoration) {
+        const int x = l.contentRect.center().x() - iconSize / 2;
+        const int y = l.contentRect.center().y() - iconSize / 2 + yOffset;
+
+        l.iconRect = QRect(x, y, iconSize, iconSize);
+        l.iconHitRect = l.iconRect;
+        l.textRect = QRect();
+    }
+    else {
+        l.textRect = l.contentRect;
+    }
+
+    return l;
+}
+
+bool
+TreeWidget::ItemDelegate::hitCheckbox(const QStyleOptionViewItem& option, const QModelIndex& index,
+                                      const QPoint& pos) const
+{
+    const Layout l = layout(option, index);
+    return l.isCheckable && l.checkHitRect.contains(pos);
+}
+
+bool
+TreeWidget::ItemDelegate::editorEvent(QEvent* event, QAbstractItemModel* model, const QStyleOptionViewItem& option,
+                                      const QModelIndex& index)
+{
+    const bool isCheckable = index.column() == 0 && (index.flags() & Qt::ItemIsUserCheckable)
+                             && index.data(Qt::CheckStateRole).isValid();
+
+    if (!isCheckable)
+        return QStyledItemDelegate::editorEvent(event, model, option, index);
+
+    if (event->type() == QEvent::MouseButtonPress || event->type() == QEvent::MouseButtonRelease) {
+        auto* mouse = static_cast<QMouseEvent*>(event);
+        if (mouse->button() == Qt::LeftButton && hitCheckbox(option, index, mouse->pos()))
+            return true;
+        return false;
+    }
+
+    if (event->type() == QEvent::MouseButtonDblClick) {
+        auto* mouse = static_cast<QMouseEvent*>(event);
+        const Layout l = layout(option, index);
+        if (!l.textRect.contains(mouse->pos()))
+            return true;
+    }
+
+    return QStyledItemDelegate::editorEvent(event, model, option, index);
+}
+
+void
+TreeWidget::ItemDelegate::paint(QPainter* painter, const QStyleOptionViewItem& option, const QModelIndex& index) const
+{
+    QStyleOptionViewItem opt(option);
+    initStyleOption(&opt, index);
+    opt.features &= ~QStyleOptionViewItem::HasCheckIndicator;
+    opt.backgroundBrush = Qt::NoBrush;
+    opt.state &= ~QStyle::State_HasFocus;
+
+    const Layout l = layout(option, index);
+    const int iconSize = stageviz::style()->iconSize(Style::UIScale::Small);
+
+    painter->save();
+
+    if (index.column() == 0 && l.isCheckable) {
+        painter->setBrush(stageviz::style()->color(Style::ColorRole::BaseAlt));
+        painter->setPen(stageviz::style()->color(Style::ColorRole::BorderAlt));
+        painter->drawRect(l.checkRect.adjusted(0, 0, -1, -1));
+
+        const Qt::CheckState state = static_cast<Qt::CheckState>(index.data(Qt::CheckStateRole).toInt());
+
+        if (state == Qt::Checked) {
+            const QIcon checked = stageviz::style()->icon(Style::IconRole::Checked, Style::UIScale::Small);
+            painter->drawPixmap(l.checkRect.topLeft(), checked.pixmap(iconSize, iconSize));
+        }
+        else if (state == Qt::PartiallyChecked) {
+            const QIcon partial = stageviz::style()->icon(Style::IconRole::PartiallyChecked, Style::UIScale::Small);
+            painter->drawPixmap(l.checkRect.topLeft(), partial.pixmap(iconSize, iconSize));
+        }
+    }
+
+    if (!l.iconRect.isNull()) {
+        opt.icon.paint(painter, l.iconRect, Qt::AlignCenter,
+                       (opt.state & QStyle::State_Enabled) ? QIcon::Normal : QIcon::Disabled);
+    }
+
+    if (!l.textRect.isNull() && !opt.text.isEmpty()) {
+        painter->setPen(opt.palette.color(QPalette::Text));
+        painter->setFont(opt.font);
+        painter->drawText(l.textRect, opt.displayAlignment | Qt::AlignVCenter,
+                          opt.fontMetrics.elidedText(opt.text, Qt::ElideRight, l.textRect.width()));
+    }
+
+#ifdef STAGEVIZ_DEBUG_TREE_HITREGIONS
+    painter->setBrush(Qt::NoBrush);
+
+    if (!l.checkRect.isNull()) {
+        QPen checkRectPen(Qt::yellow);
+        checkRectPen.setWidth(1);
+        painter->setPen(checkRectPen);
+        painter->drawRect(l.checkRect.adjusted(0, 0, -1, -1));
+    }
+
+    if (!l.checkHitRect.isNull()) {
+        QPen checkHitPen(Qt::cyan);
+        checkHitPen.setWidth(1);
+        painter->setPen(checkHitPen);
+        painter->drawRect(l.checkHitRect.adjusted(0, 0, -1, -1));
+    }
+
+    if (!l.iconRect.isNull()) {
+        QPen iconRectPen(Qt::red);
+        iconRectPen.setWidth(1);
+        painter->setPen(iconRectPen);
+        painter->drawRect(l.iconRect.adjusted(0, 0, -1, -1));
+    }
+
+    if (!l.iconHitRect.isNull()) {
+        QPen iconHitPen(Qt::magenta);
+        iconHitPen.setWidth(1);
+        painter->setPen(iconHitPen);
+        painter->drawRect(l.iconHitRect.adjusted(0, 0, -1, -1));
+    }
+
+    QPen textPen(Qt::green);
+    textPen.setWidth(1);
+    painter->setPen(textPen);
+    painter->drawRect(l.textRect.adjusted(0, 0, -1, -1));
+#endif
+
+    painter->restore();
+}
 
 class TreeWidgetPrivate : public QObject {
     Q_OBJECT
@@ -25,6 +216,7 @@ public:
     void clearHit();
     bool hasSelectedChildren(QTreeWidgetItem* item) const;
     int visualRowIndex(const QModelIndex& index) const;
+    int indexDepth(const QModelIndex& index) const;
     QModelIndex indexAtPosition(const QPoint& pos) const;
     QRect branchRect(const QRect& rect, const QModelIndex& index) const;
     QRect branchHitRect(const QRect& rect, const QModelIndex& index) const;
@@ -36,206 +228,6 @@ public:
     QRect drawRow(QPainter* painter, const QStyleOptionViewItem& option, const QModelIndex& index) const;
 
 public:
-    class ItemDelegate : public QStyledItemDelegate {
-    public:
-        struct Layout {
-            QRect contentRect;
-            QRect checkRect;
-            QRect checkHitRect;
-            QRect iconRect;
-            QRect iconHitRect;
-            QRect textRect;
-            bool isCheckable = false;
-            bool hasDecoration = false;
-        };
-
-        ItemDelegate(QObject* parent = nullptr)
-            : QStyledItemDelegate(parent)
-        {}
-
-        Layout layout(const QStyleOptionViewItem& option, const QModelIndex& index) const
-        {
-            QStyleOptionViewItem opt(option);
-            initStyleOption(&opt, index);
-
-            const int leftMargin = 8;
-            const int rightMargin = 8;
-            const int iconSpacing = 6;
-            const int textSpacing = 8;
-            const int iconSize = style()->iconSize(Style::UIScale::Small);
-            const int xOffset = 10;
-            const int yOffset = 2;
-
-            Layout l;
-            l.contentRect = opt.rect.adjusted(leftMargin, 0, -rightMargin, 0);
-            l.hasDecoration = !opt.icon.isNull();
-
-            if (index.column() == 0) {
-                int x = l.contentRect.left() + xOffset;
-
-                l.isCheckable = (index.flags() & Qt::ItemIsUserCheckable) && index.data(Qt::CheckStateRole).isValid();
-
-                if (l.isCheckable) {
-                    l.checkRect = QRect(x, l.contentRect.center().y() - iconSize / 2 + yOffset, iconSize, iconSize);
-                    l.checkHitRect = l.checkRect;
-                    x = l.checkRect.right() + 1 + iconSpacing;
-                }
-
-                if (l.hasDecoration) {
-                    l.iconRect = QRect(x, l.contentRect.center().y() - iconSize / 2 + yOffset, iconSize, iconSize);
-                    l.iconHitRect = l.iconRect;
-                    x = l.iconRect.right() + 1 + textSpacing;
-                }
-
-                l.textRect = l.contentRect;
-                l.textRect.setLeft(x);
-                return l;
-            }
-
-            const bool hasText = !opt.text.isEmpty();
-
-            if (l.hasDecoration && hasText) {
-                int x = l.contentRect.left();
-
-                l.iconRect = QRect(x, l.contentRect.center().y() - iconSize / 2 + yOffset, iconSize, iconSize);
-                l.iconHitRect = l.iconRect;
-
-                l.textRect = l.contentRect;
-                l.textRect.setLeft(l.iconRect.right() + 1 + textSpacing);
-            }
-            else if (l.hasDecoration) {
-                const int x = l.contentRect.center().x() - iconSize / 2;
-                const int y = l.contentRect.center().y() - iconSize / 2 + yOffset;
-
-                l.iconRect = QRect(x, y, iconSize, iconSize);
-                l.iconHitRect = l.iconRect;
-                l.textRect = QRect();
-            }
-            else {
-                l.textRect = l.contentRect;
-            }
-
-            return l;
-        }
-
-        bool hitCheckbox(const QStyleOptionViewItem& option, const QModelIndex& index, const QPoint& pos) const
-        {
-            const Layout l = layout(option, index);
-            return l.isCheckable && l.checkHitRect.contains(pos);
-        }
-
-        bool editorEvent(QEvent* event, QAbstractItemModel* model, const QStyleOptionViewItem& option,
-                         const QModelIndex& index) override
-        {
-            Q_UNUSED(model);
-
-            const bool isCheckable = index.column() == 0 && (index.flags() & Qt::ItemIsUserCheckable)
-                                     && index.data(Qt::CheckStateRole).isValid();
-
-            if (!isCheckable)
-                return QStyledItemDelegate::editorEvent(event, model, option, index);
-
-            if (event->type() == QEvent::MouseButtonPress || event->type() == QEvent::MouseButtonRelease) {
-                auto* mouse = static_cast<QMouseEvent*>(event);
-                if (mouse->button() == Qt::LeftButton && hitCheckbox(option, index, mouse->pos()))
-                    return true;
-                return false;
-            }
-
-            if (event->type() == QEvent::MouseButtonDblClick) {
-                auto* mouse = static_cast<QMouseEvent*>(event);
-                const Layout l = layout(option, index);
-                if (!l.textRect.contains(mouse->pos()))
-                    return true;
-            }
-
-            return QStyledItemDelegate::editorEvent(event, model, option, index);
-        }
-
-        void paint(QPainter* painter, const QStyleOptionViewItem& option, const QModelIndex& index) const override
-        {
-            QStyleOptionViewItem opt(option);
-            initStyleOption(&opt, index);
-            opt.features &= ~QStyleOptionViewItem::HasCheckIndicator;
-            opt.backgroundBrush = Qt::NoBrush;
-            opt.state &= ~QStyle::State_HasFocus;
-
-            const Layout l = layout(option, index);
-            const int iconSize = style()->iconSize(Style::UIScale::Small);
-
-            painter->save();
-
-            if (index.column() == 0 && l.isCheckable) {
-                painter->setBrush(style()->color(Style::ColorRole::BaseAlt));
-                painter->setPen(style()->color(Style::ColorRole::BorderAlt));
-                painter->drawRect(l.checkRect.adjusted(0, 0, -1, -1));
-
-                const Qt::CheckState state = static_cast<Qt::CheckState>(index.data(Qt::CheckStateRole).toInt());
-                if (state == Qt::Checked) {
-                    const QIcon checked = style()->icon(Style::IconRole::Checked, Style::UIScale::Small);
-                    painter->drawPixmap(l.checkRect.topLeft(), checked.pixmap(iconSize, iconSize));
-                }
-                else if (state == Qt::PartiallyChecked) {
-                    const QIcon partial = style()->icon(Style::IconRole::PartiallyChecked, Style::UIScale::Small);
-                    painter->drawPixmap(l.checkRect.topLeft(), partial.pixmap(iconSize, iconSize));
-                }
-            }
-
-            if (!l.iconRect.isNull()) {
-                opt.icon.paint(painter, l.iconRect, Qt::AlignCenter,
-                               (opt.state & QStyle::State_Enabled) ? QIcon::Normal : QIcon::Disabled);
-            }
-
-            if (!l.textRect.isNull() && !opt.text.isEmpty()) {
-                painter->setPen(opt.palette.color(QPalette::Text));
-                painter->setFont(opt.font);
-                painter->drawText(l.textRect, opt.displayAlignment | Qt::AlignVCenter,
-                                  opt.fontMetrics.elidedText(opt.text, Qt::ElideRight, l.textRect.width()));
-            }
-
-#ifdef STAGEVIZ_DEBUG_TREE_HITREGIONS
-            {
-                painter->setBrush(Qt::NoBrush);
-
-                if (!l.checkRect.isNull()) {
-                    QPen checkRectPen(Qt::yellow);
-                    checkRectPen.setWidth(1);
-                    painter->setPen(checkRectPen);
-                    painter->drawRect(l.checkRect.adjusted(0, 0, -1, -1));
-                }
-
-                if (!l.checkHitRect.isNull()) {
-                    QPen checkHitPen(Qt::cyan);
-                    checkHitPen.setWidth(1);
-                    painter->setPen(checkHitPen);
-                    painter->drawRect(l.checkHitRect.adjusted(0, 0, -1, -1));
-                }
-
-                if (!l.iconRect.isNull()) {
-                    QPen iconRectPen(Qt::red);
-                    iconRectPen.setWidth(1);
-                    painter->setPen(iconRectPen);
-                    painter->drawRect(l.iconRect.adjusted(0, 0, -1, -1));
-                }
-
-                if (!l.iconHitRect.isNull()) {
-                    QPen iconHitPen(Qt::magenta);
-                    iconHitPen.setWidth(1);
-                    painter->setPen(iconHitPen);
-                    painter->drawRect(l.iconHitRect.adjusted(0, 0, -1, -1));
-                }
-
-                QPen textPen(Qt::green);
-                textPen.setWidth(1);
-                painter->setPen(textPen);
-                painter->drawRect(l.textRect.adjusted(0, 0, -1, -1));
-            }
-#endif
-
-            painter->restore();
-        }
-    };
-
     enum DropMode { DropNone = 0, DropAboveItem = 1, DropOnItem = 2, DropBelowItem = 3 };
 
     struct Data {
@@ -244,7 +236,7 @@ public:
         QSet<int> selectableColumns { 0 };
         QPersistentModelIndex branchIndex;
         QPersistentModelIndex checkboxIndex;
-        QPointer<ItemDelegate> delegate;
+        QPointer<TreeWidget::ItemDelegate> delegate;
         QPointer<TreeWidget> tree;
     };
 
@@ -256,7 +248,7 @@ TreeWidgetPrivate::TreeWidgetPrivate() {}
 void
 TreeWidgetPrivate::init()
 {
-    d.delegate = new ItemDelegate(d.tree.data());
+    d.delegate = new TreeWidget::ItemDelegate(d.tree.data());
     d.tree->setItemDelegate(d.delegate);
     d.tree->viewport()->installEventFilter(this);
 }
@@ -396,6 +388,20 @@ TreeWidgetPrivate::visualRowIndex(const QModelIndex& index) const
     return row;
 }
 
+int
+TreeWidgetPrivate::indexDepth(const QModelIndex& index) const
+{
+    int depth = 0;
+    QModelIndex parent = index.parent();
+
+    while (parent.isValid()) {
+        ++depth;
+        parent = parent.parent();
+    }
+
+    return depth;
+}
+
 QModelIndex
 TreeWidgetPrivate::indexAtPosition(const QPoint& pos) const
 {
@@ -413,9 +419,8 @@ TreeWidgetPrivate::indexAtPosition(const QPoint& pos) const
 QRect
 TreeWidgetPrivate::branchRect(const QRect& rect, const QModelIndex& index) const
 {
-    Q_UNUSED(index);
     const int size = style()->iconSize(Style::UIScale::Small);
-    const int x = 6;
+    const int x = 6 + indexDepth(index) * d.tree->indentation();
     const int y = rect.center().y() - size / 2 + 1;
     return QRect(x, y, size, size);
 }
@@ -633,6 +638,15 @@ TreeWidget::TreeWidget(QWidget* parent)
     p->d.tree = this;
     p->init();
     setIndentation(12);
+
+    QPalette treePalette = palette();
+    treePalette.setColor(QPalette::Base, app()->style()->color(Style::ColorRole::Item));
+    setPalette(treePalette);
+
+    QPalette viewportPalette = viewport()->palette();
+    viewportPalette.setColor(QPalette::Base, app()->style()->color(Style::ColorRole::Item));
+    viewport()->setPalette(viewportPalette);
+    viewport()->setAutoFillBackground(true);
 }
 
 TreeWidget::~TreeWidget() = default;

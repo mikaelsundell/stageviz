@@ -61,14 +61,9 @@ MaterialOverrideSceneIndexPrivate::isGprim(const HdSceneIndexPrim& prim) const
 {
     const TfToken& type = prim.primType;
 
-    return type == HdPrimTypeTokens->mesh
-        || type == HdPrimTypeTokens->basisCurves
-        || type == HdPrimTypeTokens->points
-        || type == HdPrimTypeTokens->cube
-        || type == HdPrimTypeTokens->sphere
-        || type == HdPrimTypeTokens->cylinder
-        || type == HdPrimTypeTokens->cone
-        || type == HdPrimTypeTokens->capsule;
+    return type == HdPrimTypeTokens->mesh || type == HdPrimTypeTokens->basisCurves || type == HdPrimTypeTokens->points
+           || type == HdPrimTypeTokens->cube || type == HdPrimTypeTokens->sphere || type == HdPrimTypeTokens->cylinder
+           || type == HdPrimTypeTokens->cone || type == HdPrimTypeTokens->capsule;
 }
 
 SdfPath
@@ -92,13 +87,9 @@ MaterialOverrideSceneIndexPrivate::createMaterialBindings(const SdfPath& materia
     std::vector<HdDataSourceBaseHandle> bindings;
 
     purposes.push_back(HdMaterialBindingsSchemaTokens->allPurpose);
-    bindings.push_back(
-        HdMaterialBindingSchema::Builder()
-            .SetPath(PathDataSource::New(materialPath))
-            .Build());
+    bindings.push_back(HdMaterialBindingSchema::Builder().SetPath(PathDataSource::New(materialPath)).Build());
 
-    return HdMaterialBindingsSchema::BuildRetained(
-        purposes.size(), purposes.data(), bindings.data());
+    return HdMaterialBindingsSchema::BuildRetained(purposes.size(), purposes.data(), bindings.data());
 }
 
 TfRefPtr<MaterialOverrideSceneIndex>
@@ -186,15 +177,11 @@ MaterialOverrideSceneIndex::GetPrim(const SdfPath& primPath) const
     if (p->d.mode == Clay || p->d.mode == Custom) {
         const SdfPath materialPath = p->effectiveMaterialPath();
         if (!materialPath.IsEmpty()) {
-            editor.Set(
-                HdMaterialBindingsSchema::GetDefaultLocator(),
-                p->createMaterialBindings(materialPath));
+            editor.Set(HdMaterialBindingsSchema::GetDefaultLocator(), p->createMaterialBindings(materialPath));
         }
     }
     else if (!p->d.sceneMaterialsEnabled) {
-        editor.Set(
-            HdMaterialBindingsSchema::GetDefaultLocator(),
-            HdBlockDataSource::New());
+        editor.Set(HdMaterialBindingsSchema::GetDefaultLocator(), HdBlockDataSource::New());
     }
 
     prim.dataSource = editor.Finish();
@@ -241,36 +228,32 @@ MaterialOverrideSceneIndex::dirtyMaterialBindings()
 }
 
 void
-MaterialOverrideSceneIndex::_PrimsAdded(
-    const HdSceneIndexBase& sender,
-    const HdSceneIndexObserver::AddedPrimEntries& entries)
+MaterialOverrideSceneIndex::_PrimsAdded(const HdSceneIndexBase& sender,
+                                        const HdSceneIndexObserver::AddedPrimEntries& entries)
 {
     Q_UNUSED(sender);
     _SendPrimsAdded(entries);
 }
 
 void
-MaterialOverrideSceneIndex::_PrimsRemoved(
-    const HdSceneIndexBase& sender,
-    const HdSceneIndexObserver::RemovedPrimEntries& entries)
+MaterialOverrideSceneIndex::_PrimsRemoved(const HdSceneIndexBase& sender,
+                                          const HdSceneIndexObserver::RemovedPrimEntries& entries)
 {
     Q_UNUSED(sender);
     _SendPrimsRemoved(entries);
 }
 
 void
-MaterialOverrideSceneIndex::_PrimsDirtied(
-    const HdSceneIndexBase& sender,
-    const HdSceneIndexObserver::DirtiedPrimEntries& entries)
+MaterialOverrideSceneIndex::_PrimsDirtied(const HdSceneIndexBase& sender,
+                                          const HdSceneIndexObserver::DirtiedPrimEntries& entries)
 {
     Q_UNUSED(sender);
     _SendPrimsDirtied(entries);
 }
 
 void
-MaterialOverrideSceneIndex::_PrimsRenamed(
-    const HdSceneIndexBase& sender,
-    const HdSceneIndexObserver::RenamedPrimEntries& entries)
+MaterialOverrideSceneIndex::_PrimsRenamed(const HdSceneIndexBase& sender,
+                                          const HdSceneIndexObserver::RenamedPrimEntries& entries)
 {
     Q_UNUSED(sender);
     _SendPrimsRenamed(entries);

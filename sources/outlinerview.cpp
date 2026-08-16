@@ -52,10 +52,7 @@ public:
     Data d;
 };
 
-OutlinerViewPrivate::OutlinerViewPrivate()
-{
-    d.followEnabled = true;
-}
+OutlinerViewPrivate::OutlinerViewPrivate() { d.followEnabled = true; }
 
 void
 OutlinerViewPrivate::init()
@@ -89,8 +86,7 @@ OutlinerViewPrivate::init()
     connect(session(), &Session::maskChanged, this, &OutlinerViewPrivate::maskChanged);
     connect(session(), &Session::stageChanged, this, &OutlinerViewPrivate::stageChanged);
     connect(session(), &Session::primsChanged, this, &OutlinerViewPrivate::primsChanged);
-    connect(session()->selectionList(), &SelectionList::selectionChanged, this,
-            &OutlinerViewPrivate::selectionChanged);
+    connect(session()->selectionList(), &SelectionList::selectionChanged, this, &OutlinerViewPrivate::selectionChanged);
 }
 
 StageTree*

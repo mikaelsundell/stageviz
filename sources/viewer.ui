@@ -1,4 +1,4 @@
-<?xml version='1.0' encoding='UTF-8'?>
+<?xml version="1.0" encoding="UTF-8"?>
 <ui version="4.0">
  <class>Viewer</class>
  <widget class="QMainWindow" name="Viewer">
@@ -24,7 +24,7 @@
     <enum>Qt::FocusPolicy::ClickFocus</enum>
    </property>
    <property name="styleSheet">
-    <string notr="true" />
+    <string notr="true"/>
    </property>
    <property name="MainWidget" stdset="0">
     <bool>true</bool>
@@ -84,7 +84,7 @@
            </sizepolicy>
           </property>
           <property name="styleSheet">
-           <string notr="true" />
+           <string notr="true"/>
           </property>
           <layout class="QVBoxLayout" name="verticalLayout_3">
            <property name="spacing">
@@ -140,7 +140,7 @@
                 </size>
                </property>
                <property name="styleSheet">
-                <string notr="true" />
+                <string notr="true"/>
                </property>
                <property name="DockWidget" stdset="0">
                 <bool>true</bool>
@@ -163,11 +163,11 @@
                 </property>
                 <item>
                  <widget class="QToolButton" name="open">
-                  <property name="maximumSize">
-                   <size>
-                    <width>34</width>
-                    <height>34</height>
-                   </size>
+                  <property name="sizePolicy">
+                   <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
+                    <horstretch>0</horstretch>
+                    <verstretch>0</verstretch>
+                   </sizepolicy>
                   </property>
                   <property name="minimumSize">
                    <size>
@@ -175,11 +175,11 @@
                     <height>34</height>
                    </size>
                   </property>
-                  <property name="sizePolicy">
-                   <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
-                    <horstretch>0</horstretch>
-                    <verstretch>0</verstretch>
-                   </sizepolicy>
+                  <property name="maximumSize">
+                   <size>
+                    <width>34</width>
+                    <height>34</height>
+                   </size>
                   </property>
                   <property name="text">
                    <string>...</string>
@@ -194,11 +194,11 @@
                 </item>
                 <item>
                  <widget class="QToolButton" name="exportAll">
-                  <property name="maximumSize">
-                   <size>
-                    <width>34</width>
-                    <height>34</height>
-                   </size>
+                  <property name="sizePolicy">
+                   <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
+                    <horstretch>0</horstretch>
+                    <verstretch>0</verstretch>
+                   </sizepolicy>
                   </property>
                   <property name="minimumSize">
                    <size>
@@ -206,11 +206,11 @@
                     <height>34</height>
                    </size>
                   </property>
-                  <property name="sizePolicy">
-                   <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
-                    <horstretch>0</horstretch>
-                    <verstretch>0</verstretch>
-                   </sizepolicy>
+                  <property name="maximumSize">
+                   <size>
+                    <width>34</width>
+                    <height>34</height>
+                   </size>
                   </property>
                   <property name="text">
                    <string>...</string>
@@ -225,11 +225,11 @@
                 </item>
                 <item>
                  <widget class="QToolButton" name="exportImage">
-                  <property name="maximumSize">
-                   <size>
-                    <width>34</width>
-                    <height>34</height>
-                   </size>
+                  <property name="sizePolicy">
+                   <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
+                    <horstretch>0</horstretch>
+                    <verstretch>0</verstretch>
+                   </sizepolicy>
                   </property>
                   <property name="minimumSize">
                    <size>
@@ -237,11 +237,11 @@
                     <height>34</height>
                    </size>
                   </property>
-                  <property name="sizePolicy">
-                   <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
-                    <horstretch>0</horstretch>
-                    <verstretch>0</verstretch>
-                   </sizepolicy>
+                  <property name="maximumSize">
+                   <size>
+                    <width>34</width>
+                    <height>34</height>
+                   </size>
                   </property>
                   <property name="text">
                    <string>...</string>
@@ -272,11 +272,11 @@
                 </item>
                 <item>
                  <widget class="QToolButton" name="undo">
-                  <property name="maximumSize">
-                   <size>
-                    <width>34</width>
-                    <height>34</height>
-                   </size>
+                  <property name="sizePolicy">
+                   <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
+                    <horstretch>0</horstretch>
+                    <verstretch>0</verstretch>
+                   </sizepolicy>
                   </property>
                   <property name="minimumSize">
                    <size>
@@ -284,11 +284,11 @@
                     <height>34</height>
                    </size>
                   </property>
-                  <property name="sizePolicy">
-                   <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
-                    <horstretch>0</horstretch>
-                    <verstretch>0</verstretch>
-                   </sizepolicy>
+                  <property name="maximumSize">
+                   <size>
+                    <width>34</width>
+                    <height>34</height>
+                   </size>
                   </property>
                   <property name="text">
                    <string>...</string>
@@ -303,11 +303,11 @@
                 </item>
                 <item>
                  <widget class="QToolButton" name="redo">
-                  <property name="maximumSize">
-                   <size>
-                    <width>34</width>
-                    <height>34</height>
-                   </size>
+                  <property name="sizePolicy">
+                   <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
+                    <horstretch>0</horstretch>
+                    <verstretch>0</verstretch>
+                   </sizepolicy>
                   </property>
                   <property name="minimumSize">
                    <size>
@@ -315,11 +315,11 @@
                     <height>34</height>
                    </size>
                   </property>
-                  <property name="sizePolicy">
-                   <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
-                    <horstretch>0</horstretch>
-                    <verstretch>0</verstretch>
-                   </sizepolicy>
+                  <property name="maximumSize">
+                   <size>
+                    <width>34</width>
+                    <height>34</height>
+                   </size>
                   </property>
                   <property name="text">
                    <string>...</string>
@@ -420,7 +420,7 @@
                    <number>4</number>
                   </property>
                   <item>
-                   <widget class="stageviz::RenderView" name="renderView" native="true" />
+                   <widget class="stageviz::RenderView" name="renderView" native="true"/>
                   </item>
                  </layout>
                 </widget>
@@ -468,11 +468,11 @@
                 </property>
                 <item>
                  <widget class="QToolButton" name="shaded">
-                  <property name="maximumSize">
-                   <size>
-                    <width>34</width>
-                    <height>34</height>
-                   </size>
+                  <property name="sizePolicy">
+                   <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
+                    <horstretch>0</horstretch>
+                    <verstretch>0</verstretch>
+                   </sizepolicy>
                   </property>
                   <property name="minimumSize">
                    <size>
@@ -480,11 +480,11 @@
                     <height>34</height>
                    </size>
                   </property>
-                  <property name="sizePolicy">
-                   <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
-                    <horstretch>0</horstretch>
-                    <verstretch>0</verstretch>
-                   </sizepolicy>
+                  <property name="maximumSize">
+                   <size>
+                    <width>34</width>
+                    <height>34</height>
+                   </size>
                   </property>
                   <property name="text">
                    <string>...</string>
@@ -505,11 +505,11 @@
                 </item>
                 <item>
                  <widget class="QToolButton" name="wireframe">
-                  <property name="maximumSize">
-                   <size>
-                    <width>34</width>
-                    <height>34</height>
-                   </size>
+                  <property name="sizePolicy">
+                   <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
+                    <horstretch>0</horstretch>
+                    <verstretch>0</verstretch>
+                   </sizepolicy>
                   </property>
                   <property name="minimumSize">
                    <size>
@@ -517,11 +517,11 @@
                     <height>34</height>
                    </size>
                   </property>
-                  <property name="sizePolicy">
-                   <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
-                    <horstretch>0</horstretch>
-                    <verstretch>0</verstretch>
-                   </sizepolicy>
+                  <property name="maximumSize">
+                   <size>
+                    <width>34</width>
+                    <height>34</height>
+                   </size>
                   </property>
                   <property name="text">
                    <string>...</string>
@@ -539,11 +539,11 @@
                 </item>
                 <item>
                  <widget class="QToolButton" name="frameAll">
-                  <property name="maximumSize">
-                   <size>
-                    <width>34</width>
-                    <height>34</height>
-                   </size>
+                  <property name="sizePolicy">
+                   <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
+                    <horstretch>0</horstretch>
+                    <verstretch>0</verstretch>
+                   </sizepolicy>
                   </property>
                   <property name="minimumSize">
                    <size>
@@ -551,11 +551,11 @@
                     <height>34</height>
                    </size>
                   </property>
-                  <property name="sizePolicy">
-                   <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
-                    <horstretch>0</horstretch>
-                    <verstretch>0</verstretch>
-                   </sizepolicy>
+                  <property name="maximumSize">
+                   <size>
+                    <width>34</width>
+                    <height>34</height>
+                   </size>
                   </property>
                   <property name="text">
                    <string>...</string>
@@ -586,12 +586,6 @@
                 </item>
                 <item>
                  <widget class="QFrame" name="backgroundColor">
-                  <property name="maximumSize">
-                   <size>
-                    <width>34</width>
-                    <height>34</height>
-                   </size>
-                  </property>
                   <property name="sizePolicy">
                    <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
                     <horstretch>0</horstretch>
@@ -604,8 +598,14 @@
                     <height>34</height>
                    </size>
                   </property>
+                  <property name="maximumSize">
+                   <size>
+                    <width>34</width>
+                    <height>34</height>
+                   </size>
+                  </property>
                   <property name="styleSheet">
-                   <string notr="true" />
+                   <string notr="true"/>
                   </property>
                   <property name="frameShape">
                    <enum>QFrame::Shape::StyledPanel</enum>
@@ -622,7 +622,7 @@
            </item>
           </layout>
          </widget>
-         <widget class="QWidget" name="progressWidget" native="true">
+         <widget class="QWidget" name="propertyWidget" native="true">
           <property name="sizePolicy">
            <sizepolicy hsizetype="Minimum" vsizetype="Preferred">
             <horstretch>0</horstretch>
@@ -676,38 +676,38 @@
      <property name="title">
       <string>Render</string>
      </property>
-     <addaction name="displayRenderShaded" />
-     <addaction name="displayRenderWireframe" />
-     <addaction name="separator" />
-     <addaction name="displayRenderClay" />
+     <addaction name="displayRenderShaded"/>
+     <addaction name="displayRenderWireframe"/>
+     <addaction name="separator"/>
+     <addaction name="displayRenderClay"/>
     </widget>
     <widget class="QMenu" name="displayComplexity">
      <property name="title">
       <string>Complexity</string>
      </property>
-     <addaction name="displayComplexityLow" />
-     <addaction name="displayComplexityMedium" />
-     <addaction name="displayComplexityHigh" />
-     <addaction name="displayComplexityVeryHigh" />
+     <addaction name="displayComplexityLow"/>
+     <addaction name="displayComplexityMedium"/>
+     <addaction name="displayComplexityHigh"/>
+     <addaction name="displayComplexityVeryHigh"/>
     </widget>
-    <addaction name="displayIsolate" />
-    <addaction name="separator" />
-    <addaction name="displayRender" />
-    <addaction name="separator" />
-    <addaction name="displayComplexity" />
-    <addaction name="separator" />
-    <addaction name="displayCameraLight" />
-    <addaction name="displaySceneLights" />
-    <addaction name="displaySceneShaders" />
-    <addaction name="separator" />
-    <addaction name="displayFrameAll" />
-    <addaction name="displayFrameSelected" />
-    <addaction name="displayResetView" />
-    <addaction name="separator" />
-    <addaction name="displayExpand" />
-    <addaction name="displayCollapse" />
-    <addaction name="separator" />
-    <addaction name="displayGrid" />
+    <addaction name="displayIsolate"/>
+    <addaction name="separator"/>
+    <addaction name="displayRender"/>
+    <addaction name="separator"/>
+    <addaction name="displayComplexity"/>
+    <addaction name="separator"/>
+    <addaction name="displayCameraLight"/>
+    <addaction name="displaySceneLights"/>
+    <addaction name="displaySceneShaders"/>
+    <addaction name="separator"/>
+    <addaction name="displayFrameAll"/>
+    <addaction name="displayFrameSelected"/>
+    <addaction name="displayResetView"/>
+    <addaction name="separator"/>
+    <addaction name="displayExpand"/>
+    <addaction name="displayCollapse"/>
+    <addaction name="separator"/>
+    <addaction name="displayGrid"/>
    </widget>
    <widget class="QMenu" name="menuFile">
     <property name="title">
@@ -717,48 +717,48 @@
      <property name="title">
       <string>Policy</string>
      </property>
-     <addaction name="policyAll" />
-     <addaction name="policyPayload" />
+     <addaction name="policyAll"/>
+     <addaction name="policyPayload"/>
     </widget>
     <widget class="QMenu" name="fileRecent">
      <property name="title">
       <string>Recent</string>
      </property>
-     <addaction name="actionClear" />
+     <addaction name="actionClear"/>
     </widget>
-    <addaction name="fileNew" />
-    <addaction name="fileOpen" />
-    <addaction name="fileMerge" />
-    <addaction name="filePolicy" />
-    <addaction name="fileRecent" />
-    <addaction name="separator" />
-    <addaction name="fileSave" />
-    <addaction name="fileSaveAs" />
-    <addaction name="fileSaveCopy" />
-    <addaction name="separator" />
-    <addaction name="fileExportAll" />
-    <addaction name="fileExportSelected" />
-    <addaction name="fileExportImage" />
-    <addaction name="separator" />
-    <addaction name="filePreserveState" />
-    <addaction name="separator" />
-    <addaction name="fileReload" />
-    <addaction name="fileClose" />
-    <addaction name="separator" />
-    <addaction name="fileSaveSettings" />
-    <addaction name="separator" />
-    <addaction name="fileExit" />
+    <addaction name="fileNew"/>
+    <addaction name="fileOpen"/>
+    <addaction name="fileMerge"/>
+    <addaction name="filePolicy"/>
+    <addaction name="fileRecent"/>
+    <addaction name="separator"/>
+    <addaction name="fileSave"/>
+    <addaction name="fileSaveAs"/>
+    <addaction name="fileSaveCopy"/>
+    <addaction name="separator"/>
+    <addaction name="fileExportAll"/>
+    <addaction name="fileExportSelected"/>
+    <addaction name="fileExportImage"/>
+    <addaction name="separator"/>
+    <addaction name="filePreserveState"/>
+    <addaction name="separator"/>
+    <addaction name="fileReload"/>
+    <addaction name="fileClose"/>
+    <addaction name="separator"/>
+    <addaction name="fileSaveSettings"/>
+    <addaction name="separator"/>
+    <addaction name="fileExit"/>
    </widget>
    <widget class="QMenu" name="menuHelp">
     <property name="title">
      <string>Help</string>
     </property>
-    <addaction name="helpAbout" />
-    <addaction name="helpCheckUpdates" />
-    <addaction name="separator" />
-    <addaction name="helpGithubReadme" />
-    <addaction name="helpGithubIssues" />
-    <addaction name="separator" />
+    <addaction name="helpAbout"/>
+    <addaction name="helpCheckUpdates"/>
+    <addaction name="separator"/>
+    <addaction name="helpGithubReadme"/>
+    <addaction name="helpGithubIssues"/>
+    <addaction name="separator"/>
    </widget>
    <widget class="QMenu" name="menuEdit">
     <property name="title">
@@ -768,60 +768,60 @@
      <property name="title">
       <string>Show</string>
      </property>
-     <addaction name="editShowSelected" />
-     <addaction name="editShowRecursive" />
+     <addaction name="editShowSelected"/>
+     <addaction name="editShowRecursive"/>
     </widget>
     <widget class="QMenu" name="editHide">
      <property name="title">
       <string>Hide</string>
      </property>
-     <addaction name="editHideSelected" />
-     <addaction name="editHideRecursive" />
+     <addaction name="editHideSelected"/>
+     <addaction name="editHideRecursive"/>
     </widget>
     <widget class="QMenu" name="menu">
      <property name="title">
       <string>Stage up</string>
      </property>
-     <addaction name="editStageUpY" />
-     <addaction name="editStageUpZ" />
+     <addaction name="editStageUpY"/>
+     <addaction name="editStageUpZ"/>
     </widget>
     <widget class="QMenu" name="menuPayloads">
      <property name="title">
       <string>Payload</string>
      </property>
-     <addaction name="editPayloadLoad" />
-     <addaction name="editPayloadUnload" />
-     <addaction name="separator" />
-     <addaction name="editPayloadInvertSelected" />
+     <addaction name="editPayloadLoad"/>
+     <addaction name="editPayloadUnload"/>
+     <addaction name="separator"/>
+     <addaction name="editPayloadInvertSelected"/>
     </widget>
     <widget class="QMenu" name="menu_2">
      <property name="title">
       <string>Select visible</string>
      </property>
-     <addaction name="editSelectVisibleCapture" />
-     <addaction name="separator" />
-     <addaction name="editSelectVisibleSelect" />
-     <addaction name="editSelectVisibleClear" />
+     <addaction name="editSelectVisibleCapture"/>
+     <addaction name="separator"/>
+     <addaction name="editSelectVisibleSelect"/>
+     <addaction name="editSelectVisibleClear"/>
     </widget>
-    <addaction name="editUndo" />
-    <addaction name="editRedo" />
-    <addaction name="separator" />
-    <addaction name="editClear" />
-    <addaction name="separator" />
-    <addaction name="editCopyImage" />
-    <addaction name="separator" />
-    <addaction name="editSelectAll" />
-    <addaction name="editSelectInvert" />
-    <addaction name="menu_2" />
-    <addaction name="separator" />
-    <addaction name="editShow" />
-    <addaction name="editHide" />
-    <addaction name="separator" />
-    <addaction name="menu" />
-    <addaction name="separator" />
-    <addaction name="menuPayloads" />
-    <addaction name="separator" />
-    <addaction name="editDeleteSelected" />
+    <addaction name="editUndo"/>
+    <addaction name="editRedo"/>
+    <addaction name="separator"/>
+    <addaction name="editClear"/>
+    <addaction name="separator"/>
+    <addaction name="editCopyImage"/>
+    <addaction name="separator"/>
+    <addaction name="editSelectAll"/>
+    <addaction name="editSelectInvert"/>
+    <addaction name="menu_2"/>
+    <addaction name="separator"/>
+    <addaction name="editShow"/>
+    <addaction name="editHide"/>
+    <addaction name="separator"/>
+    <addaction name="menu"/>
+    <addaction name="separator"/>
+    <addaction name="menuPayloads"/>
+    <addaction name="separator"/>
+    <addaction name="editDeleteSelected"/>
    </widget>
    <widget class="QMenu" name="menuView">
     <property name="title">
@@ -831,27 +831,23 @@
      <property name="title">
       <string>Head-up display</string>
      </property>
-     <addaction name="hudSceneStats" />
-     <addaction name="hudPerformanceStats" />
-     <addaction name="hudCameraAxis" />
+     <addaction name="hudSceneStats"/>
+     <addaction name="hudPerformanceStats"/>
+     <addaction name="hudCameraAxis"/>
     </widget>
-    <addaction name="separator" />
-    <addaction name="menu_3" />
-    <addaction name="separator" />
-    <addaction name="viewOutliner" />
-    <addaction name="viewProgress" />
-    <addaction name="separator" />
-    <addaction name="viewProperty" />
-    <addaction name="viewPython" />
-    <addaction name="separator" />
-    <addaction name="viewConsole" />
-    <addaction name="separator" />
+    <addaction name="separator"/>
+    <addaction name="menu_3"/>
+    <addaction name="separator"/>
+    <addaction name="viewPython"/>
+    <addaction name="viewProgress"/>
+    <addaction name="viewConsole"/>
+    <addaction name="separator"/>
    </widget>
-   <addaction name="menuFile" />
-   <addaction name="menuEdit" />
-   <addaction name="menuDisplay" />
-   <addaction name="menuView" />
-   <addaction name="menuHelp" />
+   <addaction name="menuFile"/>
+   <addaction name="menuEdit"/>
+   <addaction name="menuDisplay"/>
+   <addaction name="menuView"/>
+   <addaction name="menuHelp"/>
   </widget>
   <action name="displayFrameAll">
    <property name="text">
@@ -921,7 +917,7 @@
     <string>Copy image ...</string>
    </property>
    <property name="font">
-    <font />
+    <font/>
    </property>
    <property name="shortcut">
     <string>Ctrl+C</string>
@@ -1021,20 +1017,6 @@
     <string>R</string>
    </property>
   </action>
-  <action name="viewOutliner">
-   <property name="checkable">
-    <bool>true</bool>
-   </property>
-   <property name="checked">
-    <bool>true</bool>
-   </property>
-   <property name="text">
-    <string>Outliner</string>
-   </property>
-   <property name="shortcut">
-    <string>O</string>
-   </property>
-  </action>
   <action name="policyAll">
    <property name="checkable">
     <bool>true</bool>
@@ -1073,7 +1055,7 @@
     <bool>true</bool>
    </property>
    <property name="checked">
-    <bool>true</bool>
+    <bool>false</bool>
    </property>
    <property name="text">
     <string>Progress</string>
@@ -1184,17 +1166,6 @@
   <action name="fileExit">
    <property name="text">
     <string>Exit</string>
-   </property>
-  </action>
-  <action name="viewProperty">
-   <property name="checkable">
-    <bool>true</bool>
-   </property>
-   <property name="checked">
-    <bool>false</bool>
-   </property>
-   <property name="text">
-    <string>Properties</string>
    </property>
   </action>
   <action name="viewPython">
@@ -1506,7 +1477,7 @@
   </customwidget>
  </customwidgets>
  <resources>
-  <include location="viewer.qrc" />
+  <include location="viewer.qrc"/>
  </resources>
- <connections />
+ <connections/>
 </ui>

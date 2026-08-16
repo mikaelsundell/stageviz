@@ -169,8 +169,7 @@ PrimItem::data(int column, int role) const
         if (!p->d.active || p->d.isRoot)
             return QVariant();
 
-        return style()->icon(p->d.visible ? Style::IconRole::Visible : Style::IconRole::Hidden,
-                             Style::UIScale::Medium);
+        return style()->icon(p->d.visible ? Style::IconRole::Visible : Style::IconRole::Hidden, Style::UIScale::Medium);
     }
 
     if (role == PrimItem::Path)

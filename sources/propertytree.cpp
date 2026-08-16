@@ -6,10 +6,10 @@
 #include "application.h"
 #include "command.h"
 #include "commandstack.h"
-#include "notice.h"
 #include "messagebox.h"
-#include "propertyitem.h"
+#include "notice.h"
 #include "propertydelegate.h"
+#include "propertyitem.h"
 #include "qtutils.h"
 #include "selectionlist.h"
 #include "signalguard.h"
@@ -17,17 +17,16 @@
 #include "viewcontext.h"
 #include <QFileInfo>
 #include <QHeaderView>
+#include <QIcon>
 #include <QPointer>
-#include <QSignalBlocker>
 #include <QScrollBar>
 #include <QSet>
+#include <QSignalBlocker>
 #include <algorithm>
-#include <cstdint>
 #include <climits>
+#include <cstdint>
 #include <functional>
 #include <limits>
-#include <sstream>
-#include <type_traits>
 #include <pxr/base/gf/matrix2d.h>
 #include <pxr/base/gf/matrix3d.h>
 #include <pxr/base/gf/matrix4d.h>
@@ -48,11 +47,14 @@
 #include <pxr/usd/sdf/assetPath.h>
 #include <pxr/usd/usd/attribute.h>
 #include <pxr/usd/usd/modelAPI.h>
-#include <pxr/usd/usd/relationship.h>
-#include <pxr/usd/usd/variantSets.h>
 #include <pxr/usd/usd/prim.h>
+#include <pxr/usd/usd/relationship.h>
 #include <pxr/usd/usd/stage.h>
+#include <pxr/usd/usd/variantSets.h>
+#include <pxr/usd/usdGeom/gprim.h>
 #include <pxr/usd/usdGeom/metrics.h>
+#include <sstream>
+#include <type_traits>
 
 PXR_NAMESPACE_USING_DIRECTIVE
 
@@ -66,26 +68,22 @@ public:
     void updatePrims(const NoticeBatch& batch);
     void updateSelection(const QList<SdfPath>& paths);
 
-    template <typename T>
-    static QString streamText(const T& value);
+    template<typename T> static QString streamText(const T& value);
     static QString valueText(const bool& value);
     static QString valueText(const std::string& value);
     static QString valueText(const TfToken& value);
     static QString valueText(const SdfAssetPath& value);
 
-    template <typename T>
-    static QString valueText(const T& value);
+    template<typename T> static QString valueText(const T& value);
     static QString valueText(const GfQuatf& value);
     static QString valueText(const GfQuatd& value);
 
     static QString cleanNumericText(QString text);
     static QStringList numericTokens(const QString& text);
 
-    template <typename T>
-    static bool parseIntegral(const QString& text, T& result, QString& error);
+    template<typename T> static bool parseIntegral(const QString& text, T& result, QString& error);
 
-    template <typename T>
-    static bool parseFloating(const QString& text, T& result, QString& error);
+    template<typename T> static bool parseFloating(const QString& text, T& result, QString& error);
 
     static bool parseValue(const QString& text, bool& result, QString& error);
     static bool parseValue(const QString& text, int& result, QString& error);
@@ -98,8 +96,7 @@ public:
     static bool parseValue(const QString& text, TfToken& result, QString& error);
     static bool parseValue(const QString& text, SdfAssetPath& result, QString& error);
 
-    template <typename T, int N>
-    static bool parseVector(const QString& text, T& result, QString& error);
+    template<typename T, int N> static bool parseVector(const QString& text, T& result, QString& error);
     static bool parseValue(const QString& text, GfVec2i& result, QString& error);
     static bool parseValue(const QString& text, GfVec3i& result, QString& error);
     static bool parseValue(const QString& text, GfVec4i& result, QString& error);
@@ -112,32 +109,25 @@ public:
     static bool parseValue(const QString& text, GfQuatf& result, QString& error);
     static bool parseValue(const QString& text, GfQuatd& result, QString& error);
 
-    template <typename T, int N>
-    static bool parseMatrix(const QString& text, T& result, QString& error);
+    template<typename T, int N> static bool parseMatrix(const QString& text, T& result, QString& error);
     static bool parseValue(const QString& text, GfMatrix2d& result, QString& error);
     static bool parseValue(const QString& text, GfMatrix3d& result, QString& error);
     static bool parseValue(const QString& text, GfMatrix4d& result, QString& error);
 
-    template <typename T>
-    static bool tryScalarParse(const VtValue& current, const QString& text,
-                               VtValue& result, QString& error);
-    static bool parseScalar(const VtValue& current, const QString& text,
-                            VtValue& result, QString& error);
+    template<typename T>
+    static bool tryScalarParse(const VtValue& current, const QString& text, VtValue& result, QString& error);
+    static bool parseScalar(const VtValue& current, const QString& text, VtValue& result, QString& error);
 
-    template <typename T>
-    static bool replaceArrayElementTyped(const VtValue& current, int index,
-                                         const QString& text, VtValue& result,
+    template<typename T>
+    static bool replaceArrayElementTyped(const VtValue& current, int index, const QString& text, VtValue& result,
                                          QString& error);
-    static bool replaceArrayElement(const VtValue& current, int index,
-                                    const QString& text, VtValue& result,
+    static bool replaceArrayElement(const VtValue& current, int index, const QString& text, VtValue& result,
                                     QString& error);
 
-    template <typename T>
-    static bool arrayInfoTyped(const VtValue& value, int& size);
+    template<typename T> static bool arrayInfoTyped(const VtValue& value, int& size);
     static bool arrayInfo(const VtValue& value, int& size);
 
-    template <typename T>
-    static bool arrayElementTextTyped(const VtValue& value, int index, QString& text);
+    template<typename T> static bool arrayElementTextTyped(const VtValue& value, int index, QString& text);
     static bool arrayElementText(const VtValue& value, int index, QString& text);
     static QString scalarText(const VtValue& value);
     static bool scalarEditable(const VtValue& value);
@@ -169,8 +159,8 @@ public:
     static QString metadataText(const VtValue& value);
 
     void addAttribute(PropertyItem* parent, const UsdAttribute& attr);
-    void addArrayElements(PropertyItem* parent, const SdfPath& propertyPath,
-                          const VtValue& value, int start, int count);
+    void addArrayElements(PropertyItem* parent, const SdfPath& propertyPath, const VtValue& value, int start,
+                          int count);
     void populateChunk(PropertyItem* item);
     void itemChanged(QTreeWidgetItem* item, int column);
     void itemExpanded(QTreeWidgetItem* item);
@@ -190,7 +180,7 @@ public:
     Data d;
 };
 
-template <typename T>
+template<typename T>
 QString
 PropertyTreePrivate::streamText(const T& value)
 {
@@ -223,7 +213,7 @@ PropertyTreePrivate::valueText(const SdfAssetPath& value)
     return QString::fromStdString(value.GetAssetPath());
 }
 
-template <typename T>
+template<typename T>
 QString
 PropertyTreePrivate::valueText(const T& value)
 {
@@ -249,7 +239,7 @@ PropertyTreePrivate::numericTokens(const QString& text)
     return cleanNumericText(text).split(' ', Qt::SkipEmptyParts);
 }
 
-template <typename T>
+template<typename T>
 bool
 PropertyTreePrivate::parseIntegral(const QString& text, T& result, QString& error)
 {
@@ -275,7 +265,7 @@ PropertyTreePrivate::parseIntegral(const QString& text, T& result, QString& erro
     return false;
 }
 
-template <typename T>
+template<typename T>
 bool
 PropertyTreePrivate::parseFloating(const QString& text, T& result, QString& error)
 {
@@ -362,7 +352,7 @@ PropertyTreePrivate::parseValue(const QString& text, SdfAssetPath& result, QStri
     return true;
 }
 
-template <typename T, int N>
+template<typename T, int N>
 bool
 PropertyTreePrivate::parseVector(const QString& text, T& result, QString& error)
 {
@@ -389,23 +379,50 @@ PropertyTreePrivate::parseVector(const QString& text, T& result, QString& error)
 }
 
 bool
-PropertyTreePrivate::parseValue(const QString& text, GfVec2i& result, QString& error) { return parseVector<GfVec2i, 2>(text, result, error); }
+PropertyTreePrivate::parseValue(const QString& text, GfVec2i& result, QString& error)
+{
+    return parseVector<GfVec2i, 2>(text, result, error);
+}
 bool
-PropertyTreePrivate::parseValue(const QString& text, GfVec3i& result, QString& error) { return parseVector<GfVec3i, 3>(text, result, error); }
+PropertyTreePrivate::parseValue(const QString& text, GfVec3i& result, QString& error)
+{
+    return parseVector<GfVec3i, 3>(text, result, error);
+}
 bool
-PropertyTreePrivate::parseValue(const QString& text, GfVec4i& result, QString& error) { return parseVector<GfVec4i, 4>(text, result, error); }
+PropertyTreePrivate::parseValue(const QString& text, GfVec4i& result, QString& error)
+{
+    return parseVector<GfVec4i, 4>(text, result, error);
+}
 bool
-PropertyTreePrivate::parseValue(const QString& text, GfVec2f& result, QString& error) { return parseVector<GfVec2f, 2>(text, result, error); }
+PropertyTreePrivate::parseValue(const QString& text, GfVec2f& result, QString& error)
+{
+    return parseVector<GfVec2f, 2>(text, result, error);
+}
 bool
-PropertyTreePrivate::parseValue(const QString& text, GfVec3f& result, QString& error) { return parseVector<GfVec3f, 3>(text, result, error); }
+PropertyTreePrivate::parseValue(const QString& text, GfVec3f& result, QString& error)
+{
+    return parseVector<GfVec3f, 3>(text, result, error);
+}
 bool
-PropertyTreePrivate::parseValue(const QString& text, GfVec4f& result, QString& error) { return parseVector<GfVec4f, 4>(text, result, error); }
+PropertyTreePrivate::parseValue(const QString& text, GfVec4f& result, QString& error)
+{
+    return parseVector<GfVec4f, 4>(text, result, error);
+}
 bool
-PropertyTreePrivate::parseValue(const QString& text, GfVec2d& result, QString& error) { return parseVector<GfVec2d, 2>(text, result, error); }
+PropertyTreePrivate::parseValue(const QString& text, GfVec2d& result, QString& error)
+{
+    return parseVector<GfVec2d, 2>(text, result, error);
+}
 bool
-PropertyTreePrivate::parseValue(const QString& text, GfVec3d& result, QString& error) { return parseVector<GfVec3d, 3>(text, result, error); }
+PropertyTreePrivate::parseValue(const QString& text, GfVec3d& result, QString& error)
+{
+    return parseVector<GfVec3d, 3>(text, result, error);
+}
 bool
-PropertyTreePrivate::parseValue(const QString& text, GfVec4d& result, QString& error) { return parseVector<GfVec4d, 4>(text, result, error); }
+PropertyTreePrivate::parseValue(const QString& text, GfVec4d& result, QString& error)
+{
+    return parseVector<GfVec4d, 4>(text, result, error);
+}
 
 bool
 PropertyTreePrivate::parseValue(const QString& text, GfQuatf& result, QString& error)
@@ -431,19 +448,17 @@ QString
 PropertyTreePrivate::valueText(const GfQuatf& value)
 {
     const GfVec3f i = value.GetImaginary();
-    return QString("(%1, %2, %3, %4)")
-        .arg(value.GetReal()).arg(i[0]).arg(i[1]).arg(i[2]);
+    return QString("(%1, %2, %3, %4)").arg(value.GetReal()).arg(i[0]).arg(i[1]).arg(i[2]);
 }
 
 QString
 PropertyTreePrivate::valueText(const GfQuatd& value)
 {
     const GfVec3d i = value.GetImaginary();
-    return QString("(%1, %2, %3, %4)")
-        .arg(value.GetReal()).arg(i[0]).arg(i[1]).arg(i[2]);
+    return QString("(%1, %2, %3, %4)").arg(value.GetReal()).arg(i[0]).arg(i[1]).arg(i[2]);
 }
 
-template <typename T, int N>
+template<typename T, int N>
 bool
 PropertyTreePrivate::parseMatrix(const QString& text, T& result, QString& error)
 {
@@ -469,13 +484,22 @@ PropertyTreePrivate::parseMatrix(const QString& text, T& result, QString& error)
 }
 
 bool
-PropertyTreePrivate::parseValue(const QString& text, GfMatrix2d& result, QString& error) { return parseMatrix<GfMatrix2d, 2>(text, result, error); }
+PropertyTreePrivate::parseValue(const QString& text, GfMatrix2d& result, QString& error)
+{
+    return parseMatrix<GfMatrix2d, 2>(text, result, error);
+}
 bool
-PropertyTreePrivate::parseValue(const QString& text, GfMatrix3d& result, QString& error) { return parseMatrix<GfMatrix3d, 3>(text, result, error); }
+PropertyTreePrivate::parseValue(const QString& text, GfMatrix3d& result, QString& error)
+{
+    return parseMatrix<GfMatrix3d, 3>(text, result, error);
+}
 bool
-PropertyTreePrivate::parseValue(const QString& text, GfMatrix4d& result, QString& error) { return parseMatrix<GfMatrix4d, 4>(text, result, error); }
+PropertyTreePrivate::parseValue(const QString& text, GfMatrix4d& result, QString& error)
+{
+    return parseMatrix<GfMatrix4d, 4>(text, result, error);
+}
 
-template <typename T>
+template<typename T>
 bool
 PropertyTreePrivate::tryScalarParse(const VtValue& current, const QString& text, VtValue& result, QString& error)
 {
@@ -546,9 +570,10 @@ PropertyTreePrivate::parseScalar(const VtValue& current, const QString& text, Vt
     return false;
 }
 
-template <typename T>
+template<typename T>
 bool
-PropertyTreePrivate::replaceArrayElementTyped(const VtValue& current, int index, const QString& text, VtValue& result, QString& error)
+PropertyTreePrivate::replaceArrayElementTyped(const VtValue& current, int index, const QString& text, VtValue& result,
+                                              QString& error)
 {
     if (!current.IsHolding<VtArray<T>>())
         return false;
@@ -569,7 +594,8 @@ PropertyTreePrivate::replaceArrayElementTyped(const VtValue& current, int index,
 }
 
 bool
-PropertyTreePrivate::replaceArrayElement(const VtValue& current, int index, const QString& text, VtValue& result, QString& error)
+PropertyTreePrivate::replaceArrayElement(const VtValue& current, int index, const QString& text, VtValue& result,
+                                         QString& error)
 {
     if (replaceArrayElementTyped<bool>(current, index, text, result, error))
         return !result.IsEmpty();
@@ -624,7 +650,7 @@ PropertyTreePrivate::replaceArrayElement(const VtValue& current, int index, cons
     return false;
 }
 
-template <typename T>
+template<typename T>
 bool
 PropertyTreePrivate::arrayInfoTyped(const VtValue& value, int& size)
 {
@@ -637,33 +663,21 @@ PropertyTreePrivate::arrayInfoTyped(const VtValue& value, int& size)
 bool
 PropertyTreePrivate::arrayInfo(const VtValue& value, int& size)
 {
-    return arrayInfoTyped<bool>(value, size)
-        || arrayInfoTyped<int>(value, size)
-        || arrayInfoTyped<unsigned int>(value, size)
-        || arrayInfoTyped<int64_t>(value, size)
-        || arrayInfoTyped<uint64_t>(value, size)
-        || arrayInfoTyped<float>(value, size)
-        || arrayInfoTyped<double>(value, size)
-        || arrayInfoTyped<std::string>(value, size)
-        || arrayInfoTyped<TfToken>(value, size)
-        || arrayInfoTyped<SdfAssetPath>(value, size)
-        || arrayInfoTyped<GfVec2i>(value, size)
-        || arrayInfoTyped<GfVec3i>(value, size)
-        || arrayInfoTyped<GfVec4i>(value, size)
-        || arrayInfoTyped<GfVec2f>(value, size)
-        || arrayInfoTyped<GfVec3f>(value, size)
-        || arrayInfoTyped<GfVec4f>(value, size)
-        || arrayInfoTyped<GfVec2d>(value, size)
-        || arrayInfoTyped<GfVec3d>(value, size)
-        || arrayInfoTyped<GfVec4d>(value, size)
-        || arrayInfoTyped<GfQuatf>(value, size)
-        || arrayInfoTyped<GfQuatd>(value, size)
-        || arrayInfoTyped<GfMatrix2d>(value, size)
-        || arrayInfoTyped<GfMatrix3d>(value, size)
-        || arrayInfoTyped<GfMatrix4d>(value, size);
+    return arrayInfoTyped<bool>(value, size) || arrayInfoTyped<int>(value, size)
+           || arrayInfoTyped<unsigned int>(value, size) || arrayInfoTyped<int64_t>(value, size)
+           || arrayInfoTyped<uint64_t>(value, size) || arrayInfoTyped<float>(value, size)
+           || arrayInfoTyped<double>(value, size) || arrayInfoTyped<std::string>(value, size)
+           || arrayInfoTyped<TfToken>(value, size) || arrayInfoTyped<SdfAssetPath>(value, size)
+           || arrayInfoTyped<GfVec2i>(value, size) || arrayInfoTyped<GfVec3i>(value, size)
+           || arrayInfoTyped<GfVec4i>(value, size) || arrayInfoTyped<GfVec2f>(value, size)
+           || arrayInfoTyped<GfVec3f>(value, size) || arrayInfoTyped<GfVec4f>(value, size)
+           || arrayInfoTyped<GfVec2d>(value, size) || arrayInfoTyped<GfVec3d>(value, size)
+           || arrayInfoTyped<GfVec4d>(value, size) || arrayInfoTyped<GfQuatf>(value, size)
+           || arrayInfoTyped<GfQuatd>(value, size) || arrayInfoTyped<GfMatrix2d>(value, size)
+           || arrayInfoTyped<GfMatrix3d>(value, size) || arrayInfoTyped<GfMatrix4d>(value, size);
 }
 
-template <typename T>
+template<typename T>
 bool
 PropertyTreePrivate::arrayElementTextTyped(const VtValue& value, int index, QString& text)
 {
@@ -681,30 +695,22 @@ PropertyTreePrivate::arrayElementTextTyped(const VtValue& value, int index, QStr
 bool
 PropertyTreePrivate::arrayElementText(const VtValue& value, int index, QString& text)
 {
-    return arrayElementTextTyped<bool>(value, index, text)
-        || arrayElementTextTyped<int>(value, index, text)
-        || arrayElementTextTyped<unsigned int>(value, index, text)
-        || arrayElementTextTyped<int64_t>(value, index, text)
-        || arrayElementTextTyped<uint64_t>(value, index, text)
-        || arrayElementTextTyped<float>(value, index, text)
-        || arrayElementTextTyped<double>(value, index, text)
-        || arrayElementTextTyped<std::string>(value, index, text)
-        || arrayElementTextTyped<TfToken>(value, index, text)
-        || arrayElementTextTyped<SdfAssetPath>(value, index, text)
-        || arrayElementTextTyped<GfVec2i>(value, index, text)
-        || arrayElementTextTyped<GfVec3i>(value, index, text)
-        || arrayElementTextTyped<GfVec4i>(value, index, text)
-        || arrayElementTextTyped<GfVec2f>(value, index, text)
-        || arrayElementTextTyped<GfVec3f>(value, index, text)
-        || arrayElementTextTyped<GfVec4f>(value, index, text)
-        || arrayElementTextTyped<GfVec2d>(value, index, text)
-        || arrayElementTextTyped<GfVec3d>(value, index, text)
-        || arrayElementTextTyped<GfVec4d>(value, index, text)
-        || arrayElementTextTyped<GfQuatf>(value, index, text)
-        || arrayElementTextTyped<GfQuatd>(value, index, text)
-        || arrayElementTextTyped<GfMatrix2d>(value, index, text)
-        || arrayElementTextTyped<GfMatrix3d>(value, index, text)
-        || arrayElementTextTyped<GfMatrix4d>(value, index, text);
+    return arrayElementTextTyped<bool>(value, index, text) || arrayElementTextTyped<int>(value, index, text)
+           || arrayElementTextTyped<unsigned int>(value, index, text)
+           || arrayElementTextTyped<int64_t>(value, index, text) || arrayElementTextTyped<uint64_t>(value, index, text)
+           || arrayElementTextTyped<float>(value, index, text) || arrayElementTextTyped<double>(value, index, text)
+           || arrayElementTextTyped<std::string>(value, index, text)
+           || arrayElementTextTyped<TfToken>(value, index, text)
+           || arrayElementTextTyped<SdfAssetPath>(value, index, text)
+           || arrayElementTextTyped<GfVec2i>(value, index, text) || arrayElementTextTyped<GfVec3i>(value, index, text)
+           || arrayElementTextTyped<GfVec4i>(value, index, text) || arrayElementTextTyped<GfVec2f>(value, index, text)
+           || arrayElementTextTyped<GfVec3f>(value, index, text) || arrayElementTextTyped<GfVec4f>(value, index, text)
+           || arrayElementTextTyped<GfVec2d>(value, index, text) || arrayElementTextTyped<GfVec3d>(value, index, text)
+           || arrayElementTextTyped<GfVec4d>(value, index, text) || arrayElementTextTyped<GfQuatf>(value, index, text)
+           || arrayElementTextTyped<GfQuatd>(value, index, text)
+           || arrayElementTextTyped<GfMatrix2d>(value, index, text)
+           || arrayElementTextTyped<GfMatrix3d>(value, index, text)
+           || arrayElementTextTyped<GfMatrix4d>(value, index, text);
 }
 
 QString
@@ -765,30 +771,14 @@ PropertyTreePrivate::scalarText(const VtValue& value)
 bool
 PropertyTreePrivate::scalarEditable(const VtValue& value)
 {
-    return value.IsHolding<bool>()
-        || value.IsHolding<int>()
-        || value.IsHolding<unsigned int>()
-        || value.IsHolding<int64_t>()
-        || value.IsHolding<uint64_t>()
-        || value.IsHolding<float>()
-        || value.IsHolding<double>()
-        || value.IsHolding<std::string>()
-        || value.IsHolding<TfToken>()
-        || value.IsHolding<SdfAssetPath>()
-        || value.IsHolding<GfVec2i>()
-        || value.IsHolding<GfVec3i>()
-        || value.IsHolding<GfVec4i>()
-        || value.IsHolding<GfVec2f>()
-        || value.IsHolding<GfVec3f>()
-        || value.IsHolding<GfVec4f>()
-        || value.IsHolding<GfVec2d>()
-        || value.IsHolding<GfVec3d>()
-        || value.IsHolding<GfVec4d>()
-        || value.IsHolding<GfQuatf>()
-        || value.IsHolding<GfQuatd>()
-        || value.IsHolding<GfMatrix2d>()
-        || value.IsHolding<GfMatrix3d>()
-        || value.IsHolding<GfMatrix4d>();
+    return value.IsHolding<bool>() || value.IsHolding<int>() || value.IsHolding<unsigned int>()
+           || value.IsHolding<int64_t>() || value.IsHolding<uint64_t>() || value.IsHolding<float>()
+           || value.IsHolding<double>() || value.IsHolding<std::string>() || value.IsHolding<TfToken>()
+           || value.IsHolding<SdfAssetPath>() || value.IsHolding<GfVec2i>() || value.IsHolding<GfVec3i>()
+           || value.IsHolding<GfVec4i>() || value.IsHolding<GfVec2f>() || value.IsHolding<GfVec3f>()
+           || value.IsHolding<GfVec4f>() || value.IsHolding<GfVec2d>() || value.IsHolding<GfVec3d>()
+           || value.IsHolding<GfVec4d>() || value.IsHolding<GfQuatf>() || value.IsHolding<GfQuatd>()
+           || value.IsHolding<GfMatrix2d>() || value.IsHolding<GfMatrix3d>() || value.IsHolding<GfMatrix4d>();
 }
 
 QString
@@ -798,18 +788,13 @@ PropertyTreePrivate::itemKey(const PropertyItem* item) const
         return {};
 
     switch (item->kind()) {
-    case PropertyItem::Attribute:
-        return QString("attribute:%1").arg(qt::SdfPathToQString(item->propertyPath()));
+    case PropertyItem::Attribute: return QString("attribute:%1").arg(qt::SdfPathToQString(item->propertyPath()));
 
     case PropertyItem::ArrayChunk:
-        return QString("chunk:%1:%2")
-            .arg(qt::SdfPathToQString(item->propertyPath()))
-            .arg(item->chunkStart());
+        return QString("chunk:%1:%2").arg(qt::SdfPathToQString(item->propertyPath())).arg(item->chunkStart());
 
     case PropertyItem::ArrayElement:
-        return QString("element:%1:%2")
-            .arg(qt::SdfPathToQString(item->propertyPath()))
-            .arg(item->arrayIndex());
+        return QString("element:%1:%2").arg(qt::SdfPathToQString(item->propertyPath())).arg(item->arrayIndex());
 
     case PropertyItem::Group:
     default: {
@@ -835,22 +820,21 @@ PropertyTreePrivate::captureTreeState() const
     if (auto* current = dynamic_cast<PropertyItem*>(d.tree->currentItem()))
         state.current = itemKey(current);
 
-    std::function<void(QTreeWidgetItem*)> capture =
-        [&](QTreeWidgetItem* parent) {
-            if (!parent)
-                return;
+    std::function<void(QTreeWidgetItem*)> capture = [&](QTreeWidgetItem* parent) {
+        if (!parent)
+            return;
 
-            for (int i = 0; i < parent->childCount(); ++i) {
-                QTreeWidgetItem* child = parent->child(i);
+        for (int i = 0; i < parent->childCount(); ++i) {
+            QTreeWidgetItem* child = parent->child(i);
 
-                if (auto* item = dynamic_cast<PropertyItem*>(child)) {
-                    if (item->isExpanded())
-                        state.expanded.insert(itemKey(item));
-                }
-
-                capture(child);
+            if (auto* item = dynamic_cast<PropertyItem*>(child)) {
+                if (item->isExpanded())
+                    state.expanded.insert(itemKey(item));
             }
-        };
+
+            capture(child);
+        }
+    };
 
     capture(d.tree->invisibleRootItem());
     return state;
@@ -864,33 +848,32 @@ PropertyTreePrivate::restoreTreeState(const TreeState& state)
 
     PropertyItem* currentItem = nullptr;
 
-    std::function<void(QTreeWidgetItem*)> restore =
-        [&](QTreeWidgetItem* parent) {
-            if (!parent)
-                return;
+    std::function<void(QTreeWidgetItem*)> restore = [&](QTreeWidgetItem* parent) {
+        if (!parent)
+            return;
 
-            for (int i = 0; i < parent->childCount(); ++i) {
-                QTreeWidgetItem* child = parent->child(i);
-                auto* item = dynamic_cast<PropertyItem*>(child);
+        for (int i = 0; i < parent->childCount(); ++i) {
+            QTreeWidgetItem* child = parent->child(i);
+            auto* item = dynamic_cast<PropertyItem*>(child);
 
-                if (!item) {
-                    restore(child);
-                    continue;
-                }
-
-                const QString key = itemKey(item);
-
-                if (!state.current.isEmpty() && key == state.current)
-                    currentItem = item;
-
-                const bool expanded = state.expanded.contains(key);
-                if (expanded && item->kind() == PropertyItem::ArrayChunk)
-                    populateChunk(item);
-
-                item->setExpanded(expanded);
-                restore(item);
+            if (!item) {
+                restore(child);
+                continue;
             }
-        };
+
+            const QString key = itemKey(item);
+
+            if (!state.current.isEmpty() && key == state.current)
+                currentItem = item;
+
+            const bool expanded = state.expanded.contains(key);
+            if (expanded && item->kind() == PropertyItem::ArrayChunk)
+                populateChunk(item);
+
+            item->setExpanded(expanded);
+            restore(item);
+        }
+    };
 
     restore(d.tree->invisibleRootItem());
 
@@ -900,6 +883,7 @@ PropertyTreePrivate::restoreTreeState(const TreeState& state)
     if (QScrollBar* scrollBar = d.tree->verticalScrollBar())
         scrollBar->setValue(state.scrollValue);
 }
+
 
 QString
 PropertyTreePrivate::metadataText(const VtValue& value)
@@ -946,8 +930,7 @@ PropertyTreePrivate::tokenOptions(const UsdAttribute& attr)
         return { "none", "edgeAndCorner", "edgeOnly" };
 
     if (name == "faceVaryingLinearInterpolation")
-        return { "all", "none", "cornersOnly", "cornersPlus1", "cornersPlus2",
-                 "boundaries", "edgeAndCorner" };
+        return { "all", "none", "cornersOnly", "cornersPlus1", "cornersPlus2", "boundaries", "edgeAndCorner" };
 
     if (name == "familyType")
         return { "nonOverlapping", "unrestricted", "partition" };
@@ -989,8 +972,7 @@ PropertyTreePrivate::editorForValue(const UsdAttribute& attr, const VtValue& val
 }
 
 void
-PropertyTreePrivate::configureEditor(PropertyItem* item, const UsdAttribute& attr,
-                                     const VtValue& value)
+PropertyTreePrivate::configureEditor(PropertyItem* item, const UsdAttribute& attr, const VtValue& value)
 {
     if (!item)
         return;
@@ -1006,7 +988,7 @@ PropertyTreePrivate::configureEditor(PropertyItem* item, const UsdAttribute& att
 
     if (editor == PropertyItem::FloatingEditor) {
         item->setNumericRange(-1.0e12, 1.0e12);
-        item->setEditorDecimals(6);
+        item->setEditorDecimals(2);
 
         const QString name = attributeBaseName(attr);
         if (name == "opacity" || name == "metallic" || name == "roughness")
@@ -1038,8 +1020,7 @@ PropertyTreePrivate::addSection(const QString& name, const QString& value)
 }
 
 PropertyItem*
-PropertyTreePrivate::addInfo(PropertyItem* parent, const QString& name, const QString& value,
-                             const QString& toolTip)
+PropertyTreePrivate::addInfo(PropertyItem* parent, const QString& name, const QString& value, const QString& toolTip)
 {
     if (!parent)
         return nullptr;
@@ -1075,9 +1056,8 @@ PropertyTreePrivate::addPrimSection(const UsdPrim& prim)
     PropertyItem* section = addSection("Prim");
 
     const QString name = StringToQString(prim.GetName().GetString());
-    const QString type = prim.GetTypeName().IsEmpty()
-                             ? QStringLiteral("<untyped>")
-                             : StringToQString(prim.GetTypeName().GetString());
+    const QString type = prim.GetTypeName().IsEmpty() ? QStringLiteral("<untyped>")
+                                                      : StringToQString(prim.GetTypeName().GetString());
 
     addInfo(section, "Name", name);
     addInfo(section, "Type", type);
@@ -1140,12 +1120,10 @@ PropertyTreePrivate::addCompositionSection(const UsdPrim& prim)
             for (const std::string& value : values)
                 available.append(StringToQString(value));
 
-            const QString toolTip = available.isEmpty()
-                                        ? QString()
-                                        : QString("Available: %1").arg(available.join(", "));
+            const QString toolTip = available.isEmpty() ? QString()
+                                                        : QString("Available: %1").arg(available.join(", "));
 
-            addInfo(variants, StringToQString(name),
-                    selection.isEmpty() ? QStringLiteral("<none>") : selection,
+            addInfo(variants, StringToQString(name), selection.isEmpty() ? QStringLiteral("<none>") : selection,
                     toolTip);
         }
 
@@ -1176,11 +1154,9 @@ PropertyTreePrivate::addRelationshipsSection(const UsdPrim& prim)
         SdfPathVector targets;
         relationship.GetTargets(&targets);
 
-        PropertyItem* item = addInfo(section,
-                                     StringToQString(relationship.GetName().GetString()),
-                                     targets.empty() ? QStringLiteral("<no targets>")
-                                                     : targets.size() == 1
-                                                           ? qt::SdfPathToQString(targets.front())
+        PropertyItem* item = addInfo(section, StringToQString(relationship.GetName().GetString()),
+                                     targets.empty()       ? QStringLiteral("<no targets>")
+                                     : targets.size() == 1 ? qt::SdfPathToQString(targets.front())
                                                            : QString("%1 targets").arg(targets.size()));
 
         if (targets.size() > 1) {
@@ -1329,8 +1305,8 @@ PropertyTreePrivate::updatePrims(const NoticeBatch& batch)
 }
 
 void
-PropertyTreePrivate::addArrayElements(PropertyItem* parent, const SdfPath& propertyPath,
-                                      const VtValue& value, int start, int count)
+PropertyTreePrivate::addArrayElements(PropertyItem* parent, const SdfPath& propertyPath, const VtValue& value,
+                                      int start, int count)
 {
     const int end = start + count;
     for (int index = start; index < end; ++index) {
@@ -1383,8 +1359,7 @@ PropertyTreePrivate::addAttribute(PropertyItem* parent, const UsdAttribute& attr
                 chunk->setKind(PropertyItem::ArrayChunk);
                 chunk->setPropertyPath(attr.GetPath());
                 chunk->setChunkRange(start, count);
-                chunk->setText(PropertyItem::Name,
-                               QString("[%1..%2]").arg(start).arg(start + count - 1));
+                chunk->setText(PropertyItem::Name, QString("[%1..%2]").arg(start).arg(start + count - 1));
                 chunk->setText(PropertyItem::Value, QString("%1 values").arg(count));
                 setReadOnlyValueStyle(chunk);
 
@@ -1409,13 +1384,9 @@ PropertyTreePrivate::addAttribute(PropertyItem* parent, const UsdAttribute& attr
 void
 PropertyTreePrivate::updateSelection(const QList<SdfPath>& paths)
 {
-    const bool preserveState =
-        paths.size() == 1
-        && !d.path.IsEmpty()
-        && paths.first() == d.path;
+    const bool preserveState = paths.size() == 1 && !d.path.IsEmpty() && paths.first() == d.path;
 
-    const TreeState treeState =
-        preserveState ? captureTreeState() : TreeState();
+    const TreeState treeState = preserveState ? captureTreeState() : TreeState();
 
     QSignalBlocker blocker(d.tree.data());
     d.update = true;
@@ -1598,6 +1569,7 @@ PropertyTree::PropertyTree(QWidget* parent)
     setSelectionBehavior(QAbstractItemView::SelectRows);
     setSelectionMode(QAbstractItemView::SingleSelection);
     setEditTriggers(QAbstractItemView::DoubleClicked | QAbstractItemView::EditKeyPressed);
+    setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
 }
 
 PropertyTree::~PropertyTree() = default;

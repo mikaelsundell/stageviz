@@ -11,9 +11,9 @@
 #include <QPointer>
 #include <algorithm>
 #include <pxr/usd/sdf/layer.h>
+#include <pxr/usd/usd/attribute.h>
 #include <pxr/usd/usd/editContext.h>
 #include <pxr/usd/usd/editTarget.h>
-#include <pxr/usd/usd/attribute.h>
 #include <pxr/usd/usd/prim.h>
 #include <pxr/usd/usd/primRange.h>
 #include <pxr/usd/usdGeom/imageable.h>
@@ -2096,7 +2096,7 @@ setAttributeValue(const SdfPath& attributePath, const VtValue& value)
                                     state->hadRootDefault = rootLayer->HasField(attributePath, SdfFieldKeys->Default);
                                     if (state->hadRootDefault)
                                         state->previousRootDefault = rootLayer->GetField(attributePath,
-                                                                                        SdfFieldKeys->Default);
+                                                                                         SdfFieldKeys->Default);
                                     state->captured = true;
                                 }
 
@@ -2114,8 +2114,7 @@ setAttributeValue(const SdfPath& attributePath, const VtValue& value)
                     command::finishDeferred(session,
                                             success ? "Attribute value set"
                                                     : appendError("Set attribute value failed", error),
-                                            { primPath },
-                                            success ? Status::Success : Status::Error);
+                                            { primPath }, success ? Status::Success : Status::Error);
                 });
             });
         },
@@ -2160,8 +2159,7 @@ setAttributeValue(const SdfPath& attributePath, const VtValue& value)
                     command::finishDeferred(session,
                                             success ? "Attribute value undone"
                                                     : appendError("Undo attribute value failed", error),
-                                            { primPath },
-                                            success ? Status::Success : Status::Error);
+                                            { primPath }, success ? Status::Success : Status::Error);
                 });
             });
         });

@@ -211,15 +211,10 @@ ViewCameraPrivate::camera()
         d.camera.SetTransform(matrix);
         d.camera.SetFocusDistance(d.distance);
 
-        const GfCamera::FOVDirection direction
-            = d.direction == ViewCamera::Horizontal
-                  ? GfCamera::FOVHorizontal
-                  : GfCamera::FOVVertical;
+        const GfCamera::FOVDirection direction = d.direction == ViewCamera::Horizontal ? GfCamera::FOVHorizontal
+                                                                                       : GfCamera::FOVVertical;
 
-        d.camera.SetPerspectiveFromAspectRatioAndFieldOfView(
-            d.aspectRatio,
-            d.fov,
-            direction);
+        d.camera.SetPerspectiveFromAspectRatioAndFieldOfView(d.aspectRatio, d.fov, direction);
 
         d.camera.SetClippingRange(GfRange1f(d.nearClipping, d.farClipping));
 

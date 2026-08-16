@@ -2,7 +2,7 @@
 // Copyright (c) 2025 - present Mikael Sundell
 // https://github.com/mikaelsundell/stageviz
 
-#include "propertydialog.h"
+#include "propertyview.h"
 #include "application.h"
 #include "notice.h"
 #include "propertytree.h"
@@ -11,13 +11,14 @@
 #include "viewcontext.h"
 #include <QHeaderView>
 #include <QPointer>
+#include <QSizePolicy>
 
 // generated files
-#include "ui_propertydialog.h"
+#include "ui_propertyview.h"
 
 namespace stageviz {
 
-class PropertyDialogPrivate : public QObject {
+class PropertyViewPrivate : public QObject {
 public:
     void init();
 
@@ -29,19 +30,23 @@ public Q_SLOTS:
 public:
     struct Data {
         QScopedPointer<ViewContext> context;
-        QScopedPointer<Ui_PropertyDialog> ui;
-        QPointer<PropertyDialog> dialog;
+        QScopedPointer<Ui_PropertyView> ui;
+        QPointer<PropertyView> view;
     };
     Data d;
 };
 
 void
-PropertyDialogPrivate::init()
+PropertyViewPrivate::init()
 {
-    d.ui.reset(new Ui_PropertyDialog());
-    d.ui->setupUi(d.dialog.data());
+    d.ui.reset(new Ui_PropertyView());
+    d.ui->setupUi(d.view.data());
 
-    d.context.reset(new ViewContext(d.dialog.data()));
+    d.view->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    d.ui->propertyTree->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    d.ui->verticalLayout->setStretch(0, 1);
+
+    d.context.reset(new ViewContext(d.view.data()));
     d.context->setStageLock(session()->stageLock());
     d.context->setCommandStack(session()->commandStack());
 
@@ -51,13 +56,13 @@ PropertyDialogPrivate::init()
     d.ui->propertyTree->setColumnWidth(0, 200);
     d.ui->propertyTree->header()->setSectionResizeMode(1, QHeaderView::Stretch);
 
-    connect(session(), &Session::primsChanged, this, &PropertyDialogPrivate::updatePrims);
-    connect(session(), &Session::stageChanged, this, &PropertyDialogPrivate::updateStage);
-    connect(session()->selectionList(), &SelectionList::selectionChanged, this,
-            &PropertyDialogPrivate::updateSelection);
+    connect(session(), &Session::primsChanged, this, &PropertyViewPrivate::updatePrims);
+    connect(session(), &Session::stageChanged, this, &PropertyViewPrivate::updateStage);
+    connect(session()->selectionList(), &SelectionList::selectionChanged, this, &PropertyViewPrivate::updateSelection);
 
     if (session()->isLoaded()) {
         d.ui->propertyTree->updateStage(session()->stage());
+
         const QList<SdfPath> paths = session()->selectionList()->paths();
         if (!paths.isEmpty())
             d.ui->propertyTree->updateSelection(paths);
@@ -65,19 +70,19 @@ PropertyDialogPrivate::init()
 }
 
 void
-PropertyDialogPrivate::updatePrims(const NoticeBatch& batch)
+PropertyViewPrivate::updatePrims(const NoticeBatch& batch)
 {
     d.ui->propertyTree->updatePrims(batch);
 }
 
 void
-PropertyDialogPrivate::updateSelection(const QList<SdfPath>& paths)
+PropertyViewPrivate::updateSelection(const QList<SdfPath>& paths)
 {
     d.ui->propertyTree->updateSelection(paths);
 }
 
 void
-PropertyDialogPrivate::updateStage(UsdStageRefPtr stage, Session::LoadPolicy policy, Session::StageStatus status)
+PropertyViewPrivate::updateStage(UsdStageRefPtr stage, Session::LoadPolicy policy, Session::StageStatus status)
 {
     Q_UNUSED(policy);
 
@@ -93,14 +98,14 @@ PropertyDialogPrivate::updateStage(UsdStageRefPtr stage, Session::LoadPolicy pol
         d.ui->propertyTree->updateSelection(paths);
 }
 
-PropertyDialog::PropertyDialog(QWidget* parent)
-    : QDialog(parent)
-    , p(new PropertyDialogPrivate())
+PropertyView::PropertyView(QWidget* parent)
+    : QWidget(parent)
+    , p(new PropertyViewPrivate())
 {
-    p->d.dialog = this;
+    p->d.view = this;
     p->init();
 }
 
-PropertyDialog::~PropertyDialog() = default;
+PropertyView::~PropertyView() = default;
 
 }  // namespace stageviz

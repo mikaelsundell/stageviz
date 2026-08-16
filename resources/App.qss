@@ -55,7 +55,6 @@ QComboBox {
     padding-left: 10px;
     padding-right: 28px;
     border-radius: 0px;
-    margin-top: 4px;
     border: 1px solid $color.borderalt;
     outline: none;
 }
@@ -428,7 +427,6 @@ QAbstractSpinBox
     min-height: 24px;
     border: 1px solid $color.borderalt;
     border-radius: 0px;
-    margin-top: 4px;
     padding-left: 10px;
     padding-right: 20px;
 }

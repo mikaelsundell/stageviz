@@ -12,20 +12,18 @@
 namespace stageviz {
 
 PropertyDelegate::PropertyDelegate(QObject* parent)
-    : QStyledItemDelegate(parent)
+    : TreeWidget::ItemDelegate(parent)
 {}
 
 PropertyDelegate::~PropertyDelegate() = default;
 
 QWidget*
-PropertyDelegate::createEditor(QWidget* parent, const QStyleOptionViewItem& option,
-                               const QModelIndex& index) const
+PropertyDelegate::createEditor(QWidget* parent, const QStyleOptionViewItem& option, const QModelIndex& index) const
 {
     if (!index.isValid() || index.column() != PropertyItem::Value)
         return nullptr;
 
-    const PropertyItem::Editor editorType =
-        PropertyItem::Editor(index.data(PropertyItem::EditorRole).toInt());
+    const PropertyItem::Editor editorType = PropertyItem::Editor(index.data(PropertyItem::EditorRole).toInt());
 
     switch (editorType) {
     case PropertyItem::BoolEditor: {
@@ -51,8 +49,7 @@ PropertyDelegate::createEditor(QWidget* parent, const QStyleOptionViewItem& opti
         auto* spin = new QSpinBox(parent);
         const double minimum = index.data(PropertyItem::EditorMinimumRole).toDouble();
         const double maximum = index.data(PropertyItem::EditorMaximumRole).toDouble();
-        spin->setRange(int(qMax(double(INT_MIN), minimum)),
-                       int(qMin(double(INT_MAX), maximum)));
+        spin->setRange(int(qMax(double(INT_MIN), minimum)), int(qMin(double(INT_MAX), maximum)));
         return spin;
     }
 
@@ -65,15 +62,13 @@ PropertyDelegate::createEditor(QWidget* parent, const QStyleOptionViewItem& opti
         return spin;
     }
 
-    case PropertyItem::TextEditor:
-        return new QLineEdit(parent);
+    case PropertyItem::TextEditor: return new QLineEdit(parent);
 
     case PropertyItem::NoEditor:
-    default:
-        break;
+    default: break;
     }
 
-    return QStyledItemDelegate::createEditor(parent, option, index);
+    return TreeWidget::ItemDelegate::createEditor(parent, option, index);
 }
 
 void
@@ -112,12 +107,11 @@ PropertyDelegate::setEditorData(QWidget* editor, const QModelIndex& index) const
         return;
     }
 
-    QStyledItemDelegate::setEditorData(editor, index);
+    TreeWidget::ItemDelegate::setEditorData(editor, index);
 }
 
 void
-PropertyDelegate::setModelData(QWidget* editor, QAbstractItemModel* model,
-                               const QModelIndex& index) const
+PropertyDelegate::setModelData(QWidget* editor, QAbstractItemModel* model, const QModelIndex& index) const
 {
     if (auto* combo = qobject_cast<QComboBox*>(editor)) {
         model->setData(index, combo->currentText(), Qt::EditRole);
@@ -139,7 +133,7 @@ PropertyDelegate::setModelData(QWidget* editor, QAbstractItemModel* model,
         return;
     }
 
-    QStyledItemDelegate::setModelData(editor, model, index);
+    TreeWidget::ItemDelegate::setModelData(editor, model, index);
 }
 
 }  // namespace stageviz

@@ -286,7 +286,7 @@ ShelfListPrivate::iconImage(const QImage& image) const
     if (image.isNull())
         return QImage();
 
-    const int iconSize = stageviz::style()->iconSize(Style::UIScale::Medium);
+    const int iconSize = style()->iconSize(Style::UIScale::Medium);
     const int tilePadding = 6;
     const int logicalSize = iconSize + tilePadding * 2;
 

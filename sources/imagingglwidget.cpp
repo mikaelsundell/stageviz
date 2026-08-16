@@ -41,14 +41,14 @@
 #include <pxr/imaging/hd/sceneIndexPluginRegistry.h>
 #include <pxr/imaging/hgi/hgi.h>
 #include <pxr/imaging/hgi/tokens.h>
-#include <pxr/usd/usd/primRange.h>
 #include <pxr/usd/usd/attribute.h>
+#include <pxr/usd/usd/primRange.h>
 #include <pxr/usd/usd/stage.h>
-#include <pxr/usd/usdGeom/bboxCache.h>
 #include <pxr/usd/usdGeom/basisCurves.h>
-#include <pxr/usd/usdGeom/scope.h>
+#include <pxr/usd/usdGeom/bboxCache.h>
 #include <pxr/usd/usdGeom/camera.h>
 #include <pxr/usd/usdGeom/metrics.h>
+#include <pxr/usd/usdGeom/scope.h>
 #include <pxr/usd/usdGeom/xform.h>
 #include <pxr/usd/usdShade/material.h>
 #include <pxr/usd/usdShade/materialBindingAPI.h>
@@ -75,10 +75,7 @@ public:
         return materialOverrideSceneIndexInstance();
     }
 
-    HdMergingSceneIndexRefPtr mergingSceneIndex() const
-    {
-        return mergingSceneIndexInstance();
-    }
+    HdMergingSceneIndexRefPtr mergingSceneIndex() const { return mergingSceneIndexInstance(); }
 
 private:
     static HdMergingSceneIndexRefPtr& mergingSceneIndexInstance()
@@ -108,8 +105,7 @@ private:
             HdMergingSceneIndexRefPtr mergingSceneIndex = HdMergingSceneIndex::New();
             mergingSceneIndex->AddInputScene(inputScene, SdfPath::AbsoluteRootPath());
 
-            TfRefPtr<MaterialOverrideSceneIndex> sceneIndex
-                = MaterialOverrideSceneIndex::New(mergingSceneIndex);
+            TfRefPtr<MaterialOverrideSceneIndex> sceneIndex = MaterialOverrideSceneIndex::New(mergingSceneIndex);
 
             mergingSceneIndexInstance() = mergingSceneIndex;
             materialOverrideSceneIndexInstance() = sceneIndex;
@@ -140,8 +136,8 @@ public:
     void updateAuxiliaryGrid();
     void ensureAuxiliaryMaterials();
     void authorAuxiliaryGridMaterial(const SdfPath& materialPath, const GfVec3f& color);
-    void authorAuxiliaryStandardSurface(const SdfPath& materialPath, const GfVec3f& baseColor,
-                                        float metalness, float roughness, float specular);
+    void authorAuxiliaryStandardSurface(const SdfPath& materialPath, const GfVec3f& baseColor, float metalness,
+                                        float roughness, float specular);
     void ensureMaterialOverrideSceneIndex();
     void updateMaterialOverrideSceneIndex();
     SelectionList* selectionList();
@@ -341,9 +337,7 @@ ImagingGLWidgetPrivate::ensureAuxiliarySceneIndex()
     // Merge the fully processed USD Imaging output, not the raw
     // UsdImagingStageSceneIndex. The processing chain resolves USD semantics
     // such as material bindings into the Hydra schemas expected downstream.
-    mergingSceneIndex->AddInputScene(
-        d.auxiliarySceneIndices.finalSceneIndex,
-        SdfPath::AbsoluteRootPath());
+    mergingSceneIndex->AddInputScene(d.auxiliarySceneIndices.finalSceneIndex, SdfPath::AbsoluteRootPath());
 
     d.auxiliarySceneIndexInserted = true;
 }
@@ -367,8 +361,7 @@ ImagingGLWidgetPrivate::authorAuxiliaryGridMaterial(const SdfPath& materialPath,
         return;
 
     UsdShadeMaterial material = UsdShadeMaterial::Define(d.auxiliary, materialPath);
-    UsdShadeShader surface
-        = UsdShadeShader::Define(d.auxiliary, materialPath.AppendChild(TfToken("Surface")));
+    UsdShadeShader surface = UsdShadeShader::Define(d.auxiliary, materialPath.AppendChild(TfToken("Surface")));
 
     // Use the same MaterialX Standard Surface path as the working viewport
     // overrides. The grid is intentionally emission-only so its appearance is
@@ -388,18 +381,14 @@ ImagingGLWidgetPrivate::authorAuxiliaryGridMaterial(const SdfPath& materialPath,
 }
 
 void
-ImagingGLWidgetPrivate::authorAuxiliaryStandardSurface(const SdfPath& materialPath,
-                                                       const GfVec3f& baseColor,
-                                                       float metalness,
-                                                       float roughness,
-                                                       float specular)
+ImagingGLWidgetPrivate::authorAuxiliaryStandardSurface(const SdfPath& materialPath, const GfVec3f& baseColor,
+                                                       float metalness, float roughness, float specular)
 {
     if (!d.auxiliary)
         return;
 
     UsdShadeMaterial material = UsdShadeMaterial::Define(d.auxiliary, materialPath);
-    UsdShadeShader surface
-        = UsdShadeShader::Define(d.auxiliary, materialPath.AppendChild(TfToken("Surface")));
+    UsdShadeShader surface = UsdShadeShader::Define(d.auxiliary, materialPath.AppendChild(TfToken("Surface")));
 
     surface.CreateIdAttr(VtValue(TfToken("ND_standard_surface_surfaceshader")));
     surface.CreateInput(TfToken("base"), SdfValueTypeNames->Float).Set(1.0f);
@@ -427,13 +416,7 @@ ImagingGLWidgetPrivate::ensureAuxiliaryMaterials()
 
     // Built-in Stageviz clay lives on the shared auxiliary stage just like any
     // other render-support material.
-    authorAuxiliaryStandardSurface(
-        clayPath,
-        GfVec3f(0.55f, 0.18f, 0.16f),
-        0.0f,
-        0.68f,
-        0.35f);
-
+    authorAuxiliaryStandardSurface(clayPath, GfVec3f(0.55f, 0.18f, 0.16f), 0.0f, 0.68f, 0.35f);
 }
 
 void
@@ -522,9 +505,8 @@ ImagingGLWidgetPrivate::updateAuxiliaryGrid()
     centerWidths.SetMetadata(TfToken("interpolation"), VtValue(UsdGeomTokens->constant));
 
     const QColor gridColor = state->gridColor();
-    const GfVec3f color = gridColor.isValid()
-                              ? GfVec3f(gridColor.redF(), gridColor.greenF(), gridColor.blueF())
-                              : GfVec3f(0.34f);
+    const GfVec3f color = gridColor.isValid() ? GfVec3f(gridColor.redF(), gridColor.greenF(), gridColor.blueF())
+                                              : GfVec3f(0.34f);
 
 
     authorAuxiliaryGridMaterial(gridMaterialPath, color);

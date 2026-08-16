@@ -5,25 +5,27 @@
 #pragma once
 
 #include "stageviz.h"
-#include <QStyledItemDelegate>
+#include "treewidget.h"
 
 namespace stageviz {
 
 /**
  * @class PropertyDelegate
- * @brief Creates type-aware editors for PropertyTree value cells.
+ * @brief StageViz tree delegate with type-aware property editors.
+ *
+ * Inherits the shared TreeWidget item layout and painting so PropertyTree
+ * remains visually identical to StageTree while providing specialized
+ * editors for USD property values.
  */
-class PropertyDelegate : public QStyledItemDelegate {
+class PropertyDelegate : public TreeWidget::ItemDelegate {
     Q_OBJECT
 public:
-    PropertyDelegate(QObject* parent = nullptr);
-    virtual ~PropertyDelegate();
+    explicit PropertyDelegate(QObject* parent = nullptr);
+    ~PropertyDelegate() override;
 
-    QWidget* createEditor(QWidget* parent, const QStyleOptionViewItem& option,
-                          const QModelIndex& index) const override;
+    QWidget* createEditor(QWidget* parent, const QStyleOptionViewItem& option, const QModelIndex& index) const override;
     void setEditorData(QWidget* editor, const QModelIndex& index) const override;
-    void setModelData(QWidget* editor, QAbstractItemModel* model,
-                      const QModelIndex& index) const override;
+    void setModelData(QWidget* editor, QAbstractItemModel* model, const QModelIndex& index) const override;
 };
 
 }  // namespace stageviz

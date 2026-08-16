@@ -1,36 +1,45 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <ui version="4.0">
- <class>PropertyDialog</class>
- <widget class="QDialog" name="PropertyDialog">
+ <class>PropertyView</class>
+ <widget class="QWidget" name="PropertyView">
   <property name="geometry">
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>420</width>
-    <height>600</height>
+    <width>400</width>
+    <height>628</height>
    </rect>
   </property>
-  <property name="windowTitle">
-   <string>Form</string>
+  <property name="sizePolicy">
+   <sizepolicy hsizetype="Preferred" vsizetype="Expanding">
+    <horstretch>0</horstretch>
+    <verstretch>0</verstretch>
+   </sizepolicy>
   </property>
-  <layout class="QVBoxLayout" name="verticalLayout">
+  <layout class="QVBoxLayout" name="verticalLayout" stretch="0">
    <property name="spacing">
-    <number>0</number>
+    <number>6</number>
    </property>
    <property name="leftMargin">
-    <number>9</number>
+    <number>6</number>
    </property>
    <property name="topMargin">
-    <number>9</number>
+    <number>6</number>
    </property>
    <property name="rightMargin">
-    <number>9</number>
+    <number>6</number>
    </property>
    <property name="bottomMargin">
-    <number>9</number>
+    <number>6</number>
    </property>
    <item>
-    <widget class="stageviz::PropertyTree" name="propertyTree"/>
+    <widget class="stageviz::PropertyTree" name="propertyTree">
+     <column>
+      <property name="text">
+       <string notr="true">1</string>
+      </property>
+     </column>
+    </widget>
    </item>
   </layout>
  </widget>

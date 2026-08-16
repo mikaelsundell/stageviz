@@ -24,26 +24,11 @@ class PropertyItemPrivate;
  */
 class PropertyItem : public TreeItem {
 public:
-    enum Column {
-        Name = 0,
-        Value
-    };
+    enum Column { Name = 0, Value };
 
-    enum Kind {
-        Group,
-        Attribute,
-        ArrayChunk,
-        ArrayElement
-    };
+    enum Kind { Group, Attribute, ArrayChunk, ArrayElement };
 
-    enum Editor {
-        NoEditor = 0,
-        TextEditor,
-        BoolEditor,
-        TokenEditor,
-        IntegerEditor,
-        FloatingEditor
-    };
+    enum Editor { NoEditor = 0, TextEditor, BoolEditor, TokenEditor, IntegerEditor, FloatingEditor };
 
     enum Role {
         EditorRole = Qt::UserRole + 100,

@@ -6,6 +6,7 @@
 
 #include "stageviz.h"
 #include <QStyleOptionViewItem>
+#include <QStyledItemDelegate>
 #include <QTreeWidget>
 #include <memory>
 
@@ -23,6 +24,39 @@ class TreeWidgetPrivate;
 class TreeWidget : public QTreeWidget {
     Q_OBJECT
 public:
+    /**
+     * @class ItemDelegate
+     * @brief Shared StageViz tree item layout and painting delegate.
+     *
+     * Specialized tree delegates should derive from this class when they
+     * need custom editors while preserving the standard StageViz tree
+     * geometry, hit regions, icons, and text painting.
+     */
+    class ItemDelegate : public QStyledItemDelegate {
+    public:
+        struct Layout {
+            QRect contentRect;
+            QRect checkRect;
+            QRect checkHitRect;
+            QRect iconRect;
+            QRect iconHitRect;
+            QRect textRect;
+            bool isCheckable = false;
+            bool hasDecoration = false;
+        };
+
+        explicit ItemDelegate(QObject* parent = nullptr);
+        ~ItemDelegate() override;
+
+        Layout layout(const QStyleOptionViewItem& option, const QModelIndex& index) const;
+        bool hitCheckbox(const QStyleOptionViewItem& option, const QModelIndex& index, const QPoint& pos) const;
+
+        bool editorEvent(QEvent* event, QAbstractItemModel* model, const QStyleOptionViewItem& option,
+                         const QModelIndex& index) override;
+
+        void paint(QPainter* painter, const QStyleOptionViewItem& option, const QModelIndex& index) const override;
+    };
+
     /**
      * @brief Creates the tree widget.
      * @param parent Parent widget.

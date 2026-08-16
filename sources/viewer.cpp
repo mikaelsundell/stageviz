@@ -12,8 +12,8 @@
 #include "notice.h"
 #include "os.h"
 #include "outlinerview.h"
-#include "progressview.h"
-#include "propertydialog.h"
+#include "progressdialog.h"
+#include "propertyview.h"
 #include "pythondialog.h"
 #include "pythonshelf.h"
 #include "qtutils.h"
@@ -45,6 +45,7 @@
 #include <QToolButton>
 #include <QVBoxLayout>
 
+#include <QSizePolicy>
 // generated files
 #include "ui_viewer.h"
 
@@ -61,8 +62,8 @@ public:
     bool loadFile(const QString& fileName);
     bool mergeFile(const QString& fileName);
     OutlinerView* outlinerView();
-    ProgressView* progressView();
-    PropertyDialog* propertyDialog();
+    PropertyView* propertyView();
+    ProgressDialog* progressDialog();
     PythonDialog* pythonDialog();
     ConsoleDialog* consoleDialog();
     RenderView* renderView();
@@ -120,9 +121,7 @@ public Q_SLOTS:
     void complexityMedium();
     void complexityHigh();
     void complexityVeryHigh();
-    void toggleOutliner(bool checked);
     void toggleProgress(bool checked);
-    void toggleProperty(bool checked);
     void togglePython(bool checked);
     void toggleConsole(bool checked);
     void openAbout();
@@ -161,9 +160,9 @@ public:
         QScopedPointer<Ui_Viewer> ui;
         QPointer<Viewer> viewer;
         QPointer<OutlinerView> outlinerView;
-        QPointer<ProgressView> progressView;
+        QPointer<PropertyView> propertyView;
         QPointer<PythonShelf> pythonShelf;
-        QPointer<PropertyDialog> propertyDialog;
+        QPointer<ProgressDialog> progressDialog;
         QPointer<PythonDialog> pythonDialog;
         QPointer<ConsoleDialog> consoleDialog;
     };
@@ -181,7 +180,6 @@ ViewerPrivate::ViewerPrivate()
 void
 ViewerPrivate::init()
 {
-    os::setDarkTheme();
     d.ui.reset(new Ui_Viewer());
     d.ui->setupUi(d.viewer.data());
     attach(d.ui->displayIsolate);
@@ -317,9 +315,7 @@ ViewerPrivate::init()
     connect(d.ui->hudSceneStats, &QAction::toggled, viewState, &ViewState::setSceneStatsEnabled);
     connect(d.ui->hudPerformanceStats, &QAction::toggled, viewState, &ViewState::setPerformanceStatsEnabled);
     connect(d.ui->hudCameraAxis, &QAction::toggled, viewState, &ViewState::setCameraAxisEnabled);
-    connect(d.ui->viewOutliner, &QAction::toggled, this, &ViewerPrivate::toggleOutliner);
     connect(d.ui->viewProgress, &QAction::toggled, this, &ViewerPrivate::toggleProgress);
-    connect(d.ui->viewProperty, &QAction::toggled, this, &ViewerPrivate::toggleProperty);
     connect(d.ui->viewPython, &QAction::toggled, this, &ViewerPrivate::togglePython);
     connect(d.ui->viewConsole, &QAction::toggled, this, &ViewerPrivate::toggleConsole);
     connect(viewState, &ViewState::materialModeChanged, this, &ViewerPrivate::updateMaterialMode);
@@ -377,17 +373,18 @@ ViewerPrivate::initDocks()
             layout->setSpacing(0);
             layout->setContentsMargins(margins);
         }
-        layout->addWidget(view);
+        view->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+        layout->addWidget(view, 1);
     };
     d.outlinerView = new OutlinerView(d.ui->outlinerWidget);
     d.outlinerView->setObjectName("outlinerView");
     d.outlinerView->setAttribute(Qt::WA_DeleteOnClose, false);
     addPanelView(d.ui->outlinerWidget, d.outlinerView, QMargins(4, 4, 0, 4));
 
-    d.progressView = new ProgressView(d.ui->progressWidget);
-    d.progressView->setObjectName("progressView");
-    d.progressView->setAttribute(Qt::WA_DeleteOnClose, false);
-    addPanelView(d.ui->progressWidget, d.progressView, QMargins(0, 4, 4, 4));
+    d.propertyView = new PropertyView(d.ui->propertyWidget);
+    d.propertyView->setObjectName("propertyView");
+    d.propertyView->setAttribute(Qt::WA_DeleteOnClose, false);
+    addPanelView(d.ui->propertyWidget, d.propertyView, QMargins(4, 4, 0, 4));
 
     d.pythonShelf = new PythonShelf(d.ui->pythonShelfWidget);
     d.pythonShelf->setObjectName("pythonShelf");
@@ -408,16 +405,16 @@ ViewerPrivate::initDocks()
     const int center = std::max(400, total - left - right);
     d.ui->splitter->setSizes({ left, center, right });
 
-    d.propertyDialog = new PropertyDialog(d.viewer.data());
-    d.propertyDialog->setObjectName("propertyDialog");
-    d.propertyDialog->setAttribute(Qt::WA_DeleteOnClose, false);
-    d.propertyDialog->setWindowFlags(Qt::Tool | Qt::WindowTitleHint | Qt::WindowCloseButtonHint);
+    d.progressDialog = new ProgressDialog(d.viewer.data());
+    d.progressDialog->setObjectName("progressDialog");
+    d.progressDialog->setAttribute(Qt::WA_DeleteOnClose, false);
+    d.progressDialog->setWindowFlags(Qt::Tool | Qt::WindowTitleHint | Qt::WindowCloseButtonHint);
 #ifdef Q_OS_MAC
-    d.propertyDialog->setAttribute(Qt::WA_MacAlwaysShowToolWindow, true);
+    d.progressDialog->setAttribute(Qt::WA_MacAlwaysShowToolWindow, true);
 #endif
-    d.propertyDialog->setWindowTitle("Property editor");
-    d.propertyDialog->installEventFilter(this);
-    d.propertyDialog->hide();
+    d.progressDialog->setWindowTitle("Progress");
+    d.progressDialog->installEventFilter(this);
+    d.progressDialog->hide();
 
     d.pythonDialog = new PythonDialog(d.viewer.data());
     d.pythonDialog->setObjectName("pythonDialog");
@@ -443,15 +440,10 @@ ViewerPrivate::initDocks()
     connect(d.consoleDialog, &ConsoleDialog::visibilityChanged, this,
             [this](bool visible) { updateDockAction(d.ui->viewConsole, visible); });
 
-    const bool outlinerVisible = settings()->value("viewer/outlinerVisible", true).toBool();
-    const bool progressVisible = settings()->value("viewer/progressVisible", false).toBool();
+    d.ui->outlinerWidget->show();
+    d.ui->propertyWidget->show();
 
-    d.ui->outlinerWidget->setVisible(outlinerVisible);
-    d.ui->progressWidget->setVisible(progressVisible);
-
-    updateDockAction(d.ui->viewOutliner, outlinerVisible);
-    updateDockAction(d.ui->viewProgress, progressVisible);
-    updateDockAction(d.ui->viewProperty, false);
+    updateDockAction(d.ui->viewProgress, false);
     updateDockAction(d.ui->viewPython, false);
     updateDockAction(d.ui->viewConsole, false);
 }
@@ -614,16 +606,16 @@ ViewerPrivate::outlinerView()
     return d.outlinerView.data();
 }
 
-ProgressView*
-ViewerPrivate::progressView()
+PropertyView*
+ViewerPrivate::propertyView()
 {
-    return d.progressView.data();
+    return d.propertyView.data();
 }
 
-PropertyDialog*
-ViewerPrivate::propertyDialog()
+ProgressDialog*
+ViewerPrivate::progressDialog()
 {
-    return d.propertyDialog.data();
+    return d.progressDialog.data();
 }
 
 PythonDialog*
@@ -647,10 +639,10 @@ ViewerPrivate::renderView()
 bool
 ViewerPrivate::eventFilter(QObject* object, QEvent* event)
 {
-    if (object == d.propertyDialog) {
+    if (object == d.progressDialog) {
         switch (event->type()) {
-        case QEvent::Show: updateDockAction(d.ui->viewProperty, true); break;
-        case QEvent::Hide: updateDockAction(d.ui->viewProperty, false); break;
+        case QEvent::Show: updateDockAction(d.ui->viewProgress, true); break;
+        case QEvent::Hide: updateDockAction(d.ui->viewProgress, false); break;
         default: break;
         }
     }
@@ -673,9 +665,9 @@ ViewerPrivate::eventFilter(QObject* object, QEvent* event)
         const Qt::WindowStates state = d.viewer->windowState();
         if (!(state & Qt::WindowMinimized) && d.viewer->isActiveWindow()) {
             QTimer::singleShot(0, d.viewer, [this]() {
-                if (d.ui->viewProperty->isChecked() && d.propertyDialog) {
-                    d.propertyDialog->show();
-                    d.propertyDialog->raise();
+                if (d.ui->viewProgress->isChecked() && d.progressDialog) {
+                    d.progressDialog->show();
+                    d.progressDialog->raise();
                 }
                 if (d.ui->viewPython->isChecked() && d.pythonDialog) {
                     d.pythonDialog->show();
@@ -1127,8 +1119,6 @@ ViewerPrivate::saveSettings()
     settings()->setValue("performanceStats", d.ui->hudPerformanceStats->isChecked());
     settings()->setValue("cameraAxis", d.ui->hudCameraAxis->isChecked());
     settings()->setValue("grid", d.ui->displayGrid->isChecked());
-    settings()->setValue("viewer/outlinerVisible", d.ui->outlinerWidget->isVisible());
-    settings()->setValue("viewer/progressVisible", d.ui->progressWidget->isVisible());
     settings()->setValue("viewer/windowGeometry", d.viewer->saveGeometry());
     settings()->setValue("viewer/windowState", int(windowState));
     settings()->setValue("viewer/splitterState", d.ui->splitter->saveState());
@@ -1398,33 +1388,18 @@ ViewerPrivate::complexityVeryHigh()
 }
 
 void
-ViewerPrivate::toggleOutliner(bool checked)
-{
-    d.ui->outlinerWidget->setVisible(checked);
-    settings()->setValue("viewer/outlinerVisible", checked);
-    updateDockAction(d.ui->viewOutliner, checked);
-}
-
-void
 ViewerPrivate::toggleProgress(bool checked)
 {
-    d.ui->progressWidget->setVisible(checked);
-    settings()->setValue("viewer/progressVisible", checked);
-    updateDockAction(d.ui->viewProgress, checked);
-}
-
-void
-ViewerPrivate::toggleProperty(bool checked)
-{
-    if (!d.propertyDialog)
+    if (!d.progressDialog)
         return;
+
     if (checked) {
-        d.propertyDialog->show();
-        d.propertyDialog->raise();
-        d.propertyDialog->activateWindow();
+        d.progressDialog->show();
+        d.progressDialog->raise();
+        d.progressDialog->activateWindow();
     }
     else {
-        d.propertyDialog->hide();
+        d.progressDialog->hide();
     }
 }
 
@@ -1960,9 +1935,9 @@ Viewer::closeEvent(QCloseEvent* event)
 
     p->saveSettings();
 
-    if (p->d.propertyDialog) {
-        p->d.propertyDialog->hide();
-        p->d.propertyDialog->close();
+    if (p->d.progressDialog) {
+        p->d.progressDialog->hide();
+        p->d.progressDialog->close();
     }
 
     if (p->d.pythonDialog) {

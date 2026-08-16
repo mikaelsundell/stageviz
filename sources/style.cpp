@@ -3,6 +3,7 @@
 // https://github.com/mikaelsundell/stageviz
 
 #include "style.h"
+#include "os.h"
 #include "qtutils.h"
 #include <QApplication>
 #include <QFile>
@@ -192,6 +193,7 @@ StylePrivate::updateStylesheet()
 void
 StylePrivate::updateTheme()
 {
+    os::setDarkTheme();
     d.palette.clear();
     auto map = [&](Style::ColorRole role, QColor color) { d.palette[roleName(role)] = color; };
     map(Style::ColorRole::Accent, QColor::fromHsl(220, 6, 20));
