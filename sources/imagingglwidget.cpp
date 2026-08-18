@@ -551,6 +551,7 @@ ImagingGLWidgetPrivate::initContext()
         updateMaterialOverrideSceneIndex();
         d.glwidget->update();
     });
+    connect(viewState(), &ViewState::doubleSidedModeChanged, d.glwidget, qOverload<>(&QWidget::update));
     connect(viewState(), &ViewState::defaultCameraLightEnabledChanged, d.glwidget, qOverload<>(&QWidget::update));
     connect(viewState(), &ViewState::sceneLightsEnabledChanged, d.glwidget, qOverload<>(&QWidget::update));
     connect(viewState(), &ViewState::renderModeChanged, d.glwidget, qOverload<>(&QWidget::update));
@@ -716,7 +717,19 @@ ImagingGLWidgetPrivate::paintGL()
                 }
                 d.params.complexity = complexity;
             }
-            d.params.cullStyle = UsdImagingGLCullStyle::CULL_STYLE_NOTHING;
+            {
+                const ViewState::DoubleSidedMode mode = viewState() ? viewState()->doubleSidedMode()
+                                                                    : ViewState::DoubleSided;
+
+                switch (mode) {
+                case ViewState::Primitive:
+                    d.params.cullStyle = UsdImagingGLCullStyle::CULL_STYLE_BACK_UNLESS_DOUBLE_SIDED;
+                    break;
+                case ViewState::SingleSided: d.params.cullStyle = UsdImagingGLCullStyle::CULL_STYLE_BACK; break;
+                case ViewState::DoubleSided:
+                default: d.params.cullStyle = UsdImagingGLCullStyle::CULL_STYLE_NOTHING; break;
+                }
+            }
             d.params.enableLighting = true;
             {
                 std::vector<GlfSimpleLight> lights;

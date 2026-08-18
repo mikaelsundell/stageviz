@@ -239,6 +239,35 @@ PyViewState_setSceneMaterialsEnabled(PyViewStateObject* self, PyObject* args)
 }
 
 static PyObject*
+PyViewState_doubleSidedMode(PyViewStateObject* self)
+{
+    if (!checkViewState(self->viewState))
+        return nullptr;
+
+    return PyLong_FromLong(static_cast<long>(self->viewState->doubleSidedMode()));
+}
+
+static PyObject*
+PyViewState_setDoubleSidedMode(PyViewStateObject* self, PyObject* args)
+{
+    if (!checkViewState(self->viewState))
+        return nullptr;
+
+    long mode = 0;
+    if (!PyArg_ParseTuple(args, "l", &mode))
+        return nullptr;
+
+    if (mode < static_cast<long>(ViewState::Primitive) || mode > static_cast<long>(ViewState::SingleSided)) {
+        PyErr_SetString(PyExc_ValueError,
+                        "Invalid double-sided mode. Expected Primitive, DoubleSided, or SingleSided.");
+        return nullptr;
+    }
+
+    self->viewState->setDoubleSidedMode(static_cast<ViewState::DoubleSidedMode>(mode));
+    Py_RETURN_NONE;
+}
+
+static PyObject*
 PyViewState_renderMode(PyViewStateObject* self)
 {
     if (!checkViewState(self->viewState))
@@ -429,6 +458,11 @@ static PyMethodDef PyViewState_methods[]
           "Get the scene material state" },
         { "setSceneMaterialsEnabled", reinterpret_cast<PyCFunction>(PyViewState_setSceneMaterialsEnabled), METH_VARARGS,
           "Set the scene material state" },
+
+        { "doubleSidedMode", reinterpret_cast<PyCFunction>(PyViewState_doubleSidedMode), METH_NOARGS,
+          "Get the viewport double-sided rendering mode: 0=Primitive, 1=DoubleSided, 2=SingleSided" },
+        { "setDoubleSidedMode", reinterpret_cast<PyCFunction>(PyViewState_setDoubleSidedMode), METH_VARARGS,
+          "Set the viewport double-sided rendering mode: 0=Primitive, 1=DoubleSided, 2=SingleSided" },
 
         { "renderMode", reinterpret_cast<PyCFunction>(PyViewState_renderMode), METH_NOARGS,
           "Get the viewport render mode" },

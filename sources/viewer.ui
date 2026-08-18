@@ -1061,9 +1061,6 @@
    <property name="text">
     <string>Progress</string>
    </property>
-   <property name="shortcut">
-    <string>P</string>
-   </property>
   </action>
   <action name="editShowSelected">
    <property name="text">
@@ -1178,6 +1175,9 @@
    </property>
    <property name="text">
     <string>Python</string>
+   </property>
+   <property name="shortcut">
+    <string>P</string>
    </property>
   </action>
   <action name="displayCameraLight">

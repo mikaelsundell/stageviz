@@ -47,6 +47,17 @@ public:
     Q_ENUM(MaterialMode)
 
     /**
+     * @brief Viewport double-sided rendering modes.
+     *
+     * Authored respects each USD primitives's authored doubleSided value.
+     * DoubleSided disables back-face culling for all geometry.
+     * SingleSided enables back-face culling for all geometry,
+     * ignoring authored doubleSided values.
+     */
+    enum DoubleSidedMode { Primitive, DoubleSided, SingleSided };
+    Q_ENUM(DoubleSidedMode)
+
+    /**
      * @brief Constructs a ViewState.
      *
      * @param parent Optional parent object.
@@ -161,6 +172,16 @@ public:
      */
     void setSceneMaterialsEnabled(bool enabled);
 
+    /**
+     * @brief Returns the viewport double-sided rendering mode.
+     */
+    DoubleSidedMode doubleSidedMode() const;
+
+    /**
+     * @brief Sets the viewport double-sided rendering mode.
+     */
+    void setDoubleSidedMode(DoubleSidedMode mode);
+
     ///@}
 
     /** @name Rendering */
@@ -273,6 +294,11 @@ Q_SIGNALS:
      * @brief Emitted when the scene material state changes.
      */
     void sceneMaterialsEnabledChanged(bool enabled);
+
+    /**
+     * @brief Emitted when the viewport double-sided rendering mode changes.
+     */
+    void doubleSidedModeChanged(DoubleSidedMode mode);
 
     /**
      * @brief Emitted when the viewport render mode changes.

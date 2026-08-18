@@ -111,10 +111,6 @@ QDockWidget {
     background: $color.dock;
 }
 
-QFrame {
-    border: 1px solid $color.border;
-}
-
 QGroupBox
 {
     color: $color.text;
@@ -148,11 +144,11 @@ QLineEdit
     font-size: $font.size.medium;
     background-color: $color.basealt;
     selection-background-color: $color.highlight;
-    height: 18px;  
-    min-height: 18px;  
-    min-width: 50px;      
+    height: 18px;
+    min-height: 18px;
+    min-width: 50px;
     border: 1px solid $color.borderalt;
-    border-radius: 0px;        
+    border-radius: 0px;
     padding: 2px;
     padding-left: 5px;
     padding-right: 5px;
@@ -160,8 +156,8 @@ QLineEdit
 
 QListWidget {
     color: $color.text;
-    background-color: $color.basealt;
-    border: 1px solid $color.borderalt;
+    background-color: $color.item;
+    border: 0px;
     outline: none;
     padding: 0px;
 }
@@ -264,7 +260,7 @@ QMenu::left-arrow {
 
 QProgressBar {
     min-height: 10px;
-    max-height: 10px; 
+    max-height: 10px;
     border-radius: 4px;
     background-color: $color.basealt;
 }
@@ -304,10 +300,10 @@ QPushButton
     color: $color.text;
     background-color: $color.button;
     font-size: $font.size.small;
-    height: 20px;  
-    min-width: 50px;      
+    height: 20px;
+    min-width: 50px;
     border: 1px solid $color.borderalt;
-    border-radius: 0px;        
+    border-radius: 0px;
     padding: 2px;
     padding-left: 5px;
     padding-right: 5px;
@@ -390,7 +386,7 @@ QScrollBar::handle:vertical {
 }
 
 QScrollBar::handle:vertical:hover {
-    background:$color.handle;
+    background: $color.handle;
 }
 
 QScrollBar::add-line:vertical,
@@ -411,7 +407,7 @@ QScrollBar::sub-page:vertical {
     background: none;
 }
 
-QAbstractScrollArea::corner { 
+QAbstractScrollArea::corner {
     background: $color.basealt;
 }
 
@@ -472,10 +468,7 @@ QStatusBar {
 QTabWidget::pane
 {
     background-color: $color.item;
-    border-left: 1px solid $color.borderalt;
-    border-right: 1px solid $color.borderalt;
-    border-bottom: 1px solid $color.borderalt;
-    border-top: 0px;
+    border: 1px solid $color.borderalt;
     top: 0px;
 }
 
@@ -582,7 +575,7 @@ QToolButton
     background-color: $color.button;
     border: 1px solid $color.borderalt;
     border-radius: 0px;
-    height: 18px;  
+    height: 18px;
     min-height: 18px;
     padding: 2px;
     padding-left: 5px;

@@ -9,6 +9,7 @@
 #include "roles.h"
 #include "settings.h"
 #include "shelfwidget.h"
+#include "tabwidget.h"
 #include <QAction>
 #include <QDebug>
 #include <QFileDialog>
@@ -18,8 +19,8 @@
 #include <QMenu>
 #include <QPointer>
 #include <QSaveFile>
+#include <QStyle>
 #include <QTabBar>
-#include <QTabWidget>
 #include <QVBoxLayout>
 #include <QVariantMap>
 
@@ -49,7 +50,7 @@ public:
     struct Data {
         QPointer<QLineEdit> tabRenameEditor;
         int tabRenameIndex = -1;
-        QPointer<QTabWidget> tabs;
+        QPointer<TabWidget> tabs;
         QPointer<PythonShelf> shelf;
     };
     Data d;
@@ -63,8 +64,7 @@ PythonShelfPrivate::init()
     layout->setContentsMargins(0, 0, 0, 0);
 
     d.shelf->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-
-    d.tabs = new QTabWidget(d.shelf.data());
+    d.tabs = new TabWidget(d.shelf.data());
     d.tabs->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     d.tabs->setTabsClosable(false);
     d.tabs->setMovable(true);
@@ -99,6 +99,7 @@ PythonShelfPrivate::executeCode(const QString& code)
         return;
 
     const QString result = pythonInterpreter()->executeScript(trimmed);
+
     if (!result.isEmpty())
         qInfo().noquote() << result;
 }
@@ -118,11 +119,11 @@ PythonShelfPrivate::createShelfTab(const QString& name, const QVariantList& scri
 
     auto* shelf = new ShelfWidget(d.tabs.data());
     shelf->fromVariantList(scripts);
-
     QObject::connect(shelf, &ShelfWidget::itemActivated, this, [this](const QString& code) { executeCode(code); });
     QObject::connect(shelf, &ShelfWidget::itemContextMenuRequested, this,
                      [this, shelf](const QPoint& pos, QListWidgetItem* item) {
                          QMenu menu(shelf);
+
                          QAction* renameAction = nullptr;
                          QAction* exportAction = nullptr;
                          QAction* removeAction = nullptr;
@@ -156,7 +157,6 @@ PythonShelfPrivate::createShelfTab(const QString& name, const QVariantList& scri
                                                                 item->data(roles::shelf::scriptName).toString()
                                                                     + QStringLiteral(".py"),
                                                                 tr("Python Files (*.py);;Text Files (*.txt)"));
-
                              if (!fileName.isEmpty()) {
                                  QSaveFile file(fileName);
                                  if (file.open(QIODevice::WriteOnly | QIODevice::Text)) {
@@ -172,7 +172,6 @@ PythonShelfPrivate::createShelfTab(const QString& name, const QVariantList& scri
                      });
 
     QObject::connect(shelf, &ShelfWidget::changed, this, [this]() { saveShelves(); });
-
     const int index = d.tabs->addTab(shelf, name.trimmed().isEmpty() ? tr("Shelf") : name);
     d.tabs->setCurrentIndex(index);
     return index;
@@ -193,6 +192,7 @@ PythonShelfPrivate::beginTabRename(int index)
         return;
 
     QTabBar* tabBar = d.tabs->tabBar();
+
     if (index < 0 || index >= tabBar->count())
         return;
 
@@ -216,9 +216,9 @@ PythonShelfPrivate::commitTabRename()
         return;
 
     const QString name = d.tabRenameEditor->text().trimmed();
-    if (d.tabRenameIndex >= 0 && d.tabRenameIndex < d.tabs->count())
+    if (d.tabRenameIndex >= 0 && d.tabRenameIndex < d.tabs->count()) {
         d.tabs->setTabText(d.tabRenameIndex, name.isEmpty() ? tr("Shelf") : name);
-
+    }
     d.tabRenameEditor->deleteLater();
     d.tabRenameEditor = nullptr;
     d.tabRenameIndex = -1;
@@ -239,15 +239,17 @@ PythonShelfPrivate::cancelTabRename()
 void
 PythonShelfPrivate::removeTab(int index)
 {
-    if (!d.tabs || index < 0 || index >= d.tabs->count())
+    if (!d.tabs || index < 0 || index >= d.tabs->count()) {
         return;
+    }
 
     const QString shelfName = d.tabs->tabText(index).trimmed();
     const QString displayName = shelfName.isEmpty() ? tr("Shelf") : shelfName;
 
     if (!MessageDialog::question(d.shelf.data(), tr("Remove Shelf"),
-                                 tr("Remove the shelf \"%1\" and all scripts it contains?").arg(displayName)))
+                                 tr("Remove the shelf \"%1\" and all scripts it contains?").arg(displayName))) {
         return;
+    }
 
     QWidget* widget = d.tabs->widget(index);
     d.tabs->removeTab(index);
@@ -275,7 +277,6 @@ PythonShelfPrivate::exportTab(int index)
 
     const QString tabName = d.tabs->tabText(index).trimmed();
     const QString defaultName = tabName.isEmpty() ? QStringLiteral("shelf.json") : tabName + QStringLiteral(".json");
-
     const QString fileName = QFileDialog::getSaveFileName(d.shelf.data(), tr("Export Shelf"), defaultName,
                                                           tr("JSON Files (*.json)"));
 
@@ -323,7 +324,6 @@ PythonShelfPrivate::saveShelves() const
         tabMap.insert("scripts", shelf->toVariantList());
         tabs.append(tabMap);
     }
-
     settings()->setValue("python/shelves", tabs);
 }
 
@@ -364,6 +364,7 @@ void
 PythonShelfPrivate::newTab()
 {
     const int index = createShelfTab(tr("Shelf"));
+
     saveShelves();
     beginTabRename(index);
 }
@@ -384,17 +385,15 @@ PythonShelf::sizeHint() const
     int tabHeight = 0;
     int shelfHeight = 0;
     int frameHeight = 0;
-
     if (p->d.tabs) {
         if (QTabBar* bar = p->d.tabs->tabBar())
             tabHeight = bar->sizeHint().height();
 
-        if (ShelfWidget* shelf = p->shelfAt(p->d.tabs->currentIndex()))
+        if (ShelfWidget* shelf = p->shelfAt(p->d.tabs->currentIndex())) {
             shelfHeight = shelf->sizeHint().height();
-
+        }
         frameHeight = p->d.tabs->style()->pixelMetric(QStyle::PM_DefaultFrameWidth) * 2;
     }
-
     return QSize(QWidget::sizeHint().width(), tabHeight + shelfHeight + frameHeight);
 }
 

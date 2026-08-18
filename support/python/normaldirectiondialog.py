@@ -29,6 +29,15 @@ BACK_COLOR = Gf.Vec3f(0.62, 0.10, 0.32)
 MATERIAL_MODE_ALL = 0
 MATERIAL_MODE_OVERRIDE = 2
 
+DOUBLE_SIDED_PRIMITIVE = 0
+DOUBLE_SIDED = 1
+SINGLE_SIDED = 2
+
+# Saved while the normal-direction diagnostic is active so the user's
+# previous viewport culling mode can be restored afterward.
+_previous_double_sided_mode = None
+_normal_check_active = False
+
 
 def get_session():
     try:
@@ -215,30 +224,60 @@ def ensure_normal_direction_material(stage):
 
 
 def enable_normal_direction_override():
+    global _previous_double_sided_mode
+    global _normal_check_active
+
     _, _, auxiliary, view_state, _ = get_context()
 
     material = ensure_normal_direction_material(auxiliary)
     path = material.GetPath()
 
+    # Save the user's original state only once, on transition into
+    # Normal Check mode.
+    if not _normal_check_active:
+        _previous_double_sided_mode = view_state.doubleSidedMode()
+
+    # Force SingleSided rendering regardless of the primitive's authored USD doubleSided.
+    # This maps to CULL_STYLE_BACK in ImagingGLWidget.
+    view_state.setDoubleSidedMode(SINGLE_SIDED)
+
     view_state.setOverrideMaterial(str(path))
     view_state.setMaterialMode(MATERIAL_MODE_OVERRIDE)
 
+    _normal_check_active = True
+
     print(
         "[Stageviz Normal Direction] "
-        f"override enabled: {path}"
+        f"override enabled: {path}; "
+        "double-sided mode forced to SingleSided"
     )
 
     return path
 
-
 def disable_normal_direction_override():
+    global _previous_double_sided_mode
+    global _normal_check_active
+
     _, _, _, view_state, _ = get_context()
 
     view_state.setOverrideMaterial("")
     view_state.setMaterialMode(MATERIAL_MODE_ALL)
 
-    print("[Stageviz Normal Direction] override disabled.")
+    if _normal_check_active and _previous_double_sided_mode is not None:
+        view_state.setDoubleSidedMode(
+            int(_previous_double_sided_mode)
+        )
 
+    restored = _previous_double_sided_mode
+
+    _previous_double_sided_mode = None
+    _normal_check_active = False
+
+    print(
+        "[Stageviz Normal Direction] "
+        "override disabled; "
+        f"double-sided mode restored to {restored}"
+    )
 
 def selected_meshes(stage, selection):
     """
@@ -327,7 +366,9 @@ class NormalDirectionDialog(QtWidgets.QDialog):
 
         description = QtWidgets.QLabel(
             "Front faces are shown in green.\n"
-            "Back faces are shown in magenta."
+            "Back faces are shown in magenta.\n"
+            "Normal Check temporarily forces the viewport to single-sided rendering "
+            "so authored doubleSided values cannot hide incorrect winding."
         )
         description.setWordWrap(True)
         layout.addWidget(description)
@@ -402,6 +443,7 @@ class NormalDirectionDialog(QtWidgets.QDialog):
 
             self.status_label.setText(
                 "Normal direction check enabled.\n"
+                "Double-sided mode: SingleSided\n"
                 f"Material: {path}"
             )
 
@@ -413,10 +455,11 @@ class NormalDirectionDialog(QtWidgets.QDialog):
 
     def disable_override(self):
         try:
-            disable_normal_direction_override()
+            #disable_normal_direction_override()
 
             self.status_label.setText(
-                "Using authored scene materials."
+                "Using authored scene materials.\n"
+                "Previous double-sided mode restored."
             )
 
         except Exception as exc:
@@ -424,6 +467,14 @@ class NormalDirectionDialog(QtWidgets.QDialog):
                 f"Error: {type(exc).__name__}: {exc}"
             )
             traceback.print_exc()
+
+    def closeEvent(self, event):
+        try:
+            disable_normal_direction_override()
+        except Exception:
+            traceback.print_exc()
+
+        super().closeEvent(event)
 
     def flip_selected(self):
         try:

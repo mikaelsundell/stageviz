@@ -5,8 +5,9 @@
 #pragma once
 
 #include "stageviz.h"
-#include <QScopedPointer>
+
 #include <QWidget>
+#include <memory>
 
 namespace stageviz {
 
@@ -14,42 +15,40 @@ class PythonShelfPrivate;
 
 /**
  * @class PythonShelf
- * @brief Persistent shelf bar for reusable Python scripts.
+ * @brief Tabbed shelf for storing and executing Python scripts.
  *
- * PythonShelf owns the named shelf tabs shown in the main viewer. Scripts can
- * be dropped onto a shelf, dragged back out, reordered, renamed, exported, and
- * executed directly through the application Python interpreter.
- *
- * The shelf is intentionally independent from PythonDialog. The dialog is a
- * script editor, while PythonShelf is an application-level launcher.
+ * Each shelf tab contains a ShelfWidget. Shelf tabs and their scripts are
+ * persisted through application settings and can be created, renamed,
+ * reordered, exported, and removed.
  */
 class PythonShelf : public QWidget {
     Q_OBJECT
 public:
     /**
-     * @brief Constructs the Python shelf bar.
-     * @param parent Optional parent widget.
+     * @brief Creates the Python shelf.
+     * @param parent Parent widget.
      */
-    PythonShelf(QWidget* parent = nullptr);
+    explicit PythonShelf(QWidget* parent = nullptr);
 
     /**
-     * @brief Destroys the Python shelf bar and persists its current contents.
+     * @brief Destroys the Python shelf.
      */
     ~PythonShelf() override;
 
     /**
-     * @brief Return the preferred compact shelf-bar size.
+     * @brief Returns the preferred size of the Python shelf.
+     * @return Preferred widget size.
      */
     QSize sizeHint() const override;
 
     /**
-     * @brief Return the minimum useful shelf-bar size.
+     * @brief Returns the minimum preferred size of the Python shelf.
+     * @return Minimum preferred widget size.
      */
     QSize minimumSizeHint() const override;
 
 private:
-    Q_DISABLE_COPY_MOVE(PythonShelf)
-    QScopedPointer<PythonShelfPrivate> p;
+    std::unique_ptr<PythonShelfPrivate> p;
 };
 
 }  // namespace stageviz

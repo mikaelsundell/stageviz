@@ -21,6 +21,7 @@ public:
         bool defaultCameraLightEnabled = true;
         bool sceneLightsEnabled = true;
         bool sceneMaterialsEnabled = true;
+        ViewState::DoubleSidedMode doubleSidedMode = ViewState::Primitive;
         ViewState::RenderMode renderMode = ViewState::Shaded;
         ViewState::ComplexityLevel complexityLevel = ViewState::Low;
         QString rendererAov = QStringLiteral("color");
@@ -28,7 +29,6 @@ public:
         bool performanceStatsEnabled = false;
         bool cameraAxisEnabled = true;
     };
-
     Data d;
 };
 
@@ -183,6 +183,22 @@ ViewState::setSceneMaterialsEnabled(bool enabled)
 
     p->d.sceneMaterialsEnabled = enabled;
     Q_EMIT sceneMaterialsEnabledChanged(enabled);
+}
+
+ViewState::DoubleSidedMode
+ViewState::doubleSidedMode() const
+{
+    return p->d.doubleSidedMode;
+}
+
+void
+ViewState::setDoubleSidedMode(DoubleSidedMode mode)
+{
+    if (mode == p->d.doubleSidedMode)
+        return;
+
+    p->d.doubleSidedMode = mode;
+    Q_EMIT doubleSidedModeChanged(mode);
 }
 
 ViewState::RenderMode
