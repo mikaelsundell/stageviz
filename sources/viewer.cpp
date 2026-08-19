@@ -80,6 +80,7 @@ public Q_SLOTS:
     void preserveState();
     void exportAll();
     void exportSelected();
+    void exportVisible();
     void exportImage();
     void reload();
     void close();
@@ -225,6 +226,7 @@ ViewerPrivate::init()
     connect(d.ui->filePreserveState, &QAction::triggered, this, &ViewerPrivate::preserveState);
     connect(d.ui->fileExportAll, &QAction::triggered, this, &ViewerPrivate::exportAll);
     connect(d.ui->fileExportSelected, &QAction::triggered, this, &ViewerPrivate::exportSelected);
+    connect(d.ui->fileExportVisible, &QAction::triggered, this, &ViewerPrivate::exportVisible);
     connect(d.ui->fileExportImage, &QAction::triggered, this, &ViewerPrivate::exportImage);
     connect(d.ui->fileReload, &QAction::triggered, this, &ViewerPrivate::reload);
     connect(d.ui->fileClose, &QAction::triggered, this, &ViewerPrivate::close);
@@ -695,6 +697,7 @@ ViewerPrivate::enable(bool enable)
                                 d.ui->filePreserveState,
                                 d.ui->fileExportAll,
                                 d.ui->fileExportSelected,
+                                d.ui->fileExportVisible,
                                 d.ui->fileExportImage,
                                 d.ui->editCopyImage,
                                 d.ui->editSelectAll,
@@ -988,6 +991,63 @@ ViewerPrivate::exportSelected()
     }
     else {
         session()->notifyStatus(Session::Notify::Status::Error, QString("Failed to export selected: %1").arg(fileName));
+    }
+}
+
+void
+ViewerPrivate::exportVisible()
+{
+    QString exportDir = settings()->value("exportVisibleDir", QDir::homePath()).toString();
+    QString currentFile = session()->filename();
+    QString defaultName;
+
+    if (!currentFile.isEmpty()) {
+        QFileInfo info(currentFile);
+        defaultName = QString("%1 (Export visible).%2").arg(info.completeBaseName(), info.suffix());
+        exportDir = info.absolutePath();
+    }
+    else {
+        defaultName = "Untitled.usd";
+    }
+
+    QStringList filters;
+    for (const QString& ext : d.extensions)
+        filters.append("*." + ext);
+
+    const QString filter = QString("USD Files (%1)").arg(filters.join(' '));
+
+    QString fileName = QFileDialog::getSaveFileName(d.viewer.data(), "Export Visible",
+                                                    QDir(exportDir).filePath(defaultName), filter);
+
+    if (fileName.isEmpty())
+        return;
+
+    if (QFileInfo(fileName).suffix().isEmpty())
+        fileName += ".usd";
+
+    QList<SdfPath> visiblePaths;
+    {
+        READ_LOCKER(locker, session()->stageLock(), "stageLock");
+
+        const UsdStageRefPtr stage = session()->stageUnsafe();
+        if (!stage)
+            return;
+
+        visiblePaths = stage::visiblePaths(stage);
+    }
+
+    QElapsedTimer timer;
+    timer.start();
+
+    if (session()->flattenPathsToFile(visiblePaths, fileName)) {
+        const double elapsedSec = timer.elapsed() / 1000.0;
+        settings()->setValue("exportVisibleDir", QFileInfo(fileName).absolutePath());
+        session()->notifyStatus(
+            Session::Notify::Status::Success,
+            QString("Exported visible to %1 in %2 seconds").arg(fileName).arg(QString::number(elapsedSec, 'f', 2)));
+    }
+    else {
+        session()->notifyStatus(Session::Notify::Status::Error, QString("Failed to export visible: %1").arg(fileName));
     }
 }
 

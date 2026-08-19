@@ -160,15 +160,17 @@ Command
 selectPaths(const QList<SdfPath>& paths);
 
 /**
- * @brief Creates a command that selects all leaf prim paths within the current mask.
+ * @brief Creates a command that selects prims from the stage.
  *
- * Traverses the stage and collects leaf prims (prims without traversable children),
- * optionally constrained by the current session mask.
+ * By default, selects only the direct children of the stage pseudo-root.
+ * When @p recursive is true, selects all traversable prims in the stage.
  *
  * Undo restores the previous selection.
+ *
+ * @param recursive If true, select all prims recursively.
  */
 Command
-selectAll();
+selectAll(bool recursive = false);
 
 /**
  * @brief Creates a command that inverts the current selection across leaf prims.

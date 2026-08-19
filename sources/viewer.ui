@@ -738,6 +738,7 @@
     <addaction name="separator"/>
     <addaction name="fileExportAll"/>
     <addaction name="fileExportSelected"/>
+    <addaction name="fileExportVisible"/>
     <addaction name="fileExportImage"/>
     <addaction name="separator"/>
     <addaction name="filePreserveState"/>
@@ -888,6 +889,14 @@
    </property>
    <property name="shortcut">
     <string>Ctrl+Shift+E</string>
+   </property>
+  </action>
+  <action name="fileExportVisible">
+   <property name="text">
+    <string>Export visible ...</string>
+   </property>
+   <property name="shortcut">
+    <string>Ctrl+Shift+V</string>
    </property>
   </action>
   <action name="fileExportImage">

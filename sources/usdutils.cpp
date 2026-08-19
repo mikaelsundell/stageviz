@@ -21,7 +21,6 @@
 
 namespace stageviz {
 namespace {
-
     void ensureParentSpecs(const SdfLayerHandle& layer, const SdfPath& path)
     {
         if (!layer)
@@ -36,7 +35,6 @@ namespace {
             SdfCreatePrimInLayer(layer, parent);
         }
     }
-
 }  // namespace
 
 namespace rootlayer {
@@ -953,138 +951,6 @@ namespace stage {
         return out;
     }
 
-    bool isInsideCompositionArc(UsdStageRefPtr stage, const SdfPath& path)
-    {
-        if (!stage || path.IsEmpty() || path == SdfPath::AbsoluteRootPath())
-            return false;
-
-        SdfPath current = path;
-        while (!current.IsEmpty() && current != SdfPath::AbsoluteRootPath()) {
-            const UsdPrim prim = stage->GetPrimAtPath(current);
-            if (hasCompositionArc(prim))
-                return true;
-
-            current = current.GetParentPath();
-        }
-
-        return false;
-    }
-
-    bool movePrims(UsdStageRefPtr stage, const QList<QPair<SdfPath, SdfPath>>& moves, QString& error)
-    {
-        if (!stage) {
-            error = "invalid stage";
-            return false;
-        }
-        if (moves.isEmpty())
-            return true;
-
-        QString rootError;
-        const SdfLayerHandle rootLayer = rootlayer::opened(stage, rootError);
-        if (!rootLayer) {
-            error = rootError;
-            return false;
-        }
-
-        SdfBatchNamespaceEdit edits;
-        bool hasEdits = false;
-        QSet<SdfPath> destinations;
-        UsdStageLoadRules loadRules = stage->GetLoadRules();
-
-        for (const auto& move : moves) {
-            const SdfPath& from = move.first;
-            const SdfPath& to = move.second;
-            if (from.IsEmpty() || to.IsEmpty() || from == SdfPath::AbsoluteRootPath() || !from.IsPrimPath()
-                || !to.IsPrimPath()) {
-                error = "invalid move path";
-                return false;
-            }
-            if (from == to)
-                continue;
-            if (to.HasPrefix(from)) {
-                error = "cannot move a prim below itself";
-                return false;
-            }
-            if (destinations.contains(to)) {
-                error = "duplicate move destination";
-                return false;
-            }
-            destinations.insert(to);
-
-            QString validationError;
-            if (!rootlayer::validatePrim(stage, from, validationError)) {
-                error = validationError;
-                return false;
-            }
-            if (!rootlayer::validateParent(stage, to.GetParentPath(), validationError)) {
-                error = validationError;
-                return false;
-            }
-            if (isInsideCompositionArc(stage, from)
-                || (to.GetParentPath() != SdfPath::AbsoluteRootPath()
-                    && isInsideCompositionArc(stage, to.GetParentPath()))) {
-                error = "cannot move into or out of composed prims";
-                return false;
-            }
-
-            const UsdPrim existing = stage->GetPrimAtPath(to);
-            if (existing) {
-                bool sourceDestination = false;
-                for (const auto& other : moves) {
-                    if (other.first == to) {
-                        sourceDestination = true;
-                        break;
-                    }
-                }
-                if (!sourceDestination) {
-                    error = QString("destination already exists: %1").arg(qt::SdfPathToQString(to));
-                    return false;
-                }
-            }
-
-            edits.Add(from, to);
-            hasEdits = true;
-            loadRules = remapLoadRules(loadRules, from, to);
-        }
-
-        if (!hasEdits)
-            return true;
-        if (!rootLayer->CanApply(edits)) {
-            error = "root layer cannot apply namespace edit";
-            return false;
-        }
-        if (!rootLayer->Apply(edits)) {
-            error = "root layer namespace edit failed";
-            return false;
-        }
-
-        stage->SetLoadRules(loadRules);
-        return true;
-    }
-
-    bool movePrim(UsdStageRefPtr stage, const SdfPath& from, const SdfPath& toParent, QString& error)
-    {
-        if (from.IsEmpty() || toParent.IsEmpty()) {
-            error = "invalid path";
-            return false;
-        }
-        return movePrims(stage, { qMakePair(from, toParent.AppendChild(from.GetNameToken())) }, error);
-    }
-
-
-    TfTokenVector removeChildOrderToken(const TfTokenVector& order, const TfToken& name)
-    {
-        TfTokenVector out;
-        out.reserve(order.size());
-
-        for (const TfToken& token : order) {
-            if (token != name)
-                out.push_back(token);
-        }
-
-        return out;
-    }
-
     bool isAuthored(UsdStageRefPtr stage, const SdfPath& path)
     {
         if (!stage)
@@ -1128,6 +994,23 @@ namespace stage {
             return false;
 
         return editLayer->GetPrimAtPath(path) != nullptr;
+    }
+
+    bool isInsideCompositionArc(UsdStageRefPtr stage, const SdfPath& path)
+    {
+        if (!stage || path.IsEmpty() || path == SdfPath::AbsoluteRootPath())
+            return false;
+
+        SdfPath current = path;
+        while (!current.IsEmpty() && current != SdfPath::AbsoluteRootPath()) {
+            const UsdPrim prim = stage->GetPrimAtPath(current);
+            if (hasCompositionArc(prim))
+                return true;
+
+            current = current.GetParentPath();
+        }
+
+        return false;
     }
 
     bool isLoaded(UsdStageRefPtr stage, const SdfPath& path)
@@ -1243,6 +1126,107 @@ namespace stage {
         return vis != UsdGeomTokens->invisible;
     }
 
+    bool movePrim(UsdStageRefPtr stage, const SdfPath& from, const SdfPath& toParent, QString& error)
+    {
+        if (from.IsEmpty() || toParent.IsEmpty()) {
+            error = "invalid path";
+            return false;
+        }
+        return movePrims(stage, { qMakePair(from, toParent.AppendChild(from.GetNameToken())) }, error);
+    }
+
+    bool movePrims(UsdStageRefPtr stage, const QList<QPair<SdfPath, SdfPath>>& moves, QString& error)
+    {
+        if (!stage) {
+            error = "invalid stage";
+            return false;
+        }
+        if (moves.isEmpty())
+            return true;
+
+        QString rootError;
+        const SdfLayerHandle rootLayer = rootlayer::opened(stage, rootError);
+        if (!rootLayer) {
+            error = rootError;
+            return false;
+        }
+
+        SdfBatchNamespaceEdit edits;
+        bool hasEdits = false;
+        QSet<SdfPath> destinations;
+        UsdStageLoadRules loadRules = stage->GetLoadRules();
+
+        for (const auto& move : moves) {
+            const SdfPath& from = move.first;
+            const SdfPath& to = move.second;
+            if (from.IsEmpty() || to.IsEmpty() || from == SdfPath::AbsoluteRootPath() || !from.IsPrimPath()
+                || !to.IsPrimPath()) {
+                error = "invalid move path";
+                return false;
+            }
+            if (from == to)
+                continue;
+            if (to.HasPrefix(from)) {
+                error = "cannot move a prim below itself";
+                return false;
+            }
+            if (destinations.contains(to)) {
+                error = "duplicate move destination";
+                return false;
+            }
+            destinations.insert(to);
+
+            QString validationError;
+            if (!rootlayer::validatePrim(stage, from, validationError)) {
+                error = validationError;
+                return false;
+            }
+            if (!rootlayer::validateParent(stage, to.GetParentPath(), validationError)) {
+                error = validationError;
+                return false;
+            }
+            if (isInsideCompositionArc(stage, from)
+                || (to.GetParentPath() != SdfPath::AbsoluteRootPath()
+                    && isInsideCompositionArc(stage, to.GetParentPath()))) {
+                error = "cannot move into or out of composed prims";
+                return false;
+            }
+
+            const UsdPrim existing = stage->GetPrimAtPath(to);
+            if (existing) {
+                bool sourceDestination = false;
+                for (const auto& other : moves) {
+                    if (other.first == to) {
+                        sourceDestination = true;
+                        break;
+                    }
+                }
+                if (!sourceDestination) {
+                    error = QString("destination already exists: %1").arg(qt::SdfPathToQString(to));
+                    return false;
+                }
+            }
+
+            edits.Add(from, to);
+            hasEdits = true;
+            loadRules = remapLoadRules(loadRules, from, to);
+        }
+
+        if (!hasEdits)
+            return true;
+        if (!rootLayer->CanApply(edits)) {
+            error = "root layer cannot apply namespace edit";
+            return false;
+        }
+        if (!rootLayer->Apply(edits)) {
+            error = "root layer namespace edit failed";
+            return false;
+        }
+
+        stage->SetLoadRules(loadRules);
+        return true;
+    }
+
     QList<SdfPath> leafPaths(UsdStageRefPtr stage, const QList<SdfPath>& mask, bool childMustBeWithinMask)
     {
         QList<SdfPath> paths;
@@ -1302,6 +1286,42 @@ namespace stage {
         return result;
     }
 
+    QList<SdfPath> visiblePaths(UsdStageRefPtr stage)
+    {
+        QList<SdfPath> result;
+        if (!stage)
+            return result;
+
+        std::function<void(const UsdPrim&, bool)> collect = [&](const UsdPrim& prim, bool parentVisible) {
+            if (!prim || !prim.IsValid())
+                return;
+
+            bool visible = parentVisible;
+
+            if (visible) {
+                UsdGeomImageable imageable(prim);
+                if (imageable) {
+                    TfToken visibility;
+                    if (imageable.GetVisibilityAttr().Get(&visibility) && visibility == UsdGeomTokens->invisible)
+                        visible = false;
+                }
+            }
+
+            if (!visible)
+                return;
+
+            result.append(prim.GetPath());
+
+            for (const UsdPrim& child : prim.GetChildren())
+                collect(child, true);
+        };
+
+        for (const UsdPrim& child : stage->GetPseudoRoot().GetChildren())
+            collect(child, true);
+
+        return result;
+    }
+
     TfTokenVector remapChildOrder(const TfTokenVector& order, const TfToken& oldName, const TfToken& newName)
     {
         TfTokenVector out = order;
@@ -1335,6 +1355,19 @@ namespace stage {
         return out;
     }
 
+    TfTokenVector removeChildOrderToken(const TfTokenVector& order, const TfToken& name)
+    {
+        TfTokenVector out;
+        out.reserve(order.size());
+
+        for (const TfToken& token : order) {
+            if (token != name)
+                out.push_back(token);
+        }
+
+        return out;
+    }
+
     bool removePrimSpec(const SdfLayerHandle& layer, const SdfPath& specPath)
     {
         if (!layer || specPath.IsEmpty() || specPath == SdfPath::AbsoluteRootPath())
@@ -1360,7 +1393,6 @@ namespace stage {
         }
         return movePrims(stage, { qMakePair(from, to) }, error);
     }
-
 
     void restoreChildOrder(UsdStageRefPtr stage, const SdfPath& parentPath, const TfTokenVector& childOrder)
     {
@@ -1470,4 +1502,5 @@ namespace stage {
     }
 
 }  // namespace stage
+
 }  // namespace stageviz

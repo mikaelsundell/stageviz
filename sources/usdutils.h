@@ -663,20 +663,6 @@ namespace stage {
     bool isVisible(UsdStageRefPtr stage, const SdfPath& path);
 
     /**
- * @brief Collects leaf prim paths from the stage.
- *
- * Traverses the stage and returns prims with no traversable children,
- * optionally constrained by an isolation mask.
- *
- * @param stage USD stage to traverse.
- * @param mask Optional mask paths.
- * @param childMustBeWithinMask If true, only masked children affect leaf status.
- *
- * @return List of leaf prim paths.
- */
-    QList<SdfPath> leafPaths(UsdStageRefPtr stage, const QList<SdfPath>& mask = {}, bool childMustBeWithinMask = true);
-
-    /**
  * @brief Moves a prim to a new parent using UsdNamespaceEditor.
  *
  * Validates source, destination, hierarchy rules, and composition boundaries
@@ -691,7 +677,36 @@ namespace stage {
  */
     bool movePrim(UsdStageRefPtr stage, const SdfPath& from, const SdfPath& toParent, QString& error);
 
+    /**
+ * @brief Moves multiple prims to new paths using a single namespace edit.
+ *
+ * Validates all source and destination paths, hierarchy rules, destination
+ * collisions, and composition boundaries before applying the edits.
+ *
+ * Stage load rules affected by the moved hierarchies are remapped to their
+ * new paths after the namespace edit succeeds.
+ *
+ * @param stage USD stage containing the prims.
+ * @param moves Source and destination path pairs to move.
+ * @param error Receives a failure reason.
+ *
+ * @return True if all prim moves were successfully applied.
+ */
     bool movePrims(UsdStageRefPtr stage, const QList<QPair<SdfPath, SdfPath>>& moves, QString& error);
+
+    /**
+* @brief Collects leaf prim paths from the stage.
+*
+* Traverses the stage and returns prims with no traversable children,
+* optionally constrained by an isolation mask.
+*
+* @param stage USD stage to traverse.
+* @param mask Optional mask paths.
+* @param childMustBeWithinMask If true, only masked children affect leaf status.
+*
+* @return List of leaf prim paths.
+*/
+    QList<SdfPath> leafPaths(UsdStageRefPtr stage, const QList<SdfPath>& mask = {}, bool childMustBeWithinMask = true);
 
     /**
  * @brief Collects payload paths exactly at the specified prim paths.
@@ -705,6 +720,23 @@ namespace stage {
  * @return Payload paths found at the input paths.
  */
     QList<SdfPath> payloadPaths(UsdStageRefPtr stage, const QList<SdfPath>& paths);
+
+    /**
+ * @brief Collects effectively visible prim paths from the stage.
+ *
+ * Traverses the stage hierarchy and returns prim paths whose effective
+ * visibility is visible at the default time. A prim is excluded when it or
+ * any imageable ancestor is authored invisible.
+ *
+ * Invisible subtrees are skipped entirely. Non-imageable prims inherit the
+ * visibility state of their parent and are included when their hierarchy
+ * remains visible.
+ *
+ * @param stage USD stage to traverse.
+ *
+ * @return List of effectively visible prim paths.
+ */
+    QList<SdfPath> visiblePaths(UsdStageRefPtr stage);
 
     /**
  * @brief Remaps one child name in an existing child order.

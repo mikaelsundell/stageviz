@@ -588,7 +588,7 @@ selectPaths(const QList<SdfPath>& paths)
 }
 
 Command
-selectAll()
+selectAll(bool recursive)
 {
     struct SelectAllState {
         QList<SdfPath> previousSelection;
@@ -597,32 +597,48 @@ selectAll()
     auto state = std::make_shared<SelectAllState>();
 
     return Command(
-        [state](Session* session) {
+        [recursive, state](Session* session) {
             if (!session)
                 return;
 
             session->beginProgressBlock("Select all", 1);
 
-            command::runWorker([session, state]() {
+            command::runWorker([session, recursive, state]() {
                 QList<SdfPath> selection;
-                QList<SdfPath> previousSelection;
-                QList<SdfPath> mask;
 
                 {
                     READ_LOCKER(locker, session->stageLock(), "stageLock");
+
                     const UsdStageRefPtr stage = session->stageUnsafe();
+                    if (!stage)
+                        return;
 
-                    previousSelection = session->selectionList()->paths();
-                    mask = session->mask();
-                    selection = stage::leafPaths(stage, mask, true);
+                    state->previousSelection = session->selectionList()->paths();
+
+                    if (recursive) {
+                        for (const UsdPrim& prim : stage->Traverse()) {
+                            if (!prim || !prim.IsValid())
+                                continue;
+
+                            selection.append(prim.GetPath());
+                        }
+                    }
+                    else {
+                        for (const UsdPrim& prim : stage->GetPseudoRoot().GetChildren()) {
+                            if (!prim || !prim.IsValid())
+                                continue;
+
+                            selection.append(prim.GetPath());
+                        }
+                    }
                 }
-
-                state->previousSelection = previousSelection;
 
                 command::queueToSession(session, [session, selection]() {
                     using Status = Session::Notify::Status;
+
                     session->selectionList()->updatePaths(selection);
-                    session->updateProgressNotify(Session::Notify("Paths selected", selection, Status::Success), 1);
+                    session->updateProgressNotify(
+                        Session::Notify("Paths selected", selection, Status::Success), 1);
                     session->endProgressBlock();
                 });
             });
@@ -636,10 +652,10 @@ selectAll()
             command::runWorker([session, state]() {
                 command::queueToSession(session, [session, state]() {
                     using Status = Session::Notify::Status;
+
                     session->selectionList()->updatePaths(state->previousSelection);
-                    session->updateProgressNotify(Session::Notify("Select all undone", state->previousSelection,
-                                                                  Status::Success),
-                                                  1);
+                    session->updateProgressNotify(
+                        Session::Notify("Select all undone", state->previousSelection, Status::Success), 1);
                     session->endProgressBlock();
                 });
             });
