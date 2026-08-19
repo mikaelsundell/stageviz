@@ -156,7 +156,7 @@ QLineEdit
 
 QListWidget {
     color: $color.text;
-    background-color: $color.item;
+    background-color: transparent;
     border: 0px;
     outline: none;
     padding: 0px;
@@ -164,16 +164,13 @@ QListWidget {
 
 QListWidget::item {
     color: $color.text;
-    background-color: $color.basealt;
-    border: 0px;
-    margin: 4px;
+    background-color: transparent;
+    margin: 0px;
     padding: 0px;
 }
 
 QListWidget::item:selected {
-    color: $color.text;
     background-color: $color.highlight;
-    border: 1px solid $color.highlight;
 }
 
 QMenuBar {

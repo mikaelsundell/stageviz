@@ -3,12 +3,14 @@
 // https://github.com/mikaelsundell/stageviz
 
 #include "messagedialog.h"
+
 #include <QPointer>
 
 // generated files
 #include "ui_messagedialog.h"
 
 namespace stageviz {
+
 class MessageDialogPrivate : public QObject {
     Q_OBJECT
 public:
@@ -28,6 +30,7 @@ public:
         int iconSize;
         bool showIcon;
         bool showReject;
+        bool fixedHeight;
         QPointer<MessageDialog> dialog;
         QScopedPointer<Ui_MessageDialog> ui;
     };
@@ -39,6 +42,7 @@ MessageDialogPrivate::MessageDialogPrivate()
     d.iconSize = 128;
     d.showIcon = true;
     d.showReject = false;
+    d.fixedHeight = true;
 }
 
 void
@@ -58,13 +62,16 @@ MessageDialogPrivate::exec()
     d.dialog->setWindowTitle(d.type);
     d.ui->icon->setFixedSize(d.iconSize, d.iconSize);
     d.ui->icon->setScaledContents(true);
+
     if (d.showIcon) {
         d.ui->icon->show();
     }
     else {
         d.ui->icon->hide();
     }
+
     d.ui->title->setText(d.title);
+
     if (d.url.isEmpty()) {
         d.ui->url->hide();
     }
@@ -73,6 +80,7 @@ MessageDialogPrivate::exec()
         d.ui->url->setOpenExternalLinks(true);
         d.ui->url->show();
     }
+
     if (d.text.isEmpty()) {
         d.ui->text->hide();
     }
@@ -88,7 +96,9 @@ MessageDialogPrivate::exec()
         d.ui->details->setText(d.details);
         d.ui->details->show();
     }
+
     d.ui->accept->setText(d.acceptText);
+
     if (d.showReject) {
         d.ui->reject->setText(d.rejectText);
         d.ui->reject->show();
@@ -96,8 +106,15 @@ MessageDialogPrivate::exec()
     else {
         d.ui->reject->hide();
     }
+
     d.dialog->adjustSize();
-    d.dialog->setMaximumHeight(d.dialog->sizeHint().height());
+
+    if (d.fixedHeight) {
+        d.dialog->setMaximumHeight(d.dialog->sizeHint().height());
+    }
+    else {
+        d.dialog->setMaximumHeight(QWIDGETSIZE_MAX);
+    }
     return d.dialog->exec() == QDialog::Accepted;
 }
 
@@ -163,6 +180,7 @@ MessageDialog::about(QWidget* parent, const QString& title, const QString& headi
     box.p->d.details = details;
     box.p->d.acceptText = tr("Close");
     box.p->d.showReject = false;
+    box.p->d.fixedHeight = false;
     return box.p->exec();
 }
 

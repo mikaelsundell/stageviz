@@ -3,6 +3,7 @@
 // https://github.com/mikaelsundell/stageviz
 
 #include "shelfwidget.h"
+
 #include "application.h"
 #include "mime.h"
 #include "qtutils.h"
@@ -20,86 +21,27 @@
 #include <QHBoxLayout>
 #include <QImage>
 #include <QImageReader>
-#include <QLineEdit>
 #include <QListWidget>
 #include <QMimeData>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPointer>
 #include <QStyle>
-#include <QStyledItemDelegate>
 #include <QUrl>
 #include <QVariantMap>
 
 namespace stageviz {
 
-class ShelfItemDelegate : public QStyledItemDelegate {
-public:
-    explicit ShelfItemDelegate(QObject* parent = nullptr)
-        : QStyledItemDelegate(parent)
-    {}
-
-    QWidget* createEditor(QWidget* parent, const QStyleOptionViewItem& option, const QModelIndex& index) const override
-    {
-        Q_UNUSED(option);
-        Q_UNUSED(index);
-
-        return new QLineEdit(parent);
-    }
-
-    void setEditorData(QWidget* editor, const QModelIndex& index) const override
-    {
-        auto* lineEdit = qobject_cast<QLineEdit*>(editor);
-        if (!lineEdit)
-            return;
-
-        lineEdit->setText(index.data(roles::shelf::scriptName).toString());
-
-        lineEdit->selectAll();
-    }
-
-    void setModelData(QWidget* editor, QAbstractItemModel* model, const QModelIndex& index) const override
-    {
-        auto* lineEdit = qobject_cast<QLineEdit*>(editor);
-        if (!lineEdit || !model)
-            return;
-
-        model->setData(index, lineEdit->text().trimmed(), roles::shelf::scriptName);
-    }
-
-    void updateEditorGeometry(QWidget* editor, const QStyleOptionViewItem& option,
-                              const QModelIndex& index) const override
-    {
-        Q_UNUSED(index);
-
-        if (!editor)
-            return;
-
-        const QSize hint = editor->sizeHint();
-
-        const int width = qMax(option.rect.width(), 120);
-        const int height = hint.height();
-
-        QRect rect(option.rect.center().x() - width / 2, option.rect.center().y() - height / 2, width, height);
-
-        editor->setGeometry(rect);
-        editor->raise();
-    }
-};
-
 class ShelfWidgetPrivate : public QObject {
     Q_OBJECT
+
 public:
     ShelfWidgetPrivate();
     ~ShelfWidgetPrivate();
-
     void init();
-
     void addScript(const QString& code, const QString& name = QString(), const QByteArray& iconBytes = QByteArray());
-
     void editScript(QListWidgetItem* item);
     void removeScript(QListWidgetItem* item);
-
     int count() const;
     void clear();
 
@@ -109,21 +51,15 @@ public Q_SLOTS:
 public:
     QString titleFromText(const QString& text, int maxLength, const QString& fallback = QString(),
                           const QString& prefixToStrip = QString());
-
     QVariantList toVariantList() const;
     void fromVariantList(const QVariantList& scripts);
-
     QString uniqueTitle(const QString& base, const QListWidgetItem* ignoreItem = nullptr) const;
-
     QListWidgetItem* itemAt(const QPoint& pos) const;
-
     void itemIcon(QListWidgetItem* item, const QByteArray& iconBytes);
-
     struct Data {
         QPointer<ShelfList> list;
         QPointer<ShelfWidget> shelf;
     };
-
     Data d;
 };
 
@@ -136,37 +72,25 @@ ShelfWidgetPrivate::init()
 {
     d.list = new ShelfList(d.shelf.data());
 
-    d.list->setItemDelegate(new ShelfItemDelegate(d.list));
-
     QHBoxLayout* layout = new QHBoxLayout(d.shelf);
-
-    layout->setContentsMargins(0, 0, 0, 0);
+    layout->setContentsMargins(2, 4, 0, 0);
     layout->addWidget(d.list);
 
     QObject::connect(d.list, &QWidget::customContextMenuRequested, this, &ShelfWidgetPrivate::contextMenuEvent);
-
     QObject::connect(d.list->model(), &QAbstractItemModel::rowsInserted, this, [this]() { Q_EMIT d.shelf->changed(); });
-
     QObject::connect(d.list->model(), &QAbstractItemModel::rowsRemoved, this, [this]() { Q_EMIT d.shelf->changed(); });
-
     QObject::connect(d.list->model(), &QAbstractItemModel::modelReset, this, [this]() { Q_EMIT d.shelf->changed(); });
-
     QObject::connect(d.list, &QListWidget::itemChanged, this, [this](QListWidgetItem* item) {
         if (!item)
             return;
 
         QString editedName = item->data(roles::shelf::scriptName).toString().trimmed();
-
         const QString newName = uniqueTitle(editedName.isEmpty() ? QStringLiteral("Script") : editedName, item);
-
         const bool blocked = d.list->blockSignals(true);
-
+        
         item->setData(roles::shelf::scriptName, newName);
-
         item->setToolTip(newName);
-
         d.list->blockSignals(blocked);
-
         Q_EMIT d.shelf->changed();
     });
 }
@@ -183,25 +107,18 @@ ShelfWidgetPrivate::addScript(const QString& code, const QString& name, const QB
         name.isEmpty() ? titleFromText(trimmed, 12, QStringLiteral("Script"), QStringLiteral(">>>")) : name.trimmed());
 
     auto* item = new QListWidgetItem(style()->icon(Style::IconRole::Code, Style::UIScale::Medium), QString());
-
     item->setSizeHint(d.list->gridSize());
-
     item->setData(Qt::UserRole, trimmed);
-
     item->setData(roles::shelf::scriptName, title);
-
     item->setToolTip(title);
-
     item->setFlags(item->flags() | Qt::ItemIsEditable);
 
     if (!iconBytes.isEmpty()) {
         item->setData(roles::shelf::scriptIcon, iconBytes);
-
         item->setIcon(qt::pngBytesToIcon(iconBytes));
     }
 
     d.list->addItem(item);
-
     Q_EMIT d.shelf->changed();
 }
 
@@ -226,7 +143,6 @@ ShelfWidgetPrivate::removeScript(QListWidgetItem* item)
         return;
 
     delete d.list->takeItem(row);
-
     Q_EMIT d.shelf->changed();
 }
 
@@ -237,7 +153,6 @@ ShelfWidgetPrivate::clear()
         return;
 
     d.list->clear();
-
     Q_EMIT d.shelf->changed();
 }
 
@@ -252,9 +167,7 @@ ShelfWidgetPrivate::titleFromText(const QString& text, int maxLength, const QStr
                                   const QString& prefixToStrip)
 {
     QString line;
-
     const QStringList lines = text.split('\n');
-
     for (QString l : lines) {
         l = l.trimmed();
 
@@ -270,11 +183,9 @@ ShelfWidgetPrivate::titleFromText(const QString& text, int maxLength, const QStr
     if (!prefixToStrip.isEmpty() && line.startsWith(prefixToStrip)) {
         line = line.mid(prefixToStrip.size()).trimmed();
     }
-
     if (maxLength > 0 && line.length() > maxLength) {
         line = line.left(maxLength).trimmed() + QStringLiteral("...");
     }
-
     return line.isEmpty() ? fallback : line;
 }
 
@@ -286,12 +197,10 @@ ShelfWidgetPrivate::itemIcon(QListWidgetItem* item, const QByteArray& iconBytes)
 
     if (iconBytes.isEmpty()) {
         item->setData(roles::shelf::scriptIcon, QByteArray());
-
         item->setIcon(style()->icon(Style::IconRole::Code));
     }
     else {
         item->setData(roles::shelf::scriptIcon, iconBytes);
-
         item->setIcon(qt::pngBytesToIcon(iconBytes));
     }
 
@@ -309,18 +218,12 @@ ShelfWidgetPrivate::toVariantList() const
 
     for (int i = 0; i < d.list->count(); ++i) {
         const QListWidgetItem* item = d.list->item(i);
-
         QVariantMap m;
-
         m.insert("name", item->data(roles::shelf::scriptName).toString());
-
         m.insert("code", item->data(Qt::UserRole).toString());
-
         m.insert("icon", item->data(roles::shelf::scriptIcon).toByteArray());
-
         scripts.append(m);
     }
-
     return scripts;
 }
 
@@ -334,19 +237,14 @@ ShelfWidgetPrivate::fromVariantList(const QVariantList& scripts)
 
     for (const QVariant& value : scripts) {
         const QVariantMap m = value.toMap();
-
         const QString name = m.value("name").toString().trimmed();
-
         const QString code = m.value("code").toString().trimmed();
-
         const QByteArray iconBytes = m.value("icon").toByteArray();
 
         if (code.isEmpty())
             continue;
-
         addScript(code, name, iconBytes);
     }
-
     Q_EMIT d.shelf->changed();
 }
 
@@ -354,11 +252,9 @@ QString
 ShelfWidgetPrivate::uniqueTitle(const QString& base, const QListWidgetItem* ignoreItem) const
 {
     QString name = base.trimmed().isEmpty() ? QStringLiteral("Script") : base.trimmed();
-
     QString candidate = name;
 
     int index = 2;
-
     auto exists = [this, ignoreItem](const QString& value) {
         if (!d.list)
             return false;
@@ -369,9 +265,8 @@ ShelfWidgetPrivate::uniqueTitle(const QString& base, const QListWidgetItem* igno
             if (item == ignoreItem)
                 continue;
 
-            if (item->data(roles::shelf::scriptName).toString() == value) {
+            if (item->data(roles::shelf::scriptName).toString() == value)
                 return true;
-            }
         }
 
         return false;
@@ -380,7 +275,6 @@ ShelfWidgetPrivate::uniqueTitle(const QString& base, const QListWidgetItem* igno
     while (exists(candidate)) {
         candidate = QStringLiteral("%1 %2").arg(name).arg(index++);
     }
-
     return candidate;
 }
 
@@ -396,8 +290,7 @@ ShelfWidgetPrivate::contextMenuEvent(const QPoint& pos)
     if (!d.shelf)
         return;
 
-    Q_EMIT
-    d.shelf->itemContextMenuRequested(pos, itemAt(pos));
+    Q_EMIT d.shelf->itemContextMenuRequested(pos, itemAt(pos));
 }
 
 ShelfWidget::ShelfWidget(QWidget* parent)
@@ -456,12 +349,10 @@ QSize
 ShelfWidget::sizeHint() const
 {
     const int iconSize = stageviz::style()->iconSize(Style::UIScale::Medium);
-
     const int padding = 6;
     const int spacing = 3;
-
-    const int height = iconSize + padding * 2 + spacing * 2;
-
+    const int topMargin = 8;
+    const int height = iconSize + padding * 2 + spacing * 2 + topMargin;
     return QSize(QWidget::sizeHint().width(), height);
 }
 
@@ -469,12 +360,10 @@ QSize
 ShelfWidget::minimumSizeHint() const
 {
     const int iconSize = stageviz::style()->iconSize(Style::UIScale::Medium);
-
     const int padding = 6;
     const int spacing = 3;
-
-    const int height = iconSize + padding * 2 + spacing * 2;
-
+    const int topMargin = 8;
+    const int height = iconSize + padding * 2 + spacing * 2 + topMargin;
     return QSize(0, height);
 }
 
