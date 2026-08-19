@@ -1,4 +1,4 @@
-<?xml version='1.0' encoding='UTF-8'?>
+<?xml version="1.0" encoding="UTF-8"?>
 <ui version="4.0">
  <class>PythonDialog</class>
  <widget class="QDialog" name="PythonDialog">
@@ -7,7 +7,7 @@
     <x>0</x>
     <y>0</y>
     <width>800</width>
-    <height>600</height>
+    <height>400</height>
    </rect>
   </property>
   <property name="windowTitle">
@@ -37,15 +37,15 @@
        <verstretch>0</verstretch>
       </sizepolicy>
      </property>
-     <property name="maximumSize">
-      <size>
-       <width>16777215</width>
-       <height>34</height>
-      </size>
-     </property>
      <property name="minimumSize">
       <size>
        <width>0</width>
+       <height>34</height>
+      </size>
+     </property>
+     <property name="maximumSize">
+      <size>
+       <width>16777215</width>
        <height>34</height>
       </size>
      </property>
@@ -203,7 +203,7 @@
                  </widget>
                 </item>
                 <item>
-                 <widget class="QLineEdit" name="find" />
+                 <widget class="QLineEdit" name="find"/>
                 </item>
                 <item>
                  <widget class="QToolButton" name="previous">
@@ -259,6 +259,6 @@
    <header>../../../sources/pythoneditor.h</header>
   </customwidget>
  </customwidgets>
- <resources />
- <connections />
+ <resources/>
+ <connections/>
 </ui>

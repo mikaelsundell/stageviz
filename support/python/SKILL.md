@@ -399,7 +399,7 @@ Examples:
 - Procedural scale: use a wider positive range appropriate to the shader
 
 Presets should update the controls and then let the user press Apply. Do not silently apply a material merely because a preset button was clicked unless the user requested live application.
-
+\n## Dialog shortcut ownership\n\nStageviz main-window actions may define application shortcuts such as `Ctrl+A`. A non-modal tool dialog must explicitly claim shortcuts that have a dialog-local meaning; otherwise the Stageviz menu action can fire while the user is working inside the dialog.\n\nFor shortcuts that should belong to the entire dialog whenever the tool window is active, prefer an application event filter that accepts `ShortcutOverride` and handles the matching `KeyPress`:\n\n```python\ndef eventFilter(self, obj, event):\n    if self.isActiveWindow():\n        event_type = event.type()\n\n        if event_type == QtCore.QEvent.Type.ShortcutOverride:\n            if event.matches(QtGui.QKeySequence.StandardKey.SelectAll):\n                event.accept()\n                return True\n\n        if event_type == QtCore.QEvent.Type.KeyPress:\n            if event.matches(QtGui.QKeySequence.StandardKey.SelectAll):\n                self.select_all_visible_items()\n                event.accept()\n                return True\n\n    return super().eventFilter(obj, event)\n```\n\nInstall the filter once during dialog initialization:\n\n```python\napp = QtWidgets.QApplication.instance()\nif app is not None:\n    app.installEventFilter(self)\n```\n\nUse `QKeySequence.StandardKey` rather than hard-coding platform modifiers so standard shortcuts behave correctly on macOS, Windows, and Linux.\n\nFor a filtered list editor, `Select All` should normally select only currently visible/filter-matched rows rather than hidden rows. Reuse the same function for the dialog shortcut and any `Select Filtered` button so the behavior stays consistent.\n\nIf a shortcut should apply only while a particular widget has focus, a widget-owned `QShortcut` with `WidgetWithChildrenShortcut` is acceptable. Prefer the dialog-wide event-filter approach when the main Stageviz window already owns the same shortcut and the tool needs to suppress that main-window action while active.\n
 ## Error handling
 
 Wrap the Apply operation in `try/except`:
@@ -462,5 +462,6 @@ Before returning a Stageviz dialog script, verify:
 - Material paths are valid absolute `Sdf.Path` values.
 - MaterialX output is connected to the material surface output.
 - The dialog is non-modal and retains a global reference.
+- Dialog-local standard shortcuts are claimed while the dialog is active so Stageviz main-window actions do not fire accidentally.
 - Apply errors are visible in the UI and printed with a traceback.
 - The final script is complete and runnable.

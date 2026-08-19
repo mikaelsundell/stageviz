@@ -687,12 +687,9 @@ selectInvert()
                 {
                     READ_LOCKER(locker, session->stageLock(), "stageLock");
                     const UsdStageRefPtr stage = session->stageUnsafe();
-
                     previousSelection = session->selectionList()->paths();
                     mask = session->mask();
-
-                    // Preserve previous selectInvert() behavior:
-                    // children outside the mask still make a masked parent non-leaf.
+                    
                     domain = stage::leafPaths(stage, mask, false);
                 }
 

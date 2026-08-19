@@ -67,6 +67,7 @@ public:
     PythonDialog* pythonDialog();
     ConsoleDialog* consoleDialog();
     RenderView* renderView();
+    void showDialog(QDialog* window);
     bool eventFilter(QObject* object, QEvent* event);
     void enable(bool enable);
 
@@ -139,7 +140,6 @@ public Q_SLOTS:
     void updatePreserveState(bool enabled);
     void updateMaterialMode(ViewState::MaterialMode mode);
     void notifyStatusChanged(Session::Notify::Status status, const QString& message, const QString& details);
-
 public:
     void updateDockAction(QAction* action, bool checked);
     void updateModified(bool modified);
@@ -317,9 +317,42 @@ ViewerPrivate::init()
     connect(d.ui->hudSceneStats, &QAction::toggled, viewState, &ViewState::setSceneStatsEnabled);
     connect(d.ui->hudPerformanceStats, &QAction::toggled, viewState, &ViewState::setPerformanceStatsEnabled);
     connect(d.ui->hudCameraAxis, &QAction::toggled, viewState, &ViewState::setCameraAxisEnabled);
-    connect(d.ui->viewProgress, &QAction::toggled, this, &ViewerPrivate::toggleProgress);
-    connect(d.ui->viewPython, &QAction::toggled, this, &ViewerPrivate::togglePython);
-    connect(d.ui->viewConsole, &QAction::toggled, this, &ViewerPrivate::toggleConsole);
+    connect(d.ui->viewProgress, &QAction::triggered, this, [this]() {
+        if (!d.progressDialog)
+            return;
+
+        if (!d.progressDialog->isVisible() || d.progressDialog->isMinimized()
+            || !d.progressDialog->isActiveWindow()) {
+            showDialog(d.progressDialog);
+        }
+        else {
+            d.progressDialog->hide();
+        }
+    });
+    connect(d.ui->viewPython, &QAction::triggered, this, [this]() {
+        if (!d.pythonDialog)
+            return;
+
+        if (!d.pythonDialog->isVisible() || d.pythonDialog->isMinimized()
+            || !d.pythonDialog->isActiveWindow()) {
+            showDialog(d.pythonDialog);
+        }
+        else {
+            d.pythonDialog->hide();
+        }
+    });
+    connect(d.ui->viewConsole, &QAction::triggered, this, [this]() {
+        if (!d.consoleDialog)
+            return;
+
+        if (!d.consoleDialog->isVisible() || d.consoleDialog->isMinimized()
+            || !d.consoleDialog->isActiveWindow()) {
+            showDialog(d.consoleDialog);
+        }
+        else {
+            d.consoleDialog->hide();
+        }
+    });
     connect(viewState, &ViewState::materialModeChanged, this, &ViewerPrivate::updateMaterialMode);
     connect(viewState, &ViewState::backgroundColorChanged, this, [this](const QColor& color) {
         d.ui->backgroundColor->setStyleSheet("background-color: " + color.name() + ";");
@@ -636,6 +669,21 @@ RenderView*
 ViewerPrivate::renderView()
 {
     return d.ui->renderView;
+}
+
+void
+ViewerPrivate::showDialog(QDialog* dialog)
+{
+    if (!dialog)
+        return;
+
+    if (dialog->isMinimized())
+        dialog->showNormal();
+    else if (!dialog->isVisible())
+        dialog->show();
+
+    dialog->raise();
+    dialog->activateWindow();
 }
 
 bool
