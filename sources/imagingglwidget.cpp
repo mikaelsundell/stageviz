@@ -319,7 +319,10 @@ ImagingGLWidgetPrivate::initContext()
         updateMaterialOverrideSceneIndex();
         d.glwidget->update();
     });
-    connect(viewState(), &ViewState::doubleSidedModeChanged, d.glwidget, qOverload<>(&QWidget::update));
+    connect(viewState(), &ViewState::doubleSidedModeChanged, this, [this](ViewState::DoubleSidedMode) {
+        updateMaterialOverrideSceneIndex();
+        d.glwidget->update();
+    });
     connect(viewState(), &ViewState::defaultCameraLightEnabledChanged, d.glwidget, qOverload<>(&QWidget::update));
     connect(viewState(), &ViewState::sceneLightsEnabledChanged, d.glwidget, qOverload<>(&QWidget::update));
     connect(viewState(), &ViewState::renderModeChanged, d.glwidget, qOverload<>(&QWidget::update));
@@ -494,9 +497,9 @@ ImagingGLWidgetPrivate::paintGL()
                 material.SetShininess(d.defaultShininess);
                 d.glEngine->SetLightingState(lights, material, defaultAmbient);
             }
-            
+
             d.params.gammaCorrectColors = true;
-            
+
             d.params.enableSampleAlphaToCoverage = true;
             d.params.enableSceneLights = !viewState() || viewState()->sceneLightsEnabled();
             // material evaluation remains enabled so viewport materials, such as the grid and
@@ -740,7 +743,7 @@ ImagingGLWidgetPrivate::mouseReleaseEvent(QMouseEvent* event)
 {
     if (!d.stage)
         return;
-    
+
     if (d.drag) {
         d.drag = false;
         viewCamera()->setCameraMode(ViewCamera::None);
@@ -765,7 +768,7 @@ ImagingGLWidgetPrivate::sweepEvent(const QRect& rect, QMouseEvent* event)
     d.glwidget->makeCurrent();
     if (!d.stage || !d.glEngine)
         return;
-    
+
 #ifdef WIN32
     glDepthMask(GL_TRUE);
 #endif
@@ -1260,11 +1263,14 @@ ImagingGLWidgetPrivate::updateMaterialOverrideSceneIndex()
 {
     if (!d.materialOverrideSceneIndex || !d.context)
         return;
+
     ViewState* state = viewState();
     if (!state)
         return;
+
     d.materialOverrideSceneIndex->setSceneMaterialsEnabled(state->sceneMaterialsEnabled());
     d.materialOverrideSceneIndex->setMaterialPath(state->overrideMaterial());
+
     MaterialOverrideSceneIndex::Mode mode = MaterialOverrideSceneIndex::None;
     switch (state->materialMode()) {
     case ViewState::Clay: mode = MaterialOverrideSceneIndex::Clay; break;
@@ -1273,6 +1279,14 @@ ImagingGLWidgetPrivate::updateMaterialOverrideSceneIndex()
     default: mode = MaterialOverrideSceneIndex::None; break;
     }
     d.materialOverrideSceneIndex->setMode(mode);
+
+    // In forced double-sided viewport mode, keep both rasterized sides
+    // visible while presenting meshes to Hydra as single-sided. This is
+    // required by front/back diagnostic materials so facing-ratio evaluation
+    // remains different for the two sides.
+    const bool overrideDoubleSided = state->doubleSidedMode() == ViewState::DoubleSided;
+    d.materialOverrideSceneIndex->setDoubleSidedOverride(false);
+    d.materialOverrideSceneIndex->setDoubleSidedOverrideEnabled(overrideDoubleSided);
 }
 
 bool
@@ -1679,8 +1693,7 @@ ImagingGLWidgetPrivate::drawTransformTransform(QPainter& painter)
     constexpr double arrowWidth = 7.0;
     constexpr int ringSegments = 96;
     const QColor colors[4] = { QColor(), style()->color(Style::ColorRole::AxisX),
-                               style()->color(Style::ColorRole::AxisY),
-                               style()->color(Style::ColorRole::AxisZ) };
+                               style()->color(Style::ColorRole::AxisY), style()->color(Style::ColorRole::AxisZ) };
     painter.save();
     painter.setRenderHint(QPainter::Antialiasing, true);
     // rotation rings are drawn first so translation/scale handles stay crisp
@@ -2006,74 +2019,161 @@ void
 ImagingGLWidgetPrivate::updatePerformanceStats()
 {
     const bool hasEngine = d.glEngine && d.stage;
+
     VtDictionary stats;
     if (d.glEngine)
         stats = d.glEngine->GetRenderStats();
-    auto fmtMB = [&](uint64_t bytes) { return QString::number(double(bytes) / (1024.0 * 1024.0), 'f', 2) + " MB"; };
+
+    auto fmtMB = [](uint64_t bytes) {
+        return QString::number(static_cast<double>(bytes) / (1024.0 * 1024.0), 'f', 2) + " MB";
+    };
+
+    auto statBytes = [&](const TfToken& key, uint64_t& bytes) -> bool {
+        bytes = 0;
+
+        const auto it = stats.find(key);
+        if (it == stats.end())
+            return false;
+
+        const VtValue& value = it->second;
+        if (value.IsHolding<unsigned long>()) {
+            bytes = static_cast<uint64_t>(value.UncheckedGet<unsigned long>());
+            return true;
+        }
+        if (value.IsHolding<unsigned long long>()) {
+            bytes = static_cast<uint64_t>(value.UncheckedGet<unsigned long long>());
+            return true;
+        }
+        if (value.IsHolding<unsigned int>()) {
+            bytes = static_cast<uint64_t>(value.UncheckedGet<unsigned int>());
+            return true;
+        }
+        if (value.IsHolding<unsigned short>()) {
+            bytes = static_cast<uint64_t>(value.UncheckedGet<unsigned short>());
+            return true;
+        }
+        if (value.IsHolding<long>()) {
+            const long v = value.UncheckedGet<long>();
+            if (v >= 0) {
+                bytes = static_cast<uint64_t>(v);
+                return true;
+            }
+            return false;
+        }
+
+        if (value.IsHolding<long long>()) {
+            const long long v = value.UncheckedGet<long long>();
+            if (v >= 0) {
+                bytes = static_cast<uint64_t>(v);
+                return true;
+            }
+            return false;
+        }
+
+        if (value.IsHolding<int>()) {
+            const int v = value.UncheckedGet<int>();
+            if (v >= 0) {
+                bytes = static_cast<uint64_t>(v);
+                return true;
+            }
+            return false;
+        }
+
+        if (value.IsHolding<short>()) {
+            const short v = value.UncheckedGet<short>();
+            if (v >= 0) {
+                bytes = static_cast<uint64_t>(v);
+                return true;
+            }
+            return false;
+        }
+        return false;
+    };
+
     struct Row {
         QString label;
         QString value;
     };
+
     QVector<Row> rows;
     if (d.glEngine) {
-        if (Hgi* hgi = d.glEngine->GetHgi())
+        if (Hgi* hgi = d.glEngine->GetHgi()) {
             rows.append({ "Hgi", TfTokenToQString(hgi->GetAPIName()) });
+        }
     }
     else {
         rows.append({ "Hgi", QStringLiteral("-") });
     }
     rows.append({ "GPU time", hasEngine ? QString::number(d.gpuPerformanceMs, 'f', 2) + " ms" : "-" });
+
     if (hasEngine) {
-        if (stats.count("gpuMemoryUsed"))
-            rows.append({ "GPU mem", fmtMB(VtDictionaryGet<uint64_t>(stats, "gpuMemoryUsed")) });
-        if (stats.count("primvar"))
-            rows.append({ "primvar", fmtMB(VtDictionaryGet<uint64_t>(stats, "primvar")) });
-        if (stats.count("topology"))
-            rows.append({ "topology", fmtMB(VtDictionaryGet<uint64_t>(stats, "topology")) });
-        if (stats.count("drawingShader"))
-            rows.append({ "shader", fmtMB(VtDictionaryGet<uint64_t>(stats, "drawingShader")) });
-        if (stats.count("textureMemory"))
-            rows.append({ "texture", fmtMB(VtDictionaryGet<uint64_t>(stats, "textureMemory")) });
+        uint64_t bytes = 0;
+        if (statBytes(TfToken("gpuMemoryUsed"), bytes)) {
+            rows.append({ "GPU mem", fmtMB(bytes) });
+        }
+        if (statBytes(TfToken("primvar"), bytes)) {
+            rows.append({ "primvar", fmtMB(bytes) });
+        }
+        if (statBytes(TfToken("topology"), bytes)) {
+            rows.append({ "topology", fmtMB(bytes) });
+        }
+        if (statBytes(TfToken("drawingShader"), bytes)) {
+            rows.append({ "shader", fmtMB(bytes) });
+        }
+        if (statBytes(TfToken("textureMemory"), bytes)) {
+            rows.append({ "texture", fmtMB(bytes) });
+        }
     }
+
     const double dpr = d.glwidget->devicePixelRatioF();
+
     QFont font = d.glwidget->font();
     font.setPixelSize(style()->fontSize(Style::UIScale::Small));
     font.setLetterSpacing(QFont::AbsoluteSpacing, 0.5);
+
     QFontMetrics fm(font);
     const int rowHeight = fm.lineSpacing() + 2;
     const int marginLeft = 18;
     const int marginRight = 18;
     const int marginTop = 16;
     const int columnSpacing = 24;
+
     int labelWidth = 0;
     int valueWidth = 0;
-    for (const Row& r : rows) {
-        labelWidth = std::max(labelWidth, fm.horizontalAdvance(r.label));
-        valueWidth = std::max(valueWidth, fm.horizontalAdvance(r.value));
+
+    for (const Row& row : rows) {
+        labelWidth = std::max(labelWidth, fm.horizontalAdvance(row.label));
+        valueWidth = std::max(valueWidth, fm.horizontalAdvance(row.value));
     }
+
     const int width = marginLeft + labelWidth + columnSpacing + valueWidth + marginRight;
     const int height = static_cast<int>(rows.size()) * rowHeight + marginTop;
+
     d.performanceStats = QImage(qRound(width * dpr), qRound(height * dpr), QImage::Format_ARGB32_Premultiplied);
     d.performanceStats.setDevicePixelRatio(dpr);
     d.performanceStats.fill(Qt::transparent);
-    QPainter p(&d.performanceStats);
-    p.setRenderHint(QPainter::TextAntialiasing);
-    p.setFont(font);
+
+    QPainter painter(&d.performanceStats);
+    painter.setRenderHint(QPainter::TextAntialiasing);
+    painter.setFont(font);
+
     const QColor textColor = d.stage ? style()->color(Style::ColorRole::Text, Style::UIState::Normal)
                                      : style()->color(Style::ColorRole::Text, Style::UIState::Disabled);
     const QColor shadowColor(0, 0, 0, 160);
+
     int y = marginTop + fm.ascent();
     const int labelX = marginLeft;
     const int valueRight = width - marginRight;
-    for (const Row& r : rows) {
+
+    for (const Row& row : rows) {
         const QRect labelRect(labelX, y - fm.ascent(), labelWidth, rowHeight);
         const QRect valueRect(valueRight - valueWidth, y - fm.ascent(), valueWidth, rowHeight);
-        p.setPen(shadowColor);
-        p.drawText(labelRect.translated(1, 1), Qt::AlignLeft | Qt::AlignVCenter, r.label);
-        p.drawText(valueRect.translated(1, 1), Qt::AlignRight | Qt::AlignVCenter, r.value);
-        p.setPen(textColor);
-        p.drawText(labelRect, Qt::AlignLeft | Qt::AlignVCenter, r.label);
-        p.drawText(valueRect, Qt::AlignRight | Qt::AlignVCenter, r.value);
+        painter.setPen(shadowColor);
+        painter.drawText(labelRect.translated(1, 1), Qt::AlignLeft | Qt::AlignVCenter, row.label);
+        painter.drawText(valueRect.translated(1, 1), Qt::AlignRight | Qt::AlignVCenter, row.value);
+        painter.setPen(textColor);
+        painter.drawText(labelRect, Qt::AlignLeft | Qt::AlignVCenter, row.label);
+        painter.drawText(valueRect, Qt::AlignRight | Qt::AlignVCenter, row.value);
         y += rowHeight;
     }
 }

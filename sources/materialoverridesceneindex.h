@@ -5,7 +5,6 @@
 #pragma once
 
 #include <memory>
-
 #include <pxr/base/tf/refPtr.h>
 #include <pxr/imaging/hd/filteringSceneIndex.h>
 #include <pxr/usd/sdf/path.h>
@@ -25,6 +24,9 @@ class MaterialOverrideSceneIndexPrivate;
  * on Session::auxiliary() and are presented to Hydra by ImagingGLWidget.
  * Auxiliary display geometry below /Display is always passed through
  * unchanged.
+ *
+ * The filter can also override the Hydra mesh doubleSided property for
+ * viewport diagnostics without modifying the authored USD stage.
  */
 class MaterialOverrideSceneIndex final : public pxr::HdSingleInputFilteringSceneIndexBase {
 public:
@@ -42,6 +44,9 @@ public:
      */
     static pxr::TfRefPtr<MaterialOverrideSceneIndex> New(const pxr::HdSceneIndexBaseRefPtr& inputSceneIndex);
 
+    /**
+     * @brief Destroys the material override scene index.
+     */
     ~MaterialOverrideSceneIndex() override;
 
     /** @name Scene Materials */
@@ -92,6 +97,37 @@ public:
 
     ///@}
 
+    /** @name Double-Sided Override */
+    ///@{
+
+    /**
+     * @brief Returns whether mesh doubleSided values are overridden.
+     */
+    bool doubleSidedOverrideEnabled() const;
+
+    /**
+     * @brief Enables or disables the mesh doubleSided override.
+     *
+     * This is a Hydra presentation override only and does not modify the
+     * authored USD stage.
+     */
+    void setDoubleSidedOverrideEnabled(bool enabled);
+
+    /**
+     * @brief Returns the current mesh doubleSided override value.
+     */
+    bool doubleSidedOverride() const;
+
+    /**
+     * @brief Sets the mesh doubleSided override value.
+     *
+     * For front/back diagnostics this should normally be false while render
+     * culling is disabled.
+     */
+    void setDoubleSidedOverride(bool doubleSided);
+
+    ///@}
+
     /** @name Scene Index */
     ///@{
 
@@ -113,7 +149,15 @@ protected:
 private:
     explicit MaterialOverrideSceneIndex(const pxr::HdSceneIndexBaseRefPtr& inputSceneIndex);
 
+    /**
+     * @brief Dirties material binding data on affected gprims.
+     */
     void dirtyMaterialBindings();
+
+    /**
+     * @brief Dirties mesh doubleSided data on affected meshes.
+     */
+    void dirtyDoubleSided();
 
 private:
     std::unique_ptr<MaterialOverrideSceneIndexPrivate> p;

@@ -22,21 +22,24 @@ DIALOG_GLOBAL_NAME = "_stageviz_normal_direction_dialog"
 MATERIAL_ROOT = Sdf.Path("/Materials")
 MATERIAL_PATH = Sdf.Path("/Materials/NormalDirection")
 
-# Darker, clay-like diagnostic colors so lighting/shading remains readable.
+# Darker diagnostic colors so lighting/shading remains readable.
 FRONT_COLOR = Gf.Vec3f(0.12, 0.50, 0.16)
 BACK_COLOR = Gf.Vec3f(0.62, 0.10, 0.32)
 
 MATERIAL_MODE_ALL = 0
 MATERIAL_MODE_OVERRIDE = 2
 
+# These correspond to the Stageviz ViewState double-sided modes.
 DOUBLE_SIDED_PRIMITIVE = 0
 DOUBLE_SIDED = 1
 SINGLE_SIDED = 2
 
-# Saved while the normal-direction diagnostic is active so the user's
-# previous viewport culling mode can be restored afterward.
+
+# Saved while the diagnostic is active so the user's viewport state can
+# be restored when Normal Check is disabled or the dialog is closed.
 _previous_double_sided_mode = None
 _normal_check_active = False
+_double_sided_override_enabled = True
 
 
 def get_session():
@@ -71,10 +74,12 @@ def get_context():
 def find_stageviz_main_window():
     try:
         app = stageviz.application()
+
         if hasattr(app, "window"):
             window = app.window()
             if window is not None:
                 return window
+
     except Exception:
         traceback.print_exc()
 
@@ -85,7 +90,11 @@ def find_stageviz_main_window():
     return qt_app.activeWindow()
 
 
-def connect_input(shader_input, source_shader, source_output_name="out"):
+def connect_input(
+    shader_input,
+    source_shader,
+    source_output_name="out",
+):
     shader_input.ConnectToSource(
         source_shader.ConnectableAPI(),
         source_output_name,
@@ -110,16 +119,15 @@ def ensure_normal_direction_material(stage):
         ND_standard_surface_surfaceshader
                base_color
 
-    The final Standard Surface uses the same material response as the
-    Stageviz clay material:
-        base       = 1.0
-        metalness  = 0.0
-        roughness  = 0.68
-        specular   = 0.35
+    Both polygon sides must reach the shader for this to display front/back
+    colors. Therefore the viewport can optionally be forced double-sided.
     """
     UsdGeom.Scope.Define(stage, MATERIAL_ROOT)
 
-    material = UsdShade.Material.Define(stage, MATERIAL_PATH)
+    material = UsdShade.Material.Define(
+        stage,
+        MATERIAL_PATH,
+    )
 
     facing = UsdShade.Shader.Define(
         stage,
@@ -180,7 +188,9 @@ def ensure_normal_direction_material(stage):
         stage,
         MATERIAL_PATH.AppendChild("Surface"),
     )
-    surface.CreateIdAttr("ND_standard_surface_surfaceshader")
+    surface.CreateIdAttr(
+        "ND_standard_surface_surfaceshader"
+    )
 
     surface.CreateInput(
         "base",
@@ -223,36 +233,93 @@ def ensure_normal_direction_material(stage):
     return material
 
 
+def apply_double_sided_override():
+    """
+    Apply the current diagnostic double-sided setting.
+
+    Override enabled:
+        Force every rendered primitive to double-sided.
+
+    Override disabled:
+        Respect the primitive's authored USD doubleSided value.
+    """
+    _, _, _, view_state, _ = get_context()
+
+    if _double_sided_override_enabled:
+        view_state.setDoubleSidedMode(
+            DOUBLE_SIDED
+        )
+    else:
+        view_state.setDoubleSidedMode(
+            DOUBLE_SIDED_PRIMITIVE
+        )
+
+
+def set_double_sided_override(enabled):
+    global _double_sided_override_enabled
+
+    _double_sided_override_enabled = bool(enabled)
+
+    if _normal_check_active:
+        apply_double_sided_override()
+
+    mode_name = (
+        "DoubleSided"
+        if _double_sided_override_enabled
+        else "Primitive"
+    )
+
+    print(
+        "[Stageviz Normal Direction] "
+        f"double-sided override: {mode_name}"
+    )
+
+
 def enable_normal_direction_override():
     global _previous_double_sided_mode
     global _normal_check_active
 
     _, _, auxiliary, view_state, _ = get_context()
 
-    material = ensure_normal_direction_material(auxiliary)
+    material = ensure_normal_direction_material(
+        auxiliary
+    )
     path = material.GetPath()
 
-    # Save the user's original state only once, on transition into
-    # Normal Check mode.
+    # Save the user's original viewport state only when transitioning
+    # into diagnostic mode.
     if not _normal_check_active:
-        _previous_double_sided_mode = view_state.doubleSidedMode()
+        _previous_double_sided_mode = (
+            view_state.doubleSidedMode()
+        )
 
-    # Force SingleSided rendering regardless of the primitive's authored USD doubleSided.
-    # This maps to CULL_STYLE_BACK in ImagingGLWidget.
-    view_state.setDoubleSidedMode(SINGLE_SIDED)
-
-    view_state.setOverrideMaterial(str(path))
-    view_state.setMaterialMode(MATERIAL_MODE_OVERRIDE)
+    view_state.setOverrideMaterial(
+        str(path)
+    )
+    view_state.setMaterialMode(
+        MATERIAL_MODE_OVERRIDE
+    )
 
     _normal_check_active = True
+
+    # For normal inspection we generally want both sides visible.
+    # This can be disabled independently from the material override.
+    apply_double_sided_override()
+
+    mode_name = (
+        "DoubleSided"
+        if _double_sided_override_enabled
+        else "Primitive"
+    )
 
     print(
         "[Stageviz Normal Direction] "
         f"override enabled: {path}; "
-        "double-sided mode forced to SingleSided"
+        f"double-sided mode: {mode_name}"
     )
 
     return path
+
 
 def disable_normal_direction_override():
     global _previous_double_sided_mode
@@ -261,9 +328,14 @@ def disable_normal_direction_override():
     _, _, _, view_state, _ = get_context()
 
     view_state.setOverrideMaterial("")
-    view_state.setMaterialMode(MATERIAL_MODE_ALL)
+    view_state.setMaterialMode(
+        MATERIAL_MODE_ALL
+    )
 
-    if _normal_check_active and _previous_double_sided_mode is not None:
+    if (
+        _normal_check_active
+        and _previous_double_sided_mode is not None
+    ):
         view_state.setDoubleSidedMode(
             int(_previous_double_sided_mode)
         )
@@ -279,23 +351,28 @@ def disable_normal_direction_override():
         f"double-sided mode restored to {restored}"
     )
 
+
 def selected_meshes(stage, selection):
     """
-    Return unique UsdGeom.Mesh prims under the current selection.
+    Return unique UsdGeom.Mesh prims below the current selection.
 
-    Selecting a mesh flips that mesh.
-    Selecting an Xform/group flips all descendant meshes.
+    Selecting a mesh returns that mesh.
+    Selecting an Xform/group returns all descendant meshes.
     """
     result = []
     seen = set()
 
     for path in selection.paths():
         prim = stage.GetPrimAtPath(path)
+
         if not prim:
             continue
 
         for candidate in Usd.PrimRange(prim):
-            if not candidate or not candidate.IsA(UsdGeom.Mesh):
+            if (
+                not candidate
+                or not candidate.IsA(UsdGeom.Mesh)
+            ):
                 continue
 
             candidate_path = candidate.GetPath()
@@ -305,7 +382,9 @@ def selected_meshes(stage, selection):
                 continue
 
             seen.add(key)
-            result.append(UsdGeom.Mesh(candidate))
+            result.append(
+                UsdGeom.Mesh(candidate)
+            )
 
     return result
 
@@ -314,19 +393,26 @@ def flip_selected_mesh_orientation():
     """
     Toggle UsdGeomMesh orientation between rightHanded and leftHanded.
 
-    This changes which winding is treated as the front face without rewriting
-    faceVertexIndices or face-varying primvars.
+    This changes which winding is interpreted as the front face without
+    rewriting faceVertexIndices or face-varying primvars.
     """
     _, stage, _, _, selection = get_context()
 
-    meshes = selected_meshes(stage, selection)
+    meshes = selected_meshes(
+        stage,
+        selection,
+    )
+
     if not meshes:
         return 0, []
 
     changed = []
 
     for mesh in meshes:
-        orientation_attr = mesh.GetOrientationAttr()
+        orientation_attr = (
+            mesh.GetOrientationAttr()
+        )
+
         current = orientation_attr.Get()
 
         if current == UsdGeom.Tokens.leftHanded:
@@ -334,29 +420,42 @@ def flip_selected_mesh_orientation():
         else:
             value = UsdGeom.Tokens.leftHanded
 
-        mesh.CreateOrientationAttr().Set(value)
-        changed.append((mesh.GetPath(), value))
+        mesh.CreateOrientationAttr().Set(
+            value
+        )
+
+        changed.append(
+            (mesh.GetPath(), value)
+        )
 
     return len(changed), changed
 
 
-class NormalDirectionDialog(QtWidgets.QDialog):
+class NormalDirectionDialog(
+    QtWidgets.QDialog
+):
     def __init__(self, parent=None):
         super().__init__(parent)
 
-        self.setObjectName(DIALOG_OBJECT_NAME)
+        self.setObjectName(
+            DIALOG_OBJECT_NAME
+        )
+
         self.setWindowTitle(
             f"Stageviz Normal Direction - {qt_name}"
         )
-        self.resize(420, 250)
+
+        self.resize(440, 280)
 
         self.setWindowModality(
             QtCore.Qt.WindowModality.NonModal
         )
+
         self.setWindowFlag(
             QtCore.Qt.WindowType.Tool,
             True,
         )
+
         self.setAttribute(
             QtCore.Qt.WidgetAttribute.WA_DeleteOnClose,
             True,
@@ -366,17 +465,24 @@ class NormalDirectionDialog(QtWidgets.QDialog):
 
         description = QtWidgets.QLabel(
             "Front faces are shown in green.\n"
-            "Back faces are shown in magenta.\n"
-            "Normal Check temporarily forces the viewport to single-sided rendering "
-            "so authored doubleSided values cannot hide incorrect winding."
+            "Back faces are shown in magenta.\n\n"
+            "Enable Override Double Sided to force both polygon sides "
+            "to reach the diagnostic material."
         )
         description.setWordWrap(True)
+
         layout.addWidget(description)
+
+        # --------------------------------------------------------------
+        # Color legend
+        # --------------------------------------------------------------
 
         colors = QtWidgets.QHBoxLayout()
         layout.addLayout(colors)
 
-        front_label = QtWidgets.QLabel("Front")
+        front_label = QtWidgets.QLabel(
+            "Front"
+        )
         front_label.setStyleSheet(
             "QLabel {"
             "background-color: rgb(31, 128, 41);"
@@ -385,7 +491,9 @@ class NormalDirectionDialog(QtWidgets.QDialog):
         )
         colors.addWidget(front_label)
 
-        back_label = QtWidgets.QLabel("Back")
+        back_label = QtWidgets.QLabel(
+            "Back"
+        )
         back_label.setStyleSheet(
             "QLabel {"
             "background-color: rgb(158, 26, 82);"
@@ -396,54 +504,123 @@ class NormalDirectionDialog(QtWidgets.QDialog):
 
         colors.addStretch(1)
 
+        # --------------------------------------------------------------
+        # Material override
+        # --------------------------------------------------------------
+
         override_row = QtWidgets.QHBoxLayout()
         layout.addLayout(override_row)
 
         self.enable_button = QtWidgets.QPushButton(
             "Enable Normal Check"
         )
+
         self.disable_button = QtWidgets.QPushButton(
             "Scene Materials"
         )
 
-        override_row.addWidget(self.enable_button)
-        override_row.addWidget(self.disable_button)
+        override_row.addWidget(
+            self.enable_button
+        )
+        override_row.addWidget(
+            self.disable_button
+        )
         override_row.addStretch(1)
 
-        self.flip_button = QtWidgets.QPushButton(
-            "Flip Selected Normals"
+        # --------------------------------------------------------------
+        # Double-sided override
+        # --------------------------------------------------------------
+
+        self.double_sided_checkbox = (
+            QtWidgets.QCheckBox(
+                "Override Double Sided"
+            )
         )
-        layout.addWidget(self.flip_button)
+
+        self.double_sided_checkbox.setChecked(
+            _double_sided_override_enabled
+        )
+
+        self.double_sided_checkbox.setToolTip(
+            "Enabled: force all rendered geometry double-sided.\n"
+            "Disabled: respect each primitive's authored doubleSided value."
+        )
+
+        layout.addWidget(
+            self.double_sided_checkbox
+        )
+
+        # --------------------------------------------------------------
+        # Orientation
+        # --------------------------------------------------------------
+
+        self.flip_button = QtWidgets.QPushButton(
+            "Flip Selected Orientation"
+        )
+        layout.addWidget(
+            self.flip_button
+        )
 
         self.status_label = QtWidgets.QLabel("")
         self.status_label.setWordWrap(True)
-        layout.addWidget(self.status_label)
+
+        layout.addWidget(
+            self.status_label
+        )
+
+        layout.addStretch(1)
 
         button_row = QtWidgets.QHBoxLayout()
         layout.addLayout(button_row)
+
         button_row.addStretch(1)
 
-        self.close_button = QtWidgets.QPushButton("Close")
-        button_row.addWidget(self.close_button)
+        self.close_button = QtWidgets.QPushButton(
+            "Close"
+        )
+        button_row.addWidget(
+            self.close_button
+        )
+
+        # --------------------------------------------------------------
+        # Connections
+        # --------------------------------------------------------------
 
         self.enable_button.clicked.connect(
             self.enable_override
         )
+
         self.disable_button.clicked.connect(
             self.disable_override
         )
+
+        self.double_sided_checkbox.toggled.connect(
+            self.double_sided_changed
+        )
+
         self.flip_button.clicked.connect(
             self.flip_selected
         )
-        self.close_button.clicked.connect(self.close)
+
+        self.close_button.clicked.connect(
+            self.close
+        )
 
     def enable_override(self):
         try:
-            path = enable_normal_direction_override()
+            path = (
+                enable_normal_direction_override()
+            )
+
+            mode_name = (
+                "forced DoubleSided"
+                if _double_sided_override_enabled
+                else "authored primitive setting"
+            )
 
             self.status_label.setText(
                 "Normal direction check enabled.\n"
-                "Double-sided mode: SingleSided\n"
+                f"Double-sided: {mode_name}\n"
                 f"Material: {path}"
             )
 
@@ -455,11 +632,11 @@ class NormalDirectionDialog(QtWidgets.QDialog):
 
     def disable_override(self):
         try:
-            #disable_normal_direction_override()
+            disable_normal_direction_override()
 
             self.status_label.setText(
                 "Using authored scene materials.\n"
-                "Previous double-sided mode restored."
+                "Previous viewport double-sided mode restored."
             )
 
         except Exception as exc:
@@ -468,17 +645,42 @@ class NormalDirectionDialog(QtWidgets.QDialog):
             )
             traceback.print_exc()
 
-    def closeEvent(self, event):
+    def double_sided_changed(
+        self,
+        checked,
+    ):
         try:
-            disable_normal_direction_override()
-        except Exception:
-            traceback.print_exc()
+            set_double_sided_override(
+                checked
+            )
 
-        super().closeEvent(event)
+            if _normal_check_active:
+                if checked:
+                    text = (
+                        "Normal direction check enabled.\n"
+                        "All geometry forced DoubleSided."
+                    )
+                else:
+                    text = (
+                        "Normal direction check enabled.\n"
+                        "Using authored primitive doubleSided values."
+                    )
+
+                self.status_label.setText(
+                    text
+                )
+
+        except Exception as exc:
+            self.status_label.setText(
+                f"Error: {type(exc).__name__}: {exc}"
+            )
+            traceback.print_exc()
 
     def flip_selected(self):
         try:
-            count, changed = flip_selected_mesh_orientation()
+            count, changed = (
+                flip_selected_mesh_orientation()
+            )
 
             if count == 0:
                 self.status_label.setText(
@@ -517,16 +719,31 @@ class NormalDirectionDialog(QtWidgets.QDialog):
             )
             traceback.print_exc()
 
+    def closeEvent(
+        self,
+        event,
+    ):
+        try:
+            disable_normal_direction_override()
+        except Exception:
+            traceback.print_exc()
+
+        super().closeEvent(event)
+
 
 def show_normal_direction_dialog():
     app = QtWidgets.QApplication.instance()
     owns_app = False
 
     if app is None:
-        app = QtWidgets.QApplication(sys.argv)
+        app = QtWidgets.QApplication(
+            sys.argv
+        )
         owns_app = True
 
-    old_win = globals().get(DIALOG_GLOBAL_NAME)
+    old_win = globals().get(
+        DIALOG_GLOBAL_NAME
+    )
 
     if old_win is not None:
         try:
@@ -535,16 +752,23 @@ def show_normal_direction_dialog():
         except Exception:
             pass
 
-        globals()[DIALOG_GLOBAL_NAME] = None
+        globals()[
+            DIALOG_GLOBAL_NAME
+        ] = None
 
     parent = find_stageviz_main_window()
 
-    win = NormalDirectionDialog(parent)
+    win = NormalDirectionDialog(
+        parent
+    )
+
     win.show()
     win.raise_()
     win.activateWindow()
 
-    globals()[DIALOG_GLOBAL_NAME] = win
+    globals()[
+        DIALOG_GLOBAL_NAME
+    ] = win
 
     if owns_app:
         app.exec()
@@ -552,4 +776,6 @@ def show_normal_direction_dialog():
     return win
 
 
-normal_direction_dialog = show_normal_direction_dialog()
+normal_direction_dialog = (
+    show_normal_direction_dialog()
+)
