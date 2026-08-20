@@ -110,6 +110,7 @@ public Q_SLOTS:
     void frameAll();
     void frameSelected();
     void resetView();
+    void transform(bool checked);
     void collapse();
     void expand();
     void cameraLight(bool checked);
@@ -140,6 +141,7 @@ public Q_SLOTS:
     void updatePreserveState(bool enabled);
     void updateMaterialMode(ViewState::MaterialMode mode);
     void notifyStatusChanged(Session::Notify::Status status, const QString& message, const QString& details);
+
 public:
     void updateDockAction(QAction* action, bool checked);
     void updateModified(bool modified);
@@ -202,6 +204,9 @@ ViewerPrivate::init()
     d.ui->displayFrameAll->setIcon(style()->icon(Style::IconRole::FrameAll));
     d.ui->displayRenderWireframe->setIcon(style()->icon(Style::IconRole::Wireframe));
     d.ui->displayRenderShaded->setIcon(style()->icon(Style::IconRole::Shaded));
+    d.ui->displayTransform->setIcon(style()->icon(Style::IconRole::Transform));
+    d.ui->displayTransform->setCheckable(true);
+    d.ui->displayTransform->setChecked(false);
     // connect
     connect(d.ui->policyAll, &QAction::triggered, this, [this]() {
         d.loadPolicy = Session::LoadPolicy::All;
@@ -286,6 +291,7 @@ ViewerPrivate::init()
     connect(d.ui->displayFrameAll, &QAction::triggered, this, &ViewerPrivate::frameAll);
     connect(d.ui->displayFrameSelected, &QAction::triggered, this, &ViewerPrivate::frameSelected);
     connect(d.ui->displayResetView, &QAction::triggered, this, &ViewerPrivate::resetView);
+    connect(d.ui->displayTransform, &QAction::toggled, this, &ViewerPrivate::transform);
     connect(d.ui->displayCollapse, &QAction::triggered, this, &ViewerPrivate::collapse);
     connect(d.ui->displayExpand, &QAction::triggered, this, &ViewerPrivate::expand);
     connect(d.ui->helpAbout, &QAction::triggered, this, &ViewerPrivate::openAbout);
@@ -301,6 +307,7 @@ ViewerPrivate::init()
         d.ui->undo->setDefaultAction(d.ui->editUndo);
         d.ui->wireframe->setDefaultAction(d.ui->displayRenderWireframe);
         d.ui->shaded->setDefaultAction(d.ui->displayRenderShaded);
+        d.ui->transform->setDefaultAction(d.ui->displayTransform);
     }
     connect(d.backgroundColorFilter.data(), &MouseEvent::pressed, this, &ViewerPrivate::backgroundColor);
     connect(session(), &Session::maskChanged, this, &ViewerPrivate::updateMask);
@@ -321,8 +328,7 @@ ViewerPrivate::init()
         if (!d.progressDialog)
             return;
 
-        if (!d.progressDialog->isVisible() || d.progressDialog->isMinimized()
-            || !d.progressDialog->isActiveWindow()) {
+        if (!d.progressDialog->isVisible() || d.progressDialog->isMinimized() || !d.progressDialog->isActiveWindow()) {
             showDialog(d.progressDialog);
         }
         else {
@@ -333,8 +339,7 @@ ViewerPrivate::init()
         if (!d.pythonDialog)
             return;
 
-        if (!d.pythonDialog->isVisible() || d.pythonDialog->isMinimized()
-            || !d.pythonDialog->isActiveWindow()) {
+        if (!d.pythonDialog->isVisible() || d.pythonDialog->isMinimized() || !d.pythonDialog->isActiveWindow()) {
             showDialog(d.pythonDialog);
         }
         else {
@@ -345,8 +350,7 @@ ViewerPrivate::init()
         if (!d.consoleDialog)
             return;
 
-        if (!d.consoleDialog->isVisible() || d.consoleDialog->isMinimized()
-            || !d.consoleDialog->isActiveWindow()) {
+        if (!d.consoleDialog->isVisible() || d.consoleDialog->isMinimized() || !d.consoleDialog->isActiveWindow()) {
             showDialog(d.consoleDialog);
         }
         else {
@@ -770,6 +774,7 @@ ViewerPrivate::enable(bool enable)
                                 d.ui->displayFrameAll,
                                 d.ui->displayFrameSelected,
                                 d.ui->displayResetView,
+                                d.ui->displayTransform,
                                 d.ui->displayExpand,
                                 d.ui->displayCollapse,
                                 d.ui->displayRenderShaded,
@@ -1414,6 +1419,13 @@ ViewerPrivate::resetView()
     if (camera)
         camera->resetView();
 }
+
+void
+ViewerPrivate::transform(bool checked)
+{
+    renderView()->setTransformEnabled(checked);
+}
+
 void
 ViewerPrivate::collapse()
 {

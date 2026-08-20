@@ -90,6 +90,23 @@ public:
 
     ///@}
 
+    /** @name Transform */
+    ///@{
+
+    /**
+     * @brief Returns whether transform interaction is enabled.
+     */
+    bool transformEnabled() const;
+
+    /**
+     * @brief Enables or disables the transform manipulator.
+     *
+     * @param enabled True to display and interact with the transform gizmo.
+     */
+    void setTransformEnabled(bool enabled);
+
+    ///@}
+
     /** @name Lifecycle */
     ///@{
 

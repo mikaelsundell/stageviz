@@ -6,6 +6,7 @@
 
 #include "session.h"
 #include "stageviz.h"
+#include <pxr/base/gf/matrix4d.h>
 #include <pxr/base/vt/value.h>
 #include <pxr/usd/sdf/path.h>
 
@@ -299,6 +300,10 @@ newXformPath(const SdfPath& parentPath, const QString& nameInput);
  * @p insertIndex. When multiple prims are moved, their relative order is
  * preserved.
  *
+ * When @p preserveWorldTransform is true and a prim changes parent, its
+ * world-space transform is preserved by recomputing its local transform
+ * relative to the new parent.
+ *
  * Child ordering is updated for all affected parents. Selection and mask are
  * remapped to the new paths for every moved prim.
  *
@@ -308,9 +313,11 @@ newXformPath(const SdfPath& parentPath, const QString& nameInput);
  * @param newParentPath Destination parent path.
  * @param insertIndex   Target index for the first moved prim in the destination
  *                      parent's child order.
+ * @param preserveTransform If true, preserve each moved prim's world-space
+ *                           transform when changing parent.
  */
 Command
-movePath(const QList<SdfPath>& paths, const SdfPath& newParentPath, int insertIndex);
+movePath(const QList<SdfPath>& paths, const SdfPath& newParentPath, int insertIndex, bool preserveTransform = true);
 
 
 /**
@@ -329,6 +336,23 @@ movePath(const QList<SdfPath>& paths, const SdfPath& newParentPath, int insertIn
  */
 Command
 setAttributeValue(const SdfPath& attributePath, const VtValue& value);
+
+/**
+ * @brief Creates a command that applies world-space transforms to prims.
+ *
+ * The paths, before matrices, and after matrices are supplied explicitly so
+ * interactive tools can preview transforms while dragging and still create a
+ * single deterministic undo step when the drag finishes.
+ *
+ * The three lists must contain the same number of entries. Each matrix at an
+ * index corresponds to the prim path at the same index.
+ *
+ * @param paths Prim paths to transform.
+ * @param before World transforms captured at drag start.
+ * @param after World transforms to apply for redo.
+ */
+Command
+setTransforms(const QList<SdfPath>& paths, const QList<GfMatrix4d>& before, const QList<GfMatrix4d>& after);
 
 ///@}
 

@@ -75,6 +75,7 @@ public:
         Right,
         Run,
         Shaded,
+        Transform,
         Undo,
         Up,
         Visible,

@@ -110,9 +110,15 @@ PyCommand_selectPaths(PyObject*, PyObject* args)
 }
 
 static PyObject*
-PyCommand_selectAll(PyObject*, PyObject*)
+PyCommand_selectAll(PyObject*, PyObject* args, PyObject* kwargs)
 {
-    return runCommand(selectAll());
+    int recursive = 0;
+
+    static const char* keywords[] = { "recursive", nullptr };
+    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "|p", const_cast<char**>(keywords), &recursive))
+        return nullptr;
+
+    return runCommand(selectAll(recursive != 0));
 }
 
 static PyObject*
@@ -285,10 +291,11 @@ PyCommand_movePath(PyObject*, PyObject* args, PyObject* kwargs)
     PyObject* pyPaths = nullptr;
     PyObject* pyParentPath = nullptr;
     int insertIndex = -1;
+    int preserveWorldTransform = 1;
 
-    static const char* keywords[] = { "paths", "parent_path", "insert_index", nullptr };
-    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "OO|i", const_cast<char**>(keywords), &pyPaths, &pyParentPath,
-                                     &insertIndex)) {
+    static const char* keywords[] = { "paths", "parent_path", "insert_index", "preserve_world_transform", nullptr };
+    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "OO|ip", const_cast<char**>(keywords), &pyPaths, &pyParentPath,
+                                     &insertIndex, &preserveWorldTransform)) {
         return nullptr;
     }
 
@@ -301,13 +308,13 @@ PyCommand_movePath(PyObject*, PyObject* args, PyObject* kwargs)
     if (!parsePathArg(pyParentPath, "parent_path", &parentPath))
         return nullptr;
 
-    return runCommand(movePath(paths, parentPath, insertIndex));
+    return runCommand(movePath(paths, parentPath, insertIndex, preserveWorldTransform != 0));
 }
 
 static PyMethodDef PyCommand_methods[] = {
     { "select_paths", reinterpret_cast<PyCFunction>(PyCommand_selectPaths), METH_VARARGS, "Select paths." },
-    { "select_all", reinterpret_cast<PyCFunction>(PyCommand_selectAll), METH_NOARGS,
-      "Select all selectable leaf paths." },
+    { "select_all", reinterpret_cast<PyCFunction>(PyCommand_selectAll), METH_VARARGS | METH_KEYWORDS,
+      "Select prims. Optional keyword argument: recursive." },
     { "select_invert", reinterpret_cast<PyCFunction>(PyCommand_selectInvert), METH_NOARGS,
       "Invert the current selection." },
     { "select_invert_payload", reinterpret_cast<PyCFunction>(PyCommand_selectInvertPayload), METH_NOARGS,
@@ -328,7 +335,8 @@ static PyMethodDef PyCommand_methods[] = {
     { "delete_paths", reinterpret_cast<PyCFunction>(PyCommand_deletePaths), METH_VARARGS, "Delete paths." },
     { "rename_path", reinterpret_cast<PyCFunction>(PyCommand_renamePath), METH_VARARGS, "Rename a path." },
     { "new_xform", reinterpret_cast<PyCFunction>(PyCommand_newXform), METH_VARARGS, "Create a new Xform path." },
-    { "move_path", reinterpret_cast<PyCFunction>(PyCommand_movePath), METH_VARARGS | METH_KEYWORDS, "Move paths." },
+    { "move_path", reinterpret_cast<PyCFunction>(PyCommand_movePath), METH_VARARGS | METH_KEYWORDS,
+      "Move paths. Optional keyword arguments: insert_index, preserve_world_transform." },
 
     { nullptr, nullptr, 0, nullptr }
 };

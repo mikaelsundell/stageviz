@@ -87,7 +87,7 @@ ShelfWidgetPrivate::init()
         QString editedName = item->data(roles::shelf::scriptName).toString().trimmed();
         const QString newName = uniqueTitle(editedName.isEmpty() ? QStringLiteral("Script") : editedName, item);
         const bool blocked = d.list->blockSignals(true);
-        
+
         item->setData(roles::shelf::scriptName, newName);
         item->setToolTip(newName);
         d.list->blockSignals(blocked);

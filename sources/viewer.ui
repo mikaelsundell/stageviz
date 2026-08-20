@@ -171,8 +171,8 @@
                   </property>
                   <property name="minimumSize">
                    <size>
-                    <width>34</width>
-                    <height>34</height>
+                    <width>32</width>
+                    <height>32</height>
                    </size>
                   </property>
                   <property name="maximumSize">
@@ -202,8 +202,8 @@
                   </property>
                   <property name="minimumSize">
                    <size>
-                    <width>34</width>
-                    <height>34</height>
+                    <width>32</width>
+                    <height>32</height>
                    </size>
                   </property>
                   <property name="maximumSize">
@@ -233,8 +233,8 @@
                   </property>
                   <property name="minimumSize">
                    <size>
-                    <width>34</width>
-                    <height>34</height>
+                    <width>32</width>
+                    <height>32</height>
                    </size>
                   </property>
                   <property name="maximumSize">
@@ -251,6 +251,35 @@
                     <width>24</width>
                     <height>24</height>
                    </size>
+                  </property>
+                 </widget>
+                </item>
+                <item>
+                 <spacer name="verticalSpacer">
+                  <property name="orientation">
+                   <enum>Qt::Orientation::Vertical</enum>
+                  </property>
+                  <property name="sizeType">
+                   <enum>QSizePolicy::Policy::Fixed</enum>
+                  </property>
+                  <property name="sizeHint" stdset="0">
+                   <size>
+                    <width>20</width>
+                    <height>10</height>
+                   </size>
+                  </property>
+                 </spacer>
+                </item>
+                <item>
+                 <widget class="QToolButton" name="transform">
+                  <property name="minimumSize">
+                   <size>
+                    <width>32</width>
+                    <height>32</height>
+                   </size>
+                  </property>
+                  <property name="text">
+                   <string>...</string>
                   </property>
                  </widget>
                 </item>
@@ -280,8 +309,8 @@
                   </property>
                   <property name="minimumSize">
                    <size>
-                    <width>34</width>
-                    <height>34</height>
+                    <width>32</width>
+                    <height>32</height>
                    </size>
                   </property>
                   <property name="maximumSize">
@@ -311,8 +340,8 @@
                   </property>
                   <property name="minimumSize">
                    <size>
-                    <width>34</width>
-                    <height>34</height>
+                    <width>32</width>
+                    <height>32</height>
                    </size>
                   </property>
                   <property name="maximumSize">
@@ -476,8 +505,8 @@
                   </property>
                   <property name="minimumSize">
                    <size>
-                    <width>34</width>
-                    <height>34</height>
+                    <width>32</width>
+                    <height>32</height>
                    </size>
                   </property>
                   <property name="maximumSize">
@@ -513,8 +542,8 @@
                   </property>
                   <property name="minimumSize">
                    <size>
-                    <width>34</width>
-                    <height>34</height>
+                    <width>32</width>
+                    <height>32</height>
                    </size>
                   </property>
                   <property name="maximumSize">
@@ -547,8 +576,8 @@
                   </property>
                   <property name="minimumSize">
                    <size>
-                    <width>34</width>
-                    <height>34</height>
+                    <width>32</width>
+                    <height>32</height>
                    </size>
                   </property>
                   <property name="maximumSize">
@@ -594,8 +623,8 @@
                   </property>
                   <property name="minimumSize">
                    <size>
-                    <width>34</width>
-                    <height>34</height>
+                    <width>32</width>
+                    <height>32</height>
                    </size>
                   </property>
                   <property name="maximumSize">
@@ -703,6 +732,8 @@
     <addaction name="displayFrameAll"/>
     <addaction name="displayFrameSelected"/>
     <addaction name="displayResetView"/>
+    <addaction name="separator"/>
+    <addaction name="displayTransform"/>
     <addaction name="separator"/>
     <addaction name="displayExpand"/>
     <addaction name="displayCollapse"/>
@@ -865,6 +896,17 @@
    </property>
    <property name="shortcut">
     <string>V</string>
+   </property>
+  </action>
+  <action name="displayTransform">
+   <property name="checkable">
+    <bool>true</bool>
+   </property>
+   <property name="text">
+    <string>Transform</string>
+   </property>
+   <property name="shortcut">
+    <string>T</string>
    </property>
   </action>
   <action name="displayFrameSelected">

@@ -437,6 +437,34 @@ namespace stage {
     GfBBox3d boundingBox(UsdStageRefPtr stage, const QList<SdfPath>& paths);
 
     /**
+     * @brief Returns whether a prim can be edited as a transform.
+     *
+     * The prim must exist, be UsdGeomXformable, and satisfy Stageviz's
+     * strongest-root-layer editing policy.
+     */
+    bool isTransformEditable(UsdStageRefPtr stage, const SdfPath& path);
+
+    /**
+     * @brief Reads the composed world transform for a prim.
+     *
+     * @param stage Stage containing the prim.
+     * @param path Prim path to query.
+     * @param matrix Receives the world transform.
+     * @param error Receives a failure reason.
+     */
+    bool worldTransform(UsdStageRefPtr stage, const SdfPath& path, GfMatrix4d& matrix, QString& error);
+
+    /**
+     * @brief Authors a world transform for an xformable prim.
+     *
+     * @param stage Stage containing the prim.
+     * @param path Prim path to edit.
+     * @param matrix Desired world transform.
+     * @param error Receives a failure reason.
+     */
+    bool setWorldTransform(UsdStageRefPtr stage, const SdfPath& path, const GfMatrix4d& matrix, QString& error);
+
+    /**
  * @brief Builds a valid target path for renaming a prim.
  *
  * Sanitizes the input name, validates the rename target, avoids sibling

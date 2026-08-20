@@ -114,7 +114,7 @@ public:
             const auto* list = qobject_cast<const ShelfList*>(opt.widget);
             const bool isPressed = list && list->pressedIndex() == index;
             const bool isEnabled = opt.state & QStyle::State_Enabled;
-            
+
             const QIcon icon = opt.icon;
             opt.icon = QIcon();
             opt.text.clear();

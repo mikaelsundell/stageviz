@@ -637,8 +637,7 @@ selectAll(bool recursive)
                     using Status = Session::Notify::Status;
 
                     session->selectionList()->updatePaths(selection);
-                    session->updateProgressNotify(
-                        Session::Notify("Paths selected", selection, Status::Success), 1);
+                    session->updateProgressNotify(Session::Notify("Paths selected", selection, Status::Success), 1);
                     session->endProgressBlock();
                 });
             });
@@ -654,8 +653,9 @@ selectAll(bool recursive)
                     using Status = Session::Notify::Status;
 
                     session->selectionList()->updatePaths(state->previousSelection);
-                    session->updateProgressNotify(
-                        Session::Notify("Select all undone", state->previousSelection, Status::Success), 1);
+                    session->updateProgressNotify(Session::Notify("Select all undone", state->previousSelection,
+                                                                  Status::Success),
+                                                  1);
                     session->endProgressBlock();
                 });
             });
@@ -689,7 +689,7 @@ selectInvert()
                     const UsdStageRefPtr stage = session->stageUnsafe();
                     previousSelection = session->selectionList()->paths();
                     mask = session->mask();
-                    
+
                     domain = stage::leafPaths(stage, mask, false);
                 }
 
@@ -1727,13 +1727,15 @@ newXformPath(const SdfPath& parentPath, const QString& nameInput)
 }
 
 Command
-movePath(const QList<SdfPath>& paths, const SdfPath& newParentPath, int insertIndex)
+movePath(const QList<SdfPath>& paths, const SdfPath& newParentPath, int insertIndex, bool preserveTransform)
 {
     struct MoveItem {
         SdfPath oldPath;
         SdfPath newPath;
         SdfPath oldParentPath;
         TfToken name;
+        GfMatrix4d worldTransform { 1.0 };
+        bool hasWorldTransform = false;
     };
 
     struct MoveState {
@@ -1749,7 +1751,7 @@ movePath(const QList<SdfPath>& paths, const SdfPath& newParentPath, int insertIn
     auto state = std::make_shared<MoveState>();
 
     return Command(
-        [paths, newParentPath, insertIndex, state](Session* session) {
+        [paths, newParentPath, insertIndex, preserveTransform, state](Session* session) {
             if (!session || paths.isEmpty() || newParentPath.IsEmpty())
                 return;
 
@@ -1853,6 +1855,20 @@ movePath(const QList<SdfPath>& paths, const SdfPath& newParentPath, int insertIn
                                     item.newPath = targetPath;
                                     item.oldParentPath = oldParentPath;
                                     item.name = path.GetNameToken();
+
+                                    if (preserveTransform && oldParentPath != newParentPath) {
+                                        QString transformError;
+                                        if (!stage::worldTransform(stage, path, item.worldTransform, transformError)) {
+                                            error = transformError.isEmpty()
+                                                        ? QString("failed to capture world transform: %1")
+                                                              .arg(qt::SdfPathToQString(path))
+                                                        : transformError;
+                                            valid = false;
+                                            break;
+                                        }
+                                        item.hasWorldTransform = true;
+                                    }
+
                                     state->items.append(item);
 
                                     if (!state->oldParentOrders.contains(oldParentPath)) {
@@ -1889,6 +1905,23 @@ movePath(const QList<SdfPath>& paths, const SdfPath& newParentPath, int insertIn
                                         error = moveError.isEmpty() ? "failed to move paths" : moveError;
                                         stage::restoreChildOrders(stage, state->oldParentOrders);
                                         moved = false;
+                                    }
+
+                                    if (error.isEmpty() && preserveTransform) {
+                                        for (const MoveItem& item : state->items) {
+                                            if (!item.hasWorldTransform)
+                                                continue;
+
+                                            QString transformError;
+                                            if (!stage::setWorldTransform(stage, item.newPath, item.worldTransform,
+                                                                          transformError)) {
+                                                error = transformError.isEmpty()
+                                                            ? QString("failed to preserve world transform: %1")
+                                                                  .arg(qt::SdfPathToQString(item.newPath))
+                                                            : transformError;
+                                                break;
+                                            }
+                                        }
                                     }
 
                                     if (error.isEmpty()) {
@@ -1978,7 +2011,7 @@ movePath(const QList<SdfPath>& paths, const SdfPath& newParentPath, int insertIn
                 });
             });
         },
-        [state](Session* session) {
+        [state, preserveTransform](Session* session) {
             if (!session || state->items.isEmpty())
                 return;
 
@@ -2013,6 +2046,24 @@ movePath(const QList<SdfPath>& paths, const SdfPath& newParentPath, int insertIn
                             }
 
                             restored = stage::movePrims(stage, reverseMoves, error);
+
+                            if (restored && preserveTransform) {
+                                for (const MoveItem& item : state->items) {
+                                    if (!item.hasWorldTransform)
+                                        continue;
+
+                                    QString transformError;
+                                    if (!stage::setWorldTransform(stage, item.oldPath, item.worldTransform,
+                                                                  transformError)) {
+                                        error = transformError.isEmpty()
+                                                    ? QString("failed to restore world transform: %1")
+                                                          .arg(qt::SdfPathToQString(item.oldPath))
+                                                    : transformError;
+                                        restored = false;
+                                        break;
+                                    }
+                                }
+                            }
 
                             if (restored) {
                                 for (auto it = state->oldParentOrders.cbegin(); it != state->oldParentOrders.cend();
@@ -2177,5 +2228,64 @@ setAttributeValue(const SdfPath& attributePath, const VtValue& value)
             });
         });
 }
+
+Command
+setTransforms(const QList<SdfPath>& paths, const QList<GfMatrix4d>& before, const QList<GfMatrix4d>& after)
+{
+    auto apply = [](Session* session, const QList<SdfPath>& paths, const QList<GfMatrix4d>& matrices,
+                    const QString& title, const QString& successMessage, const QString& failureMessage) {
+        if (!session || paths.isEmpty() || paths.size() != matrices.size())
+            return;
+
+        command::beginDeferred(session, title, static_cast<int>(paths.size()));
+
+        command::runWorker([session, paths, matrices, successMessage, failureMessage]() {
+            bool success = true;
+            QStringList errors;
+            QList<SdfPath> changed;
+            {
+                WRITE_LOCKER(locker, session->stageLock(), "stageLock");
+                const UsdStageRefPtr stage = session->stageUnsafe();
+
+                if (!stage) {
+                    success = false;
+                    errors.append("stage missing");
+                }
+                else {
+                    for (qsizetype i = 0; i < paths.size(); ++i) {
+                        const SdfPath& path = paths.at(i);
+                        const GfMatrix4d& matrix = matrices.at(i);
+
+                        QString error;
+                        if (!stage::setWorldTransform(stage, path, matrix, error)) {
+                            success = false;
+                            errors.append(error.isEmpty() ? QString("failed: %1").arg(qt::SdfPathToQString(path))
+                                                          : error);
+                            continue;
+                        }
+
+                        path::appendUnique(changed, path);
+                    }
+                }
+            }
+
+            const QString errorText = summarizeErrors(errors);
+            command::queueToSession(session, [session, changed, success, successMessage, failureMessage, errorText]() {
+                using Status = Session::Notify::Status;
+                command::finishDeferred(session, success ? successMessage : appendError(failureMessage, errorText),
+                                        changed, success ? Status::Success : Status::Error);
+            });
+        });
+    };
+
+    return Command(
+        [paths, after, apply](Session* session) {
+            apply(session, paths, after, "Transform paths", "Paths transformed", "Transform paths failed");
+        },
+        [paths, before, apply](Session* session) {
+            apply(session, paths, before, "Undo transform paths", "Transform undone", "Undo transform failed");
+        });
+}
+
 
 }  // namespace stageviz

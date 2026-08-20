@@ -244,6 +244,7 @@ StylePrivate::updateTheme()
     d.icons[roleName(Style::IconRole::Right)] = ":/icons/resources/Right.png";
     d.icons[roleName(Style::IconRole::Run)] = ":/icons/resources/Run.png";
     d.icons[roleName(Style::IconRole::Shaded)] = ":/icons/resources/Shaded.png";
+    d.icons[roleName(Style::IconRole::Transform)] = ":/icons/resources/Transform.png";
     d.icons[roleName(Style::IconRole::Undo)] = ":/icons/resources/Undo.png";
     d.icons[roleName(Style::IconRole::Up)] = ":/icons/resources/Up.png";
     d.icons[roleName(Style::IconRole::Visible)] = ":/icons/resources/Visible.png";

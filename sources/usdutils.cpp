@@ -10,6 +10,8 @@
 #include <pxr/usd/sdf/copyUtils.h>
 #include <pxr/usd/sdf/variantSetSpec.h>
 #include <pxr/usd/sdf/variantSpec.h>
+#include <pxr/usd/usd/editContext.h>
+#include <pxr/usd/usd/editTarget.h>
 #include <pxr/usd/usd/namespaceEditor.h>
 #include <pxr/usd/usd/prim.h>
 #include <pxr/usd/usd/primRange.h>
@@ -17,6 +19,9 @@
 #include <pxr/usd/usdGeom/bboxCache.h>
 #include <pxr/usd/usdGeom/imageable.h>
 #include <pxr/usd/usdGeom/tokens.h>
+#include <pxr/usd/usdGeom/xformCache.h>
+#include <pxr/usd/usdGeom/xformOp.h>
+#include <pxr/usd/usdGeom/xformable.h>
 #include <stack>
 
 namespace stageviz {
@@ -691,6 +696,93 @@ namespace stage {
             bbox = GfBBox3d::Combine(bbox, cache.ComputeWorldBound(prim));
         }
         return bbox;
+    }
+
+    bool isTransformEditable(UsdStageRefPtr stage, const SdfPath& path)
+    {
+        if (!stage || path.IsEmpty() || path == SdfPath::AbsoluteRootPath())
+            return false;
+
+        const UsdPrim prim = stage->GetPrimAtPath(path);
+        if (!prim || !prim.IsValid() || !UsdGeomXformable(prim))
+            return false;
+
+        QString error;
+        return rootlayer::validatePrim(stage, path, error);
+    }
+
+    bool worldTransform(UsdStageRefPtr stage, const SdfPath& path, GfMatrix4d& matrix, QString& error)
+    {
+        if (!stage) {
+            error = "stage missing";
+            return false;
+        }
+
+        const UsdPrim prim = stage->GetPrimAtPath(path);
+        if (!prim || !prim.IsValid()) {
+            error = QString("prim missing: %1").arg(qt::SdfPathToQString(path));
+            return false;
+        }
+
+        if (!UsdGeomXformable(prim)) {
+            error = QString("prim is not xformable: %1").arg(qt::SdfPathToQString(path));
+            return false;
+        }
+
+        UsdGeomXformCache cache(UsdTimeCode::Default());
+        matrix = cache.GetLocalToWorldTransform(prim);
+        return true;
+    }
+
+    bool setWorldTransform(UsdStageRefPtr stage, const SdfPath& path, const GfMatrix4d& matrix, QString& error)
+    {
+        if (!stage) {
+            error = "stage missing";
+            return false;
+        }
+
+        if (!rootlayer::validatePrim(stage, path, error))
+            return false;
+
+        const UsdPrim prim = stage->GetPrimAtPath(path);
+        UsdGeomXformable xformable(prim);
+        if (!xformable) {
+            error = QString("prim is not xformable: %1").arg(qt::SdfPathToQString(path));
+            return false;
+        }
+
+        GfMatrix4d parentWorld(1.0);
+        const UsdPrim parent = prim.GetParent();
+        if (parent && !parent.IsPseudoRoot()) {
+            UsdGeomXformCache cache(UsdTimeCode::Default());
+            parentWorld = cache.GetLocalToWorldTransform(parent);
+        }
+
+        // Gf matrices use row-vector transform convention in USD. The local
+        // transform that reproduces the requested world transform is world
+        // multiplied by the inverse parent world transform.
+        const GfMatrix4d local = matrix * parentWorld.GetInverse();
+
+        QString rootError;
+        const SdfLayerHandle rootLayer = rootlayer::opened(stage, rootError);
+        if (!rootLayer) {
+            error = rootError;
+            return false;
+        }
+
+        UsdEditContext context(stage, UsdEditTarget(rootLayer));
+        UsdGeomXformOp op = xformable.MakeMatrixXform();
+        if (!op) {
+            error = "could not create matrix xform op";
+            return false;
+        }
+
+        if (!op.Set(local, UsdTimeCode::Default())) {
+            error = "USD rejected transform matrix";
+            return false;
+        }
+
+        return true;
     }
 
     SdfPath buildRenamePath(UsdStageRefPtr stage, const SdfPath& path, const QString& input, QString& error)
