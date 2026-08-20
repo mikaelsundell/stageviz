@@ -416,12 +416,12 @@ ViewerPrivate::initDocks()
     d.outlinerView = new OutlinerView(d.ui->outlinerWidget);
     d.outlinerView->setObjectName("outlinerView");
     d.outlinerView->setAttribute(Qt::WA_DeleteOnClose, false);
-    addPanelView(d.ui->outlinerWidget, d.outlinerView, QMargins(4, 4, 0, 4));
+    addPanelView(d.ui->outlinerWidget, d.outlinerView, QMargins(0, 0, 0, 0));
 
     d.propertyView = new PropertyView(d.ui->propertyWidget);
     d.propertyView->setObjectName("propertyView");
     d.propertyView->setAttribute(Qt::WA_DeleteOnClose, false);
-    addPanelView(d.ui->propertyWidget, d.propertyView, QMargins(4, 4, 0, 4));
+    addPanelView(d.ui->propertyWidget, d.propertyView, QMargins(0, 0, 0, 0));
 
     d.pythonShelf = new PythonShelf(d.ui->pythonShelfWidget);
     d.pythonShelf->setObjectName("pythonShelf");

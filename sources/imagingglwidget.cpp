@@ -209,6 +209,9 @@ public:
         QPoint start;
         QPoint end;
         QPoint mousepos;
+        QPoint lastPickPosition;
+        QList<SdfPath> lastPickPaths;
+        int lastPickIndex;
         QImage sceneStats;
         QImage performanceStats;
         QImage axis;
@@ -257,6 +260,7 @@ ImagingGLWidgetPrivate::init()
     d.transformHoverAxis = 0;
     d.transformActiveAxis = 0;
     d.transformRotationStartAngle = 0.0;
+    d.lastPickIndex = -1;
     d.transformPivot = GfVec3d(0.0);
     d.transformStartPivot = GfVec3d(0.0);
     d.context = nullptr;
@@ -392,6 +396,9 @@ ImagingGLWidgetPrivate::close()
     d.transformPaths.clear();
     d.transformBefore.clear();
     d.transformAfter.clear();
+    d.lastPickPosition = QPoint();
+    d.lastPickPaths.clear();
+    d.lastPickIndex = -1;
     d.auxiliarySceneIndexInserted = false;
     d.auxiliarySceneIndices = {};
     d.materialOverrideSceneIndex = nullptr;
@@ -772,68 +779,129 @@ ImagingGLWidgetPrivate::sweepEvent(const QRect& rect, QMouseEvent* event)
 #ifdef WIN32
     glDepthMask(GL_TRUE);
 #endif
+
     QRect r = rect.normalized();
     QPoint tl = deviceRatio(r.topLeft());
     QPoint br = deviceRatio(r.bottomRight() - QPoint(1, 1));
     r = QRect(tl, br);
+
     const int minSize = 10;
     const bool isClick = (r.width() < 3 && r.height() < 3);
+
     if (isClick) {
-        int cx = r.center().x();
-        int cy = r.center().y();
-        int halfW = minSize / 2;
-        int halfH = minSize / 2;
+        const int cx = r.center().x();
+        const int cy = r.center().y();
+        const int halfW = minSize / 2;
+        const int halfH = minSize / 2;
         r = QRect(QPoint(cx - halfW, cy - halfH), QPoint(cx + halfW, cy + halfH));
     }
-    GfVec4d viewport = widgetViewport();
+
+    const GfVec4d viewport = widgetViewport();
     GfVec2d center(((r.left() + r.right()) * 0.5 - viewport[0]) / viewport[2],
                    ((r.top() + r.bottom()) * 0.5 - viewport[1]) / viewport[3]);
+
     center[0] = center[0] * 2.0 - 1.0;
     center[1] = -1.0 * (center[1] * 2.0 - 1.0);
-    GfVec2d size(double(r.width()) / viewport[2], double(r.height()) / viewport[3]);
+
+    const GfVec2d size(double(r.width()) / viewport[2], double(r.height()) / viewport[3]);
+
     UsdImagingGLEngine::PickParams pickParams;
-    pickParams.resolveMode = isClick ? TfToken("resolveNearestToCenter") : TfToken("resolveDeep");
-    GfCamera cam = viewCamera()->camera();
-    GfFrustum fr = cam.GetFrustum();
-    GfFrustum pickFr = fr.ComputeNarrowedFrustum(center, size);
+    pickParams.resolveMode = TfToken("resolveDeep");
+
+    const GfCamera camera = viewCamera()->camera();
+    const GfFrustum frustum = camera.GetFrustum();
+    const GfFrustum pickFrustum = frustum.ComputeNarrowedFrustum(center, size);
+
     UsdImagingGLEngine::IntersectionResultVector results;
-    const bool hit = pickMaskedIntersection(pickParams, pickFr, &results);
+    const bool hit = pickMaskedIntersection(pickParams, pickFrustum, &results);
+
     QList<SdfPath> selectedPaths;
+
     if (hit) {
-        for (const auto& rItem : results) {
-            if (!rItem.hitPrimPath.IsEmpty())
-                selectedPaths.append(rItem.hitPrimPath);
+        if (isClick) {
+            const GfVec3d cameraPosition = camera.GetTransform().ExtractTranslation();
+
+            std::sort(results.begin(), results.end(), [&](const auto& a, const auto& b) {
+                const double distanceA = (a.hitPoint - cameraPosition).GetLengthSq();
+                const double distanceB = (b.hitPoint - cameraPosition).GetLengthSq();
+                return distanceA < distanceB;
+            });
+
+            QList<SdfPath> depthPaths;
+            for (const auto& result : results) {
+                if (result.hitPrimPath.IsEmpty())
+                    continue;
+                if (!depthPaths.contains(result.hitPrimPath))
+                    depthPaths.append(result.hitPrimPath);
+            }
+
+            if (!depthPaths.isEmpty()) {
+                constexpr int pickCycleTolerance = 6;
+                const QPoint clickPosition = rect.normalized().center();
+
+                const bool samePosition =
+                    std::abs(clickPosition.x() - d.lastPickPosition.x()) <= pickCycleTolerance
+                    && std::abs(clickPosition.y() - d.lastPickPosition.y()) <= pickCycleTolerance;
+
+                const bool sameStack = (depthPaths == d.lastPickPaths);
+
+                if (samePosition && sameStack && d.lastPickIndex >= 0) {
+                    d.lastPickIndex = (d.lastPickIndex + 1) % depthPaths.size();
+                }
+                else {
+                    d.lastPickIndex = 0;
+                }
+
+                d.lastPickPosition = clickPosition;
+                d.lastPickPaths = depthPaths;
+
+                selectedPaths.append(depthPaths.at(d.lastPickIndex));
+            }
+        }
+        else {
+            for (const auto& result : results) {
+                if (!result.hitPrimPath.IsEmpty())
+                    selectedPaths.append(result.hitPrimPath);
+            }
+
+            selectedPaths = path::uniquePaths(selectedPaths);
+            d.lastPickPosition = QPoint();
+            d.lastPickPaths.clear();
+            d.lastPickIndex = -1;
         }
     }
-    selectedPaths = path::uniquePaths(selectedPaths);
+    else if (isClick) {
+        d.lastPickPosition = QPoint();
+        d.lastPickPaths.clear();
+        d.lastPickIndex = -1;
+    }
+
     bool update = false;
+
     if (!selectedPaths.isEmpty()) {
         if (event->modifiers() & Qt::ShiftModifier) {
             for (const SdfPath& path : selectedPaths) {
-                qsizetype idx = d.selection.indexOf(path);
-                if (idx >= 0)
-                    d.selection.removeAt(idx);
+                const qsizetype index = d.selection.indexOf(path);
+                if (index >= 0)
+                    d.selection.removeAt(index);
                 else
                     d.selection.append(path);
                 update = true;
             }
         }
-        else {
-            if (d.selection != selectedPaths) {
-                d.selection = selectedPaths;
-                update = true;
-            }
-        }
-    }
-    else {
-        if (!d.selection.isEmpty()) {
-            d.selection.clear();
+        else if (d.selection != selectedPaths) {
+            d.selection = selectedPaths;
             update = true;
         }
     }
-    if (update) {
-        d.context->run(new Command(selectPaths(d.selection)));
+    else if (!d.selection.isEmpty()) {
+        d.selection.clear();
+        update = true;
     }
+
+    if (update)
+        d.context->run(new Command(selectPaths(d.selection)));
+
     d.glwidget->update();
 }
 
@@ -1030,6 +1098,11 @@ void
 ImagingGLWidgetPrivate::updateCamera(const GfCamera& camera)
 {
     Q_UNUSED(camera);
+
+    d.lastPickPosition = QPoint();
+    d.lastPickPaths.clear();
+    d.lastPickIndex = -1;
+
     d.glwidget->update();
     updateAxis();
 }
