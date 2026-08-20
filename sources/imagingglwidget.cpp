@@ -494,6 +494,9 @@ ImagingGLWidgetPrivate::paintGL()
                 material.SetShininess(d.defaultShininess);
                 d.glEngine->SetLightingState(lights, material, defaultAmbient);
             }
+            
+            d.params.gammaCorrectColors = true;
+            
             d.params.enableSampleAlphaToCoverage = true;
             d.params.enableSceneLights = !viewState() || viewState()->sceneLightsEnabled();
             // material evaluation remains enabled so viewport materials, such as the grid and
@@ -503,7 +506,7 @@ ImagingGLWidgetPrivate::paintGL()
             d.params.showGuides = false;
             d.params.showProxy = true;
             d.params.showRender = true;
-            d.glEngine->SetSelectionColor(qt::QColorToGfVec4f(style()->color(Style::ColorRole::SelectionAlt)));
+            d.glEngine->SetSelectionColor(qt::QColorToGfVec4f(style()->color(Style::ColorRole::Selection)));
             d.params.highlight = true;
             d.params.bboxes = d.selectionBBoxes;
             d.params.bboxLineColor = qt::QColorToGfVec4f(style()->color(Style::ColorRole::Selection));
@@ -1603,6 +1606,7 @@ ImagingGLWidgetPrivate::endTransformDrag()
     const QList<GfMatrix4d> after = d.transformAfter;
     d.transformDragging = false;
     d.transformActiveAxis = 0;
+    d.transformHoverAxis = 0;
     d.transformPaths.clear();
     d.transformBefore.clear();
     d.transformAfter.clear();
@@ -1674,7 +1678,9 @@ ImagingGLWidgetPrivate::drawTransformTransform(QPainter& painter)
     constexpr double arrowLength = 13.0;
     constexpr double arrowWidth = 7.0;
     constexpr int ringSegments = 96;
-    const QColor colors[4] = { QColor(), QColor(230, 70, 80), QColor(90, 200, 90), QColor(70, 125, 235) };
+    const QColor colors[4] = { QColor(), style()->color(Style::ColorRole::AxisX),
+                               style()->color(Style::ColorRole::AxisY),
+                               style()->color(Style::ColorRole::AxisZ) };
     painter.save();
     painter.setRenderHint(QPainter::Antialiasing, true);
     // rotation rings are drawn first so translation/scale handles stay crisp
@@ -1683,7 +1689,7 @@ ImagingGLWidgetPrivate::drawTransformTransform(QPainter& painter)
         QColor color = colors[axis];
         const int handle = axis + 3;
         if (handle == d.transformHoverAxis || handle == d.transformActiveAxis)
-            color = QColor(255, 205, 70);
+            color = style()->color(Style::ColorRole::Selection);
         QPolygonF ring;
         ring.reserve(ringSegments + 1);
         for (int i = 0; i <= ringSegments; ++i) {
@@ -1706,7 +1712,7 @@ ImagingGLWidgetPrivate::drawTransformTransform(QPainter& painter)
             continue;
         QColor color = colors[axis];
         if (axis == d.transformHoverAxis || axis == d.transformActiveAxis)
-            color = QColor(255, 205, 70);
+            color = style()->color(Style::ColorRole::Selection);
         const QPointF end = center + dir * axisLength;
         const QPointF normal(-dir.y(), dir.x());
         painter.setPen(QPen(color, axis == d.transformActiveAxis ? 4.0 : 3.0, Qt::SolidLine, Qt::RoundCap));
@@ -1726,7 +1732,7 @@ ImagingGLWidgetPrivate::drawTransformTransform(QPainter& painter)
         QColor color = colors[axis];
         const int handle = axis + 6;
         if (handle == d.transformHoverAxis || handle == d.transformActiveAxis)
-            color = QColor(255, 205, 70);
+            color = style()->color(Style::ColorRole::Selection);
         const QPointF p = center + dir * scaleDistance;
         painter.setPen(QPen(QColor(20, 20, 20, 190), 1.0));
         painter.setBrush(color);
@@ -1807,9 +1813,9 @@ ImagingGLWidgetPrivate::updateAxis()
         QColor color;
         GfVec3d dir;
     };
-    QVector<AxisLine> axes { { "X", QColor(200, 50, 50), xCam },
-                             { "Y", QColor(50, 170, 70), yCam },
-                             { "Z", QColor(70, 110, 220), zCam } };
+    QVector<AxisLine> axes { { "X", style()->color(Style::ColorRole::AxisX), xCam },
+                             { "Y", style()->color(Style::ColorRole::AxisY), yCam },
+                             { "Z", style()->color(Style::ColorRole::AxisZ), zCam } };
     std::sort(axes.begin(), axes.end(), [](const AxisLine& a, const AxisLine& b) { return a.dir[2] < b.dir[2]; });
     const bool hasStage = static_cast<bool>(d.stage);
     const qreal opacity = hasStage ? 1.0 : 0.35;

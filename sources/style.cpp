@@ -198,6 +198,9 @@ StylePrivate::updateTheme()
     auto map = [&](Style::ColorRole role, QColor color) { d.palette[roleName(role)] = color; };
     map(Style::ColorRole::Accent, QColor::fromHsl(220, 6, 20));
     map(Style::ColorRole::AccentAlt, QColor::fromHsl(220, 6, 24));
+    map(Style::ColorRole::AxisX, QColor::fromHsl(0, 150, 100));
+    map(Style::ColorRole::AxisY, QColor::fromHsl(130, 150, 100));
+    map(Style::ColorRole::AxisZ, QColor::fromHsl(220, 150, 100));
     map(Style::ColorRole::Base, QColor::fromHsl(220, 6, 56));
     map(Style::ColorRole::BaseAlt, QColor::fromHsl(220, 6, 42));
     map(Style::ColorRole::Border, QColor::fromHsl(220, 3, 32));

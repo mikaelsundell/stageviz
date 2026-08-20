@@ -23,6 +23,9 @@ public:
     enum ColorRole {
         Accent,
         AccentAlt,
+        AxisX,
+        AxisY,
+        AxisZ,
         Base,
         BaseAlt,
         Border,
