@@ -42,16 +42,6 @@ public:
     ///@{
 
     /**
-     * @brief Collapses all nodes in the outliner.
-     */
-    void collapse();
-
-    /**
-     * @brief Expands all nodes in the outliner.
-     */
-    void expand();
-
-    /**
      * @brief Returns whether follow is enabled for outliner.
      */
     bool followEnabled();

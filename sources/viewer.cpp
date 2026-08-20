@@ -105,14 +105,13 @@ public Q_SLOTS:
     void payloadLoad();
     void payloadUnload();
     void payloadSelectInvert();
+    void newXform();
     void deleteSelected();
     void isolate(bool checked);
     void frameAll();
     void frameSelected();
     void resetView();
     void transform(bool checked);
-    void collapse();
-    void expand();
     void cameraLight(bool checked);
     void sceneLights(bool checked);
     void sceneShaders(bool checked);
@@ -261,6 +260,7 @@ ViewerPrivate::init()
     connect(d.ui->editPayloadLoad, &QAction::triggered, this, &ViewerPrivate::payloadLoad);
     connect(d.ui->editPayloadUnload, &QAction::triggered, this, &ViewerPrivate::payloadUnload);
     connect(d.ui->editPayloadInvertSelected, &QAction::triggered, this, &ViewerPrivate::payloadSelectInvert);
+    connect(d.ui->editNewXform, &QAction::triggered, this, &ViewerPrivate::newXform);
     connect(d.ui->editDeleteSelected, &QAction::triggered, this, &ViewerPrivate::deleteSelected);
     connect(d.ui->displayIsolate, &QAction::toggled, this, &ViewerPrivate::isolate);
     connect(d.ui->displayCameraLight, &QAction::toggled, this, &ViewerPrivate::cameraLight);
@@ -292,8 +292,6 @@ ViewerPrivate::init()
     connect(d.ui->displayFrameSelected, &QAction::triggered, this, &ViewerPrivate::frameSelected);
     connect(d.ui->displayResetView, &QAction::triggered, this, &ViewerPrivate::resetView);
     connect(d.ui->displayTransform, &QAction::toggled, this, &ViewerPrivate::transform);
-    connect(d.ui->displayCollapse, &QAction::triggered, this, &ViewerPrivate::collapse);
-    connect(d.ui->displayExpand, &QAction::triggered, this, &ViewerPrivate::expand);
     connect(d.ui->helpAbout, &QAction::triggered, this, &ViewerPrivate::openAbout);
     connect(d.ui->helpCheckUpdates, &QAction::triggered, this, &ViewerPrivate::checkUpdates);
     connect(d.ui->helpGithubReadme, &QAction::triggered, this, &ViewerPrivate::openGithubReadme);
@@ -765,6 +763,7 @@ ViewerPrivate::enable(bool enable)
                                 d.ui->editPayloadLoad,
                                 d.ui->editPayloadUnload,
                                 d.ui->editPayloadInvertSelected,
+                                d.ui->editNewXform,
                                 d.ui->editDeleteSelected,
                                 d.ui->displayIsolate,
                                 d.ui->displayCameraLight,
@@ -775,8 +774,6 @@ ViewerPrivate::enable(bool enable)
                                 d.ui->displayFrameSelected,
                                 d.ui->displayResetView,
                                 d.ui->displayTransform,
-                                d.ui->displayExpand,
-                                d.ui->displayCollapse,
                                 d.ui->displayRenderShaded,
                                 d.ui->displayRenderWireframe,
                                 d.ui->displayRenderClay,
@@ -1355,6 +1352,23 @@ ViewerPrivate::payloadSelectInvert()
 }
 
 void
+ViewerPrivate::newXform()
+{
+    SdfPath parentPath = SdfPath::AbsoluteRootPath();
+    const QList<SdfPath> paths = session()->selectionList()->paths();
+
+    if (paths.size() == 1) {
+        parentPath = paths.first();
+    }
+    else if (paths.size() > 1) {
+        parentPath = paths.first().GetParentPath();
+    }
+
+    if (!parentPath.IsEmpty())
+        session()->commandStack()->run(new Command(newXformPath(parentPath, "Xform")));
+}
+
+void
 ViewerPrivate::deleteSelected()
 {
     session()->commandStack()->run(new Command(deletePaths(session()->selectionList()->paths())));
@@ -1424,19 +1438,6 @@ void
 ViewerPrivate::transform(bool checked)
 {
     renderView()->setTransformEnabled(checked);
-}
-
-void
-ViewerPrivate::collapse()
-{
-    outlinerView()->collapse();
-}
-
-void
-ViewerPrivate::expand()
-{
-    if (session()->selectionList()->paths().size())
-        outlinerView()->expand();
 }
 
 void
@@ -1693,7 +1694,6 @@ void
 ViewerPrivate::updateSelection(const QList<SdfPath>& paths)
 {
     const bool hasSelection = !paths.isEmpty();
-    d.ui->displayExpand->setEnabled(hasSelection);
     d.ui->editSelectInvert->setEnabled(hasSelection);
     d.ui->editPayloadInvertSelected->setEnabled(hasSelection);
 

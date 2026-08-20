@@ -747,9 +747,6 @@
     <addaction name="separator"/>
     <addaction name="displayTransform"/>
     <addaction name="separator"/>
-    <addaction name="displayExpand"/>
-    <addaction name="displayCollapse"/>
-    <addaction name="separator"/>
     <addaction name="displayGrid"/>
    </widget>
    <widget class="QMenu" name="menuFile">
@@ -865,6 +862,7 @@
     <addaction name="separator"/>
     <addaction name="menuPayloads"/>
     <addaction name="separator"/>
+    <addaction name="editNewXform"/>
     <addaction name="editDeleteSelected"/>
    </widget>
    <widget class="QMenu" name="menuView">
@@ -1030,28 +1028,17 @@
     <string>Very high</string>
    </property>
   </action>
+  <action name="editNewXform">
+   <property name="text">
+    <string>New xform</string>
+   </property>
+  </action>
   <action name="editDeleteSelected">
    <property name="text">
     <string>Delete</string>
    </property>
    <property name="shortcut">
     <string>Del</string>
-   </property>
-  </action>
-  <action name="displayExpand">
-   <property name="text">
-    <string>Expand</string>
-   </property>
-   <property name="shortcut">
-    <string>E</string>
-   </property>
-  </action>
-  <action name="displayCollapse">
-   <property name="text">
-    <string>Collapse</string>
-   </property>
-   <property name="shortcut">
-    <string>C</string>
    </property>
   </action>
   <action name="themeLight">

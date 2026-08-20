@@ -29,6 +29,7 @@ public Q_SLOTS:
     void updateStageUp(Session::StageUp stageUp);
     void captureReady(qint64 elapsed);
     void renderReady(qint64 elapsed);
+
 public:
     struct Data {
         QScopedPointer<ViewContext> context;
@@ -84,19 +85,13 @@ RenderViewPrivate::updatePrims(const NoticeBatch& batch)
 }
 
 void
-RenderViewPrivate::updateStage(
-    UsdStageRefPtr stage,
-    Session::LoadPolicy policy,
-    Session::StageStatus status)
+RenderViewPrivate::updateStage(UsdStageRefPtr stage, Session::LoadPolicy policy, Session::StageStatus status)
 {
     Q_UNUSED(stage);
     Q_UNUSED(policy);
 
     if (status == Session::StageStatus::Loaded) {
-        const TfToken stageUp =
-            session()->stageUp() == Session::StageUp::Z
-                ? UsdGeomTokens->z
-                : UsdGeomTokens->y;
+        const TfToken stageUp = session()->stageUp() == Session::StageUp::Z ? UsdGeomTokens->z : UsdGeomTokens->y;
 
         imageGLWidget()->updateStageUp(stageUp);
         imageGLWidget()->updateStage(session()->stage());
@@ -115,10 +110,7 @@ RenderViewPrivate::updateAuxiliary(UsdStageRefPtr auxiliary)
 void
 RenderViewPrivate::updateStageUp(Session::StageUp stageUp)
 {
-    const TfToken token =
-        stageUp == Session::StageUp::Z
-            ? UsdGeomTokens->z
-            : UsdGeomTokens->y;
+    const TfToken token = stageUp == Session::StageUp::Z ? UsdGeomTokens->z : UsdGeomTokens->y;
 
     imageGLWidget()->updateStageUp(token);
 }

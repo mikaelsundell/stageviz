@@ -575,6 +575,15 @@ StageTreePrivate::nameChanged(PrimItem* item)
 void
 StageTreePrivate::contextMenuEvent(QContextMenuEvent* event)
 {
+    if (!d.tree || !event)
+        return;
+
+    QTreeWidgetItem* clickedItem = d.tree->itemAt(event->pos());
+    if (clickedItem && !clickedItem->isSelected()) {
+        d.tree->clearSelection();
+        clickedItem->setSelected(true);
+        d.tree->setCurrentItem(clickedItem);
+    }
     QList<SdfPath> paths;
     QList<PrimItem*> selectedItems;
     selectedItems.reserve(d.tree->selectedItems().size());
@@ -597,17 +606,14 @@ StageTreePrivate::contextMenuEvent(QContextMenuEvent* event)
         nameStrings.append(qt::StringToQString(path.GetName()));
     }
 
-    if (paths.isEmpty())
-        return;
-
     const QList<SdfPath> topLevelPaths = path::topLevelPaths(paths);
 
-    SdfPath createParentPath;
-    if (paths.size() == 1) {
-        createParentPath = paths.first();
-    }
-    else if (!paths.isEmpty()) {
-        createParentPath = paths.first().GetParentPath();
+    SdfPath createParentPath = SdfPath::AbsoluteRootPath();
+    if (clickedItem) {
+        if (paths.size() == 1)
+            createParentPath = paths.first();
+        else if (paths.size() > 1)
+            createParentPath = paths.first().GetParentPath();
     }
 
     const bool canSetDefaultPrim = paths.size() == 1 && !paths.first().IsEmpty()
@@ -674,7 +680,7 @@ StageTreePrivate::contextMenuEvent(QContextMenuEvent* event)
                 canUnloadSelected = true;
         }
     }
-    else {
+    else if (!paths.isEmpty()) {
         const QList<SdfPath> exactPayloadPaths = payloadPathsAtSelection();
         canLoadSelected = !exactPayloadPaths.isEmpty();
         canUnloadSelected = !exactPayloadPaths.isEmpty();
@@ -710,13 +716,24 @@ StageTreePrivate::contextMenuEvent(QContextMenuEvent* event)
 
     QMenu menu(d.tree.data());
 
+    QMenu* selectMenu = menu.addMenu("Select");
+    QAction* selectRecursive = selectMenu->addAction("Recursive");
+    selectRecursive->setEnabled(!selectedItems.isEmpty());
+
+    menu.addSeparator();
+
+    QAction* setDefaultPrim = nullptr;
+    if (canSetDefaultPrim)
+        setDefaultPrim = menu.addAction("Default prim");
+
+    menu.addSeparator();
+
     QMenu* loadVariantMenu = menu.addMenu("Variant");
     payload::PayloadVariantTargets variantTargets;
-    {
+    if (!paths.isEmpty()) {
         READ_LOCKER(locker, d.context->stageLock(), "stageLock");
-        if (d.stage) {
+        if (d.stage)
             variantTargets = payload::payloadVariantTargets(d.stage, paths);
-        }
     }
 
     if (variantTargets.isEmpty()) {
@@ -736,13 +753,11 @@ StageTreePrivate::contextMenuEvent(QContextMenuEvent* event)
                     QList<SdfPath> payloadPaths;
                     {
                         READ_LOCKER(locker, d.context->stageLock(), "stageLock");
-                        if (d.stage) {
+                        if (d.stage)
                             payloadPaths = stage::payloadPaths(d.stage, targetPaths);
-                        }
                     }
-                    if (!payloadPaths.isEmpty()) {
+                    if (!payloadPaths.isEmpty())
                         d.context->run(new Command(loadPayloads(payloadPaths, setName, value)));
-                    }
                 });
             }
         }
@@ -774,6 +789,7 @@ StageTreePrivate::contextMenuEvent(QContextMenuEvent* event)
     QAction* isolateAction = menu.addAction("Isolate");
     isolateAction->setCheckable(true);
     isolateAction->setChecked(isolateChecked);
+    isolateAction->setEnabled(!paths.isEmpty());
 
     menu.addSeparator();
 
@@ -784,6 +800,9 @@ StageTreePrivate::contextMenuEvent(QContextMenuEvent* event)
     QAction* copyPaths = nullptr;
     QAction* copyNames = nullptr;
 
+    copyPath->setEnabled(!paths.isEmpty());
+    copyName->setEnabled(!paths.isEmpty());
+
     if (hasExactPayloadSelection)
         copyPayload = copyMenu->addAction("Payload");
 
@@ -792,19 +811,97 @@ StageTreePrivate::contextMenuEvent(QContextMenuEvent* event)
         copyNames = copyMenu->addAction("Names");
     }
 
-    menu.addSeparator();
-
-    QAction* setDefaultPrim = menu.addAction("Default prim");
-    setDefaultPrim->setEnabled(canSetDefaultPrim);
+    if (paths.isEmpty())
+        copyMenu->setEnabled(false);
 
     menu.addSeparator();
 
     QAction* newXform = menu.addAction("New xform");
     QAction* deleteSelected = menu.addAction("Delete");
+    newXform->setEnabled(!createParentPath.IsEmpty());
+    deleteSelected->setEnabled(!paths.isEmpty());
+
     QAction* chosen = menu.exec(d.tree->mapToGlobal(event->pos()));
 
     if (!chosen)
         return;
+
+    if (chosen == selectRecursive) {
+        QList<SdfPath> recursivePaths;
+        QSet<SdfPath> expandedPaths;
+
+        std::function<void(QTreeWidgetItem*)> collectState = [&](QTreeWidgetItem* baseItem) {
+            if (!baseItem)
+                return;
+
+            auto* item = static_cast<PrimItem*>(baseItem);
+            const QString pathString = item->data(0, PrimItem::Path).toString();
+
+            if (!pathString.isEmpty()) {
+                const SdfPath path(qt::QStringToString(pathString));
+                if (item->isExpanded())
+                    expandedPaths.insert(path);
+            }
+
+            for (int i = 0; i < item->childCount(); ++i)
+                collectState(item->child(i));
+        };
+
+        std::function<void(QTreeWidgetItem*)> collectPaths = [&](QTreeWidgetItem* baseItem) {
+            if (!baseItem)
+                return;
+
+            auto* item = static_cast<PrimItem*>(baseItem);
+            const QString pathString = item->data(0, PrimItem::Path).toString();
+
+            if (!pathString.isEmpty()) {
+                const SdfPath path(qt::QStringToString(pathString));
+                if (!recursivePaths.contains(path))
+                    recursivePaths.append(path);
+            }
+
+            for (int i = 0; i < item->childCount(); ++i)
+                collectPaths(item->child(i));
+        };
+
+        std::function<void(QTreeWidgetItem*)> restoreExpansion = [&](QTreeWidgetItem* baseItem) {
+            if (!baseItem)
+                return;
+
+            auto* item = static_cast<PrimItem*>(baseItem);
+            const QString pathString = item->data(0, PrimItem::Path).toString();
+
+            if (!pathString.isEmpty()) {
+                const SdfPath path(qt::QStringToString(pathString));
+                item->setExpanded(expandedPaths.contains(path));
+            }
+
+            for (int i = 0; i < item->childCount(); ++i)
+                restoreExpansion(item->child(i));
+        };
+
+        for (int i = 0; i < d.tree->topLevelItemCount(); ++i)
+            collectState(d.tree->topLevelItem(i));
+
+        for (PrimItem* item : selectedItems)
+            collectPaths(item);
+
+        if (!recursivePaths.isEmpty()) {
+            d.context->run(new Command(selectPaths(recursivePaths)));
+
+            // Recursive selection must not alter the user's expansion state.
+            // Restore it after selection synchronization has completed.
+            for (int i = 0; i < d.tree->topLevelItemCount(); ++i)
+                restoreExpansion(d.tree->topLevelItem(i));
+        }
+        return;
+    }
+
+    if (chosen == setDefaultPrim) {
+        if (canSetDefaultPrim)
+            d.context->run(new Command(defaultPrimPath(paths.first())));
+        return;
+    }
 
     if (chosen == copyPath) {
         copyToClipboard(pathStrings.first());
@@ -860,12 +957,6 @@ StageTreePrivate::contextMenuEvent(QContextMenuEvent* event)
     if (chosen == newXform) {
         if (!createParentPath.IsEmpty())
             d.context->run(new Command(newXformPath(createParentPath, "Xform")));
-        return;
-    }
-
-    if (chosen == setDefaultPrim) {
-        if (canSetDefaultPrim)
-            d.context->run(new Command(defaultPrimPath(paths.first())));
         return;
     }
 

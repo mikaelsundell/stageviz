@@ -19,6 +19,7 @@
 #include <pxr/usd/usdGeom/imageable.h>
 #include <pxr/usd/usdGeom/tokens.h>
 #include <pxr/usd/usdGeom/xform.h>
+#include <pxr/usd/usdGeom/xformable.h>
 
 namespace stageviz {
 
@@ -1857,16 +1858,22 @@ movePath(const QList<SdfPath>& paths, const SdfPath& newParentPath, int insertIn
                                     item.name = path.GetNameToken();
 
                                     if (preserveTransform && oldParentPath != newParentPath) {
-                                        QString transformError;
-                                        if (!stage::worldTransform(stage, path, item.worldTransform, transformError)) {
-                                            error = transformError.isEmpty()
-                                                        ? QString("failed to capture world transform: %1")
-                                                              .arg(qt::SdfPathToQString(path))
-                                                        : transformError;
-                                            valid = false;
-                                            break;
+                                        const UsdPrim prim = stage->GetPrimAtPath(path);
+                                        const UsdGeomXformable xformable(prim);
+
+                                        if (xformable) {
+                                            QString transformError;
+                                            if (!stage::worldTransform(stage, path, item.worldTransform,
+                                                                       transformError)) {
+                                                error = transformError.isEmpty()
+                                                            ? QString("failed to capture world transform: %1")
+                                                                  .arg(qt::SdfPathToQString(path))
+                                                            : transformError;
+                                                valid = false;
+                                                break;
+                                            }
+                                            item.hasWorldTransform = true;
                                         }
-                                        item.hasWorldTransform = true;
                                     }
 
                                     state->items.append(item);

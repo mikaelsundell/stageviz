@@ -65,11 +65,9 @@ OutlinerViewPrivate::init()
     d.context->setCommandStack(session()->commandStack());
 
     attach(d.ui->depth);
-
     stageTree()->setHeaderLabels(QStringList() << "Name"
                                                << "");
     stageTree()->setContext(d.context.data());
-
     stageTree()->installEventFilter(this);
 
     d.ui->clear->setIcon(style()->icon(Style::IconRole::Clear));
@@ -238,18 +236,6 @@ OutlinerView::OutlinerView(QWidget* parent)
 }
 
 OutlinerView::~OutlinerView() = default;
-
-void
-OutlinerView::collapse()
-{
-    p->collapse();
-}
-
-void
-OutlinerView::expand()
-{
-    p->expand();
-}
 
 bool
 OutlinerView::followEnabled()
