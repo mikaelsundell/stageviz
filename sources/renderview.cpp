@@ -7,11 +7,13 @@
 #include "notice.h"
 #include "viewcontext.h"
 #include <QPointer>
+#include <pxr/usd/usdGeom/tokens.h>
 
 // generated files
 #include "ui_renderview.h"
 
 namespace stageviz {
+
 class RenderViewPrivate : public QObject {
 public:
     void init();
@@ -24,9 +26,9 @@ public Q_SLOTS:
     void updateSelection(const QList<SdfPath>& paths);
     void updateStage(UsdStageRefPtr stage, Session::LoadPolicy policy, Session::StageStatus status);
     void updateAuxiliary(UsdStageRefPtr auxiliary);
+    void updateStageUp(Session::StageUp stageUp);
     void captureReady(qint64 elapsed);
     void renderReady(qint64 elapsed);
-
 public:
     struct Data {
         QScopedPointer<ViewContext> context;
@@ -54,6 +56,7 @@ RenderViewPrivate::init()
     connect(session(), &Session::maskChanged, this, &RenderViewPrivate::updateMask);
     connect(session(), &Session::primsChanged, this, &RenderViewPrivate::updatePrims);
     connect(session(), &Session::stageChanged, this, &RenderViewPrivate::updateStage);
+    connect(session(), &Session::stageUpChanged, this, &RenderViewPrivate::updateStageUp);
 }
 
 ImagingGLWidget*
@@ -81,9 +84,21 @@ RenderViewPrivate::updatePrims(const NoticeBatch& batch)
 }
 
 void
-RenderViewPrivate::updateStage(UsdStageRefPtr stage, Session::LoadPolicy policy, Session::StageStatus status)
+RenderViewPrivate::updateStage(
+    UsdStageRefPtr stage,
+    Session::LoadPolicy policy,
+    Session::StageStatus status)
 {
+    Q_UNUSED(stage);
+    Q_UNUSED(policy);
+
     if (status == Session::StageStatus::Loaded) {
+        const TfToken stageUp =
+            session()->stageUp() == Session::StageUp::Z
+                ? UsdGeomTokens->z
+                : UsdGeomTokens->y;
+
+        imageGLWidget()->updateStageUp(stageUp);
         imageGLWidget()->updateStage(session()->stage());
     }
     else {
@@ -98,6 +113,17 @@ RenderViewPrivate::updateAuxiliary(UsdStageRefPtr auxiliary)
 }
 
 void
+RenderViewPrivate::updateStageUp(Session::StageUp stageUp)
+{
+    const TfToken token =
+        stageUp == Session::StageUp::Z
+            ? UsdGeomTokens->z
+            : UsdGeomTokens->y;
+
+    imageGLWidget()->updateStageUp(token);
+}
+
+void
 RenderViewPrivate::captureReady(qint64 elapsed)
 {
     const QString msg = QStringLiteral("Capture finished in %1 ms").arg(elapsed);
@@ -108,6 +134,7 @@ void
 RenderViewPrivate::renderReady(qint64 elapsed)
 {
     const qint64 thresholdMs = 500;
+
     if (elapsed > thresholdMs) {
         const QString msg = QStringLiteral("Render finished in %1 ms").arg(elapsed);
         session()->notifyStatus(Session::Notify::Status::Success, msg);

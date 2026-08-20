@@ -1114,9 +1114,9 @@ ImagingGLWidgetPrivate::updateAuxiliaryGrid()
 {
     if (!d.auxiliary)
         return;
+    
     ViewState* state = viewState();
-    if (!state)
-        return;
+    
     WRITE_LOCKER(locker, session()->auxiliaryLock(), "auxiliaryLock");
     const SdfPath displayPath("/Display");
     const SdfPath gridRootPath("/Display/Grid");
@@ -1129,9 +1129,11 @@ ImagingGLWidgetPrivate::updateAuxiliaryGrid()
         d.auxiliary->RemovePrim(gridRootPath);
         return;
     }
+    
     UsdGeomScope::Define(d.auxiliary, displayPath);
     UsdGeomScope::Define(d.auxiliary, gridRootPath);
     UsdGeomScope::Define(d.auxiliary, materialsPath);
+    
     const TfToken& upAxis = d.stageUpAxis;
     constexpr int lines = 12;
     constexpr float spacing = 1.0f;
@@ -1139,8 +1141,10 @@ ImagingGLWidgetPrivate::updateAuxiliaryGrid()
     auto point = [&](float a, float b) {
         return upAxis == UsdGeomTokens->z ? GfVec3f(a, b, 0.0f) : GfVec3f(a, 0.0f, b);
     };
+    
     VtVec3fArray points;
     VtIntArray counts;
+    
     for (int i = 1; i <= lines; ++i) {
         const float offset = spacing * static_cast<float>(i);
         points.push_back(point(-offset, -extent));
@@ -1154,12 +1158,14 @@ ImagingGLWidgetPrivate::updateAuxiliaryGrid()
         for (int j = 0; j < 4; ++j)
             counts.push_back(2);
     }
+    
     UsdGeomBasisCurves grid = UsdGeomBasisCurves::Define(d.auxiliary, gridPath);
     grid.CreateTypeAttr(VtValue(UsdGeomTokens->linear));
     grid.CreateBasisAttr(VtValue(UsdGeomTokens->bezier));
     grid.CreateWrapAttr(VtValue(UsdGeomTokens->nonperiodic));
     grid.CreatePointsAttr(VtValue(points));
     grid.CreateCurveVertexCountsAttr(VtValue(counts));
+    
     UsdAttribute gridWidths = grid.CreateWidthsAttr(VtValue(VtFloatArray { 1.0f }));
     gridWidths.SetMetadata(TfToken("interpolation"), VtValue(UsdGeomTokens->constant));
     VtVec3fArray centerPoints;
@@ -1170,6 +1176,7 @@ ImagingGLWidgetPrivate::updateAuxiliaryGrid()
     centerPoints.push_back(point(-extent, 0.0f));
     centerPoints.push_back(point(extent, 0.0f));
     centerCounts.push_back(2);
+    
     UsdGeomBasisCurves center = UsdGeomBasisCurves::Define(d.auxiliary, centerPath);
     center.CreateTypeAttr(VtValue(UsdGeomTokens->linear));
     center.CreateBasisAttr(VtValue(UsdGeomTokens->bezier));
@@ -1178,6 +1185,7 @@ ImagingGLWidgetPrivate::updateAuxiliaryGrid()
     center.CreateCurveVertexCountsAttr(VtValue(centerCounts));
     UsdAttribute centerWidths = center.CreateWidthsAttr(VtValue(VtFloatArray { 1.0f }));
     centerWidths.SetMetadata(TfToken("interpolation"), VtValue(UsdGeomTokens->constant));
+    
     const QColor gridColor = state->gridColor();
     const GfVec3f color = gridColor.isValid() ? GfVec3f(gridColor.redF(), gridColor.greenF(), gridColor.blueF())
                                               : GfVec3f(0.34f);
