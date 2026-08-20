@@ -73,7 +73,7 @@ ShelfWidgetPrivate::init()
     d.list = new ShelfList(d.shelf.data());
 
     QHBoxLayout* layout = new QHBoxLayout(d.shelf);
-    layout->setContentsMargins(2, 4, 0, 0);
+    layout->setContentsMargins(4, 4, 0, 0);
     layout->addWidget(d.list);
 
     QObject::connect(d.list, &QWidget::customContextMenuRequested, this, &ShelfWidgetPrivate::contextMenuEvent);

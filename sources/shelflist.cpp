@@ -165,6 +165,7 @@ ShelfListPrivate::~ShelfListPrivate() {}
 void
 ShelfListPrivate::init()
 {
+    d.list->setProperty("ShelfList", true);
     d.list->setViewMode(QListView::IconMode);
     d.list->setEditTriggers(QAbstractItemView::NoEditTriggers);
     d.list->setFlow(QListView::LeftToRight);

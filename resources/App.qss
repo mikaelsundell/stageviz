@@ -11,17 +11,26 @@ QDialog
     background-color: $color.base;
 }
 
-QMainWindow::separator {
-    background: $color.basealt;
-    width: 6px;
+QMainWindow::separator
+{
+    background-color: $color.borderalt;
+    width: 2px;
+    height: 2px;
+}
+
+QMainWindow::separator:hover
+{
+    background-color: $color.highlight;
 }
 
 QWidget[MainWidget="true"] {
     background-color: $color.basealt;
 }
 
-QWidget[DockWidget="true"] {
-    background-color: $color.dock;
+QWidget[DockWidget="true"]
+{
+    color: $color.text;
+    background-color: $color.base;
 }
 
 QCheckBox {
@@ -107,8 +116,45 @@ QComboBox QAbstractItemView::item:selected {
     color: $color.text;
 }
 
-QDockWidget {
-    background: $color.dock;
+QDockWidget
+{
+    color: $color.text;
+    background-color: $color.dock;
+    border: 0px;
+}
+
+QDockWidget::title
+{
+    color: $color.text;
+    background-color: $color.dock;
+    border-bottom: 1px solid $color.borderalt;
+    padding-top: 6px;
+    padding-bottom: 6px;
+    padding-left: 44px;
+    padding-right: 44px;
+    text-align: center;
+}
+
+QDockWidget::close-button,
+QDockWidget::float-button
+{
+    background-color: transparent;
+    border: 0px;
+    border-radius: 0px;
+    margin-left: 4px;
+    padding: 2px;
+}
+
+QDockWidget::close-button:hover,
+QDockWidget::float-button:hover
+{
+    background-color: $color.buttonalt;
+}
+
+QDockWidget::close-button:pressed,
+QDockWidget::float-button:pressed
+{
+    background-color: $color.borderalt;
 }
 
 QGroupBox
@@ -154,23 +200,45 @@ QLineEdit
     padding-right: 5px;
 }
 
-QListWidget {
+QListWidget
+{
     color: $color.text;
-    background-color: transparent;
-    border: 0px;
+    background-color: $color.item;
+    border: 1px solid $color.borderalt;
     outline: none;
     padding: 0px;
 }
 
-QListWidget::item {
-    color: $color.text;
+QListWidget[ShelfList="true"]
+{
     background-color: transparent;
-    margin: 0px;
-    padding: 0px;
+    border: 0px;
 }
 
-QListWidget::item:selected {
+QListWidget::item
+{
+    color: $color.text;
+    background-color: $color.item;
+    min-height: 22px;
+    margin: 0px;
+    padding-left: 6px;
+    padding-right: 6px;
+}
+
+QListWidget::item:alternate
+{
+    background-color: $color.itemalt;
+}
+
+QListWidget::item:selected
+{
+    color: $color.text;
     background-color: $color.highlight;
+}
+
+QListWidget::item:hover:!selected
+{
+    background-color: $color.itemalt;
 }
 
 QMenuBar {
@@ -316,6 +384,11 @@ QPushButton:disabled
     color: $color.text.disabled;
 }
 
+QPushButton:hover
+{
+    background-color: $color.buttonalt;
+}
+
 QPushButton:pressed
 {
     background-color: $color.borderalt;
@@ -451,8 +524,10 @@ QDoubleSpinBox::down-arrow
     image: url("$icon.down");
 }
 
-QSplitter::handle {
+QSplitter::handle
+{
     background-color: $color.dock;
+    width: 5px;
     height: 5px;
 }
 
@@ -614,6 +689,10 @@ QSlider::handle:horizontal {
     background: $color.handle;
     border-radius: 4px;
     margin: -5px 0;
+}
+
+QSlider::handle:horizontal:hover {
+    background: $color.highlight;
 }
 
 QSplitter
