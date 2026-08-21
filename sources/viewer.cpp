@@ -1702,9 +1702,14 @@ ViewerPrivate::updateSelection(const QList<SdfPath>& paths)
         if (action && action->property("variantMenu").toBool())
             staleActions.append(action);
     }
+
     for (QAction* action : staleActions) {
         if (QMenu* menu = action->menu()) {
             for (QAction* childAction : menu->actions()) {
+                if (QMenu* childMenu = childAction->menu()) {
+                    for (QAction* valueAction : childMenu->actions())
+                        valueAction->setShortcut(QKeySequence());
+                }
                 childAction->setShortcut(QKeySequence());
             }
             d.ui->menuPayloads->removeAction(action);
@@ -1758,14 +1763,14 @@ ViewerPrivate::updateSelection(const QList<SdfPath>& paths)
     QAction* separator = d.ui->menuPayloads->addSeparator();
     separator->setProperty("variantMenu", true);
 
+    QMenu* variantMenu = d.ui->menuPayloads->addMenu("Variant");
+    variantMenu->menuAction()->setProperty("variantMenu", true);
+
     int index = 0;
     for (auto setIt = variantTargets.cbegin(); setIt != variantTargets.cend(); ++setIt) {
         const QString& setName = setIt.key();
 
-        QMenu* setMenu = d.ui->menuPayloads->addMenu(setName);
-        setMenu->menuAction()->setProperty("variantMenu", true);
-
-        d.viewer->addAction(setMenu->menuAction());
+        QMenu* setMenu = variantMenu->addMenu(setName);
 
         for (auto valueIt = setIt.value().cbegin(); valueIt != setIt.value().cend(); ++valueIt) {
             const QString& value = valueIt.key();
@@ -1773,19 +1778,19 @@ ViewerPrivate::updateSelection(const QList<SdfPath>& paths)
 
             QAction* action = setMenu->addAction(value);
 
-            if (index < 10) {
-                const int key = (index == 9) ? Qt::Key_0 : (Qt::Key_1 + index);
-                action->setShortcut(QKeySequence(key));
+            if (index < 9) {
+                const int key = Qt::Key_1 + index;
+                action->setShortcut(QKeySequence(Qt::SHIFT | key));
                 action->setShortcutContext(Qt::WidgetWithChildrenShortcut);
                 action->setAutoRepeat(false);
                 d.viewer->addAction(action);
             }
 
             QObject::connect(action, &QAction::triggered, d.viewer, [this, targets, setName, value]() {
-                if (!targets.isEmpty()) {
+                if (!targets.isEmpty())
                     session()->commandStack()->run(new Command(loadPayloads(targets, setName, value)));
-                }
             });
+
             ++index;
         }
     }

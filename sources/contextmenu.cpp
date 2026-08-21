@@ -15,7 +15,7 @@
 #include <QSet>
 #include <functional>
 #include <pxr/usd/usd/prim.h>
-#include <pxr/usd/usd/primRange.h>
+#include <pxr/usd/usdGeom/xformable.h>
 
 namespace stageviz {
 
@@ -52,25 +52,6 @@ namespace {
         return lines.join('\n');
     }
 
-    QList<SdfPath> recursivePaths(UsdStageRefPtr usdStage, const QList<SdfPath>& paths)
-    {
-        QList<SdfPath> result;
-        if (!usdStage)
-            return result;
-
-        for (const SdfPath& path : path::topLevelPaths(paths)) {
-            const UsdPrim root = usdStage->GetPrimAtPath(path);
-            if (!root)
-                continue;
-
-            for (const UsdPrim& prim : UsdPrimRange(root)) {
-                if (prim && !result.contains(prim.GetPath()))
-                    result.append(prim.GetPath());
-            }
-        }
-        return result;
-    }
-
     void copyToClipboard(const QString& text)
     {
         if (QClipboard* clipboard = QGuiApplication::clipboard())
@@ -99,6 +80,7 @@ ContextMenu::exec(QWidget* parent, ViewContext* context, UsdStageRefPtr usdStage
     bool canHideSelected = false;
     bool canLoadSelected = false;
     bool canUnloadSelected = false;
+    bool canResetXform = !paths.isEmpty();
 
     {
         READ_LOCKER(locker, context->stageLock(), "stageLock");
@@ -114,6 +96,10 @@ ContextMenu::exec(QWidget* parent, ViewContext* context, UsdStageRefPtr usdStage
         for (const SdfPath& path : paths) {
             if (stage::isPayload(usdStage, path))
                 hasExactPayloadSelection = true;
+
+            const UsdPrim prim = usdStage->GetPrimAtPath(path);
+            if (!prim || !prim.IsValid() || prim.IsInstanceProxy() || !UsdGeomXformable(prim))
+                canResetXform = false;
 
             const bool visible = stage::isVisible(usdStage, path);
             if (visible)
@@ -149,12 +135,6 @@ ContextMenu::exec(QWidget* parent, ViewContext* context, UsdStageRefPtr usdStage
 
     QMenu menu(parent);
 
-    QMenu* selectMenu = menu.addMenu("Select");
-    QAction* selectRecursive = selectMenu->addAction("Recursive");
-    selectRecursive->setEnabled(!paths.isEmpty());
-
-    menu.addSeparator();
-
     QAction* setDefaultPrim = nullptr;
     if (canSetDefaultPrim)
         setDefaultPrim = menu.addAction("Default prim");
@@ -175,16 +155,17 @@ ContextMenu::exec(QWidget* parent, ViewContext* context, UsdStageRefPtr usdStage
                 const QList<SdfPath> targetPaths = valueIt.value();
 
                 QAction* action = setMenu->addAction(value);
-                QObject::connect(action, &QAction::triggered, parent, [context, usdStage, setName, value, targetPaths]() {
-                    QList<SdfPath> resolved;
-                    {
-                        READ_LOCKER(locker, context->stageLock(), "stageLock");
-                        if (usdStage)
-                            resolved = stage::payloadPaths(usdStage, targetPaths);
-                    }
-                    if (!resolved.isEmpty())
-                        context->run(new Command(loadPayloads(resolved, setName, value)));
-                });
+                QObject::connect(action, &QAction::triggered, parent,
+                                 [context, usdStage, setName, value, targetPaths]() {
+                                     QList<SdfPath> resolved;
+                                     {
+                                         READ_LOCKER(locker, context->stageLock(), "stageLock");
+                                         if (usdStage)
+                                             resolved = stage::payloadPaths(usdStage, targetPaths);
+                                     }
+                                     if (!resolved.isEmpty())
+                                         context->run(new Command(loadPayloads(resolved, setName, value)));
+                                 });
             }
         }
     }
@@ -242,6 +223,11 @@ ContextMenu::exec(QWidget* parent, ViewContext* context, UsdStageRefPtr usdStage
 
     menu.addSeparator();
 
+    QAction* resetXform = menu.addAction("Reset xform");
+    resetXform->setEnabled(canResetXform);
+
+    menu.addSeparator();
+
     QAction* newXform = menu.addAction("New xform");
     QAction* deleteSelected = menu.addAction("Delete");
     newXform->setEnabled(!createParentPath.IsEmpty());
@@ -250,18 +236,6 @@ ContextMenu::exec(QWidget* parent, ViewContext* context, UsdStageRefPtr usdStage
     QAction* chosen = menu.exec(globalPos);
     if (!chosen)
         return;
-
-    if (chosen == selectRecursive) {
-        QList<SdfPath> selection;
-        {
-            READ_LOCKER(locker, context->stageLock(), "stageLock");
-            if (usdStage)
-                selection = recursivePaths(usdStage, paths);
-        }
-        if (!selection.isEmpty())
-            context->run(new Command(selectPaths(selection)));
-        return;
-    }
 
     if (chosen == setDefaultPrim) {
         context->run(new Command(defaultPrimPath(paths.first())));
@@ -309,6 +283,11 @@ ContextMenu::exec(QWidget* parent, ViewContext* context, UsdStageRefPtr usdStage
     if (chosen == unloadSelected) {
         if (!payloadPaths.isEmpty())
             context->run(new Command(unloadPayloads(payloadPaths)));
+        return;
+    }
+
+    if (chosen == resetXform) {
+        context->run(new Command(resetTransforms(paths)));
         return;
     }
 

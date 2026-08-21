@@ -1472,6 +1472,9 @@
    <property name="text">
     <string>Low</string>
    </property>
+   <property name="shortcut">
+    <string>1</string>
+   </property>
   </action>
   <action name="displayComplexityMedium">
    <property name="checkable">
@@ -1479,6 +1482,9 @@
    </property>
    <property name="text">
     <string>Medium</string>
+   </property>
+   <property name="shortcut">
+    <string>2</string>
    </property>
   </action>
   <action name="displayComplexityHigh">
@@ -1488,6 +1494,9 @@
    <property name="text">
     <string>High</string>
    </property>
+   <property name="shortcut">
+    <string>3</string>
+   </property>
   </action>
   <action name="displayComplexityVeryHigh">
    <property name="checkable">
@@ -1495,6 +1504,9 @@
    </property>
    <property name="text">
     <string>Very high</string>
+   </property>
+   <property name="shortcut">
+    <string>4</string>
    </property>
   </action>
   <action name="filePreserveState">

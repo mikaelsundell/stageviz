@@ -357,6 +357,21 @@ Command
 setAttributeValue(const SdfPath& attributePath, const VtValue& value);
 
 /**
+ * @brief Creates a command that resets local transforms for xformable prims.
+ *
+ * When a selected prim has an underlying transform opinion in a weaker layer,
+ * the Stageviz root-layer matrix/order override is removed so the authored
+ * asset transform becomes visible again. When no weaker transform opinion
+ * exists, a local identity matrix is authored in the opened root layer.
+ *
+ * Undo restores the previous root-layer transform opinions exactly.
+ *
+ * @param paths Prim paths whose local transforms should be reset.
+ */
+Command
+resetTransforms(const QList<SdfPath>& paths);
+
+/**
  * @brief Creates a command that applies world-space transforms to prims.
  *
  * The paths, before matrices, and after matrices are supplied explicitly so

@@ -2492,8 +2492,8 @@ resetTransforms(const QList<SdfPath>& paths)
                             state->items.clear();
 
                             for (const SdfPath& inputPath : path::uniquePaths(paths)) {
-                                const SdfPath primPath =
-                                    inputPath.IsPropertyPath() ? inputPath.GetPrimPath() : inputPath;
+                                const SdfPath primPath = inputPath.IsPropertyPath() ? inputPath.GetPrimPath()
+                                                                                    : inputPath;
                                 const UsdPrim prim = stage->GetPrimAtPath(primPath);
                                 const UsdGeomXformable xformable(prim);
 
@@ -2535,12 +2535,10 @@ resetTransforms(const QList<SdfPath>& paths)
                 const bool success = errors.isEmpty();
                 command::queueToSession(session, [session, affected, errors, success]() {
                     using Status = Session::Notify::Status;
-                    const QString message = success
-                                                ? QStringLiteral("Xform reset")
-                                                : appendError("Reset xform finished with errors",
-                                                              summarizeErrors(errors));
-                    command::finishDeferred(session, message, affected,
-                                            success ? Status::Success : Status::Error);
+                    const QString message = success ? QStringLiteral("Xform reset")
+                                                    : appendError("Reset xform finished with errors",
+                                                                  summarizeErrors(errors));
+                    command::finishDeferred(session, message, affected, success ? Status::Success : Status::Error);
                 });
             });
         },
@@ -2553,7 +2551,6 @@ resetTransforms(const QList<SdfPath>& paths)
             command::runWorker([session, state]() {
                 QList<SdfPath> restored;
                 QStringList errors;
-
                 {
                     WRITE_LOCKER(locker, session->stageLock(), "stageLock");
                     const UsdStageRefPtr stage = session->stageUnsafe();
@@ -2585,12 +2582,10 @@ resetTransforms(const QList<SdfPath>& paths)
                 const bool success = errors.isEmpty();
                 command::queueToSession(session, [session, restored, errors, success]() {
                     using Status = Session::Notify::Status;
-                    const QString message = success
-                                                ? QStringLiteral("Reset xform undone")
-                                                : appendError("Undo reset xform finished with errors",
-                                                              summarizeErrors(errors));
-                    command::finishDeferred(session, message, restored,
-                                            success ? Status::Success : Status::Error);
+                    const QString message = success ? QStringLiteral("Reset xform undone")
+                                                    : appendError("Undo reset xform finished with errors",
+                                                                  summarizeErrors(errors));
+                    command::finishDeferred(session, message, restored, success ? Status::Success : Status::Error);
                 });
             });
         });

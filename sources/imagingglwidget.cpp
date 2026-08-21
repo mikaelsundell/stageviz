@@ -35,6 +35,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <memory>
 #include <pxr/base/gf/matrix4d.h>
 #include <pxr/base/gf/rotation.h>
 #include <pxr/base/tf/error.h>
@@ -71,54 +72,86 @@ PXR_NAMESPACE_USING_DIRECTIVE
 
 namespace stageviz {
 
+constexpr double Pi = 3.14159265358979323846;
+
+struct SceneIndices {
+    HdMergingSceneIndexRefPtr merging;
+    TfRefPtr<MaterialOverrideSceneIndex> materialOverride;
+    UsdImagingSceneIndices auxiliary;
+    bool auxiliaryInserted = false;
+
+    void clearAuxiliary()
+    {
+        auxiliary = {};
+        auxiliaryInserted = false;
+    }
+};
+
 class ImagingGLEngine final : public UsdImagingGLEngine {
 public:
     explicit ImagingGLEngine(const UsdImagingGLEngine::Parameters& params)
-        : UsdImagingGLEngine(prepareParameters(params))
+        : ImagingGLEngine(params, std::make_shared<SceneIndices>())
     {}
-    TfRefPtr<MaterialOverrideSceneIndex> materialOverrideSceneIndex() const
-    {
-        return materialOverrideSceneIndexInstance();
-    }
-    HdMergingSceneIndexRefPtr mergingSceneIndex() const { return mergingSceneIndexInstance(); }
+
+    SceneIndices& sceneIndices() { return *m_sceneIndices; }
+    const SceneIndices& sceneIndices() const { return *m_sceneIndices; }
 
 private:
-    static HdMergingSceneIndexRefPtr& mergingSceneIndexInstance()
+    using SceneIndicesPtr = std::shared_ptr<SceneIndices>;
+
+    ImagingGLEngine(const UsdImagingGLEngine::Parameters& params, const SceneIndicesPtr& sceneIndices)
+        : UsdImagingGLEngine(prepareParameters(params, sceneIndices))
+        , m_sceneIndices(sceneIndices)
     {
-        static HdMergingSceneIndexRefPtr instance;
-        return instance;
+        constructingSceneIndices() = nullptr;
     }
-    static TfRefPtr<MaterialOverrideSceneIndex>& materialOverrideSceneIndexInstance()
+
+    static SceneIndices*& constructingSceneIndices()
     {
-        static TfRefPtr<MaterialOverrideSceneIndex> instance;
-        return instance;
+        static thread_local SceneIndices* sceneIndices = nullptr;
+        return sceneIndices;
     }
-    static void registerStagevizSceneIndexFilters()
+
+    static void registerSceneIndexFilters()
     {
         static bool registered = false;
         if (registered)
             return;
+
         HdSceneIndexPluginRegistry::SceneIndexAppendCallback callback =
             [](const std::string& renderInstanceId, const HdSceneIndexBaseRefPtr& inputScene,
                const HdContainerDataSourceHandle& inputArgs) -> HdSceneIndexBaseRefPtr {
             Q_UNUSED(renderInstanceId);
             Q_UNUSED(inputArgs);
+
             HdMergingSceneIndexRefPtr mergingSceneIndex = HdMergingSceneIndex::New();
             mergingSceneIndex->AddInputScene(inputScene, SdfPath::AbsoluteRootPath());
-            TfRefPtr<MaterialOverrideSceneIndex> sceneIndex = MaterialOverrideSceneIndex::New(mergingSceneIndex);
-            mergingSceneIndexInstance() = mergingSceneIndex;
-            materialOverrideSceneIndexInstance() = sceneIndex;
-            return sceneIndex;
+
+            TfRefPtr<MaterialOverrideSceneIndex> materialOverrideSceneIndex = MaterialOverrideSceneIndex::New(
+                mergingSceneIndex);
+
+            if (SceneIndices* sceneIndices = constructingSceneIndices()) {
+                sceneIndices->merging = mergingSceneIndex;
+                sceneIndices->materialOverride = materialOverrideSceneIndex;
+            }
+
+            return materialOverrideSceneIndex;
         };
+
         HdSceneIndexPluginRegistry::GetInstance().RegisterSceneIndexForRenderer(
             std::string(), callback, nullptr, 0, HdSceneIndexPluginRegistry::InsertionOrderAtStart);
         registered = true;
     }
-    static UsdImagingGLEngine::Parameters prepareParameters(UsdImagingGLEngine::Parameters params)
+
+    static UsdImagingGLEngine::Parameters prepareParameters(UsdImagingGLEngine::Parameters params,
+                                                            const SceneIndicesPtr& sceneIndices)
     {
-        registerStagevizSceneIndexFilters();
+        registerSceneIndexFilters();
+        constructingSceneIndices() = sceneIndices.get();
         return params;
     }
+
+    SceneIndicesPtr m_sceneIndices;
 };
 
 class ImagingGLWidgetPrivate : public QObject, public SignalGuard {
@@ -197,7 +230,6 @@ public:
         float defaultSpecular;
         float defaultShininess;
         double gpuPerformanceMs;
-        bool auxiliarySceneIndexInserted;
         bool drag;
         bool sweep;
         bool transformEnabled;
@@ -233,8 +265,6 @@ public:
         QList<SdfPath> visibleCapture;
         std::vector<GfBBox3d> selectionBBoxes;
         HgiUniquePtr hgi;
-        UsdImagingSceneIndices auxiliarySceneIndices;
-        TfRefPtr<MaterialOverrideSceneIndex> materialOverrideSceneIndex;
         QScopedPointer<ImagingGLEngine> glEngine;
         QPointer<ViewContext> context;
         QPointer<ImagingGLWidget> glwidget;
@@ -259,7 +289,6 @@ ImagingGLWidgetPrivate::init()
     d.defaultSpecular = 0.5f;
     d.defaultShininess = 32.0f;
     d.gpuPerformanceMs = 0.0;
-    d.auxiliarySceneIndexInserted = false;
     d.drag = false;
     d.sweep = false;
     d.transformEnabled = false;
@@ -409,9 +438,6 @@ ImagingGLWidgetPrivate::close()
     d.lastPickPosition = QPoint();
     d.lastPickPaths.clear();
     d.lastPickIndex = -1;
-    d.auxiliarySceneIndexInserted = false;
-    d.auxiliarySceneIndices = {};
-    d.materialOverrideSceneIndex = nullptr;
     d.glEngine.reset();
     d.hgi.reset();
     if (viewState() && viewState()->sceneStatsEnabled()) {
@@ -1090,9 +1116,6 @@ ImagingGLWidgetPrivate::updateStage(UsdStageRefPtr stage)
     d.stage = stage;
     d.visibleCapture.clear();
     d.selectionBBoxes.clear();
-    d.auxiliarySceneIndexInserted = false;
-    d.auxiliarySceneIndices = {};
-    d.materialOverrideSceneIndex = nullptr;
     d.glEngine.reset();
     d.hgi.reset();
     rebuildSelectionBBoxes();
@@ -1114,11 +1137,8 @@ ImagingGLWidgetPrivate::updateAuxiliary(UsdStageRefPtr auxiliary)
     d.auxiliary = auxiliary;
     ensureAuxiliaryMaterials();
     updateAuxiliaryGrid();
-    d.auxiliarySceneIndices = {};
-    d.auxiliarySceneIndexInserted = false;
     // recreate the render engine so the render index no longer retains an
     // auxiliary scene index backed by the previous stage.
-    d.materialOverrideSceneIndex = nullptr;
     d.glEngine.reset();
     d.hgi.reset();
     d.glwidget->update();
@@ -1316,39 +1336,51 @@ ImagingGLWidgetPrivate::rebuildSelectionBBoxes()
 void
 ImagingGLWidgetPrivate::ensureAuxiliarySceneIndex()
 {
-    if (!d.glEngine || d.auxiliarySceneIndexInserted || !d.auxiliary)
+    if (!d.glEngine || !d.auxiliary)
         return;
-    HdMergingSceneIndexRefPtr mergingSceneIndex = d.glEngine->mergingSceneIndex();
-    if (!mergingSceneIndex) {
+
+    SceneIndices& sceneIndices = d.glEngine->sceneIndices();
+    if (sceneIndices.auxiliaryInserted)
+        return;
+
+    if (!sceneIndices.merging) {
         qWarning() << "could not find Stageviz merging scene index";
         return;
     }
+
     UsdImagingCreateSceneIndicesInfo createInfo;
     createInfo.stage = d.auxiliary;
     createInfo.displayUnloadedPrimsWithBounds = false;
     createInfo.addDrawModeSceneIndex = true;
-    d.auxiliarySceneIndices = UsdImagingCreateSceneIndices(createInfo);
-    if (!d.auxiliarySceneIndices.stageSceneIndex || !d.auxiliarySceneIndices.finalSceneIndex) {
+
+    sceneIndices.auxiliary = UsdImagingCreateSceneIndices(createInfo);
+    if (!sceneIndices.auxiliary.stageSceneIndex || !sceneIndices.auxiliary.finalSceneIndex) {
         qWarning() << "could not create auxiliary USD Imaging scene-index chain";
-        d.auxiliarySceneIndices = {};
+        sceneIndices.clearAuxiliary();
         return;
     }
+
     // Merge the fully processed USD Imaging output, not the raw
     // UsdImagingStageSceneIndex. The processing chain resolves USD semantics
     // such as material bindings into the Hydra schemas expected downstream.
-    mergingSceneIndex->AddInputScene(d.auxiliarySceneIndices.finalSceneIndex, SdfPath::AbsoluteRootPath());
-    d.auxiliarySceneIndexInserted = true;
+    sceneIndices.merging->AddInputScene(sceneIndices.auxiliary.finalSceneIndex, SdfPath::AbsoluteRootPath());
+    sceneIndices.auxiliaryInserted = true;
 }
 
 void
 ImagingGLWidgetPrivate::refreshAuxiliarySceneIndex()
 {
-    if (!d.auxiliarySceneIndices.stageSceneIndex)
+    if (!d.glEngine)
         return;
+
+    SceneIndices& sceneIndices = d.glEngine->sceneIndices();
+    if (!sceneIndices.auxiliary.stageSceneIndex)
+        return;
+
     // UsdImagingStageSceneIndex queues USD edits while it is being queried.
     // Flush those edits so they propagate through the complete auxiliary
     // USD Imaging chain and into the Stageviz merge.
-    d.auxiliarySceneIndices.stageSceneIndex->ApplyPendingUpdates();
+    sceneIndices.auxiliary.stageSceneIndex->ApplyPendingUpdates();
 }
 
 void
@@ -1444,11 +1476,12 @@ ImagingGLWidgetPrivate::ensureAuxiliaryMaterials()
 {
     if (!d.auxiliary)
         return;
+
     WRITE_LOCKER(locker, session()->auxiliaryLock(), "auxiliaryLock");
     const SdfPath materialsPath("/Materials");
     const SdfPath clayPath("/Materials/Clay");
     UsdGeomScope::Define(d.auxiliary, materialsPath);
-    // Built-in Stageviz clay lives on the shared auxiliary stage just like any
+    // built-in Stageviz clay lives on the shared auxiliary stage just like any
     // other render-support material.
     authorAuxiliaryStandardSurface(clayPath, GfVec3f(0.55f, 0.18f, 0.16f), 0.0f, 0.68f, 0.35f);
 }
@@ -1460,10 +1493,10 @@ ImagingGLWidgetPrivate::authorAuxiliaryGridMaterial(const SdfPath& materialPath,
         return;
     UsdShadeMaterial material = UsdShadeMaterial::Define(d.auxiliary, materialPath);
     UsdShadeShader surface = UsdShadeShader::Define(d.auxiliary, materialPath.AppendChild(TfToken("Surface")));
+
     // Use the same MaterialX Standard Surface path as the working viewport
     // overrides. The grid is intentionally emission-only so its appearance is
-    // stable and independent of viewport lighting, matching the old direct
-    // Hydra grid material.
+    // stable and independent of viewport lighting.
     surface.CreateIdAttr(VtValue(TfToken("ND_standard_surface_surfaceshader")));
     surface.CreateInput(TfToken("base"), SdfValueTypeNames->Float).Set(0.0f);
     surface.CreateInput(TfToken("base_color"), SdfValueTypeNames->Color3f).Set(GfVec3f(0.0f));
@@ -1497,13 +1530,15 @@ ImagingGLWidgetPrivate::authorAuxiliaryStandardSurface(const SdfPath& materialPa
 void
 ImagingGLWidgetPrivate::ensureMaterialOverrideSceneIndex()
 {
-    if (!d.glEngine || d.materialOverrideSceneIndex)
+    if (!d.glEngine)
         return;
-    d.materialOverrideSceneIndex = d.glEngine->materialOverrideSceneIndex();
-    if (!d.materialOverrideSceneIndex) {
+
+    SceneIndices& sceneIndices = d.glEngine->sceneIndices();
+    if (!sceneIndices.materialOverride) {
         qWarning() << "could not find material override scene index";
         return;
     }
+
     updateMaterialOverrideSceneIndex();
     updateAuxiliaryGrid();
 }
@@ -1511,15 +1546,19 @@ ImagingGLWidgetPrivate::ensureMaterialOverrideSceneIndex()
 void
 ImagingGLWidgetPrivate::updateMaterialOverrideSceneIndex()
 {
-    if (!d.materialOverrideSceneIndex || !d.context)
+    if (!d.glEngine || !d.context)
+        return;
+
+    SceneIndices& sceneIndices = d.glEngine->sceneIndices();
+    if (!sceneIndices.materialOverride)
         return;
 
     ViewState* state = viewState();
     if (!state)
         return;
 
-    d.materialOverrideSceneIndex->setSceneMaterialsEnabled(state->sceneMaterialsEnabled());
-    d.materialOverrideSceneIndex->setMaterialPath(state->overrideMaterial());
+    sceneIndices.materialOverride->setSceneMaterialsEnabled(state->sceneMaterialsEnabled());
+    sceneIndices.materialOverride->setMaterialPath(state->overrideMaterial());
 
     MaterialOverrideSceneIndex::Mode mode = MaterialOverrideSceneIndex::None;
     switch (state->materialMode()) {
@@ -1528,15 +1567,15 @@ ImagingGLWidgetPrivate::updateMaterialOverrideSceneIndex()
     case ViewState::All:
     default: mode = MaterialOverrideSceneIndex::None; break;
     }
-    d.materialOverrideSceneIndex->setMode(mode);
+    sceneIndices.materialOverride->setMode(mode);
 
-    // In forced double-sided viewport mode, keep both rasterized sides
+    // in forced double-sided viewport mode, keep both rasterized sides
     // visible while presenting meshes to Hydra as single-sided. This is
     // required by front/back diagnostic materials so facing-ratio evaluation
     // remains different for the two sides.
     const bool overrideDoubleSided = state->doubleSidedMode() == ViewState::DoubleSided;
-    d.materialOverrideSceneIndex->setDoubleSidedOverride(false);
-    d.materialOverrideSceneIndex->setDoubleSidedOverrideEnabled(overrideDoubleSided);
+    sceneIndices.materialOverride->setDoubleSidedOverride(false);
+    sceneIndices.materialOverride->setDoubleSidedOverrideEnabled(overrideDoubleSided);
 }
 
 bool
@@ -1544,6 +1583,7 @@ ImagingGLWidgetPrivate::projectWorldToScreen(const GfVec3d& world, QPointF& scre
 {
     if (!d.context || !viewCamera())
         return false;
+
     const GfCamera camera = viewCamera()->camera();
     const GfFrustum frustum = camera.GetFrustum();
     const GfMatrix4d view = frustum.ComputeViewMatrix();
@@ -1552,6 +1592,7 @@ ImagingGLWidgetPrivate::projectWorldToScreen(const GfVec3d& world, QPointF& scre
     const GfVec3d ndc = projection.Transform(cameraPoint);
     if (!std::isfinite(ndc[0]) || !std::isfinite(ndc[1]) || !std::isfinite(ndc[2]))
         return false;
+
     screen.setX((ndc[0] * 0.5 + 0.5) * d.glwidget->width());
     screen.setY((1.0 - (ndc[1] * 0.5 + 0.5)) * d.glwidget->height());
     return true;
@@ -1564,11 +1605,13 @@ ImagingGLWidgetPrivate::transformAxisDirection(int axis)
     const GfVec3d worldAxis = transformAxisVector(axis);
     if (worldAxis.GetLengthSq() < 1e-12)
         return {};
+
     const GfVec3d cameraAxis = view.TransformDir(worldAxis);
     QPointF direction(cameraAxis[0], -cameraAxis[1]);
     const double length = std::hypot(direction.x(), direction.y());
     if (length < 1e-4)
         return {};
+
     return direction / length;
 }
 
@@ -1578,10 +1621,13 @@ ImagingGLWidgetPrivate::transformAxisVector(int axis)
     const int component = ((axis - 1) % 3) + 1;
     if (component == 1)
         return GfVec3d::XAxis();
+
     if (component == 2)
         return GfVec3d::YAxis();
+
     if (component == 3)
         return GfVec3d::ZAxis();
+
     return GfVec3d(0.0);
 }
 
@@ -1596,6 +1642,7 @@ ImagingGLWidgetPrivate::transformWorldPerPixel(const GfVec3d& pivot)
 {
     if (!viewCamera())
         return 0.0;
+
     double worldPerPixel = viewCamera()->mapToFrustumHeight(std::max(1, widgetSize()[1]));
     const GfCamera camera = viewCamera()->camera();
     const double pivotDistance = (camera.GetTransform().ExtractTranslation() - pivot).GetLength();
@@ -1610,6 +1657,7 @@ ImagingGLWidgetPrivate::transformRotationPoint(int axis, double angle, QPointF& 
     const GfVec3d normal = transformAxisVector(axis);
     if (normal.GetLengthSq() < 1e-12)
         return false;
+
     GfVec3d basisA;
     GfVec3d basisB;
     if (normal == GfVec3d::XAxis()) {
@@ -1624,10 +1672,12 @@ ImagingGLWidgetPrivate::transformRotationPoint(int axis, double angle, QPointF& 
         basisA = GfVec3d::XAxis();
         basisB = GfVec3d::YAxis();
     }
+
     constexpr double radiusPixels = 62.0;
     const double radius = transformWorldPerPixel() * radiusPixels;
     if (radius <= 0.0)
         return false;
+
     const GfVec3d world = d.transformPivot + basisA * (std::cos(angle) * radius) + basisB * (std::sin(angle) * radius);
     return const_cast<ImagingGLWidgetPrivate*>(this)->projectWorldToScreen(world, screen);
 }
@@ -1640,10 +1690,11 @@ ImagingGLWidgetPrivate::transformRotationAngle(int axis, const QPointF& pos, dou
     double bestAngle = 0.0;
     bool found = false;
     for (int i = 0; i < segments; ++i) {
-        const double a = (2.0 * 3.14159265358979323846 * static_cast<double>(i)) / static_cast<double>(segments);
+        const double a = (2.0 * Pi * static_cast<double>(i)) / static_cast<double>(segments);
         QPointF p;
         if (!transformRotationPoint(axis, a, p))
             continue;
+
         const double d = std::hypot(pos.x() - p.x(), pos.y() - p.y());
         if (d < bestDistance) {
             bestDistance = d;
@@ -1653,9 +1704,11 @@ ImagingGLWidgetPrivate::transformRotationAngle(int axis, const QPointF& pos, dou
     }
     if (!found)
         return false;
+
     angle = bestAngle;
     if (distance)
         *distance = bestDistance;
+
     return true;
 }
 
@@ -1671,17 +1724,19 @@ ImagingGLWidgetPrivate::hitTestTransform(const QPointF& pos)
     constexpr double centerHitRadius = 8.0;
     if (std::hypot(pos.x() - center.x(), pos.y() - center.y()) <= centerHitRadius)
         return 10;
+
     // handles are encoded as:
     // 1..3 = translate X/Y/Z
     // 4..6 = rotate X/Y/Z
     // 7..9 = scale X/Y/Z
-    // 10   = free translate in camera plane
+    // 10   = free rotation
     constexpr double scaleDistance = 52.0;
     constexpr double scaleHitRadius = 8.0;
     for (int axis = 1; axis <= 3; ++axis) {
         const QPointF dir = transformAxisDirection(axis);
         if (dir.isNull())
             continue;
+
         const QPointF handle = center + dir * scaleDistance;
         if (std::hypot(pos.x() - handle.x(), pos.y() - handle.y()) <= scaleHitRadius)
             return axis + 6;
@@ -1699,6 +1754,7 @@ ImagingGLWidgetPrivate::hitTestTransform(const QPointF& pos)
     }
     if (rotateHandle != 0)
         return rotateHandle;
+
     constexpr double axisLength = 82.0;
     constexpr double hitWidth = 8.0;
     int bestAxis = 0;
@@ -1707,11 +1763,13 @@ ImagingGLWidgetPrivate::hitTestTransform(const QPointF& pos)
         const QPointF dir = transformAxisDirection(axis);
         if (dir.isNull())
             continue;
+
         const QPointF end = center + dir * axisLength;
         const QPointF segment = end - center;
         const double length2 = QPointF::dotProduct(segment, segment);
         if (length2 <= 0.0)
             continue;
+
         const double t = std::clamp(QPointF::dotProduct(pos - center, segment) / length2, 0.0, 1.0);
         const QPointF nearest = center + segment * t;
         const double distance = std::hypot(pos.x() - nearest.x(), pos.y() - nearest.y());
@@ -1728,9 +1786,11 @@ ImagingGLWidgetPrivate::beginTransformDrag(const QPointF& pos)
 {
     if (!d.transformEnabled)
         return false;
+
     const int handle = hitTestTransform(pos);
     if (handle == 0 || !d.context || !d.stage)
         return false;
+
     QList<SdfPath> paths;
     QList<GfMatrix4d> before;
     QList<TransformRootState> rootBefore;
@@ -1781,6 +1841,7 @@ ImagingGLWidgetPrivate::beginTransformDrag(const QPointF& pos)
     }
     if (before.isEmpty() || count == 0)
         return false;
+
     d.transformPivot = pivot / static_cast<double>(count);
     d.transformStartPivot = d.transformPivot;
     d.transformPaths = paths;
@@ -1795,6 +1856,7 @@ ImagingGLWidgetPrivate::beginTransformDrag(const QPointF& pos)
         double angle = 0.0;
         if (!transformRotationAngle(handle - 3, pos, angle))
             return false;
+
         d.transformRotationStartAngle = angle;
     }
     d.transformDragging = true;
@@ -1807,6 +1869,7 @@ ImagingGLWidgetPrivate::updateTransformDrag(const QPointF& pos)
 {
     if (!d.transformDragging || d.transformActiveAxis == 0 || d.transformBefore.isEmpty())
         return;
+
     d.transformAfter = d.transformBefore;
 
     if (d.transformActiveAxis == 10) {
@@ -1814,38 +1877,51 @@ ImagingGLWidgetPrivate::updateTransformDrag(const QPointF& pos)
 
         const GfCamera camera = viewCamera()->camera();
         const GfMatrix4d cameraTransform = camera.GetTransform();
-
         const GfVec3d right = cameraTransform.TransformDir(GfVec3d::XAxis()).GetNormalized();
         const GfVec3d up = cameraTransform.TransformDir(GfVec3d::YAxis()).GetNormalized();
 
-        const double worldPerPixel = transformWorldPerPixel(d.transformStartPivot);
+        constexpr double degreesPerPixel = 0.35;
 
-        const GfVec3d delta = right * (mouseDelta.x() * worldPerPixel) + up * (-mouseDelta.y() * worldPerPixel);
+        const double horizontalAngle = mouseDelta.x() * degreesPerPixel;
+        const double verticalAngle = mouseDelta.y() * degreesPerPixel;
 
-        for (qsizetype i = 0; i < d.transformAfter.size(); ++i) {
-            GfMatrix4d matrix = d.transformBefore.at(i);
-            matrix.SetTranslateOnly(d.transformBefore.at(i).ExtractTranslation() + delta);
-            d.transformAfter[i] = matrix;
-        }
+        GfMatrix4d toOrigin(1.0);
+        GfMatrix4d horizontalRotation(1.0);
+        GfMatrix4d verticalRotation(1.0);
+        GfMatrix4d fromOrigin(1.0);
 
-        d.transformPivot = d.transformStartPivot + delta;
+        toOrigin.SetTranslate(-d.transformStartPivot);
+        horizontalRotation.SetRotate(GfRotation(up, horizontalAngle));
+        verticalRotation.SetRotate(GfRotation(right, verticalAngle));
+        fromOrigin.SetTranslate(d.transformStartPivot);
+
+        const GfMatrix4d delta = toOrigin * verticalRotation * horizontalRotation * fromOrigin;
+
+        for (qsizetype i = 0; i < d.transformAfter.size(); ++i)
+            d.transformAfter[i] = d.transformBefore.at(i) * delta;
+
+        d.transformPivot = d.transformStartPivot;
     }
     else if (d.transformActiveAxis >= 1 && d.transformActiveAxis <= 3) {
         const GfVec3d axis = transformAxisVector(d.transformActiveAxis);
         if (axis.GetLengthSq() < 1e-12)
             return;
+
         QPointF pivotScreen;
         QPointF axisScreen;
         if (!projectWorldToScreen(d.transformStartPivot, pivotScreen))
             return;
+
         const double probeDistance = std::max(1e-6, transformWorldPerPixel(d.transformStartPivot) * 100.0);
         if (!projectWorldToScreen(d.transformStartPivot + axis * probeDistance, axisScreen)) {
             return;
         }
+
         const QPointF projectedAxis = axisScreen - pivotScreen;
         const double projectedLength = std::hypot(projectedAxis.x(), projectedAxis.y());
         if (projectedLength < 1e-6)
             return;
+
         const QPointF screenAxis = projectedAxis / projectedLength;
         const double pixels = QPointF::dotProduct(pos - d.transformStart, screenAxis);
         const double worldPerScreenPixel = probeDistance / projectedLength;
@@ -1863,17 +1939,20 @@ ImagingGLWidgetPrivate::updateTransformDrag(const QPointF& pos)
         if (!transformRotationAngle(axisIndex, pos, currentAngle)) {
             return;
         }
+
         double deltaAngle = currentAngle - d.transformRotationStartAngle;
-        while (deltaAngle > 3.14159265358979323846)
-            deltaAngle -= 2.0 * 3.14159265358979323846;
-        while (deltaAngle < -3.14159265358979323846)
-            deltaAngle += 2.0 * 3.14159265358979323846;
+
+        while (deltaAngle > Pi)
+            deltaAngle -= 2.0 * Pi;
+        while (deltaAngle < -Pi)
+            deltaAngle += 2.0 * Pi;
+
         const GfVec3d axis = transformAxisVector(axisIndex);
         GfMatrix4d toOrigin(1.0);
         GfMatrix4d rotation(1.0);
         GfMatrix4d fromOrigin(1.0);
         toOrigin.SetTranslate(-d.transformStartPivot);
-        rotation.SetRotate(GfRotation(axis, deltaAngle * 180.0 / 3.14159265358979323846));
+        rotation.SetRotate(GfRotation(axis, deltaAngle * 180.0 / Pi));
         fromOrigin.SetTranslate(d.transformStartPivot);
         const GfMatrix4d delta = toOrigin * rotation * fromOrigin;
         for (qsizetype i = 0; i < d.transformAfter.size(); ++i) {
@@ -1886,8 +1965,10 @@ ImagingGLWidgetPrivate::updateTransformDrag(const QPointF& pos)
         const QPointF screenAxis = transformAxisDirection(axisIndex);
         if (screenAxis.isNull())
             return;
+
         const double pixels = QPointF::dotProduct(pos - d.transformStart, screenAxis);
         const double factor = std::clamp(std::exp(pixels * 0.01), 0.01, 100.0);
+
         GfVec3d scale(1.0);
         scale[axisIndex - 1] = factor;
         GfMatrix4d toOrigin(1.0);
@@ -1896,6 +1977,7 @@ ImagingGLWidgetPrivate::updateTransformDrag(const QPointF& pos)
         toOrigin.SetTranslate(-d.transformStartPivot);
         scaleMatrix.SetScale(scale);
         fromOrigin.SetTranslate(d.transformStartPivot);
+
         const GfMatrix4d delta = toOrigin * scaleMatrix * fromOrigin;
         for (qsizetype i = 0; i < d.transformAfter.size(); ++i) {
             d.transformAfter[i] = d.transformBefore.at(i) * delta;
@@ -1906,6 +1988,7 @@ ImagingGLWidgetPrivate::updateTransformDrag(const QPointF& pos)
         WRITE_LOCKER(locker, d.context->stageLock(), "stageLock");
         if (!d.stage)
             return;
+
         for (qsizetype i = 0; i < d.transformPaths.size() && i < d.transformAfter.size(); ++i) {
             QString error;
             stage::setWorldTransform(d.stage, d.transformPaths.at(i), d.transformAfter.at(i), error);
@@ -1919,10 +2002,12 @@ ImagingGLWidgetPrivate::endTransformDrag()
 {
     if (!d.transformDragging)
         return;
+
     const QList<SdfPath> paths = d.transformPaths;
     const QList<GfMatrix4d> before = d.transformBefore;
     const QList<GfMatrix4d> after = d.transformAfter;
     const QList<TransformRootState> rootBefore = d.transformRootBefore;
+
     d.transformDragging = false;
     d.transformActiveAxis = 0;
     d.transformHoverAxis = 0;
@@ -1942,6 +2027,7 @@ ImagingGLWidgetPrivate::endTransformDrag()
     }
     if (changed)
         d.context->run(new Command(setTransforms(paths, before, after, rootBefore)));
+
     d.glwidget->update();
 }
 
@@ -1967,6 +2053,7 @@ ImagingGLWidgetPrivate::drawTransformTransform(QPainter& painter)
 {
     if (!d.transformEnabled || !d.stage || d.selection.isEmpty())
         return;
+
     if (!d.transformDragging) {
         GfVec3d pivot(0.0);
         int count = 0;
@@ -1994,11 +2081,13 @@ ImagingGLWidgetPrivate::drawTransformTransform(QPainter& painter)
         }
         if (count == 0)
             return;
+
         d.transformPivot = pivot / static_cast<double>(count);
     }
     QPointF center;
     if (!projectWorldToScreen(d.transformPivot, center))
         return;
+
     constexpr double axisLength = 82.0;
     constexpr double scaleDistance = 52.0;
     constexpr double arrowLength = 13.0;
@@ -2008,6 +2097,7 @@ ImagingGLWidgetPrivate::drawTransformTransform(QPainter& painter)
                                style()->color(Style::ColorRole::AxisY), style()->color(Style::ColorRole::AxisZ) };
     painter.save();
     painter.setRenderHint(QPainter::Antialiasing, true);
+
     // rotation rings are drawn first so translation/scale handles stay crisp
     // and easy to identify in front of them.
     for (int axis = 1; axis <= 3; ++axis) {
@@ -2015,11 +2105,11 @@ ImagingGLWidgetPrivate::drawTransformTransform(QPainter& painter)
         const int handle = axis + 3;
         if (handle == d.transformHoverAxis || handle == d.transformActiveAxis)
             color = style()->color(Style::ColorRole::Selection);
+
         QPolygonF ring;
         ring.reserve(ringSegments + 1);
         for (int i = 0; i <= ringSegments; ++i) {
-            const double angle = (2.0 * 3.14159265358979323846 * static_cast<double>(i % ringSegments))
-                                 / static_cast<double>(ringSegments);
+            const double angle = (2.0 * Pi * static_cast<double>(i % ringSegments)) / static_cast<double>(ringSegments);
             QPointF p;
             if (transformRotationPoint(axis, angle, p))
                 ring << p;
@@ -2125,6 +2215,7 @@ ImagingGLWidgetPrivate::updateAxis()
     GfCamera camera = viewCamera()->camera();
     GfFrustum frustum = camera.GetFrustum();
     GfMatrix4d viewMatrix = frustum.ComputeViewMatrix();
+
     const GfVec3d xCam = viewMatrix.TransformDir(GfVec3d(1.0, 0.0, 0.0));
     const GfVec3d yCam = viewMatrix.TransformDir(GfVec3d(0.0, 1.0, 0.0));
     const GfVec3d zCam = viewMatrix.TransformDir(GfVec3d(0.0, 0.0, 1.0));
@@ -2137,6 +2228,7 @@ ImagingGLWidgetPrivate::updateAxis()
     auto toPoint = [&](const GfVec3d& dir) -> QPoint {
         return QPoint(qRound(center.x() + dir[0] * radius), qRound(center.y() - dir[1] * radius));
     };
+
     struct AxisLine {
         QString label;
         QColor color;
@@ -2149,13 +2241,16 @@ ImagingGLWidgetPrivate::updateAxis()
     const bool hasStage = static_cast<bool>(d.stage);
     const qreal opacity = hasStage ? 1.0 : 0.35;
     const qreal dpr = d.glwidget->devicePixelRatioF();
+
     d.axis = QImage(qRound(width * dpr), qRound(height * dpr), QImage::Format_ARGB32_Premultiplied);
     d.axis.setDevicePixelRatio(dpr);
     d.axis.fill(Qt::transparent);
+
     QPainter painter(&d.axis);
     painter.setOpacity(opacity);
     painter.setRenderHint(QPainter::Antialiasing, true);
     painter.setRenderHint(QPainter::TextAntialiasing, true);
+
     QFont font = app()->font();
     font.setPixelSize(style()->fontSize(Style::UIScale::Small));
     font.setBold(true);
@@ -2200,15 +2295,18 @@ ImagingGLWidgetPrivate::updateSceneStats()
         s.prims++;
         if (prim.IsA<UsdGeomXform>())
             s.xforms++;
+
         if (prim.IsA<UsdGeomMesh>()) {
             s.meshes++;
             UsdGeomMesh mesh(prim);
             VtArray<GfVec3f> points;
             mesh.GetPointsAttr().Get(&points);
             s.vertices += points.size();
+
             VtArray<int> faceCounts;
             mesh.GetFaceVertexCountsAttr().Get(&faceCounts);
             s.faces += faceCounts.size();
+
             VtArray<GfVec3f> meshNormals;
             UsdGeomPrimvarsAPI pvAPI(prim);
             UsdGeomPrimvar normalsPv = pvAPI.GetPrimvar(TfToken("normals"));
@@ -2283,14 +2381,18 @@ ImagingGLWidgetPrivate::updateSceneStats()
                         { "Vertices", fmtPair(total.vertices, selected.vertices) },
                         { "Normals", fmtPair(total.normals, selected.normals) },
                         { "Faces", fmtPair(total.faces, selected.faces) } };
+
     if (!d.visibleCapture.isEmpty()) {
         rows.append({ "Captures", fmt(d.visibleCapture.size()) });
     }
+
     double dpr = d.glwidget->devicePixelRatioF();
+
     QFont font = d.glwidget->font();
     font.setPixelSize(style()->fontSize(Style::UIScale::Small));
     font.setLetterSpacing(QFont::AbsoluteSpacing, 0.5);
     QFontMetrics fm(font);
+
     int rowHeight = fm.lineSpacing() + 2;
     int marginLeft = 18;
     int marginTop = 16;
@@ -2306,6 +2408,7 @@ ImagingGLWidgetPrivate::updateSceneStats()
     d.sceneStats = QImage(width * dpr, height * dpr, QImage::Format_ARGB32_Premultiplied);
     d.sceneStats.setDevicePixelRatio(dpr);
     d.sceneStats.fill(Qt::transparent);
+
     QPainter p(&d.sceneStats);
     p.setRenderHint(QPainter::TextAntialiasing);
     p.setFont(font);
