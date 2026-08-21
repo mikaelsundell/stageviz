@@ -240,6 +240,7 @@ StylePrivate::updateTheme()
     d.icons[roleName(Style::IconRole::Left)] = ":/icons/resources/Left.png";
     d.icons[roleName(Style::IconRole::Material)] = ":/icons/resources/Material.png";
     d.icons[roleName(Style::IconRole::Open)] = ":/icons/resources/Open.png";
+    d.icons[roleName(Style::IconRole::Override)] = ":/icons/resources/Override.png";
     d.icons[roleName(Style::IconRole::PartiallyChecked)] = ":/icons/resources/PartiallyChecked.png";
     d.icons[roleName(Style::IconRole::Payload)] = ":/icons/resources/Payload.png";
     d.icons[roleName(Style::IconRole::Prim)] = ":/icons/resources/Prim.png";

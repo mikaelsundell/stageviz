@@ -13,6 +13,7 @@
 #include "qtutils.h"
 #include "selectionlist.h"
 #include "signalguard.h"
+#include "style.h"
 #include "tracelocks.h"
 #include "viewcontext.h"
 #include <QFileInfo>
@@ -22,7 +23,6 @@
 #include <QScrollBar>
 #include <QSet>
 #include <QSignalBlocker>
-#include <QStyle>
 #include <algorithm>
 #include <climits>
 #include <cstdint>
@@ -1389,7 +1389,7 @@ PropertyTreePrivate::addAttribute(PropertyItem* parent, const UsdAttribute& attr
 
     if (rootOverride) {
         toolTips.append(QStringLiteral("Root-layer override"));
-        item->setIcon(PropertyItem::Name, d.tree->style()->standardIcon(QStyle::SP_ArrowUp));
+        item->setIcon(PropertyItem::Name, QIcon(style()->icon(Style::Override, Style::UIScale::Small)));
         QFont nameFont = item->font(PropertyItem::Name);
         nameFont.setBold(true);
         item->setFont(PropertyItem::Name, nameFont);

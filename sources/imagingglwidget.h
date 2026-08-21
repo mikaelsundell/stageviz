@@ -234,6 +234,7 @@ protected:
     /** @name Mouse Interaction */
     ///@{
 
+    void contextMenuEvent(QContextMenuEvent* event) override;
     void mouseDoubleClickEvent(QMouseEvent* event) override;
     void mousePressEvent(QMouseEvent* event) override;
     void mouseMoveEvent(QMouseEvent* event) override;

@@ -5,6 +5,7 @@
 #include "imagingglwidget.h"
 #include "application.h"
 #include "command.h"
+#include "contextmenu.h"
 #include "materialoverridesceneindex.h"
 #include "notice.h"
 #include "os.h"
@@ -19,6 +20,7 @@
 #include <QApplication>
 #include <QColor>
 #include <QColorSpace>
+#include <QContextMenuEvent>
 #include <QElapsedTimer>
 #include <QFontDatabase>
 #include <QLocale>
@@ -131,6 +133,7 @@ public:
     void paintGL();
     void paintEvent(QPaintEvent* event);
     void focusEvent(QMouseEvent* event);
+    void contextMenuEvent(QContextMenuEvent* event);
     void mouseDoubleClickEvent(QMouseEvent* event);
     void mousePressEvent(QMouseEvent* event);
     void mouseMoveEvent(QMouseEvent* event);
@@ -184,6 +187,7 @@ public:
     void updateSceneStats();
     void updatePerformanceStats();
     bool isPathMaskedIn(const SdfPath& path) const;
+    SdfPath pickNearestPath(const QPoint& pos);
     bool pickMaskedIntersection(const UsdImagingGLEngine::PickParams& pickParams, const GfFrustum& pickFrustum,
                                 UsdImagingGLEngine::IntersectionResultVector* results);
     struct Data {
@@ -198,6 +202,7 @@ public:
         bool sweep;
         bool transformEnabled;
         bool transformDragging;
+        bool suppressContextMenu;
         int transformHoverAxis;
         int transformActiveAxis;
         QPointF transformStart;
@@ -259,6 +264,7 @@ ImagingGLWidgetPrivate::init()
     d.sweep = false;
     d.transformEnabled = false;
     d.transformDragging = false;
+    d.suppressContextMenu = false;
     d.transformHoverAxis = 0;
     d.transformActiveAxis = 0;
     d.transformRotationStartAngle = 0.0;
@@ -390,6 +396,7 @@ ImagingGLWidgetPrivate::close()
     d.drag = false;
     d.sweep = false;
     d.transformDragging = false;
+    d.suppressContextMenu = false;
     d.transformHoverAxis = 0;
     d.transformActiveAxis = 0;
     d.transformRotationStartAngle = 0.0;
@@ -675,6 +682,103 @@ ImagingGLWidgetPrivate::focusEvent(QMouseEvent* event)
     }
 }
 
+SdfPath
+ImagingGLWidgetPrivate::pickNearestPath(const QPoint& pos)
+{
+    d.glwidget->makeCurrent();
+    if (!d.stage || !d.glEngine)
+        return {};
+
+#ifdef WIN32
+    glDepthMask(GL_TRUE);
+#endif
+
+    const QPoint devicePos = deviceRatio(pos);
+    const GfVec4d viewport = widgetViewport();
+
+    GfVec2d center((devicePos.x() - viewport[0]) / viewport[2], (devicePos.y() - viewport[1]) / viewport[3]);
+    center[0] = center[0] * 2.0 - 1.0;
+    center[1] = -1.0 * (center[1] * 2.0 - 1.0);
+
+    const GfVec2d size(1.0 / viewport[2], 1.0 / viewport[3]);
+    const GfCamera camera = viewCamera()->camera();
+    const GfFrustum pickFrustum = camera.GetFrustum().ComputeNarrowedFrustum(center, size);
+    const GfMatrix4d viewMatrix = pickFrustum.ComputeViewMatrix();
+    const GfMatrix4d projectionMatrix = pickFrustum.ComputeProjectionMatrix();
+    const GfVec3d cameraPosition = camera.GetTransform().ExtractTranslation();
+
+    SdfPath nearestPath;
+    double nearestDistance = std::numeric_limits<double>::max();
+
+    READ_LOCKER(locker, d.context->stageLock(), "stageLock");
+    if (!d.stage)
+        return {};
+
+    auto testRoot = [&](const UsdPrim& root) {
+        if (!root)
+            return;
+
+        GfVec3d hitPoint;
+        GfVec3d hitNormal;
+        SdfPath hitPrimPath;
+        SdfPath hitInstancerPath;
+
+        const bool hit = d.glEngine->TestIntersection(viewMatrix, projectionMatrix, root, d.params, &hitPoint,
+                                                      &hitNormal, &hitPrimPath, &hitInstancerPath);
+        if (!hit || hitPrimPath.IsEmpty() || !isPathMaskedIn(hitPrimPath))
+            return;
+
+        const double distance = (hitPoint - cameraPosition).GetLength();
+        if (distance < nearestDistance) {
+            nearestDistance = distance;
+            nearestPath = hitPrimPath;
+        }
+    };
+
+    if (d.mask.isEmpty()) {
+        testRoot(d.stage->GetPseudoRoot());
+    }
+    else {
+        for (const SdfPath& maskPath : d.mask)
+            testRoot(d.stage->GetPrimAtPath(maskPath));
+    }
+
+    return nearestPath;
+}
+
+void
+ImagingGLWidgetPrivate::contextMenuEvent(QContextMenuEvent* event)
+{
+    if (!event || !d.stage || !d.context)
+        return;
+
+    if (d.suppressContextMenu) {
+        d.suppressContextMenu = false;
+        event->accept();
+        return;
+    }
+
+    const SdfPath clickedPath = pickNearestPath(event->pos());
+    QList<SdfPath> paths = d.selection;
+
+    if (!clickedPath.IsEmpty() && !paths.contains(clickedPath)) {
+        paths = { clickedPath };
+        d.selection = paths;
+        d.context->run(new Command(selectPaths(paths)));
+    }
+
+    SdfPath createParentPath = SdfPath::AbsoluteRootPath();
+    if (!clickedPath.IsEmpty()) {
+        if (paths.size() == 1)
+            createParentPath = clickedPath;
+        else if (paths.size() > 1)
+            createParentPath = paths.first().GetParentPath();
+    }
+
+    ContextMenu::exec(d.glwidget, d.context, d.stage, event->globalPos(), paths, d.mask, createParentPath);
+    event->accept();
+}
+
 void
 ImagingGLWidgetPrivate::mouseDoubleClickEvent(QMouseEvent* event)
 {
@@ -755,6 +859,7 @@ ImagingGLWidgetPrivate::mouseReleaseEvent(QMouseEvent* event)
         return;
 
     if (d.drag) {
+        d.suppressContextMenu = event->button() == Qt::RightButton;
         d.drag = false;
         viewCamera()->setCameraMode(ViewCamera::None);
         d.glwidget->update();
@@ -797,22 +902,18 @@ ImagingGLWidgetPrivate::sweepEvent(const QRect& rect, QMouseEvent* event)
         const int halfW = minSize / 2;
         const int halfH = minSize / 2;
 
-        r = QRect(QPoint(cx - halfW, cy - halfH),
-                  QPoint(cx + halfW, cy + halfH));
+        r = QRect(QPoint(cx - halfW, cy - halfH), QPoint(cx + halfW, cy + halfH));
     }
 
     const GfVec4d viewport = widgetViewport();
 
-    GfVec2d center(
-        ((r.left() + r.right()) * 0.5 - viewport[0]) / viewport[2],
-        ((r.top() + r.bottom()) * 0.5 - viewport[1]) / viewport[3]);
+    GfVec2d center(((r.left() + r.right()) * 0.5 - viewport[0]) / viewport[2],
+                   ((r.top() + r.bottom()) * 0.5 - viewport[1]) / viewport[3]);
 
     center[0] = center[0] * 2.0 - 1.0;
     center[1] = -1.0 * (center[1] * 2.0 - 1.0);
 
-    const GfVec2d size(
-        double(r.width()) / viewport[2],
-        double(r.height()) / viewport[3]);
+    const GfVec2d size(double(r.width()) / viewport[2], double(r.height()) / viewport[3]);
 
     UsdImagingGLEngine::PickParams pickParams;
     pickParams.resolveMode = TfToken("resolveDeep");
@@ -871,15 +972,9 @@ ImagingGLWidgetPrivate::sweepEvent(const QRect& rect, QMouseEvent* event)
                     SdfPath hitPrimPath;
                     SdfPath hitInstancerPath;
 
-                    const bool candidateHit = d.glEngine->TestIntersection(
-                        viewMatrix,
-                        projectionMatrix,
-                        candidate,
-                        d.params,
-                        &hitPoint,
-                        &hitNormal,
-                        &hitPrimPath,
-                        &hitInstancerPath);
+                    const bool candidateHit = d.glEngine->TestIntersection(viewMatrix, projectionMatrix, candidate,
+                                                                           d.params, &hitPoint, &hitNormal,
+                                                                           &hitPrimPath, &hitInstancerPath);
 
                     if (candidateHit && !hitPrimPath.IsEmpty()) {
                         depthHit.hitPoint = hitPoint;
@@ -891,18 +986,15 @@ ImagingGLWidgetPrivate::sweepEvent(const QRect& rect, QMouseEvent* event)
                 }
             }
 
-            std::stable_sort(
-                depthHits.begin(),
-                depthHits.end(),
-                [](const DepthHit& a, const DepthHit& b) {
-                    if (a.valid != b.valid)
-                        return a.valid;
+            std::stable_sort(depthHits.begin(), depthHits.end(), [](const DepthHit& a, const DepthHit& b) {
+                if (a.valid != b.valid)
+                    return a.valid;
 
-                    if (!a.valid)
-                        return false;
+                if (!a.valid)
+                    return false;
 
-                    return a.distance < b.distance;
-                });
+                return a.distance < b.distance;
+            });
 
             QList<SdfPath> depthPaths;
 
@@ -914,9 +1006,8 @@ ImagingGLWidgetPrivate::sweepEvent(const QRect& rect, QMouseEvent* event)
 
                 const QPoint clickPosition = rect.normalized().center();
 
-                const bool samePosition =
-                    std::abs(clickPosition.x() - d.lastPickPosition.x()) <= pickCycleTolerance
-                    && std::abs(clickPosition.y() - d.lastPickPosition.y()) <= pickCycleTolerance;
+                const bool samePosition = std::abs(clickPosition.x() - d.lastPickPosition.x()) <= pickCycleTolerance
+                                          && std::abs(clickPosition.y() - d.lastPickPosition.y()) <= pickCycleTolerance;
 
                 const bool sameStack = depthPaths == d.lastPickPaths;
 
@@ -2570,6 +2661,12 @@ ImagingGLWidget::paintEvent(QPaintEvent* event)
     QOpenGLWidget::paintEvent(event);
     p->paintEvent(event);
 }
+void
+ImagingGLWidget::contextMenuEvent(QContextMenuEvent* event)
+{
+    p->contextMenuEvent(event);
+}
+
 void
 ImagingGLWidget::mouseDoubleClickEvent(QMouseEvent* event)
 {

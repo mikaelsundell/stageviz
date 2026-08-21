@@ -12,6 +12,7 @@
 #include <pxr/base/vt/array.h>
 #include <pxr/base/vt/value.h>
 #include <pxr/usd/sdf/copyUtils.h>
+#include <pxr/usd/sdf/primSpec.h>
 #include <pxr/usd/sdf/variantSetSpec.h>
 #include <pxr/usd/sdf/variantSpec.h>
 #include <pxr/usd/usd/editContext.h>
@@ -299,8 +300,6 @@ namespace path {
         }
         return result;
     }
-
-
 
     void appendUnique(QList<SdfPath>& paths, const SdfPath& path)
     {
@@ -754,100 +753,84 @@ namespace stage {
         }
 
         UsdGeomXformCache cache(UsdTimeCode::Default());
-
-        // default to the prim origin. This remains correct for arbitrary
-        // transform stacks where Stageviz cannot unambiguously infer an
-        // artist-authored pivot.
         const GfMatrix4d world = cache.GetLocalToWorldTransform(prim);
-        pivot = world.ExtractTranslation();
 
-        VtTokenArray order;
-        if (!xformable.GetXformOpOrderAttr().Get(&order, UsdTimeCode::Default()))
-            return true;
+        // Fall back to the transformed prim origin for arbitrary xform stacks.
+        pivot = world.Transform(GfVec3d(0.0));
 
         const TfToken pivotToken("xformOp:translate:pivot");
         const TfToken inversePivotToken("!invert!xformOp:translate:pivot");
-        const TfToken translateToken("xformOp:translate");
-
-        int pivotIndex = -1;
-        int inversePivotIndex = -1;
-
-        for (int i = 0; i < static_cast<int>(order.size()); ++i) {
-            if (order[i] == pivotToken)
-                pivotIndex = i;
-            else if (order[i] == inversePivotToken)
-                inversePivotIndex = i;
-        }
-
-        // Only treat this as an artist pivot when the standard pivot op is
-        // explicitly paired with its inverse later in xformOpOrder.
-        if (pivotIndex < 0 || inversePivotIndex <= pivotIndex)
-            return true;
-
-        GfVec3d localTranslation(0.0);
-
-        // Be conservative about the transform stack before the pivot. The
-        // common DCC/USD form permits a normal translate before the pivot.
-        // If rotation, scale, matrix, or another non-translation op appears
-        // before it, fall back to the evaluated prim origin rather than
-        // guessing at pivot semantics.
-        for (int i = 0; i < pivotIndex; ++i) {
-            const TfToken& token = order[i];
-
-            if (token == TfToken("!resetXformStack!"))
-                continue;
-
-            if (token != translateToken)
-                return true;
-
-            const UsdAttribute attr = prim.GetAttribute(token);
-            if (!attr)
-                return true;
-
-            VtValue value;
-            if (!attr.Get(&value, UsdTimeCode::Default()))
-                return true;
-
-            if (value.IsHolding<GfVec3d>()) {
-                localTranslation += value.UncheckedGet<GfVec3d>();
-            }
-            else if (value.IsHolding<GfVec3f>()) {
-                const GfVec3f v = value.UncheckedGet<GfVec3f>();
-                localTranslation += GfVec3d(v[0], v[1], v[2]);
-            }
-            else {
-                return true;
-            }
-        }
-
-        const UsdAttribute pivotAttr = prim.GetAttribute(pivotToken);
-        if (!pivotAttr)
-            return true;
-
-        VtValue pivotValue;
-        if (!pivotAttr.Get(&pivotValue, UsdTimeCode::Default()))
-            return true;
+        const TfToken orderToken("xformOpOrder");
 
         GfVec3d localPivot(0.0);
+        bool foundPivot = false;
 
-        if (pivotValue.IsHolding<GfVec3d>()) {
-            localPivot = pivotValue.UncheckedGet<GfVec3d>();
+        // author a stronger xformOp:transform while the original
+        // artist pivot remains in a weaker payload, reference, or sublayer.
+        // walk the prim stack and only accept the standard paired USD pivot.
+        for (const SdfPrimSpecHandle& primSpec : prim.GetPrimStack()) {
+            if (!primSpec)
+                continue;
+
+            const SdfLayerHandle layer = primSpec->GetLayer();
+            if (!layer)
+                continue;
+
+            const SdfPath orderPath = primSpec->GetPath().AppendProperty(orderToken);
+            if (!layer->HasField(orderPath, SdfFieldKeys->Default))
+                continue;
+
+            const VtValue orderValue = layer->GetField(orderPath, SdfFieldKeys->Default);
+            if (!orderValue.IsHolding<VtTokenArray>())
+                continue;
+
+            const VtTokenArray& order = orderValue.UncheckedGet<VtTokenArray>();
+
+            int pivotIndex = -1;
+            int inversePivotIndex = -1;
+
+            for (int i = 0; i < static_cast<int>(order.size()); ++i) {
+                if (order[i] == pivotToken)
+                    pivotIndex = i;
+                else if (order[i] == inversePivotToken)
+                    inversePivotIndex = i;
+            }
+
+            if (pivotIndex < 0 || inversePivotIndex <= pivotIndex)
+                continue;
+
+            const SdfPath pivotPath = primSpec->GetPath().AppendProperty(pivotToken);
+            VtValue pivotValue;
+
+            if (layer->HasField(pivotPath, SdfFieldKeys->Default)) {
+                pivotValue = layer->GetField(pivotPath, SdfFieldKeys->Default);
+            }
+            else {
+                const UsdAttribute pivotAttr = prim.GetAttribute(pivotToken);
+                if (pivotAttr)
+                    pivotAttr.Get(&pivotValue, UsdTimeCode::Default());
+            }
+
+            if (pivotValue.IsHolding<GfVec3d>()) {
+                localPivot = pivotValue.UncheckedGet<GfVec3d>();
+                foundPivot = true;
+            }
+            else if (pivotValue.IsHolding<GfVec3f>()) {
+                const GfVec3f value = pivotValue.UncheckedGet<GfVec3f>();
+                localPivot = GfVec3d(value[0], value[1], value[2]);
+                foundPivot = true;
+            }
+
+            if (foundPivot)
+                break;
         }
-        else if (pivotValue.IsHolding<GfVec3f>()) {
-            const GfVec3f v = pivotValue.UncheckedGet<GfVec3f>();
-            localPivot = GfVec3d(v[0], v[1], v[2]);
-        }
-        else {
+
+        if (!foundPivot)
             return true;
-        }
 
-        GfMatrix4d parentWorld(1.0);
-        const UsdPrim parent = prim.GetParent();
-
-        if (parent && !parent.IsPseudoRoot())
-            parentWorld = cache.GetLocalToWorldTransform(parent);
-
-        pivot = parentWorld.Transform(localTranslation + localPivot);
+        // map the original artist pivot through the current composed transform
+        // so it remains attached after Stageviz authors a matrix override.
+        pivot = world.Transform(localPivot);
         return true;
     }
 

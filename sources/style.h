@@ -71,6 +71,7 @@ public:
         Left,
         Material,
         Open,
+        Override,
         PartiallyChecked,
         Payload,
         Prim,

@@ -182,6 +182,29 @@ namespace {
 
         return true;
     }
+    bool hasUnderlyingTransformOpinion(UsdStageRefPtr stage, const UsdPrim& prim, const SdfLayerHandle& rootLayer)
+    {
+        if (!stage || !prim || !rootLayer)
+            return false;
+
+        const TfToken orderToken("xformOpOrder");
+
+        for (const SdfPrimSpecHandle& primSpec : prim.GetPrimStack()) {
+            if (!primSpec)
+                continue;
+
+            const SdfLayerHandle layer = primSpec->GetLayer();
+            if (!layer || layer == rootLayer)
+                continue;
+
+            const SdfPath orderPath = primSpec->GetPath().AppendProperty(orderToken);
+            if (layer->HasField(orderPath, SdfFieldKeys->Default))
+                return true;
+        }
+
+        return false;
+    }
+
 
 }  // namespace
 
@@ -2421,6 +2444,153 @@ setAttributeValue(const SdfPath& attributePath, const VtValue& value)
                                             success ? "Attribute value undone"
                                                     : appendError("Undo attribute value failed", error),
                                             { primPath }, success ? Status::Success : Status::Error);
+                });
+            });
+        });
+}
+
+Command
+resetTransforms(const QList<SdfPath>& paths)
+{
+    struct ResetTransformState {
+        struct Item {
+            SdfPath path;
+            RootPropertyState orderState;
+            RootPropertyState matrixState;
+        };
+        QList<Item> items;
+    };
+
+    auto state = std::make_shared<ResetTransformState>();
+
+    return Command(
+        [paths, state](Session* session) {
+            if (!session || paths.isEmpty())
+                return;
+
+            command::beginDeferred(session, "Reset xform", static_cast<int>(paths.size()));
+
+            command::runWorker([session, paths, state]() {
+                QList<SdfPath> affected;
+                QStringList errors;
+
+                {
+                    WRITE_LOCKER(locker, session->stageLock(), "stageLock");
+                    const UsdStageRefPtr stage = session->stageUnsafe();
+
+                    if (!stage) {
+                        errors.append("stage missing");
+                    }
+                    else {
+                        QString rootError;
+                        const SdfLayerHandle rootLayer = rootlayer::opened(stage, rootError);
+
+                        if (!rootLayer) {
+                            errors.append(rootError);
+                        }
+                        else {
+                            state->items.clear();
+
+                            for (const SdfPath& inputPath : path::uniquePaths(paths)) {
+                                const SdfPath primPath =
+                                    inputPath.IsPropertyPath() ? inputPath.GetPrimPath() : inputPath;
+                                const UsdPrim prim = stage->GetPrimAtPath(primPath);
+                                const UsdGeomXformable xformable(prim);
+
+                                if (!prim || !prim.IsValid() || prim.IsInstanceProxy() || !xformable) {
+                                    errors.append(QString("prim is not transformable: %1").arg(pathText(primPath)));
+                                    continue;
+                                }
+
+                                const SdfPath orderPath = primPath.AppendProperty(TfToken("xformOpOrder"));
+                                const SdfPath matrixPath = primPath.AppendProperty(TfToken("xformOp:transform"));
+
+                                ResetTransformState::Item item;
+                                item.path = primPath;
+                                item.orderState = captureRootPropertyState(rootLayer, orderPath);
+                                item.matrixState = captureRootPropertyState(rootLayer, matrixPath);
+                                state->items.append(item);
+
+                                bool success = false;
+
+                                if (hasUnderlyingTransformOpinion(stage, prim, rootLayer)) {
+                                    success = removePropertySpec(rootLayer, orderPath)
+                                              && removePropertySpec(rootLayer, matrixPath);
+                                }
+                                else {
+                                    UsdEditContext context(stage, UsdEditTarget(rootLayer));
+                                    UsdGeomXformOp op = xformable.MakeMatrixXform();
+                                    success = op && op.Set(GfMatrix4d(1.0), UsdTimeCode::Default());
+                                }
+
+                                if (success)
+                                    affected.append(primPath);
+                                else
+                                    errors.append(QString("failed to reset xform: %1").arg(pathText(primPath)));
+                            }
+                        }
+                    }
+                }
+
+                const bool success = errors.isEmpty();
+                command::queueToSession(session, [session, affected, errors, success]() {
+                    using Status = Session::Notify::Status;
+                    const QString message = success
+                                                ? QStringLiteral("Xform reset")
+                                                : appendError("Reset xform finished with errors",
+                                                              summarizeErrors(errors));
+                    command::finishDeferred(session, message, affected,
+                                            success ? Status::Success : Status::Error);
+                });
+            });
+        },
+        [state](Session* session) {
+            if (!session || state->items.isEmpty())
+                return;
+
+            command::beginDeferred(session, "Undo reset xform", static_cast<int>(state->items.size()));
+
+            command::runWorker([session, state]() {
+                QList<SdfPath> restored;
+                QStringList errors;
+
+                {
+                    WRITE_LOCKER(locker, session->stageLock(), "stageLock");
+                    const UsdStageRefPtr stage = session->stageUnsafe();
+
+                    if (!stage) {
+                        errors.append("stage missing");
+                    }
+                    else {
+                        QString rootError;
+                        const SdfLayerHandle rootLayer = rootlayer::opened(stage, rootError);
+
+                        if (!rootLayer) {
+                            errors.append(rootError);
+                        }
+                        else {
+                            for (const ResetTransformState::Item& item : state->items) {
+                                const bool success = restoreRootPropertyState(rootLayer, item.orderState)
+                                                     && restoreRootPropertyState(rootLayer, item.matrixState);
+
+                                if (success)
+                                    restored.append(item.path);
+                                else
+                                    errors.append(QString("failed to restore xform: %1").arg(pathText(item.path)));
+                            }
+                        }
+                    }
+                }
+
+                const bool success = errors.isEmpty();
+                command::queueToSession(session, [session, restored, errors, success]() {
+                    using Status = Session::Notify::Status;
+                    const QString message = success
+                                                ? QStringLiteral("Reset xform undone")
+                                                : appendError("Undo reset xform finished with errors",
+                                                              summarizeErrors(errors));
+                    command::finishDeferred(session, message, restored,
+                                            success ? Status::Success : Status::Error);
                 });
             });
         });
