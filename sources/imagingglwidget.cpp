@@ -45,6 +45,7 @@
 #include <pxr/imaging/hd/sceneIndexPluginRegistry.h>
 #include <pxr/imaging/hgi/hgi.h>
 #include <pxr/imaging/hgi/tokens.h>
+#include <pxr/usd/sdf/layer.h>
 #include <pxr/usd/usd/attribute.h>
 #include <pxr/usd/usd/primRange.h>
 #include <pxr/usd/usd/stage.h>
@@ -206,6 +207,7 @@ public:
         QList<SdfPath> transformPaths;
         QList<GfMatrix4d> transformBefore;
         QList<GfMatrix4d> transformAfter;
+        QList<TransformRootState> transformRootBefore;
         QPoint start;
         QPoint end;
         QPoint mousepos;
@@ -396,6 +398,7 @@ ImagingGLWidgetPrivate::close()
     d.transformPaths.clear();
     d.transformBefore.clear();
     d.transformAfter.clear();
+    d.transformRootBefore.clear();
     d.lastPickPosition = QPoint();
     d.lastPickPaths.clear();
     d.lastPickIndex = -1;
@@ -793,17 +796,23 @@ ImagingGLWidgetPrivate::sweepEvent(const QRect& rect, QMouseEvent* event)
         const int cy = r.center().y();
         const int halfW = minSize / 2;
         const int halfH = minSize / 2;
-        r = QRect(QPoint(cx - halfW, cy - halfH), QPoint(cx + halfW, cy + halfH));
+
+        r = QRect(QPoint(cx - halfW, cy - halfH),
+                  QPoint(cx + halfW, cy + halfH));
     }
 
     const GfVec4d viewport = widgetViewport();
-    GfVec2d center(((r.left() + r.right()) * 0.5 - viewport[0]) / viewport[2],
-                   ((r.top() + r.bottom()) * 0.5 - viewport[1]) / viewport[3]);
+
+    GfVec2d center(
+        ((r.left() + r.right()) * 0.5 - viewport[0]) / viewport[2],
+        ((r.top() + r.bottom()) * 0.5 - viewport[1]) / viewport[3]);
 
     center[0] = center[0] * 2.0 - 1.0;
     center[1] = -1.0 * (center[1] * 2.0 - 1.0);
 
-    const GfVec2d size(double(r.width()) / viewport[2], double(r.height()) / viewport[3]);
+    const GfVec2d size(
+        double(r.width()) / viewport[2],
+        double(r.height()) / viewport[3]);
 
     UsdImagingGLEngine::PickParams pickParams;
     pickParams.resolveMode = TfToken("resolveDeep");
@@ -819,31 +828,97 @@ ImagingGLWidgetPrivate::sweepEvent(const QRect& rect, QMouseEvent* event)
 
     if (hit) {
         if (isClick) {
-            const GfVec3d cameraPosition = camera.GetTransform().ExtractTranslation();
-
-            std::sort(results.begin(), results.end(), [&](const auto& a, const auto& b) {
-                const double distanceA = (a.hitPoint - cameraPosition).GetLengthSq();
-                const double distanceB = (b.hitPoint - cameraPosition).GetLengthSq();
-                return distanceA < distanceB;
-            });
-
-            QList<SdfPath> depthPaths;
+            QList<SdfPath> candidatePaths;
             for (const auto& result : results) {
                 if (result.hitPrimPath.IsEmpty())
                     continue;
-                if (!depthPaths.contains(result.hitPrimPath))
-                    depthPaths.append(result.hitPrimPath);
+
+                if (!candidatePaths.contains(result.hitPrimPath))
+                    candidatePaths.append(result.hitPrimPath);
             }
+
+            struct DepthHit {
+                SdfPath path;
+                GfVec3d hitPoint;
+                double distance = std::numeric_limits<double>::max();
+                bool valid = false;
+            };
+
+            std::vector<DepthHit> depthHits;
+            depthHits.reserve(candidatePaths.size());
+
+            const GfMatrix4d viewMatrix = pickFrustum.ComputeViewMatrix();
+            const GfMatrix4d projectionMatrix = pickFrustum.ComputeProjectionMatrix();
+            const GfVec3d cameraPosition = camera.GetTransform().ExtractTranslation();
+
+            {
+                READ_LOCKER(locker, d.context->stageLock(), "stageLock");
+                if (!d.stage)
+                    return;
+
+                for (const SdfPath& candidatePath : candidatePaths) {
+                    DepthHit depthHit;
+                    depthHit.path = candidatePath;
+
+                    const UsdPrim candidate = d.stage->GetPrimAtPath(candidatePath);
+                    if (!candidate) {
+                        depthHits.push_back(depthHit);
+                        continue;
+                    }
+
+                    GfVec3d hitPoint;
+                    GfVec3d hitNormal;
+                    SdfPath hitPrimPath;
+                    SdfPath hitInstancerPath;
+
+                    const bool candidateHit = d.glEngine->TestIntersection(
+                        viewMatrix,
+                        projectionMatrix,
+                        candidate,
+                        d.params,
+                        &hitPoint,
+                        &hitNormal,
+                        &hitPrimPath,
+                        &hitInstancerPath);
+
+                    if (candidateHit && !hitPrimPath.IsEmpty()) {
+                        depthHit.hitPoint = hitPoint;
+                        depthHit.distance = (hitPoint - cameraPosition).GetLength();
+                        depthHit.valid = true;
+                    }
+
+                    depthHits.push_back(depthHit);
+                }
+            }
+
+            std::stable_sort(
+                depthHits.begin(),
+                depthHits.end(),
+                [](const DepthHit& a, const DepthHit& b) {
+                    if (a.valid != b.valid)
+                        return a.valid;
+
+                    if (!a.valid)
+                        return false;
+
+                    return a.distance < b.distance;
+                });
+
+            QList<SdfPath> depthPaths;
+
+            for (const DepthHit& depthHit : depthHits)
+                depthPaths.append(depthHit.path);
 
             if (!depthPaths.isEmpty()) {
                 constexpr int pickCycleTolerance = 6;
+
                 const QPoint clickPosition = rect.normalized().center();
 
                 const bool samePosition =
                     std::abs(clickPosition.x() - d.lastPickPosition.x()) <= pickCycleTolerance
                     && std::abs(clickPosition.y() - d.lastPickPosition.y()) <= pickCycleTolerance;
 
-                const bool sameStack = (depthPaths == d.lastPickPaths);
+                const bool sameStack = depthPaths == d.lastPickPaths;
 
                 if (samePosition && sameStack && d.lastPickIndex >= 0) {
                     d.lastPickIndex = (d.lastPickIndex + 1) % depthPaths.size();
@@ -855,7 +930,8 @@ ImagingGLWidgetPrivate::sweepEvent(const QRect& rect, QMouseEvent* event)
                 d.lastPickPosition = clickPosition;
                 d.lastPickPaths = depthPaths;
 
-                selectedPaths.append(depthPaths.at(d.lastPickIndex));
+                const SdfPath selectedPath = depthPaths.at(d.lastPickIndex);
+                selectedPaths.append(selectedPath);
             }
         }
         else {
@@ -865,6 +941,7 @@ ImagingGLWidgetPrivate::sweepEvent(const QRect& rect, QMouseEvent* event)
             }
 
             selectedPaths = path::uniquePaths(selectedPaths);
+
             d.lastPickPosition = QPoint();
             d.lastPickPaths.clear();
             d.lastPickIndex = -1;
@@ -877,15 +954,16 @@ ImagingGLWidgetPrivate::sweepEvent(const QRect& rect, QMouseEvent* event)
     }
 
     bool update = false;
-
     if (!selectedPaths.isEmpty()) {
         if (event->modifiers() & Qt::ShiftModifier) {
             for (const SdfPath& path : selectedPaths) {
                 const qsizetype index = d.selection.indexOf(path);
+
                 if (index >= 0)
                     d.selection.removeAt(index);
                 else
                     d.selection.append(path);
+
                 update = true;
             }
         }
@@ -1498,10 +1576,15 @@ ImagingGLWidgetPrivate::hitTestTransform(const QPointF& pos)
     QPointF center;
     if (!projectWorldToScreen(d.transformPivot, center))
         return 0;
+
+    constexpr double centerHitRadius = 8.0;
+    if (std::hypot(pos.x() - center.x(), pos.y() - center.y()) <= centerHitRadius)
+        return 10;
     // handles are encoded as:
     // 1..3 = translate X/Y/Z
     // 4..6 = rotate X/Y/Z
     // 7..9 = scale X/Y/Z
+    // 10   = free translate in camera plane
     constexpr double scaleDistance = 52.0;
     constexpr double scaleHitRadius = 8.0;
     for (int axis = 1; axis <= 3; ++axis) {
@@ -1559,6 +1642,7 @@ ImagingGLWidgetPrivate::beginTransformDrag(const QPointF& pos)
         return false;
     QList<SdfPath> paths;
     QList<GfMatrix4d> before;
+    QList<TransformRootState> rootBefore;
     GfVec3d pivot(0.0);
     int count = 0;
     {
@@ -1575,7 +1659,32 @@ ImagingGLWidgetPrivate::beginTransformDrag(const QPointF& pos)
                 continue;
             paths.append(path);
             before.append(matrix);
-            pivot += matrix.ExtractTranslation();
+
+            GfVec3d worldPivot(0.0);
+            QString pivotError;
+            if (!stage::worldPivot(d.stage, path, worldPivot, pivotError))
+                worldPivot = matrix.ExtractTranslation();
+
+            TransformRootState rootState;
+            if (const SdfLayerHandle rootLayer = d.stage->GetRootLayer()) {
+                rootState.hadPrimSpec = bool(rootLayer->GetPrimAtPath(path));
+
+                const SdfPath orderPath = path.AppendProperty(TfToken("xformOpOrder"));
+                const SdfPath matrixPath = path.AppendProperty(TfToken("xformOp:transform"));
+
+                rootState.hadXformOpOrderSpec = bool(rootLayer->GetPropertyAtPath(orderPath));
+                rootState.hadXformOpOrderDefault = rootLayer->HasField(orderPath, SdfFieldKeys->Default);
+                if (rootState.hadXformOpOrderDefault)
+                    rootState.xformOpOrderDefault = rootLayer->GetField(orderPath, SdfFieldKeys->Default);
+
+                rootState.hadMatrixOpSpec = bool(rootLayer->GetPropertyAtPath(matrixPath));
+                rootState.hadMatrixOpDefault = rootLayer->HasField(matrixPath, SdfFieldKeys->Default);
+                if (rootState.hadMatrixOpDefault)
+                    rootState.matrixOpDefault = rootLayer->GetField(matrixPath, SdfFieldKeys->Default);
+            }
+            rootBefore.append(rootState);
+
+            pivot += worldPivot;
             ++count;
         }
     }
@@ -1586,6 +1695,7 @@ ImagingGLWidgetPrivate::beginTransformDrag(const QPointF& pos)
     d.transformPaths = paths;
     d.transformBefore = before;
     d.transformAfter = before;
+    d.transformRootBefore = rootBefore;
     d.transformStart = pos;
     d.transformActiveAxis = handle;
     d.transformHoverAxis = handle;
@@ -1607,7 +1717,29 @@ ImagingGLWidgetPrivate::updateTransformDrag(const QPointF& pos)
     if (!d.transformDragging || d.transformActiveAxis == 0 || d.transformBefore.isEmpty())
         return;
     d.transformAfter = d.transformBefore;
-    if (d.transformActiveAxis >= 1 && d.transformActiveAxis <= 3) {
+
+    if (d.transformActiveAxis == 10) {
+        const QPointF mouseDelta = pos - d.transformStart;
+
+        const GfCamera camera = viewCamera()->camera();
+        const GfMatrix4d cameraTransform = camera.GetTransform();
+
+        const GfVec3d right = cameraTransform.TransformDir(GfVec3d::XAxis()).GetNormalized();
+        const GfVec3d up = cameraTransform.TransformDir(GfVec3d::YAxis()).GetNormalized();
+
+        const double worldPerPixel = transformWorldPerPixel(d.transformStartPivot);
+
+        const GfVec3d delta = right * (mouseDelta.x() * worldPerPixel) + up * (-mouseDelta.y() * worldPerPixel);
+
+        for (qsizetype i = 0; i < d.transformAfter.size(); ++i) {
+            GfMatrix4d matrix = d.transformBefore.at(i);
+            matrix.SetTranslateOnly(d.transformBefore.at(i).ExtractTranslation() + delta);
+            d.transformAfter[i] = matrix;
+        }
+
+        d.transformPivot = d.transformStartPivot + delta;
+    }
+    else if (d.transformActiveAxis >= 1 && d.transformActiveAxis <= 3) {
         const GfVec3d axis = transformAxisVector(d.transformActiveAxis);
         if (axis.GetLengthSq() < 1e-12)
             return;
@@ -1699,12 +1831,14 @@ ImagingGLWidgetPrivate::endTransformDrag()
     const QList<SdfPath> paths = d.transformPaths;
     const QList<GfMatrix4d> before = d.transformBefore;
     const QList<GfMatrix4d> after = d.transformAfter;
+    const QList<TransformRootState> rootBefore = d.transformRootBefore;
     d.transformDragging = false;
     d.transformActiveAxis = 0;
     d.transformHoverAxis = 0;
     d.transformPaths.clear();
     d.transformBefore.clear();
     d.transformAfter.clear();
+    d.transformRootBefore.clear();
     bool changed = !paths.isEmpty() && paths.size() == before.size() && before.size() == after.size();
     if (changed) {
         changed = false;
@@ -1716,7 +1850,7 @@ ImagingGLWidgetPrivate::endTransformDrag()
         }
     }
     if (changed)
-        d.context->run(new Command(setTransforms(paths, before, after)));
+        d.context->run(new Command(setTransforms(paths, before, after, rootBefore)));
     d.glwidget->update();
 }
 
@@ -1755,10 +1889,16 @@ ImagingGLWidgetPrivate::drawTransformTransform(QPainter& painter)
                     continue;
                 GfMatrix4d matrix(1.0);
                 QString error;
-                if (stage::worldTransform(d.stage, path, matrix, error)) {
-                    pivot += matrix.ExtractTranslation();
-                    ++count;
-                }
+                if (!stage::worldTransform(d.stage, path, matrix, error))
+                    continue;
+
+                GfVec3d worldPivot(0.0);
+                QString pivotError;
+                if (!stage::worldPivot(d.stage, path, worldPivot, pivotError))
+                    worldPivot = matrix.ExtractTranslation();
+
+                pivot += worldPivot;
+                ++count;
             }
         }
         if (count == 0)
@@ -1832,8 +1972,12 @@ ImagingGLWidgetPrivate::drawTransformTransform(QPainter& painter)
         painter.setBrush(color);
         painter.drawRect(QRectF(p.x() - 5.0, p.y() - 5.0, 10.0, 10.0));
     }
+    QColor centerColor(35, 35, 35, 220);
+    if (d.transformHoverAxis == 10 || d.transformActiveAxis == 10)
+        centerColor = style()->color(Style::ColorRole::Selection);
+
     painter.setPen(QPen(QColor(245, 245, 245, 220), 1.5));
-    painter.setBrush(QColor(35, 35, 35, 220));
+    painter.setBrush(centerColor);
     painter.drawEllipse(center, 5.0, 5.0);
     painter.restore();
 }

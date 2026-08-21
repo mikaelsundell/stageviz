@@ -82,6 +82,25 @@ private:
     Func m_undo;  ///< Undo operation.
 };
 
+
+/**
+ * @brief Captures the root-layer transform opinions that existed before an
+ * interactive transform preview authored a stronger matrix override.
+ *
+ * The state is used by transform undo to restore the original root-layer
+ * xformOpOrder/matrix opinions exactly, or remove the temporary override when
+ * no root-layer transform opinion existed before the drag.
+ */
+struct TransformRootState {
+    bool hadPrimSpec = false;
+    bool hadXformOpOrderSpec = false;
+    bool hadXformOpOrderDefault = false;
+    VtValue xformOpOrderDefault;
+    bool hadMatrixOpSpec = false;
+    bool hadMatrixOpDefault = false;
+    VtValue matrixOpDefault;
+};
+
 /** @name Command Factory Helpers */
 ///@{
 
@@ -350,9 +369,14 @@ setAttributeValue(const SdfPath& attributePath, const VtValue& value);
  * @param paths Prim paths to transform.
  * @param before World transforms captured at drag start.
  * @param after World transforms to apply for redo.
+ * @param rootBefore Optional root-layer transform state captured before an
+ *                   interactive preview. When supplied, undo restores those
+ *                   authored opinions exactly instead of leaving a matrix
+ *                   override behind.
  */
 Command
-setTransforms(const QList<SdfPath>& paths, const QList<GfMatrix4d>& before, const QList<GfMatrix4d>& after);
+setTransforms(const QList<SdfPath>& paths, const QList<GfMatrix4d>& before, const QList<GfMatrix4d>& after,
+              const QList<TransformRootState>& rootBefore = {});
 
 ///@}
 

@@ -7,6 +7,10 @@
 #include <QFileInfo>
 #include <algorithm>
 #include <functional>
+#include <pxr/base/gf/vec3d.h>
+#include <pxr/base/gf/vec3f.h>
+#include <pxr/base/vt/array.h>
+#include <pxr/base/vt/value.h>
 #include <pxr/usd/sdf/copyUtils.h>
 #include <pxr/usd/sdf/variantSetSpec.h>
 #include <pxr/usd/sdf/variantSpec.h>
@@ -25,6 +29,7 @@
 #include <stack>
 
 namespace stageviz {
+
 namespace {
     void ensureParentSpecs(const SdfLayerHandle& layer, const SdfPath& path)
     {
@@ -43,20 +48,17 @@ namespace {
 }  // namespace
 
 namespace rootlayer {
-
     SdfLayerHandle opened(const UsdStageRefPtr& stage, QString& error)
     {
         if (!stage) {
             error = "stage missing";
             return {};
         }
-
         const SdfLayerHandle layer = stage->GetRootLayer();
         if (!layer) {
             error = "opened root layer missing";
             return {};
         }
-
         return layer;
     }
 
@@ -73,6 +75,7 @@ namespace rootlayer {
             return false;
 
         const UsdPrim prim = stage->GetPrimAtPath(primPath);
+
         if (!prim || !prim.IsValid()) {
             error = QString("prim missing: %1").arg(qt::SdfPathToQString(primPath));
             return false;
@@ -85,13 +88,14 @@ namespace rootlayer {
 
         if (requireStrongest) {
             const SdfPrimSpecHandleVector stack = prim.GetPrimStack();
+
             if (stack.empty() || !stack.front() || stack.front()->GetLayer() != layer) {
                 error = QString("prim strongest opinion is not in opened root layer: %1")
                             .arg(qt::SdfPathToQString(primPath));
+
                 return false;
             }
         }
-
         return true;
     }
 
@@ -99,12 +103,14 @@ namespace rootlayer {
     {
         if (parentPath == SdfPath::AbsoluteRootPath())
             return true;
+
         return validatePrim(stage, parentPath, error, requireStrongest);
     }
 
 }  // namespace rootlayer
 
 namespace identifier {
+
     std::string makeValidIdentifier(const std::string& input)
     {
         if (input.empty())
@@ -116,7 +122,6 @@ namespace identifier {
     QString makeSafeIdentifier(const UsdStageRefPtr& stage, const SdfPath& parentPath, const QString& inputName)
     {
         const QString baseName = qt::StringToQString(makeValidIdentifier(qt::QStringToString(inputName)));
-
         if (!stage || !parentPath.IsAbsolutePath())
             return baseName;
 
@@ -141,10 +146,11 @@ namespace identifier {
     }
 
     QString makeSafeIdentifier(const UsdStageRefPtr& stage, const SdfPath& parentPath, const QString& inputName,
+
                                const SdfPath& ignorePath)
+
     {
         const QString baseName = qt::StringToQString(makeValidIdentifier(qt::QStringToString(inputName)));
-
         if (!stage || !parentPath.IsAbsolutePath())
             return baseName;
 
@@ -174,11 +180,11 @@ namespace identifier {
 }  // namespace identifier
 
 namespace path {
+
     QList<SdfPath> topLevelPaths(const QList<SdfPath>& paths)
     {
         QList<SdfPath> result;
         result.reserve(paths.size());
-
         for (const SdfPath& path : paths) {
             bool isChild = false;
             for (const SdfPath& other : paths) {
@@ -190,7 +196,6 @@ namespace path {
             if (!isChild)
                 result.append(path);
         }
-
         return result;
     }
 
@@ -225,7 +230,6 @@ namespace path {
             if (!covered)
                 result.append(path);
         }
-
         return result;
     }
 
@@ -236,7 +240,6 @@ namespace path {
 
         const SdfPath selectedPrimPath = selectedPath.IsPropertyPath() ? selectedPath.GetPrimPath() : selectedPath;
         const SdfPath rootPrimPath = rootPath.IsPropertyPath() ? rootPath.GetPrimPath() : rootPath;
-
         return selectedPrimPath == rootPrimPath || selectedPrimPath.HasPrefix(rootPrimPath);
     }
 
@@ -249,7 +252,6 @@ namespace path {
             if (path == maskPath || path.HasPrefix(maskPath))
                 return true;
         }
-
         return false;
     }
 
@@ -259,7 +261,6 @@ namespace path {
             if (path == selectedPath || path.HasPrefix(selectedPath))
                 return true;
         }
-
         return false;
     }
 
@@ -279,11 +280,9 @@ namespace path {
                     break;
                 }
             }
-
             if (keep)
                 result.append(inputPath);
         }
-
         return result;
     }
 
@@ -298,9 +297,9 @@ namespace path {
             else
                 result.append(inputPath);
         }
-
         return result;
     }
+
 
 
     void appendUnique(QList<SdfPath>& paths, const SdfPath& path)
@@ -325,11 +324,14 @@ namespace path {
         order.insert(order.begin() + safeIndex, tokens.begin(), tokens.end());
         return order;
     }
+
 }  // namespace path
 
 namespace payload {
+
     bool applyLoad(UsdStageRefPtr stage, const SdfPath& path, bool useVariant, const std::string& variantSetName,
                    const std::string& variantSelection, PayloadState& payloadState, QString& error)
+
     {
         if (!stage) {
             error = "stage missing";
@@ -371,10 +373,8 @@ namespace payload {
             if (vs.GetVariantSelection() != variantSelection)
                 vs.SetVariantSelection(variantSelection);
         }
-
         if (!prim.IsLoaded())
             prim.Load();
-
         return true;
     }
 
@@ -421,6 +421,7 @@ namespace payload {
                 prim.Unload();
 
             UsdVariantSet vs = prim.GetVariantSet(payloadState.variantSetName);
+
             if (!vs.IsValid()) {
                 error = "variant set missing";
                 return false;
@@ -434,6 +435,7 @@ namespace payload {
             if (!prim.IsLoaded())
                 prim.Load();
         }
+
         else {
             if (prim.IsLoaded())
                 prim.Unload();
@@ -445,6 +447,7 @@ namespace payload {
     PayloadVariantTargets payloadVariantTargets(UsdStageRefPtr stage, const QList<SdfPath>& paths)
     {
         PayloadVariantTargets result;
+
         if (!stage || paths.isEmpty()) {
             return result;
         }
@@ -460,7 +463,6 @@ namespace payload {
             if (visitedRoots.find(path) != visitedRoots.end()) {
                 return;
             }
-
             visitedRoots.insert(path);
             roots.append(path);
         };
@@ -475,7 +477,6 @@ namespace payload {
                 }
                 currentPath = currentPath.GetParentPath();
             }
-
             appendRoot(payloadRootPath.IsEmpty() ? inputPath : payloadRootPath);
         }
 
@@ -485,13 +486,13 @@ namespace payload {
                 return;
 
             const SdfPath primPath = prim.GetPath();
-
             if (!stage::isPayload(stage, primPath))
                 return;
 
             if (visitedPayloads.find(primPath) != visitedPayloads.end()) {
                 return;
             }
+
             visitedPayloads.insert(primPath);
             UsdVariantSets variantSets = prim.GetVariantSets();
             std::vector<std::string> setNames = variantSets.GetNames();
@@ -499,12 +500,9 @@ namespace payload {
             for (const std::string& setName : setNames) {
                 UsdVariantSet variantSet = variantSets.GetVariantSet(setName);
                 std::vector<std::string> variantNames = variantSet.GetVariantNames();
-
-                // Cache the converted set name so we don't convert it multiple times per variant value
                 QString qSetName = QString::fromStdString(setName);
 
                 for (const std::string& variantName : variantNames) {
-                    // Map out directly into our nested Qt container
                     result[qSetName][QString::fromStdString(variantName)].append(primPath);
                 }
             }
@@ -513,7 +511,6 @@ namespace payload {
         for (const SdfPath& rootPath : roots) {
             const UsdPrim root = (rootPath == SdfPath::AbsoluteRootPath()) ? stage->GetPseudoRoot()
                                                                            : stage->GetPrimAtPath(rootPath);
-
             if (!root)
                 continue;
 
@@ -522,7 +519,6 @@ namespace payload {
         }
         return result;
     }
-
 
     QList<AssetEntry> assetEntries(UsdStageRefPtr stage, const QList<SdfPath>& paths)
     {
@@ -534,6 +530,7 @@ namespace payload {
         for (const SdfPath& inputPath : path::minimalRootPaths(path::uniquePaths(paths))) {
             const SdfPath primPath = inputPath.IsPropertyPath() ? inputPath.GetPrimPath() : inputPath;
             const UsdPrim prim = stage->GetPrimAtPath(primPath);
+
             if (!prim || !prim.IsValid() || !stage::isPayload(stage, primPath))
                 continue;
 
@@ -549,10 +546,11 @@ namespace payload {
 
                         const QString key
                             = QString("%1|%2|%3|%4").arg(qt::SdfPathToQString(primPath), setName, value, assetPath);
+
                         if (seen.contains(key))
                             continue;
-                        seen.insert(key);
 
+                        seen.insert(key);
                         AssetEntry entry;
                         entry.primPath = primPath;
                         entry.variantSet = setName;
@@ -563,10 +561,10 @@ namespace payload {
                 };
 
                 appendItems(spec->GetPayloadList().GetAppliedItems(), {}, {});
-
                 for (const auto& setIt : spec->GetVariantSets()) {
                     const QString setName = qt::StringToQString(setIt.first);
                     const SdfVariantSetSpecHandle setSpec = setIt.second;
+
                     if (!setSpec)
                         continue;
 
@@ -584,20 +582,19 @@ namespace payload {
                 }
             }
         }
-
         return result;
     }
 
 }  // namespace payload
 
 namespace snapshot {
-
     bool capturePrimToLayer(UsdStageRefPtr stage, const SdfPath& stagePath, PrimState& out)
     {
         if (!stage)
             return false;
 
         const UsdPrim prim = stage->GetPrimAtPath(stagePath);
+
         if (!prim)
             return false;
 
@@ -611,6 +608,7 @@ namespace snapshot {
 
             const SdfLayerHandle srcLayer = spec->GetLayer();
             const SdfPath specPath = spec->GetPath();
+
             if (!srcLayer || specPath.IsEmpty())
                 continue;
 
@@ -622,7 +620,6 @@ namespace snapshot {
                 continue;
 
             ensureParentSpecs(snapshotLayer, specPath);
-
             if (SdfCopySpec(srcLayer, specPath, snapshotLayer, specPath)) {
                 out.stagePath = stagePath;
                 out.specPath = specPath;
@@ -630,7 +627,6 @@ namespace snapshot {
                 return true;
             }
         }
-
         return false;
     }
 
@@ -648,16 +644,16 @@ namespace snapshot {
         std::sort(snapshot.begin(), snapshot.end(), [](const PrimState& a, const PrimState& b) {
             const size_t ac = a.stagePath.GetPathElementCount();
             const size_t bc = b.stagePath.GetPathElementCount();
+
             if (ac != bc)
                 return ac < bc;
+
             return a.stagePath.GetString() < b.stagePath.GetString();
         });
     }
-
 }  // namespace snapshot
 
 namespace stage {
-
     QList<SdfPath> ancestorPayloadPaths(UsdStageRefPtr stage, const QList<SdfPath>& paths)
     {
         QList<SdfPath> result;
@@ -669,6 +665,7 @@ namespace stage {
             UsdPrim prim = stage->GetPrimAtPath(path);
             while (prim) {
                 const SdfPath primPath = prim.GetPath();
+
                 if (isPayload(stage, primPath)) {
                     const QString key = qt::SdfPathToQString(primPath);
                     if (!seen.contains(key)) {
@@ -680,7 +677,6 @@ namespace stage {
                 prim = prim.GetParent();
             }
         }
-
         return result;
     }
 
@@ -688,6 +684,7 @@ namespace stage {
     {
         UsdGeomBBoxCache cache(UsdTimeCode::Default(), UsdGeomImageable::GetOrderedPurposeTokens(), true);
         GfBBox3d bbox;
+
         for (const SdfPath& path : paths) {
             UsdPrim prim = stage->GetPrimAtPath(path);
             if (!prim || !prim.IsA<UsdGeomImageable>())
@@ -704,11 +701,13 @@ namespace stage {
             return false;
 
         const UsdPrim prim = stage->GetPrimAtPath(path);
-        if (!prim || !prim.IsValid() || !UsdGeomXformable(prim))
+
+        if (!prim || !prim.IsValid() || prim.IsInstanceProxy() || !UsdGeomXformable(prim))
             return false;
 
-        QString error;
-        return rootlayer::validatePrim(stage, path, error);
+        // Transform editing is a property override, not a namespace edit.
+        // Composed prims may therefore receive a stronger root-layer opinion.
+        return bool(stage->GetRootLayer());
     }
 
     bool worldTransform(UsdStageRefPtr stage, const SdfPath& path, GfMatrix4d& matrix, QString& error)
@@ -719,6 +718,7 @@ namespace stage {
         }
 
         const UsdPrim prim = stage->GetPrimAtPath(path);
+
         if (!prim || !prim.IsValid()) {
             error = QString("prim missing: %1").arg(qt::SdfPathToQString(path));
             return false;
@@ -734,6 +734,123 @@ namespace stage {
         return true;
     }
 
+    bool worldPivot(UsdStageRefPtr stage, const SdfPath& path, GfVec3d& pivot, QString& error)
+    {
+        if (!stage) {
+            error = "stage missing";
+            return false;
+        }
+
+        const UsdPrim prim = stage->GetPrimAtPath(path);
+        if (!prim || !prim.IsValid()) {
+            error = QString("prim missing: %1").arg(qt::SdfPathToQString(path));
+            return false;
+        }
+
+        const UsdGeomXformable xformable(prim);
+        if (!xformable) {
+            error = QString("prim is not xformable: %1").arg(qt::SdfPathToQString(path));
+            return false;
+        }
+
+        UsdGeomXformCache cache(UsdTimeCode::Default());
+
+        // default to the prim origin. This remains correct for arbitrary
+        // transform stacks where Stageviz cannot unambiguously infer an
+        // artist-authored pivot.
+        const GfMatrix4d world = cache.GetLocalToWorldTransform(prim);
+        pivot = world.ExtractTranslation();
+
+        VtTokenArray order;
+        if (!xformable.GetXformOpOrderAttr().Get(&order, UsdTimeCode::Default()))
+            return true;
+
+        const TfToken pivotToken("xformOp:translate:pivot");
+        const TfToken inversePivotToken("!invert!xformOp:translate:pivot");
+        const TfToken translateToken("xformOp:translate");
+
+        int pivotIndex = -1;
+        int inversePivotIndex = -1;
+
+        for (int i = 0; i < static_cast<int>(order.size()); ++i) {
+            if (order[i] == pivotToken)
+                pivotIndex = i;
+            else if (order[i] == inversePivotToken)
+                inversePivotIndex = i;
+        }
+
+        // Only treat this as an artist pivot when the standard pivot op is
+        // explicitly paired with its inverse later in xformOpOrder.
+        if (pivotIndex < 0 || inversePivotIndex <= pivotIndex)
+            return true;
+
+        GfVec3d localTranslation(0.0);
+
+        // Be conservative about the transform stack before the pivot. The
+        // common DCC/USD form permits a normal translate before the pivot.
+        // If rotation, scale, matrix, or another non-translation op appears
+        // before it, fall back to the evaluated prim origin rather than
+        // guessing at pivot semantics.
+        for (int i = 0; i < pivotIndex; ++i) {
+            const TfToken& token = order[i];
+
+            if (token == TfToken("!resetXformStack!"))
+                continue;
+
+            if (token != translateToken)
+                return true;
+
+            const UsdAttribute attr = prim.GetAttribute(token);
+            if (!attr)
+                return true;
+
+            VtValue value;
+            if (!attr.Get(&value, UsdTimeCode::Default()))
+                return true;
+
+            if (value.IsHolding<GfVec3d>()) {
+                localTranslation += value.UncheckedGet<GfVec3d>();
+            }
+            else if (value.IsHolding<GfVec3f>()) {
+                const GfVec3f v = value.UncheckedGet<GfVec3f>();
+                localTranslation += GfVec3d(v[0], v[1], v[2]);
+            }
+            else {
+                return true;
+            }
+        }
+
+        const UsdAttribute pivotAttr = prim.GetAttribute(pivotToken);
+        if (!pivotAttr)
+            return true;
+
+        VtValue pivotValue;
+        if (!pivotAttr.Get(&pivotValue, UsdTimeCode::Default()))
+            return true;
+
+        GfVec3d localPivot(0.0);
+
+        if (pivotValue.IsHolding<GfVec3d>()) {
+            localPivot = pivotValue.UncheckedGet<GfVec3d>();
+        }
+        else if (pivotValue.IsHolding<GfVec3f>()) {
+            const GfVec3f v = pivotValue.UncheckedGet<GfVec3f>();
+            localPivot = GfVec3d(v[0], v[1], v[2]);
+        }
+        else {
+            return true;
+        }
+
+        GfMatrix4d parentWorld(1.0);
+        const UsdPrim parent = prim.GetParent();
+
+        if (parent && !parent.IsPseudoRoot())
+            parentWorld = cache.GetLocalToWorldTransform(parent);
+
+        pivot = parentWorld.Transform(localTranslation + localPivot);
+        return true;
+    }
+
     bool setWorldTransform(UsdStageRefPtr stage, const SdfPath& path, const GfMatrix4d& matrix, QString& error)
     {
         if (!stage) {
@@ -741,10 +858,12 @@ namespace stage {
             return false;
         }
 
-        if (!rootlayer::validatePrim(stage, path, error))
-            return false;
-
         const UsdPrim prim = stage->GetPrimAtPath(path);
+        if (!prim || !prim.IsValid()) {
+            error = QString("prim missing: %1").arg(qt::SdfPathToQString(path));
+            return false;
+        }
+
         UsdGeomXformable xformable(prim);
         if (!xformable) {
             error = QString("prim is not xformable: %1").arg(qt::SdfPathToQString(path));
@@ -758,12 +877,9 @@ namespace stage {
             parentWorld = cache.GetLocalToWorldTransform(parent);
         }
 
-        // Gf matrices use row-vector transform convention in USD. The local
-        // transform that reproduces the requested world transform is world
-        // multiplied by the inverse parent world transform.
         const GfMatrix4d local = matrix * parentWorld.GetInverse();
-
         QString rootError;
+
         const SdfLayerHandle rootLayer = rootlayer::opened(stage, rootError);
         if (!rootLayer) {
             error = rootError;
@@ -781,7 +897,6 @@ namespace stage {
             error = "USD rejected transform matrix";
             return false;
         }
-
         return true;
     }
 
@@ -822,7 +937,6 @@ namespace stage {
             error = "invalid identifier";
             return SdfPath();
         }
-
         return parentPath.AppendChild(TfToken(nameValue));
     }
 
@@ -846,13 +960,13 @@ namespace stage {
 
         const bool parentIsRoot = parentPath == SdfPath::AbsoluteRootPath();
         const UsdPrim parentPrim = parentIsRoot ? UsdPrim() : stage->GetPrimAtPath(parentPath);
-
         if (!parentIsRoot && (!parentPrim || !parentPrim.IsValid())) {
             error = "invalid parent";
             return SdfPath();
         }
 
         const QString safeIdentifier = identifier::makeSafeIdentifier(stage, parentPath, trimmed);
+
         if (safeIdentifier.isEmpty()) {
             error = "invalid identifier";
             return SdfPath();
@@ -869,7 +983,6 @@ namespace stage {
             error = "target exists";
             return SdfPath();
         }
-
         return childPath;
     }
 
@@ -880,6 +993,7 @@ namespace stage {
 
         const UsdPrim parent = parentPath == SdfPath::AbsoluteRootPath() ? stage->GetPseudoRoot()
                                                                          : stage->GetPrimAtPath(parentPath);
+
         if (!parent)
             return false;
 
@@ -924,13 +1038,13 @@ namespace stage {
             if (prim)
                 collect(prim);
         }
-
         return result;
     }
 
     QList<SdfPath> filterStrongestEditablePaths(UsdStageRefPtr stage, const QList<SdfPath>& paths)
     {
         QList<SdfPath> result;
+
         if (!stage)
             return result;
 
@@ -939,18 +1053,17 @@ namespace stage {
             if (isStrongestEditable(stage, primPath))
                 result.append(primPath);
         }
-
         return result;
     }
 
     QMap<QString, QList<QString>> findVariantSets(UsdStageRefPtr stage, const QList<SdfPath>& paths, bool recursive)
+
     {
         QMap<QString, QList<QString>> result;
         if (!stage || paths.isEmpty())
             return result;
 
         const QList<SdfPath> filtered = path::topLevelPaths(paths);
-
         std::vector<UsdPrim> prims;
         prims.reserve(filtered.size() * 4);
 
@@ -960,15 +1073,12 @@ namespace stage {
                 continue;
 
             prims.push_back(root);
-
             if (recursive) {
                 std::stack<UsdPrim> stack;
                 stack.push(root);
-
                 while (!stack.empty()) {
                     UsdPrim prim = stack.top();
                     stack.pop();
-
                     for (const UsdPrim& child : prim.GetAllChildren()) {
                         prims.push_back(child);
                         stack.push(child);
@@ -999,11 +1109,11 @@ namespace stage {
             std::sort(list.begin(), list.end());
             list.erase(std::unique(list.begin(), list.end()), list.end());
         }
-
         return result;
     }
 
     bool hasCompositionArc(const UsdPrim& prim)
+
     {
         if (!prim || !prim.IsValid())
             return false;
@@ -1098,10 +1208,8 @@ namespace stage {
             const UsdPrim prim = stage->GetPrimAtPath(current);
             if (hasCompositionArc(prim))
                 return true;
-
             current = current.GetParentPath();
         }
-
         return false;
     }
 
@@ -1112,11 +1220,11 @@ namespace stage {
 
         const UsdPrim rootPrim = (path == SdfPath::AbsoluteRootPath()) ? stage->GetPseudoRoot()
                                                                        : stage->GetPrimAtPath(path);
+
         if (!rootPrim)
             return false;
 
         bool foundPayload = false;
-
         for (const UsdPrim& prim : UsdPrimRange(rootPrim)) {
             if (!prim)
                 continue;
@@ -1125,11 +1233,9 @@ namespace stage {
                 continue;
 
             foundPayload = true;
-
             if (!prim.IsLoaded())
                 return false;
         }
-
         return foundPayload;
     }
 
@@ -1150,12 +1256,10 @@ namespace stage {
                 continue;
 
             auto payloads = spec->GetPayloadList();
-
             if (!payloads.GetExplicitItems().empty() || !payloads.GetAddedItems().empty()
                 || !payloads.GetPrependedItems().empty())
                 return true;
         }
-
         return false;
     }
 
@@ -1174,7 +1278,6 @@ namespace stage {
                 return true;
             p = p.GetParent();
         }
-
         return false;
     }
 
@@ -1215,6 +1318,7 @@ namespace stage {
         TfToken vis;
         if (!imageable.GetVisibilityAttr().Get(&vis))
             return true;
+
         return vis != UsdGeomTokens->invisible;
     }
 
@@ -1233,11 +1337,13 @@ namespace stage {
             error = "invalid stage";
             return false;
         }
+
         if (moves.isEmpty())
             return true;
 
         QString rootError;
         const SdfLayerHandle rootLayer = rootlayer::opened(stage, rootError);
+
         if (!rootLayer) {
             error = rootError;
             return false;
@@ -1245,40 +1351,48 @@ namespace stage {
 
         SdfBatchNamespaceEdit edits;
         bool hasEdits = false;
+
         QSet<SdfPath> destinations;
         UsdStageLoadRules loadRules = stage->GetLoadRules();
 
         for (const auto& move : moves) {
             const SdfPath& from = move.first;
             const SdfPath& to = move.second;
+
             if (from.IsEmpty() || to.IsEmpty() || from == SdfPath::AbsoluteRootPath() || !from.IsPrimPath()
                 || !to.IsPrimPath()) {
                 error = "invalid move path";
                 return false;
             }
+
             if (from == to)
                 continue;
+
             if (to.HasPrefix(from)) {
                 error = "cannot move a prim below itself";
                 return false;
             }
+
             if (destinations.contains(to)) {
                 error = "duplicate move destination";
                 return false;
             }
-            destinations.insert(to);
 
+            destinations.insert(to);
             QString validationError;
             if (!rootlayer::validatePrim(stage, from, validationError)) {
                 error = validationError;
                 return false;
             }
+
             if (!rootlayer::validateParent(stage, to.GetParentPath(), validationError)) {
                 error = validationError;
                 return false;
             }
+
             if (isInsideCompositionArc(stage, from)
                 || (to.GetParentPath() != SdfPath::AbsoluteRootPath()
+
                     && isInsideCompositionArc(stage, to.GetParentPath()))) {
                 error = "cannot move into or out of composed prims";
                 return false;
@@ -1293,6 +1407,7 @@ namespace stage {
                         break;
                     }
                 }
+
                 if (!sourceDestination) {
                     error = QString("destination already exists: %1").arg(qt::SdfPathToQString(to));
                     return false;
@@ -1306,15 +1421,16 @@ namespace stage {
 
         if (!hasEdits)
             return true;
+
         if (!rootLayer->CanApply(edits)) {
             error = "root layer cannot apply namespace edit";
             return false;
         }
+
         if (!rootLayer->Apply(edits)) {
             error = "root layer namespace edit failed";
             return false;
         }
-
         stage->SetLoadRules(loadRules);
         return true;
     }
@@ -1350,7 +1466,6 @@ namespace stage {
             if (!hasTraversableChild)
                 paths.append(path);
         }
-
         return paths;
     }
 
@@ -1374,7 +1489,6 @@ namespace stage {
                 result.append(primPath);
             }
         }
-
         return result;
     }
 
@@ -1389,21 +1503,19 @@ namespace stage {
                 return;
 
             bool visible = parentVisible;
-
             if (visible) {
                 UsdGeomImageable imageable(prim);
                 if (imageable) {
                     TfToken visibility;
                     if (imageable.GetVisibilityAttr().Get(&visibility) && visibility == UsdGeomTokens->invisible)
+
                         visible = false;
                 }
             }
-
             if (!visible)
                 return;
 
             result.append(prim.GetPath());
-
             for (const UsdPrim& child : prim.GetChildren())
                 collect(child, true);
         };
@@ -1429,11 +1541,9 @@ namespace stage {
     UsdStageLoadRules remapLoadRules(const UsdStageLoadRules& rules, const SdfPath& oldPath, const SdfPath& newPath)
     {
         UsdStageLoadRules out;
-
         for (const auto& r : rules.GetRules()) {
             const SdfPath& p = r.first;
             const auto& policy = r.second;
-
             if (p.HasPrefix(oldPath)) {
                 const SdfPath rel = p.MakeRelativePath(oldPath);
                 const SdfPath mapped = newPath.AppendPath(rel);
@@ -1443,7 +1553,6 @@ namespace stage {
                 out.AddRule(p, policy);
             }
         }
-
         return out;
     }
 
@@ -1451,12 +1560,10 @@ namespace stage {
     {
         TfTokenVector out;
         out.reserve(order.size());
-
         for (const TfToken& token : order) {
             if (token != name)
                 out.push_back(token);
         }
-
         return out;
     }
 
@@ -1537,7 +1644,6 @@ namespace stage {
 
             SdfPath rootMostPayloadPath;
             SdfPath currentPath = path;
-
             while (!currentPath.IsEmpty() && currentPath != SdfPath::AbsoluteRootPath()) {
                 if (stage::isPayload(stage, currentPath))
                     rootMostPayloadPath = currentPath;
@@ -1554,18 +1660,31 @@ namespace stage {
             for (const SdfPath& descendantPayload : descendantPayloads)
                 appendUnique(descendantPayload);
         }
-
         return path::topLevelPaths(result);
     }
 
     void setVisible(UsdStageRefPtr stage, const QList<SdfPath>& paths, bool visible, bool recursive)
     {
+        if (!stage)
+            return;
+
+        QString error;
+        const SdfLayerHandle rootLayer = rootlayer::opened(stage, error);
+        if (!rootLayer)
+            return;
+
+        // visibility is a property opinion. Always author it into the opened
+        // root layer so composed assets are overridden without editing them.
+        UsdEditContext context(stage, UsdEditTarget(rootLayer));
+
         for (const SdfPath& path : paths) {
             UsdPrim prim = stage->GetPrimAtPath(path);
+
             if (!prim)
                 continue;
 
             UsdGeomImageable imageable(prim);
+
             if (imageable) {
                 if (visible)
                     imageable.MakeVisible();
@@ -1576,12 +1695,14 @@ namespace stage {
             if (recursive) {
                 for (const UsdPrim& child : prim.GetAllDescendants()) {
                     UsdGeomImageable childImageable(child);
+
                     if (!childImageable)
                         continue;
 
                     TfToken currentVis;
                     childImageable.GetVisibilityAttr().Get(&currentVis);
                     TfToken desiredVis = visible ? UsdGeomTokens->inherited : UsdGeomTokens->invisible;
+
                     if (currentVis != desiredVis) {
                         if (visible)
                             childImageable.MakeVisible();
@@ -1594,5 +1715,4 @@ namespace stage {
     }
 
 }  // namespace stage
-
 }  // namespace stageviz

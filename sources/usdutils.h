@@ -455,6 +455,23 @@ namespace stage {
     bool worldTransform(UsdStageRefPtr stage, const SdfPath& path, GfMatrix4d& matrix, QString& error);
 
     /**
+     * @brief Resolves the manipulation pivot for an xformable prim in world space.
+     *
+     * Uses the standard paired USD pivot pattern
+     * xformOp:translate:pivot / !invert!xformOp:translate:pivot when it can be
+     * interpreted unambiguously. Arbitrary transform stacks fall back to the
+     * prim's evaluated world-space origin.
+     *
+     * @param stage Stage containing the prim.
+     * @param path Prim path to evaluate.
+     * @param pivot Receives the resolved world-space manipulation pivot.
+     * @param error Receives a failure reason.
+     *
+     * @return True when a valid manipulation point was resolved.
+     */
+    bool worldPivot(UsdStageRefPtr stage, const SdfPath& path, GfVec3d& pivot, QString& error);
+
+    /**
      * @brief Authors a world transform for an xformable prim.
      *
      * @param stage Stage containing the prim.

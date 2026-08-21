@@ -395,12 +395,12 @@ SessionPrivate::loadFromFile(const QString& filename, Session::LoadPolicy policy
             preserveState = d.preserveState;
             stateFilename = QFileInfo(d.filename + ".session").absoluteFilePath();
         }
-        else {
-            d.stageStatus = Session::StageStatus::Failed;
-            return false;
-        }
-
         mask = d.mask;
+    }
+
+    if (!loaded) {
+        newStage(policy);
+        return false;
     }
 
     d.commandStack->clear();
@@ -408,12 +408,11 @@ SessionPrivate::loadFromFile(const QString& filename, Session::LoadPolicy policy
 
     const bool hasStateFile = preserveState && QFileInfo::exists(stateFilename);
 
-    if (loaded)
-        initStage();
+    initStage();
 
-    if (loaded && hasStateFile) {
+    if (hasStateFile) {
         if (!loadState(stateFilename)) {
-            close();
+            newStage(policy);
             return false;
         }
     }

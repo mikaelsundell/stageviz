@@ -11,6 +11,7 @@
 #include <QPointer>
 #include <algorithm>
 #include <pxr/usd/sdf/layer.h>
+#include <pxr/usd/sdf/namespaceEdit.h>
 #include <pxr/usd/usd/attribute.h>
 #include <pxr/usd/usd/editContext.h>
 #include <pxr/usd/usd/editTarget.h>
@@ -51,6 +52,135 @@ namespace {
         if (errors.size() > maxCount)
             result.append(QString("%1 more").arg(errors.size() - maxCount));
         return result.join("; ");
+    }
+
+    struct RootPropertyState {
+        SdfPath propertyPath;
+        bool hadSpec = false;
+        bool hadDefault = false;
+        VtValue defaultValue;
+    };
+
+    RootPropertyState captureRootPropertyState(const SdfLayerHandle& rootLayer, const SdfPath& propertyPath)
+    {
+        RootPropertyState state;
+        state.propertyPath = propertyPath;
+        if (!rootLayer || propertyPath.IsEmpty())
+            return state;
+
+        state.hadSpec = bool(rootLayer->GetPropertyAtPath(propertyPath));
+        state.hadDefault = rootLayer->HasField(propertyPath, SdfFieldKeys->Default);
+        if (state.hadDefault)
+            state.defaultValue = rootLayer->GetField(propertyPath, SdfFieldKeys->Default);
+        return state;
+    }
+
+    bool removePropertySpec(const SdfLayerHandle& layer, const SdfPath& propertyPath)
+    {
+        if (!layer || propertyPath.IsEmpty() || !propertyPath.IsPropertyPath())
+            return false;
+        if (!layer->GetPropertyAtPath(propertyPath))
+            return true;
+
+        SdfBatchNamespaceEdit edits;
+        edits.Add(propertyPath, SdfPath::EmptyPath());
+        return layer->CanApply(edits) && layer->Apply(edits);
+    }
+
+    bool restoreRootPropertyState(const SdfLayerHandle& rootLayer, const RootPropertyState& state)
+    {
+        if (!rootLayer || state.propertyPath.IsEmpty())
+            return false;
+
+        if (!state.hadSpec)
+            return removePropertySpec(rootLayer, state.propertyPath);
+
+        if (state.hadDefault) {
+            rootLayer->SetField(state.propertyPath, SdfFieldKeys->Default, state.defaultValue);
+            return true;
+        }
+
+        rootLayer->EraseField(state.propertyPath, SdfFieldKeys->Default);
+        return true;
+    }
+
+    QList<SdfPath> visibilityAffectedPaths(UsdStageRefPtr stage, const QList<SdfPath>& paths, bool recursive,
+                                           bool makeVisible)
+    {
+        QList<SdfPath> result;
+        if (!stage)
+            return result;
+
+        auto appendImageable = [&](const UsdPrim& prim) {
+            if (prim && UsdGeomImageable(prim) && !result.contains(prim.GetPath()))
+                result.append(prim.GetPath());
+        };
+
+        for (const SdfPath& inputPath : paths) {
+            const SdfPath primPath = inputPath.IsPropertyPath() ? inputPath.GetPrimPath() : inputPath;
+            const UsdPrim prim = stage->GetPrimAtPath(primPath);
+            if (!prim)
+                continue;
+
+            appendImageable(prim);
+
+            if (recursive) {
+                for (const UsdPrim& child : prim.GetAllDescendants())
+                    appendImageable(child);
+            }
+
+            if (makeVisible) {
+                for (UsdPrim ancestor = prim.GetParent(); ancestor && !ancestor.IsPseudoRoot();
+                     ancestor = ancestor.GetParent()) {
+                    appendImageable(ancestor);
+                }
+            }
+        }
+
+        return result;
+    }
+
+    bool restoreTransformRootState(UsdStageRefPtr stage, const SdfPath& primPath, const TransformRootState& state,
+                                   QString& error)
+    {
+        if (!stage) {
+            error = "stage missing";
+            return false;
+        }
+
+        QString rootError;
+        const SdfLayerHandle rootLayer = rootlayer::opened(stage, rootError);
+        if (!rootLayer) {
+            error = rootError;
+            return false;
+        }
+
+        const SdfPath orderPath = primPath.AppendProperty(TfToken("xformOpOrder"));
+        const SdfPath matrixPath = primPath.AppendProperty(TfToken("xformOp:transform"));
+
+        if (state.hadXformOpOrderSpec) {
+            if (state.hadXformOpOrderDefault)
+                rootLayer->SetField(orderPath, SdfFieldKeys->Default, state.xformOpOrderDefault);
+            else
+                rootLayer->EraseField(orderPath, SdfFieldKeys->Default);
+        }
+        else if (!removePropertySpec(rootLayer, orderPath)) {
+            error = QString("failed to remove transform order override: %1").arg(pathText(primPath));
+            return false;
+        }
+
+        if (state.hadMatrixOpSpec) {
+            if (state.hadMatrixOpDefault)
+                rootLayer->SetField(matrixPath, SdfFieldKeys->Default, state.matrixOpDefault);
+            else
+                rootLayer->EraseField(matrixPath, SdfFieldKeys->Default);
+        }
+        else if (!removePropertySpec(rootLayer, matrixPath)) {
+            error = QString("failed to remove matrix transform override: %1").arg(pathText(primPath));
+            return false;
+        }
+
+        return true;
     }
 
 }  // namespace
@@ -733,7 +863,11 @@ selectInvert()
 Command
 showPaths(const QList<SdfPath>& paths, bool recursive)
 {
-    auto state = std::make_shared<QHash<SdfPath, bool>>();
+    struct VisibilityCommandState {
+        QList<RootPropertyState> rootStates;
+    };
+
+    auto state = std::make_shared<VisibilityCommandState>();
 
     return Command(
         [paths, recursive, state](Session* session) {
@@ -741,53 +875,79 @@ showPaths(const QList<SdfPath>& paths, bool recursive)
 
             command::runWorker([session, paths, recursive, state]() {
                 bool success = false;
+                QString error;
 
                 {
                     WRITE_LOCKER(locker, session->stageLock(), "stageLock");
                     const UsdStageRefPtr stage = session->stageUnsafe();
 
-                    if (stage) {
-                        state->clear();
-                        for (const SdfPath& path : paths)
-                            state->insert(path, stage::isVisible(stage, path));
+                    if (!stage) {
+                        error = "stage missing";
+                    }
+                    else {
+                        QString rootError;
+                        const SdfLayerHandle rootLayer = rootlayer::opened(stage, rootError);
+                        if (!rootLayer) {
+                            error = rootError;
+                        }
+                        else {
+                            state->rootStates.clear();
+                            const QList<SdfPath> affected = visibilityAffectedPaths(stage, paths, recursive, true);
+                            state->rootStates.reserve(affected.size());
+                            for (const SdfPath& path : affected) {
+                                state->rootStates.append(
+                                    captureRootPropertyState(rootLayer, path.AppendProperty(UsdGeomTokens->visibility)));
+                            }
 
-                        stage::setVisible(stage, paths, true, recursive);
-                        success = true;
+                            stage::setVisible(stage, paths, true, recursive);
+                            success = true;
+                        }
                     }
                 }
 
-                command::queueToSession(session, [session, paths, success]() {
+                command::queueToSession(session, [session, paths, success, error]() {
                     using Status = Session::Notify::Status;
-                    command::finishDeferred(session, success ? "Paths shown" : "Show paths failed", paths,
-                                            success ? Status::Success : Status::Error);
+                    command::finishDeferred(session, success ? "Paths shown" : appendError("Show paths failed", error),
+                                            paths, success ? Status::Success : Status::Error);
                 });
             });
         },
-        [state, recursive](Session* session) {
+        [state](Session* session) {
             command::beginDeferred(session, "Undo show paths", 1);
 
-            command::runWorker([session, state, recursive]() {
-                bool success = false;
+            command::runWorker([session, state]() {
+                bool success = true;
                 QList<SdfPath> restoredPaths;
+                QString error;
 
                 {
                     WRITE_LOCKER(locker, session->stageLock(), "stageLock");
                     const UsdStageRefPtr stage = session->stageUnsafe();
+                    QString rootError;
+                    const SdfLayerHandle rootLayer = rootlayer::opened(stage, rootError);
 
-                    if (stage) {
-                        restoredPaths = state->keys();
-
-                        for (auto it = state->cbegin(); it != state->cend(); ++it)
-                            stage::setVisible(stage, { it.key() }, it.value(), recursive);
-
-                        success = true;
+                    if (!stage || !rootLayer) {
+                        success = false;
+                        error = !rootError.isEmpty() ? rootError : QStringLiteral("stage missing");
+                    }
+                    else {
+                        for (const RootPropertyState& rootState : state->rootStates) {
+                            if (!restoreRootPropertyState(rootLayer, rootState)) {
+                                success = false;
+                                error = QString("failed to restore visibility override: %1")
+                                            .arg(pathText(rootState.propertyPath.GetPrimPath()));
+                                break;
+                            }
+                            path::appendUnique(restoredPaths, rootState.propertyPath.GetPrimPath());
+                        }
                     }
                 }
 
-                command::queueToSession(session, [session, restoredPaths, success]() {
+                command::queueToSession(session, [session, restoredPaths, success, error]() {
                     using Status = Session::Notify::Status;
-                    command::finishDeferred(session, success ? "Show undone" : "Undo show paths failed", restoredPaths,
-                                            success ? Status::Success : Status::Error);
+                    command::finishDeferred(session,
+                                            success ? "Show undone" : appendError("Undo show paths failed", error),
+                                            restoredPaths, success ? Status::Success : Status::Error);
                 });
             });
         });
@@ -796,7 +956,11 @@ showPaths(const QList<SdfPath>& paths, bool recursive)
 Command
 hidePaths(const QList<SdfPath>& paths, bool recursive)
 {
-    auto state = std::make_shared<QHash<SdfPath, bool>>();
+    struct VisibilityCommandState {
+        QList<RootPropertyState> rootStates;
+    };
+
+    auto state = std::make_shared<VisibilityCommandState>();
 
     return Command(
         [paths, recursive, state](Session* session) {
@@ -804,53 +968,79 @@ hidePaths(const QList<SdfPath>& paths, bool recursive)
 
             command::runWorker([session, paths, recursive, state]() {
                 bool success = false;
+                QString error;
 
                 {
                     WRITE_LOCKER(locker, session->stageLock(), "stageLock");
                     const UsdStageRefPtr stage = session->stageUnsafe();
 
-                    if (stage) {
-                        state->clear();
-                        for (const SdfPath& path : paths)
-                            state->insert(path, stage::isVisible(stage, path));
+                    if (!stage) {
+                        error = "stage missing";
+                    }
+                    else {
+                        QString rootError;
+                        const SdfLayerHandle rootLayer = rootlayer::opened(stage, rootError);
+                        if (!rootLayer) {
+                            error = rootError;
+                        }
+                        else {
+                            state->rootStates.clear();
+                            const QList<SdfPath> affected = visibilityAffectedPaths(stage, paths, recursive, false);
+                            state->rootStates.reserve(affected.size());
+                            for (const SdfPath& path : affected) {
+                                state->rootStates.append(
+                                    captureRootPropertyState(rootLayer, path.AppendProperty(UsdGeomTokens->visibility)));
+                            }
 
-                        stage::setVisible(stage, paths, false, recursive);
-                        success = true;
+                            stage::setVisible(stage, paths, false, recursive);
+                            success = true;
+                        }
                     }
                 }
 
-                command::queueToSession(session, [session, paths, success]() {
+                command::queueToSession(session, [session, paths, success, error]() {
                     using Status = Session::Notify::Status;
-                    command::finishDeferred(session, success ? "Paths hidden" : "Hide paths failed", paths,
-                                            success ? Status::Success : Status::Error);
+                    command::finishDeferred(session, success ? "Paths hidden" : appendError("Hide paths failed", error),
+                                            paths, success ? Status::Success : Status::Error);
                 });
             });
         },
-        [state, recursive](Session* session) {
+        [state](Session* session) {
             command::beginDeferred(session, "Undo hide paths", 1);
 
-            command::runWorker([session, state, recursive]() {
-                bool success = false;
+            command::runWorker([session, state]() {
+                bool success = true;
                 QList<SdfPath> restoredPaths;
+                QString error;
 
                 {
                     WRITE_LOCKER(locker, session->stageLock(), "stageLock");
                     const UsdStageRefPtr stage = session->stageUnsafe();
+                    QString rootError;
+                    const SdfLayerHandle rootLayer = rootlayer::opened(stage, rootError);
 
-                    if (stage) {
-                        restoredPaths = state->keys();
-
-                        for (auto it = state->cbegin(); it != state->cend(); ++it)
-                            stage::setVisible(stage, { it.key() }, it.value(), recursive);
-
-                        success = true;
+                    if (!stage || !rootLayer) {
+                        success = false;
+                        error = !rootError.isEmpty() ? rootError : QStringLiteral("stage missing");
+                    }
+                    else {
+                        for (const RootPropertyState& rootState : state->rootStates) {
+                            if (!restoreRootPropertyState(rootLayer, rootState)) {
+                                success = false;
+                                error = QString("failed to restore visibility override: %1")
+                                            .arg(pathText(rootState.propertyPath.GetPrimPath()));
+                                break;
+                            }
+                            path::appendUnique(restoredPaths, rootState.propertyPath.GetPrimPath());
+                        }
                     }
                 }
 
-                command::queueToSession(session, [session, restoredPaths, success]() {
+                command::queueToSession(session, [session, restoredPaths, success, error]() {
                     using Status = Session::Notify::Status;
-                    command::finishDeferred(session, success ? "Hide undone" : "Undo hide paths failed", restoredPaths,
-                                            success ? Status::Success : Status::Error);
+                    command::finishDeferred(session,
+                                            success ? "Hide undone" : appendError("Undo hide paths failed", error),
+                                            restoredPaths, success ? Status::Success : Status::Error);
                 });
             });
         });
@@ -2237,10 +2427,11 @@ setAttributeValue(const SdfPath& attributePath, const VtValue& value)
 }
 
 Command
-setTransforms(const QList<SdfPath>& paths, const QList<GfMatrix4d>& before, const QList<GfMatrix4d>& after)
+setTransforms(const QList<SdfPath>& paths, const QList<GfMatrix4d>& before, const QList<GfMatrix4d>& after,
+              const QList<TransformRootState>& rootBefore)
 {
-    auto apply = [](Session* session, const QList<SdfPath>& paths, const QList<GfMatrix4d>& matrices,
-                    const QString& title, const QString& successMessage, const QString& failureMessage) {
+    auto applyMatrices = [](Session* session, const QList<SdfPath>& paths, const QList<GfMatrix4d>& matrices,
+                            const QString& title, const QString& successMessage, const QString& failureMessage) {
         if (!session || paths.isEmpty() || paths.size() != matrices.size())
             return;
 
@@ -2286,13 +2477,55 @@ setTransforms(const QList<SdfPath>& paths, const QList<GfMatrix4d>& before, cons
     };
 
     return Command(
-        [paths, after, apply](Session* session) {
-            apply(session, paths, after, "Transform paths", "Paths transformed", "Transform paths failed");
+        [paths, after, applyMatrices](Session* session) {
+            applyMatrices(session, paths, after, "Transform paths", "Paths transformed", "Transform paths failed");
         },
-        [paths, before, apply](Session* session) {
-            apply(session, paths, before, "Undo transform paths", "Transform undone", "Undo transform failed");
+        [paths, before, rootBefore, applyMatrices](Session* session) {
+            if (rootBefore.size() != paths.size()) {
+                applyMatrices(session, paths, before, "Undo transform paths", "Transform undone",
+                              "Undo transform failed");
+                return;
+            }
+
+            command::beginDeferred(session, "Undo transform paths", static_cast<int>(paths.size()));
+            command::runWorker([session, paths, rootBefore]() {
+                bool success = true;
+                QStringList errors;
+                QList<SdfPath> changed;
+
+                {
+                    WRITE_LOCKER(locker, session->stageLock(), "stageLock");
+                    const UsdStageRefPtr stage = session->stageUnsafe();
+                    if (!stage) {
+                        success = false;
+                        errors.append("stage missing");
+                    }
+                    else {
+                        for (qsizetype i = 0; i < paths.size(); ++i) {
+                            QString error;
+                            if (!restoreTransformRootState(stage, paths.at(i), rootBefore.at(i), error)) {
+                                success = false;
+                                errors.append(error.isEmpty() ? QString("failed: %1").arg(pathText(paths.at(i)))
+                                                              : error);
+                                continue;
+                            }
+                            path::appendUnique(changed, paths.at(i));
+                        }
+                    }
+                }
+
+                const QString errorText = summarizeErrors(errors);
+                command::queueToSession(session, [session, changed, success, errorText]() {
+                    using Status = Session::Notify::Status;
+                    command::finishDeferred(session,
+                                            success ? "Transform undone"
+                                                    : appendError("Undo transform failed", errorText),
+                                            changed, success ? Status::Success : Status::Error);
+                });
+            });
         });
 }
+
 
 
 }  // namespace stageviz

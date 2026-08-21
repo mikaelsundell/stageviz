@@ -22,6 +22,7 @@
 #include <QScrollBar>
 #include <QSet>
 #include <QSignalBlocker>
+#include <QStyle>
 #include <algorithm>
 #include <climits>
 #include <cstdint>
@@ -1079,6 +1080,45 @@ PropertyTreePrivate::addCompositionSection(const UsdPrim& prim)
     PropertyItem* section = addSection("Composition");
     bool hasComposition = false;
 
+    const SdfLayerHandle rootLayer = d.stage ? d.stage->GetRootLayer() : SdfLayerHandle();
+    const auto rootSpec = rootLayer ? rootLayer->GetPrimAtPath(prim.GetPath()) : SdfPrimSpecHandle();
+    const auto primStack = prim.GetPrimStack();
+    const SdfLayerHandle strongestLayer = (!primStack.empty() && primStack.front()) ? primStack.front()->GetLayer()
+                                                                                    : SdfLayerHandle();
+
+    QString editSource = QStringLiteral("Composed");
+    QString sourceToolTip;
+
+    const QString payloadAncestor = payloadAncestorPath(prim);
+    if (strongestLayer && rootLayer && strongestLayer == rootLayer) {
+        editSource = QStringLiteral("Root layer");
+    }
+    else if (!payloadAncestor.isEmpty()) {
+        editSource = QStringLiteral("Payload");
+    }
+    else if (prim.HasAuthoredReferences()) {
+        editSource = QStringLiteral("Referenced layer");
+    }
+
+    if (strongestLayer) {
+        const QString realPath = qt::StringToQString(strongestLayer->GetRealPath());
+        const QString identifier = qt::StringToQString(strongestLayer->GetIdentifier());
+        sourceToolTip = !realPath.isEmpty() ? realPath : identifier;
+    }
+
+    addInfo(section, "Edit Source", editSource, sourceToolTip);
+
+    const bool composedOutsideRoot = strongestLayer && rootLayer && strongestLayer != rootLayer;
+    addInfo(section, "Overrides", composedOutsideRoot ? QStringLiteral("Root layer") : QStringLiteral("Direct"),
+            composedOutsideRoot ? QStringLiteral(
+                "Property, visibility, and transform edits are authored as stronger opinions in the opened root layer.")
+                                : QStringLiteral("Edits are authored directly in the opened root layer."));
+
+    if (rootSpec && composedOutsideRoot) {
+        addInfo(section, "Root Override", "Yes",
+                QStringLiteral("This prim already has an authored spec in the opened root layer."));
+    }
+
     if (prim.HasPayload()) {
         PropertyItem* payload = addInfo(section, "Payload", "Yes");
         hasComposition = true;
@@ -1091,7 +1131,6 @@ PropertyTreePrivate::addCompositionSection(const UsdPrim& prim)
         }
     }
 
-    const QString payloadAncestor = payloadAncestorPath(prim);
     if (!payloadAncestor.isEmpty()) {
         addInfo(section, "Composed via Payload", payloadAncestor);
         hasComposition = true;
@@ -1130,7 +1169,7 @@ PropertyTreePrivate::addCompositionSection(const UsdPrim& prim)
         hasComposition = true;
     }
 
-    if (!hasComposition)
+    if (!hasComposition && !composedOutsideRoot)
         addInfo(section, "Status", "No payloads, references, or variants");
 }
 
@@ -1333,12 +1372,38 @@ PropertyTreePrivate::addAttribute(PropertyItem* parent, const UsdAttribute& attr
     item->setKind(PropertyItem::Attribute);
     item->setPropertyPath(attr.GetPath());
     item->setText(PropertyItem::Name, StringToQString(attr.GetName().GetString()));
-    item->setToolTip(PropertyItem::Name, QString::fromStdString(attr.GetTypeName().GetAsToken().GetString()));
+
+    const SdfLayerHandle rootLayer = d.stage ? d.stage->GetRootLayer() : SdfLayerHandle();
+    const bool rootOverride = rootLayer && bool(rootLayer->GetPropertyAtPath(attr.GetPath()));
+
+    QStringList toolTips;
+    toolTips.append(QString("Type: %1").arg(QString::fromStdString(attr.GetTypeName().GetAsToken().GetString())));
+
+    const auto propertyStack = attr.GetPropertyStack();
+    if (!propertyStack.empty() && propertyStack.front() && propertyStack.front()->GetLayer()) {
+        const SdfLayerHandle layer = propertyStack.front()->GetLayer();
+        const QString realPath = qt::StringToQString(layer->GetRealPath());
+        const QString identifier = qt::StringToQString(layer->GetIdentifier());
+        toolTips.append(QString("Strongest opinion: %1").arg(!realPath.isEmpty() ? realPath : identifier));
+    }
+
+    if (rootOverride) {
+        toolTips.append(QStringLiteral("Root-layer override"));
+        item->setIcon(PropertyItem::Name, d.tree->style()->standardIcon(QStyle::SP_ArrowUp));
+        QFont nameFont = item->font(PropertyItem::Name);
+        nameFont.setBold(true);
+        item->setFont(PropertyItem::Name, nameFont);
+    }
+
+    item->setToolTip(PropertyItem::Name, toolTips.join('\n'));
 
     VtValue value;
     if (!attr.Get(&value)) {
         item->setText(PropertyItem::Value, "<no default>");
-        item->setToolTip(PropertyItem::Value, "No composed default value");
+        QString valueToolTip = QStringLiteral("No composed default value");
+        if (rootOverride)
+            valueToolTip += QStringLiteral("\nRoot-layer override");
+        item->setToolTip(PropertyItem::Value, valueToolTip);
         setReadOnlyValueStyle(item);
         return;
     }
@@ -1346,7 +1411,10 @@ PropertyTreePrivate::addAttribute(PropertyItem* parent, const UsdAttribute& attr
     int arraySize = 0;
     if (arrayInfo(value, arraySize)) {
         item->setText(PropertyItem::Value, QString("%1 values").arg(arraySize));
-        item->setToolTip(PropertyItem::Value, QString::fromStdString(value.GetTypeName()));
+        QString valueToolTip = QString::fromStdString(value.GetTypeName());
+        if (rootOverride)
+            valueToolTip += QStringLiteral("\nRoot-layer override");
+        item->setToolTip(PropertyItem::Value, valueToolTip);
         setReadOnlyValueStyle(item);
 
         if (arraySize <= d.chunkSize) {
@@ -1373,7 +1441,10 @@ PropertyTreePrivate::addAttribute(PropertyItem* parent, const UsdAttribute& attr
     }
 
     item->setText(PropertyItem::Value, scalarText(value));
-    item->setToolTip(PropertyItem::Value, QString::fromStdString(value.GetTypeName()));
+    QString valueToolTip = QString::fromStdString(value.GetTypeName());
+    if (rootOverride)
+        valueToolTip += QStringLiteral("\nRoot-layer override");
+    item->setToolTip(PropertyItem::Value, valueToolTip);
 
     const bool editable = scalarEditable(value);
     item->setValueEditable(editable);

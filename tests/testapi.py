@@ -13,7 +13,7 @@ import tempfile
 import time
 import traceback
 
-from pxr import Gf, Sdf, Usd, UsdGeom
+from pxr import Gf, Sdf, Usd, UsdGeom, UsdShade
 import stageviz
 
 
@@ -183,6 +183,25 @@ def _default_prim_path():
     return str(prim.GetPath())
 
 
+def _root_layer():
+    stage = _stage()
+    return stage.GetRootLayer() if stage else None
+
+
+def _root_has_property(path):
+    layer = _root_layer()
+    if not layer:
+        return False
+    return bool(layer.GetPropertyAtPath(Sdf.Path(path)))
+
+
+def _root_has_prim(path):
+    layer = _root_layer()
+    if not layer:
+        return False
+    return bool(layer.GetPrimAtPath(Sdf.Path(path)))
+
+
 def _define_xform(stage, path):
     return UsdGeom.Xform.Define(stage, path).GetPrim()
 
@@ -214,6 +233,19 @@ def _set_translate(path, value):
     xform = UsdGeom.Xformable(prim)
     xform.ClearXformOpOrder()
     xform.AddTranslateOp().Set(Gf.Vec3d(*value))
+    return True
+
+
+def _set_complex_transform(path, translate, rotate, scale):
+    prim = _prim(path)
+    if not prim:
+        return False
+
+    xform = UsdGeom.Xformable(prim)
+    xform.ClearXformOpOrder()
+    xform.AddTranslateOp().Set(Gf.Vec3d(*translate))
+    xform.AddRotateXYZOp().Set(Gf.Vec3f(*rotate))
+    xform.AddScaleOp().Set(Gf.Vec3f(*scale))
     return True
 
 
@@ -1296,6 +1328,228 @@ def test_multi_move_is_transactional_on_collision():
     _assert_equal(_child_names("/World/B"), before_b, "failed batch move preserves destination order")
 
 
+def test_composed_visibility_override_and_undo():
+    stageviz.command.load_payloads(["/World/PayloadA"])
+
+    _assert(
+        _wait_until(lambda: _exists("/World/PayloadA/Geom")),
+        "payload content loaded for visibility override",
+    )
+
+    property_path = "/World/PayloadA/Geom.visibility"
+
+    _assert(
+        not _root_has_property(property_path),
+        "composed visibility has no root-layer opinion initially",
+    )
+
+    stageviz.command.hide_paths(["/World/PayloadA/Geom"], recursive=False)
+
+    _assert(
+        _wait_until(
+            lambda: str(_visibility("/World/PayloadA/Geom")) == "invisible"
+        ),
+        "hide composed prim authors invisible",
+    )
+
+    _assert(
+        _root_has_property(property_path),
+        "hide composed prim creates root-layer visibility override",
+    )
+
+    if _undo():
+        _assert(
+            _wait_until(
+                lambda: str(_visibility("/World/PayloadA/Geom")) != "invisible"
+            ),
+            "undo restores composed visibility",
+        )
+
+        _assert(
+            not _root_has_property(property_path),
+            "undo removes newly-created root-layer visibility override",
+        )
+
+
+def test_move_non_xformable_prim():
+    stage = _stage()
+
+    UsdGeom.Scope.Define(stage, "/World/Looks")
+    UsdGeom.Scope.Define(stage, "/World/LooksDestination")
+    UsdShade.Material.Define(stage, "/World/Looks/TestMaterial")
+
+    _assert(
+        _exists("/World/Looks/TestMaterial"),
+        "material prepared for namespace move",
+    )
+
+    stageviz.command.move_path(
+        ["/World/Looks/TestMaterial"],
+        "/World/LooksDestination",
+        insert_index=-1,
+        preserve_world_transform=True,
+    )
+
+    _assert(
+        _wait_until(
+            lambda: not _exists("/World/Looks/TestMaterial")
+            and _exists("/World/LooksDestination/TestMaterial")
+        ),
+        "non-xformable material moves with transform preservation enabled",
+    )
+
+    if _undo():
+        _assert(
+            _wait_until(
+                lambda: _exists("/World/Looks/TestMaterial")
+                and not _exists("/World/LooksDestination/TestMaterial")
+            ),
+            "undo restores moved non-xformable material",
+        )
+
+
+def test_move_preserve_complex_world_transform():
+    _assert(
+        _set_complex_transform(
+            "/World/A",
+            (13.0, -7.0, 4.0),
+            (27.0, -38.0, 16.0),
+            (1.7, 0.65, 1.2),
+        ),
+        "set complex source parent transform",
+    )
+
+    _assert(
+        _set_complex_transform(
+            "/World/A/A1",
+            (4.0, 9.0, -3.0),
+            (-21.0, 44.0, 33.0),
+            (0.8, 1.35, 0.7),
+        ),
+        "set complex child transform",
+    )
+
+    _assert(
+        _set_complex_transform(
+            "/World/B",
+            (-11.0, 18.0, 6.0),
+            (31.0, 19.0, -42.0),
+            (0.75, 1.4, 1.1),
+        ),
+        "set complex destination parent transform",
+    )
+
+    before = _world_transform("/World/A/A1")
+
+    _assert(
+        before is not None,
+        "capture complex child world transform before move",
+    )
+
+    stageviz.command.move_path(
+        ["/World/A/A1"],
+        "/World/B",
+        insert_index=-1,
+        preserve_world_transform=True,
+    )
+
+    _assert(
+        _wait_until(
+            lambda: _exists("/World/B/A1")
+            and not _exists("/World/A/A1")
+        ),
+        "complex transformed prim moved",
+    )
+
+    after = _world_transform("/World/B/A1")
+
+    _assert(
+        _matrix_close(after, before, tolerance=1e-6),
+        "complex reparent preserves full world transform",
+    )
+
+    if _undo():
+        _assert(
+            _wait_until(
+                lambda: _exists("/World/A/A1")
+                and not _exists("/World/B/A1")
+            ),
+            "undo complex reparent restores original hierarchy",
+        )
+
+        restored = _world_transform("/World/A/A1")
+
+        _assert(
+            _matrix_close(restored, before, tolerance=1e-6),
+            "undo complex reparent restores original world transform",
+        )
+
+
+def test_failed_load_leaves_valid_stage():
+    _disable_preserve_state()
+
+    missing_path = os.path.join(
+        tempfile.gettempdir(),
+        "stageviz_this_file_must_not_exist.usda",
+    )
+
+    try:
+        os.remove(missing_path)
+    except FileNotFoundError:
+        pass
+
+    loaded = stageviz.session().load(
+        missing_path,
+        stageviz.LoadNone,
+    )
+
+    _assert(
+        not loaded,
+        "loading missing stage reports failure",
+    )
+
+    _assert(
+        stageviz.session().stage() is not None,
+        "failed load leaves a valid stage object",
+    )
+
+
+def test_payload_descendant_rejects_namespace_edit():
+    stageviz.command.load_payloads(["/World/PayloadA"])
+
+    _assert(
+        _wait_until(lambda: _exists("/World/PayloadA/Geom")),
+        "payload descendant prepared",
+    )
+
+    stageviz.command.move_path(
+        ["/World/PayloadA/Geom"],
+        "/World/B",
+        insert_index=-1,
+    )
+
+    _wait()
+
+    _assert(
+        _exists("/World/PayloadA/Geom"),
+        "payload descendant remains at composed path",
+    )
+
+    _assert(
+        not _exists("/World/B/Geom"),
+        "payload descendant move creates no destination override",
+    )
+
+    stageviz.command.delete_paths(["/World/PayloadA/Geom"])
+
+    _wait()
+
+    _assert(
+        _exists("/World/PayloadA/Geom"),
+        "delete rejects payload-owned descendant",
+    )
+
+
 def test_save_reload(saved_path):
     ok = stageviz.session().save(saved_path)
     _assert(ok, "session.save writes test stage")
@@ -1338,6 +1592,11 @@ def run():
         ("root layer policy", test_root_layer_policy_rejects_sublayer_prim),
         ("composition boundary", test_composition_boundary_rejects_namespace_edit),
         ("transactional multi move", test_multi_move_is_transactional_on_collision),
+        ("composed visibility override", test_composed_visibility_override_and_undo),
+        ("move non-xformable prim", test_move_non_xformable_prim),
+        ("move preserve complex transform", test_move_preserve_complex_world_transform),
+        ("failed load recovery", test_failed_load_leaves_valid_stage),
+        ("payload descendant namespace policy", test_payload_descendant_rejects_namespace_edit),
         ("save/reopen", lambda: test_save_reload(saved_path)),
     ]
 
