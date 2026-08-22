@@ -753,6 +753,17 @@
     <property name="title">
      <string>File</string>
     </property>
+    <widget class="QMenu" name="fileMerge">
+     <property name="title">
+      <string>Merge</string>
+     </property>
+     <addaction name="fileMergeStage"/>
+     <addaction name="fileMergeFlattened"/>
+     <addaction name="separator"/>
+     <addaction name="fileMergeSublayer"/>
+     <addaction name="fileMergeReference"/>
+     <addaction name="fileMergePayload"/>
+    </widget>
     <widget class="QMenu" name="filePolicy">
      <property name="title">
       <string>Policy</string>
@@ -1388,9 +1399,29 @@
     <string>Ctrl+I</string>
    </property>
   </action>
-  <action name="fileMerge">
+  <action name="fileMergeStage">
    <property name="text">
-    <string>Merge</string>
+    <string>Merge into stage ...</string>
+   </property>
+  </action>
+  <action name="fileMergeFlattened">
+   <property name="text">
+    <string>Merge flattened ...</string>
+   </property>
+  </action>
+  <action name="fileMergeSublayer">
+   <property name="text">
+    <string>Merge sublayer ...</string>
+   </property>
+  </action>
+  <action name="fileMergeReference">
+   <property name="text">
+    <string>Merge reference ...</string>
+   </property>
+  </action>
+  <action name="fileMergePayload">
+   <property name="text">
+    <string>Merge payload ...</string>
    </property>
   </action>
   <action name="editSelectAll">

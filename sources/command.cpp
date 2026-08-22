@@ -10,6 +10,7 @@
 #include "usdutils.h"
 #include <QPointer>
 #include <algorithm>
+#include <pxr/usd/sdf/copyUtils.h>
 #include <pxr/usd/sdf/layer.h>
 #include <pxr/usd/sdf/namespaceEdit.h>
 #include <pxr/usd/usd/attribute.h>
@@ -2673,6 +2674,177 @@ setAttributeValue(const SdfPath& attributePath, const VtValue& value)
 }
 
 Command
+resetAttributeOverride(const SdfPath& attributePath)
+{
+    struct ResetAttributeOverrideState {
+        SdfPath attributePath;
+        SdfPath primPath;
+        SdfLayerRefPtr snapshotLayer;
+        bool captured = false;
+    };
+
+    auto state = std::make_shared<ResetAttributeOverrideState>();
+
+    return Command(
+        [attributePath, state](Session* session) {
+            if (!session || attributePath.IsEmpty() || !attributePath.IsPropertyPath())
+                return;
+
+            command::beginDeferred(session, "Reset attribute override", 1);
+
+            command::runWorker([session, attributePath, state]() {
+                bool success = false;
+                QString error;
+                const SdfPath primPath = attributePath.GetPrimPath();
+
+                {
+                    WRITE_LOCKER(locker, session->stageLock(), "stageLock");
+                    const UsdStageRefPtr stage = session->stageUnsafe();
+
+                    if (!stage) {
+                        error = "stage missing";
+                    }
+                    else {
+                        QString rootError;
+                        const SdfLayerHandle rootLayer = rootlayer::opened(stage, rootError);
+
+                        if (!rootLayer) {
+                            error = rootError;
+                        }
+                        else {
+                            const UsdPrim prim = stage->GetPrimAtPath(primPath);
+                            const SdfPropertySpecHandle rootAttribute = rootLayer->GetPropertyAtPath(attributePath);
+
+                            bool hasUnderlyingPrimOpinion = false;
+
+                            if (prim && prim.IsValid() && !prim.IsInstanceProxy()) {
+                                for (const SdfPrimSpecHandle& primSpec : prim.GetPrimStack()) {
+                                    if (!primSpec)
+                                        continue;
+
+                                    const SdfLayerHandle layer = primSpec->GetLayer();
+                                    if (layer && layer != rootLayer) {
+                                        hasUnderlyingPrimOpinion = true;
+                                        break;
+                                    }
+                                }
+                            }
+
+                            if (!prim || !prim.IsValid()) {
+                                error = "prim missing";
+                            }
+                            else if (prim.IsInstanceProxy()) {
+                                error = "instance proxy is not editable";
+                            }
+                            else if (!rootAttribute) {
+                                error = "attribute has no root-layer override";
+                            }
+                            else if (!hasUnderlyingPrimOpinion) {
+                                error = "attribute belongs to a root-layer-owned prim";
+                            }
+                            else {
+                                if (!state->captured) {
+                                    state->attributePath = attributePath;
+                                    state->primPath = primPath;
+                                    state->snapshotLayer = SdfLayer::CreateAnonymous(
+                                        "stageviz_attribute_override_snapshot.usda");
+
+                                    if (!state->snapshotLayer) {
+                                        error = "failed to create attribute override snapshot";
+                                    }
+                                    else {
+                                        SdfCreatePrimInLayer(state->snapshotLayer, primPath);
+
+                                        if (!SdfCopySpec(rootLayer, attributePath, state->snapshotLayer,
+                                                         attributePath)) {
+                                            state->snapshotLayer = nullptr;
+                                            error = "failed to snapshot attribute override";
+                                        }
+                                        else {
+                                            state->captured = true;
+                                        }
+                                    }
+                                }
+
+                                if (state->captured && error.isEmpty()) {
+                                    if (!removePropertySpec(rootLayer, attributePath)) {
+                                        error = "failed to remove attribute override";
+                                    }
+                                    else {
+                                        const SdfPrimSpecHandle remainingSpec = rootLayer->GetPrimAtPath(primPath);
+
+                                        if (remainingSpec && remainingSpec->IsInert())
+                                            stage::removePrimSpec(rootLayer, primPath);
+
+                                        success = true;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                command::queueToSession(session, [session, primPath, success, error]() {
+                    using Status = Session::Notify::Status;
+
+                    command::finishDeferred(session,
+                                            success ? "Attribute override reset"
+                                                    : appendError("Reset attribute override failed", error),
+                                            { primPath }, success ? Status::Success : Status::Error);
+                });
+            });
+        },
+        [state](Session* session) {
+            if (!session || !state->captured || !state->snapshotLayer)
+                return;
+
+            command::beginDeferred(session, "Undo reset attribute override", 1);
+
+            command::runWorker([session, state]() {
+                bool success = false;
+                QString error;
+
+                {
+                    WRITE_LOCKER(locker, session->stageLock(), "stageLock");
+                    const UsdStageRefPtr stage = session->stageUnsafe();
+
+                    if (!stage) {
+                        error = "stage missing";
+                    }
+                    else {
+                        QString rootError;
+                        const SdfLayerHandle rootLayer = rootlayer::opened(stage, rootError);
+
+                        if (!rootLayer) {
+                            error = rootError;
+                        }
+                        else {
+                            if (!rootLayer->GetPrimAtPath(state->primPath))
+                                SdfCreatePrimInLayer(rootLayer, state->primPath);
+
+                            if (!SdfCopySpec(state->snapshotLayer, state->attributePath, rootLayer,
+                                             state->attributePath)) {
+                                error = "failed to restore attribute override";
+                            }
+                            else {
+                                success = true;
+                            }
+                        }
+                    }
+                }
+
+                command::queueToSession(session, [session, state, success, error]() {
+                    using Status = Session::Notify::Status;
+
+                    command::finishDeferred(session,
+                                            success ? "Attribute override reset undone"
+                                                    : appendError("Undo reset attribute override failed", error),
+                                            { state->primPath }, success ? Status::Success : Status::Error);
+                });
+            });
+        });
+}
+Command
 resetTransforms(const QList<SdfPath>& paths)
 {
     struct ResetTransformState {
@@ -2808,6 +2980,237 @@ resetTransforms(const QList<SdfPath>& paths)
                     const QString message = success ? QStringLiteral("Reset xform undone")
                                                     : appendError("Undo reset xform finished with errors",
                                                                   summarizeErrors(errors));
+                    command::finishDeferred(session, message, restored, success ? Status::Success : Status::Error);
+                });
+            });
+        });
+}
+
+
+Command
+resetOverrides(const QList<SdfPath>& paths)
+{
+    struct ResetOverrideState {
+        struct Item {
+            SdfPath path;
+            SdfLayerRefPtr snapshotLayer;
+            QList<SdfPath> propertyPaths;
+            std::vector<TfToken> metadataKeys;
+            bool removedPrimSpec = false;
+        };
+
+        QList<Item> items;
+    };
+
+    auto state = std::make_shared<ResetOverrideState>();
+
+    return Command(
+        [paths, state](Session* session) {
+            if (!session || paths.isEmpty())
+                return;
+
+            command::beginDeferred(session, "Reset overrides", static_cast<int>(paths.size()));
+
+            command::runWorker([session, paths, state]() {
+                QList<SdfPath> affected;
+                QStringList errors;
+
+                {
+                    WRITE_LOCKER(locker, session->stageLock(), "stageLock");
+                    const UsdStageRefPtr stage = session->stageUnsafe();
+
+                    if (!stage) {
+                        errors.append("stage missing");
+                    }
+                    else {
+                        QString rootError;
+                        const SdfLayerHandle rootLayer = rootlayer::opened(stage, rootError);
+
+                        if (!rootLayer) {
+                            errors.append(rootError);
+                        }
+                        else {
+                            state->items.clear();
+
+                            for (const SdfPath& inputPath : path::uniquePaths(paths)) {
+                                const SdfPath primPath = inputPath.IsPropertyPath() ? inputPath.GetPrimPath()
+                                                                                    : inputPath;
+
+                                const UsdPrim prim = stage->GetPrimAtPath(primPath);
+                                if (!prim || !prim.IsValid() || prim.IsInstanceProxy()) {
+                                    errors.append(QString("invalid prim: %1").arg(pathText(primPath)));
+                                    continue;
+                                }
+
+                                const SdfPrimSpecHandle rootSpec = rootLayer->GetPrimAtPath(primPath);
+                                if (!rootSpec)
+                                    continue;
+
+                                bool hasUnderlyingOpinion = false;
+                                for (const SdfPrimSpecHandle& primSpec : prim.GetPrimStack()) {
+                                    if (!primSpec)
+                                        continue;
+
+                                    const SdfLayerHandle layer = primSpec->GetLayer();
+                                    if (layer && layer != rootLayer) {
+                                        hasUnderlyingOpinion = true;
+                                        break;
+                                    }
+                                }
+
+                                if (!hasUnderlyingOpinion)
+                                    continue;
+
+                                ResetOverrideState::Item item;
+                                item.path = primPath;
+                                item.snapshotLayer = SdfLayer::CreateAnonymous("stageviz_override_snapshot.usda");
+                                if (!item.snapshotLayer) {
+                                    errors.append(
+                                        QString("failed to create override snapshot: %1").arg(pathText(primPath)));
+                                    continue;
+                                }
+
+                                SdfCreatePrimInLayer(item.snapshotLayer, primPath);
+
+                                const auto properties = rootSpec->GetProperties();
+                                item.propertyPaths.reserve(static_cast<int>(properties.size()));
+
+                                bool snapshotFailed = false;
+                                for (const SdfPropertySpecHandle& property : properties) {
+                                    if (!property)
+                                        continue;
+
+                                    const SdfPath propertyPath = property->GetPath();
+                                    if (!SdfCopySpec(rootLayer, propertyPath, item.snapshotLayer, propertyPath)) {
+                                        errors.append(QString("failed to snapshot override property: %1")
+                                                          .arg(pathText(propertyPath)));
+                                        snapshotFailed = true;
+                                        break;
+                                    }
+
+                                    item.propertyPaths.append(propertyPath);
+                                }
+
+                                if (snapshotFailed)
+                                    continue;
+
+                                item.metadataKeys = rootSpec->GetMetaDataInfoKeys();
+                                for (const TfToken& key : item.metadataKeys)
+                                    item.snapshotLayer->SetField(primPath, key, rootLayer->GetField(primPath, key));
+
+                                bool reset = true;
+
+                                for (const SdfPath& propertyPath : item.propertyPaths) {
+                                    if (!removePropertySpec(rootLayer, propertyPath)) {
+                                        errors.append(QString("failed to remove override property: %1")
+                                                          .arg(pathText(propertyPath)));
+                                        reset = false;
+                                        break;
+                                    }
+                                }
+
+                                if (!reset)
+                                    continue;
+
+                                for (const TfToken& key : item.metadataKeys)
+                                    rootSpec->ClearInfo(key);
+
+                                const SdfPrimSpecHandle remainingSpec = rootLayer->GetPrimAtPath(primPath);
+                                if (remainingSpec && remainingSpec->IsInert()) {
+                                    item.removedPrimSpec = stage::removePrimSpec(rootLayer, primPath);
+                                    if (!item.removedPrimSpec) {
+                                        errors.append(
+                                            QString("failed to remove empty override spec: %1").arg(pathText(primPath)));
+                                        continue;
+                                    }
+                                }
+
+                                state->items.append(item);
+                                path::appendUnique(affected, primPath);
+                            }
+                        }
+                    }
+                }
+
+                const bool success = errors.isEmpty();
+                command::queueToSession(session, [session, affected, errors, success]() {
+                    using Status = Session::Notify::Status;
+                    const QString message = success ? QStringLiteral("Overrides reset")
+                                                    : appendError("Reset overrides finished with errors",
+                                                                  summarizeErrors(errors));
+
+                    command::finishDeferred(session, message, affected, success ? Status::Success : Status::Error);
+                });
+            });
+        },
+        [state](Session* session) {
+            if (!session || state->items.isEmpty())
+                return;
+
+            command::beginDeferred(session, "Undo reset overrides", static_cast<int>(state->items.size()));
+
+            command::runWorker([session, state]() {
+                QList<SdfPath> restored;
+                QStringList errors;
+
+                {
+                    WRITE_LOCKER(locker, session->stageLock(), "stageLock");
+                    const UsdStageRefPtr stage = session->stageUnsafe();
+
+                    if (!stage) {
+                        errors.append("stage missing");
+                    }
+                    else {
+                        QString rootError;
+                        const SdfLayerHandle rootLayer = rootlayer::opened(stage, rootError);
+
+                        if (!rootLayer) {
+                            errors.append(rootError);
+                        }
+                        else {
+                            for (const ResetOverrideState::Item& item : state->items) {
+                                SdfPrimSpecHandle rootSpec = rootLayer->GetPrimAtPath(item.path);
+                                if (!rootSpec)
+                                    rootSpec = SdfCreatePrimInLayer(rootLayer, item.path);
+
+                                if (!rootSpec) {
+                                    errors.append(
+                                        QString("failed to restore override spec: %1").arg(pathText(item.path)));
+                                    continue;
+                                }
+
+                                bool restoredItem = true;
+
+                                for (const TfToken& key : item.metadataKeys) {
+                                    if (!item.snapshotLayer->HasField(item.path, key))
+                                        continue;
+
+                                    rootLayer->SetField(item.path, key, item.snapshotLayer->GetField(item.path, key));
+                                }
+
+                                for (const SdfPath& propertyPath : item.propertyPaths) {
+                                    if (!SdfCopySpec(item.snapshotLayer, propertyPath, rootLayer, propertyPath)) {
+                                        errors.append(QString("failed to restore override property: %1")
+                                                          .arg(pathText(propertyPath)));
+                                        restoredItem = false;
+                                        break;
+                                    }
+                                }
+
+                                if (restoredItem)
+                                    path::appendUnique(restored, item.path);
+                            }
+                        }
+                    }
+                }
+
+                const bool success = errors.isEmpty();
+                command::queueToSession(session, [session, restored, errors, success]() {
+                    using Status = Session::Notify::Status;
+                    const QString message = success ? QStringLiteral("Reset overrides undone")
+                                                    : appendError("Undo reset overrides finished with errors",
+                                                                  summarizeErrors(errors));
+
                     command::finishDeferred(session, message, restored, success ? Status::Success : Status::Error);
                 });
             });

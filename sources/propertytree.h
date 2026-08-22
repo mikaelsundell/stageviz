@@ -12,6 +12,8 @@
 
 PXR_NAMESPACE_USING_DIRECTIVE
 
+class QMouseEvent;
+
 namespace stageviz {
 
 class PropertyTreePrivate;
@@ -98,6 +100,17 @@ public:
     void updateSelection(const QList<SdfPath>& paths);
 
     ///@}
+
+protected:
+    /**
+     * @brief Handles clicks on property override icons.
+     *
+     * Clicking the override icon of an overridden attribute removes only that
+     * property's root-layer override through the undoable command system.
+     *
+     * @param event Mouse press event.
+     */
+    void mousePressEvent(QMouseEvent* event) override;
 
 private:
     QScopedPointer<PropertyTreePrivate> p;

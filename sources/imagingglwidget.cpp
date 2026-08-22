@@ -1195,7 +1195,7 @@ ImagingGLWidgetPrivate::updateAuxiliaryGrid()
 {
     if (!d.auxiliary)
         return;
-    
+
     ViewState* state = viewState();
     WRITE_LOCKER(locker, session()->auxiliaryLock(), "auxiliaryLock");
     const SdfPath displayPath("/Display");
@@ -1209,7 +1209,7 @@ ImagingGLWidgetPrivate::updateAuxiliaryGrid()
         d.auxiliary->RemovePrim(gridRootPath);
         return;
     }
-    
+
     UsdGeomScope::Define(d.auxiliary, displayPath);
     UsdGeomScope::Define(d.auxiliary, gridRootPath);
     UsdGeomScope::Define(d.auxiliary, materialsPath);
@@ -1220,7 +1220,7 @@ ImagingGLWidgetPrivate::updateAuxiliaryGrid()
     auto point = [&](float a, float b) {
         return upAxis == UsdGeomTokens->z ? GfVec3f(a, b, 0.0f) : GfVec3f(a, 0.0f, b);
     };
-    
+
     VtVec3fArray points;
     VtIntArray counts;
     for (int i = 1; i <= lines; ++i) {
@@ -1236,7 +1236,7 @@ ImagingGLWidgetPrivate::updateAuxiliaryGrid()
         for (int j = 0; j < 4; ++j)
             counts.push_back(2);
     }
-    
+
     UsdGeomBasisCurves grid = UsdGeomBasisCurves::Define(d.auxiliary, gridPath);
     grid.CreateTypeAttr(VtValue(UsdGeomTokens->linear));
     grid.CreateBasisAttr(VtValue(UsdGeomTokens->bezier));
@@ -1271,30 +1271,32 @@ ImagingGLWidgetPrivate::updateAuxiliaryGrid()
     UsdShadeMaterialBindingAPI::Apply(grid.GetPrim()).Bind(gridMaterial);
     UsdShadeMaterialBindingAPI::Apply(center.GetPrim()).Bind(centerMaterial);
 }
+
 void
 ImagingGLWidgetPrivate::ensureAuxiliaryMaterials()
 {
     if (!d.auxiliary)
         return;
-    
+
     WRITE_LOCKER(locker, session()->auxiliaryLock(), "auxiliaryLock");
     const SdfPath materialsPath("/Materials");
     const SdfPath clayPath("/Materials/Clay");
     UsdGeomScope::Define(d.auxiliary, materialsPath);
-    
+
     // built-in Stageviz clay lives on the shared auxiliary stage just like any
     // other render-support material.
     authorAuxiliaryStandardSurface(clayPath, GfVec3f(0.55f, 0.18f, 0.16f), 0.0f, 0.68f, 0.35f);
 }
+
 void
 ImagingGLWidgetPrivate::authorAuxiliaryGridMaterial(const SdfPath& materialPath, const GfVec3f& color)
 {
     if (!d.auxiliary)
         return;
-    
+
     UsdShadeMaterial material = UsdShadeMaterial::Define(d.auxiliary, materialPath);
     UsdShadeShader surface = UsdShadeShader::Define(d.auxiliary, materialPath.AppendChild(TfToken("Surface")));
-    
+
     // Use the same MaterialX Standard Surface path as the working viewport
     // overrides. The grid is intentionally emission-only so its appearance is
     // stable and independent of viewport lighting.
@@ -1309,13 +1311,14 @@ ImagingGLWidgetPrivate::authorAuxiliaryGridMaterial(const SdfPath& materialPath,
     UsdShadeOutput output = surface.CreateOutput(TfToken("out"), SdfValueTypeNames->Token);
     material.CreateSurfaceOutput().ConnectToSource(output);
 }
+
 void
 ImagingGLWidgetPrivate::authorAuxiliaryStandardSurface(const SdfPath& materialPath, const GfVec3f& baseColor,
                                                        float metalness, float roughness, float specular)
 {
     if (!d.auxiliary)
         return;
-    
+
     UsdShadeMaterial material = UsdShadeMaterial::Define(d.auxiliary, materialPath);
     UsdShadeShader surface = UsdShadeShader::Define(d.auxiliary, materialPath.AppendChild(TfToken("Surface")));
     surface.CreateIdAttr(VtValue(TfToken("ND_standard_surface_surfaceshader")));
@@ -1333,11 +1336,11 @@ ImagingGLWidgetPrivate::updateRenderEngineSettings()
 {
     if (!d.renderEngine)
         return;
-    
+
     ViewState* state = viewState();
     if (!state)
         return;
-    
+
     RenderEngine::Settings settings = d.renderEngine->settings();
     settings.clearColor = state->backgroundColor().isValid() ? state->backgroundColor() : QColor(Qt::black);
     settings.aov = QStringToTfToken(state->rendererAov().isEmpty() ? QStringLiteral("color") : state->rendererAov());
@@ -1349,21 +1352,21 @@ ImagingGLWidgetPrivate::updateRenderEngineSettings()
     case ViewState::High: settings.complexity = 1.2; break;
     case ViewState::VeryHigh: settings.complexity = 1.3; break;
     }
-    
+
     switch (state->doubleSidedMode()) {
     case ViewState::Primitive: settings.doubleSidedMode = RenderEngine::DoubleSidedMode::Primitive; break;
     case ViewState::SingleSided: settings.doubleSidedMode = RenderEngine::DoubleSidedMode::SingleSided; break;
     case ViewState::DoubleSided:
     default: settings.doubleSidedMode = RenderEngine::DoubleSidedMode::DoubleSided; break;
     }
-    
+
     switch (state->materialMode()) {
     case ViewState::Clay: settings.materialMode = RenderEngine::MaterialMode::Clay; break;
     case ViewState::Override: settings.materialMode = RenderEngine::MaterialMode::Override; break;
     case ViewState::All:
     default: settings.materialMode = RenderEngine::MaterialMode::Scene; break;
     }
-    
+
     settings.overrideMaterial = state->overrideMaterial();
     settings.sceneLightsEnabled = state->sceneLightsEnabled();
     settings.sceneMaterialsEnabled = state->sceneMaterialsEnabled();
@@ -1378,7 +1381,7 @@ ImagingGLWidgetPrivate::projectWorldToScreen(const GfVec3d& world, QPointF& scre
 {
     if (!d.context || !viewCamera())
         return false;
-    
+
     const GfCamera camera = viewCamera()->camera();
     const GfFrustum frustum = camera.GetFrustum();
     const GfMatrix4d view = frustum.ComputeViewMatrix();
@@ -1387,7 +1390,7 @@ ImagingGLWidgetPrivate::projectWorldToScreen(const GfVec3d& world, QPointF& scre
     const GfVec3d ndc = projection.Transform(cameraPoint);
     if (!std::isfinite(ndc[0]) || !std::isfinite(ndc[1]) || !std::isfinite(ndc[2]))
         return false;
-    
+
     const QRectF gate = cameraGateRect();
     screen.setX(gate.left() + (ndc[0] * 0.5 + 0.5) * gate.width());
     screen.setY(gate.top() + (1.0 - (ndc[1] * 0.5 + 0.5)) * gate.height());
@@ -1400,13 +1403,13 @@ ImagingGLWidgetPrivate::transformAxisDirection(int axis)
     const GfVec3d worldAxis = transformAxisVector(axis);
     if (worldAxis.GetLengthSq() < 1e-12)
         return {};
-    
+
     const GfVec3d cameraAxis = view.TransformDir(worldAxis);
     QPointF direction(cameraAxis[0], -cameraAxis[1]);
     const double length = std::hypot(direction.x(), direction.y());
     if (length < 1e-4)
         return {};
-    
+
     return direction / length;
 }
 GfVec3d
@@ -1431,7 +1434,7 @@ ImagingGLWidgetPrivate::transformWorldPerPixel(const GfVec3d& pivot)
 {
     if (!viewCamera())
         return 0.0;
-    
+
     double worldPerPixel = viewCamera()->mapToFrustumHeight(std::max(1, widgetSize()[1]));
     const GfCamera camera = viewCamera()->camera();
     const double pivotDistance = (camera.GetTransform().ExtractTranslation() - pivot).GetLength();
@@ -1445,7 +1448,7 @@ ImagingGLWidgetPrivate::transformRotationPoint(int axis, double angle, QPointF& 
     const GfVec3d normal = transformAxisVector(axis);
     if (normal.GetLengthSq() < 1e-12)
         return false;
-    
+
     GfVec3d basisA;
     GfVec3d basisB;
     if (normal == GfVec3d::XAxis()) {
@@ -1464,7 +1467,7 @@ ImagingGLWidgetPrivate::transformRotationPoint(int axis, double angle, QPointF& 
     const double radius = transformWorldPerPixel() * radiusPixels;
     if (radius <= 0.0)
         return false;
-    
+
     const GfVec3d world = d.transformPivot + basisA * (std::cos(angle) * radius) + basisB * (std::sin(angle) * radius);
     return const_cast<ImagingGLWidgetPrivate*>(this)->projectWorldToScreen(world, screen);
 }
@@ -1480,7 +1483,7 @@ ImagingGLWidgetPrivate::transformRotationAngle(int axis, const QPointF& pos, dou
         QPointF p;
         if (!transformRotationPoint(axis, a, p))
             continue;
-        
+
         const double d = std::hypot(pos.x() - p.x(), pos.y() - p.y());
         if (d < bestDistance) {
             bestDistance = d;
@@ -1490,11 +1493,11 @@ ImagingGLWidgetPrivate::transformRotationAngle(int axis, const QPointF& pos, dou
     }
     if (!found)
         return false;
-    
+
     angle = bestAngle;
     if (distance)
         *distance = bestDistance;
-    
+
     return true;
 }
 int
@@ -1631,11 +1634,13 @@ ImagingGLWidgetPrivate::beginTransformDrag(const QPointF& pos)
     d.glwidget->update();
     return true;
 }
+
 void
 ImagingGLWidgetPrivate::updateTransformDrag(const QPointF& pos)
 {
     if (!d.transformDragging || d.transformActiveAxis == 0 || d.transformBefore.isEmpty())
         return;
+
     d.transformAfter = d.transformBefore;
     if (d.transformActiveAxis == 10) {
         const QPointF mouseDelta = pos - d.transformStart;
@@ -1663,18 +1668,22 @@ ImagingGLWidgetPrivate::updateTransformDrag(const QPointF& pos)
         const GfVec3d axis = transformAxisVector(d.transformActiveAxis);
         if (axis.GetLengthSq() < 1e-12)
             return;
+
         QPointF pivotScreen;
         QPointF axisScreen;
         if (!projectWorldToScreen(d.transformStartPivot, pivotScreen))
             return;
+
         const double probeDistance = std::max(1e-6, transformWorldPerPixel(d.transformStartPivot) * 100.0);
         if (!projectWorldToScreen(d.transformStartPivot + axis * probeDistance, axisScreen)) {
             return;
         }
+
         const QPointF projectedAxis = axisScreen - pivotScreen;
         const double projectedLength = std::hypot(projectedAxis.x(), projectedAxis.y());
         if (projectedLength < 1e-6)
             return;
+
         const QPointF screenAxis = projectedAxis / projectedLength;
         const double pixels = QPointF::dotProduct(pos - d.transformStart, screenAxis);
         const double worldPerScreenPixel = probeDistance / projectedLength;
@@ -1695,8 +1704,10 @@ ImagingGLWidgetPrivate::updateTransformDrag(const QPointF& pos)
         double deltaAngle = currentAngle - d.transformRotationStartAngle;
         while (deltaAngle > Pi)
             deltaAngle -= 2.0 * Pi;
+
         while (deltaAngle < -Pi)
             deltaAngle += 2.0 * Pi;
+
         const GfVec3d axis = transformAxisVector(axisIndex);
         GfMatrix4d toOrigin(1.0);
         GfMatrix4d rotation(1.0);
@@ -1715,6 +1726,7 @@ ImagingGLWidgetPrivate::updateTransformDrag(const QPointF& pos)
         const QPointF screenAxis = transformAxisDirection(axisIndex);
         if (screenAxis.isNull())
             return;
+
         const double pixels = QPointF::dotProduct(pos - d.transformStart, screenAxis);
         const double factor = std::clamp(std::exp(pixels * 0.01), 0.01, 100.0);
         GfVec3d scale(1.0);
@@ -1735,6 +1747,7 @@ ImagingGLWidgetPrivate::updateTransformDrag(const QPointF& pos)
         WRITE_LOCKER(locker, d.context->stageLock(), "stageLock");
         if (!d.stage)
             return;
+
         for (qsizetype i = 0; i < d.transformPaths.size() && i < d.transformAfter.size(); ++i) {
             QString error;
             stage::setWorldTransform(d.stage, d.transformPaths.at(i), d.transformAfter.at(i), error);
@@ -1747,10 +1760,12 @@ ImagingGLWidgetPrivate::endTransformDrag()
 {
     if (!d.transformDragging)
         return;
+
     const QList<SdfPath> paths = d.transformPaths;
     const QList<GfMatrix4d> before = d.transformBefore;
     const QList<GfMatrix4d> after = d.transformAfter;
     const QList<TransformRootState> rootBefore = d.transformRootBefore;
+
     d.transformDragging = false;
     d.transformActiveAxis = 0;
     d.transformHoverAxis = 0;
@@ -1770,8 +1785,10 @@ ImagingGLWidgetPrivate::endTransformDrag()
     }
     if (changed)
         d.context->run(new Command(setTransforms(paths, before, after, rootBefore)));
+
     d.glwidget->update();
 }
+
 void
 ImagingGLWidgetPrivate::updateTransformHover(const QPointF& pos)
 {
@@ -1785,14 +1802,17 @@ ImagingGLWidgetPrivate::updateTransformHover(const QPointF& pos)
     const int handle = hitTestTransform(pos);
     if (handle == d.transformHoverAxis)
         return;
+
     d.transformHoverAxis = handle;
     d.glwidget->update();
 }
+
 void
 ImagingGLWidgetPrivate::drawTransformTransform(QPainter& painter)
 {
     if (!d.transformEnabled || !d.stage || d.selection.isEmpty())
         return;
+
     if (!d.transformDragging) {
         GfVec3d pivot(0.0);
         int count = 0;
@@ -1800,14 +1820,17 @@ ImagingGLWidgetPrivate::drawTransformTransform(QPainter& painter)
             READ_LOCKER(locker, d.context->stageLock(), "stageLock");
             if (!d.stage)
                 return;
+
             for (const SdfPath& selectedPath : d.selection) {
                 const SdfPath path = selectedPath.IsPropertyPath() ? selectedPath.GetPrimPath() : selectedPath;
                 if (!stage::isTransformEditable(d.stage, path))
                     continue;
+
                 GfMatrix4d matrix(1.0);
                 QString error;
                 if (!stage::worldTransform(d.stage, path, matrix, error))
                     continue;
+
                 GfVec3d worldPivot(0.0);
                 QString pivotError;
                 if (!stage::worldPivot(d.stage, path, worldPivot, pivotError))
@@ -1823,15 +1846,18 @@ ImagingGLWidgetPrivate::drawTransformTransform(QPainter& painter)
     QPointF center;
     if (!projectWorldToScreen(d.transformPivot, center))
         return;
+
     constexpr double axisLength = 82.0;
     constexpr double scaleDistance = 52.0;
     constexpr double arrowLength = 13.0;
     constexpr double arrowWidth = 7.0;
     constexpr int ringSegments = 96;
+
     const QColor colors[4] = { QColor(), style()->color(Style::ColorRole::AxisX),
                                style()->color(Style::ColorRole::AxisY), style()->color(Style::ColorRole::AxisZ) };
     painter.save();
     painter.setRenderHint(QPainter::Antialiasing, true);
+
     // rotation rings are drawn first so translation/scale handles stay crisp
     // and easy to identify in front of them.
     for (int axis = 1; axis <= 3; ++axis) {
@@ -1839,6 +1865,7 @@ ImagingGLWidgetPrivate::drawTransformTransform(QPainter& painter)
         const int handle = axis + 3;
         if (handle == d.transformHoverAxis || handle == d.transformActiveAxis)
             color = style()->color(Style::ColorRole::Selection);
+
         QPolygonF ring;
         ring.reserve(ringSegments + 1);
         for (int i = 0; i <= ringSegments; ++i) {
@@ -1894,16 +1921,19 @@ ImagingGLWidgetPrivate::drawTransformTransform(QPainter& painter)
     painter.drawEllipse(center, 5.0, 5.0);
     painter.restore();
 }
+
 QPoint
 ImagingGLWidgetPrivate::deviceRatio(QPoint value) const
 {
     return QPoint(deviceRatio(value.x()), deviceRatio(value.y()));
 }
+
 double
 ImagingGLWidgetPrivate::deviceRatio(double value) const
 {
     return value * d.glwidget->devicePixelRatio();
 }
+
 double
 ImagingGLWidgetPrivate::widgetAspectRatio() const
 {
@@ -1912,6 +1942,7 @@ ImagingGLWidgetPrivate::widgetAspectRatio() const
     double height = static_cast<double>(size[1]);
     return width / std::max(1.0, height);
 }
+
 GfVec2i
 ImagingGLWidgetPrivate::widgetSize() const
 {
@@ -1919,6 +1950,7 @@ ImagingGLWidgetPrivate::widgetSize() const
     int h = deviceRatio(d.glwidget->height());
     return GfVec2i(w, h);
 }
+
 QRectF
 ImagingGLWidgetPrivate::cameraGateRect()
 {
@@ -1985,17 +2017,15 @@ ImagingGLWidgetPrivate::drawLetterbox(QPainter& painter)
         painter.setBrush(QColor(0, 0, 0, alpha));
 
         if (gate.left() > widgetRect.left())
-            painter.drawRect(QRectF(widgetRect.left(), widgetRect.top(),
-                                    gate.left() - widgetRect.left(), widgetRect.height()));
+            painter.drawRect(
+                QRectF(widgetRect.left(), widgetRect.top(), gate.left() - widgetRect.left(), widgetRect.height()));
         if (gate.right() < widgetRect.right())
-            painter.drawRect(QRectF(gate.right(), widgetRect.top(),
-                                    widgetRect.right() - gate.right(), widgetRect.height()));
+            painter.drawRect(
+                QRectF(gate.right(), widgetRect.top(), widgetRect.right() - gate.right(), widgetRect.height()));
         if (gate.top() > widgetRect.top())
-            painter.drawRect(QRectF(gate.left(), widgetRect.top(),
-                                    gate.width(), gate.top() - widgetRect.top()));
+            painter.drawRect(QRectF(gate.left(), widgetRect.top(), gate.width(), gate.top() - widgetRect.top()));
         if (gate.bottom() < widgetRect.bottom())
-            painter.drawRect(QRectF(gate.left(), gate.bottom(),
-                                    gate.width(), widgetRect.bottom() - gate.bottom()));
+            painter.drawRect(QRectF(gate.left(), gate.bottom(), gate.width(), widgetRect.bottom() - gate.bottom()));
     }
 
     // inset the guide slightly from the exact render gate so all four edges
@@ -2046,11 +2076,11 @@ ImagingGLWidgetPrivate::updateAxis()
                              { "Y", style()->color(Style::ColorRole::AxisY), yCam },
                              { "Z", style()->color(Style::ColorRole::AxisZ), zCam } };
     std::sort(axes.begin(), axes.end(), [](const AxisLine& a, const AxisLine& b) { return a.dir[2] < b.dir[2]; });
-    
+
     const bool hasStage = static_cast<bool>(d.stage);
     const qreal opacity = hasStage ? 1.0 : 0.35;
     const qreal dpr = d.glwidget->devicePixelRatioF();
-    
+
     d.axis = QImage(qRound(width * dpr), qRound(height * dpr), QImage::Format_ARGB32_Premultiplied);
     d.axis.setDevicePixelRatio(dpr);
     d.axis.fill(Qt::transparent);
@@ -2066,7 +2096,7 @@ ImagingGLWidgetPrivate::updateAxis()
     painter.setPen(Qt::NoPen);
     painter.setBrush(QColor(0, 0, 0, 20));
     painter.drawEllipse(center, radius - 10, radius - 10);
-    
+
     for (const AxisLine& axis : axes) {
         const QPoint end = toPoint(axis.dir);
         painter.setPen(QPen(axis.color, 2.0, Qt::SolidLine, Qt::RoundCap));
@@ -2096,15 +2126,15 @@ ImagingGLWidgetPrivate::updateSceneStats()
         size_t normals = 0;
         size_t faces = 0;
     };
-    
+
     auto accumulate = [&](const UsdPrim& prim, SceneStats& s) {
         if (!prim.IsActive() || !prim.IsLoaded())
             return;
         s.prims++;
-        
+
         if (prim.IsA<UsdGeomXform>())
             s.xforms++;
-        
+
         if (prim.IsA<UsdGeomMesh>()) {
             s.meshes++;
             UsdGeomMesh mesh(prim);
@@ -2117,7 +2147,7 @@ ImagingGLWidgetPrivate::updateSceneStats()
             VtArray<GfVec3f> meshNormals;
             UsdGeomPrimvarsAPI pvAPI(prim);
             UsdGeomPrimvar normalsPv = pvAPI.GetPrimvar(TfToken("normals"));
-            
+
             bool hasNormals = false;
             if (normalsPv && normalsPv.HasValue()) {
                 normalsPv.Get(&meshNormals);
@@ -2130,7 +2160,7 @@ ImagingGLWidgetPrivate::updateSceneStats()
         }
         if (prim.HasPayload())
             s.payloads++;
-        
+
         if (prim.IsInstanceable())
             s.instances++;
     };
@@ -2164,7 +2194,7 @@ ImagingGLWidgetPrivate::updateSceneStats()
                 UsdPrim root = d.stage->GetPrimAtPath(path);
                 if (!root)
                     continue;
-                
+
                 for (const UsdPrim& prim : UsdPrimRange(root)) {
                     accumulate(prim, selected);
                 }
@@ -2177,10 +2207,10 @@ ImagingGLWidgetPrivate::updateSceneStats()
     auto fmtPair = [&](size_t totalValue, size_t selectedValue) {
         if (hasSelection && selectedValue > 0)
             return QString("%1 (%2)").arg(fmt(totalValue), fmt(selectedValue));
-        
+
         return fmt(totalValue);
     };
-    
+
     struct Row {
         QString label;
         QString value;
@@ -2200,7 +2230,7 @@ ImagingGLWidgetPrivate::updateSceneStats()
     QFont font = d.glwidget->font();
     font.setPixelSize(style()->fontSize(Style::UIScale::Small));
     font.setLetterSpacing(QFont::AbsoluteSpacing, 0.5);
-    
+
     QFontMetrics fm(font);
     int rowHeight = fm.lineSpacing() + 2;
     int marginLeft = 18;
@@ -2246,10 +2276,10 @@ ImagingGLWidgetPrivate::updatePerformanceStats()
 {
     const bool hasEngine = d.renderEngine && d.renderEngine->isInitialized() && d.stage;
     VtDictionary stats;
-    
+
     if (d.renderEngine)
         stats = d.renderEngine->renderStats();
-    
+
     auto fmtMB = [](uint64_t bytes) {
         return QString::number(static_cast<double>(bytes) / (1024.0 * 1024.0), 'f', 2) + " MB";
     };
@@ -2385,10 +2415,10 @@ ImagingGLWidgetPrivate::isPathMaskedIn(const SdfPath& path) const
 {
     if (path.IsEmpty())
         return false;
-    
+
     if (d.mask.isEmpty())
         return true;
-    
+
     const SdfPath primPath = path.IsPropertyPath() ? path.GetPrimPath() : path;
     for (const SdfPath& maskedPath : d.mask) {
         const SdfPath maskedPrimPath = maskedPath.IsPropertyPath() ? maskedPath.GetPrimPath() : maskedPath;
@@ -2405,7 +2435,7 @@ ImagingGLWidgetPrivate::pickMaskedIntersection(const UsdImagingGLEngine::PickPar
 {
     if (!results)
         return false;
-    
+
     results->clear();
     if (!d.stage || !d.renderEngine)
         return false;
@@ -2414,24 +2444,24 @@ ImagingGLWidgetPrivate::pickMaskedIntersection(const UsdImagingGLEngine::PickPar
     READ_LOCKER(locker, d.context->stageLock(), "stageLock");
     if (!d.stage)
         return false;
-    
+
     if (d.mask.isEmpty()) {
         return d.renderEngine->testIntersection(pickParams, viewMatrix, projectionMatrix, d.stage->GetPseudoRoot(),
                                                 results);
     }
-    
+
     bool hitAny = false;
     for (const SdfPath& maskPath : d.mask) {
         UsdPrim root = d.stage->GetPrimAtPath(maskPath);
         if (!root)
             continue;
-        
+
         UsdImagingGLEngine::IntersectionResultVector localResults;
         const bool hit = d.renderEngine->testIntersection(pickParams, viewMatrix, projectionMatrix, root,
                                                           &localResults);
         if (!hit)
             continue;
-        
+
         for (const auto& item : localResults) {
             if (!item.hitPrimPath.IsEmpty() && isPathMaskedIn(item.hitPrimPath))
                 results->push_back(item);
@@ -2484,6 +2514,7 @@ ImagingGLWidget::setTransformEnabled(bool enabled)
 {
     p->updateTransform(enabled);
 }
+
 void
 ImagingGLWidget::close()
 {
@@ -2497,68 +2528,81 @@ ImagingGLWidget::rendererAovs() const
         return {};
     return p->d.renderEngine->rendererAovs();
 }
+
 void
 ImagingGLWidget::captureVisible()
 {
     p->captureVisible();
 }
+
 void
 ImagingGLWidget::clearVisibleCapture()
 {
     p->clearVisibleCapture();
 }
+
 QList<SdfPath>
 ImagingGLWidget::visibleCapturePaths() const
 {
     return p->d.visibleCapture;
 }
+
 void
 ImagingGLWidget::updateStage(UsdStageRefPtr stage)
 {
     p->updateStage(stage);
 }
+
 void
 ImagingGLWidget::updateAuxiliary(UsdStageRefPtr auxiliary)
 {
     p->updateAuxiliary(auxiliary);
 }
+
 void
 ImagingGLWidget::updateStageUp(const TfToken& upAxis)
 {
     p->updateStageUp(upAxis);
 }
+
 void
 ImagingGLWidget::updateBoundingBox(const GfBBox3d& bbox)
 {
     p->updateBoundingBox(bbox);
 }
+
 void
 ImagingGLWidget::updateMask(const QList<SdfPath>& paths)
 {
     p->updateMask(paths);
 }
+
 void
 ImagingGLWidget::updatePrims(const NoticeBatch& batch)
 {
     p->updatePrims(batch);
 }
+
 void
 ImagingGLWidget::initializeGL()
 {
     initializeOpenGLFunctions();
     p->initGL();
 }
+
 void
 ImagingGLWidget::paintGL()
 {
     p->paintGL();
 }
+
 void
 ImagingGLWidget::paintEvent(QPaintEvent* event)
 {
     QOpenGLWidget::paintEvent(event);
     p->paintEvent(event);
 }
+
 void
 ImagingGLWidget::dragEnterEvent(QDragEnterEvent* event)
 {
@@ -2582,26 +2626,31 @@ ImagingGLWidget::contextMenuEvent(QContextMenuEvent* event)
 {
     p->contextMenuEvent(event);
 }
+
 void
 ImagingGLWidget::mouseDoubleClickEvent(QMouseEvent* event)
 {
     p->mouseDoubleClickEvent(event);
 }
+
 void
 ImagingGLWidget::mousePressEvent(QMouseEvent* event)
 {
     p->mousePressEvent(event);
 }
+
 void
 ImagingGLWidget::mouseMoveEvent(QMouseEvent* event)
 {
     p->mouseMoveEvent(event);
 }
+
 void
 ImagingGLWidget::mouseReleaseEvent(QMouseEvent* event)
 {
     p->mouseReleaseEvent(event);
 }
+
 void
 ImagingGLWidget::wheelEvent(QWheelEvent* event)
 {

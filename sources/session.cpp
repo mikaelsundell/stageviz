@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
 // Copyright (c) 2025 - present Mikael Sundell
 // https://github.com/mikaelsundell/stageviz
-
 #include "session.h"
 #include "commandstack.h"
 #include "qtutils.h"
@@ -10,6 +9,7 @@
 #include "usdutils.h"
 #include "viewcamera.h"
 #include "viewstate.h"
+#include <QDir>
 #include <QFile>
 #include <QFileInfo>
 #include <QJsonArray>
@@ -20,7 +20,9 @@
 #include <QMutexLocker>
 #include <QPointer>
 #include <pxr/base/tf/weakBase.h>
+#include <pxr/usd/sdf/copyUtils.h>
 #include <pxr/usd/usd/notice.h>
+#include <pxr/usd/usd/payloads.h>
 #include <pxr/usd/usdGeom/bboxCache.h>
 #include <pxr/usd/usdGeom/metrics.h>
 #include <pxr/usd/usdGeom/xform.h>
@@ -41,6 +43,12 @@ public:
     bool newStage(Session::LoadPolicy policy);
     bool loadFromFile(const QString& filename, Session::LoadPolicy loadPolicy);
     bool mergeFromFile(const QString& filename);
+    bool mergeFlattenedFromFile(const QString& filename);
+    bool mergeSublayerFromFile(const QString& filename);
+    bool mergeReferenceFromFile(const QString& filename, const SdfPath& targetPath);
+    bool mergePayloadFromFile(const QString& filename, const SdfPath& targetPath);
+    bool mergeLayer(const SdfLayerHandle& sourceLayer);
+    void refreshAfterStageEdit();
     bool saveToFile(const QString& filename);
     bool copyToFile(const QString& filename);
     bool flattenPathsToFile(const QList<SdfPath>& paths, const QString& filename);
@@ -64,19 +72,15 @@ public:
     class StageWatcher : public TfWeakBase {
     public:
         explicit StageWatcher(SessionPrivate* parent) { d.parent = parent; }
-
         void init()
         {
             if (d.key.IsValid())
                 TfNotice::Revoke(d.key);
-
             d.stage = nullptr;
-
             QMutexLocker locker(&d.pendingMutex);
             d.pending.entries.clear();
             d.dispatchQueued = false;
         }
-
         void watch(const UsdStageRefPtr& stage)
         {
             init();
@@ -84,7 +88,6 @@ public:
             if (stage)
                 d.key = TfNotice::Register(TfWeakPtr<StageWatcher>(this), &StageWatcher::objectsChanged, stage);
         }
-
         NoticeBatch takePending()
         {
             QMutexLocker locker(&d.pendingMutex);
@@ -93,23 +96,19 @@ public:
             d.dispatchQueued = false;
             return batch;
         }
-
         void dispatchPending()
         {
             const NoticeBatch batch = takePending();
             if (!batch.entries.isEmpty())
                 d.parent->updatePrims(batch);
         }
-
         void objectsChanged(const UsdNotice::ObjectsChanged& notice, const UsdStageWeakPtr& sender)
         {
             if (d.suppress.load())
                 return;
-
             UsdStageRefPtr senderStage = sender;
             if (!d.stage || !senderStage || d.stage != senderStage)
                 return;
-
             NoticeBatch batch;
             for (const SdfPath& path : notice.GetChangedInfoOnlyPaths()) {
                 NoticeEntry entry;
@@ -133,7 +132,6 @@ public:
             }
             if (batch.entries.isEmpty())
                 return;
-
             bool queueDispatch = false;
             {
                 QMutexLocker locker(&d.pendingMutex);
@@ -143,17 +141,13 @@ public:
                     queueDispatch = true;
                 }
             }
-
             if (!queueDispatch || !d.parent->d.session)
                 return;
-
             QMetaObject::invokeMethod(
                 d.parent->d.session, [this]() { dispatchPending(); }, Qt::QueuedConnection);
         }
-
         void blockSignals(bool block) { d.suppress.store(block); }
         bool signalsBlocked() const { return d.suppress.load(); }
-
         struct Data {
             std::atomic<bool> suppress { false };
             TfNotice::Key key;
@@ -165,7 +159,6 @@ public:
         };
         Data d;
     };
-
     class StageBlocker {
     public:
         explicit StageBlocker(StageWatcher* w)
@@ -174,7 +167,6 @@ public:
             if (watcher)
                 watcher->blockSignals(true);
         }
-
         ~StageBlocker()
         {
             if (watcher)
@@ -184,7 +176,6 @@ public:
     private:
         StageWatcher* watcher = nullptr;
     };
-
     struct Data {
         UsdStageRefPtr stage;
         UsdStageRefPtr auxiliary;
@@ -211,9 +202,7 @@ public:
     };
     Data d;
 };
-
 SessionPrivate::SessionPrivate() { d.stageWatcher.reset(new StageWatcher(this)); }
-
 SessionPrivate::~SessionPrivate() = default;
 
 void
@@ -227,13 +216,13 @@ SessionPrivate::init()
     d.auxiliary = UsdStage::CreateInMemory("stageviz_auxiliary.usda");
 }
 
+
 void
 SessionPrivate::initStage()
 {
     UsdStageRefPtr stage;
     const GfBBox3d bbox = boundingBox();
     Session::StageUp up = Session::StageUp::Z;
-
     {
         READ_LOCKER(locker, &d.stageLock, "stageLock");
         stage = d.stage;
@@ -248,16 +237,15 @@ SessionPrivate::initStage()
         d.bbox = bbox;
         d.pendingNotices.entries.clear();
     }
-
     if (d.viewState && d.viewState->camera()) {
         ViewCamera* camera = d.viewState->camera();
         camera->setBoundingBox(bbox);
         camera->setCameraUp(up == Session::StageUp::Y ? ViewCamera::Y : ViewCamera::Z);
         camera->resetView();
     }
-
     d.stageWatcher->watch(stage);
 }
+
 
 void
 SessionPrivate::beginProgressBlock(const QString& name, size_t count)
@@ -272,6 +260,7 @@ SessionPrivate::beginProgressBlock(const QString& name, size_t count)
     }
 }
 
+
 void
 SessionPrivate::updateProgressNotify(const Session::Notify& notify, size_t completed)
 {
@@ -279,37 +268,35 @@ SessionPrivate::updateProgressNotify(const Session::Notify& notify, size_t compl
     Q_EMIT d.session->progressNotifyChanged(notify, completed, d.expectedChanges);
 }
 
+
 void
 SessionPrivate::cancelProgressBlock()
 {
     d.changeCancelled.store(true);
 }
 
+
 void
 SessionPrivate::endProgressBlock()
 {
     if (d.changeDepth == 0)
         return;
-
     d.changeDepth--;
     if (d.changeDepth > 0)
         return;
-
     const bool cancelled = d.changeCancelled.load();
     d.changeCancelled.store(false);
-
     Q_EMIT d.session->progressBlockChanged(d.changeName, Session::ProgressMode::Idle);
     d.changeName.clear();
-
     if (cancelled) {
         d.pendingNotices.entries.clear();
         if (d.stageWatcher)
             d.stageWatcher->takePending();
         return;
     }
-
     flushPrims();
 }
+
 
 bool
 SessionPrivate::isProgressBlockCancelled() const
@@ -317,19 +304,18 @@ SessionPrivate::isProgressBlockCancelled() const
     return d.changeCancelled.load();
 }
 
+
 bool
 SessionPrivate::newStage(Session::LoadPolicy policy)
 {
     close();
     beginProgressBlock("New stage", 1);
-
     QList<SdfPath> mask;
     bool created = false;
     {
         WRITE_LOCKER(locker, &d.stageLock, "stageLock");
         StageBlocker blocker(d.stageWatcher.data());
         d.stageWatcher->init();
-
         UsdStageRefPtr stage = UsdStage::CreateInMemory();
         if (!stage) {
             endProgressBlock();
@@ -337,7 +323,6 @@ SessionPrivate::newStage(Session::LoadPolicy policy)
         }
         d.stage = stage;
         UsdGeomSetStageMetersPerUnit(d.stage, UsdGeomLinearUnits::millimeters);
-
         UsdGeomXform root = UsdGeomXform::Define(d.stage, SdfPath("/World"));
         d.stage->SetDefaultPrim(root.GetPrim());
         d.filename.clear();
@@ -349,46 +334,38 @@ SessionPrivate::newStage(Session::LoadPolicy policy)
     }
     d.commandStack->clear();
     d.selectionList->clear();
-
     if (created)
         initStage();
-
     endProgressBlock();
     setMask(mask);
     updateStage();
     return true;
 }
 
+
 bool
 SessionPrivate::loadFromFile(const QString& filename, Session::LoadPolicy policy)
 {
     const QString absFilename = QFileInfo(filename).absoluteFilePath();
     const std::string identifier = QStringToString(absFilename);
-
     close();
-
     QList<SdfPath> mask;
     bool loaded = false;
     bool preserveState = false;
     QString stateFilename;
-
     {
         WRITE_LOCKER(locker, &d.stageLock, "stageLock");
         StageBlocker blocker(d.stageWatcher.data());
         d.stageWatcher->init();
-
         if (SdfLayerHandle existingLayer = SdfLayer::Find(identifier))
             existingLayer->Reload(true);
-
         if (policy == Session::LoadPolicy::All)
             d.stage = UsdStage::Open(identifier, UsdStage::LoadAll);
         else
             d.stage = UsdStage::Open(identifier, UsdStage::LoadNone);
-
         d.loadPolicy = policy;
         d.mask.clear();
         d.pendingNotices.entries.clear();
-
         if (d.stage) {
             d.filename = absFilename;
             loaded = true;
@@ -397,77 +374,138 @@ SessionPrivate::loadFromFile(const QString& filename, Session::LoadPolicy policy
         }
         mask = d.mask;
     }
-
     if (!loaded) {
         newStage(policy);
         return false;
     }
-
     d.commandStack->clear();
     d.selectionList->clear();
-
     const bool hasStateFile = preserveState && QFileInfo::exists(stateFilename);
-
     initStage();
-
     if (hasStateFile) {
         if (!loadState(stateFilename)) {
             newStage(policy);
             return false;
         }
     }
-
     setMask(mask);
     updateStage();
     return true;
 }
 
+namespace {
+
+    std::string compositionAssetPath(const SdfLayerHandle& destinationLayer, const QString& filename)
+    {
+        const QString absoluteFilename = QFileInfo(filename).absoluteFilePath();
+        if (!destinationLayer || destinationLayer->IsAnonymous())
+            return QStringToString(QDir::fromNativeSeparators(absoluteFilename));
+
+        const QString destinationFilename = QString::fromStdString(destinationLayer->GetRealPath());
+        if (destinationFilename.isEmpty())
+            return QStringToString(QDir::fromNativeSeparators(absoluteFilename));
+
+        const QDir directory(QFileInfo(destinationFilename).absolutePath());
+        return QStringToString(QDir::fromNativeSeparators(directory.relativeFilePath(absoluteFilename)));
+    }
+
+}  // namespace
+
+
 bool
-SessionPrivate::mergeFromFile(const QString& filename)
+SessionPrivate::mergeLayer(const SdfLayerHandle& sourceLayer)
 {
-    const QString absFilename = QFileInfo(filename).absoluteFilePath();
-    if (absFilename.endsWith(".session", Qt::CaseInsensitive)) {
-        QFile file(absFilename);
-        if (!file.exists())
-            return false;
-        if (!file.open(QIODevice::ReadOnly))
-            return false;
+    if (!sourceLayer)
+        return false;
 
-        const QJsonDocument doc = QJsonDocument::fromJson(file.readAll());
-        if (!doc.isObject())
-            return false;
-
-        const QJsonObject root = doc.object();
-        const QJsonArray payloads = root.value("loadedPayloads").toArray();
-
+    {
         WRITE_LOCKER(locker, &d.stageLock, "stageLock");
         if (!d.stage)
             return false;
 
         StageBlocker blocker(d.stageWatcher.data());
 
-        for (const QJsonValue& value : payloads) {
-            const QString pathString = value.toString().trimmed();
-            if (pathString.isEmpty())
-                continue;
+        const SdfLayerHandle destinationLayer = d.stage->GetRootLayer();
+        if (!destinationLayer)
+            return false;
 
-            const SdfPath path(qt::QStringToString(pathString));
-            if (!path.IsAbsolutePath())
-                continue;
-
-            const UsdPrim prim = d.stage->GetPrimAtPath(path);
-            if (!prim || !prim.IsValid())
-                continue;
-
-            if (!stage::isPayload(d.stage, path))
-                continue;
-
-            if (!prim.IsLoaded())
-                prim.Load();
+        if (!sourceLayer->IsAnonymous() && !destinationLayer->IsAnonymous()
+            && sourceLayer->GetRealPath() == destinationLayer->GetRealPath()) {
+            return false;
         }
 
-        return true;
+        for (const SdfPrimSpecHandle& sourcePrim : sourceLayer->GetRootPrims()) {
+            if (!sourcePrim)
+                continue;
+
+            const SdfPath sourcePath = sourcePrim->GetPath();
+            const SdfPath destinationPath = SdfPath::AbsoluteRootPath().AppendChild(sourcePath.GetNameToken());
+
+            if (!SdfCopySpec(sourceLayer, sourcePath, destinationLayer, destinationPath))
+                return false;
+        }
     }
+
+    refreshAfterStageEdit();
+    return true;
+}
+
+
+void
+SessionPrivate::refreshAfterStageEdit()
+{
+    const GfBBox3d bbox = boundingBox();
+
+    {
+        WRITE_LOCKER(locker, &d.stageLock, "stageLock");
+        d.bbox = bbox;
+        d.pendingNotices.entries.clear();
+    }
+
+    if (d.stageWatcher)
+        d.stageWatcher->takePending();
+
+    if (d.viewState && d.viewState->camera())
+        d.viewState->camera()->setBoundingBox(bbox);
+
+    NoticeBatch batch;
+    NoticeEntry entry;
+    entry.path = SdfPath::AbsoluteRootPath();
+    entry.changedInfoOnly = true;
+    batch.entries.append(entry);
+
+    Q_EMIT d.session->primsChanged(batch);
+    Q_EMIT d.session->boundingBoxChanged(bbox);
+}
+
+
+bool
+SessionPrivate::mergeFromFile(const QString& filename)
+{
+    const QString absFilename = QFileInfo(filename).absoluteFilePath();
+
+    UsdStageRefPtr sourceStage;
+    try {
+        sourceStage = UsdStage::Open(QStringToString(absFilename), UsdStage::LoadNone);
+    } catch (const std::exception&) {
+        return false;
+    }
+
+    if (!sourceStage)
+        return false;
+
+    const SdfLayerHandle sourceLayer = sourceStage->GetRootLayer();
+    if (!sourceLayer)
+        return false;
+
+    return mergeLayer(sourceLayer);
+}
+
+
+bool
+SessionPrivate::mergeFlattenedFromFile(const QString& filename)
+{
+    const QString absFilename = QFileInfo(filename).absoluteFilePath();
 
     UsdStageRefPtr sourceStage;
     try {
@@ -479,41 +517,144 @@ SessionPrivate::mergeFromFile(const QString& filename)
     if (!sourceStage)
         return false;
 
+    const SdfLayerRefPtr flattenedLayer = sourceStage->Flatten();
+    if (!flattenedLayer)
+        return false;
+
+    return mergeLayer(flattenedLayer);
+}
+
+
+bool
+SessionPrivate::mergeSublayerFromFile(const QString& filename)
+{
+    const QString absFilename = QFileInfo(filename).absoluteFilePath();
+    if (!QFileInfo::exists(absFilename))
+        return false;
+
+    bool changed = false;
     {
         WRITE_LOCKER(locker, &d.stageLock, "stageLock");
         if (!d.stage)
             return false;
 
         StageBlocker blocker(d.stageWatcher.data());
-        const SdfLayerHandle destRoot = d.stage->GetRootLayer();
-        const SdfLayerHandle srcRoot = sourceStage->GetRootLayer();
-
-        if (!destRoot || !srcRoot)
+        const SdfLayerHandle destinationLayer = d.stage->GetRootLayer();
+        if (!destinationLayer)
             return false;
 
-        const std::string srcIdentifier = srcRoot->GetIdentifier();
-        const auto& sublayers = destRoot->GetSubLayerPaths();
-        if (std::find(sublayers.begin(), sublayers.end(), srcIdentifier) == sublayers.end()) {
-            destRoot->GetSubLayerPaths().push_back(srcIdentifier);
+        const QString destinationFilename = QString::fromStdString(destinationLayer->GetRealPath());
+
+        if (!destinationFilename.isEmpty() && QFileInfo(destinationFilename).absoluteFilePath() == absFilename) {
+            return false;
         }
+
+        const std::string assetPath = compositionAssetPath(destinationLayer, absFilename);
+
+        std::vector<std::string> sublayers = destinationLayer->GetSubLayerPaths();
+        if (std::find(sublayers.begin(), sublayers.end(), assetPath) != sublayers.end())
+            return true;
+
+        sublayers.push_back(assetPath);
+        destinationLayer->SetSubLayerPaths(sublayers);
+
+        const std::vector<std::string> resultingSublayers = destinationLayer->GetSubLayerPaths();
+
+        changed = std::find(resultingSublayers.begin(), resultingSublayers.end(), assetPath)
+                  != resultingSublayers.end();
     }
-    const QString sessionFilename = QFileInfo(absFilename + ".session").absoluteFilePath();
-    QFile sessionFile(sessionFilename);
-    if (sessionFile.exists()) {
-        mergeFromFile(sessionFilename);
-    }
+
+    if (!changed)
+        return false;
+
+    refreshAfterStageEdit();
     return true;
 }
+
+
+bool
+SessionPrivate::mergeReferenceFromFile(const QString& filename, const SdfPath& targetPath)
+{
+    const QString absFilename = QFileInfo(filename).absoluteFilePath();
+    {
+        WRITE_LOCKER(locker, &d.stageLock, "stageLock");
+        if (!d.stage || !targetPath.IsAbsolutePath() || !targetPath.IsPrimPath())
+            return false;
+
+        StageBlocker blocker(d.stageWatcher.data());
+
+        const SdfLayerHandle destinationLayer = d.stage->GetRootLayer();
+        if (!destinationLayer)
+            return false;
+
+        const UsdPrim targetPrim = d.stage->GetPrimAtPath(targetPath);
+        if (!targetPrim || !targetPrim.IsValid())
+            return false;
+
+        UsdStageRefPtr sourceStage;
+        try {
+            sourceStage = UsdStage::Open(QStringToString(absFilename), UsdStage::LoadNone);
+        } catch (const std::exception&) {
+            return false;
+        }
+
+        if (!sourceStage || !sourceStage->GetDefaultPrim())
+            return false;
+
+        const std::string assetPath = compositionAssetPath(destinationLayer, absFilename);
+        if (!targetPrim.GetReferences().AddReference(assetPath))
+            return false;
+    }
+    refreshAfterStageEdit();
+    return true;
+}
+
+
+bool
+SessionPrivate::mergePayloadFromFile(const QString& filename, const SdfPath& targetPath)
+{
+    const QString absFilename = QFileInfo(filename).absoluteFilePath();
+    {
+        WRITE_LOCKER(locker, &d.stageLock, "stageLock");
+        if (!d.stage || !targetPath.IsAbsolutePath() || !targetPath.IsPrimPath())
+            return false;
+
+        StageBlocker blocker(d.stageWatcher.data());
+
+        const SdfLayerHandle destinationLayer = d.stage->GetRootLayer();
+        if (!destinationLayer)
+            return false;
+
+        const UsdPrim targetPrim = d.stage->GetPrimAtPath(targetPath);
+        if (!targetPrim || !targetPrim.IsValid())
+            return false;
+
+        UsdStageRefPtr sourceStage;
+        try {
+            sourceStage = UsdStage::Open(QStringToString(absFilename), UsdStage::LoadNone);
+        } catch (const std::exception&) {
+            return false;
+        }
+
+        if (!sourceStage || !sourceStage->GetDefaultPrim())
+            return false;
+
+        const std::string assetPath = compositionAssetPath(destinationLayer, absFilename);
+        if (!targetPrim.GetPayloads().AddPayload(assetPath))
+            return false;
+    }
+    refreshAfterStageEdit();
+    return true;
+}
+
 
 bool
 SessionPrivate::saveToFile(const QString& filename)
 {
     QString stageFilename;
     bool preserveState = false;
-
     {
         WRITE_LOCKER(locker, &d.stageLock, "stageLock");
-
         try {
             if (!d.stage)
                 return false;
@@ -524,15 +665,12 @@ SessionPrivate::saveToFile(const QString& filename)
 
             stageFilename = QFileInfo(filename).absoluteFilePath();
             preserveState = d.preserveState;
-
             // export rewrites the root layer into a fresh file without flattening
             // composition, avoiding stale USDC/crate storage after destructive edits.
             const QString absFilename = QFileInfo(d.filename).absoluteFilePath();
             if (!absFilename.isEmpty() && absFilename == stageFilename && !rootLayer->IsAnonymous()) {
                 const QString tempFilename = stageFilename + ".stageviz.tmp";
-
                 QFile::remove(tempFilename);
-
                 if (!rootLayer->Export(QStringToString(tempFilename)))
                     return false;
 
@@ -555,19 +693,16 @@ SessionPrivate::saveToFile(const QString& filename)
                 StageBlocker blocker(d.stageWatcher.data());
                 rootLayer->SetIdentifier(QStringToString(stageFilename));
             }
-
             d.filename = stageFilename;
         } catch (const std::exception&) {
             return false;
         }
     }
-
     if (preserveState) {
         const QString stateFilename = QFileInfo(stageFilename + ".session").absoluteFilePath();
         if (!saveState(stateFilename))
             return false;
     }
-
     return true;
 }
 
@@ -576,10 +711,8 @@ SessionPrivate::copyToFile(const QString& filename)
 {
     QString stageFilename;
     bool preserveState = false;
-
     {
         READ_LOCKER(locker, &d.stageLock, "stageLock");
-
         try {
             if (!d.stage)
                 return false;
@@ -589,7 +722,6 @@ SessionPrivate::copyToFile(const QString& filename)
                 return false;
 
             stageFilename = QFileInfo(filename).absoluteFilePath();
-
             if (!rootLayer->Export(QStringToString(stageFilename)))
                 return false;
 
@@ -598,13 +730,11 @@ SessionPrivate::copyToFile(const QString& filename)
             return false;
         }
     }
-
     if (preserveState) {
         const QString stateFilename = QFileInfo(stageFilename + ".session").absoluteFilePath();
         if (!saveState(stateFilename))
             return false;
     }
-
     return true;
 }
 
@@ -637,6 +767,7 @@ SessionPrivate::loadState(const QString& filename)
     QFile file(QFileInfo(filename).absoluteFilePath());
     if (!file.exists())
         return true;
+
     if (!file.open(QIODevice::ReadOnly))
         return false;
 
@@ -647,14 +778,12 @@ SessionPrivate::loadState(const QString& filename)
     const QJsonObject root = doc.object();
     const QJsonObject cameraObject = root.value("viewCamera").toObject();
     const QJsonArray payloads = root.value("loadedPayloads").toArray();
-
     {
         WRITE_LOCKER(locker, &d.stageLock, "stageLock");
         if (!d.stage)
             return false;
 
         StageBlocker blocker(d.stageWatcher.data());
-
         for (const QJsonValue& value : payloads) {
             const QString pathString = value.toString().trimmed();
             if (pathString.isEmpty())
@@ -675,25 +804,19 @@ SessionPrivate::loadState(const QString& filename)
                 prim.Load();
         }
     }
-
     const GfBBox3d bbox = boundingBox();
     {
         WRITE_LOCKER(locker, &d.stageLock, "stageLock");
         d.bbox = bbox;
     }
-
     if (d.viewState && d.viewState->camera()) {
         ViewCamera* camera = d.viewState->camera();
-
         camera->setBoundingBox(bbox);
-
         if (!cameraObject.isEmpty()) {
             if (cameraObject.contains("aspectRatio"))
                 camera->setAspectRatio(cameraObject.value("aspectRatio").toDouble(camera->aspectRatio()));
-
             if (cameraObject.contains("fov"))
                 camera->setFov(cameraObject.value("fov").toDouble(camera->fov()));
-
             if (cameraObject.contains("fovDirection")) {
                 const QString value = cameraObject.value("fovDirection").toString();
                 if (value == "Horizontal")
@@ -701,16 +824,12 @@ SessionPrivate::loadState(const QString& filename)
                 else if (value == "Vertical")
                     camera->setFovDirection(ViewCamera::Vertical);
             }
-
             if (cameraObject.contains("nearClipping"))
                 camera->setNearClipping(cameraObject.value("nearClipping").toDouble(camera->nearClipping()));
-
             if (cameraObject.contains("farClipping"))
                 camera->setFarClipping(cameraObject.value("farClipping").toDouble(camera->farClipping()));
-
             if (cameraObject.contains("fit"))
                 camera->setFit(cameraObject.value("fit").toDouble(camera->fit()));
-
             if (cameraObject.contains("cameraMode")) {
                 const QString value = cameraObject.value("cameraMode").toString();
                 if (value == "None")
@@ -724,7 +843,6 @@ SessionPrivate::loadState(const QString& filename)
                 else if (value == "Pick")
                     camera->setCameraMode(ViewCamera::Pick);
             }
-
             if (cameraObject.contains("cameraUp")) {
                 const QString value = cameraObject.value("cameraUp").toString();
                 if (value == "X")
@@ -734,27 +852,21 @@ SessionPrivate::loadState(const QString& filename)
                 else if (value == "Z")
                     camera->setCameraUp(ViewCamera::Z);
             }
-
             const QJsonArray focusPoint = cameraObject.value("focusPoint").toArray();
             if (focusPoint.size() == 3) {
                 camera->setFocusPoint(
                     GfVec3d(focusPoint.at(0).toDouble(), focusPoint.at(1).toDouble(), focusPoint.at(2).toDouble()));
             }
-
             if (cameraObject.contains("axisYaw"))
                 camera->setAxisYaw(cameraObject.value("axisYaw").toDouble(camera->axisYaw()));
-
             if (cameraObject.contains("axisPitch"))
                 camera->setAxisPitch(cameraObject.value("axisPitch").toDouble(camera->axisPitch()));
-
             if (cameraObject.contains("axisRoll"))
                 camera->setAxisRoll(cameraObject.value("axisRoll").toDouble(camera->axisRoll()));
-
             if (cameraObject.contains("cameraDistance"))
                 camera->setCameraDistance(cameraObject.value("cameraDistance").toDouble(camera->cameraDistance()));
         }
     }
-
     Q_EMIT d.session->boundingBoxChanged(bbox);
     return true;
 }
@@ -764,21 +876,17 @@ SessionPrivate::saveState(const QString& filename)
 {
     QString stageFilename;
     QJsonArray payloads;
-
     {
         READ_LOCKER(locker, &d.stageLock, "stageLock");
         if (!d.stage)
             return false;
 
         stageFilename = QFileInfo(d.filename).absoluteFilePath();
-
         std::stack<UsdPrim> stack;
         stack.push(d.stage->GetPseudoRoot());
-
         while (!stack.empty()) {
             const UsdPrim prim = stack.top();
             stack.pop();
-
             if (!prim || !prim.IsValid())
                 continue;
 
@@ -789,15 +897,12 @@ SessionPrivate::saveState(const QString& filename)
                 stack.push(child);
         }
     }
-
     QJsonObject root;
     root["version"] = 1;
     root["stageFile"] = stageFilename;
     root["loadedPayloads"] = payloads;
-
     if (d.viewState && d.viewState->camera()) {
         ViewCamera* camera = d.viewState->camera();
-
         auto cameraUp = [](ViewCamera::CameraUp value) {
             switch (value) {
             case ViewCamera::X: return QStringLiteral("X");
@@ -806,7 +911,6 @@ SessionPrivate::saveState(const QString& filename)
             }
             return QStringLiteral("Y");
         };
-
         auto cameraMode = [](ViewCamera::CameraMode value) {
             switch (value) {
             case ViewCamera::None: return QStringLiteral("None");
@@ -817,7 +921,6 @@ SessionPrivate::saveState(const QString& filename)
             }
             return QStringLiteral("None");
         };
-
         auto fovDirection = [](ViewCamera::FovDirection value) {
             switch (value) {
             case ViewCamera::Horizontal: return QStringLiteral("Horizontal");
@@ -825,14 +928,11 @@ SessionPrivate::saveState(const QString& filename)
             }
             return QStringLiteral("Vertical");
         };
-
         const GfVec3d focusPoint = camera->focusPoint();
-
         QJsonArray focusPointArray;
         focusPointArray.append(focusPoint[0]);
         focusPointArray.append(focusPoint[1]);
         focusPointArray.append(focusPoint[2]);
-
         QJsonObject cameraObject;
         cameraObject["aspectRatio"] = camera->aspectRatio();
         cameraObject["fov"] = camera->fov();
@@ -847,10 +947,8 @@ SessionPrivate::saveState(const QString& filename)
         cameraObject["axisPitch"] = camera->axisPitch();
         cameraObject["axisRoll"] = camera->axisRoll();
         cameraObject["cameraDistance"] = camera->cameraDistance();
-
         root["viewCamera"] = cameraObject;
     }
-
     QFile file(QFileInfo(filename).absoluteFilePath());
     if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate))
         return false;
@@ -876,10 +974,8 @@ SessionPrivate::close()
         d.changeCancelled.store(false);
         d.filename.clear();
     }
-
     d.commandStack->clear();
     d.selectionList->clear();
-
     updateStage();
     return true;
 }
@@ -889,7 +985,6 @@ SessionPrivate::reload()
 {
     QString filename;
     Session::LoadPolicy loadPolicy;
-
     {
         READ_LOCKER(locker, &d.stageLock, "stageLock");
         if (!d.stage)
@@ -898,7 +993,6 @@ SessionPrivate::reload()
         filename = d.filename;
         loadPolicy = d.loadPolicy;
     }
-
     if (filename.isEmpty())
         return false;
 
@@ -927,19 +1021,18 @@ void
 SessionPrivate::setPayloads(const QList<SdfPath>& paths, bool loaded)
 {
     bool changed = false;
-
     {
         WRITE_LOCKER(locker, &d.stageLock, "stageLock");
         if (!d.stage)
             return;
 
         StageBlocker blocker(d.stageWatcher.data());
-
         for (const SdfPath& path : paths) {
             const SdfPath primPath = path.IsPropertyPath() ? path.GetPrimPath() : path;
             UsdPrim prim = d.stage->GetPrimAtPath(primPath);
             if (!prim || !prim.IsValid())
                 continue;
+
             if (!stage::isPayload(d.stage, primPath))
                 continue;
 
@@ -957,17 +1050,13 @@ SessionPrivate::setPayloads(const QList<SdfPath>& paths, bool loaded)
             }
         }
     }
-
     if (!changed)
         return;
-
     const GfBBox3d bbox = boundingBox();
-
     {
         WRITE_LOCKER(locker, &d.stageLock, "stageLock");
         d.bbox = bbox;
     }
-
     if (d.viewState && d.viewState->camera())
         d.viewState->camera()->setBoundingBox(bbox);
 
@@ -1012,10 +1101,8 @@ SessionPrivate::setStageUp(Session::StageUp stageUp)
         UsdGeomSetStageUpAxis(d.stage, upAxis);
         changed = true;
     }
-
     if (!changed)
         return;
-
     bbox = boundingBox();
     {
         WRITE_LOCKER(locker, &d.stageLock, "stageLock");
@@ -1040,7 +1127,6 @@ SessionPrivate::boundingBox()
         stage = d.stage;
         mask = d.mask;
     }
-
     Q_ASSERT(stage && "stage is not loaded");
     if (!stage)
         return GfBBox3d();
@@ -1065,7 +1151,6 @@ SessionPrivate::needsBoundingBoxUpdate(const NoticeBatch& batch) const
         if (entry.changedInfoOnly && !entry.path.IsPropertyPath())
             return true;
     }
-
     return false;
 }
 
@@ -1079,16 +1164,13 @@ SessionPrivate::updatePrims(const NoticeBatch& batch)
         d.pendingNotices.entries.append(batch.entries);
         return;
     }
-
     const bool updateBBox = needsBoundingBoxUpdate(batch);
-
     if (updateBBox) {
         const GfBBox3d bbox = boundingBox();
         {
             WRITE_LOCKER(locker, &d.stageLock, "stageLock");
             d.bbox = bbox;
         }
-
         Q_EMIT d.session->primsChanged(batch);
         Q_EMIT d.session->boundingBoxChanged(bbox);
     }
@@ -1096,6 +1178,7 @@ SessionPrivate::updatePrims(const NoticeBatch& batch)
         Q_EMIT d.session->primsChanged(batch);
     }
 }
+
 
 void
 SessionPrivate::flushPrims()
@@ -1105,22 +1188,18 @@ SessionPrivate::flushPrims()
         if (!watcherBatch.entries.isEmpty())
             d.pendingNotices.entries.append(watcherBatch.entries);
     }
-
     if (d.pendingNotices.entries.isEmpty())
         return;
 
     const NoticeBatch batch = d.pendingNotices;
     d.pendingNotices.entries.clear();
-
     const bool updateBBox = needsBoundingBoxUpdate(batch);
-
     if (updateBBox) {
         const GfBBox3d bbox = boundingBox();
         {
             WRITE_LOCKER(locker, &d.stageLock, "stageLock");
             d.bbox = bbox;
         }
-
         Q_EMIT d.session->primsChanged(batch);
         Q_EMIT d.session->boundingBoxChanged(bbox);
     }
@@ -1136,7 +1215,6 @@ SessionPrivate::updateStage()
     Session::LoadPolicy loadPolicy;
     Session::StageStatus stageStatus;
     GfBBox3d bbox;
-
     {
         READ_LOCKER(locker, &d.stageLock, "stageLock");
         stage = d.stage;
@@ -1144,7 +1222,6 @@ SessionPrivate::updateStage()
         stageStatus = d.stageStatus;
         bbox = d.bbox;
     }
-
     Q_EMIT d.session->stageChanged(stage, loadPolicy, stageStatus);
     Q_EMIT d.session->stageUpChanged(stageUp());
     Q_EMIT d.session->boundingBoxChanged(bbox);
@@ -1207,6 +1284,7 @@ Session::newStage(Session::LoadPolicy policy)
     return p->newStage(policy);
 }
 
+
 bool
 Session::loadFromFile(const QString& filename, Session::LoadPolicy loadPolicy)
 {
@@ -1217,6 +1295,30 @@ bool
 Session::mergeFromFile(const QString& filename)
 {
     return p->mergeFromFile(filename);
+}
+
+bool
+Session::mergeFlattenedFromFile(const QString& filename)
+{
+    return p->mergeFlattenedFromFile(filename);
+}
+
+bool
+Session::mergeSublayerFromFile(const QString& filename)
+{
+    return p->mergeSublayerFromFile(filename);
+}
+
+bool
+Session::mergeReferenceFromFile(const QString& filename, const SdfPath& targetPath)
+{
+    return p->mergeReferenceFromFile(filename, targetPath);
+}
+
+bool
+Session::mergePayloadFromFile(const QString& filename, const SdfPath& targetPath)
+{
+    return p->mergePayloadFromFile(filename, targetPath);
 }
 
 bool
@@ -1237,7 +1339,6 @@ Session::flattenToFile(const QString& filename)
     READ_LOCKER(locker, stageLock(), "stageLock");
     if (!p->d.stage)
         return false;
-
     try {
         return p->d.stage->Export(QStringToString(QFileInfo(filename).absoluteFilePath()));
     } catch (const std::exception&) {
@@ -1293,6 +1394,7 @@ Session::stageUp()
     return p->stageUp();
 }
 
+
 void
 Session::setStageUp(Session::StageUp stageUp)
 {
@@ -1344,6 +1446,7 @@ Session::auxiliary() const
     READ_LOCKER(locker, auxiliaryLock(), "auxiliaryLock");
     return p->d.auxiliary;
 }
+
 
 UsdStageRefPtr
 Session::auxiliaryUnsafe() const
@@ -1410,11 +1513,9 @@ Session::setPrimsUpdate(PrimsUpdate update)
         WRITE_LOCKER(locker, stageLock(), "stageLock");
         if (p->d.primsUpdate == update)
             return;
-
         p->d.primsUpdate = update;
         flush = (update == Session::PrimsUpdate::Immediate);
     }
-
     if (flush)
         p->flushPrims();
 }

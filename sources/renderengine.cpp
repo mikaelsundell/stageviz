@@ -279,8 +279,8 @@ RenderEngine::Private::reset()
     if (contextMode == ContextMode::Offscreen) {
         {
             OpenGLContextRestore contextRestore;
-            if (engine && (!offscreenContext || !offscreenSurface
-                           || !offscreenContext->makeCurrent(offscreenSurface.get()))) {
+            if (engine
+                && (!offscreenContext || !offscreenSurface || !offscreenContext->makeCurrent(offscreenSurface.get()))) {
                 qWarning() << "could not make offscreen context current while releasing render engine";
                 return;
             }
@@ -632,8 +632,8 @@ RenderEngine::renderToCurrentFramebuffer()
     GfVec4d viewport = p->viewport;
     if (viewport[2] <= 0.0 || viewport[3] <= 0.0)
         viewport = GfVec4d(0, 0, p->size[0], p->size[1]);
-    glViewport(static_cast<GLint>(viewport[0]), static_cast<GLint>(viewport[1]),
-               static_cast<GLsizei>(viewport[2]), static_cast<GLsizei>(viewport[3]));
+    glViewport(static_cast<GLint>(viewport[0]), static_cast<GLint>(viewport[1]), static_cast<GLsizei>(viewport[2]),
+               static_cast<GLsizei>(viewport[3]));
 #endif
 
     return p->render();

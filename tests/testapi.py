@@ -119,10 +119,10 @@ def _wait_until(predicate, timeout=3.0, interval=0.02):
     return False
 
 
-def _run(label, func):
+def _run(label, func, args=()):
     print(f"\n--- {label} ---")
     try:
-        func()
+        func(*args)
     except Exception as exc:
         _fail(f"{label}: exception: {exc}")
         traceback.print_exc()
@@ -303,6 +303,22 @@ def _create_external_file(path):
     stage.GetRootLayer().Save()
 
 
+def _create_merge_source(path, external):
+    stage = Usd.Stage.CreateNew(path)
+
+    world = _define_xform(stage, "/World")
+    _define_xform(stage, "/World/Merged")
+    stage.SetDefaultPrim(world)
+
+    referenced = _define_xform(stage, "/World/MergedReference")
+    referenced.GetReferences().AddReference(
+        os.path.basename(external),
+        "/ExternalRoot",
+    )
+
+    stage.GetRootLayer().Save()
+
+
 def _create_main_file(path, payload_a, payload_b, external):
     stage = Usd.Stage.CreateNew(path)
 
@@ -342,14 +358,16 @@ def create_fixture():
     payload_b = os.path.join(root, "payload_b.usda")
     external = os.path.join(root, "external.usda")
     main = os.path.join(root, "command_test.usda")
+    merge_source = os.path.join(root, "merge_source.usda")
     saved = os.path.join(root, "command_test_saved.usda")
 
     _create_payload_file(payload_a, "PayloadA")
     _create_payload_file(payload_b, "PayloadB")
     _create_external_file(external)
     _create_main_file(main, payload_a, payload_b, external)
+    _create_merge_source(merge_source, external)
 
-    return root, main, saved
+    return root, main, merge_source, saved
 
 
 def reload_fixture(main_path):
@@ -1371,6 +1389,267 @@ def test_composed_visibility_override_and_undo():
         )
 
 
+
+def test_reset_overrides():
+    if not _has_command("reset_overrides"):
+        print("[skip] reset_overrides is not bound")
+        return
+
+    stageviz.command.load_payloads(["/World/PayloadA"])
+
+    _assert(
+        _wait_until(lambda: _exists("/World/PayloadA/Geom")),
+        "payload content loaded for reset overrides",
+    )
+
+    path = "/World/PayloadA/Geom"
+    visibility_path = f"{path}.visibility"
+    translate_path = f"{path}.xformOp:translate"
+
+    prim = _prim(path)
+    _assert(bool(prim), "composed prim prepared for reset overrides")
+
+    # Author several direct root-layer overrides on the composed prim.
+    UsdGeom.Imageable(prim).GetVisibilityAttr().Set(UsdGeom.Tokens.invisible)
+
+    xform = UsdGeom.Xformable(prim)
+    xform.AddTranslateOp().Set(Gf.Vec3d(3.0, 4.0, 5.0))
+
+    prim.SetMetadata("documentation", "Stageviz reset override test")
+
+    _assert(
+        _root_has_property(visibility_path),
+        "visibility override authored in root layer",
+    )
+    _assert(
+        _root_has_property(translate_path),
+        "transform override authored in root layer",
+    )
+    _assert(
+        _root_has_prim(path),
+        "root-layer override prim spec exists",
+    )
+
+    root_spec = _root_layer().GetPrimAtPath(Sdf.Path(path))
+    _assert(
+        bool(root_spec and root_spec.HasInfo("documentation")),
+        "metadata override authored in root layer",
+    )
+
+    # Add a descendant override. Resetting the parent must not remove it.
+    child_path = f"{path}/ChildOverride"
+    child = UsdGeom.Xform.Define(_stage(), child_path).GetPrim()
+    child.SetMetadata("documentation", "Preserve descendant override")
+
+    _assert(
+        _root_has_prim(child_path),
+        "descendant root-layer opinion prepared",
+    )
+
+    stageviz.command.reset_overrides([path])
+
+    _assert(
+        _wait_until(
+            lambda: not _root_has_property(visibility_path)
+            and not _root_has_property(translate_path)
+        ),
+        "reset_overrides removes direct root-layer properties",
+    )
+
+    root_spec = _root_layer().GetPrimAtPath(Sdf.Path(path))
+    _assert(
+        not root_spec or not root_spec.HasInfo("documentation"),
+        "reset_overrides removes direct root-layer metadata",
+    )
+
+    _assert(
+        _exists(path),
+        "reset_overrides preserves composed prim",
+    )
+
+    _assert(
+        _root_has_prim(child_path),
+        "reset_overrides preserves descendant root-layer opinions",
+    )
+
+    if _undo():
+        _assert(
+            _wait_until(
+                lambda: _root_has_property(visibility_path)
+                and _root_has_property(translate_path)
+            ),
+            "undo reset_overrides restores direct root-layer properties",
+        )
+
+        root_spec = _root_layer().GetPrimAtPath(Sdf.Path(path))
+        _assert(
+            bool(root_spec and root_spec.HasInfo("documentation")),
+            "undo reset_overrides restores direct root-layer metadata",
+        )
+
+        _assert_equal(
+            root_spec.GetInfo("documentation") if root_spec else None,
+            "Stageviz reset override test",
+            "undo reset_overrides restores metadata value",
+        )
+
+        _assert(
+            _root_has_prim(child_path),
+            "undo reset_overrides keeps descendant override intact",
+        )
+
+    if _redo():
+        _assert(
+            _wait_until(
+                lambda: not _root_has_property(visibility_path)
+                and not _root_has_property(translate_path)
+            ),
+            "redo reset_overrides removes direct root-layer properties again",
+        )
+
+        _assert(
+            _exists(path),
+            "redo reset_overrides still preserves composed prim",
+        )
+
+
+def test_reset_overrides_ignores_root_owned_prim():
+    if not _has_command("reset_overrides"):
+        print("[skip] reset_overrides is not bound")
+        return
+
+    path = "/World/A"
+    prim = _prim(path)
+
+    _assert(bool(prim), "root-owned prim prepared for reset override policy")
+
+    prim.SetMetadata("documentation", "Root owned")
+    UsdGeom.Imageable(prim).CreatePurposeAttr().Set(UsdGeom.Tokens.render)
+
+    _assert(
+        _root_has_prim(path),
+        "root-owned prim has root-layer spec",
+    )
+
+    stageviz.command.reset_overrides([path])
+    _wait()
+
+    _assert(
+        _exists(path),
+        "reset_overrides never deletes root-owned prim",
+    )
+
+    root_spec = _root_layer().GetPrimAtPath(Sdf.Path(path))
+    _assert(
+        bool(root_spec and root_spec.HasInfo("documentation")),
+        "reset_overrides leaves root-owned metadata unchanged",
+    )
+
+    _assert(
+        _root_has_property(f"{path}.purpose"),
+        "reset_overrides leaves root-owned properties unchanged",
+    )
+
+
+def test_reset_attribute_override():
+    if not _has_command("reset_attribute_override"):
+        print("[skip] reset_attribute_override is not bound")
+        return
+
+    stageviz.command.load_payloads(["/World/PayloadA"])
+
+    _assert(
+        _wait_until(lambda: _exists("/World/PayloadA/Geom")),
+        "payload content loaded for attribute override reset",
+    )
+
+    path = "/World/PayloadA/Geom"
+    visibility_path = f"{path}.visibility"
+
+    prim = _prim(path)
+    _assert(bool(prim), "composed prim prepared for attribute override reset")
+
+    # Author one root-layer visibility override.
+    UsdGeom.Imageable(prim).GetVisibilityAttr().Set(UsdGeom.Tokens.invisible)
+
+    _assert(
+        _root_has_property(visibility_path),
+        "attribute override is authored in root layer",
+    )
+
+    _assert_equal(
+        str(_visibility(path)),
+        "invisible",
+        "composed attribute reflects root-layer override",
+    )
+
+    stageviz.command.reset_attribute_override(visibility_path)
+
+    _assert(
+        _wait_until(lambda: not _root_has_property(visibility_path)),
+        "reset_attribute_override removes only the root-layer attribute spec",
+    )
+
+    _assert(
+        _exists(path),
+        "reset_attribute_override preserves composed prim",
+    )
+
+    _assert(
+        str(_visibility(path)) != "invisible",
+        "reset_attribute_override exposes weaker composed attribute value",
+    )
+
+    if _undo():
+        _assert(
+            _wait_until(lambda: _root_has_property(visibility_path)),
+            "undo reset_attribute_override restores root-layer attribute spec",
+        )
+
+        _assert_equal(
+            str(_visibility(path)),
+            "invisible",
+            "undo reset_attribute_override restores overridden value",
+        )
+
+    if _redo():
+        _assert(
+            _wait_until(lambda: not _root_has_property(visibility_path)),
+            "redo reset_attribute_override removes attribute override again",
+        )
+
+
+def test_reset_attribute_override_ignores_root_owned_prim():
+    if not _has_command("reset_attribute_override"):
+        print("[skip] reset_attribute_override is not bound")
+        return
+
+    path = "/World/A"
+    attribute_path = f"{path}.purpose"
+
+    prim = _prim(path)
+    _assert(bool(prim), "root-owned prim prepared for attribute override policy")
+
+    UsdGeom.Imageable(prim).CreatePurposeAttr().Set(UsdGeom.Tokens.render)
+
+    _assert(
+        _root_has_property(attribute_path),
+        "root-owned attribute is authored in root layer",
+    )
+
+    stageviz.command.reset_attribute_override(attribute_path)
+    _wait()
+
+    _assert(
+        _root_has_property(attribute_path),
+        "reset_attribute_override leaves root-owned attribute unchanged",
+    )
+
+    _assert(
+        _exists(path),
+        "reset_attribute_override never removes root-owned prim",
+    )
+
 def test_move_non_xformable_prim():
     stage = _stage()
 
@@ -1550,6 +1829,148 @@ def test_payload_descendant_rejects_namespace_edit():
     )
 
 
+def test_merge_into_stage(merge_source):
+    session = stageviz.session()
+
+    _assert(hasattr(session, "merge"), "session.merge is exposed")
+    _assert(hasattr(session, "mergeFromFile"), "session.mergeFromFile is exposed")
+
+    before_sublayers = list(_root_layer().subLayerPaths)
+
+    ok = session.merge(merge_source)
+
+    _assert(ok, "merge destructively imports source content")
+    _assert(
+        _wait_until(lambda: _exists("/World/Merged")),
+        "merge imports authored prim",
+    )
+    _assert_equal(
+        list(_root_layer().subLayerPaths),
+        before_sublayers,
+        "merge does not add the source as a sublayer",
+    )
+
+
+def test_merge_flattened(merge_source):
+    session = stageviz.session()
+
+    _assert(
+        hasattr(session, "mergeFlattened"),
+        "session.mergeFlattened is exposed",
+    )
+
+    ok = session.mergeFlattened(merge_source)
+
+    _assert(ok, "mergeFlattened imports composed source content")
+    _assert(
+        _wait_until(lambda: _exists("/World/MergedReference/Child")),
+        "mergeFlattened includes composed referenced content",
+    )
+
+    prim = _prim("/World/MergedReference")
+    references = prim.GetMetadata("references") if prim else None
+
+    has_reference = bool(
+        references
+        and references.GetAddedOrExplicitItems()
+    )
+
+    _assert(
+        not has_reference,
+        "mergeFlattened removes the incoming reference arc",
+    )
+
+
+def test_merge_sublayer(merge_source):
+    session = stageviz.session()
+
+    _assert(
+        hasattr(session, "mergeSublayer"),
+        "session.mergeSublayer is exposed",
+    )
+
+    before = list(_root_layer().subLayerPaths)
+
+    ok = session.mergeSublayer(merge_source)
+
+    _assert(ok, "mergeSublayer succeeds")
+    _assert(
+        _wait_until(lambda: _exists("/World/Merged")),
+        "sublayer content composes into stage",
+    )
+
+    after = list(_root_layer().subLayerPaths)
+
+    _assert_equal(
+        len(after),
+        len(before) + 1,
+        "mergeSublayer adds exactly one dependency",
+    )
+
+    ok_again = session.mergeSublayer(merge_source)
+
+    _assert(
+        ok_again,
+        "merging the same sublayer again is a safe no-op",
+    )
+    _assert_equal(
+        len(_root_layer().subLayerPaths),
+        len(after),
+        "duplicate sublayer is not merged",
+    )
+
+
+def test_merge_reference(merge_source):
+    session = stageviz.session()
+    stage = _stage()
+
+    _assert(
+        hasattr(session, "mergeReference"),
+        "session.mergeReference is exposed",
+    )
+
+    _define_xform(stage, "/World/ReferenceTarget")
+
+    ok = session.mergeReference(
+        merge_source,
+        "/World/ReferenceTarget",
+    )
+
+    _assert(ok, "mergeReference succeeds")
+    _assert(
+        _wait_until(
+            lambda: _exists("/World/ReferenceTarget/Merged")
+        ),
+        "reference composes source default prim below target",
+    )
+
+
+def test_merge_payload(merge_source):
+    session = stageviz.session()
+    stage = _stage()
+
+    _assert(
+        hasattr(session, "mergePayload"),
+        "session.mergePayload is exposed",
+    )
+
+    _define_xform(stage, "/World/PayloadTarget")
+
+    ok = session.mergePayload(
+        merge_source,
+        "/World/PayloadTarget",
+    )
+
+    _assert(ok, "mergePayload succeeds")
+
+    target = _prim("/World/PayloadTarget")
+
+    _assert(
+        bool(target and target.HasPayload()),
+        "payload arc is authored on target",
+    )
+
+
 def test_save_reload(saved_path):
     ok = stageviz.session().save(saved_path)
     _assert(ok, "session.save writes test stage")
@@ -1560,49 +1981,58 @@ def test_save_reload(saved_path):
 
 
 def run():
-    root, main_path, saved_path = create_fixture()
+    root, main_path, merge_source, saved_path = create_fixture()
     print(f"Stageviz command test root: {root}")
 
     _disable_preserve_state()
 
     tests = [
-        ("select paths", test_select_paths),
-        ("select all and invert", test_select_all_and_invert),
-        ("isolate paths", test_isolate_paths),
-        ("show/hide paths", test_show_hide_paths),
-        ("new/rename/move/delete", test_new_rename_move_delete),
-        ("new_xform root parent", test_new_xform_root_parent),
-        ("new_xform unique name", test_new_xform_unique_name),
-        ("new_xform wraps multiple selection", test_new_xform_wraps_multiple_selection),
-        ("new_xform minimal root selection", test_new_xform_minimal_root_selection),
-        ("rename remaps child selection and mask", test_rename_remaps_child_selection_and_mask),
-        ("rename noop is safe", test_rename_noop_is_safe),
-        ("move selection/mask and insert order", test_move_selection_mask_and_insert_order),
-        ("move preserve world transform", test_move_preserve_world_transform),
-        ("move multiple siblings", test_move_multiple_siblings),
-        ("move rejects self parenting", test_move_rejects_self_parenting),
-        ("move rejects destination collision/no-op", test_move_rejects_destination_collision),
-        ("delete selection/mask and default prim", test_delete_removes_selection_mask_and_restores_default_prim),
-        ("delete default prim and undo", test_delete_default_prim_and_undo),
-        ("default prim validation", test_default_prim_validation),
-        ("stage up", test_stage_up),
-        ("payload load/unload", test_payload_load_unload),
-        ("select invert payload", test_select_invert_payload),
-        ("root prim order", test_root_prim_order_create_move_and_undo),
-        ("root layer policy", test_root_layer_policy_rejects_sublayer_prim),
-        ("composition boundary", test_composition_boundary_rejects_namespace_edit),
-        ("transactional multi move", test_multi_move_is_transactional_on_collision),
-        ("composed visibility override", test_composed_visibility_override_and_undo),
-        ("move non-xformable prim", test_move_non_xformable_prim),
-        ("move preserve complex transform", test_move_preserve_complex_world_transform),
-        ("failed load recovery", test_failed_load_leaves_valid_stage),
-        ("payload descendant namespace policy", test_payload_descendant_rejects_namespace_edit),
-        ("save/reopen", lambda: test_save_reload(saved_path)),
+        ("select paths", test_select_paths, ()),
+        ("select all and invert", test_select_all_and_invert, ()),
+        ("isolate paths", test_isolate_paths, ()),
+        ("show/hide paths", test_show_hide_paths, ()),
+        ("new/rename/move/delete", test_new_rename_move_delete, ()),
+        ("new_xform root parent", test_new_xform_root_parent, ()),
+        ("new_xform unique name", test_new_xform_unique_name, ()),
+        ("new_xform wraps multiple selection", test_new_xform_wraps_multiple_selection, ()),
+        ("new_xform minimal root selection", test_new_xform_minimal_root_selection, ()),
+        ("rename remaps child selection and mask", test_rename_remaps_child_selection_and_mask, ()),
+        ("rename noop is safe", test_rename_noop_is_safe, ()),
+        ("move selection/mask and insert order", test_move_selection_mask_and_insert_order, ()),
+        ("move preserve world transform", test_move_preserve_world_transform, ()),
+        ("move multiple siblings", test_move_multiple_siblings, ()),
+        ("move rejects self parenting", test_move_rejects_self_parenting, ()),
+        ("move rejects destination collision/no-op", test_move_rejects_destination_collision, ()),
+        ("delete selection/mask and default prim", test_delete_removes_selection_mask_and_restores_default_prim, ()),
+        ("delete default prim and undo", test_delete_default_prim_and_undo, ()),
+        ("default prim validation", test_default_prim_validation, ()),
+        ("stage up", test_stage_up, ()),
+        ("payload load/unload", test_payload_load_unload, ()),
+        ("select invert payload", test_select_invert_payload, ()),
+        ("root prim order", test_root_prim_order_create_move_and_undo, ()),
+        ("root layer policy", test_root_layer_policy_rejects_sublayer_prim, ()),
+        ("composition boundary", test_composition_boundary_rejects_namespace_edit, ()),
+        ("transactional multi move", test_multi_move_is_transactional_on_collision, ()),
+        ("composed visibility override", test_composed_visibility_override_and_undo, ()),
+        ("reset overrides", test_reset_overrides, ()),
+        ("reset overrides root-owned policy", test_reset_overrides_ignores_root_owned_prim, ()),
+        ("reset attribute override", test_reset_attribute_override, ()),
+        ("reset attribute override root-owned policy", test_reset_attribute_override_ignores_root_owned_prim, ()),
+        ("move non-xformable prim", test_move_non_xformable_prim, ()),
+        ("move preserve complex transform", test_move_preserve_complex_world_transform, ()),
+        ("failed load recovery", test_failed_load_leaves_valid_stage, ()),
+        ("payload descendant namespace policy", test_payload_descendant_rejects_namespace_edit, ()),
+        ("merge into stage", test_merge_into_stage, (merge_source,)),
+        ("merge flattened", test_merge_flattened, (merge_source,)),
+        ("merge sublayer", test_merge_sublayer, (merge_source,)),
+        ("merge reference", test_merge_reference, (merge_source,)),
+        ("merge payload", test_merge_payload, (merge_source,)),
+        ("save/reopen", test_save_reload, (saved_path,)),
     ]
 
-    for label, func in tests:
+    for label, func, args in tests:
         reload_fixture(main_path)
-        _run(label, func)
+        _run(label, func, args)
 
     print("\n=== Stageviz command test summary ===")
     if _FAILURES:

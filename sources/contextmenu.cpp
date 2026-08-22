@@ -14,6 +14,7 @@
 #include <QMenu>
 #include <QSet>
 #include <functional>
+#include <pxr/usd/sdf/primSpec.h>
 #include <pxr/usd/usd/prim.h>
 #include <pxr/usd/usdGeom/xformable.h>
 
@@ -81,6 +82,7 @@ ContextMenu::exec(QWidget* parent, ViewContext* context, UsdStageRefPtr usdStage
     bool canLoadSelected = false;
     bool canUnloadSelected = false;
     bool canResetXform = !paths.isEmpty();
+    bool canResetOverrides = false;
 
     {
         READ_LOCKER(locker, context->stageLock(), "stageLock");
@@ -100,6 +102,30 @@ ContextMenu::exec(QWidget* parent, ViewContext* context, UsdStageRefPtr usdStage
             const UsdPrim prim = usdStage->GetPrimAtPath(path);
             if (!prim || !prim.IsValid() || prim.IsInstanceProxy() || !UsdGeomXformable(prim))
                 canResetXform = false;
+
+            if (prim && prim.IsValid() && !prim.IsInstanceProxy()) {
+                const SdfLayerHandle rootLayer = usdStage->GetRootLayer();
+                const SdfPrimSpecHandle rootSpec = rootLayer ? rootLayer->GetPrimAtPath(prim.GetPath())
+                                                             : SdfPrimSpecHandle();
+
+                if (rootSpec) {
+                    const bool hasDirectOpinions = !rootSpec->GetProperties().empty()
+                                                   || !rootSpec->GetMetaDataInfoKeys().empty();
+
+                    if (hasDirectOpinions) {
+                        for (const SdfPrimSpecHandle& primSpec : prim.GetPrimStack()) {
+                            if (!primSpec)
+                                continue;
+
+                            const SdfLayerHandle layer = primSpec->GetLayer();
+                            if (layer && layer != rootLayer) {
+                                canResetOverrides = true;
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
 
             const bool visible = stage::isVisible(usdStage, path);
             if (visible)
@@ -223,8 +249,13 @@ ContextMenu::exec(QWidget* parent, ViewContext* context, UsdStageRefPtr usdStage
 
     menu.addSeparator();
 
-    QAction* resetXform = menu.addAction("Reset xform");
+    QMenu* resetMenu = menu.addMenu("Reset");
+    QAction* resetXform = resetMenu->addAction("Transform");
+    resetMenu->addSeparator();
+    QAction* resetOverridesAction = resetMenu->addAction("Overrides");
     resetXform->setEnabled(canResetXform);
+    resetOverridesAction->setEnabled(canResetOverrides);
+    resetMenu->setEnabled(canResetXform || canResetOverrides);
 
     menu.addSeparator();
 
@@ -288,6 +319,11 @@ ContextMenu::exec(QWidget* parent, ViewContext* context, UsdStageRefPtr usdStage
 
     if (chosen == resetXform) {
         context->run(new Command(resetTransforms(paths)));
+        return;
+    }
+
+    if (chosen == resetOverridesAction) {
+        context->run(new Command(resetOverrides(paths)));
         return;
     }
 

@@ -61,6 +61,12 @@ public:
     void initSettings();
     bool loadFile(const QString& fileName);
     bool mergeFile(const QString& fileName);
+    bool mergeFlattenedFile(const QString& fileName);
+    bool mergeSublayerFile(const QString& fileName);
+    bool mergeReferenceFile(const QString& fileName, const SdfPath& targetPath);
+    bool mergePayloadFile(const QString& fileName, const SdfPath& targetPath);
+    QString selectUsdFile(const QString& title);
+    SdfPath compositionTarget() const;
     OutlinerView* outlinerView();
     PropertyView* propertyView();
     ProgressDialog* progressDialog();
@@ -75,6 +81,10 @@ public Q_SLOTS:
     void newFile();
     void open();
     void merge();
+    void mergeFlattened();
+    void mergeSublayer();
+    void mergeReference();
+    void mergePayload();
     void save();
     void saveAs();
     void saveCopy();
@@ -223,7 +233,11 @@ ViewerPrivate::init()
     }
     connect(d.ui->fileNew, &QAction::triggered, this, &ViewerPrivate::newFile);
     connect(d.ui->fileOpen, &QAction::triggered, this, &ViewerPrivate::open);
-    connect(d.ui->fileMerge, &QAction::triggered, this, &ViewerPrivate::merge);
+    connect(d.ui->fileMergeStage, &QAction::triggered, this, &ViewerPrivate::merge);
+    connect(d.ui->fileMergeFlattened, &QAction::triggered, this, &ViewerPrivate::mergeFlattened);
+    connect(d.ui->fileMergeSublayer, &QAction::triggered, this, &ViewerPrivate::mergeSublayer);
+    connect(d.ui->fileMergeReference, &QAction::triggered, this, &ViewerPrivate::mergeReference);
+    connect(d.ui->fileMergePayload, &QAction::triggered, this, &ViewerPrivate::mergePayload);
     connect(d.ui->fileSave, &QAction::triggered, this, &ViewerPrivate::save);
     connect(d.ui->fileSaveAs, &QAction::triggered, this, &ViewerPrivate::saveAs);
     connect(d.ui->fileSaveCopy, &QAction::triggered, this, &ViewerPrivate::saveCopy);
@@ -612,9 +626,8 @@ ViewerPrivate::loadFile(const QString& fileName)
 bool
 ViewerPrivate::mergeFile(const QString& fileName)
 {
-    QFileInfo fileInfo(fileName);
-    const QString suffix = fileInfo.suffix().toLower();
-    if (suffix != "session" && !d.extensions.contains(suffix)) {
+    const QFileInfo fileInfo(fileName);
+    if (!d.extensions.contains(fileInfo.suffix().toLower())) {
         session()->notifyStatus(Session::Notify::Status::Error,
                                 QString("Unsupported file format: %1").arg(fileInfo.suffix()));
         return false;
@@ -628,13 +641,125 @@ ViewerPrivate::mergeFile(const QString& fileName)
         return false;
     }
 
-    const double elapsedSec = timer.elapsed() / 1000.0;
+    settings()->setValue("openDir", fileInfo.absolutePath());
+    session()->notifyStatus(Session::Notify::Status::Success,
+                            QString("Merged %1 into stage in %2 seconds")
+                                .arg(fileName)
+                                .arg(QString::number(timer.elapsed() / 1000.0, 'f', 2)));
+    return true;
+}
+
+bool
+ViewerPrivate::mergeFlattenedFile(const QString& fileName)
+{
+    const QFileInfo fileInfo(fileName);
+    if (!d.extensions.contains(fileInfo.suffix().toLower())) {
+        session()->notifyStatus(Session::Notify::Status::Error,
+                                QString("Unsupported file format: %1").arg(fileInfo.suffix()));
+        return false;
+    }
+
+    QElapsedTimer timer;
+    timer.start();
+
+    if (!session()->mergeFlattenedFromFile(fileName)) {
+        session()->notifyStatus(Session::Notify::Status::Error,
+                                QString("Failed to merge flattened file: %1").arg(fileName));
+        return false;
+    }
 
     settings()->setValue("openDir", fileInfo.absolutePath());
     session()->notifyStatus(Session::Notify::Status::Success,
-                            QString("Merge %1 in %2 seconds").arg(fileName).arg(QString::number(elapsedSec, 'f', 2)));
-    clearChanges();
+                            QString("Merged flattened %1 in %2 seconds")
+                                .arg(fileName)
+                                .arg(QString::number(timer.elapsed() / 1000.0, 'f', 2)));
     return true;
+}
+
+bool
+ViewerPrivate::mergeSublayerFile(const QString& fileName)
+{
+    const QFileInfo fileInfo(fileName);
+    if (!d.extensions.contains(fileInfo.suffix().toLower())) {
+        session()->notifyStatus(Session::Notify::Status::Error,
+                                QString("Unsupported file format: %1").arg(fileInfo.suffix()));
+        return false;
+    }
+
+    if (!session()->mergeSublayerFromFile(fileName)) {
+        session()->notifyStatus(Session::Notify::Status::Error, QString("Failed to merge sublayer: %1").arg(fileName));
+        return false;
+    }
+
+    settings()->setValue("openDir", fileInfo.absolutePath());
+    session()->notifyStatus(Session::Notify::Status::Success, QString("Merged sublayer: %1").arg(fileName));
+    return true;
+}
+
+bool
+ViewerPrivate::mergeReferenceFile(const QString& fileName, const SdfPath& targetPath)
+{
+    const QFileInfo fileInfo(fileName);
+    if (!d.extensions.contains(fileInfo.suffix().toLower())) {
+        session()->notifyStatus(Session::Notify::Status::Error,
+                                QString("Unsupported file format: %1").arg(fileInfo.suffix()));
+        return false;
+    }
+
+    if (!session()->mergeReferenceFromFile(fileName, targetPath)) {
+        session()->notifyStatus(Session::Notify::Status::Error, QString("Failed to merge reference: %1").arg(fileName));
+        return false;
+    }
+
+    settings()->setValue("openDir", fileInfo.absolutePath());
+    session()->notifyStatus(Session::Notify::Status::Success,
+                            QString("Added reference %1 to %2").arg(fileName, qt::SdfPathToQString(targetPath)));
+    return true;
+}
+
+bool
+ViewerPrivate::mergePayloadFile(const QString& fileName, const SdfPath& targetPath)
+{
+    const QFileInfo fileInfo(fileName);
+    if (!d.extensions.contains(fileInfo.suffix().toLower())) {
+        session()->notifyStatus(Session::Notify::Status::Error,
+                                QString("Unsupported file format: %1").arg(fileInfo.suffix()));
+        return false;
+    }
+
+    if (!session()->mergePayloadFromFile(fileName, targetPath)) {
+        session()->notifyStatus(Session::Notify::Status::Error, QString("Failed to add payload: %1").arg(fileName));
+        return false;
+    }
+
+    settings()->setValue("openDir", fileInfo.absolutePath());
+    session()->notifyStatus(Session::Notify::Status::Success,
+                            QString("Added payload %1 to %2").arg(fileName, qt::SdfPathToQString(targetPath)));
+    return true;
+}
+
+QString
+ViewerPrivate::selectUsdFile(const QString& title)
+{
+    const QString openDir = settings()->value("openDir", QDir::homePath()).toString();
+
+    QStringList filters;
+    for (const QString& ext : d.extensions)
+        filters.append("*." + ext);
+
+    const QString filter = QString("USD Files (%1)").arg(filters.join(' '));
+    return QFileDialog::getOpenFileName(d.viewer.data(), title, openDir, filter);
+}
+
+SdfPath
+ViewerPrivate::compositionTarget() const
+{
+    const QList<SdfPath> paths = session()->selectionList()->paths();
+    if (paths.size() != 1)
+        return {};
+
+    const SdfPath path = paths.first();
+    return path.IsPropertyPath() ? path.GetPrimPath() : path;
 }
 
 OutlinerView*
@@ -739,7 +864,12 @@ ViewerPrivate::eventFilter(QObject* object, QEvent* event)
 void
 ViewerPrivate::enable(bool enable)
 {
-    QList<QAction*> actions = { d.ui->fileReload,
+    QList<QAction*> actions = { d.ui->fileMergeStage,
+                                d.ui->fileMergeFlattened,
+                                d.ui->fileMergeSublayer,
+                                d.ui->fileMergeReference,
+                                d.ui->fileMergePayload,
+                                d.ui->fileReload,
                                 d.ui->fileClose,
                                 d.ui->fileSave,
                                 d.ui->fileSaveAs,
@@ -827,23 +957,53 @@ ViewerPrivate::open()
 void
 ViewerPrivate::merge()
 {
-    if (!saveChanges())
-        return;
-
-    QString openDir = settings()->value("openDir", QDir::homePath()).toString();
-
-    QStringList filters;
-    filters.reserve(d.extensions.size() + 1);
-    filters.append("*.session");
-    for (const QString& ext : d.extensions)
-        filters.append("*." + ext);
-    filters.removeDuplicates();
-
-    const QString filter = QString("USD and Session Files (%1)").arg(filters.join(' '));
-    const QString filename = QFileDialog::getOpenFileName(d.viewer.data(), "Merge USD File", openDir, filter);
-
+    const QString filename = selectUsdFile("Merge into Stage");
     if (!filename.isEmpty())
         mergeFile(filename);
+}
+
+void
+ViewerPrivate::mergeFlattened()
+{
+    const QString filename = selectUsdFile("Merge Flattened");
+    if (!filename.isEmpty())
+        mergeFlattenedFile(filename);
+}
+
+void
+ViewerPrivate::mergeSublayer()
+{
+    const QString filename = selectUsdFile("Add Sublayer");
+    if (!filename.isEmpty())
+        mergeSublayerFile(filename);
+}
+
+void
+ViewerPrivate::mergeReference()
+{
+    const SdfPath targetPath = compositionTarget();
+    if (targetPath.IsEmpty()) {
+        session()->notifyStatus(Session::Notify::Status::Warning, "Select exactly one prim before merging a reference");
+        return;
+    }
+
+    const QString filename = selectUsdFile("Merge Reference");
+    if (!filename.isEmpty())
+        mergeReferenceFile(filename, targetPath);
+}
+
+void
+ViewerPrivate::mergePayload()
+{
+    const SdfPath targetPath = compositionTarget();
+    if (targetPath.IsEmpty()) {
+        session()->notifyStatus(Session::Notify::Status::Warning, "Select exactly one prim before merging a payload");
+        return;
+    }
+
+    const QString filename = selectUsdFile("Merge Payload");
+    if (!filename.isEmpty())
+        mergePayloadFile(filename, targetPath);
 }
 
 void

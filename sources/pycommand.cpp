@@ -3,22 +3,20 @@
 // https://github.com/mikaelsundell/stageviz
 
 #include "pycommand.h"
-
 #include "application.h"
 #include "command.h"
 #include "commandstack.h"
 #include "pyutils.h"
 #include "qtutils.h"
 #include "session.h"
-
 #include <pxr/pxr.h>
 #include <pxr/usd/sdf/path.h>
 
 PXR_NAMESPACE_USING_DIRECTIVE
 
 namespace stageviz::python {
-namespace {
 
+namespace {
     static bool checkApplication(Application* application)
     {
         if (application)
@@ -48,7 +46,6 @@ namespace {
             PyErr_Format(PyExc_TypeError, "%s must be a string", argumentName);
             return false;
         }
-
         const char* text = PyUnicode_AsUTF8(object);
         if (!text)
             return false;
@@ -63,7 +60,6 @@ namespace {
             PyErr_SetString(PyExc_RuntimeError, "Invalid output path list pointer");
             return false;
         }
-
         if (!pyToPathList(object, out))
             return false;
 
@@ -71,7 +67,6 @@ namespace {
             if (!checkPath(path, argumentName))
                 return false;
         }
-
         return true;
     }
 
@@ -82,17 +77,14 @@ namespace {
             PyErr_SetString(PyExc_RuntimeError, "Invalid stageviz.Session");
             return nullptr;
         }
-
         CommandStack* stack = s->commandStack();
         if (!stack) {
             PyErr_SetString(PyExc_RuntimeError, "Invalid stageviz.CommandStack");
             return nullptr;
         }
-
         stack->run(new Command(command));
         Py_RETURN_NONE;
     }
-
 }  // namespace
 
 static PyObject*
@@ -108,12 +100,10 @@ PyCommand_selectPaths(PyObject*, PyObject* args)
 
     return runCommand(selectPaths(paths));
 }
-
 static PyObject*
 PyCommand_selectAll(PyObject*, PyObject* args, PyObject* kwargs)
 {
     int recursive = 0;
-
     static const char* keywords[] = { "recursive", nullptr };
     if (!PyArg_ParseTupleAndKeywords(args, kwargs, "|p", const_cast<char**>(keywords), &recursive))
         return nullptr;
@@ -152,7 +142,6 @@ PyCommand_showPaths(PyObject*, PyObject* args, PyObject* kwargs)
 {
     PyObject* pyPaths = nullptr;
     int recursive = 0;
-
     static const char* keywords[] = { "paths", "recursive", nullptr };
     if (!PyArg_ParseTupleAndKeywords(args, kwargs, "O|p", const_cast<char**>(keywords), &pyPaths, &recursive))
         return nullptr;
@@ -169,7 +158,6 @@ PyCommand_hidePaths(PyObject*, PyObject* args, PyObject* kwargs)
 {
     PyObject* pyPaths = nullptr;
     int recursive = 0;
-
     static const char* keywords[] = { "paths", "recursive", nullptr };
     if (!PyArg_ParseTupleAndKeywords(args, kwargs, "O|p", const_cast<char**>(keywords), &pyPaths, &recursive))
         return nullptr;
@@ -187,7 +175,6 @@ PyCommand_loadPayloads(PyObject*, PyObject* args, PyObject* kwargs)
     PyObject* pyPaths = nullptr;
     const char* variantSet = "";
     const char* variantValue = "";
-
     static const char* keywords[] = { "paths", "variant_set", "variant_value", nullptr };
     if (!PyArg_ParseTupleAndKeywords(args, kwargs, "O|ss", const_cast<char**>(keywords), &pyPaths, &variantSet,
                                      &variantValue)) {
@@ -258,7 +245,6 @@ PyCommand_renamePath(PyObject*, PyObject* args)
 {
     PyObject* pyPath = nullptr;
     const char* name = nullptr;
-
     if (!PyArg_ParseTuple(args, "Os", &pyPath, &name))
         return nullptr;
 
@@ -274,7 +260,6 @@ PyCommand_newXform(PyObject*, PyObject* args)
 {
     PyObject* pyParentPath = nullptr;
     const char* name = nullptr;
-
     if (!PyArg_ParseTuple(args, "Os", &pyParentPath, &name))
         return nullptr;
 
@@ -292,7 +277,6 @@ PyCommand_movePath(PyObject*, PyObject* args, PyObject* kwargs)
     PyObject* pyParentPath = nullptr;
     int insertIndex = -1;
     int preserveWorldTransform = 1;
-
     static const char* keywords[] = { "paths", "parent_path", "insert_index", "preserve_world_transform", nullptr };
     if (!PyArg_ParseTupleAndKeywords(args, kwargs, "OO|ip", const_cast<char**>(keywords), &pyPaths, &pyParentPath,
                                      &insertIndex, &preserveWorldTransform)) {
@@ -301,7 +285,6 @@ PyCommand_movePath(PyObject*, PyObject* args, PyObject* kwargs)
 
     QList<SdfPath> paths;
     SdfPath parentPath;
-
     if (!parsePathListArg(pyPaths, "paths", &paths))
         return nullptr;
 
@@ -312,17 +295,34 @@ PyCommand_movePath(PyObject*, PyObject* args, PyObject* kwargs)
 }
 
 static PyObject*
+PyCommand_resetAttributeOverride(PyObject*, PyObject* args)
+{
+    PyObject* pyAttributePath = nullptr;
+    if (!PyArg_ParseTuple(args, "O", &pyAttributePath))
+        return nullptr;
+
+    SdfPath attributePath;
+    if (!parsePathArg(pyAttributePath, "attribute_path", &attributePath))
+        return nullptr;
+
+    if (!attributePath.IsPropertyPath()) {
+        PyErr_SetString(PyExc_ValueError, "attribute_path must be a USD property path");
+        return nullptr;
+    }
+
+    return runCommand(resetAttributeOverride(attributePath));
+}
+
+static PyObject*
 PyCommand_bindMaterial(PyObject*, PyObject* args)
 {
     PyObject* pyPaths = nullptr;
     PyObject* pyMaterialPath = nullptr;
-
     if (!PyArg_ParseTuple(args, "OO", &pyPaths, &pyMaterialPath))
         return nullptr;
 
     QList<SdfPath> paths;
     SdfPath materialPath;
-
     if (!parsePathListArg(pyPaths, "paths", &paths))
         return nullptr;
 
@@ -340,27 +340,24 @@ static PyMethodDef PyCommand_methods[] = {
       "Invert the current selection." },
     { "select_invert_payload", reinterpret_cast<PyCFunction>(PyCommand_selectInvertPayload), METH_NOARGS,
       "Invert the current payload selection." },
-
     { "isolate_paths", reinterpret_cast<PyCFunction>(PyCommand_isolatePaths), METH_VARARGS, "Isolate paths." },
     { "show_paths", reinterpret_cast<PyCFunction>(PyCommand_showPaths), METH_VARARGS | METH_KEYWORDS, "Show paths." },
     { "hide_paths", reinterpret_cast<PyCFunction>(PyCommand_hidePaths), METH_VARARGS | METH_KEYWORDS, "Hide paths." },
-
     { "load_payloads", reinterpret_cast<PyCFunction>(PyCommand_loadPayloads), METH_VARARGS | METH_KEYWORDS,
       "Load payloads. Optional keyword arguments: variant_set, variant_value." },
     { "unload_payloads", reinterpret_cast<PyCFunction>(PyCommand_unloadPayloads), METH_VARARGS, "Unload payloads." },
-
     { "set_stage_up", reinterpret_cast<PyCFunction>(PyCommand_setStageUp), METH_VARARGS, "Set the stage up axis." },
     { "set_default_prim", reinterpret_cast<PyCFunction>(PyCommand_setDefaultPrim), METH_VARARGS,
       "Set the default prim." },
-
     { "delete_paths", reinterpret_cast<PyCFunction>(PyCommand_deletePaths), METH_VARARGS, "Delete paths." },
     { "rename_path", reinterpret_cast<PyCFunction>(PyCommand_renamePath), METH_VARARGS, "Rename a path." },
     { "new_xform", reinterpret_cast<PyCFunction>(PyCommand_newXform), METH_VARARGS, "Create a new Xform path." },
     { "move_path", reinterpret_cast<PyCFunction>(PyCommand_movePath), METH_VARARGS | METH_KEYWORDS,
       "Move paths. Optional keyword arguments: insert_index, preserve_world_transform." },
+    { "reset_attribute_override", reinterpret_cast<PyCFunction>(PyCommand_resetAttributeOverride), METH_VARARGS,
+      "Reset one root-layer USD attribute override." },
     { "bind_material", reinterpret_cast<PyCFunction>(PyCommand_bindMaterial), METH_VARARGS,
       "Bind an existing USD material to one or more prim paths." },
-
     { nullptr, nullptr, 0, nullptr }
 };
 
@@ -373,19 +370,16 @@ static PyModuleDef PyCommandModule = { PyModuleDef_HEAD_INIT,
                                        nullptr,
                                        nullptr,
                                        nullptr };
-
 int
 addPyCommandModule(PyObject* module)
 {
     PyObject* commandModule = PyModule_Create(&PyCommandModule);
     if (!commandModule)
         return -1;
-
     if (PyModule_AddObject(module, "command", commandModule) < 0) {
         Py_DECREF(commandModule);
         return -1;
     }
-
     return 0;
 }
 

@@ -19,10 +19,12 @@
 #include <QFileInfo>
 #include <QHeaderView>
 #include <QIcon>
+#include <QMouseEvent>
 #include <QPointer>
 #include <QScrollBar>
 #include <QSet>
 #include <QSignalBlocker>
+#include <QStyle>
 #include <algorithm>
 #include <climits>
 #include <cstdint>
@@ -61,6 +63,10 @@ PXR_NAMESPACE_USING_DIRECTIVE
 
 namespace stageviz {
 
+namespace {
+    constexpr int OverrideRole = Qt::UserRole + 100;
+}
+
 class PropertyTreePrivate : public QObject, public SignalGuard {
 public:
     void init();
@@ -83,7 +89,6 @@ public:
     static QStringList numericTokens(const QString& text);
 
     template<typename T> static bool parseIntegral(const QString& text, T& result, QString& error);
-
     template<typename T> static bool parseFloating(const QString& text, T& result, QString& error);
 
     static bool parseValue(const QString& text, bool& result, QString& error);
@@ -137,6 +142,9 @@ public:
     static QStringList tokenOptions(const UsdAttribute& attr);
     static PropertyItem::Editor editorForValue(const UsdAttribute& attr, const VtValue& value);
     static void configureEditor(PropertyItem* item, const UsdAttribute& attr, const VtValue& value);
+    static bool hasUnderlyingPrimOpinion(const UsdPrim& prim, const SdfLayerHandle& rootLayer);
+    bool isOverrideItem(const PropertyItem* item) const;
+    QRect overrideIconRect(const PropertyItem* item) const;
 
     struct TreeState {
         QSet<QString> expanded;
@@ -166,7 +174,6 @@ public:
     void itemChanged(QTreeWidgetItem* item, int column);
     void itemExpanded(QTreeWidgetItem* item);
     void restoreItemText(PropertyItem* item);
-
     bool currentAttributeValue(const SdfPath& propertyPath, VtValue& value) const;
 
 public:
@@ -997,6 +1004,60 @@ PropertyTreePrivate::configureEditor(PropertyItem* item, const UsdAttribute& att
     }
 }
 
+bool
+PropertyTreePrivate::hasUnderlyingPrimOpinion(const UsdPrim& prim, const SdfLayerHandle& rootLayer)
+{
+    if (!prim || !prim.IsValid() || !rootLayer)
+        return false;
+
+    for (const SdfPrimSpecHandle& primSpec : prim.GetPrimStack()) {
+        if (!primSpec)
+            continue;
+
+        const SdfLayerHandle layer = primSpec->GetLayer();
+        if (layer && layer != rootLayer)
+            return true;
+    }
+
+    return false;
+}
+
+bool
+PropertyTreePrivate::isOverrideItem(const PropertyItem* item) const
+{
+    if (!item || item->kind() != PropertyItem::Attribute)
+        return false;
+
+    return item->data(PropertyItem::Name, OverrideRole).toBool();
+}
+
+QRect
+PropertyTreePrivate::overrideIconRect(const PropertyItem* item) const
+{
+    if (!d.tree || !item || !isOverrideItem(item))
+        return {};
+
+    const QRect itemRect = d.tree->visualItemRect(item);
+    if (!itemRect.isValid())
+        return {};
+
+    int depth = 0;
+    for (QTreeWidgetItem* parent = item->parent(); parent; parent = parent->parent())
+        ++depth;
+
+    const int iconSize = d.tree->iconSize().width() > 0
+                             ? d.tree->iconSize().width()
+                             : d.tree->style()->pixelMetric(QStyle::PM_SmallIconSize, nullptr, d.tree.data());
+
+    const int columnLeft = d.tree->header()->sectionViewportPosition(PropertyItem::Name);
+
+    const int left = columnLeft + d.tree->indentation() * (depth + 1);
+
+    const int top = itemRect.top() + qMax(0, (itemRect.height() - iconSize) / 2);
+
+    return QRect(left, top, iconSize, iconSize);
+}
+
 void
 PropertyTreePrivate::setReadOnlyValueStyle(PropertyItem* item, bool readOnly)
 {
@@ -1374,7 +1435,9 @@ PropertyTreePrivate::addAttribute(PropertyItem* parent, const UsdAttribute& attr
     item->setText(PropertyItem::Name, StringToQString(attr.GetName().GetString()));
 
     const SdfLayerHandle rootLayer = d.stage ? d.stage->GetRootLayer() : SdfLayerHandle();
-    const bool rootOverride = rootLayer && bool(rootLayer->GetPropertyAtPath(attr.GetPath()));
+    const UsdPrim prim = attr.GetPrim();
+    const bool rootOverride = rootLayer && bool(rootLayer->GetPropertyAtPath(attr.GetPath()))
+                              && hasUnderlyingPrimOpinion(prim, rootLayer);
 
     QStringList toolTips;
     toolTips.append(QString("Type: %1").arg(QString::fromStdString(attr.GetTypeName().GetAsToken().GetString())));
@@ -1387,8 +1450,11 @@ PropertyTreePrivate::addAttribute(PropertyItem* parent, const UsdAttribute& attr
         toolTips.append(QString("Strongest opinion: %1").arg(!realPath.isEmpty() ? realPath : identifier));
     }
 
+    item->setData(PropertyItem::Name, OverrideRole, rootOverride);
+
     if (rootOverride) {
         toolTips.append(QStringLiteral("Root-layer override"));
+        toolTips.append(QStringLiteral("Click the override icon to reset this property"));
         item->setIcon(PropertyItem::Name, QIcon(style()->icon(Style::Override, Style::UIScale::Small)));
         QFont nameFont = item->font(PropertyItem::Name);
         nameFont.setBold(true);
@@ -1655,6 +1721,30 @@ void
 PropertyTree::setContext(ViewContext* context)
 {
     p->d.context = context;
+}
+
+void
+PropertyTree::mousePressEvent(QMouseEvent* event)
+{
+    if (event && event->button() == Qt::LeftButton) {
+        auto* item = dynamic_cast<PropertyItem*>(itemAt(event->pos()));
+
+        if (item && p->isOverrideItem(item)) {
+            const QRect iconRect = p->overrideIconRect(item);
+
+            if (iconRect.contains(event->pos())) {
+                if (ViewContext* viewContext = context())
+                    viewContext->run(new Command(resetAttributeOverride(item->propertyPath())));
+                else
+                    session()->commandStack()->run(new Command(resetAttributeOverride(item->propertyPath())));
+
+                event->accept();
+                return;
+            }
+        }
+    }
+
+    TreeWidget::mousePressEvent(event);
 }
 
 void

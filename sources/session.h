@@ -189,21 +189,66 @@ public:
     bool loadFromFile(const QString& filename, LoadPolicy policy = LoadPolicy::All);
 
     /**
-     * @brief Merges a USD file or session state file into the current stage.
+     * @brief Destructively merges authored USD content into the current root layer.
      *
-     * If @p filename refers to a USD file, the file is merged into the
-     * current stage and a companion ".session" file is also applied if present.
+     * The incoming file itself is not added as a sublayer, reference, or payload.
+     * Existing destination content is preserved where it does not conflict with
+     * incoming authored opinions; incoming authored opinions are stronger on
+     * conflicts.
      *
-     * If @p filename refers to a ".session" file, only the stored payload
-     * load state is applied to the current stage.
+     * Composition arcs authored inside the incoming root layer remain authored.
      *
-     * Unlike loadFromFile(), this does not replace the current stage.
-     *
-     * @param filename USD file or ".session" state file to merge.
+     * @param filename USD file to merge.
      *
      * @return True if the merge succeeded.
      */
     bool mergeFromFile(const QString& filename);
+
+    /**
+     * @brief Flattens an incoming USD stage and merges it into the current root layer.
+     *
+     * The complete composed incoming stage is flattened before merging, baking
+     * incoming references, payloads, sublayers, and variants into authored
+     * content in the current root layer.
+     *
+     * @param filename USD file to flatten and merge.
+     *
+     * @return True if the merge succeeded.
+     */
+    bool mergeFlattenedFromFile(const QString& filename);
+
+    /**
+     * @brief Merge a USD file as a sublayer of the current root layer.
+     *
+     * @param filename USD file to add.
+     *
+     * @return True if the sublayer was added or was already present.
+     */
+    bool mergeSublayerFromFile(const QString& filename);
+
+    /**
+     * @brief Merge a reference to an existing prim.
+     *
+     * The source file's default prim is referenced.
+     *
+     * @param filename USD file to reference.
+     * @param targetPath Existing target prim path.
+     *
+     * @return True if the reference was authored.
+     */
+    bool mergeReferenceFromFile(const QString& filename, const SdfPath& targetPath);
+
+    /**
+     * @brief Merge a payload to an existing prim.
+     *
+     * The source file's default prim is used as the payload target.
+     *
+     * @param filename USD file to add as a payload.
+     * @param targetPath Existing target prim path.
+     *
+     * @return True if the payload was authored.
+     */
+    bool mergePayloadFromFile(const QString& filename, const SdfPath& targetPath);
 
     /**
      * @brief Saves the current stage to file.
@@ -426,10 +471,6 @@ Q_SIGNALS:
 
     /**
      * @brief Emitted when the Stageviz-owned auxiliary USD stage changes.
-     *
-     * This signal represents replacement of the auxiliary stage object. Edits
-     * authored within the existing auxiliary stage are handled by USD/Hydra
-     * change propagation and do not require replacing the stage.
      */
     void auxiliaryChanged(UsdStageRefPtr auxiliary);
 

@@ -149,6 +149,72 @@ PySession_merge(PySessionObject* self, PyObject* args)
 }
 
 static PyObject*
+PySession_mergeFlattened(PySessionObject* self, PyObject* args)
+{
+    if (!checkSession(self->session))
+        return nullptr;
+
+    const char* filename = nullptr;
+    if (!PyArg_ParseTuple(args, "s", &filename))
+        return nullptr;
+
+    return PyBool_FromLong(self->session->mergeFlattenedFromFile(QString::fromUtf8(filename)));
+}
+
+static PyObject*
+PySession_mergeSublayer(PySessionObject* self, PyObject* args)
+{
+    if (!checkSession(self->session))
+        return nullptr;
+
+    const char* filename = nullptr;
+    if (!PyArg_ParseTuple(args, "s", &filename))
+        return nullptr;
+
+    return PyBool_FromLong(self->session->mergeSublayerFromFile(QString::fromUtf8(filename)));
+}
+
+static PyObject*
+PySession_mergeReference(PySessionObject* self, PyObject* args)
+{
+    if (!checkSession(self->session))
+        return nullptr;
+
+    const char* filename = nullptr;
+    const char* path = nullptr;
+    if (!PyArg_ParseTuple(args, "ss", &filename, &path))
+        return nullptr;
+
+    const SdfPath targetPath(path);
+    if (!targetPath.IsAbsolutePath() || !targetPath.IsPrimPath()) {
+        PyErr_SetString(PyExc_ValueError, "target path must be an absolute USD prim path");
+        return nullptr;
+    }
+
+    return PyBool_FromLong(self->session->mergeReferenceFromFile(QString::fromUtf8(filename), targetPath));
+}
+
+static PyObject*
+PySession_mergePayload(PySessionObject* self, PyObject* args)
+{
+    if (!checkSession(self->session))
+        return nullptr;
+
+    const char* filename = nullptr;
+    const char* path = nullptr;
+    if (!PyArg_ParseTuple(args, "ss", &filename, &path))
+        return nullptr;
+
+    const SdfPath targetPath(path);
+    if (!targetPath.IsAbsolutePath() || !targetPath.IsPrimPath()) {
+        PyErr_SetString(PyExc_ValueError, "target path must be an absolute USD prim path");
+        return nullptr;
+    }
+
+    return PyBool_FromLong(self->session->mergePayloadFromFile(QString::fromUtf8(filename), targetPath));
+}
+
+static PyObject*
 PySession_save(PySessionObject* self, PyObject* args)
 {
     if (!checkSession(self->session))
@@ -542,7 +608,6 @@ static PyMethodDef PySession_methods[] = {
       "End the current progress block" },
     { "isProgressBlockCancelled", reinterpret_cast<PyCFunction>(PySession_isProgressBlockCancelled), METH_NOARGS,
       "Check whether the progress block was cancelled" },
-
     { "newStage", reinterpret_cast<PyCFunction>(PySession_newStage), METH_VARARGS | METH_KEYWORDS,
       "Create a new stage" },
     { "load", reinterpret_cast<PyCFunction>(PySession_load), METH_VARARGS | METH_KEYWORDS,
@@ -550,9 +615,25 @@ static PyMethodDef PySession_methods[] = {
     { "loadFromFile", reinterpret_cast<PyCFunction>(PySession_load), METH_VARARGS | METH_KEYWORDS,
       "Load a USD stage from file" },
     { "merge", reinterpret_cast<PyCFunction>(PySession_merge), METH_VARARGS,
-      "Merge a USD stage or session state file into the current stage" },
+      "Destructively merge authored USD content into the current root layer" },
     { "mergeFromFile", reinterpret_cast<PyCFunction>(PySession_merge), METH_VARARGS,
-      "Merge a USD stage or session state file into the current stage" },
+      "Destructively merge authored USD content into the current root layer" },
+    { "mergeFlattened", reinterpret_cast<PyCFunction>(PySession_mergeFlattened), METH_VARARGS,
+      "Flatten an incoming USD stage and destructively merge it into the current root layer" },
+    { "mergeFlattenedFromFile", reinterpret_cast<PyCFunction>(PySession_mergeFlattened), METH_VARARGS,
+      "Flatten an incoming USD stage and destructively merge it into the current root layer" },
+    { "mergeSublayer", reinterpret_cast<PyCFunction>(PySession_mergeSublayer), METH_VARARGS,
+      "Merge a USD file as a sublayer of the current root layer" },
+    { "mergeSublayerFromFile", reinterpret_cast<PyCFunction>(PySession_mergeSublayer), METH_VARARGS,
+      "Merge a USD file as a sublayer of the current root layer" },
+    { "mergeReference", reinterpret_cast<PyCFunction>(PySession_mergeReference), METH_VARARGS,
+      "Merge a USD reference to an existing target prim" },
+    { "mergeReferenceFromFile", reinterpret_cast<PyCFunction>(PySession_mergeReference), METH_VARARGS,
+      "Merge a USD reference to an existing target prim" },
+    { "mergePayload", reinterpret_cast<PyCFunction>(PySession_mergePayload), METH_VARARGS,
+      "Merge a USD payload to an existing target prim" },
+    { "mergePayloadFromFile", reinterpret_cast<PyCFunction>(PySession_mergePayload), METH_VARARGS,
+      "Merge a USD payload to an existing target prim" },
     { "save", reinterpret_cast<PyCFunction>(PySession_save), METH_VARARGS, "Save the current stage to file" },
     { "saveToFile", reinterpret_cast<PyCFunction>(PySession_save), METH_VARARGS, "Save the current stage to file" },
     { "copy", reinterpret_cast<PyCFunction>(PySession_copy), METH_VARARGS, "Copy the current stage to file" },

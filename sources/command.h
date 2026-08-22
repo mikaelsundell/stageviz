@@ -372,6 +372,25 @@ Command
 setAttributeValue(const SdfPath& attributePath, const VtValue& value);
 
 /**
+ * @brief Creates a command that removes one root-layer attribute override.
+ *
+ * The attribute must be authored in the opened root layer on a prim that also
+ * has an underlying opinion from a weaker composition layer, such as a
+ * sublayer, reference, or payload. Root-layer-owned prims are never modified.
+ *
+ * The complete attribute spec is snapshotted before removal so undo restores
+ * the authored value, metadata, connections, and other attribute information
+ * exactly.
+ *
+ * If removing the attribute leaves an inert root-layer prim spec, the empty
+ * prim spec is removed so the weaker composed prim is exposed cleanly.
+ *
+ * @param attributePath USD attribute path whose root-layer override should be removed.
+ */
+Command
+resetAttributeOverride(const SdfPath& attributePath);
+
+/**
  * @brief Creates a command that resets local transforms for xformable prims.
  *
  * When a selected prim has an underlying transform opinion in a weaker layer,
@@ -385,6 +404,27 @@ setAttributeValue(const SdfPath& attributePath, const VtValue& value);
  */
 Command
 resetTransforms(const QList<SdfPath>& paths);
+
+/**
+ * @brief Creates a command that removes root-layer overrides from composed prims.
+ *
+ * Only direct opinions authored on the selected prim in the opened root layer
+ * are removed. Direct property specs and authored metadata are cleared while
+ * root-layer overrides on descendant prims are preserved.
+ *
+ * The command only operates on prims that also have an underlying opinion in
+ * a weaker layer, such as content composed from a sublayer, reference, or
+ * payload. Root-layer-owned prims are ignored and are never deleted.
+ *
+ * If removing the direct opinions leaves an inert root-layer prim spec, the
+ * empty spec is removed so the weaker composed prim is exposed cleanly.
+ *
+ * Undo restores the removed root-layer properties and metadata exactly.
+ *
+ * @param paths Prim paths whose direct root-layer overrides should be removed.
+ */
+Command
+resetOverrides(const QList<SdfPath>& paths);
 
 /**
  * @brief Creates a command that applies world-space transforms to prims.
