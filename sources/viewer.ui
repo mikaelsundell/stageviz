@@ -1411,17 +1411,17 @@
   </action>
   <action name="fileMergeSublayer">
    <property name="text">
-    <string>Merge sublayer ...</string>
+    <string>Merge as sublayer ...</string>
    </property>
   </action>
   <action name="fileMergeReference">
    <property name="text">
-    <string>Merge reference ...</string>
+    <string>Merge as reference ...</string>
    </property>
   </action>
   <action name="fileMergePayload">
    <property name="text">
-    <string>Merge payload ...</string>
+    <string>Merge as payload ...</string>
    </property>
   </action>
   <action name="editSelectAll">
