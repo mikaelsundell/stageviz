@@ -21,6 +21,8 @@
 #include <pxr/usd/usdGeom/tokens.h>
 #include <pxr/usd/usdGeom/xform.h>
 #include <pxr/usd/usdGeom/xformable.h>
+#include <pxr/usd/usdShade/material.h>
+#include <pxr/usd/usdShade/materialBindingAPI.h>
 
 namespace stageviz {
 
@@ -206,7 +208,228 @@ namespace {
     }
 
 
+    struct MaterialBindingState {
+        SdfPath primPath;
+        bool hadDirectBinding = false;
+        SdfPath previousMaterialPath;
+    };
+
+    bool captureDirectMaterialBinding(const UsdPrim& prim, MaterialBindingState& state)
+    {
+        if (!prim)
+            return false;
+
+        state.primPath = prim.GetPath();
+        state.hadDirectBinding = false;
+        state.previousMaterialPath = SdfPath();
+
+        const UsdShadeMaterialBindingAPI bindingApi(prim);
+        const UsdRelationship relationship = bindingApi.GetDirectBindingRel();
+        if (!relationship)
+            return true;
+
+        SdfPathVector targets;
+        if (!relationship.GetTargets(&targets) || targets.empty())
+            return true;
+
+        state.hadDirectBinding = true;
+        state.previousMaterialPath = targets.front();
+        return true;
+    }
+
+    bool applyDirectMaterialBinding(UsdStageRefPtr stage, const SdfPath& primPath, const SdfPath& materialPath,
+                                    QString& error)
+    {
+        if (!stage) {
+            error = "stage missing";
+            return false;
+        }
+
+        const UsdPrim prim = stage->GetPrimAtPath(primPath);
+        if (!prim || !prim.IsValid()) {
+            error = QString("target prim missing: %1").arg(pathText(primPath));
+            return false;
+        }
+
+        const UsdPrim materialPrim = stage->GetPrimAtPath(materialPath);
+        if (!materialPrim || !materialPrim.IsA<UsdShadeMaterial>()) {
+            error = QString("material missing: %1").arg(pathText(materialPath));
+            return false;
+        }
+
+        UsdShadeMaterialBindingAPI bindingApi = UsdShadeMaterialBindingAPI::Apply(prim);
+        if (!bindingApi) {
+            error = QString("could not apply material binding API: %1").arg(pathText(primPath));
+            return false;
+        }
+
+        if (!bindingApi.Bind(UsdShadeMaterial(materialPrim))) {
+            error = QString("failed to bind material to: %1").arg(pathText(primPath));
+            return false;
+        }
+
+        return true;
+    }
+
+    bool restoreDirectMaterialBinding(UsdStageRefPtr stage, const MaterialBindingState& state, QString& error)
+    {
+        if (!stage) {
+            error = "stage missing";
+            return false;
+        }
+
+        const UsdPrim prim = stage->GetPrimAtPath(state.primPath);
+        if (!prim || !prim.IsValid()) {
+            error = QString("target prim missing: %1").arg(pathText(state.primPath));
+            return false;
+        }
+
+        UsdShadeMaterialBindingAPI bindingApi = UsdShadeMaterialBindingAPI::Apply(prim);
+        if (!bindingApi) {
+            error = QString("could not apply material binding API: %1").arg(pathText(state.primPath));
+            return false;
+        }
+
+        if (!state.hadDirectBinding) {
+            if (!bindingApi.UnbindDirectBinding()) {
+                error = QString("failed to remove material binding from: %1").arg(pathText(state.primPath));
+                return false;
+            }
+            return true;
+        }
+
+        const UsdPrim materialPrim = stage->GetPrimAtPath(state.previousMaterialPath);
+        if (!materialPrim || !materialPrim.IsA<UsdShadeMaterial>()) {
+            error = QString("previous material missing: %1").arg(pathText(state.previousMaterialPath));
+            return false;
+        }
+
+        if (!bindingApi.Bind(UsdShadeMaterial(materialPrim))) {
+            error = QString("failed to restore material binding on: %1").arg(pathText(state.primPath));
+            return false;
+        }
+
+        return true;
+    }
+
 }  // namespace
+
+
+Command
+bindMaterial(const QList<SdfPath>& inPaths, const SdfPath& materialPath)
+{
+    auto states = std::make_shared<QList<MaterialBindingState>>();
+
+    return Command(
+        [inPaths, materialPath, states](Session* session) {
+            if (!session || inPaths.isEmpty() || materialPath.IsEmpty())
+                return;
+
+            const QList<SdfPath> paths = path::uniquePaths(inPaths);
+            command::beginDeferred(session, "Bind material", static_cast<int>(paths.size()));
+
+            command::runWorker([session, paths, materialPath, states]() {
+                QList<SdfPath> changed;
+                QStringList errors;
+
+                {
+                    WRITE_LOCKER(locker, session->stageLock(), "stageLock");
+                    const UsdStageRefPtr stage = session->stageUnsafe();
+
+                    if (!stage) {
+                        errors.append("stage missing");
+                    }
+                    else {
+                        const UsdPrim materialPrim = stage->GetPrimAtPath(materialPath);
+                        if (!materialPrim || !materialPrim.IsA<UsdShadeMaterial>()) {
+                            errors.append(QString("material missing: %1").arg(pathText(materialPath)));
+                        }
+                        else {
+                            if (states->isEmpty()) {
+                                states->reserve(paths.size());
+
+                                for (const SdfPath& inputPath : paths) {
+                                    const SdfPath primPath = inputPath.IsPropertyPath() ? inputPath.GetPrimPath()
+                                                                                        : inputPath;
+                                    const UsdPrim prim = stage->GetPrimAtPath(primPath);
+                                    if (!prim || !prim.IsValid()) {
+                                        errors.append(QString("target prim missing: %1").arg(pathText(primPath)));
+                                        continue;
+                                    }
+
+                                    MaterialBindingState state;
+                                    if (!captureDirectMaterialBinding(prim, state)) {
+                                        errors.append(
+                                            QString("failed to capture material binding: %1").arg(pathText(primPath)));
+                                        continue;
+                                    }
+
+                                    states->append(state);
+                                }
+                            }
+
+                            for (const MaterialBindingState& state : *states) {
+                                QString error;
+                                if (applyDirectMaterialBinding(stage, state.primPath, materialPath, error))
+                                    path::appendUnique(changed, state.primPath);
+                                else
+                                    errors.append(error);
+                            }
+                        }
+                    }
+                }
+
+                const bool success = errors.isEmpty();
+                const QString errorText = summarizeErrors(errors);
+                command::queueToSession(session, [session, changed, success, errorText]() {
+                    using Status = Session::Notify::Status;
+                    command::finishDeferred(session,
+                                            success ? "Material bound"
+                                                    : appendError("Bind material finished with errors", errorText),
+                                            changed, success ? Status::Success : Status::Error);
+                });
+            });
+        },
+        [states](Session* session) {
+            if (!session || states->isEmpty())
+                return;
+
+            command::beginDeferred(session, "Undo bind material", static_cast<int>(states->size()));
+
+            command::runWorker([session, states]() {
+                QList<SdfPath> changed;
+                QStringList errors;
+
+                {
+                    WRITE_LOCKER(locker, session->stageLock(), "stageLock");
+                    const UsdStageRefPtr stage = session->stageUnsafe();
+
+                    if (!stage) {
+                        errors.append("stage missing");
+                    }
+                    else {
+                        for (const MaterialBindingState& state : *states) {
+                            QString error;
+                            if (restoreDirectMaterialBinding(stage, state, error))
+                                path::appendUnique(changed, state.primPath);
+                            else
+                                errors.append(error);
+                        }
+                    }
+                }
+
+                const bool success = errors.isEmpty();
+                const QString errorText = summarizeErrors(errors);
+                command::queueToSession(session, [session, changed, success, errorText]() {
+                    using Status = Session::Notify::Status;
+                    command::finishDeferred(session,
+                                            success ? "Material binding undone"
+                                                    : appendError("Undo bind material finished with errors", errorText),
+                                            changed, success ? Status::Success : Status::Error);
+                });
+            });
+        });
+}
 
 Command
 loadPayloads(const QList<SdfPath>& paths, const QString& variantSet, const QString& variantValue)

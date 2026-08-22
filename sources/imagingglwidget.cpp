@@ -21,9 +21,13 @@
 #include <QColor>
 #include <QColorSpace>
 #include <QContextMenuEvent>
+#include <QDragEnterEvent>
+#include <QDragMoveEvent>
+#include <QDropEvent>
 #include <QElapsedTimer>
 #include <QFontDatabase>
 #include <QLocale>
+#include <QMimeData>
 #include <QMouseEvent>
 #include <QObject>
 #include <QOpenGLContext>
@@ -75,6 +79,9 @@ public:
     void paintEvent(QPaintEvent* event);
     void focusEvent(QMouseEvent* event);
     void contextMenuEvent(QContextMenuEvent* event);
+    void dragEnterEvent(QDragEnterEvent* event);
+    void dragMoveEvent(QDragMoveEvent* event);
+    void dropEvent(QDropEvent* event);
     void mouseDoubleClickEvent(QMouseEvent* event);
     void mousePressEvent(QMouseEvent* event);
     void mouseMoveEvent(QMouseEvent* event);
@@ -188,6 +195,7 @@ ImagingGLWidgetPrivate::init()
     format.setAlphaBufferSize(8);
     format.setColorSpace(QColorSpace::SRgb);
     d.glwidget->setFormat(format);
+    d.glwidget->setAcceptDrops(true);
     d.count = 0;
     d.frame = 0;
     d.defaultAmbient = 0.4f;
@@ -381,6 +389,7 @@ ImagingGLWidgetPrivate::paintGL()
     d.renderEngine->setSelectionBBoxes(d.selectionBBoxes);
     d.renderEngine->setSelectionColor(style()->color(Style::ColorRole::Selection));
     updateRenderEngineSettings();
+
     QElapsedTimer gpuTimer;
     gpuTimer.start();
     TfErrorMark mark;
@@ -396,12 +405,15 @@ ImagingGLWidgetPrivate::paintGL()
         qWarning() << "render pass was skipped";
         return;
     }
+
     d.gpuPerformanceMs = gpuTimer.nsecsElapsed() / 1e6;
     d.count++;
+
     Q_EMIT d.glwidget->renderReady(timer.elapsed());
     if (viewState() && viewState()->performanceStatsEnabled())
         updatePerformanceStats();
 }
+
 void
 ImagingGLWidgetPrivate::paintEvent(QPaintEvent* event)
 {
@@ -409,6 +421,7 @@ ImagingGLWidgetPrivate::paintEvent(QPaintEvent* event)
     if (!d.renderEngine) {
         return;
     }
+
     QPainter painter(d.glwidget);
     painter.setRenderHint(QPainter::Antialiasing, true);
     if (d.sweep) {
@@ -421,14 +434,18 @@ ImagingGLWidgetPrivate::paintEvent(QPaintEvent* event)
         painter.drawRect(rect);
         painter.restore();
     }
+
     drawTransformTransform(painter);
+
     if (viewState() && viewState()->sceneStatsEnabled()) {
         painter.drawImage(QPoint(0, 0), d.sceneStats);
     }
+
     if (viewState() && viewState()->performanceStatsEnabled()) {
         QPoint pos(d.glwidget->width() - d.performanceStats.width() / d.performanceStats.devicePixelRatio(), 0);
         painter.drawImage(pos, d.performanceStats);
     }
+
     if (viewState() && viewState()->cameraAxisEnabled()) {
         const int margin = 8;
         const int axisHeight = qRound(d.axis.height() / d.axis.devicePixelRatio());
@@ -436,15 +453,18 @@ ImagingGLWidgetPrivate::paintEvent(QPaintEvent* event)
     }
     drawBorder(painter);
 }
+
 void
 ImagingGLWidgetPrivate::focusEvent(QMouseEvent* event)
 {
     d.glwidget->makeCurrent();
     if (!d.stage || !d.renderEngine)
         return;
+
 #ifdef WIN32
     glDepthMask(GL_TRUE);
 #endif
+
     const qreal deviceRatio = d.glwidget->devicePixelRatioF();
     QPointF mousePosDevice = event->pos() * deviceRatio;
     GfVec4d viewport = widgetViewport();
@@ -501,6 +521,7 @@ ImagingGLWidgetPrivate::focusEvent(QMouseEvent* event)
         viewCamera()->setFocusPoint(bestHitPoint);
     }
 }
+
 SdfPath
 ImagingGLWidgetPrivate::pickNearestPath(const QPoint& pos)
 {
@@ -526,9 +547,11 @@ ImagingGLWidgetPrivate::pickNearestPath(const QPoint& pos)
     READ_LOCKER(locker, d.context->stageLock(), "stageLock");
     if (!d.stage)
         return {};
+
     auto testRoot = [&](const UsdPrim& root) {
         if (!root)
             return;
+
         GfVec3d hitPoint;
         GfVec3d hitNormal;
         SdfPath hitPrimPath;
@@ -553,15 +576,97 @@ ImagingGLWidgetPrivate::pickNearestPath(const QPoint& pos)
     return nearestPath;
 }
 void
+ImagingGLWidgetPrivate::dragEnterEvent(QDragEnterEvent* event)
+{
+    static constexpr const char* MaterialMimeType = "application/x-stageviz-material";
+
+    if (!event || !event->mimeData() || !event->mimeData()->hasFormat(MaterialMimeType)) {
+        if (event)
+            event->ignore();
+        return;
+    }
+
+    event->setDropAction(Qt::CopyAction);
+    event->accept();
+}
+
+void
+ImagingGLWidgetPrivate::dragMoveEvent(QDragMoveEvent* event)
+{
+    static constexpr const char* MaterialMimeType = "application/x-stageviz-material";
+
+    if (!event || !event->mimeData() || !event->mimeData()->hasFormat(MaterialMimeType)) {
+        if (event)
+            event->ignore();
+        return;
+    }
+
+    const SdfPath path = pickNearestPath(event->position().toPoint());
+    if (path.IsEmpty()) {
+        event->ignore();
+        return;
+    }
+
+    event->setDropAction(Qt::CopyAction);
+    event->accept();
+}
+
+void
+ImagingGLWidgetPrivate::dropEvent(QDropEvent* event)
+{
+    static constexpr const char* MaterialMimeType = "application/x-stageviz-material";
+
+    if (!event || !event->mimeData() || !event->mimeData()->hasFormat(MaterialMimeType) || !d.context || !d.stage) {
+        if (event)
+            event->ignore();
+        return;
+    }
+
+    const QString materialText = QString::fromUtf8(event->mimeData()->data(MaterialMimeType)).trimmed();
+    const SdfPath materialPath(materialText.toStdString());
+    if (materialPath.IsEmpty() || !materialPath.IsAbsolutePath() || !materialPath.IsPrimPath()) {
+        event->ignore();
+        return;
+    }
+    {
+        READ_LOCKER(locker, d.context->stageLock(), "stageLock");
+        if (!d.stage) {
+            event->ignore();
+            return;
+        }
+
+        const UsdPrim materialPrim = d.stage->GetPrimAtPath(materialPath);
+        if (!materialPrim || !materialPrim.IsA<UsdShadeMaterial>()) {
+            event->ignore();
+            return;
+        }
+    }
+
+    const SdfPath targetPath = pickNearestPath(event->position().toPoint());
+    if (targetPath.IsEmpty()) {
+        event->ignore();
+        return;
+    }
+
+    d.context->run(new Command(bindMaterial({ targetPath }, materialPath)));
+
+    event->setDropAction(Qt::CopyAction);
+    event->accept();
+    d.glwidget->update();
+}
+
+void
 ImagingGLWidgetPrivate::contextMenuEvent(QContextMenuEvent* event)
 {
     if (!event || !d.stage || !d.context)
         return;
+
     if (d.suppressContextMenu) {
         d.suppressContextMenu = false;
         event->accept();
         return;
     }
+
     const SdfPath clickedPath = pickNearestPath(event->pos());
     QList<SdfPath> paths = d.selection;
     if (!clickedPath.IsEmpty() && !paths.contains(clickedPath)) {
@@ -569,6 +674,7 @@ ImagingGLWidgetPrivate::contextMenuEvent(QContextMenuEvent* event)
         d.selection = paths;
         d.context->run(new Command(selectPaths(paths)));
     }
+
     SdfPath createParentPath = SdfPath::AbsoluteRootPath();
     if (!clickedPath.IsEmpty()) {
         if (paths.size() == 1)
@@ -591,6 +697,7 @@ ImagingGLWidgetPrivate::mousePressEvent(QMouseEvent* event)
 {
     if (!d.stage)
         return;
+
     if (event->modifiers() & (Qt::AltModifier | Qt::MetaModifier)) {
         d.drag = true;
         d.sweep = false;
@@ -620,6 +727,7 @@ ImagingGLWidgetPrivate::mouseMoveEvent(QMouseEvent* event)
 {
     if (!d.stage)
         return;
+
     const QPoint pos = event->pos();
     if (d.drag) {
         QPoint delta = deviceRatio(pos) - deviceRatio(d.mousepos);
@@ -649,11 +757,13 @@ ImagingGLWidgetPrivate::mouseMoveEvent(QMouseEvent* event)
     }
     d.mousepos = event->pos();
 }
+
 void
 ImagingGLWidgetPrivate::mouseReleaseEvent(QMouseEvent* event)
 {
     if (!d.stage)
         return;
+
     if (d.drag) {
         d.suppressContextMenu = event->button() == Qt::RightButton;
         d.drag = false;
@@ -673,11 +783,13 @@ ImagingGLWidgetPrivate::mouseReleaseEvent(QMouseEvent* event)
     }
 }
 void
+
 ImagingGLWidgetPrivate::sweepEvent(const QRect& rect, QMouseEvent* event)
 {
     d.glwidget->makeCurrent();
     if (!d.stage || !d.renderEngine)
         return;
+
 #ifdef WIN32
     glDepthMask(GL_TRUE);
 #endif
@@ -799,6 +911,7 @@ ImagingGLWidgetPrivate::sweepEvent(const QRect& rect, QMouseEvent* event)
         d.lastPickPaths.clear();
         d.lastPickIndex = -1;
     }
+
     bool update = false;
     if (!selectedPaths.isEmpty()) {
         if (event->modifiers() & Qt::ShiftModifier) {
@@ -822,8 +935,10 @@ ImagingGLWidgetPrivate::sweepEvent(const QRect& rect, QMouseEvent* event)
     }
     if (update)
         d.context->run(new Command(selectPaths(d.selection)));
+
     d.glwidget->update();
 }
+
 void
 ImagingGLWidgetPrivate::wheelEvent(QWheelEvent* event)
 {
@@ -832,6 +947,7 @@ ImagingGLWidgetPrivate::wheelEvent(QWheelEvent* event)
     double factor = 1.0 - clamped;
     viewCamera()->distance(factor);
 }
+
 void
 ImagingGLWidgetPrivate::updateStage(UsdStageRefPtr stage)
 {
@@ -841,40 +957,49 @@ ImagingGLWidgetPrivate::updateStage(UsdStageRefPtr stage)
     d.selectionBBoxes.clear();
     if (d.renderEngine)
         d.renderEngine->setStage(stage);
+
     rebuildSelectionBBoxes();
     ensureAuxiliaryMaterials();
     if (viewState() && viewState()->sceneStatsEnabled()) {
         updateSceneStats();
     }
+
     updateAuxiliaryGrid();
     d.glwidget->update();
     updateAxis();
 }
+
 void
 ImagingGLWidgetPrivate::updateAuxiliary(UsdStageRefPtr auxiliary)
 {
     SignalGuard::Scope guard(this);
     if (auxiliary == d.auxiliary)
         return;
+
     d.auxiliary = auxiliary;
     ensureAuxiliaryMaterials();
     updateAuxiliaryGrid();
     if (d.renderEngine)
         d.renderEngine->setAuxiliaryStage(auxiliary);
+
     d.glwidget->update();
 }
+
 void
 ImagingGLWidgetPrivate::updateStageUp(const TfToken& upAxis)
 {
     const TfToken normalizedAxis = (upAxis == UsdGeomTokens->z) ? UsdGeomTokens->z : UsdGeomTokens->y;
     if (d.stageUpAxis == normalizedAxis)
         return;
+
     d.stageUpAxis = normalizedAxis;
     updateAuxiliaryGrid();
     if (d.renderEngine)
         d.renderEngine->refreshAuxiliaryStage();
+
     d.glwidget->update();
 }
+
 void
 ImagingGLWidgetPrivate::updateBoundingBox(const GfBBox3d& bbox)
 {
@@ -882,6 +1007,7 @@ ImagingGLWidgetPrivate::updateBoundingBox(const GfBBox3d& bbox)
     d.bbox = bbox;
     d.glwidget->update();
 }
+
 void
 ImagingGLWidgetPrivate::updateMask(const QList<SdfPath>& paths)
 {
@@ -889,6 +1015,7 @@ ImagingGLWidgetPrivate::updateMask(const QList<SdfPath>& paths)
     d.mask = paths;
     d.glwidget->update();
 }
+
 void
 ImagingGLWidgetPrivate::updatePrims(const NoticeBatch& batch)
 {
@@ -900,11 +1027,13 @@ ImagingGLWidgetPrivate::updatePrims(const NoticeBatch& batch)
     }
     d.glwidget->update();
 }
+
 void
 ImagingGLWidgetPrivate::updateTransform(bool enabled)
 {
     if (d.transformEnabled == enabled)
         return;
+
     d.transformEnabled = enabled;
     if (!enabled) {
         if (d.transformDragging)
@@ -914,6 +1043,7 @@ ImagingGLWidgetPrivate::updateTransform(bool enabled)
     }
     d.glwidget->update();
 }
+
 void
 ImagingGLWidgetPrivate::captureVisible()
 {
@@ -986,16 +1116,19 @@ ImagingGLWidgetPrivate::captureVisible()
         d.glwidget->update();
     Q_EMIT d.glwidget->captureReady(timer.elapsed());
 }
+
 void
 ImagingGLWidgetPrivate::clearVisibleCapture()
 {
     if (d.visibleCapture.isEmpty())
         return;
+
     d.visibleCapture.clear();
     if (viewState() && viewState()->sceneStatsEnabled())
         updateSceneStats();
     d.glwidget->update();
 }
+
 void
 ImagingGLWidgetPrivate::updateCamera(const GfCamera& camera)
 {
@@ -1020,22 +1153,28 @@ ImagingGLWidgetPrivate::updateSelection(const QList<SdfPath>& paths)
     }
     d.glwidget->update();
 }
+
 void
 ImagingGLWidgetPrivate::rebuildSelectionBBoxes()
 {
     d.selectionBBoxes.clear();
     if (!d.context || !d.stage || d.selection.isEmpty())
         return;
+
     READ_LOCKER(locker, d.context->stageLock(), "stageLock");
+
     if (!d.stage)
         return;
+
     UsdGeomBBoxCache bboxCache(UsdTimeCode::Default(),
                                { UsdGeomTokens->default_, UsdGeomTokens->proxy, UsdGeomTokens->render }, true);
+
     d.selectionBBoxes.reserve(d.selection.size());
     for (const SdfPath& path : d.selection) {
         UsdPrim prim = d.stage->GetPrimAtPath(path);
         if (!prim)
             continue;
+
         GfBBox3d bbox = bboxCache.ComputeWorldBound(prim);
         if (!bbox.GetRange().IsEmpty())
             d.selectionBBoxes.push_back(bbox);
@@ -1047,6 +1186,7 @@ ImagingGLWidgetPrivate::updateAuxiliaryGrid()
 {
     if (!d.auxiliary)
         return;
+    
     ViewState* state = viewState();
     WRITE_LOCKER(locker, session()->auxiliaryLock(), "auxiliaryLock");
     const SdfPath displayPath("/Display");
@@ -1060,6 +1200,7 @@ ImagingGLWidgetPrivate::updateAuxiliaryGrid()
         d.auxiliary->RemovePrim(gridRootPath);
         return;
     }
+    
     UsdGeomScope::Define(d.auxiliary, displayPath);
     UsdGeomScope::Define(d.auxiliary, gridRootPath);
     UsdGeomScope::Define(d.auxiliary, materialsPath);
@@ -1070,6 +1211,7 @@ ImagingGLWidgetPrivate::updateAuxiliaryGrid()
     auto point = [&](float a, float b) {
         return upAxis == UsdGeomTokens->z ? GfVec3f(a, b, 0.0f) : GfVec3f(a, 0.0f, b);
     };
+    
     VtVec3fArray points;
     VtIntArray counts;
     for (int i = 1; i <= lines; ++i) {
@@ -1085,6 +1227,7 @@ ImagingGLWidgetPrivate::updateAuxiliaryGrid()
         for (int j = 0; j < 4; ++j)
             counts.push_back(2);
     }
+    
     UsdGeomBasisCurves grid = UsdGeomBasisCurves::Define(d.auxiliary, gridPath);
     grid.CreateTypeAttr(VtValue(UsdGeomTokens->linear));
     grid.CreateBasisAttr(VtValue(UsdGeomTokens->bezier));
@@ -1124,10 +1267,12 @@ ImagingGLWidgetPrivate::ensureAuxiliaryMaterials()
 {
     if (!d.auxiliary)
         return;
+    
     WRITE_LOCKER(locker, session()->auxiliaryLock(), "auxiliaryLock");
     const SdfPath materialsPath("/Materials");
     const SdfPath clayPath("/Materials/Clay");
     UsdGeomScope::Define(d.auxiliary, materialsPath);
+    
     // built-in Stageviz clay lives on the shared auxiliary stage just like any
     // other render-support material.
     authorAuxiliaryStandardSurface(clayPath, GfVec3f(0.55f, 0.18f, 0.16f), 0.0f, 0.68f, 0.35f);
@@ -1137,8 +1282,10 @@ ImagingGLWidgetPrivate::authorAuxiliaryGridMaterial(const SdfPath& materialPath,
 {
     if (!d.auxiliary)
         return;
+    
     UsdShadeMaterial material = UsdShadeMaterial::Define(d.auxiliary, materialPath);
     UsdShadeShader surface = UsdShadeShader::Define(d.auxiliary, materialPath.AppendChild(TfToken("Surface")));
+    
     // Use the same MaterialX Standard Surface path as the working viewport
     // overrides. The grid is intentionally emission-only so its appearance is
     // stable and independent of viewport lighting.
@@ -1159,6 +1306,7 @@ ImagingGLWidgetPrivate::authorAuxiliaryStandardSurface(const SdfPath& materialPa
 {
     if (!d.auxiliary)
         return;
+    
     UsdShadeMaterial material = UsdShadeMaterial::Define(d.auxiliary, materialPath);
     UsdShadeShader surface = UsdShadeShader::Define(d.auxiliary, materialPath.AppendChild(TfToken("Surface")));
     surface.CreateIdAttr(VtValue(TfToken("ND_standard_surface_surfaceshader")));
@@ -1176,9 +1324,11 @@ ImagingGLWidgetPrivate::updateRenderEngineSettings()
 {
     if (!d.renderEngine)
         return;
+    
     ViewState* state = viewState();
     if (!state)
         return;
+    
     RenderEngine::Settings settings = d.renderEngine->settings();
     settings.clearColor = state->backgroundColor().isValid() ? state->backgroundColor() : QColor(Qt::black);
     settings.aov = QStringToTfToken(state->rendererAov().isEmpty() ? QStringLiteral("color") : state->rendererAov());
@@ -1190,18 +1340,21 @@ ImagingGLWidgetPrivate::updateRenderEngineSettings()
     case ViewState::High: settings.complexity = 1.2; break;
     case ViewState::VeryHigh: settings.complexity = 1.3; break;
     }
+    
     switch (state->doubleSidedMode()) {
     case ViewState::Primitive: settings.doubleSidedMode = RenderEngine::DoubleSidedMode::Primitive; break;
     case ViewState::SingleSided: settings.doubleSidedMode = RenderEngine::DoubleSidedMode::SingleSided; break;
     case ViewState::DoubleSided:
     default: settings.doubleSidedMode = RenderEngine::DoubleSidedMode::DoubleSided; break;
     }
+    
     switch (state->materialMode()) {
     case ViewState::Clay: settings.materialMode = RenderEngine::MaterialMode::Clay; break;
     case ViewState::Override: settings.materialMode = RenderEngine::MaterialMode::Override; break;
     case ViewState::All:
     default: settings.materialMode = RenderEngine::MaterialMode::Scene; break;
     }
+    
     settings.overrideMaterial = state->overrideMaterial();
     settings.sceneLightsEnabled = state->sceneLightsEnabled();
     settings.sceneMaterialsEnabled = state->sceneMaterialsEnabled();
@@ -1216,6 +1369,7 @@ ImagingGLWidgetPrivate::projectWorldToScreen(const GfVec3d& world, QPointF& scre
 {
     if (!d.context || !viewCamera())
         return false;
+    
     const GfCamera camera = viewCamera()->camera();
     const GfFrustum frustum = camera.GetFrustum();
     const GfMatrix4d view = frustum.ComputeViewMatrix();
@@ -1224,6 +1378,7 @@ ImagingGLWidgetPrivate::projectWorldToScreen(const GfVec3d& world, QPointF& scre
     const GfVec3d ndc = projection.Transform(cameraPoint);
     if (!std::isfinite(ndc[0]) || !std::isfinite(ndc[1]) || !std::isfinite(ndc[2]))
         return false;
+    
     screen.setX((ndc[0] * 0.5 + 0.5) * d.glwidget->width());
     screen.setY((1.0 - (ndc[1] * 0.5 + 0.5)) * d.glwidget->height());
     return true;
@@ -1235,11 +1390,13 @@ ImagingGLWidgetPrivate::transformAxisDirection(int axis)
     const GfVec3d worldAxis = transformAxisVector(axis);
     if (worldAxis.GetLengthSq() < 1e-12)
         return {};
+    
     const GfVec3d cameraAxis = view.TransformDir(worldAxis);
     QPointF direction(cameraAxis[0], -cameraAxis[1]);
     const double length = std::hypot(direction.x(), direction.y());
     if (length < 1e-4)
         return {};
+    
     return direction / length;
 }
 GfVec3d
@@ -1264,6 +1421,7 @@ ImagingGLWidgetPrivate::transformWorldPerPixel(const GfVec3d& pivot)
 {
     if (!viewCamera())
         return 0.0;
+    
     double worldPerPixel = viewCamera()->mapToFrustumHeight(std::max(1, widgetSize()[1]));
     const GfCamera camera = viewCamera()->camera();
     const double pivotDistance = (camera.GetTransform().ExtractTranslation() - pivot).GetLength();
@@ -1277,6 +1435,7 @@ ImagingGLWidgetPrivate::transformRotationPoint(int axis, double angle, QPointF& 
     const GfVec3d normal = transformAxisVector(axis);
     if (normal.GetLengthSq() < 1e-12)
         return false;
+    
     GfVec3d basisA;
     GfVec3d basisB;
     if (normal == GfVec3d::XAxis()) {
@@ -1295,6 +1454,7 @@ ImagingGLWidgetPrivate::transformRotationPoint(int axis, double angle, QPointF& 
     const double radius = transformWorldPerPixel() * radiusPixels;
     if (radius <= 0.0)
         return false;
+    
     const GfVec3d world = d.transformPivot + basisA * (std::cos(angle) * radius) + basisB * (std::sin(angle) * radius);
     return const_cast<ImagingGLWidgetPrivate*>(this)->projectWorldToScreen(world, screen);
 }
@@ -1310,6 +1470,7 @@ ImagingGLWidgetPrivate::transformRotationAngle(int axis, const QPointF& pos, dou
         QPointF p;
         if (!transformRotationPoint(axis, a, p))
             continue;
+        
         const double d = std::hypot(pos.x() - p.x(), pos.y() - p.y());
         if (d < bestDistance) {
             bestDistance = d;
@@ -1319,9 +1480,11 @@ ImagingGLWidgetPrivate::transformRotationAngle(int axis, const QPointF& pos, dou
     }
     if (!found)
         return false;
+    
     angle = bestAngle;
     if (distance)
         *distance = bestDistance;
+    
     return true;
 }
 int
@@ -2270,6 +2433,24 @@ ImagingGLWidget::paintEvent(QPaintEvent* event)
     QOpenGLWidget::paintEvent(event);
     p->paintEvent(event);
 }
+void
+ImagingGLWidget::dragEnterEvent(QDragEnterEvent* event)
+{
+    p->dragEnterEvent(event);
+}
+
+void
+ImagingGLWidget::dragMoveEvent(QDragMoveEvent* event)
+{
+    p->dragMoveEvent(event);
+}
+
+void
+ImagingGLWidget::dropEvent(QDropEvent* event)
+{
+    p->dropEvent(event);
+}
+
 void
 ImagingGLWidget::contextMenuEvent(QContextMenuEvent* event)
 {

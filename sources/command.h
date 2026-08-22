@@ -105,6 +105,21 @@ struct TransformRootState {
 ///@{
 
 /**
+ * @brief Creates an undoable command that binds a material to prims.
+ *
+ * The material must already exist in the current USD stage. A direct material
+ * binding is authored on every valid target prim. Undo restores the previous
+ * direct binding when one existed, or removes the newly-authored direct binding
+ * otherwise.
+ *
+ * @param paths Prim paths that should receive the material.
+ * @param materialPath Path to an existing UsdShadeMaterial prim.
+ * @return Undoable material-binding command.
+ */
+Command
+bindMaterial(const QList<SdfPath>& paths, const SdfPath& materialPath);
+
+/**
  * @brief Creates a command that loads payloads resolved from the specified paths.
  *
  * Each input path is interpreted as either:

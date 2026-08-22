@@ -311,6 +311,27 @@ PyCommand_movePath(PyObject*, PyObject* args, PyObject* kwargs)
     return runCommand(movePath(paths, parentPath, insertIndex, preserveWorldTransform != 0));
 }
 
+static PyObject*
+PyCommand_bindMaterial(PyObject*, PyObject* args)
+{
+    PyObject* pyPaths = nullptr;
+    PyObject* pyMaterialPath = nullptr;
+
+    if (!PyArg_ParseTuple(args, "OO", &pyPaths, &pyMaterialPath))
+        return nullptr;
+
+    QList<SdfPath> paths;
+    SdfPath materialPath;
+
+    if (!parsePathListArg(pyPaths, "paths", &paths))
+        return nullptr;
+
+    if (!parsePathArg(pyMaterialPath, "material_path", &materialPath))
+        return nullptr;
+
+    return runCommand(bindMaterial(paths, materialPath));
+}
+
 static PyMethodDef PyCommand_methods[] = {
     { "select_paths", reinterpret_cast<PyCFunction>(PyCommand_selectPaths), METH_VARARGS, "Select paths." },
     { "select_all", reinterpret_cast<PyCFunction>(PyCommand_selectAll), METH_VARARGS | METH_KEYWORDS,
@@ -337,6 +358,8 @@ static PyMethodDef PyCommand_methods[] = {
     { "new_xform", reinterpret_cast<PyCFunction>(PyCommand_newXform), METH_VARARGS, "Create a new Xform path." },
     { "move_path", reinterpret_cast<PyCFunction>(PyCommand_movePath), METH_VARARGS | METH_KEYWORDS,
       "Move paths. Optional keyword arguments: insert_index, preserve_world_transform." },
+    { "bind_material", reinterpret_cast<PyCFunction>(PyCommand_bindMaterial), METH_VARARGS,
+      "Bind an existing USD material to one or more prim paths." },
 
     { nullptr, nullptr, 0, nullptr }
 };

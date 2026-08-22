@@ -28,6 +28,40 @@ PXR_NAMESPACE_USING_DIRECTIVE
 namespace stageviz {
 namespace {
 
+    /**
+     * @brief Restores the OpenGL context that was current on entry.
+     *
+     * Offscreen material previews temporarily make their own context current.
+     * QOpenGLContext::doneCurrent() does not restore the context that was
+     * active before that switch, which can leave a QOpenGLWidget without its
+     * expected context during the next paint. This guard scopes that switch
+     * and restores the previous context and surface on every return path.
+     */
+    class OpenGLContextRestore final {
+    public:
+        OpenGLContextRestore()
+            : m_context(QOpenGLContext::currentContext())
+            , m_surface(m_context ? m_context->surface() : nullptr)
+        {}
+
+        ~OpenGLContextRestore()
+        {
+            QOpenGLContext* current = QOpenGLContext::currentContext();
+            if (current && current != m_context)
+                current->doneCurrent();
+
+            if (m_context && m_surface && QOpenGLContext::currentContext() != m_context)
+                m_context->makeCurrent(m_surface);
+        }
+
+        OpenGLContextRestore(const OpenGLContextRestore&) = delete;
+        OpenGLContextRestore& operator=(const OpenGLContextRestore&) = delete;
+
+    private:
+        QOpenGLContext* m_context = nullptr;
+        QSurface* m_surface = nullptr;
+    };
+
     struct SceneIndices {
         HdMergingSceneIndexRefPtr merging;
         TfRefPtr<MaterialOverrideSceneIndex> materialOverride;
@@ -129,6 +163,7 @@ public:
 
     bool initialize();
     bool ensureCurrentContext();
+    void resetEngine();
     void reset();
     void ensureAuxiliarySceneIndex();
     void refreshAuxiliarySceneIndex();
@@ -195,7 +230,10 @@ RenderEngine::Private::initialize()
 
     UsdImagingGLEngine::Parameters engineParams {};
     engineParams.displayUnloadedPrimsWithBounds = false;
-    engineParams.allowAsynchronousSceneProcessing = true;
+    // offscreen preview rendering shares GPU resources with the interactive
+    // viewport. Keep its Hydra scene processing synchronous so background
+    // work cannot overlap a context hand-off back to QOpenGLWidget.
+    engineParams.allowAsynchronousSceneProcessing = contextMode == ContextMode::Current;
 
     engine = std::make_unique<ImagingGLEngine>(engineParams);
     if (!engine->GetHgi()) {
@@ -216,18 +254,44 @@ RenderEngine::Private::initialize()
 }
 
 void
-RenderEngine::Private::reset()
+RenderEngine::Private::resetEngine()
 {
-    if (contextMode == ContextMode::Offscreen && offscreenContext && offscreenSurface)
-        offscreenContext->makeCurrent(offscreenSurface.get());
+    if (!engine)
+        return;
+
+    if (contextMode == ContextMode::Offscreen) {
+        OpenGLContextRestore contextRestore;
+        if (!ensureCurrentContext()) {
+            qWarning() << "could not make offscreen context current while resetting render engine";
+            return;
+        }
+        engine.reset();
+        return;
+    }
 
     engine.reset();
+}
 
-    if (contextMode == ContextMode::Offscreen && offscreenContext)
-        offscreenContext->doneCurrent();
+void
+RenderEngine::Private::reset()
+{
+    if (contextMode == ContextMode::Offscreen) {
+        {
+            OpenGLContextRestore contextRestore;
+            if (engine && (!offscreenContext || !offscreenSurface
+                           || !offscreenContext->makeCurrent(offscreenSurface.get()))) {
+                qWarning() << "could not make offscreen context current while releasing render engine";
+                return;
+            }
+            engine.reset();
+        }
 
-    offscreenContext.reset();
-    offscreenSurface.reset();
+        offscreenContext.reset();
+        offscreenSurface.reset();
+        return;
+    }
+
+    engine.reset();
 }
 
 void
@@ -391,11 +455,20 @@ RenderEngine::RenderEngine(ContextMode mode)
     : p(std::make_unique<Private>(mode))
 {}
 
-RenderEngine::~RenderEngine() = default;
+RenderEngine::~RenderEngine()
+{
+    if (p)
+        p->reset();
+}
 
 bool
 RenderEngine::initialize()
 {
+    if (p->contextMode == ContextMode::Offscreen) {
+        OpenGLContextRestore contextRestore;
+        return p->initialize();
+    }
+
     return p->initialize();
 }
 
@@ -417,7 +490,7 @@ RenderEngine::setStage(UsdStageRefPtr stage)
     if (p->stage == stage)
         return;
     p->stage = stage;
-    p->engine.reset();
+    p->resetEngine();
 }
 
 UsdStageRefPtr
@@ -432,7 +505,7 @@ RenderEngine::setAuxiliaryStage(UsdStageRefPtr stage)
     if (p->auxiliary == stage)
         return;
     p->auxiliary = stage;
-    p->engine.reset();
+    p->resetEngine();
 }
 
 UsdStageRefPtr
@@ -550,7 +623,17 @@ RenderEngine::renderImage()
 {
     if (p->contextMode != ContextMode::Offscreen)
         return {};
-    if (!p->ensureCurrentContext() || (!p->engine && !p->initialize()))
+
+    // rendering a swatch temporarily switches away from the context owned by
+    // ImagingGLWidget. Always restore that previous context before returning;
+    // simply calling doneCurrent() would otherwise leave the viewport with no
+    // current context and can produce black or corrupted frames.
+    OpenGLContextRestore contextRestore;
+
+    if (!p->ensureCurrentContext())
+        return {};
+
+    if (!p->engine && !p->initialize())
         return {};
 
     QOpenGLFramebufferObjectFormat format;
@@ -560,11 +643,12 @@ RenderEngine::renderImage()
     if (!framebuffer.isValid())
         return {};
 
-    framebuffer.bind();
+    if (!framebuffer.bind())
+        return {};
+
     const bool rendered = renderToCurrentFramebuffer();
     const QImage image = rendered ? framebuffer.toImage() : QImage();
     framebuffer.release();
-    p->offscreenContext->doneCurrent();
     return image;
 }
 

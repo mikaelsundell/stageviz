@@ -206,7 +206,9 @@ public:
      * @brief Renders the current stage into an offscreen image.
      * @return Rendered image, or a null image if rendering failed.
      *
-     * The engine must have been created with ContextMode::Offscreen.
+     * The engine must have been created with ContextMode::Offscreen. The
+     * previously current OpenGL context and surface are restored before this
+     * function returns, including on failure paths.
      */
     QImage renderImage();
 
