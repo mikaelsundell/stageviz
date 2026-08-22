@@ -16,15 +16,15 @@
 #include "style.h"
 #include "tracelocks.h"
 #include "viewcontext.h"
+#include <QContextMenuEvent>
 #include <QFileInfo>
 #include <QHeaderView>
 #include <QIcon>
-#include <QMouseEvent>
+#include <QMenu>
 #include <QPointer>
 #include <QScrollBar>
 #include <QSet>
 #include <QSignalBlocker>
-#include <QStyle>
 #include <algorithm>
 #include <climits>
 #include <cstdint>
@@ -144,7 +144,6 @@ public:
     static void configureEditor(PropertyItem* item, const UsdAttribute& attr, const VtValue& value);
     static bool hasUnderlyingPrimOpinion(const UsdPrim& prim, const SdfLayerHandle& rootLayer);
     bool isOverrideItem(const PropertyItem* item) const;
-    QRect overrideIconRect(const PropertyItem* item) const;
 
     struct TreeState {
         QSet<QString> expanded;
@@ -1031,33 +1030,6 @@ PropertyTreePrivate::isOverrideItem(const PropertyItem* item) const
     return item->data(PropertyItem::Name, OverrideRole).toBool();
 }
 
-QRect
-PropertyTreePrivate::overrideIconRect(const PropertyItem* item) const
-{
-    if (!d.tree || !item || !isOverrideItem(item))
-        return {};
-
-    const QRect itemRect = d.tree->visualItemRect(item);
-    if (!itemRect.isValid())
-        return {};
-
-    int depth = 0;
-    for (QTreeWidgetItem* parent = item->parent(); parent; parent = parent->parent())
-        ++depth;
-
-    const int iconSize = d.tree->iconSize().width() > 0
-                             ? d.tree->iconSize().width()
-                             : d.tree->style()->pixelMetric(QStyle::PM_SmallIconSize, nullptr, d.tree.data());
-
-    const int columnLeft = d.tree->header()->sectionViewportPosition(PropertyItem::Name);
-
-    const int left = columnLeft + d.tree->indentation() * (depth + 1);
-
-    const int top = itemRect.top() + qMax(0, (itemRect.height() - iconSize) / 2);
-
-    return QRect(left, top, iconSize, iconSize);
-}
-
 void
 PropertyTreePrivate::setReadOnlyValueStyle(PropertyItem* item, bool readOnly)
 {
@@ -1454,7 +1426,6 @@ PropertyTreePrivate::addAttribute(PropertyItem* parent, const UsdAttribute& attr
 
     if (rootOverride) {
         toolTips.append(QStringLiteral("Root-layer override"));
-        toolTips.append(QStringLiteral("Click the override icon to reset this property"));
         item->setIcon(PropertyItem::Name, QIcon(style()->icon(Style::Override, Style::UIScale::Small)));
         QFont nameFont = item->font(PropertyItem::Name);
         nameFont.setBold(true);
@@ -1724,27 +1695,28 @@ PropertyTree::setContext(ViewContext* context)
 }
 
 void
-PropertyTree::mousePressEvent(QMouseEvent* event)
+PropertyTree::contextMenuEvent(QContextMenuEvent* event)
 {
-    if (event && event->button() == Qt::LeftButton) {
-        auto* item = dynamic_cast<PropertyItem*>(itemAt(event->pos()));
+    if (!event)
+        return;
 
-        if (item && p->isOverrideItem(item)) {
-            const QRect iconRect = p->overrideIconRect(item);
-
-            if (iconRect.contains(event->pos())) {
-                if (ViewContext* viewContext = context())
-                    viewContext->run(new Command(resetAttributeOverride(item->propertyPath())));
-                else
-                    session()->commandStack()->run(new Command(resetAttributeOverride(item->propertyPath())));
-
-                event->accept();
-                return;
-            }
-        }
+    auto* item = dynamic_cast<PropertyItem*>(itemAt(event->pos()));
+    if (!item || !p->isOverrideItem(item)) {
+        TreeWidget::contextMenuEvent(event);
+        return;
     }
 
-    TreeWidget::mousePressEvent(event);
+    QMenu menu(this);
+    QAction* resetOverride = menu.addAction("Reset");
+
+    QAction* chosen = menu.exec(event->globalPos());
+    if (chosen != resetOverride)
+        return;
+
+    if (ViewContext* viewContext = context())
+        viewContext->run(new Command(resetAttributeOverride(item->propertyPath())));
+    else
+        session()->commandStack()->run(new Command(resetAttributeOverride(item->propertyPath())));
 }
 
 void

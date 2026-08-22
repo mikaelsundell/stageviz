@@ -777,6 +777,7 @@ SessionPrivate::loadState(const QString& filename)
 
     const QJsonObject root = doc.object();
     const QJsonObject cameraObject = root.value("viewCamera").toObject();
+    const QJsonObject viewStateObject = root.value("viewState").toObject();
     const QJsonArray payloads = root.value("loadedPayloads").toArray();
     {
         WRITE_LOCKER(locker, &d.stageLock, "stageLock");
@@ -815,6 +816,19 @@ SessionPrivate::loadState(const QString& filename)
         if (!cameraObject.isEmpty()) {
             if (cameraObject.contains("aspectRatio"))
                 camera->setAspectRatio(cameraObject.value("aspectRatio").toDouble(camera->aspectRatio()));
+            if (cameraObject.contains("aspectRatioLocked"))
+                camera->setAspectRatioLocked(cameraObject.value("aspectRatioLocked").toBool(camera->aspectRatioLocked()));
+            if (cameraObject.contains("letterboxEnabled"))
+                camera->setLetterboxEnabled(cameraObject.value("letterboxEnabled").toBool(camera->letterboxEnabled()));
+            if (cameraObject.contains("letterboxOpacity"))
+                camera->setLetterboxOpacity(cameraObject.value("letterboxOpacity").toDouble(camera->letterboxOpacity()));
+            if (cameraObject.contains("projectionMode")) {
+                const QString value = cameraObject.value("projectionMode").toString();
+                if (value == "FieldOfView")
+                    camera->setProjectionMode(ViewCamera::FieldOfView);
+                else if (value == "Physical")
+                    camera->setProjectionMode(ViewCamera::Physical);
+            }
             if (cameraObject.contains("fov"))
                 camera->setFov(cameraObject.value("fov").toDouble(camera->fov()));
             if (cameraObject.contains("fovDirection")) {
@@ -824,6 +838,12 @@ SessionPrivate::loadState(const QString& filename)
                 else if (value == "Vertical")
                     camera->setFovDirection(ViewCamera::Vertical);
             }
+            if (cameraObject.contains("focalLength"))
+                camera->setFocalLength(cameraObject.value("focalLength").toDouble(camera->focalLength()));
+            if (cameraObject.contains("sensorWidth"))
+                camera->setSensorWidth(cameraObject.value("sensorWidth").toDouble(camera->sensorWidth()));
+            if (cameraObject.contains("sensorHeight"))
+                camera->setSensorHeight(cameraObject.value("sensorHeight").toDouble(camera->sensorHeight()));
             if (cameraObject.contains("nearClipping"))
                 camera->setNearClipping(cameraObject.value("nearClipping").toDouble(camera->nearClipping()));
             if (cameraObject.contains("farClipping"))
@@ -866,6 +886,74 @@ SessionPrivate::loadState(const QString& filename)
             if (cameraObject.contains("cameraDistance"))
                 camera->setCameraDistance(cameraObject.value("cameraDistance").toDouble(camera->cameraDistance()));
         }
+        if (!viewStateObject.isEmpty()) {
+            if (viewStateObject.contains("backgroundColor")) {
+                const QColor color(viewStateObject.value("backgroundColor").toString());
+                if (color.isValid())
+                    d.viewState->setBackgroundColor(color);
+            }
+            if (viewStateObject.contains("gridColor")) {
+                const QColor color(viewStateObject.value("gridColor").toString());
+                if (color.isValid())
+                    d.viewState->setGridColor(color);
+            }
+            if (viewStateObject.contains("gridEnabled"))
+                d.viewState->setGridEnabled(viewStateObject.value("gridEnabled").toBool(d.viewState->gridEnabled()));
+            if (viewStateObject.contains("materialMode")) {
+                const QString value = viewStateObject.value("materialMode").toString();
+                if (value == "All")
+                    d.viewState->setMaterialMode(ViewState::All);
+                else if (value == "Clay")
+                    d.viewState->setMaterialMode(ViewState::Clay);
+                else if (value == "Override")
+                    d.viewState->setMaterialMode(ViewState::Override);
+            }
+            if (viewStateObject.contains("overrideMaterial")) {
+                const QString value = viewStateObject.value("overrideMaterial").toString();
+                d.viewState->setOverrideMaterial(value.isEmpty() ? SdfPath() : SdfPath(qt::QStringToString(value)));
+            }
+            if (viewStateObject.contains("defaultCameraLightEnabled"))
+                d.viewState->setDefaultCameraLightEnabled(viewStateObject.value("defaultCameraLightEnabled").toBool(d.viewState->defaultCameraLightEnabled()));
+            if (viewStateObject.contains("sceneLightsEnabled"))
+                d.viewState->setSceneLightsEnabled(viewStateObject.value("sceneLightsEnabled").toBool(d.viewState->sceneLightsEnabled()));
+            if (viewStateObject.contains("sceneMaterialsEnabled"))
+                d.viewState->setSceneMaterialsEnabled(viewStateObject.value("sceneMaterialsEnabled").toBool(d.viewState->sceneMaterialsEnabled()));
+            if (viewStateObject.contains("doubleSidedMode")) {
+                const QString value = viewStateObject.value("doubleSidedMode").toString();
+                if (value == "Primitive")
+                    d.viewState->setDoubleSidedMode(ViewState::Primitive);
+                else if (value == "DoubleSided")
+                    d.viewState->setDoubleSidedMode(ViewState::DoubleSided);
+                else if (value == "SingleSided")
+                    d.viewState->setDoubleSidedMode(ViewState::SingleSided);
+            }
+            if (viewStateObject.contains("renderMode")) {
+                const QString value = viewStateObject.value("renderMode").toString();
+                if (value == "Shaded")
+                    d.viewState->setRenderMode(ViewState::Shaded);
+                else if (value == "Wireframe")
+                    d.viewState->setRenderMode(ViewState::Wireframe);
+            }
+            if (viewStateObject.contains("complexityLevel")) {
+                const QString value = viewStateObject.value("complexityLevel").toString();
+                if (value == "Low")
+                    d.viewState->setComplexityLevel(ViewState::Low);
+                else if (value == "Medium")
+                    d.viewState->setComplexityLevel(ViewState::Medium);
+                else if (value == "High")
+                    d.viewState->setComplexityLevel(ViewState::High);
+                else if (value == "VeryHigh")
+                    d.viewState->setComplexityLevel(ViewState::VeryHigh);
+            }
+            if (viewStateObject.contains("rendererAov"))
+                d.viewState->setRendererAov(viewStateObject.value("rendererAov").toString(d.viewState->rendererAov()));
+            if (viewStateObject.contains("sceneStatsEnabled"))
+                d.viewState->setSceneStatsEnabled(viewStateObject.value("sceneStatsEnabled").toBool(d.viewState->sceneStatsEnabled()));
+            if (viewStateObject.contains("performanceStatsEnabled"))
+                d.viewState->setPerformanceStatsEnabled(viewStateObject.value("performanceStatsEnabled").toBool(d.viewState->performanceStatsEnabled()));
+            if (viewStateObject.contains("cameraAxisEnabled"))
+                d.viewState->setCameraAxisEnabled(viewStateObject.value("cameraAxisEnabled").toBool(d.viewState->cameraAxisEnabled()));
+        }
     }
     Q_EMIT d.session->boundingBoxChanged(bbox);
     return true;
@@ -898,7 +986,7 @@ SessionPrivate::saveState(const QString& filename)
         }
     }
     QJsonObject root;
-    root["version"] = 1;
+    root["version"] = 2;
     root["stageFile"] = stageFilename;
     root["loadedPayloads"] = payloads;
     if (d.viewState && d.viewState->camera()) {
@@ -928,6 +1016,45 @@ SessionPrivate::saveState(const QString& filename)
             }
             return QStringLiteral("Vertical");
         };
+        auto projectionMode = [](ViewCamera::ProjectionMode value) {
+            switch (value) {
+            case ViewCamera::FieldOfView: return QStringLiteral("FieldOfView");
+            case ViewCamera::Physical: return QStringLiteral("Physical");
+            }
+            return QStringLiteral("FieldOfView");
+        };
+        auto materialMode = [](ViewState::MaterialMode value) {
+            switch (value) {
+            case ViewState::All: return QStringLiteral("All");
+            case ViewState::Clay: return QStringLiteral("Clay");
+            case ViewState::Override: return QStringLiteral("Override");
+            }
+            return QStringLiteral("All");
+        };
+        auto doubleSidedMode = [](ViewState::DoubleSidedMode value) {
+            switch (value) {
+            case ViewState::Primitive: return QStringLiteral("Primitive");
+            case ViewState::DoubleSided: return QStringLiteral("DoubleSided");
+            case ViewState::SingleSided: return QStringLiteral("SingleSided");
+            }
+            return QStringLiteral("Primitive");
+        };
+        auto renderMode = [](ViewState::RenderMode value) {
+            switch (value) {
+            case ViewState::Shaded: return QStringLiteral("Shaded");
+            case ViewState::Wireframe: return QStringLiteral("Wireframe");
+            }
+            return QStringLiteral("Shaded");
+        };
+        auto complexityLevel = [](ViewState::ComplexityLevel value) {
+            switch (value) {
+            case ViewState::Low: return QStringLiteral("Low");
+            case ViewState::Medium: return QStringLiteral("Medium");
+            case ViewState::High: return QStringLiteral("High");
+            case ViewState::VeryHigh: return QStringLiteral("VeryHigh");
+            }
+            return QStringLiteral("Low");
+        };
         const GfVec3d focusPoint = camera->focusPoint();
         QJsonArray focusPointArray;
         focusPointArray.append(focusPoint[0]);
@@ -935,8 +1062,15 @@ SessionPrivate::saveState(const QString& filename)
         focusPointArray.append(focusPoint[2]);
         QJsonObject cameraObject;
         cameraObject["aspectRatio"] = camera->aspectRatio();
+        cameraObject["aspectRatioLocked"] = camera->aspectRatioLocked();
+        cameraObject["letterboxEnabled"] = camera->letterboxEnabled();
+        cameraObject["letterboxOpacity"] = camera->letterboxOpacity();
+        cameraObject["projectionMode"] = projectionMode(camera->projectionMode());
         cameraObject["fov"] = camera->fov();
         cameraObject["fovDirection"] = fovDirection(camera->fovDirection());
+        cameraObject["focalLength"] = camera->focalLength();
+        cameraObject["sensorWidth"] = camera->sensorWidth();
+        cameraObject["sensorHeight"] = camera->sensorHeight();
         cameraObject["nearClipping"] = camera->nearClipping();
         cameraObject["farClipping"] = camera->farClipping();
         cameraObject["fit"] = camera->fit();
@@ -948,6 +1082,23 @@ SessionPrivate::saveState(const QString& filename)
         cameraObject["axisRoll"] = camera->axisRoll();
         cameraObject["cameraDistance"] = camera->cameraDistance();
         root["viewCamera"] = cameraObject;
+        QJsonObject viewStateObject;
+        viewStateObject["backgroundColor"] = d.viewState->backgroundColor().name(QColor::HexArgb);
+        viewStateObject["gridColor"] = d.viewState->gridColor().name(QColor::HexArgb);
+        viewStateObject["gridEnabled"] = d.viewState->gridEnabled();
+        viewStateObject["materialMode"] = materialMode(d.viewState->materialMode());
+        viewStateObject["overrideMaterial"] = qt::SdfPathToQString(d.viewState->overrideMaterial());
+        viewStateObject["defaultCameraLightEnabled"] = d.viewState->defaultCameraLightEnabled();
+        viewStateObject["sceneLightsEnabled"] = d.viewState->sceneLightsEnabled();
+        viewStateObject["sceneMaterialsEnabled"] = d.viewState->sceneMaterialsEnabled();
+        viewStateObject["doubleSidedMode"] = doubleSidedMode(d.viewState->doubleSidedMode());
+        viewStateObject["renderMode"] = renderMode(d.viewState->renderMode());
+        viewStateObject["complexityLevel"] = complexityLevel(d.viewState->complexityLevel());
+        viewStateObject["rendererAov"] = d.viewState->rendererAov();
+        viewStateObject["sceneStatsEnabled"] = d.viewState->sceneStatsEnabled();
+        viewStateObject["performanceStatsEnabled"] = d.viewState->performanceStatsEnabled();
+        viewStateObject["cameraAxisEnabled"] = d.viewState->cameraAxisEnabled();
+        root["viewState"] = viewStateObject;
     }
     QFile file(QFileInfo(filename).absoluteFilePath());
     if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate))

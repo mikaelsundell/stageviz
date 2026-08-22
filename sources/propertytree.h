@@ -12,7 +12,7 @@
 
 PXR_NAMESPACE_USING_DIRECTIVE
 
-class QMouseEvent;
+class QContextMenuEvent;
 
 namespace stageviz {
 
@@ -103,14 +103,14 @@ public:
 
 protected:
     /**
-     * @brief Handles clicks on property override icons.
+     * @brief Shows actions for the property under the cursor.
      *
-     * Clicking the override icon of an overridden attribute removes only that
-     * property's root-layer override through the undoable command system.
+     * Overridden attributes expose a Reset Override action that removes only
+     * that attribute's root-layer opinion through the undoable command system.
      *
-     * @param event Mouse press event.
+     * @param event Context menu event.
      */
-    void mousePressEvent(QMouseEvent* event) override;
+    void contextMenuEvent(QContextMenuEvent* event) override;
 
 private:
     QScopedPointer<PropertyTreePrivate> p;
