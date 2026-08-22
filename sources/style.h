@@ -34,6 +34,7 @@ public:
         ButtonAlt,
         Error,
         Grid,
+        Guide,
         Handle,
         Highlight,
         HighlightAlt,

@@ -195,6 +195,7 @@ StylePrivate::updateTheme()
 {
     os::setDarkTheme();
     d.palette.clear();
+    
     auto map = [&](Style::ColorRole role, QColor color) { d.palette[roleName(role)] = color; };
     map(Style::ColorRole::Accent, QColor::fromHsl(220, 6, 20));
     map(Style::ColorRole::AccentAlt, QColor::fromHsl(220, 6, 24));
@@ -207,8 +208,9 @@ StylePrivate::updateTheme()
     map(Style::ColorRole::BorderAlt, QColor::fromHsl(220, 3, 64));
     map(Style::ColorRole::Button, QColor::fromHsl(220, 6, 36));
     map(Style::ColorRole::ButtonAlt, QColor::fromHsl(220, 6, 64));
-    map(Style::ColorRole::Error, QColor(150, 35, 50));
-    map(Style::ColorRole::Grid, QColor(80, 80, 80));
+    map(Style::ColorRole::Error, QColor::fromHsl(352, 158, 93));
+    map(Style::ColorRole::Grid, QColor::fromHsl(0, 0, 80));
+    map(Style::ColorRole::Guide, QColor::fromHsl(0, 0, 120));
     map(Style::ColorRole::Handle, QColor::fromHsl(0, 0, 150));
     map(Style::ColorRole::Highlight, QColor::fromHsl(216, 82, 80));
     map(Style::ColorRole::HighlightAlt, QColor::fromHsl(216, 60, 60));

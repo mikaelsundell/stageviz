@@ -26,12 +26,16 @@ public:
     GfMatrix4d mapToCameraUp();
     GfCamera camera();
     GfMatrix4d rotateAxis(const GfVec3d& value, double angle);
+    double effectiveFov() const;
     void reset();
 
 public:
     struct Data {
         double aspectRatio;
         double fov;
+        double focalLength;
+        double sensorWidth;
+        double sensorHeight;
         double nearClipping;
         double farClipping;
         double fit;
@@ -44,6 +48,10 @@ public:
         ViewCamera::CameraUp cameraUp;
         ViewCamera::CameraMode cameraMode;
         ViewCamera::FovDirection direction;
+        ViewCamera::ProjectionMode projectionMode;
+        bool aspectRatioLocked;
+        bool letterboxEnabled;
+        double letterboxOpacity;
         double axisyaw;
         double axispitch;
         double axisroll;
@@ -60,6 +68,9 @@ ViewCameraPrivate::init()
 {
     d.aspectRatio = 1.0;
     d.fov = 40.0;
+    d.focalLength = 50.0;
+    d.sensorWidth = 36.0;
+    d.sensorHeight = 24.0;
     d.nearClipping = 1.0;
     d.farClipping = 2000000.0;
     d.fit = 1.25;
@@ -72,6 +83,10 @@ ViewCameraPrivate::init()
     d.cameraUp = ViewCamera::Y;
     d.cameraMode = ViewCamera::None;
     d.direction = ViewCamera::Vertical;
+    d.projectionMode = ViewCamera::FieldOfView;
+    d.aspectRatioLocked = false;
+    d.letterboxEnabled = false;
+    d.letterboxOpacity = 0.9;
     d.axisyaw = 0.0;
     d.axispitch = 0.0;
     d.axisroll = 0.0;
@@ -92,7 +107,7 @@ ViewCameraPrivate::frame(const GfRange3d& range)
     if (!std::isfinite(maxsize) || maxsize <= 0.0)
         return;
 
-    double fovangle = d.fov * 0.5;
+    double fovangle = effectiveFov() * 0.5;
     if (!std::isfinite(fovangle) || fovangle <= 0.0)
         fovangle = 0.5;
 
@@ -189,6 +204,19 @@ ViewCameraPrivate::mapToCameraUp()
     return matrix.GetInverse();
 }
 
+double
+ViewCameraPrivate::effectiveFov() const
+{
+    if (d.projectionMode != ViewCamera::Physical)
+        return d.fov;
+
+    const double aperture = d.direction == ViewCamera::Horizontal ? d.sensorWidth : d.sensorHeight;
+    if (!std::isfinite(aperture) || aperture <= 0.0 || !std::isfinite(d.focalLength) || d.focalLength <= 0.0)
+        return d.fov;
+
+    return 2.0 * std::atan(aperture / (2.0 * d.focalLength)) * 180.0 / M_PI;
+}
+
 GfCamera
 ViewCameraPrivate::camera()
 {
@@ -206,12 +234,19 @@ ViewCameraPrivate::camera()
         const GfCamera::FOVDirection direction = d.direction == ViewCamera::Horizontal ? GfCamera::FOVHorizontal
                                                                                        : GfCamera::FOVVertical;
 
-        d.camera.SetPerspectiveFromAspectRatioAndFieldOfView(d.aspectRatio, d.fov, direction);
+        if (d.projectionMode == ViewCamera::Physical) {
+            d.camera.SetHorizontalAperture(d.sensorWidth);
+            d.camera.SetVerticalAperture(d.sensorHeight);
+            d.camera.SetFocalLength(d.focalLength);
+
+            CameraUtilConformWindowPolicy policy = CameraUtilConformWindowPolicy::CameraUtilFit;
+            CameraUtilConformWindow(&d.camera, policy, d.aspectRatio);
+        }
+        else {
+            d.camera.SetPerspectiveFromAspectRatioAndFieldOfView(d.aspectRatio, d.fov, direction);
+        }
 
         d.camera.SetClippingRange(GfRange1f(d.nearClipping, d.farClipping));
-
-        CameraUtilConformWindowPolicy policy = CameraUtilConformWindowPolicy::CameraUtilFit;
-        CameraUtilConformWindow(&d.camera, policy, d.aspectRatio);
 
         d.valid = true;
     }
@@ -333,6 +368,75 @@ ViewCamera::setAspectRatio(double aspectRatio)
     Q_EMIT cameraChanged(camera());
 }
 
+bool
+ViewCamera::aspectRatioLocked() const
+{
+    return p->d.aspectRatioLocked;
+}
+
+void
+ViewCamera::setAspectRatioLocked(bool locked)
+{
+    if (p->d.aspectRatioLocked == locked)
+        return;
+
+    p->d.aspectRatioLocked = locked;
+    p->d.valid = false;
+    p->d.identity = false;
+    Q_EMIT cameraChanged(camera());
+}
+
+bool
+ViewCamera::letterboxEnabled() const
+{
+    return p->d.letterboxEnabled;
+}
+
+void
+ViewCamera::setLetterboxEnabled(bool enabled)
+{
+    if (p->d.letterboxEnabled == enabled)
+        return;
+
+    p->d.letterboxEnabled = enabled;
+    Q_EMIT cameraChanged(camera());
+}
+
+double
+ViewCamera::letterboxOpacity() const
+{
+    return p->d.letterboxOpacity;
+}
+
+void
+ViewCamera::setLetterboxOpacity(double opacity)
+{
+    opacity = std::clamp(opacity, 0.0, 1.0);
+    if (p->d.letterboxOpacity == opacity)
+        return;
+
+    p->d.letterboxOpacity = opacity;
+    Q_EMIT cameraChanged(camera());
+}
+
+ViewCamera::ProjectionMode
+ViewCamera::projectionMode() const
+{
+    return p->d.projectionMode;
+}
+
+void
+ViewCamera::setProjectionMode(ViewCamera::ProjectionMode mode)
+{
+    if (p->d.projectionMode == mode)
+        return;
+
+    p->d.projectionMode = mode;
+    p->d.valid = false;
+    p->d.identity = false;
+    Q_EMIT cameraChanged(camera());
+}
+
 double
 ViewCamera::fov() const
 {
@@ -364,6 +468,60 @@ ViewCamera::setFovDirection(ViewCamera::FovDirection direction)
         return;
 
     p->d.direction = direction;
+    p->d.valid = false;
+    p->d.identity = false;
+    Q_EMIT cameraChanged(camera());
+}
+
+double
+ViewCamera::focalLength() const
+{
+    return p->d.focalLength;
+}
+
+void
+ViewCamera::setFocalLength(double focalLength)
+{
+    if (!std::isfinite(focalLength) || focalLength <= 0.0 || p->d.focalLength == focalLength)
+        return;
+
+    p->d.focalLength = focalLength;
+    p->d.valid = false;
+    p->d.identity = false;
+    Q_EMIT cameraChanged(camera());
+}
+
+double
+ViewCamera::sensorWidth() const
+{
+    return p->d.sensorWidth;
+}
+
+void
+ViewCamera::setSensorWidth(double width)
+{
+    if (!std::isfinite(width) || width <= 0.0 || p->d.sensorWidth == width)
+        return;
+
+    p->d.sensorWidth = width;
+    p->d.valid = false;
+    p->d.identity = false;
+    Q_EMIT cameraChanged(camera());
+}
+
+double
+ViewCamera::sensorHeight() const
+{
+    return p->d.sensorHeight;
+}
+
+void
+ViewCamera::setSensorHeight(double height)
+{
+    if (!std::isfinite(height) || height <= 0.0 || p->d.sensorHeight == height)
+        return;
+
+    p->d.sensorHeight = height;
     p->d.valid = false;
     p->d.identity = false;
     Q_EMIT cameraChanged(camera());

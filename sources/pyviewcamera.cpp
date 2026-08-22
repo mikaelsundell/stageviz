@@ -51,6 +51,16 @@ toFovDirection(long value)
     }
 }
 
+static ViewCamera::ProjectionMode
+toProjectionMode(long value)
+{
+    switch (value) {
+    case ViewCamera::FieldOfView: return ViewCamera::FieldOfView;
+    case ViewCamera::Physical: return ViewCamera::Physical;
+    default: return ViewCamera::FieldOfView;
+    }
+}
+
 static void
 PyGfCameraCapsule_destructor(PyObject* capsule)
 {
@@ -188,6 +198,98 @@ PyViewCamera_setAspectRatio(PyViewCameraObject* self, PyObject* args)
 }
 
 static PyObject*
+PyViewCamera_aspectRatioLocked(PyViewCameraObject* self)
+{
+    if (!checkViewCamera(self->camera))
+        return nullptr;
+
+    return PyBool_FromLong(self->camera->aspectRatioLocked());
+}
+
+static PyObject*
+PyViewCamera_setAspectRatioLocked(PyViewCameraObject* self, PyObject* args)
+{
+    if (!checkViewCamera(self->camera))
+        return nullptr;
+
+    int value = 0;
+    if (!PyArg_ParseTuple(args, "p", &value))
+        return nullptr;
+
+    self->camera->setAspectRatioLocked(value != 0);
+    Py_RETURN_NONE;
+}
+
+static PyObject*
+PyViewCamera_letterboxEnabled(PyViewCameraObject* self)
+{
+    if (!checkViewCamera(self->camera))
+        return nullptr;
+
+    return PyBool_FromLong(self->camera->letterboxEnabled());
+}
+
+static PyObject*
+PyViewCamera_setLetterboxEnabled(PyViewCameraObject* self, PyObject* args)
+{
+    if (!checkViewCamera(self->camera))
+        return nullptr;
+
+    int value = 0;
+    if (!PyArg_ParseTuple(args, "p", &value))
+        return nullptr;
+
+    self->camera->setLetterboxEnabled(value != 0);
+    Py_RETURN_NONE;
+}
+
+static PyObject*
+PyViewCamera_letterboxOpacity(PyViewCameraObject* self)
+{
+    if (!checkViewCamera(self->camera))
+        return nullptr;
+
+    return PyFloat_FromDouble(self->camera->letterboxOpacity());
+}
+
+static PyObject*
+PyViewCamera_setLetterboxOpacity(PyViewCameraObject* self, PyObject* args)
+{
+    if (!checkViewCamera(self->camera))
+        return nullptr;
+
+    double value = 0.0;
+    if (!PyArg_ParseTuple(args, "d", &value))
+        return nullptr;
+
+    self->camera->setLetterboxOpacity(value);
+    Py_RETURN_NONE;
+}
+
+static PyObject*
+PyViewCamera_projectionMode(PyViewCameraObject* self)
+{
+    if (!checkViewCamera(self->camera))
+        return nullptr;
+
+    return PyLong_FromLong(static_cast<long>(self->camera->projectionMode()));
+}
+
+static PyObject*
+PyViewCamera_setProjectionMode(PyViewCameraObject* self, PyObject* args)
+{
+    if (!checkViewCamera(self->camera))
+        return nullptr;
+
+    long value = 0;
+    if (!PyArg_ParseTuple(args, "l", &value))
+        return nullptr;
+
+    self->camera->setProjectionMode(toProjectionMode(value));
+    Py_RETURN_NONE;
+}
+
+static PyObject*
 PyViewCamera_fov(PyViewCameraObject* self)
 {
     if (!checkViewCamera(self->camera))
@@ -232,6 +334,75 @@ PyViewCamera_setFovDirection(PyViewCameraObject* self, PyObject* args)
         return nullptr;
 
     self->camera->setFovDirection(toFovDirection(value));
+    Py_RETURN_NONE;
+}
+
+static PyObject*
+PyViewCamera_focalLength(PyViewCameraObject* self)
+{
+    if (!checkViewCamera(self->camera))
+        return nullptr;
+
+    return PyFloat_FromDouble(self->camera->focalLength());
+}
+
+static PyObject*
+PyViewCamera_setFocalLength(PyViewCameraObject* self, PyObject* args)
+{
+    if (!checkViewCamera(self->camera))
+        return nullptr;
+
+    double value = 0.0;
+    if (!PyArg_ParseTuple(args, "d", &value))
+        return nullptr;
+
+    self->camera->setFocalLength(value);
+    Py_RETURN_NONE;
+}
+
+static PyObject*
+PyViewCamera_sensorWidth(PyViewCameraObject* self)
+{
+    if (!checkViewCamera(self->camera))
+        return nullptr;
+
+    return PyFloat_FromDouble(self->camera->sensorWidth());
+}
+
+static PyObject*
+PyViewCamera_setSensorWidth(PyViewCameraObject* self, PyObject* args)
+{
+    if (!checkViewCamera(self->camera))
+        return nullptr;
+
+    double value = 0.0;
+    if (!PyArg_ParseTuple(args, "d", &value))
+        return nullptr;
+
+    self->camera->setSensorWidth(value);
+    Py_RETURN_NONE;
+}
+
+static PyObject*
+PyViewCamera_sensorHeight(PyViewCameraObject* self)
+{
+    if (!checkViewCamera(self->camera))
+        return nullptr;
+
+    return PyFloat_FromDouble(self->camera->sensorHeight());
+}
+
+static PyObject*
+PyViewCamera_setSensorHeight(PyViewCameraObject* self, PyObject* args)
+{
+    if (!checkViewCamera(self->camera))
+        return nullptr;
+
+    double value = 0.0;
+    if (!PyArg_ParseTuple(args, "d", &value))
+        return nullptr;
+
+    self->camera->setSensorHeight(value);
     Py_RETURN_NONE;
 }
 
@@ -534,13 +705,41 @@ static PyMethodDef PyViewCamera_methods[] = {
 
     { "aspectRatio", reinterpret_cast<PyCFunction>(PyViewCamera_aspectRatio), METH_NOARGS, "Get the aspect ratio" },
     { "setAspectRatio", reinterpret_cast<PyCFunction>(PyViewCamera_setAspectRatio), METH_VARARGS,
-      "Set the aspect ratio" },
+      "Set the output aspect ratio" },
+    { "aspectRatioLocked", reinterpret_cast<PyCFunction>(PyViewCamera_aspectRatioLocked), METH_NOARGS,
+      "Get whether the output aspect ratio is locked" },
+    { "setAspectRatioLocked", reinterpret_cast<PyCFunction>(PyViewCamera_setAspectRatioLocked), METH_VARARGS,
+      "Set whether the output aspect ratio is locked" },
+    { "letterboxEnabled", reinterpret_cast<PyCFunction>(PyViewCamera_letterboxEnabled), METH_NOARGS,
+      "Get whether camera-gate letterboxing is enabled" },
+    { "setLetterboxEnabled", reinterpret_cast<PyCFunction>(PyViewCamera_setLetterboxEnabled), METH_VARARGS,
+      "Set whether camera-gate letterboxing is enabled" },
+    { "letterboxOpacity", reinterpret_cast<PyCFunction>(PyViewCamera_letterboxOpacity), METH_NOARGS,
+      "Get the camera-gate letterbox opacity" },
+    { "setLetterboxOpacity", reinterpret_cast<PyCFunction>(PyViewCamera_setLetterboxOpacity), METH_VARARGS,
+      "Set the camera-gate letterbox opacity in the range 0.0 to 1.0" },
+    { "projectionMode", reinterpret_cast<PyCFunction>(PyViewCamera_projectionMode), METH_NOARGS,
+      "Get projection mode: 0=FieldOfView, 1=Physical" },
+    { "setProjectionMode", reinterpret_cast<PyCFunction>(PyViewCamera_setProjectionMode), METH_VARARGS,
+      "Set projection mode: 0=FieldOfView, 1=Physical" },
     { "fov", reinterpret_cast<PyCFunction>(PyViewCamera_fov), METH_NOARGS, "Get the field of view" },
     { "setFov", reinterpret_cast<PyCFunction>(PyViewCamera_setFov), METH_VARARGS, "Set the field of view" },
     { "fovDirection", reinterpret_cast<PyCFunction>(PyViewCamera_fovDirection), METH_NOARGS,
       "Get the field-of-view direction" },
     { "setFovDirection", reinterpret_cast<PyCFunction>(PyViewCamera_setFovDirection), METH_VARARGS,
       "Set the field-of-view direction" },
+    { "focalLength", reinterpret_cast<PyCFunction>(PyViewCamera_focalLength), METH_NOARGS,
+      "Get the physical camera focal length in millimeters" },
+    { "setFocalLength", reinterpret_cast<PyCFunction>(PyViewCamera_setFocalLength), METH_VARARGS,
+      "Set the physical camera focal length in millimeters" },
+    { "sensorWidth", reinterpret_cast<PyCFunction>(PyViewCamera_sensorWidth), METH_NOARGS,
+      "Get the physical sensor width in millimeters" },
+    { "setSensorWidth", reinterpret_cast<PyCFunction>(PyViewCamera_setSensorWidth), METH_VARARGS,
+      "Set the physical sensor width in millimeters" },
+    { "sensorHeight", reinterpret_cast<PyCFunction>(PyViewCamera_sensorHeight), METH_NOARGS,
+      "Get the physical sensor height in millimeters" },
+    { "setSensorHeight", reinterpret_cast<PyCFunction>(PyViewCamera_setSensorHeight), METH_VARARGS,
+      "Set the physical sensor height in millimeters" },
 
     { "focusPoint", reinterpret_cast<PyCFunction>(PyViewCamera_focusPoint), METH_NOARGS,
       "Get the focus point as a tuple" },

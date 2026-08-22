@@ -47,6 +47,14 @@ public:
      */
     enum FovDirection { Vertical, Horizontal };
 
+    /**
+     * @brief Camera projection model.
+     *
+     * FieldOfView uses an explicit angular field of view. Physical derives
+     * field of view from focal length and sensor aperture dimensions.
+     */
+    enum ProjectionMode { FieldOfView, Physical };
+
 public:
     /**
      * @brief Constructs a ViewCamera.
@@ -153,14 +161,78 @@ public:
     ///@{
 
     /**
-     * @brief Returns the aspect ratio.
+     * @brief Returns the output camera aspect ratio.
+     *
+     * When aspect-ratio locking is disabled the viewport updates this value to
+     * match the widget. When locked, the viewport renders a centered camera
+     * gate using this ratio.
      */
     double aspectRatio() const;
 
     /**
-     * @brief Sets the aspect ratio.
+     * @brief Sets the output camera aspect ratio.
+     *
+     * @param aspectRatio Width divided by height.
      */
     void setAspectRatio(double aspectRatio);
+
+    /**
+     * @brief Returns whether the camera aspect ratio is locked.
+     */
+    bool aspectRatioLocked() const;
+
+    /**
+     * @brief Enables or disables output aspect-ratio locking.
+     *
+     * When enabled, ImagingGLWidget preserves aspectRatio() while resizing and
+     * renders into a centered camera gate.
+     *
+     * @param locked True to preserve the configured output aspect ratio.
+     */
+    void setAspectRatioLocked(bool locked);
+
+    /**
+     * @brief Returns whether letterbox/pillarbox bars are displayed.
+     */
+    bool letterboxEnabled() const;
+
+    /**
+     * @brief Enables or disables camera-gate letterboxing.
+     *
+     * This affects viewport presentation only; the camera gate remains active
+     * whenever aspectRatioLocked() is true.
+     *
+     * @param enabled True to draw dark bars outside the camera gate.
+     */
+    void setLetterboxEnabled(bool enabled);
+
+    /**
+     * @brief Returns the letterbox overlay opacity.
+     *
+     * @return Opacity in the range 0.0 to 1.0.
+     */
+    double letterboxOpacity() const;
+
+    /**
+     * @brief Sets the letterbox overlay opacity.
+     *
+     * Values are clamped to the range 0.0 to 1.0.
+     *
+     * @param opacity Overlay opacity.
+     */
+    void setLetterboxOpacity(double opacity);
+
+    /**
+     * @brief Returns the active camera projection model.
+     */
+    ProjectionMode projectionMode() const;
+
+    /**
+     * @brief Sets the active camera projection model.
+     *
+     * @param mode Field-of-view or physical-camera projection.
+     */
+    void setProjectionMode(ProjectionMode mode);
 
     /**
      * @brief Returns the field of view in degrees.
@@ -181,6 +253,42 @@ public:
      * @brief Sets the field-of-view direction.
      */
     void setFovDirection(ViewCamera::FovDirection direction);
+
+    /**
+     * @brief Returns the physical camera focal length in millimeters.
+     */
+    double focalLength() const;
+
+    /**
+     * @brief Sets the physical camera focal length in millimeters.
+     *
+     * @param focalLength Focal length in millimeters.
+     */
+    void setFocalLength(double focalLength);
+
+    /**
+     * @brief Returns the physical sensor width in millimeters.
+     */
+    double sensorWidth() const;
+
+    /**
+     * @brief Sets the physical sensor width in millimeters.
+     *
+     * @param width Sensor width in millimeters.
+     */
+    void setSensorWidth(double width);
+
+    /**
+     * @brief Returns the physical sensor height in millimeters.
+     */
+    double sensorHeight() const;
+
+    /**
+     * @brief Sets the physical sensor height in millimeters.
+     *
+     * @param height Sensor height in millimeters.
+     */
+    void setSensorHeight(double height);
 
     ///@}
 

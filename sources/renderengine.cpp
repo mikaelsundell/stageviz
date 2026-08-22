@@ -178,6 +178,7 @@ public:
     UsdStageRefPtr auxiliary;
     GfCamera camera;
     GfVec2i size = GfVec2i(512, 512);
+    GfVec4d viewport = GfVec4d(0.0);
     QList<SdfPath> mask;
     QList<SdfPath> selected;
     std::vector<GfBBox3d> selectionBBoxes;
@@ -230,7 +231,7 @@ RenderEngine::Private::initialize()
 
     UsdImagingGLEngine::Parameters engineParams {};
     engineParams.displayUnloadedPrimsWithBounds = false;
-    // offscreen preview rendering shares GPU resources with the interactive
+    // Offscreen preview rendering shares GPU resources with the interactive
     // viewport. Keep its Hydra scene processing synchronous so background
     // work cannot overlap a context hand-off back to QOpenGLWidget.
     engineParams.allowAsynchronousSceneProcessing = contextMode == ContextMode::Current;
@@ -424,7 +425,11 @@ RenderEngine::Private::render()
     engine->SetRenderBufferSize(size);
     engine->SetFraming(CameraUtilFraming(GfRange2f(GfVec2i(), size), GfRect2i(GfVec2i(), size)));
     engine->SetWindowPolicy(CameraUtilMatchVertically);
-    engine->SetRenderViewport(GfVec4d(0, 0, size[0], size[1]));
+
+    GfVec4d renderViewport = viewport;
+    if (renderViewport[2] <= 0.0 || renderViewport[3] <= 0.0)
+        renderViewport = GfVec4d(0, 0, size[0], size[1]);
+    engine->SetRenderViewport(renderViewport);
 
     const GfFrustum frustum = camera.GetFrustum();
     engine->SetCameraState(frustum.ComputeViewMatrix(), frustum.ComputeProjectionMatrix());
@@ -545,6 +550,18 @@ RenderEngine::size() const
 }
 
 void
+RenderEngine::setViewport(const GfVec4d& viewport)
+{
+    p->viewport = viewport;
+}
+
+const GfVec4d&
+RenderEngine::viewport() const
+{
+    return p->viewport;
+}
+
+void
 RenderEngine::setSettings(const Settings& settings)
 {
     p->settings = settings;
@@ -612,7 +629,11 @@ RenderEngine::renderToCurrentFramebuffer()
     glEnable(GL_DEPTH_TEST);
     glDepthMask(GL_TRUE);
     glDepthFunc(GL_LESS);
-    glViewport(0, 0, p->size[0], p->size[1]);
+    GfVec4d viewport = p->viewport;
+    if (viewport[2] <= 0.0 || viewport[3] <= 0.0)
+        viewport = GfVec4d(0, 0, p->size[0], p->size[1]);
+    glViewport(static_cast<GLint>(viewport[0]), static_cast<GLint>(viewport[1]),
+               static_cast<GLsizei>(viewport[2]), static_cast<GLsizei>(viewport[3]));
 #endif
 
     return p->render();
@@ -624,7 +645,7 @@ RenderEngine::renderImage()
     if (p->contextMode != ContextMode::Offscreen)
         return {};
 
-    // rendering a swatch temporarily switches away from the context owned by
+    // Rendering a swatch temporarily switches away from the context owned by
     // ImagingGLWidget. Always restore that previous context before returning;
     // simply calling doneCurrent() would otherwise leave the viewport with no
     // current context and can produce black or corrupted frames.

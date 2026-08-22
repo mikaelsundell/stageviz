@@ -128,7 +128,10 @@ public:
     double deviceRatio(double value) const;
     double widgetAspectRatio() const;
     GfVec2i widgetSize() const;
-    GfVec4d widgetViewport() const;
+    QRectF cameraGateRect();
+    GfVec4d widgetViewport();
+    GfVec4d renderViewport();
+    void drawLetterbox(QPainter& painter);
     void drawBorder(QPainter& painter);
     void updateAxis();
     void updateSceneStats();
@@ -379,11 +382,14 @@ ImagingGLWidgetPrivate::paintGL()
 
     QElapsedTimer timer;
     timer.start();
-    viewCamera()->setAspectRatio(widgetAspectRatio());
+    if (!viewCamera()->aspectRatioLocked())
+        viewCamera()->setAspectRatio(widgetAspectRatio());
+
     d.renderEngine->setStage(d.stage);
     d.renderEngine->setAuxiliaryStage(d.auxiliary);
     d.renderEngine->setCamera(viewCamera()->camera());
     d.renderEngine->setSize(widgetSize());
+    d.renderEngine->setViewport(renderViewport());
     d.renderEngine->setMask(d.mask);
     d.renderEngine->setSelected(d.selection);
     d.renderEngine->setSelectionBBoxes(d.selectionBBoxes);
@@ -424,6 +430,9 @@ ImagingGLWidgetPrivate::paintEvent(QPaintEvent* event)
 
     QPainter painter(d.glwidget);
     painter.setRenderHint(QPainter::Antialiasing, true);
+
+    drawLetterbox(painter);
+
     if (d.sweep) {
         painter.save();
         painter.setRenderHint(QPainter::Antialiasing, false);
@@ -1379,8 +1388,9 @@ ImagingGLWidgetPrivate::projectWorldToScreen(const GfVec3d& world, QPointF& scre
     if (!std::isfinite(ndc[0]) || !std::isfinite(ndc[1]) || !std::isfinite(ndc[2]))
         return false;
     
-    screen.setX((ndc[0] * 0.5 + 0.5) * d.glwidget->width());
-    screen.setY((1.0 - (ndc[1] * 0.5 + 0.5)) * d.glwidget->height());
+    const QRectF gate = cameraGateRect();
+    screen.setX(gate.left() + (ndc[0] * 0.5 + 0.5) * gate.width());
+    screen.setY(gate.top() + (1.0 - (ndc[1] * 0.5 + 0.5)) * gate.height());
     return true;
 }
 QPointF
@@ -1909,12 +1919,97 @@ ImagingGLWidgetPrivate::widgetSize() const
     int h = deviceRatio(d.glwidget->height());
     return GfVec2i(w, h);
 }
-GfVec4d
-ImagingGLWidgetPrivate::widgetViewport() const
+QRectF
+ImagingGLWidgetPrivate::cameraGateRect()
 {
-    GfVec2i size = widgetSize();
-    return GfVec4d(0, 0, size[0], size[1]);
+    const QRectF widgetRect = d.glwidget->rect();
+    if (!viewCamera() || !viewCamera()->aspectRatioLocked())
+        return widgetRect;
+
+    const double aspect = viewCamera()->aspectRatio();
+    if (!std::isfinite(aspect) || aspect <= 0.0 || widgetRect.width() <= 0.0 || widgetRect.height() <= 0.0)
+        return widgetRect;
+
+    const double widgetAspect = widgetRect.width() / widgetRect.height();
+    if (std::abs(widgetAspect - aspect) < 1e-8)
+        return widgetRect;
+
+    if (widgetAspect > aspect) {
+        const double width = widgetRect.height() * aspect;
+        const double left = widgetRect.left() + (widgetRect.width() - width) * 0.5;
+        return QRectF(left, widgetRect.top(), width, widgetRect.height());
+    }
+
+    const double height = widgetRect.width() / aspect;
+    const double top = widgetRect.top() + (widgetRect.height() - height) * 0.5;
+    return QRectF(widgetRect.left(), top, widgetRect.width(), height);
 }
+
+GfVec4d
+ImagingGLWidgetPrivate::widgetViewport()
+{
+    const QRectF gate = cameraGateRect();
+    const qreal dpr = d.glwidget->devicePixelRatioF();
+    return GfVec4d(gate.left() * dpr, gate.top() * dpr, gate.width() * dpr, gate.height() * dpr);
+}
+
+GfVec4d
+ImagingGLWidgetPrivate::renderViewport()
+{
+    const QRectF gate = cameraGateRect();
+    const qreal dpr = d.glwidget->devicePixelRatioF();
+
+    // Hydra render viewport coordinates originate at the lower-left while Qt
+    // widget coordinates originate at the upper-left.
+    const double x = gate.left() * dpr;
+    const double y = (d.glwidget->height() - gate.top() - gate.height()) * dpr;
+    return GfVec4d(x, y, gate.width() * dpr, gate.height() * dpr);
+}
+
+void
+ImagingGLWidgetPrivate::drawLetterbox(QPainter& painter)
+{
+    if (!viewCamera() || !viewCamera()->aspectRatioLocked())
+        return;
+
+    const QRectF gate = cameraGateRect();
+    const QRectF widgetRect = d.glwidget->rect();
+    if (gate == widgetRect)
+        return;
+
+    painter.save();
+    painter.setPen(Qt::NoPen);
+
+    if (viewCamera()->letterboxEnabled()) {
+        const int alpha = qRound(std::clamp(viewCamera()->letterboxOpacity(), 0.0, 1.0) * 255.0);
+        painter.setBrush(QColor(0, 0, 0, alpha));
+
+        if (gate.left() > widgetRect.left())
+            painter.drawRect(QRectF(widgetRect.left(), widgetRect.top(),
+                                    gate.left() - widgetRect.left(), widgetRect.height()));
+        if (gate.right() < widgetRect.right())
+            painter.drawRect(QRectF(gate.right(), widgetRect.top(),
+                                    widgetRect.right() - gate.right(), widgetRect.height()));
+        if (gate.top() > widgetRect.top())
+            painter.drawRect(QRectF(gate.left(), widgetRect.top(),
+                                    gate.width(), gate.top() - widgetRect.top()));
+        if (gate.bottom() < widgetRect.bottom())
+            painter.drawRect(QRectF(gate.left(), gate.bottom(),
+                                    gate.width(), widgetRect.bottom() - gate.bottom()));
+    }
+
+    // inset the guide slightly from the exact render gate so all four edges
+    // remain visible even when the gate touches the widget boundary.
+    constexpr qreal guideInset = 3.0;
+    constexpr qreal guideWidth = 1.5;
+    const QRectF guideRect = gate.adjusted(guideInset, guideInset, -guideInset, -guideInset);
+
+    painter.setBrush(Qt::NoBrush);
+    painter.setPen(QPen(style()->color(Style::ColorRole::Guide), guideWidth));
+    painter.drawRect(guideRect);
+    painter.restore();
+}
+
 void
 ImagingGLWidgetPrivate::drawBorder(QPainter& painter)
 {
@@ -1951,9 +2046,11 @@ ImagingGLWidgetPrivate::updateAxis()
                              { "Y", style()->color(Style::ColorRole::AxisY), yCam },
                              { "Z", style()->color(Style::ColorRole::AxisZ), zCam } };
     std::sort(axes.begin(), axes.end(), [](const AxisLine& a, const AxisLine& b) { return a.dir[2] < b.dir[2]; });
+    
     const bool hasStage = static_cast<bool>(d.stage);
     const qreal opacity = hasStage ? 1.0 : 0.35;
     const qreal dpr = d.glwidget->devicePixelRatioF();
+    
     d.axis = QImage(qRound(width * dpr), qRound(height * dpr), QImage::Format_ARGB32_Premultiplied);
     d.axis.setDevicePixelRatio(dpr);
     d.axis.fill(Qt::transparent);
@@ -1969,6 +2066,7 @@ ImagingGLWidgetPrivate::updateAxis()
     painter.setPen(Qt::NoPen);
     painter.setBrush(QColor(0, 0, 0, 20));
     painter.drawEllipse(center, radius - 10, radius - 10);
+    
     for (const AxisLine& axis : axes) {
         const QPoint end = toPoint(axis.dir);
         painter.setPen(QPen(axis.color, 2.0, Qt::SolidLine, Qt::RoundCap));
@@ -1998,12 +2096,15 @@ ImagingGLWidgetPrivate::updateSceneStats()
         size_t normals = 0;
         size_t faces = 0;
     };
+    
     auto accumulate = [&](const UsdPrim& prim, SceneStats& s) {
         if (!prim.IsActive() || !prim.IsLoaded())
             return;
         s.prims++;
+        
         if (prim.IsA<UsdGeomXform>())
             s.xforms++;
+        
         if (prim.IsA<UsdGeomMesh>()) {
             s.meshes++;
             UsdGeomMesh mesh(prim);
@@ -2016,6 +2117,7 @@ ImagingGLWidgetPrivate::updateSceneStats()
             VtArray<GfVec3f> meshNormals;
             UsdGeomPrimvarsAPI pvAPI(prim);
             UsdGeomPrimvar normalsPv = pvAPI.GetPrimvar(TfToken("normals"));
+            
             bool hasNormals = false;
             if (normalsPv && normalsPv.HasValue()) {
                 normalsPv.Get(&meshNormals);
@@ -2028,6 +2130,7 @@ ImagingGLWidgetPrivate::updateSceneStats()
         }
         if (prim.HasPayload())
             s.payloads++;
+        
         if (prim.IsInstanceable())
             s.instances++;
     };
@@ -2061,6 +2164,7 @@ ImagingGLWidgetPrivate::updateSceneStats()
                 UsdPrim root = d.stage->GetPrimAtPath(path);
                 if (!root)
                     continue;
+                
                 for (const UsdPrim& prim : UsdPrimRange(root)) {
                     accumulate(prim, selected);
                 }
@@ -2073,8 +2177,10 @@ ImagingGLWidgetPrivate::updateSceneStats()
     auto fmtPair = [&](size_t totalValue, size_t selectedValue) {
         if (hasSelection && selectedValue > 0)
             return QString("%1 (%2)").arg(fmt(totalValue), fmt(selectedValue));
+        
         return fmt(totalValue);
     };
+    
     struct Row {
         QString label;
         QString value;
@@ -2094,6 +2200,7 @@ ImagingGLWidgetPrivate::updateSceneStats()
     QFont font = d.glwidget->font();
     font.setPixelSize(style()->fontSize(Style::UIScale::Small));
     font.setLetterSpacing(QFont::AbsoluteSpacing, 0.5);
+    
     QFontMetrics fm(font);
     int rowHeight = fm.lineSpacing() + 2;
     int marginLeft = 18;
@@ -2139,8 +2246,10 @@ ImagingGLWidgetPrivate::updatePerformanceStats()
 {
     const bool hasEngine = d.renderEngine && d.renderEngine->isInitialized() && d.stage;
     VtDictionary stats;
+    
     if (d.renderEngine)
         stats = d.renderEngine->renderStats();
+    
     auto fmtMB = [](uint64_t bytes) {
         return QString::number(static_cast<double>(bytes) / (1024.0 * 1024.0), 'f', 2) + " MB";
     };
@@ -2270,13 +2379,16 @@ ImagingGLWidgetPrivate::updatePerformanceStats()
         y += rowHeight;
     }
 }
+
 bool
 ImagingGLWidgetPrivate::isPathMaskedIn(const SdfPath& path) const
 {
     if (path.IsEmpty())
         return false;
+    
     if (d.mask.isEmpty())
         return true;
+    
     const SdfPath primPath = path.IsPropertyPath() ? path.GetPrimPath() : path;
     for (const SdfPath& maskedPath : d.mask) {
         const SdfPath maskedPrimPath = maskedPath.IsPropertyPath() ? maskedPath.GetPrimPath() : maskedPath;
@@ -2285,6 +2397,7 @@ ImagingGLWidgetPrivate::isPathMaskedIn(const SdfPath& path) const
     }
     return false;
 }
+
 bool
 ImagingGLWidgetPrivate::pickMaskedIntersection(const UsdImagingGLEngine::PickParams& pickParams,
                                                const GfFrustum& pickFrustum,
@@ -2292,6 +2405,7 @@ ImagingGLWidgetPrivate::pickMaskedIntersection(const UsdImagingGLEngine::PickPar
 {
     if (!results)
         return false;
+    
     results->clear();
     if (!d.stage || !d.renderEngine)
         return false;
@@ -2300,20 +2414,24 @@ ImagingGLWidgetPrivate::pickMaskedIntersection(const UsdImagingGLEngine::PickPar
     READ_LOCKER(locker, d.context->stageLock(), "stageLock");
     if (!d.stage)
         return false;
+    
     if (d.mask.isEmpty()) {
         return d.renderEngine->testIntersection(pickParams, viewMatrix, projectionMatrix, d.stage->GetPseudoRoot(),
                                                 results);
     }
+    
     bool hitAny = false;
     for (const SdfPath& maskPath : d.mask) {
         UsdPrim root = d.stage->GetPrimAtPath(maskPath);
         if (!root)
             continue;
+        
         UsdImagingGLEngine::IntersectionResultVector localResults;
         const bool hit = d.renderEngine->testIntersection(pickParams, viewMatrix, projectionMatrix, root,
                                                           &localResults);
         if (!hit)
             continue;
+        
         for (const auto& item : localResults) {
             if (!item.hitPrimPath.IsEmpty() && isPathMaskedIn(item.hitPrimPath))
                 results->push_back(item);
@@ -2323,6 +2441,7 @@ ImagingGLWidgetPrivate::pickMaskedIntersection(const UsdImagingGLEngine::PickPar
     }
     return hitAny && !results->empty();
 }
+
 ImagingGLWidget::ImagingGLWidget(QWidget* parent)
     : QOpenGLWidget(parent)
     , p(new ImagingGLWidgetPrivate())
@@ -2330,12 +2449,15 @@ ImagingGLWidget::ImagingGLWidget(QWidget* parent)
     p->d.glwidget = this;
     p->init();
 }
+
 ImagingGLWidget::~ImagingGLWidget() = default;
+
 ViewContext*
 ImagingGLWidget::context() const
 {
     return p->d.context;
 }
+
 void
 ImagingGLWidget::setContext(ViewContext* context)
 {
@@ -2344,16 +2466,19 @@ ImagingGLWidget::setContext(ViewContext* context)
         p->initContext();
     }
 }
+
 QImage
 ImagingGLWidget::captureImage()
 {
     return QOpenGLWidget::grabFramebuffer();
 }
+
 bool
 ImagingGLWidget::transformEnabled() const
 {
     return p->d.transformEnabled;
 }
+
 void
 ImagingGLWidget::setTransformEnabled(bool enabled)
 {
@@ -2364,6 +2489,7 @@ ImagingGLWidget::close()
 {
     p->close();
 }
+
 QList<QString>
 ImagingGLWidget::rendererAovs() const
 {

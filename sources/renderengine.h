@@ -15,6 +15,7 @@
 #include <pxr/base/gf/frustum.h>
 #include <pxr/base/gf/vec2i.h>
 #include <pxr/base/gf/vec4f.h>
+#include <pxr/base/gf/vec4d.h>
 #include <pxr/base/tf/token.h>
 #include <pxr/base/vt/dictionary.h>
 #include <pxr/usd/sdf/path.h>
@@ -157,6 +158,21 @@ public:
      * @brief Returns the render resolution in device pixels.
      */
     const GfVec2i& size() const;
+
+    /**
+     * @brief Sets the render viewport inside the current framebuffer.
+     *
+     * The value is expressed as x, y, width, height in device pixels. A
+     * non-positive width or height selects the complete render buffer.
+     *
+     * @param viewport Render viewport in device pixels.
+     */
+    void setViewport(const GfVec4d& viewport);
+
+    /**
+     * @brief Returns the configured render viewport.
+     */
+    const GfVec4d& viewport() const;
 
     /**
      * @brief Sets render settings.
