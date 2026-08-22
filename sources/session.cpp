@@ -817,11 +817,13 @@ SessionPrivate::loadState(const QString& filename)
             if (cameraObject.contains("aspectRatio"))
                 camera->setAspectRatio(cameraObject.value("aspectRatio").toDouble(camera->aspectRatio()));
             if (cameraObject.contains("aspectRatioLocked"))
-                camera->setAspectRatioLocked(cameraObject.value("aspectRatioLocked").toBool(camera->aspectRatioLocked()));
+                camera->setAspectRatioLocked(
+                    cameraObject.value("aspectRatioLocked").toBool(camera->aspectRatioLocked()));
             if (cameraObject.contains("letterboxEnabled"))
                 camera->setLetterboxEnabled(cameraObject.value("letterboxEnabled").toBool(camera->letterboxEnabled()));
             if (cameraObject.contains("letterboxOpacity"))
-                camera->setLetterboxOpacity(cameraObject.value("letterboxOpacity").toDouble(camera->letterboxOpacity()));
+                camera->setLetterboxOpacity(
+                    cameraObject.value("letterboxOpacity").toDouble(camera->letterboxOpacity()));
             if (cameraObject.contains("projectionMode")) {
                 const QString value = cameraObject.value("projectionMode").toString();
                 if (value == "FieldOfView")
@@ -913,11 +915,14 @@ SessionPrivate::loadState(const QString& filename)
                 d.viewState->setOverrideMaterial(value.isEmpty() ? SdfPath() : SdfPath(qt::QStringToString(value)));
             }
             if (viewStateObject.contains("defaultCameraLightEnabled"))
-                d.viewState->setDefaultCameraLightEnabled(viewStateObject.value("defaultCameraLightEnabled").toBool(d.viewState->defaultCameraLightEnabled()));
+                d.viewState->setDefaultCameraLightEnabled(
+                    viewStateObject.value("defaultCameraLightEnabled").toBool(d.viewState->defaultCameraLightEnabled()));
             if (viewStateObject.contains("sceneLightsEnabled"))
-                d.viewState->setSceneLightsEnabled(viewStateObject.value("sceneLightsEnabled").toBool(d.viewState->sceneLightsEnabled()));
+                d.viewState->setSceneLightsEnabled(
+                    viewStateObject.value("sceneLightsEnabled").toBool(d.viewState->sceneLightsEnabled()));
             if (viewStateObject.contains("sceneMaterialsEnabled"))
-                d.viewState->setSceneMaterialsEnabled(viewStateObject.value("sceneMaterialsEnabled").toBool(d.viewState->sceneMaterialsEnabled()));
+                d.viewState->setSceneMaterialsEnabled(
+                    viewStateObject.value("sceneMaterialsEnabled").toBool(d.viewState->sceneMaterialsEnabled()));
             if (viewStateObject.contains("doubleSidedMode")) {
                 const QString value = viewStateObject.value("doubleSidedMode").toString();
                 if (value == "Primitive")
@@ -948,11 +953,14 @@ SessionPrivate::loadState(const QString& filename)
             if (viewStateObject.contains("rendererAov"))
                 d.viewState->setRendererAov(viewStateObject.value("rendererAov").toString(d.viewState->rendererAov()));
             if (viewStateObject.contains("sceneStatsEnabled"))
-                d.viewState->setSceneStatsEnabled(viewStateObject.value("sceneStatsEnabled").toBool(d.viewState->sceneStatsEnabled()));
+                d.viewState->setSceneStatsEnabled(
+                    viewStateObject.value("sceneStatsEnabled").toBool(d.viewState->sceneStatsEnabled()));
             if (viewStateObject.contains("performanceStatsEnabled"))
-                d.viewState->setPerformanceStatsEnabled(viewStateObject.value("performanceStatsEnabled").toBool(d.viewState->performanceStatsEnabled()));
+                d.viewState->setPerformanceStatsEnabled(
+                    viewStateObject.value("performanceStatsEnabled").toBool(d.viewState->performanceStatsEnabled()));
             if (viewStateObject.contains("cameraAxisEnabled"))
-                d.viewState->setCameraAxisEnabled(viewStateObject.value("cameraAxisEnabled").toBool(d.viewState->cameraAxisEnabled()));
+                d.viewState->setCameraAxisEnabled(
+                    viewStateObject.value("cameraAxisEnabled").toBool(d.viewState->cameraAxisEnabled()));
         }
     }
     Q_EMIT d.session->boundingBoxChanged(bbox);

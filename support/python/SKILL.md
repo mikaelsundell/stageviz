@@ -1,6 +1,9 @@
 ---
+
 name: stageviz-python-dialogs
-description: Create, modify, and debug standalone Python dialogs for Stageviz using PySide6/PyQt6, the Stageviz session API, OpenUSD, UsdShade, and MaterialX. Use when asked to build Stageviz shelf/dialog scripts such as material/look creators, primitive tools, inspection utilities, or selection-based actions; when adapting an existing Stageviz Python dialog into another tool; or when fixing runtime errors in these scripts and returning a complete runnable script.
+
+description: Create, modify, and debug standalone and dockable Python dialogs for Stageviz using PySide6/PyQt6, the Stageviz session API, OpenUSD, UsdShade, and MaterialX. Use when asked to build Stageviz shelf/dialog scripts such as material/look creators, primitive tools, inspection utilities, selection-based actions, dockable editors, inspectors, browsers, or panels; when adapting an existing Stageviz Python dialog into another tool; or when fixing runtime errors in these scripts and returning a complete runnable script.
+
 ---
 
 # Stageviz Python Dialogs
@@ -10,7 +13,7 @@ Create complete, self-contained Python tools that run inside Stageviz and follow
 ## Core requirements
 
 - Return a complete runnable script, not partial snippets, unless the user explicitly asks for only a patch.
-- Prefer a non-modal Qt tool dialog parented to the Stageviz main window.
+- Prefer a non-modal Qt tool parented to the Stageviz main window. Use QDockWidget when the user asks for a dockable panel/editor; otherwise use a standalone tool dialog.
 - Support both PySide6 and PyQt6.
 - Use the existing Stageviz session and current stage rather than opening a new USD stage.
 - Operate on the current Stageviz selection when the tool is selection-based.
@@ -24,18 +27,20 @@ Create complete, self-contained Python tools that run inside Stageviz and follow
 Start from this pattern when applicable:
 
 ```python
+
 import sys
 import traceback
-
 from pxr import UsdShade, UsdGeom, Sdf, Gf
-import stageviz
 
+import stageviz
 try:
-    from PySide6 import QtWidgets, QtCore, QtGui
-    qt_name = "PySide6"
+from PySide6 import QtWidgets, QtCore, QtGui
+qt\_name = "PySide6"
+
 except Exception:
-    from PyQt6 import QtWidgets, QtCore, QtGui
-    qt_name = "PyQt6"
+from PyQt6 import QtWidgets, QtCore, QtGui
+qt\_name = "PyQt6"
+
 ```
 
 Only import additional USD modules when needed.
@@ -45,21 +50,26 @@ Only import additional USD modules when needed.
 Use this compatibility pattern:
 
 ```python
+
 def get_session():
-    try:
-        return stageviz.session()
-    except Exception:
-        return stageviz.Session()
+
+try:
+    return stageviz.session()
+except Exception:
+    return stageviz.Session()
+
 
 
 def get_stage():
-    session = get_session()
-    stage = session.stage()
 
-    if not stage:
-        raise RuntimeError("No stage loaded.")
+session = get\_session()
+stage = session.stage()
 
-    return stage, session
+if not stage:
+    raise RuntimeError("No stage loaded.")
+
+return stage, session
+
 ```
 
 Do not create a separate stage when the user's intent is to modify the stage currently open in Stageviz.
@@ -69,18 +79,24 @@ Do not create a separate stage when the user's intent is to modify the stage cur
 Use:
 
 ```python
+
 def selected_paths(session):
-    try:
-        return [str(path) for path in session.paths()]
-    except Exception:
-        return []
+try:
+    return [str(path) for path in session.paths()]
+
+except Exception:
+
+    return []
+
 ```
 
 For selection-driven tools, report a clear error if no prims are selected:
 
 ```python
+
 if not paths:
-    raise RuntimeError("No prims selected.")
+raise RuntimeError("No prims selected.")
+
 ```
 
 ## Find the Stageviz parent window
@@ -88,25 +104,26 @@ if not paths:
 Use this pattern:
 
 ```python
+
 def find_stageviz_main_window():
-    try:
-        app = stageviz.application()
 
-        if hasattr(app, "window"):
-            window = app.window()
+try:
+    app = stageviz.application()
+    if hasattr(app, "window"):
+        window = app.window()
+        if window is not None:
+            return window
 
-            if window is not None:
-                return window
+except Exception:
+    traceback.print\_exc()
 
-    except Exception:
-        traceback.print_exc()
+qt\_app = QtWidgets.QApplication.instance()
 
-    qt_app = QtWidgets.QApplication.instance()
+if qt\_app is None:
+    return None
 
-    if qt_app is None:
-        return None
+return qt\_app.activeWindow()
 
-    return qt_app.activeWindow()
 ```
 
 ## Dialog lifecycle
@@ -114,56 +131,65 @@ def find_stageviz_main_window():
 Give every dialog a stable object name and global reference:
 
 ```python
+
 DIALOG_OBJECT_NAME = "stagevizExampleDialog"
 DIALOG_GLOBAL_NAME = "_stageviz_example_dialog"
+
 ```
 
-Use a non-modal tool window:
+For standalone dialogs, use a non-modal tool window:
 
 ```python
+
 self.setWindowModality(QtCore.Qt.WindowModality.NonModal)
 self.setWindowFlag(QtCore.Qt.WindowType.Tool, True)
 self.setAttribute(QtCore.Qt.WidgetAttribute.WA_DeleteOnClose, True)
+
 ```
 
 Use a `show_*_dialog()` function that closes any previous instance before creating the new one:
 
 ```python
+
 def show_example_dialog():
-    app = QtWidgets.QApplication.instance()
-    owns_app = False
 
-    if app is None:
-        app = QtWidgets.QApplication(sys.argv)
-        owns_app = True
+app = QtWidgets.QApplication.instance()
+owns\_app = False
 
-    old_win = globals().get(DIALOG_GLOBAL_NAME)
+if app is None:
+    app = QtWidgets.QApplication(sys.argv)
+    owns\_app = True
 
-    if old_win is not None:
-        try:
-            old_win.close()
-            old_win.deleteLater()
-        except Exception:
-            pass
+old\_win = globals().get(DIALOG\_GLOBAL\_NAME)
 
-        globals()[DIALOG_GLOBAL_NAME] = None
+if old\_win is not None:
+    try:
+        old\_win.close()
+        old\_win.deleteLater()
 
-    parent = find_stageviz_main_window()
+    except Exception:
+        pass
 
-    win = ExampleDialog(parent)
-    win.show()
-    win.raise_()
-    win.activateWindow()
+    globals()[DIALOG\_GLOBAL\_NAME] = None
 
-    globals()[DIALOG_GLOBAL_NAME] = win
+parent = find\_stageviz\_main\_window()
 
-    if owns_app:
-        app.exec()
+win = ExampleDialog(parent)
+win.show()
+win.raise\_()
+win.activateWindow()
 
-    return win
+globals()[DIALOG\_GLOBAL\_NAME] = win
+
+if owns\_app:
+    app.exec()
+
+return win
+
 
 
 example_dialog = show_example_dialog()
+
 ```
 
 Keep the final global assignment so the dialog remains alive in embedded Python environments.
@@ -175,56 +201,65 @@ Always use a real `QtGui.QColor`. Do not store `QtCore.Qt.GlobalColor` values an
 Use:
 
 ```python
+
 class ColorButton(QtWidgets.QPushButton):
-    colorChanged = QtCore.Signal(object)
 
-    def __init__(self, color, parent=None):
-        super().__init__(parent)
-        self._color = QtGui.QColor(color)
-        self.clicked.connect(self.choose_color)
-        self.update_style()
+colorChanged = QtCore.Signal(object)
 
-    def color(self):
-        return QtGui.QColor(self._color)
+def \_\_init\_\_(self, color, parent=None):
+    super().\_\_init\_\_(parent)
+    self.\_color = QtGui.QColor(color)
+    self.clicked.connect(self.choose\_color)
+    self.update\_style()
 
-    def set_color(self, color):
-        self._color = QtGui.QColor(color)
-        self.update_style()
-        self.colorChanged.emit(self._color)
+def color(self):
+    return QtGui.QColor(self.\_color)
 
-    def update_style(self):
-        color_name = self._color.name()
-        self.setText(color_name.upper())
-        self.setStyleSheet(
-            "QPushButton {"
-            f"background-color: {color_name};"
-            "padding: 5px;"
-            "}"
-        )
+def set\_color(self, color):
+    self.\_color = QtGui.QColor(color)
+    self.update\_style()
+    self.colorChanged.emit(self.\_color)
 
-    def choose_color(self):
-        color = QtWidgets.QColorDialog.getColor(
-            self._color,
-            self,
-            "Choose Color",
-        )
+def update\_style(self):
+    color\_name = self.\_color.name()
+    self.setText(color\_name.upper())
+    self.setStyleSheet(
+        "QPushButton {"
+        f"background-color: {color\_name};"
+        "padding: 5px;"
+        "}"
+    )
 
-        if color.isValid():
-            self.set_color(color)
+def choose\_color(self):
+    color = QtWidgets.QColorDialog.getColor(
+        self.\_color,
+        self,
+        "Choose Color",
+    )
+
+    if color.isValid():
+        self.set\_color(color)
+
 ```
 
 Create RGB colors directly:
 
 ```python
+
 QtGui.QColor.fromRgbF(r, g, b, 1.0)
+
 ```
 
 Convert to USD color values with:
 
 ```python
+
 def vec3_from_qcolor(color):
-    color = QtGui.QColor(color)
-    return Gf.Vec3f(color.redF(), color.greenF(), color.blueF())
+
+color = QtGui.QColor(color)
+
+return Gf.Vec3f(color.redF(), color.greenF(), color.blueF())
+
 ```
 
 ## USD type names
@@ -247,18 +282,22 @@ For generated looks, prefer:
 Use helpers such as:
 
 ```python
+
 def ensure_xform(stage, path):
-    prim = stage.GetPrimAtPath(path)
+prim = stage.GetPrimAtPath(path)
 
-    if prim and prim.IsValid():
-        return UsdGeom.Xform(prim)
+if prim and prim.IsValid():
+    return UsdGeom.Xform(prim)
 
-    return UsdGeom.Xform.Define(stage, path)
+return UsdGeom.Xform.Define(stage, path)
+
 
 
 def ensure_looks_scope(stage):
-    ensure_xform(stage, "/World")
-    ensure_xform(stage, "/World/Looks")
+
+ensure\_xform(stage, "/World")
+ensure\_xform(stage, "/World/Looks")
+
 ```
 
 If the user's existing project deliberately avoids `/World`, preserve its stage organization rather than forcing this convention.
@@ -268,9 +307,13 @@ If the user's existing project deliberately avoids `/World`, preserve its stage 
 For simple generated materials, prefer MaterialX Standard Surface:
 
 ```python
+
 surface = UsdShade.Shader.Define(
-    stage,
-    material_path.AppendChild("Surface"),
+
+stage,
+
+material\_path.AppendChild("Surface"),
+
 )
 
 surface.CreateIdAttr("ND_standard_surface_surfaceshader")
@@ -280,11 +323,12 @@ surface.CreateInput("metalness", Sdf.ValueTypeNames.Float).Set(0.0)
 surface.CreateInput("roughness", Sdf.ValueTypeNames.Float).Set(0.4)
 surface.CreateInput("specular", Sdf.ValueTypeNames.Float).Set(0.5)
 surface.CreateOutput("out", Sdf.ValueTypeNames.Token)
-
 material.CreateSurfaceOutput().ConnectToSource(
-    surface.ConnectableAPI(),
-    "out",
+surface.ConnectableAPI(),
+"out",
+
 )
+
 ```
 
 For car paint, useful inputs include:
@@ -303,11 +347,15 @@ For transparent looks, consider `transmission` and `opacity` only when the rende
 Create helper connections with:
 
 ```python
+
 def connect_input(shader_input, source_shader, source_output_name):
-    shader_input.ConnectToSource(
-        source_shader.ConnectableAPI(),
-        source_output_name,
-    )
+
+shader\_input.ConnectToSource(
+    source\_shader.ConnectableAPI(),
+    source\_output\_name,
+
+)
+
 ```
 
 For procedural materials, prefer object-space or world-space inputs when avoiding UV requirements.
@@ -328,23 +376,29 @@ Do not rewrite unrelated Stageviz code when the failure is isolated to MaterialX
 Use the Material Binding API:
 
 ```python
+
 def bind_material(prim, material):
-    UsdShade.MaterialBindingAPI.Apply(prim).Bind(material)
+
+UsdShade.MaterialBindingAPI.Apply(prim).Bind(material)
+
 ```
 
 For recursive application:
 
 ```python
+
 def iter_bindable_prims(prim, recursive=True):
-    if not prim or not prim.IsValid():
-        return
 
-    if UsdGeom.Imageable(prim):
-        yield prim
+if not prim or not prim.IsValid():
+    return
 
-    if recursive:
-        for child in prim.GetChildren():
-            yield from iter_bindable_prims(child, recursive=True)
+if UsdGeom.Imageable(prim):
+    yield prim
+
+if recursive:
+    for child in prim.GetChildren():
+        yield from iter\_bindable\_prims(child, recursive=True)
+
 ```
 
 Expose an `Apply recursively to children` checkbox by default for material tools unless recursion would be unsafe or misleading.
@@ -356,21 +410,30 @@ When a tool will author many USD changes in one operation, temporarily defer Sta
 Prefer this pattern when the Python bindings expose the corresponding Session API:
 
 ```python
+
 session = get_session()
+
 previous_update = session.primsUpdate()
 
 session.setPrimsUpdate(stageviz.Session.PrimsUpdate.Deferred)
 
 try:
-    # Perform the complete batch of USD edits here.
-    ...
-finally:
-    session.setPrimsUpdate(previous_update)
 
-    # Restoring Immediate already flushes queued updates in the current Session API.
-    # Flush explicitly only if the previous mode was not Immediate.
-    if previous_update != stageviz.Session.PrimsUpdate.Immediate:
-        session.flushPrimsUpdates()
+\# Perform the complete batch of USD edits here.
+
+...
+
+finally:
+
+session.setPrimsUpdate(previous\_update)
+
+\# Restoring Immediate already flushes queued updates in the current Session API.
+\# Flush explicitly only if the previous mode was not Immediate.
+
+if previous\_update != stageviz.Session.PrimsUpdate.Immediate:
+
+    session.flushPrimsUpdates()
+
 ```
 
 Always restore the previous update mode in `finally`, including when authoring raises an exception. Do not permanently force `Immediate` mode, because the caller or another Stageviz workflow may already be using deferred updates.
@@ -399,23 +462,31 @@ Examples:
 - Procedural scale: use a wider positive range appropriate to the shader
 
 Presets should update the controls and then let the user press Apply. Do not silently apply a material merely because a preset button was clicked unless the user requested live application.
+
 \n## Dialog shortcut ownership\n\nStageviz main-window actions may define application shortcuts such as `Ctrl+A`. A non-modal tool dialog must explicitly claim shortcuts that have a dialog-local meaning; otherwise the Stageviz menu action can fire while the user is working inside the dialog.\n\nFor shortcuts that should belong to the entire dialog whenever the tool window is active, prefer an application event filter that accepts `ShortcutOverride` and handles the matching `KeyPress`:\n\n```python\ndef eventFilter(self, obj, event):\n    if self.isActiveWindow():\n        event_type = event.type()\n\n        if event_type == QtCore.QEvent.Type.ShortcutOverride:\n            if event.matches(QtGui.QKeySequence.StandardKey.SelectAll):\n                event.accept()\n                return True\n\n        if event_type == QtCore.QEvent.Type.KeyPress:\n            if event.matches(QtGui.QKeySequence.StandardKey.SelectAll):\n                self.select_all_visible_items()\n                event.accept()\n                return True\n\n    return super().eventFilter(obj, event)\n```\n\nInstall the filter once during dialog initialization:\n\n```python\napp = QtWidgets.QApplication.instance()\nif app is not None:\n    app.installEventFilter(self)\n```\n\nUse `QKeySequence.StandardKey` rather than hard-coding platform modifiers so standard shortcuts behave correctly on macOS, Windows, and Linux.\n\nFor a filtered list editor, `Select All` should normally select only currently visible/filter-matched rows rather than hidden rows. Reuse the same function for the dialog shortcut and any `Select Filtered` button so the behavior stays consistent.\n\nIf a shortcut should apply only while a particular widget has focus, a widget-owned `QShortcut` with `WidgetWithChildrenShortcut` is acceptable. Prefer the dialog-wide event-filter approach when the main Stageviz window already owns the same shortcut and the tool needs to suppress that main-window action while active.\n
+
 ## Error handling
 
 Wrap the Apply operation in `try/except`:
 
 ```python
+
 def apply_material(self):
-    try:
-        # Gather UI values.
-        # Author USD/material.
-        # Bind to selection.
-        self.status_label.setText("Applied material successfully.")
-    except Exception as e:
-        self.status_label.setText(
-            f"Error: {type(e).__name__}: {e}"
-        )
-        traceback.print_exc()
+
+try:
+    \# Gather UI values.
+    \# Author USD/material.
+    \# Bind to selection.
+
+    self.status\_label.setText("Applied material successfully.")
+
+except Exception as e:
+    self.status\_label.setText(
+        f"Error: {type(e).\_\_name\_\_}: {e}"
+    )
+
+    traceback.print\_exc()
+
 ```
 
 Show the concise error in the dialog and print the traceback for debugging.
@@ -452,7 +523,7 @@ When the user reports an error after testing a generated script, treat the last 
 
 Before returning a Stageviz dialog script, verify:
 
-- Qt imports include `QtGui` when `QColor` is used.
+- Qt i
 - No `QtCore.Qt.GlobalColor` value is treated as a `QColor` object.
 - `Sdf.ValueTypeNames.Int` is used for integer shader inputs.
 - The current Stageviz stage is used.
@@ -462,6 +533,11 @@ Before returning a Stageviz dialog script, verify:
 - Material paths are valid absolute `Sdf.Path` values.
 - MaterialX output is connected to the material surface output.
 - The dialog is non-modal and retains a global reference.
+
+Dockable tools use QDockWidget, are parented to the Stageviz QMainWindow, and are registered with addDockWidget().
+
+Dock widgets use a child content widget via setWidget() and do not use the standalone Qt::Tool window flag.
+
 - Dialog-local standard shortcuts are claimed while the dialog is active so Stageviz main-window actions do not fire accidentally.
 - Apply errors are visible in the UI and printed with a traceback.
 - The final script is complete and runnable.
