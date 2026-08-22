@@ -5,6 +5,7 @@
 #include "application.h"
 #include "pyapplication.h"
 #include "pycommand.h"
+#include "pyrenderengine.h"
 #include "pyselectionlist.h"
 #include "pysession.h"
 #include "pystyle.h"
@@ -88,6 +89,9 @@ PyInit_stageviz(void)
     if (!initPySelectionListType())
         return nullptr;
 
+    if (!initPyRenderEngineType())
+        return nullptr;
+
     if (!initPyViewCameraType())
         return nullptr;
 
@@ -110,6 +114,11 @@ PyInit_stageviz(void)
     }
 
     if (addPySelectionListType(module) < 0) {
+        Py_DECREF(module);
+        return nullptr;
+    }
+
+    if (addPyRenderEngineType(module) < 0) {
         Py_DECREF(module);
         return nullptr;
     }
