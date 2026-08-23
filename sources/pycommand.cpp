@@ -9,6 +9,7 @@
 #include "pyutils.h"
 #include "qtutils.h"
 #include "session.h"
+#include <pxr/base/tf/token.h>
 #include <pxr/pxr.h>
 #include <pxr/usd/sdf/path.h>
 
@@ -85,7 +86,105 @@ namespace {
         stack->run(new Command(command));
         Py_RETURN_NONE;
     }
+
+    static CommandStack* commandStack()
+    {
+        Session* s = stageviz::session();
+        if (!s) {
+            PyErr_SetString(PyExc_RuntimeError, "Invalid stageviz.Session");
+            return nullptr;
+        }
+
+        CommandStack* stack = s->commandStack();
+        if (!stack) {
+            PyErr_SetString(PyExc_RuntimeError, "Invalid stageviz.CommandStack");
+            return nullptr;
+        }
+
+        return stack;
+    }
 }  // namespace
+
+static PyObject*
+PyCommand_undo(PyObject*, PyObject*)
+{
+    CommandStack* stack = commandStack();
+    if (!stack)
+        return nullptr;
+
+    stack->undo();
+    Py_RETURN_NONE;
+}
+
+static PyObject*
+PyCommand_redo(PyObject*, PyObject*)
+{
+    CommandStack* stack = commandStack();
+    if (!stack)
+        return nullptr;
+
+    stack->redo();
+    Py_RETURN_NONE;
+}
+
+static PyObject*
+PyCommand_clear(PyObject*, PyObject*)
+{
+    CommandStack* stack = commandStack();
+    if (!stack)
+        return nullptr;
+
+    stack->clear();
+    Py_RETURN_NONE;
+}
+
+static PyObject*
+PyCommand_canUndo(PyObject*, PyObject*)
+{
+    CommandStack* stack = commandStack();
+    if (!stack)
+        return nullptr;
+
+    return PyBool_FromLong(stack->canUndo() ? 1 : 0);
+}
+
+static PyObject*
+PyCommand_canRedo(PyObject*, PyObject*)
+{
+    CommandStack* stack = commandStack();
+    if (!stack)
+        return nullptr;
+
+    return PyBool_FromLong(stack->canRedo() ? 1 : 0);
+}
+
+static PyObject*
+PyCommand_resetTransforms(PyObject*, PyObject* args)
+{
+    PyObject* pyPaths = nullptr;
+    if (!PyArg_ParseTuple(args, "O", &pyPaths))
+        return nullptr;
+
+    QList<SdfPath> paths;
+    if (!parsePathListArg(pyPaths, "paths", &paths))
+        return nullptr;
+
+    return runCommand(resetTransforms(paths));
+}
+
+static PyObject*
+PyCommand_resetOverrides(PyObject*, PyObject* args)
+{
+    PyObject* pyPaths = nullptr;
+    if (!PyArg_ParseTuple(args, "O", &pyPaths))
+        return nullptr;
+
+    QList<SdfPath> paths;
+    if (!parsePathListArg(pyPaths, "paths", &paths))
+        return nullptr;
+
+    return runCommand(resetOverrides(paths));
+}
 
 static PyObject*
 PyCommand_selectPaths(PyObject*, PyObject* args)
@@ -100,6 +199,7 @@ PyCommand_selectPaths(PyObject*, PyObject* args)
 
     return runCommand(selectPaths(paths));
 }
+
 static PyObject*
 PyCommand_selectAll(PyObject*, PyObject* args, PyObject* kwargs)
 {
@@ -241,6 +341,128 @@ PyCommand_deletePaths(PyObject*, PyObject* args)
 }
 
 static PyObject*
+PyCommand_duplicatePaths(PyObject*, PyObject* args)
+{
+    PyObject* pyPaths = nullptr;
+    if (!PyArg_ParseTuple(args, "O", &pyPaths))
+        return nullptr;
+
+    QList<SdfPath> paths;
+    if (!parsePathListArg(pyPaths, "paths", &paths))
+        return nullptr;
+
+    return runCommand(duplicatePaths(paths));
+}
+
+static PyObject*
+PyCommand_newPrim(PyObject*, PyObject* args, PyObject* kwargs)
+{
+    PyObject* pyParentPath = nullptr;
+    const char* name = nullptr;
+    const char* typeName = "";
+
+    static const char* keywords[] = { "parent_path", "name", "type_name", nullptr };
+    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "Os|s", const_cast<char**>(keywords), &pyParentPath, &name,
+                                     &typeName)) {
+        return nullptr;
+    }
+
+    SdfPath parentPath;
+    if (!parsePathArg(pyParentPath, "parent_path", &parentPath))
+        return nullptr;
+
+    return runCommand(newPrimPath(parentPath, QString::fromUtf8(name), TfToken(typeName)));
+}
+
+static PyObject*
+PyCommand_newScope(PyObject*, PyObject* args)
+{
+    PyObject* pyParentPath = nullptr;
+    const char* name = nullptr;
+    if (!PyArg_ParseTuple(args, "Os", &pyParentPath, &name))
+        return nullptr;
+
+    SdfPath parentPath;
+    if (!parsePathArg(pyParentPath, "parent_path", &parentPath))
+        return nullptr;
+
+    return runCommand(newScopePath(parentPath, QString::fromUtf8(name)));
+}
+
+static PyObject*
+PyCommand_newMaterial(PyObject*, PyObject* args)
+{
+    PyObject* pyParentPath = nullptr;
+    const char* name = nullptr;
+    if (!PyArg_ParseTuple(args, "Os", &pyParentPath, &name))
+        return nullptr;
+
+    SdfPath parentPath;
+    if (!parsePathArg(pyParentPath, "parent_path", &parentPath))
+        return nullptr;
+
+    return runCommand(newMaterialPath(parentPath, QString::fromUtf8(name)));
+}
+
+static PyObject*
+PyCommand_newReference(PyObject*, PyObject* args, PyObject* kwargs)
+{
+    PyObject* pyParentPath = nullptr;
+    const char* name = nullptr;
+    const char* assetPath = nullptr;
+    const char* primPath = "";
+
+    static const char* keywords[] = { "parent_path", "name", "asset_path", "prim_path", nullptr };
+    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "Oss|s", const_cast<char**>(keywords), &pyParentPath, &name,
+                                     &assetPath, &primPath)) {
+        return nullptr;
+    }
+
+    SdfPath parentPath;
+    if (!parsePathArg(pyParentPath, "parent_path", &parentPath))
+        return nullptr;
+
+    SdfPath targetPrimPath;
+    if (primPath && primPath[0] != '\0') {
+        targetPrimPath = SdfPath(primPath);
+        if (!checkPath(targetPrimPath, "prim_path"))
+            return nullptr;
+    }
+
+    return runCommand(newReferencePath(parentPath, QString::fromUtf8(name), QString::fromUtf8(assetPath),
+                                       targetPrimPath));
+}
+
+static PyObject*
+PyCommand_newPayload(PyObject*, PyObject* args, PyObject* kwargs)
+{
+    PyObject* pyParentPath = nullptr;
+    const char* name = nullptr;
+    const char* assetPath = nullptr;
+    const char* primPath = "";
+
+    static const char* keywords[] = { "parent_path", "name", "asset_path", "prim_path", nullptr };
+    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "Oss|s", const_cast<char**>(keywords), &pyParentPath, &name,
+                                     &assetPath, &primPath)) {
+        return nullptr;
+    }
+
+    SdfPath parentPath;
+    if (!parsePathArg(pyParentPath, "parent_path", &parentPath))
+        return nullptr;
+
+    SdfPath targetPrimPath;
+    if (primPath && primPath[0] != '\0') {
+        targetPrimPath = SdfPath(primPath);
+        if (!checkPath(targetPrimPath, "prim_path"))
+            return nullptr;
+    }
+
+    return runCommand(newPayloadPath(parentPath, QString::fromUtf8(name), QString::fromUtf8(assetPath),
+                                     targetPrimPath));
+}
+
+static PyObject*
 PyCommand_renamePath(PyObject*, PyObject* args)
 {
     PyObject* pyPath = nullptr;
@@ -333,6 +555,11 @@ PyCommand_bindMaterial(PyObject*, PyObject* args)
 }
 
 static PyMethodDef PyCommand_methods[] = {
+    { "undo", reinterpret_cast<PyCFunction>(PyCommand_undo), METH_NOARGS, "Undo the most recent command." },
+    { "redo", reinterpret_cast<PyCFunction>(PyCommand_redo), METH_NOARGS, "Redo the most recently undone command." },
+    { "clear", reinterpret_cast<PyCFunction>(PyCommand_clear), METH_NOARGS, "Clear command history." },
+    { "can_undo", reinterpret_cast<PyCFunction>(PyCommand_canUndo), METH_NOARGS, "Return whether undo is available." },
+    { "can_redo", reinterpret_cast<PyCFunction>(PyCommand_canRedo), METH_NOARGS, "Return whether redo is available." },
     { "select_paths", reinterpret_cast<PyCFunction>(PyCommand_selectPaths), METH_VARARGS, "Select paths." },
     { "select_all", reinterpret_cast<PyCFunction>(PyCommand_selectAll), METH_VARARGS | METH_KEYWORDS,
       "Select prims. Optional keyword argument: recursive." },
@@ -350,12 +577,27 @@ static PyMethodDef PyCommand_methods[] = {
     { "set_default_prim", reinterpret_cast<PyCFunction>(PyCommand_setDefaultPrim), METH_VARARGS,
       "Set the default prim." },
     { "delete_paths", reinterpret_cast<PyCFunction>(PyCommand_deletePaths), METH_VARARGS, "Delete paths." },
+    { "duplicate_paths", reinterpret_cast<PyCFunction>(PyCommand_duplicatePaths), METH_VARARGS,
+      "Duplicate one or more prim paths." },
+    { "new_prim", reinterpret_cast<PyCFunction>(PyCommand_newPrim), METH_VARARGS | METH_KEYWORDS,
+      "Create a generic prim. Optional keyword argument: type_name." },
+    { "new_scope", reinterpret_cast<PyCFunction>(PyCommand_newScope), METH_VARARGS, "Create a new Scope prim." },
+    { "new_material", reinterpret_cast<PyCFunction>(PyCommand_newMaterial), METH_VARARGS,
+      "Create a new material with a UsdPreviewSurface shader." },
+    { "new_reference", reinterpret_cast<PyCFunction>(PyCommand_newReference), METH_VARARGS | METH_KEYWORDS,
+      "Create a prim with a reference arc. Optional keyword argument: prim_path." },
+    { "new_payload", reinterpret_cast<PyCFunction>(PyCommand_newPayload), METH_VARARGS | METH_KEYWORDS,
+      "Create a prim with a payload arc. Optional keyword argument: prim_path." },
     { "rename_path", reinterpret_cast<PyCFunction>(PyCommand_renamePath), METH_VARARGS, "Rename a path." },
     { "new_xform", reinterpret_cast<PyCFunction>(PyCommand_newXform), METH_VARARGS, "Create a new Xform path." },
     { "move_path", reinterpret_cast<PyCFunction>(PyCommand_movePath), METH_VARARGS | METH_KEYWORDS,
       "Move paths. Optional keyword arguments: insert_index, preserve_world_transform." },
     { "reset_attribute_override", reinterpret_cast<PyCFunction>(PyCommand_resetAttributeOverride), METH_VARARGS,
       "Reset one root-layer USD attribute override." },
+    { "reset_transforms", reinterpret_cast<PyCFunction>(PyCommand_resetTransforms), METH_VARARGS,
+      "Reset root-layer transform overrides." },
+    { "reset_overrides", reinterpret_cast<PyCFunction>(PyCommand_resetOverrides), METH_VARARGS,
+      "Reset direct root-layer overrides." },
     { "bind_material", reinterpret_cast<PyCFunction>(PyCommand_bindMaterial), METH_VARARGS,
       "Bind an existing USD material to one or more prim paths." },
     { nullptr, nullptr, 0, nullptr }

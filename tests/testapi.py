@@ -367,7 +367,7 @@ def create_fixture():
     _create_main_file(main, payload_a, payload_b, external)
     _create_merge_source(merge_source, external)
 
-    return root, main, merge_source, saved
+    return root, main, merge_source, saved, external
 
 
 def reload_fixture(main_path):
@@ -515,6 +515,451 @@ def test_show_hide_paths():
         _wait_until(lambda: str(_visibility("/World/A/A1")) != "invisible"),
         "recursive show restores visible/inherited on child",
     )
+
+
+
+def test_new_prim():
+    _assert(
+        _has_command("new_prim"),
+        "new_prim command is exposed",
+    )
+
+    if not _has_command("new_prim"):
+        return
+
+    before_order = _child_names("/World")
+
+    stageviz.command.new_prim("/World", "GenericPrim")
+
+    _assert(
+        _wait_until(lambda: _exists("/World/GenericPrim")),
+        "new_prim creates untyped prim",
+    )
+
+    prim = _prim("/World/GenericPrim")
+    _assert(
+        bool(prim and not prim.GetTypeName()),
+        "new_prim without type creates untyped prim",
+    )
+
+    _assert_equal(
+        _selection(),
+        ["/World/GenericPrim"],
+        "new_prim selects created prim",
+    )
+
+    _assert_equal(
+        _child_names("/World"),
+        before_order + ["GenericPrim"],
+        "new_prim appends child order",
+    )
+
+    if _undo():
+        _assert(
+            _wait_until(lambda: not _exists("/World/GenericPrim")),
+            "undo new_prim removes created prim",
+        )
+
+        _assert_equal(
+            _child_names("/World"),
+            before_order,
+            "undo new_prim restores child order",
+        )
+
+    if _redo():
+        _assert(
+            _wait_until(lambda: _exists("/World/GenericPrim")),
+            "redo new_prim recreates prim",
+        )
+
+
+def test_new_typed_prim():
+    if not _has_command("new_prim"):
+        print("[skip] new_prim is not bound")
+        return
+
+    stageviz.command.new_prim("/World", "CameraPrim", "Camera")
+
+    _assert(
+        _wait_until(lambda: _exists("/World/CameraPrim")),
+        "new_prim creates typed prim",
+    )
+
+    prim = _prim("/World/CameraPrim")
+    _assert_equal(
+        str(prim.GetTypeName()) if prim else "",
+        "Camera",
+        "new_prim preserves requested USD type",
+    )
+
+
+def test_new_prim_unique_name():
+    if not _has_command("new_prim"):
+        print("[skip] new_prim is not bound")
+        return
+
+    stageviz.command.new_prim("/World", "A", "Xform")
+
+    _assert(
+        _wait_until(lambda: _exists("/World/A_1") or _exists("/World/A1")),
+        "new_prim creates unique sibling name",
+    )
+
+
+def test_new_scope():
+    _assert(
+        _has_command("new_scope"),
+        "new_scope command is exposed",
+    )
+
+    if not _has_command("new_scope"):
+        return
+
+    stageviz.command.new_scope("/World", "Looks")
+
+    _assert(
+        _wait_until(lambda: _exists("/World/Looks")),
+        "new_scope creates scope",
+    )
+
+    prim = _prim("/World/Looks")
+    _assert_equal(
+        str(prim.GetTypeName()) if prim else "",
+        "Scope",
+        "new_scope creates USD Scope type",
+    )
+
+    _assert_equal(
+        _selection(),
+        ["/World/Looks"],
+        "new_scope selects created scope",
+    )
+
+    if _undo():
+        _assert(
+            _wait_until(lambda: not _exists("/World/Looks")),
+            "undo new_scope removes scope",
+        )
+
+
+def test_new_material():
+    _assert(
+        _has_command("new_material"),
+        "new_material command is exposed",
+    )
+
+    if not _has_command("new_material"):
+        return
+
+    if not _exists("/World/Looks"):
+        UsdGeom.Scope.Define(_stage(), "/World/Looks")
+
+    stageviz.command.new_material("/World/Looks", "TestMaterial")
+
+    material_path = "/World/Looks/TestMaterial"
+    shader_path = f"{material_path}/PreviewSurface"
+
+    _assert(
+        _wait_until(lambda: _exists(material_path) and _exists(shader_path)),
+        "new_material creates material and preview shader",
+    )
+
+    material_prim = _prim(material_path)
+    shader_prim = _prim(shader_path)
+
+    _assert_equal(
+        str(material_prim.GetTypeName()) if material_prim else "",
+        "Material",
+        "new_material creates UsdShadeMaterial",
+    )
+
+    _assert_equal(
+        str(shader_prim.GetTypeName()) if shader_prim else "",
+        "Shader",
+        "new_material creates child Shader",
+    )
+
+    shader = UsdShade.Shader(shader_prim) if shader_prim else None
+    shader_id = shader.GetIdAttr().Get() if shader else None
+
+    _assert_equal(
+        str(shader_id) if shader_id is not None else "",
+        "UsdPreviewSurface",
+        "new_material assigns UsdPreviewSurface shader id",
+    )
+
+    material = UsdShade.Material(material_prim) if material_prim else None
+    surface_output = material.GetSurfaceOutput() if material else None
+    source = surface_output.GetConnectedSource() if surface_output else None
+
+    _assert(
+        bool(source),
+        "new_material connects material surface output",
+    )
+
+    _assert_equal(
+        _selection(),
+        [material_path],
+        "new_material selects created material",
+    )
+
+    if _undo():
+        _assert(
+            _wait_until(lambda: not _exists(material_path)),
+            "undo new_material removes complete material hierarchy",
+        )
+
+    if _redo():
+        _assert(
+            _wait_until(lambda: _exists(material_path) and _exists(shader_path)),
+            "redo new_material restores material hierarchy",
+        )
+
+
+def test_new_reference(external):
+    _assert(
+        _has_command("new_reference"),
+        "new_reference command is exposed",
+    )
+
+    if not _has_command("new_reference"):
+        return
+
+    stageviz.command.new_reference(
+        "/World",
+        "CreatedReference",
+        external,
+        "/ExternalRoot",
+    )
+
+    path = "/World/CreatedReference"
+
+    _assert(
+        _wait_until(lambda: _exists(path) and _exists(f"{path}/Child")),
+        "new_reference creates composed reference hierarchy",
+    )
+
+    prim = _prim(path)
+    references = prim.GetMetadata("references") if prim else None
+    has_reference = bool(
+        references
+        and references.GetAddedOrExplicitItems()
+    )
+
+    _assert(
+        has_reference,
+        "new_reference authors reference arc",
+    )
+
+    _assert_equal(
+        _selection(),
+        [path],
+        "new_reference selects created prim",
+    )
+
+    if _undo():
+        _assert(
+            _wait_until(lambda: not _exists(path)),
+            "undo new_reference removes reference prim",
+        )
+
+    if _redo():
+        _assert(
+            _wait_until(lambda: _exists(path) and _exists(f"{path}/Child")),
+            "redo new_reference restores composed hierarchy",
+        )
+
+
+def test_new_reference_default_prim(external):
+    if not _has_command("new_reference"):
+        print("[skip] new_reference is not bound")
+        return
+
+    stageviz.command.new_reference(
+        "/World",
+        "DefaultReference",
+        external,
+    )
+
+    _assert(
+        _wait_until(lambda: _exists("/World/DefaultReference/Child")),
+        "new_reference empty prim path uses referenced default prim",
+    )
+
+
+def test_new_payload(external):
+    _assert(
+        _has_command("new_payload"),
+        "new_payload command is exposed",
+    )
+
+    if not _has_command("new_payload"):
+        return
+
+    stageviz.command.new_payload(
+        "/World",
+        "CreatedPayload",
+        external,
+        "/ExternalRoot",
+    )
+
+    path = "/World/CreatedPayload"
+
+    _assert(
+        _wait_until(lambda: bool(_prim(path) and _prim(path).HasPayload())),
+        "new_payload authors payload arc",
+    )
+
+    _assert(
+        _wait_until(lambda: _exists(f"{path}/Child"), timeout=5.0),
+        "new_payload composes payload hierarchy",
+    )
+
+    _assert_equal(
+        _selection(),
+        [path],
+        "new_payload selects created prim",
+    )
+
+    if _undo():
+        _assert(
+            _wait_until(lambda: not _exists(path)),
+            "undo new_payload removes payload prim",
+        )
+
+    if _redo():
+        _assert(
+            _wait_until(lambda: bool(_prim(path) and _prim(path).HasPayload())),
+            "redo new_payload restores payload arc",
+        )
+
+
+def test_new_payload_default_prim(external):
+    if not _has_command("new_payload"):
+        print("[skip] new_payload is not bound")
+        return
+
+    stageviz.command.new_payload(
+        "/World",
+        "DefaultPayload",
+        external,
+    )
+
+    _assert(
+        _wait_until(lambda: _exists("/World/DefaultPayload/Child"), timeout=5.0),
+        "new_payload empty prim path uses payload default prim",
+    )
+
+
+def test_duplicate_paths():
+    _assert(
+        _has_command("duplicate_paths"),
+        "duplicate_paths command is exposed",
+    )
+
+    if not _has_command("duplicate_paths"):
+        return
+
+    before_order = _child_names("/World")
+
+    stageviz.command.duplicate_paths(["/World/A"])
+
+    duplicate_candidates = [
+        name for name in _child_names("/World")
+        if name not in before_order
+    ]
+
+    _assert(
+        _wait_until(
+            lambda: any(
+                _exists(f"/World/{name}")
+                for name in _child_names("/World")
+                if name not in before_order
+            )
+        ),
+        "duplicate_paths creates sibling prim",
+    )
+
+    duplicate_candidates = [
+        name for name in _child_names("/World")
+        if name not in before_order
+    ]
+    duplicate_name = duplicate_candidates[0] if duplicate_candidates else ""
+    duplicate_path = f"/World/{duplicate_name}" if duplicate_name else ""
+
+    _assert(
+        bool(duplicate_path),
+        "duplicate_paths resolves created duplicate path",
+    )
+
+    if duplicate_path:
+        _assert(
+            _exists(f"{duplicate_path}/A1") and _exists(f"{duplicate_path}/A2"),
+            "duplicate_paths copies descendant specs",
+        )
+
+        _assert_equal(
+            _selection(),
+            [duplicate_path],
+            "duplicate_paths selects new duplicate",
+        )
+
+    if _undo():
+        if duplicate_path:
+            _assert(
+                _wait_until(lambda: not _exists(duplicate_path)),
+                "undo duplicate_paths removes duplicate",
+            )
+
+        _assert_equal(
+            _child_names("/World"),
+            before_order,
+            "undo duplicate_paths restores child order",
+        )
+
+    if _redo():
+        _assert(
+            _wait_until(lambda: len(_child_names("/World")) == len(before_order) + 1),
+            "redo duplicate_paths restores duplicate",
+        )
+
+
+def test_duplicate_composed_payload_prim():
+    if not _has_command("duplicate_paths"):
+        print("[skip] duplicate_paths is not bound")
+        return
+
+    stageviz.command.load_payloads(["/World/PayloadA"])
+
+    _assert(
+        _wait_until(lambda: _exists("/World/PayloadA/Geom"), timeout=5.0),
+        "payload prepared for duplicate composed prim",
+    )
+
+    before = set(_child_names("/World/PayloadA"))
+
+    stageviz.command.duplicate_paths(["/World/PayloadA/Geom"])
+
+    _assert(
+        _wait_until(
+            lambda: len(set(_child_names("/World/PayloadA")) - before) == 1
+        ),
+        "duplicate_paths copies strongest payload-owned prim spec into root layer",
+    )
+
+    added = list(set(_child_names("/World/PayloadA")) - before)
+    duplicate_path = f"/World/PayloadA/{added[0]}" if added else ""
+
+    _assert(
+        bool(duplicate_path and _root_has_prim(duplicate_path)),
+        "duplicate of payload-owned prim is authored in root layer",
+    )
+
+    if _undo() and duplicate_path:
+        _assert(
+            _wait_until(lambda: not _exists(duplicate_path)),
+            "undo duplicate payload-owned prim removes root-layer copy",
+        )
 
 
 def test_new_rename_move_delete():
@@ -1981,7 +2426,7 @@ def test_save_reload(saved_path):
 
 
 def run():
-    root, main_path, merge_source, saved_path = create_fixture()
+    root, main_path, merge_source, saved_path, external = create_fixture()
     print(f"Stageviz command test root: {root}")
 
     _disable_preserve_state()
@@ -1991,6 +2436,17 @@ def run():
         ("select all and invert", test_select_all_and_invert, ()),
         ("isolate paths", test_isolate_paths, ()),
         ("show/hide paths", test_show_hide_paths, ()),
+        ("new prim", test_new_prim, ()),
+        ("new typed prim", test_new_typed_prim, ()),
+        ("new prim unique name", test_new_prim_unique_name, ()),
+        ("new scope", test_new_scope, ()),
+        ("new material", test_new_material, ()),
+        ("new reference", test_new_reference, (external,)),
+        ("new reference default prim", test_new_reference_default_prim, (external,)),
+        ("new payload", test_new_payload, (external,)),
+        ("new payload default prim", test_new_payload_default_prim, (external,)),
+        ("duplicate paths", test_duplicate_paths, ()),
+        ("duplicate composed payload prim", test_duplicate_composed_payload_prim, ()),
         ("new/rename/move/delete", test_new_rename_move_delete, ()),
         ("new_xform root parent", test_new_xform_root_parent, ()),
         ("new_xform unique name", test_new_xform_unique_name, ()),

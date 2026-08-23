@@ -13,17 +13,23 @@
 #include <pxr/usd/sdf/copyUtils.h>
 #include <pxr/usd/sdf/layer.h>
 #include <pxr/usd/sdf/namespaceEdit.h>
+#include <pxr/usd/sdf/payload.h>
+#include <pxr/usd/sdf/reference.h>
+#include <pxr/usd/sdf/types.h>
 #include <pxr/usd/usd/attribute.h>
 #include <pxr/usd/usd/editContext.h>
 #include <pxr/usd/usd/editTarget.h>
+#include <pxr/usd/usd/payloads.h>
 #include <pxr/usd/usd/prim.h>
 #include <pxr/usd/usd/primRange.h>
+#include <pxr/usd/usd/references.h>
 #include <pxr/usd/usdGeom/imageable.h>
 #include <pxr/usd/usdGeom/tokens.h>
 #include <pxr/usd/usdGeom/xform.h>
 #include <pxr/usd/usdGeom/xformable.h>
 #include <pxr/usd/usdShade/material.h>
 #include <pxr/usd/usdShade/materialBindingAPI.h>
+#include <pxr/usd/usdShade/shader.h>
 
 namespace stageviz {
 
@@ -1705,6 +1711,810 @@ deletePaths(const QList<SdfPath>& inPaths)
                 });
             });
         });
+}
+
+Command
+duplicatePaths(const QList<SdfPath>& inPaths)
+{
+    struct DuplicateState {
+        struct Item {
+            SdfPath sourcePath;
+            SdfPath destinationPath;
+            SdfPath parentPath;
+        };
+
+        QList<Item> items;
+        QHash<SdfPath, TfTokenVector> oldParentOrders;
+        QSet<SdfPath> createdParentSpecs;
+        QList<SdfPath> previousSelection;
+        QList<SdfPath> previousMask;
+    };
+
+    auto state = std::make_shared<DuplicateState>();
+
+    return Command(
+        [inPaths, state](Session* session) {
+            if (!session || inPaths.isEmpty())
+                return;
+
+            state->previousSelection = session->selectionList()->paths();
+            state->previousMask = session->mask();
+
+            command::beginDeferred(session, "Duplicate paths", 1);
+
+            command::runWorker([session, inPaths, state]() {
+                bool success = false;
+                QList<SdfPath> duplicatedPaths;
+                QList<SdfPath> changed;
+                QStringList errors;
+
+                {
+                    WRITE_LOCKER(locker, session->stageLock(), "stageLock");
+                    const UsdStageRefPtr stage = session->stageUnsafe();
+
+                    if (!stage) {
+                        errors.append("stage missing");
+                    }
+                    else {
+                        QString rootError;
+                        const SdfLayerHandle rootLayer = rootlayer::opened(stage, rootError);
+
+                        if (!rootLayer) {
+                            errors.append(rootError);
+                        }
+                        else {
+                            state->items.clear();
+                            state->oldParentOrders.clear();
+                            state->createdParentSpecs.clear();
+
+                            const QList<SdfPath> paths = path::minimalRootPaths(path::uniquePaths(inPaths));
+
+                            for (const SdfPath& inputPath : paths) {
+                                const SdfPath sourcePath = inputPath.IsPropertyPath() ? inputPath.GetPrimPath()
+                                                                                      : inputPath;
+                                const UsdPrim prim = stage->GetPrimAtPath(sourcePath);
+
+                                if (!prim || !prim.IsValid() || prim.IsInstanceProxy()) {
+                                    errors.append(QString("invalid prim: %1").arg(pathText(sourcePath)));
+                                    continue;
+                                }
+
+                                const SdfPrimSpecHandleVector primStack = prim.GetPrimStack();
+                                if (primStack.empty() || !primStack.front()) {
+                                    errors.append(QString("prim has no authored spec: %1").arg(pathText(sourcePath)));
+                                    continue;
+                                }
+
+                                const SdfPrimSpecHandle sourceSpec = primStack.front();
+                                const SdfLayerHandle sourceLayer = sourceSpec->GetLayer();
+                                const SdfPath sourceSpecPath = sourceSpec->GetPath();
+
+                                if (!sourceLayer) {
+                                    errors.append(QString("source layer missing: %1").arg(pathText(sourcePath)));
+                                    continue;
+                                }
+
+                                const SdfPath parentPath = sourcePath.GetParentPath();
+                                if (parentPath.IsEmpty()) {
+                                    errors.append(QString("invalid parent: %1").arg(pathText(sourcePath)));
+                                    continue;
+                                }
+
+                                if (parentPath != SdfPath::AbsoluteRootPath()) {
+                                    QString parentError;
+                                    if (!rootlayer::validateParent(stage, parentPath, parentError)) {
+                                        errors.append(parentError);
+                                        continue;
+                                    }
+                                }
+
+                                const QString sourceName = qt::StringToQString(sourcePath.GetName());
+                                const SdfPath destinationPath = stage::buildChildPath(stage, parentPath, sourceName,
+                                                                                      rootError);
+
+                                if (destinationPath.IsEmpty()) {
+                                    errors.append(
+                                        rootError.isEmpty()
+                                            ? QString("failed to build duplicate path: %1").arg(pathText(sourcePath))
+                                            : rootError);
+                                    rootError.clear();
+                                    continue;
+                                }
+
+                                if (!state->oldParentOrders.contains(parentPath)) {
+                                    TfTokenVector order;
+                                    stage::captureChildOrder(stage, parentPath, order);
+                                    state->oldParentOrders.insert(parentPath, order);
+                                }
+
+                                if (parentPath != SdfPath::AbsoluteRootPath()
+                                    && !rootLayer->GetPrimAtPath(parentPath)) {
+                                    if (!SdfCreatePrimInLayer(rootLayer, parentPath)) {
+                                        errors.append(
+                                            QString("failed to create parent override: %1").arg(pathText(parentPath)));
+                                        continue;
+                                    }
+                                    state->createdParentSpecs.insert(parentPath);
+                                }
+
+                                if (!SdfCopySpec(sourceLayer, sourceSpecPath, rootLayer, destinationPath)) {
+                                    errors.append(QString("failed to copy prim spec: %1").arg(pathText(sourcePath)));
+                                    continue;
+                                }
+
+                                DuplicateState::Item item;
+                                item.sourcePath = sourcePath;
+                                item.destinationPath = destinationPath;
+                                item.parentPath = parentPath;
+                                state->items.append(item);
+
+                                TfTokenVector order;
+                                stage::captureChildOrder(stage, parentPath, order);
+                                if (std::find(order.begin(), order.end(), destinationPath.GetNameToken())
+                                    == order.end()) {
+                                    order.push_back(destinationPath.GetNameToken());
+                                    stage::restoreChildOrder(stage, parentPath, order);
+                                }
+
+                                path::appendUnique(duplicatedPaths, destinationPath);
+                                path::appendUnique(changed, sourcePath);
+                                path::appendUnique(changed, destinationPath);
+                                path::appendUnique(changed, parentPath);
+                            }
+
+                            success = !state->items.isEmpty();
+                        }
+                    }
+                }
+
+                const QString errorText = summarizeErrors(errors);
+                command::queueToSession(session, [session, duplicatedPaths, changed, success, errorText]() {
+                    using Status = Session::Notify::Status;
+
+                    command::finishDeferred(session,
+                                            success ? (errorText.isEmpty()
+                                                           ? QStringLiteral("Paths duplicated")
+                                                           : appendError("Paths duplicated with errors", errorText))
+                                                    : appendError("Duplicate paths failed", errorText),
+                                            changed, success ? Status::Success : Status::Error);
+
+                    if (success)
+                        session->selectionList()->updatePaths(duplicatedPaths);
+                });
+            });
+        },
+        [state](Session* session) {
+            if (!session || state->items.isEmpty())
+                return;
+
+            command::beginDeferred(session, "Undo duplicate paths", 1);
+
+            command::runWorker([session, state]() {
+                bool success = true;
+                QList<SdfPath> changed;
+                QStringList errors;
+
+                {
+                    WRITE_LOCKER(locker, session->stageLock(), "stageLock");
+                    const UsdStageRefPtr stage = session->stageUnsafe();
+
+                    if (!stage) {
+                        success = false;
+                        errors.append("stage missing");
+                    }
+                    else {
+                        QString rootError;
+                        const SdfLayerHandle rootLayer = rootlayer::opened(stage, rootError);
+
+                        if (!rootLayer) {
+                            success = false;
+                            errors.append(rootError);
+                        }
+                        else {
+                            for (auto it = state->items.crbegin(); it != state->items.crend(); ++it) {
+                                if (!stage::removePrimSpec(rootLayer, it->destinationPath)) {
+                                    success = false;
+                                    errors.append(
+                                        QString("failed to remove duplicate: %1").arg(pathText(it->destinationPath)));
+                                    continue;
+                                }
+
+                                path::appendUnique(changed, it->destinationPath);
+                                path::appendUnique(changed, it->parentPath);
+                            }
+
+                            for (auto it = state->oldParentOrders.cbegin(); it != state->oldParentOrders.cend(); ++it)
+                                stage::restoreChildOrder(stage, it.key(), it.value());
+
+                            QList<SdfPath> createdParents = state->createdParentSpecs.values();
+                            std::sort(createdParents.begin(), createdParents.end(),
+                                      [](const SdfPath& a, const SdfPath& b) {
+                                          return a.GetPathElementCount() > b.GetPathElementCount();
+                                      });
+
+                            for (const SdfPath& parentPath : createdParents) {
+                                const SdfPrimSpecHandle parentSpec = rootLayer->GetPrimAtPath(parentPath);
+                                if (parentSpec && parentSpec->IsInert())
+                                    stage::removePrimSpec(rootLayer, parentPath);
+                            }
+                        }
+                    }
+                }
+
+                const QString errorText = summarizeErrors(errors);
+                command::queueToSession(session, [session, state, changed, success, errorText]() {
+                    using Status = Session::Notify::Status;
+
+                    command::finishDeferred(session,
+                                            success ? "Duplicate undone"
+                                                    : appendError("Undo duplicate paths failed", errorText),
+                                            changed, success ? Status::Success : Status::Error);
+
+                    if (success) {
+                        session->selectionList()->updatePaths(state->previousSelection);
+                        session->setMask(state->previousMask);
+                    }
+                });
+            });
+        });
+}
+
+Command
+newPrimPath(const SdfPath& parentPath, const QString& nameInput, const TfToken& typeName)
+{
+    struct NewPrimState {
+        SdfPath parentPath;
+        SdfPath createdPath;
+        TfTokenVector oldParentOrder;
+        QList<SdfPath> createdAncestorSpecs;
+        QList<SdfPath> previousSelection;
+        QList<SdfPath> previousMask;
+    };
+
+    auto state = std::make_shared<NewPrimState>();
+
+    return Command(
+        [parentPath, nameInput, typeName, state](Session* session) {
+            if (!session || parentPath.IsEmpty())
+                return;
+
+            state->previousSelection = session->selectionList()->paths();
+            state->previousMask = session->mask();
+
+            command::beginDeferred(session, "New prim", 1);
+
+            command::runWorker([session, parentPath, nameInput, typeName, state]() {
+                bool success = false;
+                QString error;
+                SdfPath newPath;
+                QList<SdfPath> changed;
+
+                {
+                    WRITE_LOCKER(locker, session->stageLock(), "stageLock");
+                    const UsdStageRefPtr stage = session->stageUnsafe();
+
+                    if (!stage) {
+                        error = "stage missing";
+                    }
+                    else {
+                        QString rootError;
+                        const SdfLayerHandle rootLayer = rootlayer::opened(stage, rootError);
+
+                        if (!rootLayer) {
+                            error = rootError;
+                        }
+                        else if (!rootlayer::validateParent(stage, parentPath, error)) {}
+                        else {
+                            newPath = stage::buildChildPath(stage, parentPath, nameInput, error);
+
+                            if (!newPath.IsEmpty()) {
+                                state->parentPath = parentPath;
+                                state->createdPath = newPath;
+                                state->oldParentOrder.clear();
+                                state->createdAncestorSpecs.clear();
+
+                                stage::captureChildOrder(stage, parentPath, state->oldParentOrder);
+
+                                for (SdfPath path = parentPath; !path.IsEmpty() && path != SdfPath::AbsoluteRootPath();
+                                     path = path.GetParentPath()) {
+                                    if (!rootLayer->GetPrimAtPath(path))
+                                        state->createdAncestorSpecs.prepend(path);
+                                }
+
+                                UsdEditContext context(stage, UsdEditTarget(rootLayer));
+                                const UsdPrim prim = typeName.IsEmpty() ? stage->DefinePrim(newPath)
+                                                                        : stage->DefinePrim(newPath, typeName);
+
+                                if (!prim || !prim.IsValid()) {
+                                    error = "define failed";
+                                }
+                                else {
+                                    TfTokenVector order = state->oldParentOrder;
+                                    order.push_back(newPath.GetNameToken());
+                                    stage::restoreChildOrder(stage, parentPath, order);
+
+                                    path::appendUnique(changed, parentPath);
+                                    path::appendUnique(changed, newPath);
+                                    success = true;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                command::queueToSession(session, [session, newPath, changed, success, error]() {
+                    using Status = Session::Notify::Status;
+
+                    command::finishDeferred(session, success ? "Prim created" : appendError("New prim failed", error),
+                                            changed, success ? Status::Success : Status::Error);
+
+                    if (success)
+                        session->selectionList()->updatePaths({ newPath });
+                });
+            });
+        },
+        [state](Session* session) {
+            if (!session || state->createdPath.IsEmpty())
+                return;
+
+            command::beginDeferred(session, "Undo new prim", 1);
+
+            command::runWorker([session, state]() {
+                bool success = false;
+                QString error;
+                QList<SdfPath> changed;
+
+                {
+                    WRITE_LOCKER(locker, session->stageLock(), "stageLock");
+                    const UsdStageRefPtr stage = session->stageUnsafe();
+
+                    if (!stage) {
+                        error = "stage missing";
+                    }
+                    else {
+                        QString rootError;
+                        const SdfLayerHandle rootLayer = rootlayer::opened(stage, rootError);
+
+                        if (!rootLayer) {
+                            error = rootError;
+                        }
+                        else if (!stage::removePrimSpec(rootLayer, state->createdPath)) {
+                            error = QString("failed to remove prim: %1").arg(pathText(state->createdPath));
+                        }
+                        else {
+                            stage::restoreChildOrder(stage, state->parentPath, state->oldParentOrder);
+
+                            for (auto it = state->createdAncestorSpecs.crbegin();
+                                 it != state->createdAncestorSpecs.crend(); ++it) {
+                                const SdfPrimSpecHandle spec = rootLayer->GetPrimAtPath(*it);
+                                if (spec && spec->IsInert())
+                                    stage::removePrimSpec(rootLayer, *it);
+                            }
+
+                            path::appendUnique(changed, state->parentPath);
+                            path::appendUnique(changed, state->createdPath);
+                            success = true;
+                        }
+                    }
+                }
+
+                command::queueToSession(session, [session, state, changed, success, error]() {
+                    using Status = Session::Notify::Status;
+
+                    command::finishDeferred(session,
+                                            success ? "New prim undone" : appendError("Undo new prim failed", error),
+                                            changed, success ? Status::Success : Status::Error);
+
+                    if (success) {
+                        session->selectionList()->updatePaths(state->previousSelection);
+                        session->setMask(state->previousMask);
+                    }
+                });
+            });
+        });
+}
+
+Command
+newScopePath(const SdfPath& parentPath, const QString& nameInput)
+{
+    return newPrimPath(parentPath, nameInput, TfToken("Scope"));
+}
+
+Command
+newMaterialPath(const SdfPath& parentPath, const QString& nameInput)
+{
+    struct NewMaterialState {
+        SdfPath parentPath;
+        SdfPath createdPath;
+        TfTokenVector oldParentOrder;
+        QList<SdfPath> createdAncestorSpecs;
+        QList<SdfPath> previousSelection;
+        QList<SdfPath> previousMask;
+    };
+
+    auto state = std::make_shared<NewMaterialState>();
+
+    return Command(
+        [parentPath, nameInput, state](Session* session) {
+            if (!session || parentPath.IsEmpty())
+                return;
+
+            state->previousSelection = session->selectionList()->paths();
+            state->previousMask = session->mask();
+
+            command::beginDeferred(session, "New material", 1);
+
+            command::runWorker([session, parentPath, nameInput, state]() {
+                bool success = false;
+                QString error;
+                SdfPath materialPath;
+                QList<SdfPath> changed;
+
+                {
+                    WRITE_LOCKER(locker, session->stageLock(), "stageLock");
+                    const UsdStageRefPtr stage = session->stageUnsafe();
+
+                    if (!stage) {
+                        error = "stage missing";
+                    }
+                    else {
+                        QString rootError;
+                        const SdfLayerHandle rootLayer = rootlayer::opened(stage, rootError);
+
+                        if (!rootLayer) {
+                            error = rootError;
+                        }
+                        else if (!rootlayer::validateParent(stage, parentPath, error)) {}
+                        else {
+                            materialPath = stage::buildChildPath(stage, parentPath, nameInput, error);
+
+                            if (!materialPath.IsEmpty()) {
+                                state->parentPath = parentPath;
+                                state->createdPath = materialPath;
+                                state->oldParentOrder.clear();
+                                state->createdAncestorSpecs.clear();
+
+                                stage::captureChildOrder(stage, parentPath, state->oldParentOrder);
+
+                                for (SdfPath path = parentPath; !path.IsEmpty() && path != SdfPath::AbsoluteRootPath();
+                                     path = path.GetParentPath()) {
+                                    if (!rootLayer->GetPrimAtPath(path))
+                                        state->createdAncestorSpecs.prepend(path);
+                                }
+
+                                UsdEditContext context(stage, UsdEditTarget(rootLayer));
+
+                                const UsdShadeMaterial material = UsdShadeMaterial::Define(stage, materialPath);
+                                const SdfPath shaderPath = materialPath.AppendChild(TfToken("PreviewSurface"));
+                                const UsdShadeShader shader = UsdShadeShader::Define(stage, shaderPath);
+
+                                if (!material || !material.GetPrim() || !shader || !shader.GetPrim()) {
+                                    error = "failed to define material";
+                                }
+                                else if (!shader.CreateIdAttr(VtValue(TfToken("UsdPreviewSurface")))) {
+                                    error = "failed to create preview surface shader";
+                                }
+                                else {
+                                    UsdShadeMaterial material = UsdShadeMaterial::Define(stage, materialPath);
+
+                                    const SdfPath shaderPath = materialPath.AppendChild(TfToken("PreviewSurface"));
+                                    UsdShadeShader shader = UsdShadeShader::Define(stage, shaderPath);
+
+                                    if (!material || !material.GetPrim() || !shader || !shader.GetPrim()) {
+                                        error = "failed to define material";
+                                    }
+                                    else if (!shader.CreateIdAttr(VtValue(TfToken("UsdPreviewSurface")))) {
+                                        error = "failed to create preview surface shader";
+                                    }
+                                    else {
+                                        const UsdShadeOutput shaderOutput
+                                            = shader.CreateOutput(TfToken("surface"), SdfValueTypeNames->Token);
+
+                                        const UsdShadeOutput materialOutput = material.CreateSurfaceOutput();
+
+                                        if (!shaderOutput || !materialOutput
+                                            || !materialOutput.ConnectToSource(shaderOutput)) {
+                                            error = "failed to connect material surface output";
+                                        }
+                                        else {
+                                            TfTokenVector order = state->oldParentOrder;
+                                            order.push_back(materialPath.GetNameToken());
+                                            stage::restoreChildOrder(stage, parentPath, order);
+
+                                            path::appendUnique(changed, parentPath);
+                                            path::appendUnique(changed, materialPath);
+
+                                            success = true;
+                                        }
+                                    }
+                                }
+
+                                if (!success)
+                                    stage::removePrimSpec(rootLayer, materialPath);
+                            }
+                        }
+                    }
+                }
+
+                command::queueToSession(session, [session, materialPath, changed, success, error]() {
+                    using Status = Session::Notify::Status;
+
+                    command::finishDeferred(session,
+                                            success ? "Material created" : appendError("New material failed", error),
+                                            changed, success ? Status::Success : Status::Error);
+
+                    if (success)
+                        session->selectionList()->updatePaths({ materialPath });
+                });
+            });
+        },
+        [state](Session* session) {
+            if (!session || state->createdPath.IsEmpty())
+                return;
+
+            command::beginDeferred(session, "Undo new material", 1);
+
+            command::runWorker([session, state]() {
+                bool success = false;
+                QString error;
+                QList<SdfPath> changed;
+
+                {
+                    WRITE_LOCKER(locker, session->stageLock(), "stageLock");
+                    const UsdStageRefPtr stage = session->stageUnsafe();
+
+                    if (!stage) {
+                        error = "stage missing";
+                    }
+                    else {
+                        QString rootError;
+                        const SdfLayerHandle rootLayer = rootlayer::opened(stage, rootError);
+
+                        if (!rootLayer) {
+                            error = rootError;
+                        }
+                        else if (!stage::removePrimSpec(rootLayer, state->createdPath)) {
+                            error = QString("failed to remove material: %1").arg(pathText(state->createdPath));
+                        }
+                        else {
+                            stage::restoreChildOrder(stage, state->parentPath, state->oldParentOrder);
+
+                            for (auto it = state->createdAncestorSpecs.crbegin();
+                                 it != state->createdAncestorSpecs.crend(); ++it) {
+                                const SdfPrimSpecHandle spec = rootLayer->GetPrimAtPath(*it);
+                                if (spec && spec->IsInert())
+                                    stage::removePrimSpec(rootLayer, *it);
+                            }
+
+                            path::appendUnique(changed, state->parentPath);
+                            path::appendUnique(changed, state->createdPath);
+                            success = true;
+                        }
+                    }
+                }
+
+                command::queueToSession(session, [session, state, changed, success, error]() {
+                    using Status = Session::Notify::Status;
+
+                    command::finishDeferred(session,
+                                            success ? "New material undone"
+                                                    : appendError("Undo new material failed", error),
+                                            changed, success ? Status::Success : Status::Error);
+
+                    if (success) {
+                        session->selectionList()->updatePaths(state->previousSelection);
+                        session->setMask(state->previousMask);
+                    }
+                });
+            });
+        });
+}
+
+namespace {
+
+    enum class CompositionArc { Reference, Payload };
+
+    Command newCompositionArcPath(const SdfPath& parentPath, const QString& nameInput, const QString& assetPath,
+                                  const SdfPath& primPath, CompositionArc arc)
+    {
+        struct NewCompositionArcState {
+            SdfPath parentPath;
+            SdfPath createdPath;
+            TfTokenVector oldParentOrder;
+            QList<SdfPath> createdAncestorSpecs;
+            QList<SdfPath> previousSelection;
+            QList<SdfPath> previousMask;
+        };
+
+        auto state = std::make_shared<NewCompositionArcState>();
+        const QString title = arc == CompositionArc::Reference ? QStringLiteral("New reference")
+                                                               : QStringLiteral("New payload");
+        const QString successMessage = arc == CompositionArc::Reference ? QStringLiteral("Reference created")
+                                                                        : QStringLiteral("Payload created");
+        const QString failureMessage = arc == CompositionArc::Reference ? QStringLiteral("New reference failed")
+                                                                        : QStringLiteral("New payload failed");
+
+        return Command(
+            [parentPath, nameInput, assetPath, primPath, arc, state, title, successMessage,
+             failureMessage](Session* session) {
+                if (!session || parentPath.IsEmpty() || assetPath.isEmpty())
+                    return;
+
+                state->previousSelection = session->selectionList()->paths();
+                state->previousMask = session->mask();
+
+                command::beginDeferred(session, title, 1);
+
+                command::runWorker([session, parentPath, nameInput, assetPath, primPath, arc, state, successMessage,
+                                    failureMessage]() {
+                    bool success = false;
+                    QString error;
+                    SdfPath newPath;
+                    QList<SdfPath> changed;
+
+                    {
+                        WRITE_LOCKER(locker, session->stageLock(), "stageLock");
+                        const UsdStageRefPtr stage = session->stageUnsafe();
+
+                        if (!stage) {
+                            error = "stage missing";
+                        }
+                        else {
+                            QString rootError;
+                            const SdfLayerHandle rootLayer = rootlayer::opened(stage, rootError);
+
+                            if (!rootLayer) {
+                                error = rootError;
+                            }
+                            else if (!rootlayer::validateParent(stage, parentPath, error)) {}
+                            else {
+                                newPath = stage::buildChildPath(stage, parentPath, nameInput, error);
+
+                                if (!newPath.IsEmpty()) {
+                                    state->parentPath = parentPath;
+                                    state->createdPath = newPath;
+                                    state->oldParentOrder.clear();
+                                    state->createdAncestorSpecs.clear();
+
+                                    stage::captureChildOrder(stage, parentPath, state->oldParentOrder);
+
+                                    for (SdfPath path = parentPath;
+                                         !path.IsEmpty() && path != SdfPath::AbsoluteRootPath();
+                                         path = path.GetParentPath()) {
+                                        if (!rootLayer->GetPrimAtPath(path))
+                                            state->createdAncestorSpecs.prepend(path);
+                                    }
+
+                                    UsdEditContext context(stage, UsdEditTarget(rootLayer));
+                                    const UsdPrim prim = stage->DefinePrim(newPath, TfToken("Xform"));
+
+                                    if (!prim || !prim.IsValid()) {
+                                        error = "failed to define composition prim";
+                                    }
+                                    else {
+                                        const std::string asset = qt::QStringToString(assetPath);
+                                        bool authored = false;
+
+                                        if (arc == CompositionArc::Reference) {
+                                            authored = prim.GetReferences().AddReference(SdfReference(asset, primPath));
+                                        }
+                                        else {
+                                            authored = prim.GetPayloads().AddPayload(SdfPayload(asset, primPath));
+
+                                            if (authored)
+                                                stage->Load(newPath);
+                                        }
+
+                                        if (!authored) {
+                                            error = arc == CompositionArc::Reference
+                                                        ? QStringLiteral("failed to author reference")
+                                                        : QStringLiteral("failed to author payload");
+                                        }
+                                        else {
+                                            TfTokenVector order = state->oldParentOrder;
+                                            order.push_back(newPath.GetNameToken());
+                                            stage::restoreChildOrder(stage, parentPath, order);
+
+                                            path::appendUnique(changed, parentPath);
+                                            path::appendUnique(changed, newPath);
+                                            success = true;
+                                        }
+                                    }
+
+                                    if (!success)
+                                        stage::removePrimSpec(rootLayer, newPath);
+                                }
+                            }
+                        }
+                    }
+
+                    command::queueToSession(session, [session, newPath, changed, success, error, successMessage,
+                                                      failureMessage]() {
+                        using Status = Session::Notify::Status;
+
+                        command::finishDeferred(session, success ? successMessage : appendError(failureMessage, error),
+                                                changed, success ? Status::Success : Status::Error);
+
+                        if (success)
+                            session->selectionList()->updatePaths({ newPath });
+                    });
+                });
+            },
+            [state, title](Session* session) {
+                if (!session || state->createdPath.IsEmpty())
+                    return;
+
+                command::beginDeferred(session, QString("Undo %1").arg(title.toLower()), 1);
+
+                command::runWorker([session, state, title]() {
+                    bool success = false;
+                    QString error;
+                    QList<SdfPath> changed;
+
+                    {
+                        WRITE_LOCKER(locker, session->stageLock(), "stageLock");
+                        const UsdStageRefPtr stage = session->stageUnsafe();
+
+                        if (!stage) {
+                            error = "stage missing";
+                        }
+                        else {
+                            QString rootError;
+                            const SdfLayerHandle rootLayer = rootlayer::opened(stage, rootError);
+
+                            if (!rootLayer) {
+                                error = rootError;
+                            }
+                            else if (!stage::removePrimSpec(rootLayer, state->createdPath)) {
+                                error = QString("failed to remove prim: %1").arg(pathText(state->createdPath));
+                            }
+                            else {
+                                stage::restoreChildOrder(stage, state->parentPath, state->oldParentOrder);
+
+                                for (auto it = state->createdAncestorSpecs.crbegin();
+                                     it != state->createdAncestorSpecs.crend(); ++it) {
+                                    const SdfPrimSpecHandle spec = rootLayer->GetPrimAtPath(*it);
+                                    if (spec && spec->IsInert())
+                                        stage::removePrimSpec(rootLayer, *it);
+                                }
+
+                                path::appendUnique(changed, state->parentPath);
+                                path::appendUnique(changed, state->createdPath);
+                                success = true;
+                            }
+                        }
+                    }
+
+                    command::queueToSession(session, [session, state, changed, success, error, title]() {
+                        using Status = Session::Notify::Status;
+
+                        command::finishDeferred(session,
+                                                success
+                                                    ? QString("%1 undone").arg(title.mid(4))
+                                                    : appendError(QString("Undo %1 failed").arg(title.mid(4)), error),
+                                                changed, success ? Status::Success : Status::Error);
+
+                        if (success) {
+                            session->selectionList()->updatePaths(state->previousSelection);
+                            session->setMask(state->previousMask);
+                        }
+                    });
+                });
+            });
+    }
+
+}  // namespace
+
+Command
+newReferencePath(const SdfPath& parentPath, const QString& nameInput, const QString& assetPath, const SdfPath& primPath)
+{
+    return newCompositionArcPath(parentPath, nameInput, assetPath, primPath, CompositionArc::Reference);
+}
+
+Command
+newPayloadPath(const SdfPath& parentPath, const QString& nameInput, const QString& assetPath, const SdfPath& primPath)
+{
+    return newCompositionArcPath(parentPath, nameInput, assetPath, primPath, CompositionArc::Payload);
 }
 
 Command

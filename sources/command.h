@@ -7,6 +7,7 @@
 #include "session.h"
 #include "stageviz.h"
 #include <pxr/base/gf/matrix4d.h>
+#include <pxr/base/tf/token.h>
 #include <pxr/base/vt/value.h>
 #include <pxr/usd/sdf/path.h>
 
@@ -294,6 +295,103 @@ defaultPrimPath(const SdfPath& path);
  */
 Command
 deletePaths(const QList<SdfPath>& paths);
+
+/**
+ * @brief Creates a command that duplicates prim specs as sibling prims.
+ *
+ * Each input path is reduced to a minimal root path and resolved to its
+ * strongest authored SdfPrimSpec. That spec is copied into the opened root
+ * layer under the same parent using a unique sibling name.
+ *
+ * This allows a prim introduced by a payload, reference, or other composition
+ * arc to be copied into the editable stage without modifying the source asset.
+ *
+ * On success, the newly-created prims become the current selection.
+ * Undo removes the duplicated prim specs and restores child ordering,
+ * selection, and mask.
+ *
+ * @param paths Prim paths to duplicate.
+ */
+Command
+duplicatePaths(const QList<SdfPath>& paths);
+
+/**
+ * @brief Creates a command that defines a generic prim under a parent.
+ *
+ * The name is sanitized and made unique under the parent. When @p typeName is
+ * non-empty, the prim is defined with that USD type; otherwise an untyped prim
+ * is defined.
+ *
+ * On success, the new prim becomes the current selection. Undo removes the
+ * created prim and restores child ordering, selection, and mask.
+ *
+ * @param parentPath Parent prim path.
+ * @param nameInput Desired name for the new prim.
+ * @param typeName Optional USD schema type name, for example "Xform", "Mesh",
+ *                 "Camera", or "Scope".
+ */
+Command
+newPrimPath(const SdfPath& parentPath, const QString& nameInput, const TfToken& typeName = TfToken());
+
+/**
+ * @brief Creates a Scope prim under a parent.
+ *
+ * This is a convenience wrapper around newPrimPath() using the USD "Scope"
+ * type. The new scope is selected on success and is fully undoable.
+ *
+ * @param parentPath Parent prim path.
+ * @param nameInput Desired scope name.
+ */
+Command
+newScopePath(const SdfPath& parentPath, const QString& nameInput);
+
+/**
+ * @brief Creates a UsdShadeMaterial with a default UsdPreviewSurface shader.
+ *
+ * The material is created under the specified parent using a unique name. A
+ * child shader named "PreviewSurface" is created, assigned the
+ * "UsdPreviewSurface" shader id, and connected to the material surface output.
+ *
+ * On success, the material becomes the current selection. Undo removes the
+ * complete material hierarchy and restores child ordering, selection, and mask.
+ *
+ * @param parentPath Parent path, typically a Looks or Materials scope.
+ * @param nameInput Desired material name.
+ */
+Command
+newMaterialPath(const SdfPath& parentPath, const QString& nameInput);
+
+/**
+ * @brief Creates an Xform prim with a reference composition arc.
+ *
+ * The prim is created under @p parentPath using a unique name and authors a
+ * reference to @p assetPath. When @p primPath is empty, the referenced file's
+ * default prim is used.
+ *
+ * @param parentPath Parent prim path.
+ * @param nameInput Desired prim name.
+ * @param assetPath Referenced USD asset path.
+ * @param primPath Optional prim path inside the referenced asset.
+ */
+Command
+newReferencePath(const SdfPath& parentPath, const QString& nameInput, const QString& assetPath,
+                 const SdfPath& primPath = SdfPath());
+
+/**
+ * @brief Creates an Xform prim with a payload composition arc.
+ *
+ * The prim is created under @p parentPath using a unique name and authors a
+ * payload to @p assetPath. When @p primPath is empty, the payload file's
+ * default prim is used.
+ *
+ * @param parentPath Parent prim path.
+ * @param nameInput Desired prim name.
+ * @param assetPath Payload USD asset path.
+ * @param primPath Optional prim path inside the payload asset.
+ */
+Command
+newPayloadPath(const SdfPath& parentPath, const QString& nameInput, const QString& assetPath,
+               const SdfPath& primPath = SdfPath());
 
 /**
  * @brief Creates a command that renames a prim.
