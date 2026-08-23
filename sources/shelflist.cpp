@@ -3,14 +3,12 @@
 // https://github.com/mikaelsundell/stageviz
 
 #include "shelflist.h"
-
 #include "application.h"
 #include "mime.h"
 #include "qtutils.h"
 #include "roles.h"
 #include "shelfwidget.h"
 #include "style.h"
-
 #include <QAbstractItemModel>
 #include <QAbstractScrollArea>
 #include <QApplication>
@@ -525,6 +523,7 @@ ShelfList::dropEvent(QDropEvent* event)
             const QByteArray iconBytes = qt::imageToPngBytes(normalizedImage);
 
             if (!iconBytes.isEmpty()) {
+                targetItem->setData(roles::shelf::scriptIconText, QString());
                 targetItem->setData(roles::shelf::scriptIcon, iconBytes);
                 targetItem->setIcon(qt::pngBytesToIcon(iconBytes));
                 viewport()->update();

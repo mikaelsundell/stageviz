@@ -129,6 +129,8 @@ PythonShelfPrivate::createShelfTab(const QString& name, const QVariantList& scri
                          QAction* removeAction = nullptr;
 
                          if (item) {
+                             shelf->addIconMenu(&menu, item);
+                             menu.addSeparator();
                              renameAction = menu.addAction(tr("Rename"));
                              exportAction = menu.addAction(tr("Export"));
                              removeAction = menu.addAction(tr("Remove"));

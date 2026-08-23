@@ -64,6 +64,47 @@ public:
     void removeScript(QListWidgetItem* item);
 
     /**
+     * @brief Add the shelf icon submenu for an item to an existing context menu.
+     *
+     * The submenu contains Generate..., Choose Image..., and Reset actions.
+     * Generate accepts between one and five characters and creates a fitted
+     * text icon using the current Stageviz style. Choose Image loads and
+     * normalizes an image from disk. Reset restores the standard code icon.
+     *
+     * @param menu Context menu that should receive the Icon submenu.
+     * @param item Shelf item whose icon should be edited.
+     */
+    void addIconMenu(QMenu* menu, QListWidgetItem* item);
+
+    /**
+     * @brief Generate a text icon for a shelf item.
+     *
+     * Opens a small text prompt limited to five characters. The prompt is blank
+     * the first time an icon is generated and reuses the previously generated
+     * text on subsequent edits.
+     *
+     * @param item Shelf item whose icon should be generated.
+     */
+    void generateIcon(QListWidgetItem* item);
+
+    /**
+     * @brief Choose a custom image icon for a shelf item.
+     *
+     * The selected image is center-cropped, scaled to the shelf tile size and
+     * persisted with the shelf item.
+     *
+     * @param item Shelf item whose image icon should be changed.
+     */
+    void chooseIcon(QListWidgetItem* item);
+
+    /**
+     * @brief Restore the default code icon for a shelf item.
+     *
+     * @param item Shelf item whose custom icon should be cleared.
+     */
+    void resetIcon(QListWidgetItem* item);
+
+    /**
      * @brief Remove all script items from the shelf.
      */
     void clear();
@@ -77,7 +118,8 @@ public:
     /**
      * @brief Serialize the shelf contents to a QVariant list.
      *
-     * Each entry contains at least the item display name and script code.
+     * Each entry contains the item display name, script code, custom icon data,
+     * and generated icon text when applicable.
      *
      * @return Serialized shelf data suitable for settings persistence.
      */

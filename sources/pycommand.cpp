@@ -429,8 +429,8 @@ PyCommand_newReference(PyObject*, PyObject* args, PyObject* kwargs)
             return nullptr;
     }
 
-    return runCommand(newReferencePath(parentPath, QString::fromUtf8(name), QString::fromUtf8(assetPath),
-                                       targetPrimPath));
+    return runCommand(
+        newReferencePath(parentPath, QString::fromUtf8(name), QString::fromUtf8(assetPath), targetPrimPath));
 }
 
 static PyObject*
@@ -458,8 +458,8 @@ PyCommand_newPayload(PyObject*, PyObject* args, PyObject* kwargs)
             return nullptr;
     }
 
-    return runCommand(newPayloadPath(parentPath, QString::fromUtf8(name), QString::fromUtf8(assetPath),
-                                     targetPrimPath));
+    return runCommand(
+        newPayloadPath(parentPath, QString::fromUtf8(name), QString::fromUtf8(assetPath), targetPrimPath));
 }
 
 static PyObject*

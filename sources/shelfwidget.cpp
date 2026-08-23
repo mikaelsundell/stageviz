@@ -3,25 +3,27 @@
 // https://github.com/mikaelsundell/stageviz
 
 #include "shelfwidget.h"
-
 #include "application.h"
 #include "mime.h"
 #include "qtutils.h"
 #include "roles.h"
 #include "shelflist.h"
 #include "style.h"
-
 #include <QAbstractItemModel>
 #include <QApplication>
 #include <QBuffer>
 #include <QDebug>
 #include <QDragEnterEvent>
 #include <QDropEvent>
+#include <QFileDialog>
 #include <QFileInfo>
+#include <QFontMetrics>
 #include <QHBoxLayout>
 #include <QImage>
 #include <QImageReader>
+#include <QInputDialog>
 #include <QListWidget>
+#include <QMenu>
 #include <QMimeData>
 #include <QMouseEvent>
 #include <QPainter>
@@ -54,8 +56,15 @@ public:
     QVariantList toVariantList() const;
     void fromVariantList(const QVariantList& scripts);
     QString uniqueTitle(const QString& base, const QListWidgetItem* ignoreItem = nullptr) const;
+    QByteArray textIconBytes(const QString& text) const;
+    QByteArray imageIconBytes(const QImage& image) const;
+    QImage centerCrop(const QImage& image) const;
     QListWidgetItem* itemAt(const QPoint& pos) const;
     void itemIcon(QListWidgetItem* item, const QByteArray& iconBytes);
+    void addIconMenu(QMenu* menu, QListWidgetItem* item);
+    void generateIcon(QListWidgetItem* item);
+    void chooseIcon(QListWidgetItem* item);
+    void resetIcon(QListWidgetItem* item);
     struct Data {
         QPointer<ShelfList> list;
         QPointer<ShelfWidget> shelf;
@@ -189,6 +198,182 @@ ShelfWidgetPrivate::titleFromText(const QString& text, int maxLength, const QStr
     return line.isEmpty() ? fallback : line;
 }
 
+QImage
+ShelfWidgetPrivate::centerCrop(const QImage& image) const
+{
+    if (image.isNull())
+        return QImage();
+
+    const int side = qMin(image.width(), image.height());
+    const int x = (image.width() - side) / 2;
+    const int y = (image.height() - side) / 2;
+    return image.copy(x, y, side, side);
+}
+
+QByteArray
+ShelfWidgetPrivate::imageIconBytes(const QImage& image) const
+{
+    if (image.isNull())
+        return QByteArray();
+
+    const int iconSize = style()->iconSize(Style::UIScale::Medium);
+    const int tilePadding = 6;
+    const int logicalSize = iconSize + tilePadding * 2;
+
+    if (logicalSize <= 0)
+        return QByteArray();
+
+    const QImage cropped = centerCrop(image).convertToFormat(QImage::Format_ARGB32_Premultiplied);
+    const QImage scaled = qt::scaledImage(cropped, logicalSize, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+    return qt::imageToPngBytes(scaled);
+}
+
+QByteArray
+ShelfWidgetPrivate::textIconBytes(const QString& input) const
+{
+    const QString text = input.trimmed().left(5);
+
+    if (text.isEmpty())
+        return QByteArray();
+
+    const int iconSize = style()->iconSize(Style::UIScale::Medium);
+    const int tilePadding = 6;
+    const int size = iconSize + tilePadding * 2;
+
+    if (size <= 0)
+        return QByteArray();
+
+    const qreal dpr = qt::devicePixelRatio();
+    const int physicalSize = qt::physicalPixelSize(size, dpr);
+
+    QImage image(physicalSize, physicalSize, QImage::Format_ARGB32_Premultiplied);
+    image.setDevicePixelRatio(dpr);
+    image.fill(style()->color(Style::ColorRole::BaseAlt));
+
+    QPainter painter(&image);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    painter.setRenderHint(QPainter::TextAntialiasing, true);
+    painter.setPen(style()->color(Style::ColorRole::Text));
+
+    QFont font = painter.font();
+    font.setWeight(QFont::Medium);
+
+    if (text.size() == 1)
+        font.setPixelSize(qRound(size * 0.42));
+    else if (text.size() == 2)
+        font.setPixelSize(qRound(size * 0.36));
+    else if (text.size() == 3)
+        font.setPixelSize(qRound(size * 0.30));
+    else if (text.size() == 4)
+        font.setPixelSize(qRound(size * 0.25));
+    else
+        font.setPixelSize(qRound(size * 0.22));
+
+    const int horizontalPadding = qMax(4, qRound(size * 0.12));
+    const int availableWidth = size - horizontalPadding * 2;
+
+    while (font.pixelSize() > 8) {
+        const QFontMetrics metrics(font);
+
+        if (metrics.horizontalAdvance(text) <= availableWidth)
+            break;
+
+        font.setPixelSize(font.pixelSize() - 1);
+    }
+
+    painter.setFont(font);
+    painter.drawText(QRectF(0.0, 0.0, size, size), Qt::AlignCenter, text);
+    painter.end();
+
+    return qt::imageToPngBytes(image);
+}
+
+void
+ShelfWidgetPrivate::generateIcon(QListWidgetItem* item)
+{
+    if (!item || !d.shelf)
+        return;
+
+    QInputDialog dialog(d.shelf.data());
+    dialog.setWindowTitle(tr("Generate Icon"));
+    dialog.setLabelText(tr("Text (1-5 characters):"));
+    dialog.setInputMode(QInputDialog::TextInput);
+    dialog.setTextValue(item->data(roles::shelf::scriptIconText).toString());
+
+    if (QLineEdit* lineEdit = dialog.findChild<QLineEdit*>()) {
+        lineEdit->setMaxLength(5);
+        lineEdit->selectAll();
+    }
+
+    if (dialog.exec() != QDialog::Accepted)
+        return;
+
+    const QString text = dialog.textValue().trimmed();
+
+    if (text.isEmpty())
+        return;
+
+    const QByteArray iconBytes = textIconBytes(text);
+
+    if (iconBytes.isEmpty())
+        return;
+
+    item->setData(roles::shelf::scriptIconText, text);
+    itemIcon(item, iconBytes);
+}
+
+void
+ShelfWidgetPrivate::chooseIcon(QListWidgetItem* item)
+{
+    if (!item || !d.shelf)
+        return;
+
+    const QString filename
+        = QFileDialog::getOpenFileName(d.shelf.data(), tr("Choose Icon"), QString(),
+                                       tr("Images (*.png *.jpg *.jpeg *.bmp *.gif *.webp);;All Files (*)"));
+
+    if (filename.isEmpty())
+        return;
+
+    QImageReader reader(filename);
+    reader.setAutoTransform(true);
+
+    const QImage image = reader.read();
+    const QByteArray iconBytes = imageIconBytes(image);
+
+    if (!iconBytes.isEmpty()) {
+        item->setData(roles::shelf::scriptIconText, QString());
+        itemIcon(item, iconBytes);
+    }
+}
+
+void
+ShelfWidgetPrivate::resetIcon(QListWidgetItem* item)
+{
+    if (!item)
+        return;
+
+    item->setData(roles::shelf::scriptIconText, QString());
+    itemIcon(item, QByteArray());
+}
+
+void
+ShelfWidgetPrivate::addIconMenu(QMenu* menu, QListWidgetItem* item)
+{
+    if (!menu || !item)
+        return;
+
+    QMenu* iconMenu = menu->addMenu(tr("Icon"));
+    QAction* generateAction = iconMenu->addAction(tr("Generate..."));
+    iconMenu->addSeparator();
+    QAction* chooseAction = iconMenu->addAction(tr("Choose Image..."));
+    QAction* resetAction = iconMenu->addAction(tr("Reset"));
+    // connect
+    QObject::connect(generateAction, &QAction::triggered, d.shelf.data(), [this, item]() { generateIcon(item); });
+    QObject::connect(chooseAction, &QAction::triggered, d.shelf.data(), [this, item]() { chooseIcon(item); });
+    QObject::connect(resetAction, &QAction::triggered, d.shelf.data(), [this, item]() { resetIcon(item); });
+}
+
 void
 ShelfWidgetPrivate::itemIcon(QListWidgetItem* item, const QByteArray& iconBytes)
 {
@@ -222,6 +407,7 @@ ShelfWidgetPrivate::toVariantList() const
         m.insert("name", item->data(roles::shelf::scriptName).toString());
         m.insert("code", item->data(Qt::UserRole).toString());
         m.insert("icon", item->data(roles::shelf::scriptIcon).toByteArray());
+        m.insert("iconText", item->data(roles::shelf::scriptIconText).toString());
         scripts.append(m);
     }
     return scripts;
@@ -240,10 +426,15 @@ ShelfWidgetPrivate::fromVariantList(const QVariantList& scripts)
         const QString name = m.value("name").toString().trimmed();
         const QString code = m.value("code").toString().trimmed();
         const QByteArray iconBytes = m.value("icon").toByteArray();
+        const QString iconText = m.value("iconText").toString().left(5);
 
         if (code.isEmpty())
             continue;
+
         addScript(code, name, iconBytes);
+
+        if (!iconText.isEmpty() && d.list->count() > 0)
+            d.list->item(d.list->count() - 1)->setData(roles::shelf::scriptIconText, iconText);
     }
     Q_EMIT d.shelf->changed();
 }
@@ -319,6 +510,30 @@ void
 ShelfWidget::removeScript(QListWidgetItem* item)
 {
     p->removeScript(item);
+}
+
+void
+ShelfWidget::addIconMenu(QMenu* menu, QListWidgetItem* item)
+{
+    p->addIconMenu(menu, item);
+}
+
+void
+ShelfWidget::generateIcon(QListWidgetItem* item)
+{
+    p->generateIcon(item);
+}
+
+void
+ShelfWidget::chooseIcon(QListWidgetItem* item)
+{
+    p->chooseIcon(item);
+}
+
+void
+ShelfWidget::resetIcon(QListWidgetItem* item)
+{
+    p->resetIcon(item);
 }
 
 void
