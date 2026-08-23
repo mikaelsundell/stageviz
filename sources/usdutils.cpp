@@ -1373,10 +1373,13 @@ namespace stage {
                 return false;
             }
 
-            if (isInsideCompositionArc(stage, from)
-                || (to.GetParentPath() != SdfPath::AbsoluteRootPath()
+            const SdfPath fromParentPath = from.GetParentPath();
+            const SdfPath toParentPath = to.GetParentPath();
 
-                    && isInsideCompositionArc(stage, to.GetParentPath()))) {
+            if ((fromParentPath != SdfPath::AbsoluteRootPath()
+                 && isInsideCompositionArc(stage, fromParentPath))
+                || (toParentPath != SdfPath::AbsoluteRootPath()
+                    && isInsideCompositionArc(stage, toParentPath))) {
                 error = "cannot move into or out of composed prims";
                 return false;
             }

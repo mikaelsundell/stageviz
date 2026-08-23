@@ -2238,6 +2238,170 @@ def test_failed_load_leaves_valid_stage():
     )
 
 
+
+def test_move_payload_root_is_allowed():
+    stageviz.command.load_payloads(["/World/PayloadA"])
+
+    _assert(
+        _wait_until(
+            lambda: bool(
+                _prim("/World/PayloadA")
+                and _prim("/World/PayloadA").IsLoaded()
+                and _exists("/World/PayloadA/Geom")
+            ),
+            timeout=5.0,
+        ),
+        "payload root prepared for namespace move",
+    )
+
+    _assert(_set_translate("/World/PayloadA", (8.0, -3.0, 2.0)), "payload root transform prepared")
+    _assert(_set_translate("/World/B", (-4.0, 7.0, 1.0)), "payload destination transform prepared")
+
+    before = _world_transform("/World/PayloadA")
+
+    stageviz.command.move_path(
+        ["/World/PayloadA"],
+        "/World/B",
+        insert_index=-1,
+        preserve_world_transform=True,
+    )
+
+    _assert(
+        _wait_until(
+            lambda: not _exists("/World/PayloadA")
+            and _exists("/World/B/PayloadA")
+            and bool(_prim("/World/B/PayloadA").HasPayload())
+        ),
+        "move_path allows moving a root-layer payload root",
+    )
+
+    _assert(
+        _wait_until(lambda: _exists("/World/B/PayloadA/Geom"), timeout=5.0),
+        "moved payload root keeps composed payload content",
+    )
+
+    after = _world_transform("/World/B/PayloadA")
+    _assert(
+        _matrix_close(after, before, tolerance=1e-6),
+        "moving payload root preserves world transform",
+    )
+
+    if _undo():
+        _assert(
+            _wait_until(
+                lambda: _exists("/World/PayloadA")
+                and not _exists("/World/B/PayloadA")
+                and bool(_prim("/World/PayloadA").HasPayload())
+            ),
+            "undo restores moved payload root",
+        )
+
+        _assert(
+            _wait_until(lambda: _exists("/World/PayloadA/Geom"), timeout=5.0),
+            "undo restores payload composition below original root",
+        )
+
+        restored = _world_transform("/World/PayloadA")
+        _assert(
+            _matrix_close(restored, before, tolerance=1e-6),
+            "undo payload-root move restores world transform",
+        )
+
+
+def test_move_reference_root_is_allowed():
+    _assert(
+        _exists("/World/Referenced/Child"),
+        "reference root prepared for namespace move",
+    )
+
+    before = _world_transform("/World/Referenced")
+
+    stageviz.command.move_path(
+        ["/World/Referenced"],
+        "/World/B",
+        insert_index=-1,
+        preserve_world_transform=True,
+    )
+
+    _assert(
+        _wait_until(
+            lambda: not _exists("/World/Referenced")
+            and _exists("/World/B/Referenced")
+            and _exists("/World/B/Referenced/Child")
+        ),
+        "move_path allows moving a root-layer reference root",
+    )
+
+    moved = _world_transform("/World/B/Referenced")
+    _assert(
+        _matrix_close(moved, before, tolerance=1e-6),
+        "moving reference root preserves world transform",
+    )
+
+    if _undo():
+        _assert(
+            _wait_until(
+                lambda: _exists("/World/Referenced")
+                and _exists("/World/Referenced/Child")
+                and not _exists("/World/B/Referenced")
+            ),
+            "undo restores moved reference root",
+        )
+
+
+def test_new_xform_wraps_payload_roots():
+    stageviz.command.load_payloads(["/World/PayloadA", "/World/PayloadB"])
+
+    _assert(
+        _wait_until(
+            lambda: bool(
+                _prim("/World/PayloadA")
+                and _prim("/World/PayloadA").IsLoaded()
+                and _prim("/World/PayloadB")
+                and _prim("/World/PayloadB").IsLoaded()
+            ),
+            timeout=5.0,
+        ),
+        "payload roots prepared for new_xform wrapping",
+    )
+
+    stageviz.command.select_paths(["/World/PayloadA", "/World/PayloadB"])
+
+    _assert(
+        _wait_until(lambda: _selection() == ["/World/PayloadA", "/World/PayloadB"]),
+        "payload roots selected for new_xform wrapping",
+    )
+
+    stageviz.command.new_xform("/World", "PayloadGroup")
+
+    _assert(
+        _wait_until(
+            lambda: _exists("/World/PayloadGroup")
+            and _exists("/World/PayloadGroup/PayloadA")
+            and _exists("/World/PayloadGroup/PayloadB")
+            and not _exists("/World/PayloadA")
+            and not _exists("/World/PayloadB")
+        ),
+        "new_xform can wrap root-layer payload roots",
+    )
+
+    _assert(
+        bool(_prim("/World/PayloadGroup/PayloadA").HasPayload())
+        and bool(_prim("/World/PayloadGroup/PayloadB").HasPayload()),
+        "wrapped payload roots retain payload arcs",
+    )
+
+    if _undo():
+        _assert(
+            _wait_until(
+                lambda: _exists("/World/PayloadA")
+                and _exists("/World/PayloadB")
+                and not _exists("/World/PayloadGroup")
+            ),
+            "undo new_xform restores payload roots",
+        )
+
+
 def test_payload_descendant_rejects_namespace_edit():
     stageviz.command.load_payloads(["/World/PayloadA"])
 
@@ -2477,6 +2641,9 @@ def run():
         ("move non-xformable prim", test_move_non_xformable_prim, ()),
         ("move preserve complex transform", test_move_preserve_complex_world_transform, ()),
         ("failed load recovery", test_failed_load_leaves_valid_stage, ()),
+        ("move payload root", test_move_payload_root_is_allowed, ()),
+        ("move reference root", test_move_reference_root_is_allowed, ()),
+        ("new_xform wraps payload roots", test_new_xform_wraps_payload_roots, ()),
         ("payload descendant namespace policy", test_payload_descendant_rejects_namespace_edit, ()),
         ("merge into stage", test_merge_into_stage, (merge_source,)),
         ("merge flattened", test_merge_flattened, (merge_source,)),

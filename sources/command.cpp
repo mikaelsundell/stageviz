@@ -2789,7 +2789,9 @@ newXformPath(const SdfPath& parentPath, const QString& nameInput)
                                             break;
                                         }
 
-                                        if (stage::isInsideCompositionArc(stage, movePath)) {
+                                        const SdfPath moveParentPath = movePath.GetParentPath();
+                                        if (moveParentPath != SdfPath::AbsoluteRootPath()
+                                            && stage::isInsideCompositionArc(stage, moveParentPath)) {
                                             error = "cannot move into or out of composed prims";
                                             movedSelection = false;
                                             break;
@@ -3069,7 +3071,8 @@ movePath(const QList<SdfPath>& paths, const SdfPath& newParentPath, int insertIn
                                         break;
                                     }
 
-                                    if (stage::isInsideCompositionArc(stage, path)) {
+                                    if (oldParentPath != SdfPath::AbsoluteRootPath()
+                                        && stage::isInsideCompositionArc(stage, oldParentPath)) {
                                         error = "cannot move into or out of composed prims";
                                         valid = false;
                                         break;
