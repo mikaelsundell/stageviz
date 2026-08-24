@@ -34,8 +34,9 @@ public Q_SLOTS:
     void expand();
     void follow(bool enabled);
     void filterChanged(const QString& filter);
-    void primsChanged(const NoticeBatch& batch);
+    void editLayerChanged(SdfLayerHandle layer);
     void maskChanged(const QList<SdfPath>& paths);
+    void primsChanged(const NoticeBatch& batch);
     void selectionChanged(const QList<SdfPath>& paths);
     void stageChanged(UsdStageRefPtr stage, Session::LoadPolicy policy, Session::StageStatus status);
     void depthChanged(int value);
@@ -81,9 +82,10 @@ OutlinerViewPrivate::init()
     connect(d.ui->expand, &QToolButton::clicked, this, &OutlinerViewPrivate::expand);
     connect(d.ui->follow, &QToolButton::toggled, this, &OutlinerViewPrivate::follow);
     connect(d.ui->depth, &QSlider::valueChanged, this, &OutlinerViewPrivate::depthChanged);
+    connect(session(), &Session::editLayerChanged, this, &OutlinerViewPrivate::editLayerChanged);
     connect(session(), &Session::maskChanged, this, &OutlinerViewPrivate::maskChanged);
-    connect(session(), &Session::stageChanged, this, &OutlinerViewPrivate::stageChanged);
     connect(session(), &Session::primsChanged, this, &OutlinerViewPrivate::primsChanged);
+    connect(session(), &Session::stageChanged, this, &OutlinerViewPrivate::stageChanged);
     connect(session()->selectionList(), &SelectionList::selectionChanged, this, &OutlinerViewPrivate::selectionChanged);
 }
 
@@ -154,15 +156,21 @@ OutlinerViewPrivate::filterChanged(const QString& filter)
 }
 
 void
-OutlinerViewPrivate::primsChanged(const NoticeBatch& batch)
+OutlinerViewPrivate::editLayerChanged(SdfLayerHandle layer)
 {
-    stageTree()->updatePrims(batch);
+    Q_UNUSED(layer);
+    stageTree()->updateEditLayer();
 }
 
 void
 OutlinerViewPrivate::maskChanged(const QList<SdfPath>& paths)
 {
     stageTree()->updateMask(paths);
+}
+void
+OutlinerViewPrivate::primsChanged(const NoticeBatch& batch)
+{
+    stageTree()->updatePrims(batch);
 }
 
 void

@@ -85,12 +85,12 @@ private:
 
 
 /**
- * @brief Captures the root-layer transform opinions that existed before an
+ * @brief Captures the edit-layer transform opinions that existed before an
  * interactive transform preview authored a stronger matrix override.
  *
- * The state is used by transform undo to restore the original root-layer
+ * The state is used by transform undo to restore the original edit-layer
  * xformOpOrder/matrix opinions exactly, or remove the temporary override when
- * no root-layer transform opinion existed before the drag.
+ * no edit-layer transform opinion existed before the drag.
  */
 struct TransformRootState {
     bool hadPrimSpec = false;
@@ -455,8 +455,8 @@ movePath(const QList<SdfPath>& paths, const SdfPath& newParentPath, int insertIn
 /**
  * @brief Creates a command that authors the default value of a USD attribute.
  *
- * The value is authored into the root layer edit target. Undo restores the
- * previous root-layer default opinion exactly; if there was no root-layer
+ * The value is authored into the edit layer edit target. Undo restores the
+ * previous edit-layer default opinion exactly; if there was no edit-layer
  * default opinion, undo clears the newly authored default.
  *
  * This command accepts scalar, vector, matrix, token/string, asset-path and
@@ -470,20 +470,20 @@ Command
 setAttributeValue(const SdfPath& attributePath, const VtValue& value);
 
 /**
- * @brief Creates a command that removes one root-layer attribute override.
+ * @brief Creates a command that removes one edit-layer attribute override.
  *
- * The attribute must be authored in the opened root layer on a prim that also
+ * The attribute must be authored in the opened edit layer on a prim that also
  * has an underlying opinion from a weaker composition layer, such as a
- * sublayer, reference, or payload. Root-layer-owned prims are never modified.
+ * sublayer, reference, or payload. Edit-layer-owned prims are never modified.
  *
  * The complete attribute spec is snapshotted before removal so undo restores
  * the authored value, metadata, connections, and other attribute information
  * exactly.
  *
- * If removing the attribute leaves an inert root-layer prim spec, the empty
+ * If removing the attribute leaves an inert edit-layer prim spec, the empty
  * prim spec is removed so the weaker composed prim is exposed cleanly.
  *
- * @param attributePath USD attribute path whose root-layer override should be removed.
+ * @param attributePath USD attribute path whose edit-layer override should be removed.
  */
 Command
 resetAttributeOverride(const SdfPath& attributePath);
@@ -492,11 +492,11 @@ resetAttributeOverride(const SdfPath& attributePath);
  * @brief Creates a command that resets local transforms for xformable prims.
  *
  * When a selected prim has an underlying transform opinion in a weaker layer,
- * the Stageviz root-layer matrix/order override is removed so the authored
+ * the Stageviz edit-layer matrix/order override is removed so the authored
  * asset transform becomes visible again. When no weaker transform opinion
- * exists, a local identity matrix is authored in the opened root layer.
+ * exists, a local identity matrix is authored in the opened edit layer.
  *
- * Undo restores the previous root-layer transform opinions exactly.
+ * Undo restores the previous edit-layer transform opinions exactly.
  *
  * @param paths Prim paths whose local transforms should be reset.
  */
@@ -504,22 +504,25 @@ Command
 resetTransforms(const QList<SdfPath>& paths);
 
 /**
- * @brief Creates a command that removes root-layer overrides from composed prims.
+ * @brief Creates a command that removes edit-layer property overrides from composed prims.
  *
- * Only direct opinions authored on the selected prim in the opened root layer
- * are removed. Direct property specs and authored metadata are cleared while
- * root-layer overrides on descendant prims are preserved.
+ * The selected prims and their descendants are inspected recursively. Only
+ * property specs on SdfSpecifierOver prim specs authored in the opened edit
+ * layer are removed when the prim also has an underlying opinion from a weaker
+ * layer, such as a sublayer, reference, or payload. SdfSpecifierDef prim specs
+ * are traversed but never modified. This exposes the composed attribute or
+ * relationship value again.
  *
- * The command only operates on prims that also have an underlying opinion in
- * a weaker layer, such as content composed from a sublayer, reference, or
- * payload. Root-layer-owned prims are ignored and are never deleted.
+ * Prim metadata and composition arcs are preserved, so resetting overrides does
+ * not remove references, payloads, variants, or otherwise change payload load
+ * state. Edit-layer-owned prims are ignored and are never deleted.
  *
- * If removing the direct opinions leaves an inert root-layer prim spec, the
- * empty spec is removed so the weaker composed prim is exposed cleanly.
+ * If removing property opinions leaves an inert edit-layer prim spec, the empty
+ * override spec is removed so the weaker composed prim is exposed cleanly.
  *
- * Undo restores the removed root-layer properties and metadata exactly.
+ * Undo restores the removed edit-layer property specs exactly.
  *
- * @param paths Prim paths whose direct root-layer overrides should be removed.
+ * @param paths Root prim paths of the hierarchies whose property overrides should be removed.
  */
 Command
 resetOverrides(const QList<SdfPath>& paths);
@@ -537,7 +540,7 @@ resetOverrides(const QList<SdfPath>& paths);
  * @param paths Prim paths to transform.
  * @param before World transforms captured at drag start.
  * @param after World transforms to apply for redo.
- * @param rootBefore Optional root-layer transform state captured before an
+ * @param rootBefore Optional edit-layer transform state captured before an
  *                   interactive preview. When supplied, undo restores those
  *                   authored opinions exactly instead of leaving a matrix
  *                   override behind.

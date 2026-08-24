@@ -179,6 +179,7 @@ public:
     struct Data {
         UsdStageRefPtr stage;
         UsdStageRefPtr auxiliary;
+        UsdEditTarget editTarget;
         Session::LoadPolicy loadPolicy = Session::LoadPolicy::All;
         Session::PrimsUpdate primsUpdate = Session::PrimsUpdate::Immediate;
         Session::StageStatus stageStatus = Session::StageStatus::Closed;
@@ -322,6 +323,8 @@ SessionPrivate::newStage(Session::LoadPolicy policy)
             return false;
         }
         d.stage = stage;
+        d.editTarget = UsdEditTarget(d.stage->GetRootLayer());
+        d.stage->SetEditTarget(d.editTarget);
         UsdGeomSetStageMetersPerUnit(d.stage, UsdGeomLinearUnits::millimeters);
         UsdGeomXform root = UsdGeomXform::Define(d.stage, SdfPath("/World"));
         d.stage->SetDefaultPrim(root.GetPrim());
@@ -367,6 +370,8 @@ SessionPrivate::loadFromFile(const QString& filename, Session::LoadPolicy policy
         d.mask.clear();
         d.pendingNotices.entries.clear();
         if (d.stage) {
+            d.editTarget = UsdEditTarget(d.stage->GetRootLayer());
+            d.stage->SetEditTarget(d.editTarget);
             d.filename = absFilename;
             loaded = true;
             preserveState = d.preserveState;
@@ -1124,6 +1129,7 @@ SessionPrivate::close()
         StageBlocker blocker(d.stageWatcher.data());
         d.stageWatcher->init();
         d.stage = nullptr;
+        d.editTarget = UsdEditTarget();
         d.stageStatus = Session::StageStatus::Closed;
         d.pendingNotices.entries.clear();
         d.changeDepth = 0;
@@ -1373,15 +1379,18 @@ SessionPrivate::updateStage()
     UsdStageRefPtr stage;
     Session::LoadPolicy loadPolicy;
     Session::StageStatus stageStatus;
+    SdfLayerHandle editLayer;
     GfBBox3d bbox;
     {
         READ_LOCKER(locker, &d.stageLock, "stageLock");
         stage = d.stage;
         loadPolicy = d.loadPolicy;
         stageStatus = d.stageStatus;
+        editLayer = d.editTarget.GetLayer();
         bbox = d.bbox;
     }
     Q_EMIT d.session->stageChanged(stage, loadPolicy, stageStatus);
+    Q_EMIT d.session->editLayerChanged(editLayer);
     Q_EMIT d.session->stageUpChanged(stageUp());
     Q_EMIT d.session->boundingBoxChanged(bbox);
 }
@@ -1631,6 +1640,57 @@ UsdStageRefPtr
 Session::stageUnsafe() const
 {
     return p->d.stage;
+}
+
+UsdEditTarget
+Session::editTarget() const
+{
+    READ_LOCKER(locker, stageLock(), "stageLock");
+    return p->d.editTarget;
+}
+
+UsdEditTarget
+Session::editTargetUnsafe() const
+{
+    return p->d.editTarget;
+}
+
+SdfLayerHandle
+Session::editLayer() const
+{
+    READ_LOCKER(locker, stageLock(), "stageLock");
+    return p->d.editTarget.GetLayer();
+}
+
+SdfLayerHandle
+Session::editLayerUnsafe() const
+{
+    return p->d.editTarget.GetLayer();
+}
+
+bool
+Session::setEditLayer(const SdfLayerHandle& layer)
+{
+    SdfLayerHandle changedLayer;
+    {
+        WRITE_LOCKER(locker, stageLock(), "stageLock");
+        if (!p->d.stage || !layer || !p->d.stage->HasLocalLayer(layer))
+            return false;
+
+        const UsdEditTarget target = p->d.stage->GetEditTargetForLocalLayer(layer);
+        if (!target.GetLayer())
+            return false;
+
+        if (p->d.editTarget.GetLayer() == target.GetLayer())
+            return true;
+
+        p->d.editTarget = target;
+        p->d.stage->SetEditTarget(target);
+        changedLayer = target.GetLayer();
+    }
+
+    Q_EMIT editLayerChanged(changedLayer);
+    return true;
 }
 
 QReadWriteLock*

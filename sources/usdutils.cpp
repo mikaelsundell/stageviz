@@ -48,16 +48,16 @@ namespace {
     }
 }  // namespace
 
-namespace rootlayer {
+namespace editlayer {
     SdfLayerHandle opened(const UsdStageRefPtr& stage, QString& error)
     {
         if (!stage) {
             error = "stage missing";
             return {};
         }
-        const SdfLayerHandle layer = stage->GetRootLayer();
+        const SdfLayerHandle layer = stage->GetEditTarget().GetLayer();
         if (!layer) {
-            error = "opened root layer missing";
+            error = "edit layer missing";
             return {};
         }
         return layer;
@@ -83,7 +83,7 @@ namespace rootlayer {
         }
 
         if (!layer->GetPrimAtPath(primPath)) {
-            error = QString("prim is not authored in opened root layer: %1").arg(qt::SdfPathToQString(primPath));
+            error = QString("prim is not authored in edit layer: %1").arg(qt::SdfPathToQString(primPath));
             return false;
         }
 
@@ -91,7 +91,7 @@ namespace rootlayer {
             const SdfPrimSpecHandleVector stack = prim.GetPrimStack();
 
             if (stack.empty() || !stack.front() || stack.front()->GetLayer() != layer) {
-                error = QString("prim strongest opinion is not in opened root layer: %1")
+                error = QString("prim strongest opinion is not in edit layer: %1")
                             .arg(qt::SdfPathToQString(primPath));
 
                 return false;
@@ -108,7 +108,7 @@ namespace rootlayer {
         return validatePrim(stage, parentPath, error, requireStrongest);
     }
 
-}  // namespace rootlayer
+}  // namespace editlayer
 
 namespace identifier {
 
@@ -705,8 +705,8 @@ namespace stage {
             return false;
 
         // Transform editing is a property override, not a namespace edit.
-        // Composed prims may therefore receive a stronger root-layer opinion.
-        return bool(stage->GetRootLayer());
+        // Composed prims may therefore receive a stronger edit-layer opinion.
+        return bool(stage->GetEditTarget().GetLayer());
     }
 
     bool worldTransform(UsdStageRefPtr stage, const SdfPath& path, GfMatrix4d& matrix, QString& error)
@@ -861,15 +861,15 @@ namespace stage {
         }
 
         const GfMatrix4d local = matrix * parentWorld.GetInverse();
-        QString rootError;
+        QString editError;
 
-        const SdfLayerHandle rootLayer = rootlayer::opened(stage, rootError);
-        if (!rootLayer) {
-            error = rootError;
+        const SdfLayerHandle editLayer = editlayer::opened(stage, editError);
+        if (!editLayer) {
+            error = editError;
             return false;
         }
 
-        UsdEditContext context(stage, UsdEditTarget(rootLayer));
+        UsdEditContext context(stage, stage->GetEditTarget());
         UsdGeomXformOp op = xformable.MakeMatrixXform();
         if (!op) {
             error = "could not create matrix xform op";
@@ -1324,11 +1324,11 @@ namespace stage {
         if (moves.isEmpty())
             return true;
 
-        QString rootError;
-        const SdfLayerHandle rootLayer = rootlayer::opened(stage, rootError);
+        QString editError;
+        const SdfLayerHandle editLayer = editlayer::opened(stage, editError);
 
-        if (!rootLayer) {
-            error = rootError;
+        if (!editLayer) {
+            error = editError;
             return false;
         }
 
@@ -1363,12 +1363,12 @@ namespace stage {
 
             destinations.insert(to);
             QString validationError;
-            if (!rootlayer::validatePrim(stage, from, validationError)) {
+            if (!editlayer::validatePrim(stage, from, validationError)) {
                 error = validationError;
                 return false;
             }
 
-            if (!rootlayer::validateParent(stage, to.GetParentPath(), validationError)) {
+            if (!editlayer::validateParent(stage, to.GetParentPath(), validationError)) {
                 error = validationError;
                 return false;
             }
@@ -1406,13 +1406,13 @@ namespace stage {
         if (!hasEdits)
             return true;
 
-        if (!rootLayer->CanApply(edits)) {
-            error = "root layer cannot apply namespace edit";
+        if (!editLayer->CanApply(edits)) {
+            error = "edit layer cannot apply namespace edit";
             return false;
         }
 
-        if (!rootLayer->Apply(edits)) {
-            error = "root layer namespace edit failed";
+        if (!editLayer->Apply(edits)) {
+            error = "edit layer namespace edit failed";
             return false;
         }
         stage->SetLoadRules(loadRules);
@@ -1583,22 +1583,24 @@ namespace stage {
             return;
 
         QString error;
-        const SdfLayerHandle rootLayer = rootlayer::opened(stage, error);
-        if (!rootLayer)
+        const SdfLayerHandle editLayer = editlayer::opened(stage, error);
+        if (!editLayer)
             return;
 
         if (parentPath == SdfPath::AbsoluteRootPath()) {
-            rootLayer->SetRootPrimOrder(childOrder);
+            editLayer->SetRootPrimOrder(childOrder);
             return;
         }
 
-        ensureParentSpecs(rootLayer, parentPath);
-        if (!rootLayer->GetPrimAtPath(parentPath))
-            SdfCreatePrimInLayer(rootLayer, parentPath);
+        ensureParentSpecs(editLayer, parentPath);
+        if (!editLayer->GetPrimAtPath(parentPath))
+            SdfCreatePrimInLayer(editLayer, parentPath);
 
         const UsdPrim parent = stage->GetPrimAtPath(parentPath);
-        if (parent)
+        if (parent) {
+            UsdEditContext context(stage, stage->GetEditTarget());
             parent.SetChildrenReorder(childOrder);
+        }
     }
 
     QList<SdfPath> resolvePayloadPaths(UsdStageRefPtr stage, const QList<SdfPath>& paths)
@@ -1653,13 +1655,13 @@ namespace stage {
             return;
 
         QString error;
-        const SdfLayerHandle rootLayer = rootlayer::opened(stage, error);
-        if (!rootLayer)
+        const SdfLayerHandle editLayer = editlayer::opened(stage, error);
+        if (!editLayer)
             return;
 
         // visibility is a property opinion. Always author it into the opened
-        // root layer so composed assets are overridden without editing them.
-        UsdEditContext context(stage, UsdEditTarget(rootLayer));
+        // edit layer so composed assets are overridden without editing them.
+        UsdEditContext context(stage, stage->GetEditTarget());
 
         for (const SdfPath& path : paths) {
             UsdPrim prim = stage->GetPrimAtPath(path);

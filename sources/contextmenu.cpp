@@ -78,7 +78,9 @@ ContextMenu::exec(QWidget* parent, ViewContext* context, UsdStageRefPtr usdStage
     payload::PayloadVariantTargets variantTargets;
     bool hasExactPayloadSelection = false;
     bool canShowSelected = false;
+    bool canShowRecursive = false;
     bool canHideSelected = false;
+    bool canHideRecursive = false;
     bool canLoadSelected = false;
     bool canUnloadSelected = false;
     bool canResetXform = !paths.isEmpty();
@@ -132,6 +134,26 @@ ContextMenu::exec(QWidget* parent, ViewContext* context, UsdStageRefPtr usdStage
                 canHideSelected = true;
             else
                 canShowSelected = true;
+
+            if (prim && prim.IsValid()) {
+                if (visible)
+                    canHideRecursive = true;
+                else
+                    canShowRecursive = true;
+
+                for (const UsdPrim& descendant : prim.GetAllDescendants()) {
+                    if (!descendant || !descendant.IsValid())
+                        continue;
+
+                    if (stage::isVisible(usdStage, descendant.GetPath()))
+                        canHideRecursive = true;
+                    else
+                        canShowRecursive = true;
+
+                    if (canShowRecursive && canHideRecursive)
+                        break;
+                }
+            }
         }
 
         if (payloadEnabled) {
@@ -209,13 +231,13 @@ ContextMenu::exec(QWidget* parent, ViewContext* context, UsdStageRefPtr usdStage
     QAction* showSelected = showMenu->addAction("Selected");
     QAction* showRecursive = showMenu->addAction("Recursive");
     showSelected->setEnabled(canShowSelected);
-    showRecursive->setEnabled(canShowSelected);
+    showRecursive->setEnabled(canShowRecursive);
 
     QMenu* hideMenu = menu.addMenu("Hide");
     QAction* hideSelected = hideMenu->addAction("Selected");
     QAction* hideRecursive = hideMenu->addAction("Recursive");
     hideSelected->setEnabled(canHideSelected);
-    hideRecursive->setEnabled(canHideSelected);
+    hideRecursive->setEnabled(canHideRecursive);
 
     menu.addSeparator();
 

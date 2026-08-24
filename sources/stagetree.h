@@ -134,6 +134,11 @@ public:
     ///@{
 
     /**
+     * @brief Refreshes cached edit-layer ownership state without rebuilding the tree.
+     */
+    void updateEditLayer();
+
+    /**
      * @brief Updates the active stage mask state in the tree.
      *
      * Applies the current isolation or masking paths so the widget can

@@ -48,8 +48,9 @@ public:
     void itemCheckState(QTreeWidgetItem* item, bool checkable, bool recursive = false);
     void treeCheckState(QTreeWidgetItem* item);
     void contextMenuEvent(QContextMenuEvent* event);
-    void updateStage(UsdStageRefPtr stage);
+    void updateEditLayer();
     void updatePrims(const NoticeBatch& batch);
+    void updateStage(UsdStageRefPtr stage);
     void updateSelection(const QList<SdfPath>& paths);
 
 public Q_SLOTS:
@@ -130,7 +131,7 @@ StageTreePrivate::itemCheckState(QTreeWidgetItem* item, bool checkable, bool rec
     Qt::ItemFlags flags = item->flags();
     if (checkable) {
         flags |= Qt::ItemIsUserCheckable | Qt::ItemIsEnabled;
-        flags |= Qt::ItemIsAutoTristate;
+        flags &= ~Qt::ItemIsAutoTristate;
         item->setFlags(flags);
         if (item->data(0, Qt::CheckStateRole).isNull())
             item->setCheckState(0, Qt::Unchecked);
@@ -403,7 +404,7 @@ StageTreePrivate::addItem(PrimItem* parent, const SdfPath& path)
     flags |= Qt::ItemIsDragEnabled | Qt::ItemIsDropEnabled;
     item->setFlags(flags);
 
-    itemCheckState(item, d.payloadEnabled);
+    itemCheckState(item, isPayload);
     parent->addChild(item);
 
     if (isPayload) {
@@ -628,8 +629,6 @@ StageTreePrivate::updateStage(UsdStageRefPtr stage)
     addChildren(rootItem, prim.GetPath());
     initTree();
 
-    if (d.payloadEnabled)
-        itemCheckState(rootItem, true, true);
 }
 
 void
@@ -637,6 +636,34 @@ StageTreePrivate::syncDirectChildrenOnly(PrimItem* parentItem, const UsdPrim& pa
 {
     if (!parentItem || !parentPrim)
         return;
+
+    bool isPayload = false;
+    bool isLoaded = false;
+
+    {
+        READ_LOCKER(locker, d.context->stageLock(), "stageLock");
+        if (!d.stage)
+            return;
+
+        if (d.payloadEnabled) {
+            isPayload = stage::isPayload(d.stage, parentPrim.GetPath());
+            isLoaded = parentPrim.IsLoaded();
+        }
+    }
+
+    if (isPayload) {
+        parentItem->invalidate();
+        itemCheckState(parentItem, true, false);
+
+        const Qt::CheckState want = isLoaded ? Qt::Checked : Qt::Unchecked;
+        if (parentItem->checkState(PrimItem::Name) != want)
+            parentItem->setCheckState(PrimItem::Name, want);
+
+        while (parentItem->childCount() > 0)
+            delete parentItem->child(0);
+
+        return;
+    }
 
     QList<SdfPath> ordered;
     QSet<QString> stageSet;
@@ -715,7 +742,6 @@ StageTreePrivate::syncDirectChildrenOnly(PrimItem* parentItem, const UsdPrim& pa
             continue;
 
         childItem->invalidate();
-        itemCheckState(childItem, d.payloadEnabled, false);
 
         const QString childPathString = childItem->data(0, PrimItem::Path).toString();
         if (childPathString.isEmpty())
@@ -740,6 +766,8 @@ StageTreePrivate::syncDirectChildrenOnly(PrimItem* parentItem, const UsdPrim& pa
             }
         }
 
+        itemCheckState(childItem, isPayload, false);
+
         if (isPayload) {
             const Qt::CheckState want = isLoaded ? Qt::Checked : Qt::Unchecked;
             if (childItem->checkState(0) != want)
@@ -748,6 +776,26 @@ StageTreePrivate::syncDirectChildrenOnly(PrimItem* parentItem, const UsdPrim& pa
     }
 
     parentItem->invalidate();
+}
+
+void
+StageTreePrivate::updateEditLayer()
+{
+    std::function<void(QTreeWidgetItem*)> invalidate = [&](QTreeWidgetItem* baseItem) {
+        if (!baseItem)
+            return;
+
+        if (auto* item = dynamic_cast<PrimItem*>(baseItem))
+            item->invalidate();
+
+        for (int i = 0; i < baseItem->childCount(); ++i)
+            invalidate(baseItem->child(i));
+    };
+
+    for (int i = 0; i < d.tree->topLevelItemCount(); ++i)
+        invalidate(d.tree->topLevelItem(i));
+
+    d.tree->viewport()->update();
 }
 
 void
@@ -912,7 +960,7 @@ StageTreePrivate::updatePrim(const SdfPath& path)
     }
 
     primItem->invalidate();
-    itemCheckState(primItem, d.payloadEnabled, false);
+    itemCheckState(primItem, isPayload, false);
 
     if (isPayload) {
         const Qt::CheckState want = prim.IsLoaded() ? Qt::Checked : Qt::Unchecked;
@@ -940,7 +988,7 @@ StageTreePrivate::invalidateSubtree(PrimItem* item, const UsdPrim& prim)
     }
 
     item->invalidate();
-    itemCheckState(item, d.payloadEnabled, false);
+    itemCheckState(item, isPayload, false);
 
     if (isPayload) {
         const Qt::CheckState want = prim.IsLoaded() ? Qt::Checked : Qt::Unchecked;
@@ -998,6 +1046,38 @@ StageTreePrivate::invalidatePrim(const SdfPath& path)
         if (!parentItem)
             return;
 
+        UsdPrim parentPrim;
+        bool parentIsPayload = false;
+        bool parentIsLoaded = false;
+
+        {
+            READ_LOCKER(locker, d.context->stageLock(), "stageLock");
+            if (!d.stage)
+                return;
+
+            parentPrim = parentPath == SdfPath::AbsoluteRootPath() ? d.stage->GetPseudoRoot()
+                                                                   : d.stage->GetPrimAtPath(parentPath);
+
+            if (d.payloadEnabled && parentPrim) {
+                parentIsPayload = stage::isPayload(d.stage, parentPath);
+                parentIsLoaded = parentPrim.IsLoaded();
+            }
+        }
+
+        if (parentIsPayload) {
+            parentItem->invalidate();
+            itemCheckState(parentItem, true, false);
+
+            const Qt::CheckState want = parentIsLoaded ? Qt::Checked : Qt::Unchecked;
+            if (parentItem->checkState(PrimItem::Name) != want)
+                parentItem->setCheckState(PrimItem::Name, want);
+
+            while (parentItem->childCount() > 0)
+                delete parentItem->child(0);
+
+            return;
+        }
+
         primItem = addItem(parentItem, primPath);
         if (!primItem)
             return;
@@ -1014,6 +1094,34 @@ StageTreePrivate::invalidateChildren(PrimItem* parentItem, const UsdPrim& prim)
 {
     if (!parentItem || !prim)
         return;
+
+    bool isPayload = false;
+    bool isLoaded = false;
+
+    {
+        READ_LOCKER(locker, d.context->stageLock(), "stageLock");
+        if (!d.stage)
+            return;
+
+        if (d.payloadEnabled) {
+            isPayload = stage::isPayload(d.stage, prim.GetPath());
+            isLoaded = prim.IsLoaded();
+        }
+    }
+
+    if (isPayload) {
+        parentItem->invalidate();
+        itemCheckState(parentItem, true, false);
+
+        const Qt::CheckState want = isLoaded ? Qt::Checked : Qt::Unchecked;
+        if (parentItem->checkState(PrimItem::Name) != want)
+            parentItem->setCheckState(PrimItem::Name, want);
+
+        while (parentItem->childCount() > 0)
+            delete parentItem->child(0);
+
+        return;
+    }
 
     QHash<QString, PrimItem*> existing;
     existing.reserve(parentItem->childCount());
@@ -1332,6 +1440,12 @@ StageTree::setPayloadEnabled(bool enabled)
 }
 
 void
+StageTree::updateEditLayer()
+{
+    p->updateEditLayer();
+}
+
+void
 StageTree::updateMask(const QList<SdfPath>& paths)
 {
     if (p->d.maskPaths != paths)
@@ -1339,15 +1453,15 @@ StageTree::updateMask(const QList<SdfPath>& paths)
 }
 
 void
-StageTree::updateStage(UsdStageRefPtr stage)
-{
-    p->updateStage(stage);
-}
-
-void
 StageTree::updatePrims(const NoticeBatch& batch)
 {
     p->updatePrims(batch);
+}
+
+void
+StageTree::updateStage(UsdStageRefPtr stage)
+{
+    p->updateStage(stage);
 }
 
 void

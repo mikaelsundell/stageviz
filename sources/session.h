@@ -12,6 +12,7 @@
 #include <QReadWriteLock>
 #include <QVariant>
 #include <pxr/base/gf/bbox3d.h>
+#include <pxr/usd/usd/editTarget.h>
 #include <pxr/usd/usd/stage.h>
 
 PXR_NAMESPACE_USING_DIRECTIVE
@@ -384,6 +385,45 @@ public:
     UsdStageRefPtr stageUnsafe() const;
 
     /**
+     * @brief Returns the current Stageviz USD edit target.
+     *
+     * The edit target determines where normal Stageviz authoring operations
+     * are written. New and loaded stages default to their root layer.
+     */
+    UsdEditTarget editTarget() const;
+
+    /**
+     * @brief Returns the current edit target without acquiring the stage lock.
+     *
+     * The caller must already hold stageLock().
+     */
+    UsdEditTarget editTargetUnsafe() const;
+
+    /**
+     * @brief Returns the layer used by the current Stageviz edit target.
+     */
+    SdfLayerHandle editLayer() const;
+
+    /**
+     * @brief Returns the current edit layer without acquiring the stage lock.
+     *
+     * The caller must already hold stageLock().
+     */
+    SdfLayerHandle editLayerUnsafe() const;
+
+    /**
+     * @brief Sets the Stageviz edit layer.
+     *
+     * Only layers in the stage's local layer stack are accepted. The stage
+     * creates the corresponding local-layer edit target so layer offsets are
+     * preserved correctly.
+     *
+     * @param layer Local layer to use for subsequent Stageviz authoring.
+     * @return True if the layer is valid and became the active edit layer.
+     */
+    bool setEditLayer(const SdfLayerHandle& layer);
+
+    /**
      * @brief Returns the stage lock used for thread-safe access.
      */
     QReadWriteLock* stageLock() const;
@@ -468,6 +508,14 @@ Q_SIGNALS:
      * @brief Emitted when the stage changes.
      */
     void stageChanged(UsdStageRefPtr stage, LoadPolicy policy, StageStatus status);
+
+    /**
+     * @brief Emitted when the active Stageviz edit layer changes.
+     *
+     * Changing the edit layer changes where future authoring is written but
+     * does not itself modify the composed USD stage.
+     */
+    void editLayerChanged(SdfLayerHandle layer);
 
     /**
      * @brief Emitted when the Stageviz-owned auxiliary USD stage changes.

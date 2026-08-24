@@ -1847,114 +1847,134 @@ def test_reset_overrides():
         "payload content loaded for reset overrides",
     )
 
-    path = "/World/PayloadA/Geom"
-    visibility_path = f"{path}.visibility"
-    translate_path = f"{path}.xformOp:translate"
+    payload_path = "/World/PayloadA"
+    child_path = "/World/PayloadA/Geom"
+    visibility_path = f"{child_path}.visibility"
+    payload_translate_path = f"{payload_path}.xformOp:translate"
 
-    prim = _prim(path)
-    _assert(bool(prim), "composed prim prepared for reset overrides")
+    payload_prim = _prim(payload_path)
+    child_prim = _prim(child_path)
 
-    # Author several direct root-layer overrides on the composed prim.
-    UsdGeom.Imageable(prim).GetVisibilityAttr().Set(UsdGeom.Tokens.invisible)
+    _assert(
+        bool(payload_prim and payload_prim.HasPayload() and payload_prim.IsLoaded()),
+        "payload root prepared for reset overrides",
+    )
+    _assert(
+        bool(child_prim),
+        "payload child prepared for reset overrides",
+    )
 
-    xform = UsdGeom.Xformable(prim)
-    xform.AddTranslateOp().Set(Gf.Vec3d(3.0, 4.0, 5.0))
+    # The payload root is owned by the root layer. Its authored transform is
+    # stage content, not an override, and must survive Reset > Overrides.
+    _assert(
+        _set_translate(payload_path, (8.0, -3.0, 2.0)),
+        "payload root transform authored",
+    )
 
-    prim.SetMetadata("documentation", "Stageviz reset override test")
+    payload_world_before = _world_transform(payload_path)
+
+    _assert(
+        _root_has_property(payload_translate_path),
+        "payload root transform exists in root layer",
+    )
+
+    # Hide a composed child exactly as the UI does. This creates a root-layer
+    # over containing only the visibility opinion.
+    stageviz.command.hide_paths([child_path], recursive=False)
+
+    _assert(
+        _wait_until(lambda: str(_visibility(child_path)) == "invisible"),
+        "payload child hidden",
+    )
 
     _assert(
         _root_has_property(visibility_path),
-        "visibility override authored in root layer",
-    )
-    _assert(
-        _root_has_property(translate_path),
-        "transform override authored in root layer",
-    )
-    _assert(
-        _root_has_prim(path),
-        "root-layer override prim spec exists",
-    )
-
-    root_spec = _root_layer().GetPrimAtPath(Sdf.Path(path))
-    _assert(
-        bool(root_spec and root_spec.HasInfo("documentation")),
-        "metadata override authored in root layer",
-    )
-
-    # Add a descendant override. Resetting the parent must not remove it.
-    child_path = f"{path}/ChildOverride"
-    child = UsdGeom.Xform.Define(_stage(), child_path).GetPrim()
-    child.SetMetadata("documentation", "Preserve descendant override")
-
-    _assert(
-        _root_has_prim(child_path),
-        "descendant root-layer opinion prepared",
-    )
-
-    stageviz.command.reset_overrides([path])
-
-    _assert(
-        _wait_until(
-            lambda: not _root_has_property(visibility_path)
-            and not _root_has_property(translate_path)
-        ),
-        "reset_overrides removes direct root-layer properties",
-    )
-
-    root_spec = _root_layer().GetPrimAtPath(Sdf.Path(path))
-    _assert(
-        not root_spec or not root_spec.HasInfo("documentation"),
-        "reset_overrides removes direct root-layer metadata",
+        "hide creates descendant root-layer visibility override",
     )
 
     _assert(
-        _exists(path),
-        "reset_overrides preserves composed prim",
+        bool(_prim(payload_path) and _prim(payload_path).HasPayload() and _prim(payload_path).IsLoaded()),
+        "payload remains loaded before reset",
+    )
+
+    # Resetting the payload root must recurse into composed descendants and
+    # remove their override properties without touching the payload root def.
+    stageviz.command.reset_overrides([payload_path])
+
+    _assert(
+        _wait_until(lambda: not _root_has_property(visibility_path)),
+        "reset_overrides recursively removes descendant visibility override",
     )
 
     _assert(
-        _root_has_prim(child_path),
-        "reset_overrides preserves descendant root-layer opinions",
+        str(_visibility(child_path)) != "invisible",
+        "reset_overrides exposes weaker payload visibility",
+    )
+
+    _assert(
+        _exists(child_path),
+        "reset_overrides preserves payload child",
+    )
+
+    payload_prim = _prim(payload_path)
+    _assert(
+        bool(payload_prim and payload_prim.HasPayload() and payload_prim.IsLoaded()),
+        "reset_overrides preserves payload arc and load state",
+    )
+
+    _assert(
+        _root_has_property(payload_translate_path),
+        "reset_overrides preserves root-owned payload transform",
+    )
+
+    _assert(
+        _matrix_close(_world_transform(payload_path), payload_world_before, tolerance=1e-8),
+        "reset_overrides preserves payload root world transform",
     )
 
     if _undo():
         _assert(
-            _wait_until(
-                lambda: _root_has_property(visibility_path)
-                and _root_has_property(translate_path)
-            ),
-            "undo reset_overrides restores direct root-layer properties",
-        )
-
-        root_spec = _root_layer().GetPrimAtPath(Sdf.Path(path))
-        _assert(
-            bool(root_spec and root_spec.HasInfo("documentation")),
-            "undo reset_overrides restores direct root-layer metadata",
+            _wait_until(lambda: _root_has_property(visibility_path)),
+            "undo reset_overrides restores descendant visibility override",
         )
 
         _assert_equal(
-            root_spec.GetInfo("documentation") if root_spec else None,
-            "Stageviz reset override test",
-            "undo reset_overrides restores metadata value",
+            str(_visibility(child_path)),
+            "invisible",
+            "undo reset_overrides restores hidden child",
+        )
+
+        payload_prim = _prim(payload_path)
+        _assert(
+            bool(payload_prim and payload_prim.HasPayload() and payload_prim.IsLoaded()),
+            "undo reset_overrides keeps payload loaded",
         )
 
         _assert(
-            _root_has_prim(child_path),
-            "undo reset_overrides keeps descendant override intact",
+            _matrix_close(_world_transform(payload_path), payload_world_before, tolerance=1e-8),
+            "undo reset_overrides keeps payload root transform unchanged",
         )
 
     if _redo():
         _assert(
-            _wait_until(
-                lambda: not _root_has_property(visibility_path)
-                and not _root_has_property(translate_path)
-            ),
-            "redo reset_overrides removes direct root-layer properties again",
+            _wait_until(lambda: not _root_has_property(visibility_path)),
+            "redo reset_overrides removes descendant visibility override again",
+        )
+
+        payload_prim = _prim(payload_path)
+        _assert(
+            bool(payload_prim and payload_prim.HasPayload() and payload_prim.IsLoaded()),
+            "redo reset_overrides keeps payload loaded",
         )
 
         _assert(
-            _exists(path),
-            "redo reset_overrides still preserves composed prim",
+            _root_has_property(payload_translate_path),
+            "redo reset_overrides still preserves payload root transform",
+        )
+
+        _assert(
+            _matrix_close(_world_transform(payload_path), payload_world_before, tolerance=1e-8),
+            "redo reset_overrides preserves payload root world transform",
         )
 
 

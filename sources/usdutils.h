@@ -13,12 +13,12 @@ PXR_NAMESPACE_USING_DIRECTIVE
 
 namespace stageviz {
 
-namespace rootlayer {
+namespace editlayer {
 
     /**
-     * @brief Result container for root-layer path validation.
+     * @brief Result container for edit-layer path validation.
      *
-     * Stores the opened root layer together with the normalized prim path
+     * Stores the opened edit layer together with the normalized prim path
      * that was validated. Property paths are normalized to their owning prim
      * path before validation.
      */
@@ -28,48 +28,48 @@ namespace rootlayer {
     };
 
     /**
-     * @brief Returns the stage's opened root layer.
+     * @brief Returns the stage's opened edit layer.
      *
      * This function defines the current Stageviz structural editing scope.
      * Namespace and structural edits are restricted to the stage's opened
-     * root layer and do not target sublayers, session layers, referenced
+     * edit layer and do not target sublayers, session layers, referenced
      * layers, payload layers, or other composed layers.
      *
-     * @param stage Stage whose root layer should be returned.
+     * @param stage Stage whose edit layer should be returned.
      * @param error Receives a descriptive failure reason.
      *
-     * @return Opened root layer, or an invalid handle on failure.
+     * @return Opened edit layer, or an invalid handle on failure.
      */
     SdfLayerHandle opened(const UsdStageRefPtr& stage, QString& error);
 
     /**
-     * @brief Validates that a prim may be edited in the opened root layer.
+     * @brief Validates that a prim may be edited in the opened edit layer.
      *
      * Property paths are normalized to their owning prim path. Validation
-     * requires that the stage and prim exist and that the opened root layer
+     * requires that the stage and prim exist and that the opened edit layer
      * contains a prim specification at the normalized path.
      *
      * When @p requireStrongest is true, the strongest composed prim
-     * specification must also belong to the opened root layer. This prevents
-     * Stageviz from structurally editing a weaker root-layer opinion while a
+     * specification must also belong to the opened edit layer. This prevents
+     * Stageviz from structurally editing a weaker edit-layer opinion while a
      * stronger opinion from another layer controls the composed prim.
      *
      * @param stage Stage containing the prim.
      * @param path Prim or property path to validate.
      * @param error Receives a descriptive failure reason.
-     * @param requireStrongest Require the opened root layer to provide the
+     * @param requireStrongest Require the opened edit layer to provide the
      * strongest prim specification.
      *
-     * @return True when the prim is valid for root-layer editing.
+     * @return True when the prim is valid for edit-layer editing.
      */
     bool validatePrim(const UsdStageRefPtr& stage, const SdfPath& path, QString& error, bool requireStrongest = true);
 
     /**
-     * @brief Validates a destination parent for root-layer structural edits.
+     * @brief Validates a destination parent for edit-layer structural edits.
      *
      * The absolute root path is always accepted as a valid parent when the
-     * stage has an opened root layer. Other parent paths are validated using
-     * the same root-layer ownership and strongest-opinion policy as
+     * stage has an opened edit layer. Other parent paths are validated using
+     * the same edit-layer ownership and strongest-opinion policy as
      * validatePrim().
      *
      * This function does not validate operation-specific hierarchy rules such
@@ -80,15 +80,19 @@ namespace rootlayer {
      * @param stage Stage containing the destination parent.
      * @param parentPath Parent prim path or the absolute root path.
      * @param error Receives a descriptive failure reason.
-     * @param requireStrongest Require the opened root layer to provide the
+     * @param requireStrongest Require the opened edit layer to provide the
      * strongest parent prim specification.
      *
-     * @return True when the parent is valid for root-layer editing.
+     * @return True when the parent is valid for edit-layer editing.
      */
     bool validateParent(const UsdStageRefPtr& stage, const SdfPath& parentPath, QString& error,
                         bool requireStrongest = true);
 
-}  // namespace rootlayer
+}  // namespace editlayer
+
+// Transitional compatibility alias for callers that still use the former
+// rootlayer namespace. New code should use editlayer directly.
+namespace rootlayer = editlayer;
 
 namespace identifier {
 
@@ -440,7 +444,7 @@ namespace stage {
      * @brief Returns whether a prim can be edited as a transform.
      *
      * The prim must exist, be UsdGeomXformable, and satisfy Stageviz's
-     * strongest-root-layer editing policy.
+     * strongest-edit-layer editing policy.
      */
     bool isTransformEditable(UsdStageRefPtr stage, const SdfPath& path);
 

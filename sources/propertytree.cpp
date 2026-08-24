@@ -1113,7 +1113,7 @@ PropertyTreePrivate::addCompositionSection(const UsdPrim& prim)
     PropertyItem* section = addSection("Composition");
     bool hasComposition = false;
 
-    const SdfLayerHandle rootLayer = d.stage ? d.stage->GetRootLayer() : SdfLayerHandle();
+    const SdfLayerHandle rootLayer = d.stage ? d.stage->GetEditTarget().GetLayer() : SdfLayerHandle();
     const auto rootSpec = rootLayer ? rootLayer->GetPrimAtPath(prim.GetPath()) : SdfPrimSpecHandle();
     const auto primStack = prim.GetPrimStack();
     const SdfLayerHandle strongestLayer = (!primStack.empty() && primStack.front()) ? primStack.front()->GetLayer()
@@ -1124,7 +1124,7 @@ PropertyTreePrivate::addCompositionSection(const UsdPrim& prim)
 
     const QString payloadAncestor = payloadAncestorPath(prim);
     if (strongestLayer && rootLayer && strongestLayer == rootLayer) {
-        editSource = QStringLiteral("Root layer");
+        editSource = QStringLiteral("Edit layer");
     }
     else if (!payloadAncestor.isEmpty()) {
         editSource = QStringLiteral("Payload");
@@ -1245,6 +1245,15 @@ PropertyTreePrivate::init()
 
     connect(d.tree.data(), &QTreeWidget::itemChanged, this, &PropertyTreePrivate::itemChanged);
     connect(d.tree.data(), &QTreeWidget::itemExpanded, this, &PropertyTreePrivate::itemExpanded);
+    connect(session(), &Session::editLayerChanged, this, [this](SdfLayerHandle) {
+        if (!d.stage)
+            return;
+
+        if (!d.path.IsEmpty())
+            updateSelection({ d.path });
+        else
+            updateStage(d.stage);
+    });
 }
 
 void
@@ -1406,7 +1415,7 @@ PropertyTreePrivate::addAttribute(PropertyItem* parent, const UsdAttribute& attr
     item->setPropertyPath(attr.GetPath());
     item->setText(PropertyItem::Name, StringToQString(attr.GetName().GetString()));
 
-    const SdfLayerHandle rootLayer = d.stage ? d.stage->GetRootLayer() : SdfLayerHandle();
+    const SdfLayerHandle rootLayer = d.stage ? d.stage->GetEditTarget().GetLayer() : SdfLayerHandle();
     const UsdPrim prim = attr.GetPrim();
     const bool rootOverride = rootLayer && bool(rootLayer->GetPropertyAtPath(attr.GetPath()))
                               && hasUnderlyingPrimOpinion(prim, rootLayer);
@@ -1425,7 +1434,7 @@ PropertyTreePrivate::addAttribute(PropertyItem* parent, const UsdAttribute& attr
     item->setData(PropertyItem::Name, OverrideRole, rootOverride);
 
     if (rootOverride) {
-        toolTips.append(QStringLiteral("Root-layer override"));
+        toolTips.append(QStringLiteral("Edit-layer override"));
         item->setIcon(PropertyItem::Name, QIcon(style()->icon(Style::Override, Style::UIScale::Small)));
         QFont nameFont = item->font(PropertyItem::Name);
         nameFont.setBold(true);

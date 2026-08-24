@@ -70,17 +70,17 @@ namespace {
         VtValue defaultValue;
     };
 
-    RootPropertyState captureRootPropertyState(const SdfLayerHandle& rootLayer, const SdfPath& propertyPath)
+    RootPropertyState captureRootPropertyState(const SdfLayerHandle& editLayer, const SdfPath& propertyPath)
     {
         RootPropertyState state;
         state.propertyPath = propertyPath;
-        if (!rootLayer || propertyPath.IsEmpty())
+        if (!editLayer || propertyPath.IsEmpty())
             return state;
 
-        state.hadSpec = bool(rootLayer->GetPropertyAtPath(propertyPath));
-        state.hadDefault = rootLayer->HasField(propertyPath, SdfFieldKeys->Default);
+        state.hadSpec = bool(editLayer->GetPropertyAtPath(propertyPath));
+        state.hadDefault = editLayer->HasField(propertyPath, SdfFieldKeys->Default);
         if (state.hadDefault)
-            state.defaultValue = rootLayer->GetField(propertyPath, SdfFieldKeys->Default);
+            state.defaultValue = editLayer->GetField(propertyPath, SdfFieldKeys->Default);
         return state;
     }
 
@@ -96,20 +96,20 @@ namespace {
         return layer->CanApply(edits) && layer->Apply(edits);
     }
 
-    bool restoreRootPropertyState(const SdfLayerHandle& rootLayer, const RootPropertyState& state)
+    bool restoreRootPropertyState(const SdfLayerHandle& editLayer, const RootPropertyState& state)
     {
-        if (!rootLayer || state.propertyPath.IsEmpty())
+        if (!editLayer || state.propertyPath.IsEmpty())
             return false;
 
         if (!state.hadSpec)
-            return removePropertySpec(rootLayer, state.propertyPath);
+            return removePropertySpec(editLayer, state.propertyPath);
 
         if (state.hadDefault) {
-            rootLayer->SetField(state.propertyPath, SdfFieldKeys->Default, state.defaultValue);
+            editLayer->SetField(state.propertyPath, SdfFieldKeys->Default, state.defaultValue);
             return true;
         }
 
-        rootLayer->EraseField(state.propertyPath, SdfFieldKeys->Default);
+        editLayer->EraseField(state.propertyPath, SdfFieldKeys->Default);
         return true;
     }
 
@@ -157,10 +157,10 @@ namespace {
             return false;
         }
 
-        QString rootError;
-        const SdfLayerHandle rootLayer = rootlayer::opened(stage, rootError);
-        if (!rootLayer) {
-            error = rootError;
+        QString editError;
+        const SdfLayerHandle editLayer = editlayer::opened(stage, editError);
+        if (!editLayer) {
+            error = editError;
             return false;
         }
 
@@ -169,31 +169,31 @@ namespace {
 
         if (state.hadXformOpOrderSpec) {
             if (state.hadXformOpOrderDefault)
-                rootLayer->SetField(orderPath, SdfFieldKeys->Default, state.xformOpOrderDefault);
+                editLayer->SetField(orderPath, SdfFieldKeys->Default, state.xformOpOrderDefault);
             else
-                rootLayer->EraseField(orderPath, SdfFieldKeys->Default);
+                editLayer->EraseField(orderPath, SdfFieldKeys->Default);
         }
-        else if (!removePropertySpec(rootLayer, orderPath)) {
+        else if (!removePropertySpec(editLayer, orderPath)) {
             error = QString("failed to remove transform order override: %1").arg(pathText(primPath));
             return false;
         }
 
         if (state.hadMatrixOpSpec) {
             if (state.hadMatrixOpDefault)
-                rootLayer->SetField(matrixPath, SdfFieldKeys->Default, state.matrixOpDefault);
+                editLayer->SetField(matrixPath, SdfFieldKeys->Default, state.matrixOpDefault);
             else
-                rootLayer->EraseField(matrixPath, SdfFieldKeys->Default);
+                editLayer->EraseField(matrixPath, SdfFieldKeys->Default);
         }
-        else if (!removePropertySpec(rootLayer, matrixPath)) {
+        else if (!removePropertySpec(editLayer, matrixPath)) {
             error = QString("failed to remove matrix transform override: %1").arg(pathText(primPath));
             return false;
         }
 
         return true;
     }
-    bool hasUnderlyingTransformOpinion(UsdStageRefPtr stage, const UsdPrim& prim, const SdfLayerHandle& rootLayer)
+    bool hasUnderlyingTransformOpinion(UsdStageRefPtr stage, const UsdPrim& prim, const SdfLayerHandle& editLayer)
     {
-        if (!stage || !prim || !rootLayer)
+        if (!stage || !prim || !editLayer)
             return false;
 
         const TfToken orderToken("xformOpOrder");
@@ -203,7 +203,7 @@ namespace {
                 continue;
 
             const SdfLayerHandle layer = primSpec->GetLayer();
-            if (!layer || layer == rootLayer)
+            if (!layer || layer == editLayer)
                 continue;
 
             const SdfPath orderPath = primSpec->GetPath().AppendProperty(orderToken);
@@ -1138,10 +1138,10 @@ showPaths(const QList<SdfPath>& paths, bool recursive)
                         error = "stage missing";
                     }
                     else {
-                        QString rootError;
-                        const SdfLayerHandle rootLayer = rootlayer::opened(stage, rootError);
-                        if (!rootLayer) {
-                            error = rootError;
+                        QString editError;
+                        const SdfLayerHandle editLayer = editlayer::opened(stage, editError);
+                        if (!editLayer) {
+                            error = editError;
                         }
                         else {
                             state->rootStates.clear();
@@ -1149,7 +1149,7 @@ showPaths(const QList<SdfPath>& paths, bool recursive)
                             state->rootStates.reserve(affected.size());
                             for (const SdfPath& path : affected) {
                                 state->rootStates.append(
-                                    captureRootPropertyState(rootLayer, path.AppendProperty(UsdGeomTokens->visibility)));
+                                    captureRootPropertyState(editLayer, path.AppendProperty(UsdGeomTokens->visibility)));
                             }
 
                             stage::setVisible(stage, paths, true, recursive);
@@ -1176,16 +1176,16 @@ showPaths(const QList<SdfPath>& paths, bool recursive)
                 {
                     WRITE_LOCKER(locker, session->stageLock(), "stageLock");
                     const UsdStageRefPtr stage = session->stageUnsafe();
-                    QString rootError;
-                    const SdfLayerHandle rootLayer = rootlayer::opened(stage, rootError);
+                    QString editError;
+                    const SdfLayerHandle editLayer = editlayer::opened(stage, editError);
 
-                    if (!stage || !rootLayer) {
+                    if (!stage || !editLayer) {
                         success = false;
-                        error = !rootError.isEmpty() ? rootError : QStringLiteral("stage missing");
+                        error = !editError.isEmpty() ? editError : QStringLiteral("stage missing");
                     }
                     else {
                         for (const RootPropertyState& rootState : state->rootStates) {
-                            if (!restoreRootPropertyState(rootLayer, rootState)) {
+                            if (!restoreRootPropertyState(editLayer, rootState)) {
                                 success = false;
                                 error = QString("failed to restore visibility override: %1")
                                             .arg(pathText(rootState.propertyPath.GetPrimPath()));
@@ -1231,10 +1231,10 @@ hidePaths(const QList<SdfPath>& paths, bool recursive)
                         error = "stage missing";
                     }
                     else {
-                        QString rootError;
-                        const SdfLayerHandle rootLayer = rootlayer::opened(stage, rootError);
-                        if (!rootLayer) {
-                            error = rootError;
+                        QString editError;
+                        const SdfLayerHandle editLayer = editlayer::opened(stage, editError);
+                        if (!editLayer) {
+                            error = editError;
                         }
                         else {
                             state->rootStates.clear();
@@ -1242,7 +1242,7 @@ hidePaths(const QList<SdfPath>& paths, bool recursive)
                             state->rootStates.reserve(affected.size());
                             for (const SdfPath& path : affected) {
                                 state->rootStates.append(
-                                    captureRootPropertyState(rootLayer, path.AppendProperty(UsdGeomTokens->visibility)));
+                                    captureRootPropertyState(editLayer, path.AppendProperty(UsdGeomTokens->visibility)));
                             }
 
                             stage::setVisible(stage, paths, false, recursive);
@@ -1269,16 +1269,16 @@ hidePaths(const QList<SdfPath>& paths, bool recursive)
                 {
                     WRITE_LOCKER(locker, session->stageLock(), "stageLock");
                     const UsdStageRefPtr stage = session->stageUnsafe();
-                    QString rootError;
-                    const SdfLayerHandle rootLayer = rootlayer::opened(stage, rootError);
+                    QString editError;
+                    const SdfLayerHandle editLayer = editlayer::opened(stage, editError);
 
-                    if (!stage || !rootLayer) {
+                    if (!stage || !editLayer) {
                         success = false;
-                        error = !rootError.isEmpty() ? rootError : QStringLiteral("stage missing");
+                        error = !editError.isEmpty() ? editError : QStringLiteral("stage missing");
                     }
                     else {
                         for (const RootPropertyState& rootState : state->rootStates) {
-                            if (!restoreRootPropertyState(rootLayer, rootState)) {
+                            if (!restoreRootPropertyState(editLayer, rootState)) {
                                 success = false;
                                 error = QString("failed to restore visibility override: %1")
                                             .arg(pathText(rootState.propertyPath.GetPrimPath()));
@@ -1385,11 +1385,11 @@ defaultPrimPath(const SdfPath& path)
                         else
                             state->previousDefaultPrimPath = SdfPath();
 
-                        QString rootError;
-                        const SdfLayerHandle rootLayer = rootlayer::opened(stage, rootError);
+                        QString editError;
+                        const SdfLayerHandle editLayer = editlayer::opened(stage, editError);
                         const UsdPrim prim = stage->GetPrimAtPath(path);
-                        if (!rootLayer) {
-                            error = rootError;
+                        if (!editLayer) {
+                            error = editError;
                         }
                         else if (!prim || !prim.IsValid()) {
                             error = "invalid prim";
@@ -1397,9 +1397,9 @@ defaultPrimPath(const SdfPath& path)
                         else if (path.GetParentPath() != SdfPath::AbsoluteRootPath()) {
                             error = "default prim must be a root prim";
                         }
-                        else if (!rootlayer::validatePrim(stage, path, error)) {}
+                        else if (!editlayer::validatePrim(stage, path, error)) {}
                         else {
-                            UsdEditContext context(stage, UsdEditTarget(rootLayer));
+                            UsdEditContext context(stage, UsdEditTarget(editLayer));
                             stage->SetDefaultPrim(prim);
                             state->newDefaultPrimPath = path;
                             success = true;
@@ -1452,13 +1452,13 @@ defaultPrimPath(const SdfPath& path)
                         hadStage = false;
                     }
                     else {
-                        QString rootError;
-                        const SdfLayerHandle rootLayer = rootlayer::opened(stage, rootError);
-                        if (!rootLayer) {
-                            error = rootError;
+                        QString editError;
+                        const SdfLayerHandle editLayer = editlayer::opened(stage, editError);
+                        if (!editLayer) {
+                            error = editError;
                         }
                         else if (state->previousDefaultPrimPath.IsEmpty()) {
-                            UsdEditContext context(stage, UsdEditTarget(rootLayer));
+                            UsdEditContext context(stage, UsdEditTarget(editLayer));
                             stage->ClearDefaultPrim();
                             success = true;
                         }
@@ -1468,7 +1468,7 @@ defaultPrimPath(const SdfPath& path)
                                 error = "previous default prim missing";
                             }
                             else {
-                                UsdEditContext context(stage, UsdEditTarget(rootLayer));
+                                UsdEditContext context(stage, UsdEditTarget(editLayer));
                                 stage->SetDefaultPrim(prim);
                                 success = true;
                             }
@@ -1529,10 +1529,10 @@ deletePaths(const QList<SdfPath>& inPaths)
 
                     const UsdStageRefPtr stage = session->stageUnsafe();
                     if (stage) {
-                        QString rootError;
-                        const SdfLayerHandle rootLayer = rootlayer::opened(stage, rootError);
-                        if (!rootLayer) {
-                            error = rootError;
+                        QString editError;
+                        const SdfLayerHandle editLayer = editlayer::opened(stage, editError);
+                        if (!editLayer) {
+                            error = editError;
                         }
                         else {
                             QList<SdfPath> editable;
@@ -1546,7 +1546,7 @@ deletePaths(const QList<SdfPath>& inPaths)
                                                                                     : candidate;
 
                                 QString pathError;
-                                if (rootlayer::validatePrim(stage, primPath, pathError)) {
+                                if (editlayer::validatePrim(stage, primPath, pathError)) {
                                     editable.append(primPath);
                                 }
                                 else {
@@ -1594,7 +1594,7 @@ deletePaths(const QList<SdfPath>& inPaths)
                             if (deletesDefaultPrim)
                                 stage->ClearDefaultPrim();
 
-                            UsdEditContext context(stage, UsdEditTarget(rootLayer));
+                            UsdEditContext context(stage, UsdEditTarget(editLayer));
                             for (const SdfPath& path : paths) {
                                 snapshot::PrimState primState;
                                 if (!snapshot::capturePrimToLayer(stage, path, primState)) {
@@ -1602,8 +1602,8 @@ deletePaths(const QList<SdfPath>& inPaths)
                                     continue;
                                 }
 
-                                if (!stage::removePrimSpec(rootLayer, primState.specPath)) {
-                                    rejected.append(QString("failed to remove root-layer spec: %1")
+                                if (!stage::removePrimSpec(editLayer, primState.specPath)) {
+                                    rejected.append(QString("failed to remove edit-layer spec: %1")
                                                         .arg(pathText(primState.specPath)));
                                     continue;
                                 }
@@ -1659,19 +1659,19 @@ deletePaths(const QList<SdfPath>& inPaths)
 
                     const UsdStageRefPtr stage = session->stageUnsafe();
                     if (stage) {
-                        QString rootError;
-                        const SdfLayerHandle rootLayer = rootlayer::opened(stage, rootError);
-                        if (!rootLayer) {
-                            error = rootError;
+                        QString editError;
+                        const SdfLayerHandle editLayer = editlayer::opened(stage, editError);
+                        if (!editLayer) {
+                            error = editError;
                         }
                         else {
-                            UsdEditContext context(stage, UsdEditTarget(rootLayer));
+                            UsdEditContext context(stage, UsdEditTarget(editLayer));
                             snapshot::sortByHierarchy(state->prims);
 
                             QSet<SdfPath> changedSet;
 
                             for (const auto& primState : state->prims) {
-                                snapshot::restorePrimFromSnapshotLayer(rootLayer, primState);
+                                snapshot::restorePrimFromSnapshotLayer(editLayer, primState);
                                 changedSet.insert(primState.stagePath);
 
                                 const SdfPath parentPath = primState.stagePath.GetParentPath();
@@ -1756,11 +1756,11 @@ duplicatePaths(const QList<SdfPath>& inPaths)
                         errors.append("stage missing");
                     }
                     else {
-                        QString rootError;
-                        const SdfLayerHandle rootLayer = rootlayer::opened(stage, rootError);
+                        QString editError;
+                        const SdfLayerHandle editLayer = editlayer::opened(stage, editError);
 
-                        if (!rootLayer) {
-                            errors.append(rootError);
+                        if (!editLayer) {
+                            errors.append(editError);
                         }
                         else {
                             state->items.clear();
@@ -1802,7 +1802,7 @@ duplicatePaths(const QList<SdfPath>& inPaths)
 
                                 if (parentPath != SdfPath::AbsoluteRootPath()) {
                                     QString parentError;
-                                    if (!rootlayer::validateParent(stage, parentPath, parentError)) {
+                                    if (!editlayer::validateParent(stage, parentPath, parentError)) {
                                         errors.append(parentError);
                                         continue;
                                     }
@@ -1810,14 +1810,14 @@ duplicatePaths(const QList<SdfPath>& inPaths)
 
                                 const QString sourceName = qt::StringToQString(sourcePath.GetName());
                                 const SdfPath destinationPath = stage::buildChildPath(stage, parentPath, sourceName,
-                                                                                      rootError);
+                                                                                      editError);
 
                                 if (destinationPath.IsEmpty()) {
                                     errors.append(
-                                        rootError.isEmpty()
+                                        editError.isEmpty()
                                             ? QString("failed to build duplicate path: %1").arg(pathText(sourcePath))
-                                            : rootError);
-                                    rootError.clear();
+                                            : editError);
+                                    editError.clear();
                                     continue;
                                 }
 
@@ -1828,8 +1828,8 @@ duplicatePaths(const QList<SdfPath>& inPaths)
                                 }
 
                                 if (parentPath != SdfPath::AbsoluteRootPath()
-                                    && !rootLayer->GetPrimAtPath(parentPath)) {
-                                    if (!SdfCreatePrimInLayer(rootLayer, parentPath)) {
+                                    && !editLayer->GetPrimAtPath(parentPath)) {
+                                    if (!SdfCreatePrimInLayer(editLayer, parentPath)) {
                                         errors.append(
                                             QString("failed to create parent override: %1").arg(pathText(parentPath)));
                                         continue;
@@ -1837,7 +1837,7 @@ duplicatePaths(const QList<SdfPath>& inPaths)
                                     state->createdParentSpecs.insert(parentPath);
                                 }
 
-                                if (!SdfCopySpec(sourceLayer, sourceSpecPath, rootLayer, destinationPath)) {
+                                if (!SdfCopySpec(sourceLayer, sourceSpecPath, editLayer, destinationPath)) {
                                     errors.append(QString("failed to copy prim spec: %1").arg(pathText(sourcePath)));
                                     continue;
                                 }
@@ -1903,16 +1903,16 @@ duplicatePaths(const QList<SdfPath>& inPaths)
                         errors.append("stage missing");
                     }
                     else {
-                        QString rootError;
-                        const SdfLayerHandle rootLayer = rootlayer::opened(stage, rootError);
+                        QString editError;
+                        const SdfLayerHandle editLayer = editlayer::opened(stage, editError);
 
-                        if (!rootLayer) {
+                        if (!editLayer) {
                             success = false;
-                            errors.append(rootError);
+                            errors.append(editError);
                         }
                         else {
                             for (auto it = state->items.crbegin(); it != state->items.crend(); ++it) {
-                                if (!stage::removePrimSpec(rootLayer, it->destinationPath)) {
+                                if (!stage::removePrimSpec(editLayer, it->destinationPath)) {
                                     success = false;
                                     errors.append(
                                         QString("failed to remove duplicate: %1").arg(pathText(it->destinationPath)));
@@ -1933,9 +1933,9 @@ duplicatePaths(const QList<SdfPath>& inPaths)
                                       });
 
                             for (const SdfPath& parentPath : createdParents) {
-                                const SdfPrimSpecHandle parentSpec = rootLayer->GetPrimAtPath(parentPath);
+                                const SdfPrimSpecHandle parentSpec = editLayer->GetPrimAtPath(parentPath);
                                 if (parentSpec && parentSpec->IsInert())
-                                    stage::removePrimSpec(rootLayer, parentPath);
+                                    stage::removePrimSpec(editLayer, parentPath);
                             }
                         }
                     }
@@ -1997,13 +1997,13 @@ newPrimPath(const SdfPath& parentPath, const QString& nameInput, const TfToken& 
                         error = "stage missing";
                     }
                     else {
-                        QString rootError;
-                        const SdfLayerHandle rootLayer = rootlayer::opened(stage, rootError);
+                        QString editError;
+                        const SdfLayerHandle editLayer = editlayer::opened(stage, editError);
 
-                        if (!rootLayer) {
-                            error = rootError;
+                        if (!editLayer) {
+                            error = editError;
                         }
-                        else if (!rootlayer::validateParent(stage, parentPath, error)) {}
+                        else if (!editlayer::validateParent(stage, parentPath, error)) {}
                         else {
                             newPath = stage::buildChildPath(stage, parentPath, nameInput, error);
 
@@ -2017,11 +2017,11 @@ newPrimPath(const SdfPath& parentPath, const QString& nameInput, const TfToken& 
 
                                 for (SdfPath path = parentPath; !path.IsEmpty() && path != SdfPath::AbsoluteRootPath();
                                      path = path.GetParentPath()) {
-                                    if (!rootLayer->GetPrimAtPath(path))
+                                    if (!editLayer->GetPrimAtPath(path))
                                         state->createdAncestorSpecs.prepend(path);
                                 }
 
-                                UsdEditContext context(stage, UsdEditTarget(rootLayer));
+                                UsdEditContext context(stage, UsdEditTarget(editLayer));
                                 const UsdPrim prim = typeName.IsEmpty() ? stage->DefinePrim(newPath)
                                                                         : stage->DefinePrim(newPath, typeName);
 
@@ -2072,13 +2072,13 @@ newPrimPath(const SdfPath& parentPath, const QString& nameInput, const TfToken& 
                         error = "stage missing";
                     }
                     else {
-                        QString rootError;
-                        const SdfLayerHandle rootLayer = rootlayer::opened(stage, rootError);
+                        QString editError;
+                        const SdfLayerHandle editLayer = editlayer::opened(stage, editError);
 
-                        if (!rootLayer) {
-                            error = rootError;
+                        if (!editLayer) {
+                            error = editError;
                         }
-                        else if (!stage::removePrimSpec(rootLayer, state->createdPath)) {
+                        else if (!stage::removePrimSpec(editLayer, state->createdPath)) {
                             error = QString("failed to remove prim: %1").arg(pathText(state->createdPath));
                         }
                         else {
@@ -2086,9 +2086,9 @@ newPrimPath(const SdfPath& parentPath, const QString& nameInput, const TfToken& 
 
                             for (auto it = state->createdAncestorSpecs.crbegin();
                                  it != state->createdAncestorSpecs.crend(); ++it) {
-                                const SdfPrimSpecHandle spec = rootLayer->GetPrimAtPath(*it);
+                                const SdfPrimSpecHandle spec = editLayer->GetPrimAtPath(*it);
                                 if (spec && spec->IsInert())
-                                    stage::removePrimSpec(rootLayer, *it);
+                                    stage::removePrimSpec(editLayer, *it);
                             }
 
                             path::appendUnique(changed, state->parentPath);
@@ -2158,13 +2158,13 @@ newMaterialPath(const SdfPath& parentPath, const QString& nameInput)
                         error = "stage missing";
                     }
                     else {
-                        QString rootError;
-                        const SdfLayerHandle rootLayer = rootlayer::opened(stage, rootError);
+                        QString editError;
+                        const SdfLayerHandle editLayer = editlayer::opened(stage, editError);
 
-                        if (!rootLayer) {
-                            error = rootError;
+                        if (!editLayer) {
+                            error = editError;
                         }
-                        else if (!rootlayer::validateParent(stage, parentPath, error)) {}
+                        else if (!editlayer::validateParent(stage, parentPath, error)) {}
                         else {
                             materialPath = stage::buildChildPath(stage, parentPath, nameInput, error);
 
@@ -2178,11 +2178,11 @@ newMaterialPath(const SdfPath& parentPath, const QString& nameInput)
 
                                 for (SdfPath path = parentPath; !path.IsEmpty() && path != SdfPath::AbsoluteRootPath();
                                      path = path.GetParentPath()) {
-                                    if (!rootLayer->GetPrimAtPath(path))
+                                    if (!editLayer->GetPrimAtPath(path))
                                         state->createdAncestorSpecs.prepend(path);
                                 }
 
-                                UsdEditContext context(stage, UsdEditTarget(rootLayer));
+                                UsdEditContext context(stage, UsdEditTarget(editLayer));
 
                                 const UsdShadeMaterial material = UsdShadeMaterial::Define(stage, materialPath);
                                 const SdfPath shaderPath = materialPath.AppendChild(TfToken("PreviewSurface"));
@@ -2230,7 +2230,7 @@ newMaterialPath(const SdfPath& parentPath, const QString& nameInput)
                                 }
 
                                 if (!success)
-                                    stage::removePrimSpec(rootLayer, materialPath);
+                                    stage::removePrimSpec(editLayer, materialPath);
                             }
                         }
                     }
@@ -2267,13 +2267,13 @@ newMaterialPath(const SdfPath& parentPath, const QString& nameInput)
                         error = "stage missing";
                     }
                     else {
-                        QString rootError;
-                        const SdfLayerHandle rootLayer = rootlayer::opened(stage, rootError);
+                        QString editError;
+                        const SdfLayerHandle editLayer = editlayer::opened(stage, editError);
 
-                        if (!rootLayer) {
-                            error = rootError;
+                        if (!editLayer) {
+                            error = editError;
                         }
-                        else if (!stage::removePrimSpec(rootLayer, state->createdPath)) {
+                        else if (!stage::removePrimSpec(editLayer, state->createdPath)) {
                             error = QString("failed to remove material: %1").arg(pathText(state->createdPath));
                         }
                         else {
@@ -2281,9 +2281,9 @@ newMaterialPath(const SdfPath& parentPath, const QString& nameInput)
 
                             for (auto it = state->createdAncestorSpecs.crbegin();
                                  it != state->createdAncestorSpecs.crend(); ++it) {
-                                const SdfPrimSpecHandle spec = rootLayer->GetPrimAtPath(*it);
+                                const SdfPrimSpecHandle spec = editLayer->GetPrimAtPath(*it);
                                 if (spec && spec->IsInert())
-                                    stage::removePrimSpec(rootLayer, *it);
+                                    stage::removePrimSpec(editLayer, *it);
                             }
 
                             path::appendUnique(changed, state->parentPath);
@@ -2360,13 +2360,13 @@ namespace {
                             error = "stage missing";
                         }
                         else {
-                            QString rootError;
-                            const SdfLayerHandle rootLayer = rootlayer::opened(stage, rootError);
+                            QString editError;
+                            const SdfLayerHandle editLayer = editlayer::opened(stage, editError);
 
-                            if (!rootLayer) {
-                                error = rootError;
+                            if (!editLayer) {
+                                error = editError;
                             }
-                            else if (!rootlayer::validateParent(stage, parentPath, error)) {}
+                            else if (!editlayer::validateParent(stage, parentPath, error)) {}
                             else {
                                 newPath = stage::buildChildPath(stage, parentPath, nameInput, error);
 
@@ -2381,11 +2381,11 @@ namespace {
                                     for (SdfPath path = parentPath;
                                          !path.IsEmpty() && path != SdfPath::AbsoluteRootPath();
                                          path = path.GetParentPath()) {
-                                        if (!rootLayer->GetPrimAtPath(path))
+                                        if (!editLayer->GetPrimAtPath(path))
                                             state->createdAncestorSpecs.prepend(path);
                                     }
 
-                                    UsdEditContext context(stage, UsdEditTarget(rootLayer));
+                                    UsdEditContext context(stage, UsdEditTarget(editLayer));
                                     const UsdPrim prim = stage->DefinePrim(newPath, TfToken("Xform"));
 
                                     if (!prim || !prim.IsValid()) {
@@ -2422,7 +2422,7 @@ namespace {
                                     }
 
                                     if (!success)
-                                        stage::removePrimSpec(rootLayer, newPath);
+                                        stage::removePrimSpec(editLayer, newPath);
                                 }
                             }
                         }
@@ -2459,13 +2459,13 @@ namespace {
                             error = "stage missing";
                         }
                         else {
-                            QString rootError;
-                            const SdfLayerHandle rootLayer = rootlayer::opened(stage, rootError);
+                            QString editError;
+                            const SdfLayerHandle editLayer = editlayer::opened(stage, editError);
 
-                            if (!rootLayer) {
-                                error = rootError;
+                            if (!editLayer) {
+                                error = editError;
                             }
-                            else if (!stage::removePrimSpec(rootLayer, state->createdPath)) {
+                            else if (!stage::removePrimSpec(editLayer, state->createdPath)) {
                                 error = QString("failed to remove prim: %1").arg(pathText(state->createdPath));
                             }
                             else {
@@ -2473,9 +2473,9 @@ namespace {
 
                                 for (auto it = state->createdAncestorSpecs.crbegin();
                                      it != state->createdAncestorSpecs.crend(); ++it) {
-                                    const SdfPrimSpecHandle spec = rootLayer->GetPrimAtPath(*it);
+                                    const SdfPrimSpecHandle spec = editLayer->GetPrimAtPath(*it);
                                     if (spec && spec->IsInert())
-                                        stage::removePrimSpec(rootLayer, *it);
+                                        stage::removePrimSpec(editLayer, *it);
                                 }
 
                                 path::appendUnique(changed, state->parentPath);
@@ -2557,12 +2557,12 @@ renamePath(const SdfPath& path, const QString& newNameInput)
                         hadStage = false;
                     }
                     else {
-                        QString rootError;
-                        const SdfLayerHandle rootLayer = rootlayer::opened(stage, rootError);
-                        if (!rootLayer) {
-                            error = rootError;
+                        QString editError;
+                        const SdfLayerHandle editLayer = editlayer::opened(stage, editError);
+                        if (!editLayer) {
+                            error = editError;
                         }
-                        else if (!rootlayer::validatePrim(stage, path, error)) {}
+                        else if (!editlayer::validatePrim(stage, path, error)) {}
                         else {
                             newPath = stage::buildRenamePath(stage, path, newNameInput, error);
 
@@ -2581,7 +2581,7 @@ renamePath(const SdfPath& path, const QString& newNameInput)
                                     stage::captureChildOrder(stage, state->parentPath, state->oldOrder);
 
                                 const UsdStageLoadRules rules = stage->GetLoadRules();
-                                UsdEditContext context(stage, UsdEditTarget(rootLayer));
+                                UsdEditContext context(stage, UsdEditTarget(editLayer));
 
                                 if (stage::renamePrim(stage, path, newPath, error)) {
                                     stage->SetLoadRules(stage::remapLoadRules(rules, path, newPath));
@@ -2646,14 +2646,14 @@ renamePath(const SdfPath& path, const QString& newNameInput)
                         hadStage = false;
                     }
                     else {
-                        QString rootError;
-                        const SdfLayerHandle rootLayer = rootlayer::opened(stage, rootError);
-                        if (!rootLayer) {
-                            error = rootError;
+                        QString editError;
+                        const SdfLayerHandle editLayer = editlayer::opened(stage, editError);
+                        if (!editLayer) {
+                            error = editError;
                         }
                         else {
                             const UsdStageLoadRules rules = stage->GetLoadRules();
-                            UsdEditContext context(stage, UsdEditTarget(rootLayer));
+                            UsdEditContext context(stage, UsdEditTarget(editLayer));
 
                             if (stage::renamePrim(stage, state->newPath, state->oldPath, error)) {
                                 stage->SetLoadRules(stage::remapLoadRules(rules, state->newPath, state->oldPath));
@@ -2759,17 +2759,17 @@ newXformPath(const SdfPath& parentPath, const QString& nameInput)
                             state->oldMoveParentOrders.clear();
                             state->movedItems.clear();
 
-                            QString rootError;
-                            const SdfLayerHandle rootLayer = rootlayer::opened(stage, rootError);
-                            if (!rootLayer) {
-                                error = rootError;
+                            QString editError;
+                            const SdfLayerHandle editLayer = editlayer::opened(stage, editError);
+                            if (!editLayer) {
+                                error = editError;
                             }
-                            else if (!rootlayer::validateParent(stage, parentPath, error)) {}
+                            else if (!editlayer::validateParent(stage, parentPath, error)) {}
                             else {
                                 const bool parentIsRoot = parentPath == SdfPath::AbsoluteRootPath();
                                 stage::captureChildOrder(stage, parentPath, state->oldParentOrder);
 
-                                UsdEditContext context(stage, UsdEditTarget(rootLayer));
+                                UsdEditContext context(stage, UsdEditTarget(editLayer));
                                 const UsdGeomXform xform = UsdGeomXform::Define(stage, newPath);
                                 if (!xform || !xform.GetPrim()) {
                                     error = "define failed";
@@ -2798,7 +2798,7 @@ newXformPath(const SdfPath& parentPath, const QString& nameInput)
                                         }
 
                                         QString authoredError;
-                                        if (!rootlayer::validatePrim(stage, movePath, authoredError)) {
+                                        if (!editlayer::validatePrim(stage, movePath, authoredError)) {
                                             error = authoredError;
                                             movedSelection = false;
                                             break;
@@ -2835,7 +2835,7 @@ newXformPath(const SdfPath& parentPath, const QString& nameInput)
                                             error = moveError.isEmpty() ? "failed to move selected paths" : moveError;
                                             stage::restoreChildOrders(stage, state->oldMoveParentOrders);
                                             stage::restoreChildOrder(stage, parentPath, state->oldParentOrder);
-                                            stage::removePrimSpec(rootLayer, newPath);
+                                            stage::removePrimSpec(editLayer, newPath);
                                             movedSelection = false;
                                         }
                                     }
@@ -2911,13 +2911,13 @@ newXformPath(const SdfPath& parentPath, const QString& nameInput)
                         hadStage = false;
                     }
                     else {
-                        QString rootError;
-                        const SdfLayerHandle rootLayer = rootlayer::opened(stage, rootError);
-                        if (!rootLayer) {
-                            error = rootError;
+                        QString editError;
+                        const SdfLayerHandle editLayer = editlayer::opened(stage, editError);
+                        if (!editLayer) {
+                            error = editError;
                         }
                         else {
-                            UsdEditContext context(stage, UsdEditTarget(rootLayer));
+                            UsdEditContext context(stage, UsdEditTarget(editLayer));
                             QList<QPair<SdfPath, SdfPath>> reverseMoves;
                             reverseMoves.reserve(state->movedItems.size());
                             for (auto it = state->movedItems.crbegin(); it != state->movedItems.crend(); ++it)
@@ -2934,7 +2934,7 @@ newXformPath(const SdfPath& parentPath, const QString& nameInput)
                                 if (!state->parentPath.IsEmpty())
                                     stage::restoreChildOrder(stage, state->parentPath, state->oldParentOrder);
 
-                                restored = stage::removePrimSpec(rootLayer, state->createdPath);
+                                restored = stage::removePrimSpec(editLayer, state->createdPath);
                             }
 
                             if (restored) {
@@ -3035,12 +3035,12 @@ movePath(const QList<SdfPath>& paths, const SdfPath& newParentPath, int insertIn
                             error = "cannot move into or out of composed prims";
                         }
                         else {
-                            QString rootError;
-                            const SdfLayerHandle rootLayer = rootlayer::opened(stage, rootError);
-                            if (!rootLayer) {
-                                error = rootError;
+                            QString editError;
+                            const SdfLayerHandle editLayer = editlayer::opened(stage, editError);
+                            if (!editLayer) {
+                                error = editError;
                             }
-                            else if (!rootlayer::validateParent(stage, newParentPath, error)) {}
+                            else if (!editlayer::validateParent(stage, newParentPath, error)) {}
                             else {
                                 state->items.clear();
                                 state->newParentPath = newParentPath;
@@ -3079,7 +3079,7 @@ movePath(const QList<SdfPath>& paths, const SdfPath& newParentPath, int insertIn
                                     }
 
                                     QString authoredError;
-                                    if (!rootlayer::validatePrim(stage, path, authoredError)) {
+                                    if (!editlayer::validatePrim(stage, path, authoredError)) {
                                         error = authoredError;
                                         valid = false;
                                         break;
@@ -3148,7 +3148,7 @@ movePath(const QList<SdfPath>& paths, const SdfPath& newParentPath, int insertIn
                                     for (const MoveItem& item : state->items)
                                         movedNames.push_back(item.name);
 
-                                    UsdEditContext context(stage, UsdEditTarget(rootLayer));
+                                    UsdEditContext context(stage, UsdEditTarget(editLayer));
 
                                     QList<QPair<SdfPath, SdfPath>> moves;
                                     moves.reserve(state->items.size());
@@ -3288,13 +3288,13 @@ movePath(const QList<SdfPath>& paths, const SdfPath& newParentPath, int insertIn
                         hadStage = false;
                     }
                     else {
-                        QString rootError;
-                        const SdfLayerHandle rootLayer = rootlayer::opened(stage, rootError);
-                        if (!rootLayer) {
-                            error = rootError;
+                        QString editError;
+                        const SdfLayerHandle editLayer = editlayer::opened(stage, editError);
+                        if (!editLayer) {
+                            error = editError;
                         }
                         else {
-                            UsdEditContext context(stage, UsdEditTarget(rootLayer));
+                            UsdEditContext context(stage, UsdEditTarget(editLayer));
                             QList<QPair<SdfPath, SdfPath>> reverseMoves;
                             reverseMoves.reserve(state->items.size());
                             for (auto it = state->items.crbegin(); it != state->items.crend(); ++it) {
@@ -3401,11 +3401,11 @@ setAttributeValue(const SdfPath& attributePath, const VtValue& value)
                         error = "stage missing";
                     }
                     else {
-                        QString rootError;
-                        const SdfLayerHandle rootLayer = rootlayer::opened(stage, rootError);
+                        QString editError;
+                        const SdfLayerHandle editLayer = editlayer::opened(stage, editError);
 
-                        if (!rootLayer) {
-                            error = rootError;
+                        if (!editLayer) {
+                            error = editError;
                         }
                         else {
                             const UsdAttribute attr = stage->GetAttributeAtPath(attributePath);
@@ -3414,14 +3414,14 @@ setAttributeValue(const SdfPath& attributePath, const VtValue& value)
                             }
                             else {
                                 if (!state->captured) {
-                                    state->hadRootDefault = rootLayer->HasField(attributePath, SdfFieldKeys->Default);
+                                    state->hadRootDefault = editLayer->HasField(attributePath, SdfFieldKeys->Default);
                                     if (state->hadRootDefault)
-                                        state->previousRootDefault = rootLayer->GetField(attributePath,
+                                        state->previousRootDefault = editLayer->GetField(attributePath,
                                                                                          SdfFieldKeys->Default);
                                     state->captured = true;
                                 }
 
-                                UsdEditContext context(stage, UsdEditTarget(rootLayer));
+                                UsdEditContext context(stage, UsdEditTarget(editLayer));
                                 success = attr.Set(value);
                                 if (!success)
                                     error = "USD rejected the value for this attribute type";
@@ -3458,17 +3458,17 @@ setAttributeValue(const SdfPath& attributePath, const VtValue& value)
                         error = "stage missing";
                     }
                     else {
-                        QString rootError;
-                        const SdfLayerHandle rootLayer = rootlayer::opened(stage, rootError);
+                        QString editError;
+                        const SdfLayerHandle editLayer = editlayer::opened(stage, editError);
 
-                        if (!rootLayer) {
-                            error = rootError;
+                        if (!editLayer) {
+                            error = editError;
                         }
                         else {
                             if (state->hadRootDefault)
-                                rootLayer->SetField(attributePath, SdfFieldKeys->Default, state->previousRootDefault);
+                                editLayer->SetField(attributePath, SdfFieldKeys->Default, state->previousRootDefault);
                             else
-                                rootLayer->EraseField(attributePath, SdfFieldKeys->Default);
+                                editLayer->EraseField(attributePath, SdfFieldKeys->Default);
 
                             success = true;
                         }
@@ -3518,15 +3518,15 @@ resetAttributeOverride(const SdfPath& attributePath)
                         error = "stage missing";
                     }
                     else {
-                        QString rootError;
-                        const SdfLayerHandle rootLayer = rootlayer::opened(stage, rootError);
+                        QString editError;
+                        const SdfLayerHandle editLayer = editlayer::opened(stage, editError);
 
-                        if (!rootLayer) {
-                            error = rootError;
+                        if (!editLayer) {
+                            error = editError;
                         }
                         else {
                             const UsdPrim prim = stage->GetPrimAtPath(primPath);
-                            const SdfPropertySpecHandle rootAttribute = rootLayer->GetPropertyAtPath(attributePath);
+                            const SdfPropertySpecHandle rootAttribute = editLayer->GetPropertyAtPath(attributePath);
 
                             bool hasUnderlyingPrimOpinion = false;
 
@@ -3536,7 +3536,7 @@ resetAttributeOverride(const SdfPath& attributePath)
                                         continue;
 
                                     const SdfLayerHandle layer = primSpec->GetLayer();
-                                    if (layer && layer != rootLayer) {
+                                    if (layer && layer != editLayer) {
                                         hasUnderlyingPrimOpinion = true;
                                         break;
                                     }
@@ -3550,10 +3550,10 @@ resetAttributeOverride(const SdfPath& attributePath)
                                 error = "instance proxy is not editable";
                             }
                             else if (!rootAttribute) {
-                                error = "attribute has no root-layer override";
+                                error = "attribute has no edit-layer override";
                             }
                             else if (!hasUnderlyingPrimOpinion) {
-                                error = "attribute belongs to a root-layer-owned prim";
+                                error = "attribute belongs to a edit-layer-owned prim";
                             }
                             else {
                                 if (!state->captured) {
@@ -3568,7 +3568,7 @@ resetAttributeOverride(const SdfPath& attributePath)
                                     else {
                                         SdfCreatePrimInLayer(state->snapshotLayer, primPath);
 
-                                        if (!SdfCopySpec(rootLayer, attributePath, state->snapshotLayer,
+                                        if (!SdfCopySpec(editLayer, attributePath, state->snapshotLayer,
                                                          attributePath)) {
                                             state->snapshotLayer = nullptr;
                                             error = "failed to snapshot attribute override";
@@ -3580,14 +3580,14 @@ resetAttributeOverride(const SdfPath& attributePath)
                                 }
 
                                 if (state->captured && error.isEmpty()) {
-                                    if (!removePropertySpec(rootLayer, attributePath)) {
+                                    if (!removePropertySpec(editLayer, attributePath)) {
                                         error = "failed to remove attribute override";
                                     }
                                     else {
-                                        const SdfPrimSpecHandle remainingSpec = rootLayer->GetPrimAtPath(primPath);
+                                        const SdfPrimSpecHandle remainingSpec = editLayer->GetPrimAtPath(primPath);
 
                                         if (remainingSpec && remainingSpec->IsInert())
-                                            stage::removePrimSpec(rootLayer, primPath);
+                                            stage::removePrimSpec(editLayer, primPath);
 
                                         success = true;
                                     }
@@ -3625,17 +3625,17 @@ resetAttributeOverride(const SdfPath& attributePath)
                         error = "stage missing";
                     }
                     else {
-                        QString rootError;
-                        const SdfLayerHandle rootLayer = rootlayer::opened(stage, rootError);
+                        QString editError;
+                        const SdfLayerHandle editLayer = editlayer::opened(stage, editError);
 
-                        if (!rootLayer) {
-                            error = rootError;
+                        if (!editLayer) {
+                            error = editError;
                         }
                         else {
-                            if (!rootLayer->GetPrimAtPath(state->primPath))
-                                SdfCreatePrimInLayer(rootLayer, state->primPath);
+                            if (!editLayer->GetPrimAtPath(state->primPath))
+                                SdfCreatePrimInLayer(editLayer, state->primPath);
 
-                            if (!SdfCopySpec(state->snapshotLayer, state->attributePath, rootLayer,
+                            if (!SdfCopySpec(state->snapshotLayer, state->attributePath, editLayer,
                                              state->attributePath)) {
                                 error = "failed to restore attribute override";
                             }
@@ -3690,11 +3690,11 @@ resetTransforms(const QList<SdfPath>& paths)
                         errors.append("stage missing");
                     }
                     else {
-                        QString rootError;
-                        const SdfLayerHandle rootLayer = rootlayer::opened(stage, rootError);
+                        QString editError;
+                        const SdfLayerHandle editLayer = editlayer::opened(stage, editError);
 
-                        if (!rootLayer) {
-                            errors.append(rootError);
+                        if (!editLayer) {
+                            errors.append(editError);
                         }
                         else {
                             state->items.clear();
@@ -3715,18 +3715,18 @@ resetTransforms(const QList<SdfPath>& paths)
 
                                 ResetTransformState::Item item;
                                 item.path = primPath;
-                                item.orderState = captureRootPropertyState(rootLayer, orderPath);
-                                item.matrixState = captureRootPropertyState(rootLayer, matrixPath);
+                                item.orderState = captureRootPropertyState(editLayer, orderPath);
+                                item.matrixState = captureRootPropertyState(editLayer, matrixPath);
                                 state->items.append(item);
 
                                 bool success = false;
 
-                                if (hasUnderlyingTransformOpinion(stage, prim, rootLayer)) {
-                                    success = removePropertySpec(rootLayer, orderPath)
-                                              && removePropertySpec(rootLayer, matrixPath);
+                                if (hasUnderlyingTransformOpinion(stage, prim, editLayer)) {
+                                    success = removePropertySpec(editLayer, orderPath)
+                                              && removePropertySpec(editLayer, matrixPath);
                                 }
                                 else {
-                                    UsdEditContext context(stage, UsdEditTarget(rootLayer));
+                                    UsdEditContext context(stage, UsdEditTarget(editLayer));
                                     UsdGeomXformOp op = xformable.MakeMatrixXform();
                                     success = op && op.Set(GfMatrix4d(1.0), UsdTimeCode::Default());
                                 }
@@ -3767,16 +3767,16 @@ resetTransforms(const QList<SdfPath>& paths)
                         errors.append("stage missing");
                     }
                     else {
-                        QString rootError;
-                        const SdfLayerHandle rootLayer = rootlayer::opened(stage, rootError);
+                        QString editError;
+                        const SdfLayerHandle editLayer = editlayer::opened(stage, editError);
 
-                        if (!rootLayer) {
-                            errors.append(rootError);
+                        if (!editLayer) {
+                            errors.append(editError);
                         }
                         else {
                             for (const ResetTransformState::Item& item : state->items) {
-                                const bool success = restoreRootPropertyState(rootLayer, item.orderState)
-                                                     && restoreRootPropertyState(rootLayer, item.matrixState);
+                                const bool success = restoreRootPropertyState(editLayer, item.orderState)
+                                                     && restoreRootPropertyState(editLayer, item.matrixState);
 
                                 if (success)
                                     restored.append(item.path);
@@ -3808,7 +3808,6 @@ resetOverrides(const QList<SdfPath>& paths)
             SdfPath path;
             SdfLayerRefPtr snapshotLayer;
             QList<SdfPath> propertyPaths;
-            std::vector<TfToken> metadataKeys;
             bool removedPrimSpec = false;
         };
 
@@ -3836,27 +3835,40 @@ resetOverrides(const QList<SdfPath>& paths)
                         errors.append("stage missing");
                     }
                     else {
-                        QString rootError;
-                        const SdfLayerHandle rootLayer = rootlayer::opened(stage, rootError);
+                        QString editError;
+                        const SdfLayerHandle editLayer = editlayer::opened(stage, editError);
 
-                        if (!rootLayer) {
-                            errors.append(rootError);
+                        if (!editLayer) {
+                            errors.append(editError);
                         }
                         else {
                             state->items.clear();
 
-                            for (const SdfPath& inputPath : path::uniquePaths(paths)) {
+                            QList<SdfPath> primPaths;
+                            for (const SdfPath& inputPath : path::minimalRootPaths(path::uniquePaths(paths))) {
                                 const SdfPath primPath = inputPath.IsPropertyPath() ? inputPath.GetPrimPath()
                                                                                     : inputPath;
-
                                 const UsdPrim prim = stage->GetPrimAtPath(primPath);
                                 if (!prim || !prim.IsValid() || prim.IsInstanceProxy()) {
                                     errors.append(QString("invalid prim: %1").arg(pathText(primPath)));
                                     continue;
                                 }
 
-                                const SdfPrimSpecHandle rootSpec = rootLayer->GetPrimAtPath(primPath);
-                                if (!rootSpec)
+                                path::appendUnique(primPaths, primPath);
+                                for (const UsdPrim& descendant : prim.GetAllDescendants()) {
+                                    if (descendant && descendant.IsValid() && !descendant.IsInstanceProxy())
+                                        path::appendUnique(primPaths, descendant.GetPath());
+                                }
+                            }
+
+                            for (const SdfPath& primPath : primPaths) {
+                                const UsdPrim prim = stage->GetPrimAtPath(primPath);
+                                if (!prim || !prim.IsValid() || prim.IsInstanceProxy())
+                                    continue;
+
+                                const SdfPrimSpecHandle rootSpec = editLayer->GetPrimAtPath(primPath);
+                                if (!rootSpec || rootSpec->GetSpecifier() != SdfSpecifierOver
+                                    || rootSpec->GetProperties().empty())
                                     continue;
 
                                 bool hasUnderlyingOpinion = false;
@@ -3865,7 +3877,7 @@ resetOverrides(const QList<SdfPath>& paths)
                                         continue;
 
                                     const SdfLayerHandle layer = primSpec->GetLayer();
-                                    if (layer && layer != rootLayer) {
+                                    if (layer && layer != editLayer) {
                                         hasUnderlyingOpinion = true;
                                         break;
                                     }
@@ -3894,7 +3906,7 @@ resetOverrides(const QList<SdfPath>& paths)
                                         continue;
 
                                     const SdfPath propertyPath = property->GetPath();
-                                    if (!SdfCopySpec(rootLayer, propertyPath, item.snapshotLayer, propertyPath)) {
+                                    if (!SdfCopySpec(editLayer, propertyPath, item.snapshotLayer, propertyPath)) {
                                         errors.append(QString("failed to snapshot override property: %1")
                                                           .arg(pathText(propertyPath)));
                                         snapshotFailed = true;
@@ -3904,17 +3916,12 @@ resetOverrides(const QList<SdfPath>& paths)
                                     item.propertyPaths.append(propertyPath);
                                 }
 
-                                if (snapshotFailed)
+                                if (snapshotFailed || item.propertyPaths.isEmpty())
                                     continue;
 
-                                item.metadataKeys = rootSpec->GetMetaDataInfoKeys();
-                                for (const TfToken& key : item.metadataKeys)
-                                    item.snapshotLayer->SetField(primPath, key, rootLayer->GetField(primPath, key));
-
                                 bool reset = true;
-
                                 for (const SdfPath& propertyPath : item.propertyPaths) {
-                                    if (!removePropertySpec(rootLayer, propertyPath)) {
+                                    if (!removePropertySpec(editLayer, propertyPath)) {
                                         errors.append(QString("failed to remove override property: %1")
                                                           .arg(pathText(propertyPath)));
                                         reset = false;
@@ -3925,12 +3932,9 @@ resetOverrides(const QList<SdfPath>& paths)
                                 if (!reset)
                                     continue;
 
-                                for (const TfToken& key : item.metadataKeys)
-                                    rootSpec->ClearInfo(key);
-
-                                const SdfPrimSpecHandle remainingSpec = rootLayer->GetPrimAtPath(primPath);
+                                const SdfPrimSpecHandle remainingSpec = editLayer->GetPrimAtPath(primPath);
                                 if (remainingSpec && remainingSpec->IsInert()) {
-                                    item.removedPrimSpec = stage::removePrimSpec(rootLayer, primPath);
+                                    item.removedPrimSpec = stage::removePrimSpec(editLayer, primPath);
                                     if (!item.removedPrimSpec) {
                                         errors.append(
                                             QString("failed to remove empty override spec: %1").arg(pathText(primPath)));
@@ -3974,17 +3978,17 @@ resetOverrides(const QList<SdfPath>& paths)
                         errors.append("stage missing");
                     }
                     else {
-                        QString rootError;
-                        const SdfLayerHandle rootLayer = rootlayer::opened(stage, rootError);
+                        QString editError;
+                        const SdfLayerHandle editLayer = editlayer::opened(stage, editError);
 
-                        if (!rootLayer) {
-                            errors.append(rootError);
+                        if (!editLayer) {
+                            errors.append(editError);
                         }
                         else {
                             for (const ResetOverrideState::Item& item : state->items) {
-                                SdfPrimSpecHandle rootSpec = rootLayer->GetPrimAtPath(item.path);
+                                SdfPrimSpecHandle rootSpec = editLayer->GetPrimAtPath(item.path);
                                 if (!rootSpec)
-                                    rootSpec = SdfCreatePrimInLayer(rootLayer, item.path);
+                                    rootSpec = SdfCreatePrimInLayer(editLayer, item.path);
 
                                 if (!rootSpec) {
                                     errors.append(
@@ -3993,16 +3997,8 @@ resetOverrides(const QList<SdfPath>& paths)
                                 }
 
                                 bool restoredItem = true;
-
-                                for (const TfToken& key : item.metadataKeys) {
-                                    if (!item.snapshotLayer->HasField(item.path, key))
-                                        continue;
-
-                                    rootLayer->SetField(item.path, key, item.snapshotLayer->GetField(item.path, key));
-                                }
-
                                 for (const SdfPath& propertyPath : item.propertyPaths) {
-                                    if (!SdfCopySpec(item.snapshotLayer, propertyPath, rootLayer, propertyPath)) {
+                                    if (!SdfCopySpec(item.snapshotLayer, propertyPath, editLayer, propertyPath)) {
                                         errors.append(QString("failed to restore override property: %1")
                                                           .arg(pathText(propertyPath)));
                                         restoredItem = false;

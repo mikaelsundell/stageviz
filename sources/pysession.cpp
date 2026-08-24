@@ -417,6 +417,87 @@ PySession_filename(PySessionObject* self)
 }
 
 static PyObject*
+PySession_editLayer(PySessionObject* self)
+{
+    if (!checkSession(self->session))
+        return nullptr;
+
+    const SdfLayerHandle layer = self->session->editLayer();
+    if (!layer)
+        Py_RETURN_NONE;
+
+    return PyUnicode_FromString(layer->GetIdentifier().c_str());
+}
+
+static PyObject*
+PySession_editLayers(PySessionObject* self)
+{
+    if (!checkSession(self->session))
+        return nullptr;
+
+    std::vector<SdfLayerHandle> layers;
+    {
+        QReadLocker locker(self->session->stageLock());
+        const UsdStageRefPtr stage = self->session->stageUnsafe();
+        if (!stage)
+            return PyList_New(0);
+        layers = stage->GetLayerStack(false);
+    }
+
+    PyObject* list = PyList_New(static_cast<Py_ssize_t>(layers.size()));
+    if (!list)
+        return nullptr;
+
+    for (Py_ssize_t i = 0; i < static_cast<Py_ssize_t>(layers.size()); ++i) {
+        PyObject* value = PyUnicode_FromString(layers[static_cast<size_t>(i)]->GetIdentifier().c_str());
+        if (!value) {
+            Py_DECREF(list);
+            return nullptr;
+        }
+        PyList_SET_ITEM(list, i, value);
+    }
+    return list;
+}
+
+static PyObject*
+PySession_setEditLayer(PySessionObject* self, PyObject* args)
+{
+    if (!checkSession(self->session))
+        return nullptr;
+
+    const char* identifier = nullptr;
+    if (!PyArg_ParseTuple(args, "s", &identifier))
+        return nullptr;
+
+    SdfLayerHandle match;
+    {
+        QReadLocker locker(self->session->stageLock());
+        const UsdStageRefPtr stage = self->session->stageUnsafe();
+        if (!stage) {
+            PyErr_SetString(PyExc_RuntimeError, "stage is not loaded");
+            return nullptr;
+        }
+
+        const std::string requested(identifier);
+        for (const SdfLayerHandle& layer : stage->GetLayerStack(false)) {
+            if (!layer)
+                continue;
+            if (layer->GetIdentifier() == requested || layer->GetRealPath() == requested) {
+                match = layer;
+                break;
+            }
+        }
+    }
+
+    if (!match) {
+        PyErr_SetString(PyExc_ValueError, "edit layer must identify a layer in the local layer stack");
+        return nullptr;
+    }
+
+    return PyBool_FromLong(self->session->setEditLayer(match));
+}
+
+static PyObject*
 PySession_auxiliary(PySessionObject* self)
 {
     if (!checkSession(self->session))
@@ -659,6 +740,12 @@ static PyMethodDef PySession_methods[] = {
     { "loadPolicy", reinterpret_cast<PyCFunction>(PySession_loadPolicy), METH_NOARGS, "Get the current load policy" },
     { "boundingBox", reinterpret_cast<PyCFunction>(PySession_boundingBox), METH_NOARGS, "Get the current bounding box" },
     { "filename", reinterpret_cast<PyCFunction>(PySession_filename), METH_NOARGS, "Get the current filename" },
+    { "editLayer", reinterpret_cast<PyCFunction>(PySession_editLayer), METH_NOARGS,
+      "Get the active edit layer identifier" },
+    { "editLayers", reinterpret_cast<PyCFunction>(PySession_editLayers), METH_NOARGS,
+      "Get identifiers for layers in the local layer stack" },
+    { "setEditLayer", reinterpret_cast<PyCFunction>(PySession_setEditLayer), METH_VARARGS,
+      "Set the active edit layer by local-layer identifier or real path" },
 
     { "auxiliary", reinterpret_cast<PyCFunction>(PySession_auxiliary), METH_NOARGS,
       "Get the Stageviz-owned auxiliary USD stage" },
