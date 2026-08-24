@@ -36,6 +36,7 @@ class StageTreePrivate : public QObject, public SignalGuard {
 public:
     StageTreePrivate();
     void init();
+    void initContext();
     void initTree();
     void close();
     void collapse();
@@ -48,10 +49,10 @@ public:
     void itemCheckState(QTreeWidgetItem* item, bool checkable, bool recursive = false);
     void treeCheckState(QTreeWidgetItem* item);
     void contextMenuEvent(QContextMenuEvent* event);
-    void updateEditLayer();
-    void updatePrims(const NoticeBatch& batch);
     void updateStage(UsdStageRefPtr stage);
+    void updatePrims(const NoticeBatch& batch);
     void updateSelection(const QList<SdfPath>& paths);
+    SelectionList* selectionList() const;
 
 public Q_SLOTS:
     void itemSelectionChanged();
@@ -126,12 +127,32 @@ StageTreePrivate::init()
 }
 
 void
+StageTreePrivate::initContext()
+{
+    if (!d.context)
+        return;
+
+    SelectionList* list = selectionList();
+    if (!list)
+        return;
+
+    connect(list, &SelectionList::selectionChanged, this, &StageTreePrivate::updateSelection);
+    updateSelection(list->paths());
+}
+
+SelectionList*
+StageTreePrivate::selectionList() const
+{
+    return d.context ? d.context->selectionList() : nullptr;
+}
+
+void
 StageTreePrivate::itemCheckState(QTreeWidgetItem* item, bool checkable, bool recursive)
 {
     Qt::ItemFlags flags = item->flags();
     if (checkable) {
         flags |= Qt::ItemIsUserCheckable | Qt::ItemIsEnabled;
-        flags &= ~Qt::ItemIsAutoTristate;
+        flags |= Qt::ItemIsAutoTristate;
         item->setFlags(flags);
         if (item->data(0, Qt::CheckStateRole).isNull())
             item->setCheckState(0, Qt::Unchecked);
@@ -404,7 +425,7 @@ StageTreePrivate::addItem(PrimItem* parent, const SdfPath& path)
     flags |= Qt::ItemIsDragEnabled | Qt::ItemIsDropEnabled;
     item->setFlags(flags);
 
-    itemCheckState(item, isPayload);
+    itemCheckState(item, d.payloadEnabled);
     parent->addChild(item);
 
     if (isPayload) {
@@ -574,22 +595,33 @@ StageTreePrivate::nameChanged(PrimItem* item)
 void
 StageTreePrivate::contextMenuEvent(QContextMenuEvent* event)
 {
-    if (!d.tree || !event)
+    if (!d.tree || !event || !d.context)
+        return;
+
+    SelectionList* list = selectionList();
+    if (!list)
         return;
 
     QTreeWidgetItem* clickedItem = d.tree->itemAt(event->pos());
-    if (clickedItem && !clickedItem->isSelected()) {
-        d.tree->clearSelection();
-        clickedItem->setSelected(true);
-        d.tree->setCurrentItem(clickedItem);
-    }
+    QList<SdfPath> paths = list->paths();
 
-    QList<SdfPath> paths;
-    for (QTreeWidgetItem* selected : d.tree->selectedItems()) {
-        auto* item = static_cast<PrimItem*>(selected);
+    if (clickedItem && !clickedItem->isSelected()) {
+        auto* item = static_cast<PrimItem*>(clickedItem);
         const QString pathString = item->data(0, PrimItem::Path).toString();
-        if (!pathString.isEmpty())
-            paths.append(SdfPath(qt::QStringToString(pathString)));
+        const SdfPath clickedPath = pathString.isEmpty() ? SdfPath() : SdfPath(qt::QStringToString(pathString));
+
+        if (!clickedPath.IsEmpty()) {
+            paths = { clickedPath };
+
+            {
+                SignalGuard::Scope guard(this);
+                d.tree->clearSelection();
+                clickedItem->setSelected(true);
+                d.tree->setCurrentItem(clickedItem);
+            }
+
+            d.context->run(new Command(selectPaths(paths)));
+        }
     }
 
     SdfPath createParentPath = SdfPath::AbsoluteRootPath();
@@ -629,6 +661,31 @@ StageTreePrivate::updateStage(UsdStageRefPtr stage)
     addChildren(rootItem, prim.GetPath());
     initTree();
 
+    if (d.payloadEnabled)
+        treeCheckState(rootItem);
+
+    if (SelectionList* list = selectionList())
+        updateSelection(list->paths());
+}
+
+void
+StageTree::updateEditLayer()
+{
+    std::function<void(QTreeWidgetItem*)> invalidate = [&](QTreeWidgetItem* baseItem) {
+        if (!baseItem)
+            return;
+
+        if (auto* item = dynamic_cast<PrimItem*>(baseItem))
+            item->invalidate();
+
+        for (int i = 0; i < baseItem->childCount(); ++i)
+            invalidate(baseItem->child(i));
+    };
+
+    for (int i = 0; i < topLevelItemCount(); ++i)
+        invalidate(topLevelItem(i));
+
+    viewport()->update();
 }
 
 void
@@ -766,7 +823,7 @@ StageTreePrivate::syncDirectChildrenOnly(PrimItem* parentItem, const UsdPrim& pa
             }
         }
 
-        itemCheckState(childItem, isPayload, false);
+        itemCheckState(childItem, d.payloadEnabled, false);
 
         if (isPayload) {
             const Qt::CheckState want = isLoaded ? Qt::Checked : Qt::Unchecked;
@@ -776,26 +833,6 @@ StageTreePrivate::syncDirectChildrenOnly(PrimItem* parentItem, const UsdPrim& pa
     }
 
     parentItem->invalidate();
-}
-
-void
-StageTreePrivate::updateEditLayer()
-{
-    std::function<void(QTreeWidgetItem*)> invalidate = [&](QTreeWidgetItem* baseItem) {
-        if (!baseItem)
-            return;
-
-        if (auto* item = dynamic_cast<PrimItem*>(baseItem))
-            item->invalidate();
-
-        for (int i = 0; i < baseItem->childCount(); ++i)
-            invalidate(baseItem->child(i));
-    };
-
-    for (int i = 0; i < d.tree->topLevelItemCount(); ++i)
-        invalidate(d.tree->topLevelItem(i));
-
-    d.tree->viewport()->update();
 }
 
 void
@@ -960,7 +997,7 @@ StageTreePrivate::updatePrim(const SdfPath& path)
     }
 
     primItem->invalidate();
-    itemCheckState(primItem, isPayload, false);
+    itemCheckState(primItem, d.payloadEnabled, false);
 
     if (isPayload) {
         const Qt::CheckState want = prim.IsLoaded() ? Qt::Checked : Qt::Unchecked;
@@ -988,7 +1025,7 @@ StageTreePrivate::invalidateSubtree(PrimItem* item, const UsdPrim& prim)
     }
 
     item->invalidate();
-    itemCheckState(item, isPayload, false);
+    itemCheckState(item, d.payloadEnabled, false);
 
     if (isPayload) {
         const Qt::CheckState want = prim.IsLoaded() ? Qt::Checked : Qt::Unchecked;
@@ -1371,8 +1408,14 @@ StageTree::context() const
 void
 StageTree::setContext(ViewContext* context)
 {
-    if (p->d.context != context)
-        p->d.context = context;
+    if (p->d.context == context)
+        return;
+
+    if (p->d.context && p->d.context->selectionList())
+        disconnect(p->d.context->selectionList(), nullptr, p.data(), nullptr);
+
+    p->d.context = context;
+    p->initContext();
 }
 
 void
@@ -1440,22 +1483,10 @@ StageTree::setPayloadEnabled(bool enabled)
 }
 
 void
-StageTree::updateEditLayer()
-{
-    p->updateEditLayer();
-}
-
-void
 StageTree::updateMask(const QList<SdfPath>& paths)
 {
     if (p->d.maskPaths != paths)
         p->d.maskPaths = paths;
-}
-
-void
-StageTree::updatePrims(const NoticeBatch& batch)
-{
-    p->updatePrims(batch);
 }
 
 void
@@ -1465,9 +1496,9 @@ StageTree::updateStage(UsdStageRefPtr stage)
 }
 
 void
-StageTree::updateSelection(const QList<SdfPath>& paths)
+StageTree::updatePrims(const NoticeBatch& batch)
 {
-    p->updateSelection(paths);
+    p->updatePrims(batch);
 }
 
 void

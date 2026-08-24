@@ -64,6 +64,7 @@ OutlinerViewPrivate::init()
     d.context.reset(new ViewContext(d.view.data()));
     d.context->setStageLock(session()->stageLock());
     d.context->setCommandStack(session()->commandStack());
+    d.context->setSelectionList(session()->selectionList());
 
     attach(d.ui->depth);
     stageTree()->setHeaderLabels(QStringList() << "Name"
@@ -75,7 +76,7 @@ OutlinerViewPrivate::init()
     d.ui->collapse->setIcon(style()->icon(Style::IconRole::Collapse));
     d.ui->expand->setIcon(style()->icon(Style::IconRole::Expand));
     d.ui->follow->setIcon(style()->icon(Style::IconRole::Follow));
-
+    // connect
     connect(d.ui->filter, &QLineEdit::textChanged, this, &OutlinerViewPrivate::filterChanged);
     connect(d.ui->clear, &QToolButton::clicked, this, &OutlinerViewPrivate::clearFilter);
     connect(d.ui->collapse, &QToolButton::clicked, this, &OutlinerViewPrivate::collapse);
@@ -130,7 +131,7 @@ OutlinerViewPrivate::clearDepth()
 void
 OutlinerViewPrivate::collapse()
 {
-    if (session()->selectionList()->paths().size())
+    if (d.context->selectionList() && !d.context->selectionList()->paths().isEmpty())
         d.ui->stageTree->collapse();
 }
 
@@ -178,8 +179,6 @@ OutlinerViewPrivate::selectionChanged(const QList<SdfPath>& paths)
 {
     SignalGuard::Scope guard(this);
 
-    stageTree()->updateSelection(paths);
-
     if (!paths.isEmpty() && d.followEnabled)
         expand();
 
@@ -217,7 +216,9 @@ OutlinerViewPrivate::stageChanged(UsdStageRefPtr stage, Session::LoadPolicy poli
 void
 OutlinerViewPrivate::depthChanged(int value)
 {
-    const QList<SdfPath> paths = session()->selectionList()->paths();
+    const SelectionList* list = d.context->selectionList();
+    const QList<SdfPath> paths = list ? list->paths() : QList<SdfPath>();
+
     if (paths.size() == 1)
         stageTree()->expandDepth(value, paths.first());
     else

@@ -463,11 +463,37 @@ movePath(const QList<SdfPath>& paths, const SdfPath& newParentPath, int insertIn
  * VtArray values. Array element editing in PropertyTree reconstructs the typed
  * array and submits it through this same command.
  *
+ * Editing the standard xformOp:translate:pivot attribute is handled specially:
+ * Stageviz rebuilds the canonical paired pivot/matrix/inverse-pivot stack while
+ * preserving the prim's evaluated local transform, so moving a pivot does not
+ * move the geometry.
+ *
  * @param attributePath USD property path identifying an attribute.
  * @param value Typed value to author.
  */
 Command
 setAttributeValue(const SdfPath& attributePath, const VtValue& value);
+
+/**
+ * @brief Creates one undoable command that authors the same value to several attributes.
+ *
+ * Every path must identify an existing USD attribute compatible with @p value.
+ * Previous edit-layer default opinions are captured individually and restored
+ * by a single undo step. Standard xformOp:translate:pivot edits preserve each
+ * prim's evaluated local transform.
+ */
+Command
+setAttributeValues(const QList<SdfPath>& attributePaths, const VtValue& value);
+
+/**
+ * @brief Creates one undoable command that clears edit-layer default values.
+ *
+ * Clearing the default value exposes any weaker composed default while leaving
+ * the rest of each property spec intact. Undo restores every previous
+ * edit-layer default exactly.
+ */
+Command
+resetAttributeValues(const QList<SdfPath>& attributePaths);
 
 /**
  * @brief Creates a command that removes one edit-layer attribute override.
@@ -489,19 +515,78 @@ Command
 resetAttributeOverride(const SdfPath& attributePath);
 
 /**
+ * @brief Creates one undoable command that removes edit-layer overrides for several attributes.
+ *
+ * Attributes without an applicable edit-layer override are skipped. Each
+ * removed property spec is snapshotted so undo restores the complete authored
+ * property information.
+ */
+Command
+resetAttributeOverrides(const QList<SdfPath>& attributePaths);
+
+/**
+ * @brief Creates a command that centers manipulation pivots on prim bounds.
+ *
+ * Each selected xformable prim receives its own pivot at the center of its
+ * world-space bound. The standard paired USD pivot representation
+ * xformOp:translate:pivot / !invert!xformOp:translate:pivot is authored while
+ * preserving the prim's evaluated local transform.
+ *
+ * Undo restores the previous edit-layer transform property specs exactly.
+ *
+ * @param paths Prim paths whose pivots should be centered.
+ */
+Command
+centerPivots(const QList<SdfPath>& paths);
+
+/**
+ * @brief Creates a command that removes the Stageviz-authored pivot.
+ *
+ * The active edit-layer pivot properties are removed by rewriting the prim to
+ * Stageviz's canonical matrix-only transform while preserving its evaluated
+ * local transform. No zero-valued pivot attribute is left behind.
+ *
+ * After reset, stage::worldPivot() resolves a weaker authored paired pivot when
+ * one exists. If no authored pivot exists in the composed stack, the gizmo
+ * falls back to the prim's transformed local origin.
+ *
+ * Undo restores the previous edit-layer transform property specs exactly.
+ *
+ * @param paths Prim paths whose pivots should be reset.
+ */
+Command
+resetPivots(const QList<SdfPath>& paths);
+
+/**
  * @brief Creates a command that resets local transforms for xformable prims.
  *
- * When a selected prim has an underlying transform opinion in a weaker layer,
- * the Stageviz edit-layer matrix/order override is removed so the authored
- * asset transform becomes visible again. When no weaker transform opinion
- * exists, a local identity matrix is authored in the opened edit layer.
+ * All transform properties authored in the active edit layer are removed,
+ * including xformOpOrder and every xformOp:* property. This prevents stale
+ * translate, rotate, scale, pivot, or matrix operations from remaining after
+ * the reset.
  *
- * Undo restores the previous edit-layer transform opinions exactly.
+ * When a weaker composed transform opinion exists, removing the edit-layer
+ * transform properties exposes that weaker transform again. When no weaker
+ * transform opinion exists, a single identity xformOp:transform is authored in
+ * the active edit layer.
+ *
+ * Undo restores the complete previous set of edit-layer transform properties
+ * exactly.
  *
  * @param paths Prim paths whose local transforms should be reset.
  */
 Command
 resetTransforms(const QList<SdfPath>& paths);
+
+/**
+ * @brief UI-named wrapper for resetTransforms().
+ *
+ * Transform > Identity uses the same edit-layer-aware reset behavior: stale
+ * transform ops are removed, weaker composed transforms are exposed when they
+ * exist, otherwise a single identity matrix op is authored.
+ */
+Command
+identityTransforms(const QList<SdfPath>& paths);
 
 /**
  * @brief Creates a command that removes edit-layer property overrides from composed prims.

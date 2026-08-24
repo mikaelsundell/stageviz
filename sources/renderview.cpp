@@ -56,6 +56,7 @@ RenderViewPrivate::init()
     connect(session(), &Session::boundingBoxChanged, this, &RenderViewPrivate::updateBoundingBox);
     connect(session(), &Session::maskChanged, this, &RenderViewPrivate::updateMask);
     connect(session(), &Session::primsChanged, this, &RenderViewPrivate::updatePrims);
+    connect(session(), &Session::redrawRequested, imageGLWidget(), QOverload<>::of(&QWidget::update));
     connect(session(), &Session::stageChanged, this, &RenderViewPrivate::updateStage);
     connect(session(), &Session::stageUpChanged, this, &RenderViewPrivate::updateStageUp);
 }

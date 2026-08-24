@@ -105,8 +105,9 @@ protected:
     /**
      * @brief Shows actions for the property under the cursor.
      *
-     * Overridden attributes expose a Reset Override action that removes only
-     * that attribute's root-layer opinion through the undoable command system.
+     * The menu provides semantic Select for SdfPath-valued rows, Copy Name
+     * and Copy Value, and a Reset submenu for authored values and edit-layer
+     * overrides when those operations are applicable.
      *
      * @param event Context menu event.
      */

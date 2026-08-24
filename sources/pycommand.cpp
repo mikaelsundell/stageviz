@@ -9,6 +9,10 @@
 #include "pyutils.h"
 #include "qtutils.h"
 #include "session.h"
+#include <cstdint>
+#include <pxr/base/gf/vec2d.h>
+#include <pxr/base/gf/vec3d.h>
+#include <pxr/base/gf/vec4d.h>
 #include <pxr/base/tf/token.h>
 #include <pxr/pxr.h>
 #include <pxr/usd/sdf/path.h>
@@ -102,6 +106,91 @@ namespace {
         }
 
         return stack;
+    }
+
+    static bool pyToVtValueSimple(PyObject* object, VtValue* out)
+    {
+        if (!out) {
+            PyErr_SetString(PyExc_RuntimeError, "Invalid output value pointer");
+            return false;
+        }
+
+        if (PyBool_Check(object)) {
+            *out = VtValue(object == Py_True);
+            return true;
+        }
+
+        if (PyLong_Check(object)) {
+            const long long value = PyLong_AsLongLong(object);
+            if (PyErr_Occurred())
+                return false;
+
+            *out = VtValue(static_cast<int64_t>(value));
+            return true;
+        }
+
+        if (PyFloat_Check(object)) {
+            const double value = PyFloat_AsDouble(object);
+            if (PyErr_Occurred())
+                return false;
+
+            *out = VtValue(value);
+            return true;
+        }
+
+        if (PyUnicode_Check(object)) {
+            const char* text = PyUnicode_AsUTF8(object);
+            if (!text)
+                return false;
+
+            *out = VtValue(std::string(text));
+            return true;
+        }
+
+        if (PyTuple_Check(object) || PyList_Check(object)) {
+            PyObject* sequence = PySequence_Fast(object, "value must be a sequence");
+            if (!sequence)
+                return false;
+
+            const Py_ssize_t size = PySequence_Fast_GET_SIZE(sequence);
+
+            if (size == 2 || size == 3 || size == 4) {
+                double values[4] = { 0.0, 0.0, 0.0, 0.0 };
+                bool numeric = true;
+
+                for (Py_ssize_t i = 0; i < size; ++i) {
+                    PyObject* item = PySequence_Fast_GET_ITEM(sequence, i);
+                    if (!PyFloat_Check(item) && !PyLong_Check(item)) {
+                        numeric = false;
+                        break;
+                    }
+
+                    values[i] = PyFloat_AsDouble(item);
+                    if (PyErr_Occurred()) {
+                        Py_DECREF(sequence);
+                        return false;
+                    }
+                }
+
+                if (numeric) {
+                    if (size == 2)
+                        *out = VtValue(GfVec2d(values[0], values[1]));
+                    else if (size == 3)
+                        *out = VtValue(GfVec3d(values[0], values[1], values[2]));
+                    else
+                        *out = VtValue(GfVec4d(values[0], values[1], values[2], values[3]));
+
+                    Py_DECREF(sequence);
+                    return true;
+                }
+            }
+
+            Py_DECREF(sequence);
+        }
+
+        PyErr_SetString(PyExc_TypeError,
+                        "value must be bool, int, float, string, or a numeric sequence of length 2, 3, or 4");
+        return false;
     }
 }  // namespace
 
@@ -536,6 +625,140 @@ PyCommand_resetAttributeOverride(PyObject*, PyObject* args)
 }
 
 static PyObject*
+PyCommand_resetAttributeOverrides(PyObject*, PyObject* args)
+{
+    PyObject* pyAttributePaths = nullptr;
+    if (!PyArg_ParseTuple(args, "O", &pyAttributePaths))
+        return nullptr;
+
+    QList<SdfPath> attributePaths;
+    if (!parsePathListArg(pyAttributePaths, "attribute_paths", &attributePaths))
+        return nullptr;
+
+    for (const SdfPath& path : attributePaths) {
+        if (!path.IsPropertyPath()) {
+            PyErr_SetString(PyExc_ValueError, "attribute_paths must contain USD property paths");
+            return nullptr;
+        }
+    }
+
+    return runCommand(resetAttributeOverrides(attributePaths));
+}
+
+static PyObject*
+PyCommand_setAttributeValue(PyObject*, PyObject* args)
+{
+    PyObject* pyAttributePath = nullptr;
+    PyObject* pyValue = nullptr;
+    if (!PyArg_ParseTuple(args, "OO", &pyAttributePath, &pyValue))
+        return nullptr;
+
+    SdfPath attributePath;
+    if (!parsePathArg(pyAttributePath, "attribute_path", &attributePath))
+        return nullptr;
+
+    if (!attributePath.IsPropertyPath()) {
+        PyErr_SetString(PyExc_ValueError, "attribute_path must be a USD property path");
+        return nullptr;
+    }
+
+    VtValue value;
+    if (!pyToVtValueSimple(pyValue, &value))
+        return nullptr;
+
+    return runCommand(setAttributeValue(attributePath, value));
+}
+
+static PyObject*
+PyCommand_setAttributeValues(PyObject*, PyObject* args)
+{
+    PyObject* pyAttributePaths = nullptr;
+    PyObject* pyValue = nullptr;
+    if (!PyArg_ParseTuple(args, "OO", &pyAttributePaths, &pyValue))
+        return nullptr;
+
+    QList<SdfPath> attributePaths;
+    if (!parsePathListArg(pyAttributePaths, "attribute_paths", &attributePaths))
+        return nullptr;
+
+    for (const SdfPath& path : attributePaths) {
+        if (!path.IsPropertyPath()) {
+            PyErr_SetString(PyExc_ValueError, "attribute_paths must contain USD property paths");
+            return nullptr;
+        }
+    }
+
+    VtValue value;
+    if (!pyToVtValueSimple(pyValue, &value))
+        return nullptr;
+
+    return runCommand(setAttributeValues(attributePaths, value));
+}
+
+static PyObject*
+PyCommand_resetAttributeValues(PyObject*, PyObject* args)
+{
+    PyObject* pyAttributePaths = nullptr;
+    if (!PyArg_ParseTuple(args, "O", &pyAttributePaths))
+        return nullptr;
+
+    QList<SdfPath> attributePaths;
+    if (!parsePathListArg(pyAttributePaths, "attribute_paths", &attributePaths))
+        return nullptr;
+
+    for (const SdfPath& path : attributePaths) {
+        if (!path.IsPropertyPath()) {
+            PyErr_SetString(PyExc_ValueError, "attribute_paths must contain USD property paths");
+            return nullptr;
+        }
+    }
+
+    return runCommand(resetAttributeValues(attributePaths));
+}
+
+static PyObject*
+PyCommand_centerPivots(PyObject*, PyObject* args)
+{
+    PyObject* pyPaths = nullptr;
+    if (!PyArg_ParseTuple(args, "O", &pyPaths))
+        return nullptr;
+
+    QList<SdfPath> paths;
+    if (!parsePathListArg(pyPaths, "paths", &paths))
+        return nullptr;
+
+    return runCommand(centerPivots(paths));
+}
+
+static PyObject*
+PyCommand_resetPivots(PyObject*, PyObject* args)
+{
+    PyObject* pyPaths = nullptr;
+    if (!PyArg_ParseTuple(args, "O", &pyPaths))
+        return nullptr;
+
+    QList<SdfPath> paths;
+    if (!parsePathListArg(pyPaths, "paths", &paths))
+        return nullptr;
+
+    return runCommand(resetPivots(paths));
+}
+
+static PyObject*
+PyCommand_identityTransforms(PyObject*, PyObject* args)
+{
+    PyObject* pyPaths = nullptr;
+    if (!PyArg_ParseTuple(args, "O", &pyPaths))
+        return nullptr;
+
+    QList<SdfPath> paths;
+    if (!parsePathListArg(pyPaths, "paths", &paths))
+        return nullptr;
+
+    return runCommand(identityTransforms(paths));
+}
+
+static PyObject*
 PyCommand_bindMaterial(PyObject*, PyObject* args)
 {
     PyObject* pyPaths = nullptr;
@@ -592,10 +815,24 @@ static PyMethodDef PyCommand_methods[] = {
     { "new_xform", reinterpret_cast<PyCFunction>(PyCommand_newXform), METH_VARARGS, "Create a new Xform path." },
     { "move_path", reinterpret_cast<PyCFunction>(PyCommand_movePath), METH_VARARGS | METH_KEYWORDS,
       "Move paths. Optional keyword arguments: insert_index, preserve_world_transform." },
+    { "set_attribute_value", reinterpret_cast<PyCFunction>(PyCommand_setAttributeValue), METH_VARARGS,
+      "Set one USD attribute value in the active edit layer." },
+    { "set_attribute_values", reinterpret_cast<PyCFunction>(PyCommand_setAttributeValues), METH_VARARGS,
+      "Set one value on several USD attributes in the active edit layer." },
+    { "reset_attribute_values", reinterpret_cast<PyCFunction>(PyCommand_resetAttributeValues), METH_VARARGS,
+      "Clear authored default values from USD attributes in the active edit layer." },
     { "reset_attribute_override", reinterpret_cast<PyCFunction>(PyCommand_resetAttributeOverride), METH_VARARGS,
-      "Reset one root-layer USD attribute override." },
+      "Reset one USD attribute override in the active edit layer." },
+    { "reset_attribute_overrides", reinterpret_cast<PyCFunction>(PyCommand_resetAttributeOverrides), METH_VARARGS,
+      "Reset several USD attribute overrides in the active edit layer." },
+    { "center_pivots", reinterpret_cast<PyCFunction>(PyCommand_centerPivots), METH_VARARGS,
+      "Center transform pivots on prim bounds." },
+    { "reset_pivots", reinterpret_cast<PyCFunction>(PyCommand_resetPivots), METH_VARARGS,
+      "Reset Stageviz-authored pivots while preserving local transforms." },
     { "reset_transforms", reinterpret_cast<PyCFunction>(PyCommand_resetTransforms), METH_VARARGS,
-      "Reset root-layer transform overrides." },
+      "Reset local transforms in the active edit layer." },
+    { "identity_transforms", reinterpret_cast<PyCFunction>(PyCommand_identityTransforms), METH_VARARGS,
+      "Set local transforms to identity using edit-layer-aware transform reset behavior." },
     { "reset_overrides", reinterpret_cast<PyCFunction>(PyCommand_resetOverrides), METH_VARARGS,
       "Reset direct root-layer overrides." },
     { "bind_material", reinterpret_cast<PyCFunction>(PyCommand_bindMaterial), METH_VARARGS,

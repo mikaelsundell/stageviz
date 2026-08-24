@@ -10,6 +10,7 @@
 #include "usdutils.h"
 #include <QPointer>
 #include <algorithm>
+#include <cmath>
 #include <pxr/usd/sdf/copyUtils.h>
 #include <pxr/usd/sdf/layer.h>
 #include <pxr/usd/sdf/namespaceEdit.h>
@@ -23,6 +24,7 @@
 #include <pxr/usd/usd/prim.h>
 #include <pxr/usd/usd/primRange.h>
 #include <pxr/usd/usd/references.h>
+#include <pxr/usd/usdGeom/bboxCache.h>
 #include <pxr/usd/usdGeom/imageable.h>
 #include <pxr/usd/usdGeom/tokens.h>
 #include <pxr/usd/usdGeom/xform.h>
@@ -212,6 +214,193 @@ namespace {
         }
 
         return false;
+    }
+
+
+    struct TransformPropertyState {
+        SdfPath primPath;
+        SdfLayerRefPtr snapshotLayer;
+        QList<SdfPath> propertyPaths;
+    };
+
+    bool isTransformPropertyPath(const SdfPath& propertyPath)
+    {
+        if (!propertyPath.IsPropertyPath())
+            return false;
+
+        const std::string name = propertyPath.GetName();
+        return name == "xformOpOrder" || name.rfind("xformOp:", 0) == 0;
+    }
+
+    bool captureTransformPropertyState(const SdfLayerHandle& editLayer, const SdfPath& primPath,
+                                       TransformPropertyState& state, QString& error)
+    {
+        if (!editLayer || primPath.IsEmpty()) {
+            error = "edit layer or prim path missing";
+            return false;
+        }
+
+        state.primPath = primPath;
+        state.snapshotLayer = SdfLayer::CreateAnonymous("stageviz_transform_snapshot.usda");
+        state.propertyPaths.clear();
+
+        if (!state.snapshotLayer) {
+            error = "failed to create transform snapshot";
+            return false;
+        }
+
+        SdfCreatePrimInLayer(state.snapshotLayer, primPath);
+
+        const SdfPrimSpecHandle primSpec = editLayer->GetPrimAtPath(primPath);
+        if (!primSpec)
+            return true;
+
+        for (const SdfPropertySpecHandle& property : primSpec->GetProperties()) {
+            if (!property)
+                continue;
+
+            const SdfPath propertyPath = property->GetPath();
+            if (!isTransformPropertyPath(propertyPath))
+                continue;
+
+            if (!SdfCopySpec(editLayer, propertyPath, state.snapshotLayer, propertyPath)) {
+                error = QString("failed to snapshot transform property: %1").arg(pathText(propertyPath));
+                return false;
+            }
+
+            state.propertyPaths.append(propertyPath);
+        }
+
+        return true;
+    }
+
+    bool clearEditLayerTransformProperties(const SdfLayerHandle& editLayer, const SdfPath& primPath, QString& error)
+    {
+        if (!editLayer || primPath.IsEmpty())
+            return false;
+
+        const SdfPrimSpecHandle primSpec = editLayer->GetPrimAtPath(primPath);
+        if (!primSpec)
+            return true;
+
+        QList<SdfPath> paths;
+        for (const SdfPropertySpecHandle& property : primSpec->GetProperties()) {
+            if (property && isTransformPropertyPath(property->GetPath()))
+                paths.append(property->GetPath());
+        }
+
+        for (const SdfPath& propertyPath : paths) {
+            if (!removePropertySpec(editLayer, propertyPath)) {
+                error = QString("failed to remove transform property: %1").arg(pathText(propertyPath));
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    bool restoreTransformPropertyState(const SdfLayerHandle& editLayer, const TransformPropertyState& state,
+                                       QString& error)
+    {
+        if (!editLayer || state.primPath.IsEmpty() || !state.snapshotLayer)
+            return false;
+
+        if (!clearEditLayerTransformProperties(editLayer, state.primPath, error))
+            return false;
+
+        if (!editLayer->GetPrimAtPath(state.primPath))
+            SdfCreatePrimInLayer(editLayer, state.primPath);
+
+        for (const SdfPath& propertyPath : state.propertyPaths) {
+            if (!SdfCopySpec(state.snapshotLayer, propertyPath, editLayer, propertyPath)) {
+                error = QString("failed to restore transform property: %1").arg(pathText(propertyPath));
+                return false;
+            }
+        }
+
+        const SdfPrimSpecHandle remaining = editLayer->GetPrimAtPath(state.primPath);
+        if (remaining && remaining->IsInert())
+            stage::removePrimSpec(editLayer, state.primPath);
+
+        return true;
+    }
+
+    bool matrixClose(const GfMatrix4d& a, const GfMatrix4d& b, double tolerance = 1.0e-8)
+    {
+        for (int row = 0; row < 4; ++row) {
+            for (int column = 0; column < 4; ++column) {
+                if (std::abs(a[row][column] - b[row][column]) > tolerance)
+                    return false;
+            }
+        }
+        return true;
+    }
+
+    bool authorCanonicalTransformWithPivot(const UsdPrim& prim, const GfMatrix4d& localMatrix,
+                                           const GfVec3d& localPivot, QString& error)
+    {
+        const UsdGeomXformable xformable(prim);
+        if (!xformable) {
+            error = "prim is not xformable";
+            return false;
+        }
+
+        xformable.ClearXformOpOrder();
+
+        const UsdGeomXformOp pivotOp = xformable.AddTranslateOp(UsdGeomXformOp::PrecisionDouble, TfToken("pivot"),
+                                                                false);
+        const UsdGeomXformOp matrixOp = xformable.AddTransformOp(UsdGeomXformOp::PrecisionDouble);
+        const UsdGeomXformOp inversePivotOp = xformable.AddTranslateOp(UsdGeomXformOp::PrecisionDouble,
+                                                                       TfToken("pivot"), true);
+
+        if (!pivotOp || !matrixOp || !inversePivotOp || !pivotOp.Set(localPivot)) {
+            error = "failed to author pivot transform ops";
+            return false;
+        }
+
+        GfMatrix4d pivot(1.0);
+        pivot.SetTranslate(localPivot);
+        GfMatrix4d inversePivot(1.0);
+        inversePivot.SetTranslate(-localPivot);
+
+        const GfMatrix4d candidates[] = {
+            pivot * localMatrix * inversePivot,
+            inversePivot * localMatrix * pivot,
+        };
+
+        for (const GfMatrix4d& candidate : candidates) {
+            if (!matrixOp.Set(candidate))
+                continue;
+
+            GfMatrix4d evaluated(1.0);
+            bool resetsXformStack = false;
+            if (!xformable.GetLocalTransformation(&evaluated, &resetsXformStack, UsdTimeCode::Default()))
+                continue;
+
+            if (matrixClose(evaluated, localMatrix))
+                return true;
+        }
+
+        error = "failed to preserve local transform while authoring pivot";
+        return false;
+    }
+
+    bool authorCanonicalMatrixTransform(const UsdPrim& prim, const GfMatrix4d& localMatrix, QString& error)
+    {
+        const UsdGeomXformable xformable(prim);
+        if (!xformable) {
+            error = "prim is not xformable";
+            return false;
+        }
+
+        xformable.ClearXformOpOrder();
+        const UsdGeomXformOp matrixOp = xformable.AddTransformOp(UsdGeomXformOp::PrecisionDouble);
+        if (!matrixOp || !matrixOp.Set(localMatrix)) {
+            error = "failed to author matrix transform";
+            return false;
+        }
+
+        return true;
     }
 
 
@@ -908,7 +1097,7 @@ isolatePaths(const QList<SdfPath>& paths)
 
     return Command(
         [paths, state](Session* session) {
-            session->beginProgressBlock("isolate paths", 1);
+            session->beginProgressBlock("Isolate paths", 1);
 
             command::runWorker([session, paths, state]() {
                 *state = session->mask();
@@ -916,7 +1105,7 @@ isolatePaths(const QList<SdfPath>& paths)
 
                 command::queueToSession(session, [session, paths]() {
                     using Status = Session::Notify::Status;
-                    session->updateProgressNotify(Session::Notify("paths isolated", paths, Status::Success), 1);
+                    session->updateProgressNotify(Session::Notify("Paths isolated", paths, Status::Success), 1);
                     session->endProgressBlock();
                 });
             });
@@ -929,7 +1118,7 @@ isolatePaths(const QList<SdfPath>& paths)
 
                 command::queueToSession(session, [session, state]() {
                     using Status = Session::Notify::Status;
-                    session->updateProgressNotify(Session::Notify("isolate undone", *state, Status::Success), 1);
+                    session->updateProgressNotify(Session::Notify("Isolate undone", *state, Status::Success), 1);
                     session->endProgressBlock();
                 });
             });
@@ -3371,312 +3560,386 @@ movePath(const QList<SdfPath>& paths, const SdfPath& newParentPath, int insertIn
 
 
 Command
-setAttributeValue(const SdfPath& attributePath, const VtValue& value)
+setAttributeValues(const QList<SdfPath>& attributePaths, const VtValue& value)
 {
     struct AttributeValueState {
+        struct Item {
+            SdfPath attributePath;
+            bool hadRootDefault = false;
+            VtValue previousRootDefault;
+            bool preservePivotTransform = false;
+            GfMatrix4d previousLocalTransform { 1.0 };
+            TransformPropertyState transformState;
+        };
+
+        QList<Item> items;
         bool captured = false;
-        bool hadRootDefault = false;
-        VtValue previousRootDefault;
     };
 
     auto state = std::make_shared<AttributeValueState>();
 
     return Command(
-        [attributePath, value, state](Session* session) {
-            if (!session || attributePath.IsEmpty() || !attributePath.IsPropertyPath() || value.IsEmpty())
+        [attributePaths, value, state](Session* session) {
+            if (!session || attributePaths.isEmpty() || value.IsEmpty())
                 return;
 
-            command::beginDeferred(session, "Set attribute value", 1);
+            const QList<SdfPath> paths = path::uniquePaths(attributePaths);
+            command::beginDeferred(session, "Set attribute values", static_cast<int>(paths.size()));
 
-            command::runWorker([=]() {
-                bool success = false;
-                QString error;
-                SdfPath primPath = attributePath.GetPrimPath();
+            command::runWorker([session, paths, value, state]() {
+                QList<SdfPath> affected;
+                QStringList errors;
 
                 {
                     WRITE_LOCKER(locker, session->stageLock(), "stageLock");
                     const UsdStageRefPtr stage = session->stageUnsafe();
 
                     if (!stage) {
-                        error = "stage missing";
+                        errors.append("stage missing");
                     }
                     else {
                         QString editError;
                         const SdfLayerHandle editLayer = editlayer::opened(stage, editError);
 
                         if (!editLayer) {
-                            error = editError;
+                            errors.append(editError);
                         }
                         else {
-                            const UsdAttribute attr = stage->GetAttributeAtPath(attributePath);
-                            if (!attr) {
-                                error = "attribute missing";
-                            }
-                            else {
-                                if (!state->captured) {
-                                    state->hadRootDefault = editLayer->HasField(attributePath, SdfFieldKeys->Default);
-                                    if (state->hadRootDefault)
-                                        state->previousRootDefault = editLayer->GetField(attributePath,
-                                                                                         SdfFieldKeys->Default);
-                                    state->captured = true;
+                            if (!state->captured) {
+                                state->items.clear();
+
+                                for (const SdfPath& attributePath : paths) {
+                                    if (attributePath.IsEmpty() || !attributePath.IsPropertyPath()) {
+                                        errors.append(
+                                            QString("invalid attribute path: %1").arg(pathText(attributePath)));
+                                        continue;
+                                    }
+
+                                    const UsdAttribute attr = stage->GetAttributeAtPath(attributePath);
+                                    if (!attr) {
+                                        errors.append(QString("attribute missing: %1").arg(pathText(attributePath)));
+                                        continue;
+                                    }
+
+                                    AttributeValueState::Item item;
+                                    item.attributePath = attributePath;
+                                    item.hadRootDefault = editLayer->HasField(attributePath, SdfFieldKeys->Default);
+
+                                    if (item.hadRootDefault)
+                                        item.previousRootDefault = editLayer->GetField(attributePath,
+                                                                                       SdfFieldKeys->Default);
+
+                                    const bool isPivot = attributePath.GetNameToken()
+                                                             == TfToken("xformOp:translate:pivot")
+                                                         && value.IsHolding<GfVec3d>();
+
+                                    if (isPivot) {
+                                        const UsdPrim prim = stage->GetPrimAtPath(attributePath.GetPrimPath());
+                                        const UsdGeomXformable xformable(prim);
+
+                                        if (!prim || !prim.IsValid() || prim.IsInstanceProxy() || !xformable) {
+                                            errors.append(QString("pivot prim is not transformable: %1")
+                                                              .arg(pathText(attributePath.GetPrimPath())));
+                                            continue;
+                                        }
+
+                                        bool resetsXformStack = false;
+                                        if (!xformable.GetLocalTransformation(&item.previousLocalTransform,
+                                                                              &resetsXformStack,
+                                                                              UsdTimeCode::Default())) {
+                                            errors.append(QString("failed to evaluate local transform: %1")
+                                                              .arg(pathText(attributePath.GetPrimPath())));
+                                            continue;
+                                        }
+
+                                        QString transformError;
+                                        if (!captureTransformPropertyState(editLayer, attributePath.GetPrimPath(),
+                                                                           item.transformState, transformError)) {
+                                            errors.append(transformError);
+                                            continue;
+                                        }
+
+                                        item.preservePivotTransform = true;
+                                    }
+
+                                    state->items.append(item);
                                 }
 
-                                UsdEditContext context(stage, UsdEditTarget(editLayer));
-                                success = attr.Set(value);
-                                if (!success)
-                                    error = "USD rejected the value for this attribute type";
+                                state->captured = !state->items.isEmpty();
+                            }
+
+                            UsdEditContext context(stage, UsdEditTarget(editLayer));
+
+                            for (const AttributeValueState::Item& item : state->items) {
+                                if (item.preservePivotTransform) {
+                                    const UsdPrim prim = stage->GetPrimAtPath(item.attributePath.GetPrimPath());
+                                    QString error;
+
+                                    if (!prim || !prim.IsValid()) {
+                                        errors.append(
+                                            QString("prim missing: %1").arg(pathText(item.attributePath.GetPrimPath())));
+                                        continue;
+                                    }
+
+                                    if (!authorCanonicalTransformWithPivot(prim, item.previousLocalTransform,
+                                                                           value.UncheckedGet<GfVec3d>(), error)) {
+                                        QString restoreError;
+                                        restoreTransformPropertyState(editLayer, item.transformState, restoreError);
+
+                                        errors.append(
+                                            error.isEmpty()
+                                                ? QString("failed to set pivot: %1")
+                                                      .arg(pathText(item.attributePath.GetPrimPath()))
+                                                : QString("%1: %2").arg(pathText(item.attributePath.GetPrimPath()),
+                                                                        error));
+                                        continue;
+                                    }
+
+                                    path::appendUnique(affected, item.attributePath.GetPrimPath());
+                                    continue;
+                                }
+
+                                const UsdAttribute attr = stage->GetAttributeAtPath(item.attributePath);
+                                if (!attr) {
+                                    errors.append(QString("attribute missing: %1").arg(pathText(item.attributePath)));
+                                    continue;
+                                }
+
+                                if (!attr.Set(value)) {
+                                    errors.append(QString("USD rejected value: %1").arg(pathText(item.attributePath)));
+                                    continue;
+                                }
+
+                                path::appendUnique(affected, item.attributePath.GetPrimPath());
                             }
                         }
                     }
                 }
 
-                command::queueToSession(session, [=]() {
+                const bool success = errors.isEmpty() && !affected.isEmpty();
+                command::queueToSession(session, [session, affected, errors, success]() {
                     using Status = Session::Notify::Status;
-                    command::finishDeferred(session,
-                                            success ? "Attribute value set"
-                                                    : appendError("Set attribute value failed", error),
-                                            { primPath }, success ? Status::Success : Status::Error);
+                    const QString message = success ? (affected.size() == 1 ? QStringLiteral("Attribute value set")
+                                                                            : QStringLiteral("Attribute values set"))
+                                                    : appendError("Set attribute values finished with errors",
+                                                                  summarizeErrors(errors));
+                    command::finishDeferred(session, message, affected, success ? Status::Success : Status::Error);
                 });
             });
         },
-        [attributePath, state](Session* session) {
-            if (!session || !state->captured || attributePath.IsEmpty())
+        [state](Session* session) {
+            if (!session || !state->captured || state->items.isEmpty())
                 return;
 
-            command::beginDeferred(session, "Undo set attribute value", 1);
+            command::beginDeferred(session, "Undo set attribute values", static_cast<int>(state->items.size()));
 
-            command::runWorker([=]() {
-                bool success = false;
-                QString error;
-                const SdfPath primPath = attributePath.GetPrimPath();
+            command::runWorker([session, state]() {
+                QList<SdfPath> affected;
+                QStringList errors;
 
                 {
                     WRITE_LOCKER(locker, session->stageLock(), "stageLock");
                     const UsdStageRefPtr stage = session->stageUnsafe();
 
                     if (!stage) {
-                        error = "stage missing";
+                        errors.append("stage missing");
                     }
                     else {
                         QString editError;
                         const SdfLayerHandle editLayer = editlayer::opened(stage, editError);
 
                         if (!editLayer) {
-                            error = editError;
+                            errors.append(editError);
                         }
                         else {
-                            if (state->hadRootDefault)
-                                editLayer->SetField(attributePath, SdfFieldKeys->Default, state->previousRootDefault);
-                            else
-                                editLayer->EraseField(attributePath, SdfFieldKeys->Default);
+                            for (const AttributeValueState::Item& item : state->items) {
+                                if (item.preservePivotTransform) {
+                                    QString error;
+                                    if (!restoreTransformPropertyState(editLayer, item.transformState, error)) {
+                                        errors.append(error.isEmpty()
+                                                          ? QString("failed to restore pivot transform: %1")
+                                                                .arg(pathText(item.attributePath.GetPrimPath()))
+                                                          : error);
+                                        continue;
+                                    }
 
-                            success = true;
+                                    path::appendUnique(affected, item.attributePath.GetPrimPath());
+                                    continue;
+                                }
+
+                                if (item.hadRootDefault)
+                                    editLayer->SetField(item.attributePath, SdfFieldKeys->Default,
+                                                        item.previousRootDefault);
+                                else
+                                    editLayer->EraseField(item.attributePath, SdfFieldKeys->Default);
+
+                                path::appendUnique(affected, item.attributePath.GetPrimPath());
+                            }
                         }
                     }
                 }
 
-                command::queueToSession(session, [=]() {
+                const bool success = errors.isEmpty();
+                command::queueToSession(session, [session, affected, errors, success]() {
                     using Status = Session::Notify::Status;
                     command::finishDeferred(session,
-                                            success ? "Attribute value undone"
-                                                    : appendError("Undo attribute value failed", error),
-                                            { primPath }, success ? Status::Success : Status::Error);
+                                            success
+                                                ? "Attribute values undone"
+                                                : appendError("Undo attribute values failed", summarizeErrors(errors)),
+                                            affected, success ? Status::Success : Status::Error);
+                });
+            });
+        });
+}
+
+
+Command
+setAttributeValue(const SdfPath& attributePath, const VtValue& value)
+{
+    return setAttributeValues({ attributePath }, value);
+}
+
+Command
+resetAttributeValues(const QList<SdfPath>& attributePaths)
+{
+    struct ResetAttributeValueState {
+        QList<RootPropertyState> states;
+    };
+
+    auto state = std::make_shared<ResetAttributeValueState>();
+
+    return Command(
+        [attributePaths, state](Session* session) {
+            if (!session || attributePaths.isEmpty())
+                return;
+
+            const QList<SdfPath> paths = path::uniquePaths(attributePaths);
+            command::beginDeferred(session, "Reset attribute values", static_cast<int>(paths.size()));
+
+            command::runWorker([session, paths, state]() {
+                QList<SdfPath> affected;
+                QStringList errors;
+
+                {
+                    WRITE_LOCKER(locker, session->stageLock(), "stageLock");
+                    const UsdStageRefPtr stage = session->stageUnsafe();
+
+                    if (!stage) {
+                        errors.append("stage missing");
+                    }
+                    else {
+                        QString editError;
+                        const SdfLayerHandle editLayer = editlayer::opened(stage, editError);
+
+                        if (!editLayer) {
+                            errors.append(editError);
+                        }
+                        else {
+                            state->states.clear();
+
+                            for (const SdfPath& attributePath : paths) {
+                                if (attributePath.IsEmpty() || !attributePath.IsPropertyPath())
+                                    continue;
+
+                                if (!stage->GetAttributeAtPath(attributePath))
+                                    continue;
+
+                                if (!editLayer->HasField(attributePath, SdfFieldKeys->Default))
+                                    continue;
+
+                                state->states.append(captureRootPropertyState(editLayer, attributePath));
+                                editLayer->EraseField(attributePath, SdfFieldKeys->Default);
+                                path::appendUnique(affected, attributePath.GetPrimPath());
+                            }
+                        }
+                    }
+                }
+
+                const bool success = errors.isEmpty() && !affected.isEmpty();
+                command::queueToSession(session, [session, affected, errors, success]() {
+                    using Status = Session::Notify::Status;
+                    const QString message
+                        = success ? QStringLiteral("Attribute values reset")
+                                  : (errors.isEmpty()
+                                         ? QStringLiteral("No authored attribute values to reset")
+                                         : appendError("Reset attribute values failed", summarizeErrors(errors)));
+                    command::finishDeferred(session, message, affected, success ? Status::Success : Status::Error);
+                });
+            });
+        },
+        [state](Session* session) {
+            if (!session || state->states.isEmpty())
+                return;
+
+            command::beginDeferred(session, "Undo reset attribute values", static_cast<int>(state->states.size()));
+
+            command::runWorker([session, state]() {
+                QList<SdfPath> affected;
+                QStringList errors;
+
+                {
+                    WRITE_LOCKER(locker, session->stageLock(), "stageLock");
+                    const UsdStageRefPtr stage = session->stageUnsafe();
+
+                    if (!stage) {
+                        errors.append("stage missing");
+                    }
+                    else {
+                        QString editError;
+                        const SdfLayerHandle editLayer = editlayer::opened(stage, editError);
+
+                        if (!editLayer) {
+                            errors.append(editError);
+                        }
+                        else {
+                            for (const RootPropertyState& rootState : state->states) {
+                                if (!restoreRootPropertyState(editLayer, rootState)) {
+                                    errors.append(QString("failed to restore attribute value: %1")
+                                                      .arg(pathText(rootState.propertyPath)));
+                                    continue;
+                                }
+
+                                path::appendUnique(affected, rootState.propertyPath.GetPrimPath());
+                            }
+                        }
+                    }
+                }
+
+                const bool success = errors.isEmpty();
+                command::queueToSession(session, [session, affected, errors, success]() {
+                    using Status = Session::Notify::Status;
+                    command::finishDeferred(session,
+                                            success ? "Reset attribute values undone"
+                                                    : appendError("Undo reset attribute values failed",
+                                                                  summarizeErrors(errors)),
+                                            affected, success ? Status::Success : Status::Error);
                 });
             });
         });
 }
 
 Command
-resetAttributeOverride(const SdfPath& attributePath)
+resetAttributeOverrides(const QList<SdfPath>& attributePaths)
 {
     struct ResetAttributeOverrideState {
-        SdfPath attributePath;
-        SdfPath primPath;
-        SdfLayerRefPtr snapshotLayer;
-        bool captured = false;
+        struct Item {
+            SdfPath attributePath;
+            SdfPath primPath;
+            SdfLayerRefPtr snapshotLayer;
+        };
+
+        QList<Item> items;
     };
 
     auto state = std::make_shared<ResetAttributeOverrideState>();
 
     return Command(
-        [attributePath, state](Session* session) {
-            if (!session || attributePath.IsEmpty() || !attributePath.IsPropertyPath())
+        [attributePaths, state](Session* session) {
+            if (!session || attributePaths.isEmpty())
                 return;
 
-            command::beginDeferred(session, "Reset attribute override", 1);
-
-            command::runWorker([session, attributePath, state]() {
-                bool success = false;
-                QString error;
-                const SdfPath primPath = attributePath.GetPrimPath();
-
-                {
-                    WRITE_LOCKER(locker, session->stageLock(), "stageLock");
-                    const UsdStageRefPtr stage = session->stageUnsafe();
-
-                    if (!stage) {
-                        error = "stage missing";
-                    }
-                    else {
-                        QString editError;
-                        const SdfLayerHandle editLayer = editlayer::opened(stage, editError);
-
-                        if (!editLayer) {
-                            error = editError;
-                        }
-                        else {
-                            const UsdPrim prim = stage->GetPrimAtPath(primPath);
-                            const SdfPropertySpecHandle rootAttribute = editLayer->GetPropertyAtPath(attributePath);
-
-                            bool hasUnderlyingPrimOpinion = false;
-
-                            if (prim && prim.IsValid() && !prim.IsInstanceProxy()) {
-                                for (const SdfPrimSpecHandle& primSpec : prim.GetPrimStack()) {
-                                    if (!primSpec)
-                                        continue;
-
-                                    const SdfLayerHandle layer = primSpec->GetLayer();
-                                    if (layer && layer != editLayer) {
-                                        hasUnderlyingPrimOpinion = true;
-                                        break;
-                                    }
-                                }
-                            }
-
-                            if (!prim || !prim.IsValid()) {
-                                error = "prim missing";
-                            }
-                            else if (prim.IsInstanceProxy()) {
-                                error = "instance proxy is not editable";
-                            }
-                            else if (!rootAttribute) {
-                                error = "attribute has no edit-layer override";
-                            }
-                            else if (!hasUnderlyingPrimOpinion) {
-                                error = "attribute belongs to a edit-layer-owned prim";
-                            }
-                            else {
-                                if (!state->captured) {
-                                    state->attributePath = attributePath;
-                                    state->primPath = primPath;
-                                    state->snapshotLayer = SdfLayer::CreateAnonymous(
-                                        "stageviz_attribute_override_snapshot.usda");
-
-                                    if (!state->snapshotLayer) {
-                                        error = "failed to create attribute override snapshot";
-                                    }
-                                    else {
-                                        SdfCreatePrimInLayer(state->snapshotLayer, primPath);
-
-                                        if (!SdfCopySpec(editLayer, attributePath, state->snapshotLayer,
-                                                         attributePath)) {
-                                            state->snapshotLayer = nullptr;
-                                            error = "failed to snapshot attribute override";
-                                        }
-                                        else {
-                                            state->captured = true;
-                                        }
-                                    }
-                                }
-
-                                if (state->captured && error.isEmpty()) {
-                                    if (!removePropertySpec(editLayer, attributePath)) {
-                                        error = "failed to remove attribute override";
-                                    }
-                                    else {
-                                        const SdfPrimSpecHandle remainingSpec = editLayer->GetPrimAtPath(primPath);
-
-                                        if (remainingSpec && remainingSpec->IsInert())
-                                            stage::removePrimSpec(editLayer, primPath);
-
-                                        success = true;
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                command::queueToSession(session, [session, primPath, success, error]() {
-                    using Status = Session::Notify::Status;
-
-                    command::finishDeferred(session,
-                                            success ? "Attribute override reset"
-                                                    : appendError("Reset attribute override failed", error),
-                                            { primPath }, success ? Status::Success : Status::Error);
-                });
-            });
-        },
-        [state](Session* session) {
-            if (!session || !state->captured || !state->snapshotLayer)
-                return;
-
-            command::beginDeferred(session, "Undo reset attribute override", 1);
-
-            command::runWorker([session, state]() {
-                bool success = false;
-                QString error;
-
-                {
-                    WRITE_LOCKER(locker, session->stageLock(), "stageLock");
-                    const UsdStageRefPtr stage = session->stageUnsafe();
-
-                    if (!stage) {
-                        error = "stage missing";
-                    }
-                    else {
-                        QString editError;
-                        const SdfLayerHandle editLayer = editlayer::opened(stage, editError);
-
-                        if (!editLayer) {
-                            error = editError;
-                        }
-                        else {
-                            if (!editLayer->GetPrimAtPath(state->primPath))
-                                SdfCreatePrimInLayer(editLayer, state->primPath);
-
-                            if (!SdfCopySpec(state->snapshotLayer, state->attributePath, editLayer,
-                                             state->attributePath)) {
-                                error = "failed to restore attribute override";
-                            }
-                            else {
-                                success = true;
-                            }
-                        }
-                    }
-                }
-
-                command::queueToSession(session, [session, state, success, error]() {
-                    using Status = Session::Notify::Status;
-
-                    command::finishDeferred(session,
-                                            success ? "Attribute override reset undone"
-                                                    : appendError("Undo reset attribute override failed", error),
-                                            { state->primPath }, success ? Status::Success : Status::Error);
-                });
-            });
-        });
-}
-Command
-resetTransforms(const QList<SdfPath>& paths)
-{
-    struct ResetTransformState {
-        struct Item {
-            SdfPath path;
-            RootPropertyState orderState;
-            RootPropertyState matrixState;
-        };
-        QList<Item> items;
-    };
-
-    auto state = std::make_shared<ResetTransformState>();
-
-    return Command(
-        [paths, state](Session* session) {
-            if (!session || paths.isEmpty())
-                return;
-
-            command::beginDeferred(session, "Reset xform", static_cast<int>(paths.size()));
+            const QList<SdfPath> paths = path::uniquePaths(attributePaths);
+            command::beginDeferred(session, "Reset attribute overrides", static_cast<int>(paths.size()));
 
             command::runWorker([session, paths, state]() {
                 QList<SdfPath> affected;
@@ -3699,53 +3962,76 @@ resetTransforms(const QList<SdfPath>& paths)
                         else {
                             state->items.clear();
 
-                            for (const SdfPath& inputPath : path::uniquePaths(paths)) {
-                                const SdfPath primPath = inputPath.IsPropertyPath() ? inputPath.GetPrimPath()
-                                                                                    : inputPath;
-                                const UsdPrim prim = stage->GetPrimAtPath(primPath);
-                                const UsdGeomXformable xformable(prim);
+                            for (const SdfPath& attributePath : paths) {
+                                if (attributePath.IsEmpty() || !attributePath.IsPropertyPath())
+                                    continue;
 
-                                if (!prim || !prim.IsValid() || prim.IsInstanceProxy() || !xformable) {
-                                    errors.append(QString("prim is not transformable: %1").arg(pathText(primPath)));
+                                const SdfPath primPath = attributePath.GetPrimPath();
+                                const UsdPrim prim = stage->GetPrimAtPath(primPath);
+                                const SdfPropertySpecHandle rootAttribute = editLayer->GetPropertyAtPath(attributePath);
+
+                                if (!prim || !prim.IsValid() || prim.IsInstanceProxy() || !rootAttribute)
+                                    continue;
+
+                                bool hasUnderlyingPrimOpinion = false;
+                                for (const SdfPrimSpecHandle& primSpec : prim.GetPrimStack()) {
+                                    if (!primSpec)
+                                        continue;
+
+                                    const SdfLayerHandle layer = primSpec->GetLayer();
+                                    if (layer && layer != editLayer) {
+                                        hasUnderlyingPrimOpinion = true;
+                                        break;
+                                    }
+                                }
+
+                                if (!hasUnderlyingPrimOpinion)
+                                    continue;
+
+                                ResetAttributeOverrideState::Item item;
+                                item.attributePath = attributePath;
+                                item.primPath = primPath;
+                                item.snapshotLayer = SdfLayer::CreateAnonymous(
+                                    "stageviz_attribute_override_snapshot.usda");
+
+                                if (!item.snapshotLayer) {
+                                    errors.append(
+                                        QString("failed to create override snapshot: %1").arg(pathText(attributePath)));
                                     continue;
                                 }
 
-                                const SdfPath orderPath = primPath.AppendProperty(TfToken("xformOpOrder"));
-                                const SdfPath matrixPath = primPath.AppendProperty(TfToken("xformOp:transform"));
+                                SdfCreatePrimInLayer(item.snapshotLayer, primPath);
+                                if (!SdfCopySpec(editLayer, attributePath, item.snapshotLayer, attributePath)) {
+                                    errors.append(QString("failed to snapshot attribute override: %1")
+                                                      .arg(pathText(attributePath)));
+                                    continue;
+                                }
 
-                                ResetTransformState::Item item;
-                                item.path = primPath;
-                                item.orderState = captureRootPropertyState(editLayer, orderPath);
-                                item.matrixState = captureRootPropertyState(editLayer, matrixPath);
+                                if (!removePropertySpec(editLayer, attributePath)) {
+                                    errors.append(
+                                        QString("failed to remove attribute override: %1").arg(pathText(attributePath)));
+                                    continue;
+                                }
+
+                                const SdfPrimSpecHandle remainingSpec = editLayer->GetPrimAtPath(primPath);
+                                if (remainingSpec && remainingSpec->IsInert())
+                                    stage::removePrimSpec(editLayer, primPath);
+
                                 state->items.append(item);
-
-                                bool success = false;
-
-                                if (hasUnderlyingTransformOpinion(stage, prim, editLayer)) {
-                                    success = removePropertySpec(editLayer, orderPath)
-                                              && removePropertySpec(editLayer, matrixPath);
-                                }
-                                else {
-                                    UsdEditContext context(stage, UsdEditTarget(editLayer));
-                                    UsdGeomXformOp op = xformable.MakeMatrixXform();
-                                    success = op && op.Set(GfMatrix4d(1.0), UsdTimeCode::Default());
-                                }
-
-                                if (success)
-                                    affected.append(primPath);
-                                else
-                                    errors.append(QString("failed to reset xform: %1").arg(pathText(primPath)));
+                                path::appendUnique(affected, primPath);
                             }
                         }
                     }
                 }
 
-                const bool success = errors.isEmpty();
+                const bool success = errors.isEmpty() && !affected.isEmpty();
                 command::queueToSession(session, [session, affected, errors, success]() {
                     using Status = Session::Notify::Status;
-                    const QString message = success ? QStringLiteral("Xform reset")
-                                                    : appendError("Reset xform finished with errors",
-                                                                  summarizeErrors(errors));
+                    const QString message = success
+                                                ? QStringLiteral("Attribute overrides reset")
+                                                : (errors.isEmpty() ? QStringLiteral("No attribute overrides to reset")
+                                                                    : appendError("Reset attribute overrides failed",
+                                                                                  summarizeErrors(errors)));
                     command::finishDeferred(session, message, affected, success ? Status::Success : Status::Error);
                 });
             });
@@ -3754,11 +4040,12 @@ resetTransforms(const QList<SdfPath>& paths)
             if (!session || state->items.isEmpty())
                 return;
 
-            command::beginDeferred(session, "Undo reset xform", static_cast<int>(state->items.size()));
+            command::beginDeferred(session, "Undo reset attribute overrides", static_cast<int>(state->items.size()));
 
             command::runWorker([session, state]() {
-                QList<SdfPath> restored;
+                QList<SdfPath> affected;
                 QStringList errors;
+
                 {
                     WRITE_LOCKER(locker, session->stageLock(), "stageLock");
                     const UsdStageRefPtr stage = session->stageUnsafe();
@@ -3774,14 +4061,180 @@ resetTransforms(const QList<SdfPath>& paths)
                             errors.append(editError);
                         }
                         else {
-                            for (const ResetTransformState::Item& item : state->items) {
-                                const bool success = restoreRootPropertyState(editLayer, item.orderState)
-                                                     && restoreRootPropertyState(editLayer, item.matrixState);
+                            for (const ResetAttributeOverrideState::Item& item : state->items) {
+                                if (!editLayer->GetPrimAtPath(item.primPath))
+                                    SdfCreatePrimInLayer(editLayer, item.primPath);
 
-                                if (success)
-                                    restored.append(item.path);
+                                if (!SdfCopySpec(item.snapshotLayer, item.attributePath, editLayer,
+                                                 item.attributePath)) {
+                                    errors.append(QString("failed to restore attribute override: %1")
+                                                      .arg(pathText(item.attributePath)));
+                                    continue;
+                                }
+
+                                path::appendUnique(affected, item.primPath);
+                            }
+                        }
+                    }
+                }
+
+                const bool success = errors.isEmpty();
+                command::queueToSession(session, [session, affected, errors, success]() {
+                    using Status = Session::Notify::Status;
+                    command::finishDeferred(session,
+                                            success ? "Attribute overrides reset undone"
+                                                    : appendError("Undo reset attribute overrides failed",
+                                                                  summarizeErrors(errors)),
+                                            affected, success ? Status::Success : Status::Error);
+                });
+            });
+        });
+}
+
+Command
+resetAttributeOverride(const SdfPath& attributePath)
+{
+    return resetAttributeOverrides({ attributePath });
+}
+Command
+resetTransforms(const QList<SdfPath>& paths)
+{
+    struct ResetTransformState {
+        QList<TransformPropertyState> items;
+    };
+
+    auto state = std::make_shared<ResetTransformState>();
+
+    return Command(
+        [paths, state](Session* session) {
+            if (!session || paths.isEmpty())
+                return;
+
+            const QList<SdfPath> unique = path::uniquePaths(paths);
+            command::beginDeferred(session, "Reset xform", static_cast<int>(unique.size()));
+
+            command::runWorker([session, unique, state]() {
+                QList<SdfPath> affected;
+                QStringList errors;
+
+                {
+                    WRITE_LOCKER(locker, session->stageLock(), "stageLock");
+                    const UsdStageRefPtr stage = session->stageUnsafe();
+
+                    if (!stage) {
+                        errors.append("stage missing");
+                    }
+                    else {
+                        QString editError;
+                        const SdfLayerHandle editLayer = editlayer::opened(stage, editError);
+
+                        if (!editLayer) {
+                            errors.append(editError);
+                        }
+                        else {
+                            state->items.clear();
+
+                            for (const SdfPath& inputPath : unique) {
+                                const SdfPath primPath = inputPath.IsPropertyPath() ? inputPath.GetPrimPath()
+                                                                                    : inputPath;
+                                const UsdPrim prim = stage->GetPrimAtPath(primPath);
+                                const UsdGeomXformable xformable(prim);
+
+                                if (!prim || !prim.IsValid() || prim.IsInstanceProxy() || !xformable) {
+                                    errors.append(QString("prim is not transformable: %1").arg(pathText(primPath)));
+                                    continue;
+                                }
+
+                                TransformPropertyState item;
+                                QString error;
+                                if (!captureTransformPropertyState(editLayer, primPath, item, error)) {
+                                    errors.append(error);
+                                    continue;
+                                }
+
+                                const bool hasUnderlying = hasUnderlyingTransformOpinion(stage, prim, editLayer);
+
+                                if (!clearEditLayerTransformProperties(editLayer, primPath, error)) {
+                                    errors.append(error);
+                                    continue;
+                                }
+
+                                bool success = false;
+
+                                if (hasUnderlying) {
+                                    success = true;
+                                }
+                                else {
+                                    UsdEditContext context(stage, UsdEditTarget(editLayer));
+                                    const UsdGeomXformOp matrixOp = xformable.AddTransformOp(
+                                        UsdGeomXformOp::PrecisionDouble);
+
+                                    success = matrixOp && matrixOp.Set(GfMatrix4d(1.0), UsdTimeCode::Default());
+
+                                    if (!success)
+                                        error
+                                            = QString("failed to author identity transform: %1").arg(pathText(primPath));
+                                }
+
+                                if (!success) {
+                                    QString restoreError;
+                                    restoreTransformPropertyState(editLayer, item, restoreError);
+                                    errors.append(error.isEmpty()
+                                                      ? QString("failed to reset xform: %1").arg(pathText(primPath))
+                                                      : error);
+                                    continue;
+                                }
+
+                                state->items.append(item);
+                                path::appendUnique(affected, primPath);
+                            }
+                        }
+                    }
+                }
+
+                const bool success = errors.isEmpty() && !affected.isEmpty();
+                command::queueToSession(session, [session, affected, errors, success]() {
+                    using Status = Session::Notify::Status;
+                    const QString message = success
+                                                ? QStringLiteral("Xform reset")
+                                                : (errors.isEmpty() ? QStringLiteral("No transforms to reset")
+                                                                    : appendError("Reset xform finished with errors",
+                                                                                  summarizeErrors(errors)));
+                    command::finishDeferred(session, message, affected, success ? Status::Success : Status::Error);
+                });
+            });
+        },
+        [state](Session* session) {
+            if (!session || state->items.isEmpty())
+                return;
+
+            command::beginDeferred(session, "Undo reset xform", static_cast<int>(state->items.size()));
+
+            command::runWorker([session, state]() {
+                QList<SdfPath> restored;
+                QStringList errors;
+
+                {
+                    WRITE_LOCKER(locker, session->stageLock(), "stageLock");
+                    const UsdStageRefPtr stage = session->stageUnsafe();
+
+                    if (!stage) {
+                        errors.append("stage missing");
+                    }
+                    else {
+                        QString editError;
+                        const SdfLayerHandle editLayer = editlayer::opened(stage, editError);
+
+                        if (!editLayer) {
+                            errors.append(editError);
+                        }
+                        else {
+                            for (const TransformPropertyState& item : state->items) {
+                                QString error;
+                                if (restoreTransformPropertyState(editLayer, item, error))
+                                    path::appendUnique(restored, item.primPath);
                                 else
-                                    errors.append(QString("failed to restore xform: %1").arg(pathText(item.path)));
+                                    errors.append(error);
                             }
                         }
                     }
@@ -3790,13 +4243,324 @@ resetTransforms(const QList<SdfPath>& paths)
                 const bool success = errors.isEmpty();
                 command::queueToSession(session, [session, restored, errors, success]() {
                     using Status = Session::Notify::Status;
-                    const QString message = success ? QStringLiteral("Reset xform undone")
+                    command::finishDeferred(session,
+                                            success ? "Reset xform undone"
                                                     : appendError("Undo reset xform finished with errors",
-                                                                  summarizeErrors(errors));
-                    command::finishDeferred(session, message, restored, success ? Status::Success : Status::Error);
+                                                                  summarizeErrors(errors)),
+                                            restored, success ? Status::Success : Status::Error);
                 });
             });
         });
+}
+
+
+Command
+centerPivots(const QList<SdfPath>& paths)
+{
+    struct PivotState {
+        QList<TransformPropertyState> items;
+    };
+
+    auto state = std::make_shared<PivotState>();
+
+    return Command(
+        [paths, state](Session* session) {
+            if (!session || paths.isEmpty())
+                return;
+
+            const QList<SdfPath> unique = path::uniquePaths(paths);
+            command::beginDeferred(session, "Center pivot", static_cast<int>(unique.size()));
+
+            command::runWorker([session, unique, state]() {
+                QList<SdfPath> affected;
+                QStringList errors;
+
+                {
+                    WRITE_LOCKER(locker, session->stageLock(), "stageLock");
+                    const UsdStageRefPtr stage = session->stageUnsafe();
+
+                    if (!stage) {
+                        errors.append("stage missing");
+                    }
+                    else {
+                        QString editError;
+                        const SdfLayerHandle editLayer = editlayer::opened(stage, editError);
+
+                        if (!editLayer) {
+                            errors.append(editError);
+                        }
+                        else {
+                            state->items.clear();
+                            UsdGeomBBoxCache bboxCache(UsdTimeCode::Default(),
+                                                       UsdGeomImageable::GetOrderedPurposeTokens(), true);
+
+                            for (const SdfPath& inputPath : unique) {
+                                const SdfPath primPath = inputPath.IsPropertyPath() ? inputPath.GetPrimPath()
+                                                                                    : inputPath;
+                                const UsdPrim prim = stage->GetPrimAtPath(primPath);
+                                const UsdGeomXformable xformable(prim);
+
+                                if (!prim || !prim.IsValid() || prim.IsInstanceProxy() || !xformable) {
+                                    errors.append(QString("prim is not transformable: %1").arg(pathText(primPath)));
+                                    continue;
+                                }
+
+                                const GfBBox3d worldBound = bboxCache.ComputeWorldBound(prim);
+                                const GfRange3d worldRange = worldBound.ComputeAlignedRange();
+                                if (worldRange.IsEmpty()) {
+                                    errors.append(QString("prim has no bound: %1").arg(pathText(primPath)));
+                                    continue;
+                                }
+
+                                GfMatrix4d localMatrix(1.0);
+                                bool resetsXformStack = false;
+                                if (!xformable.GetLocalTransformation(&localMatrix, &resetsXformStack,
+                                                                      UsdTimeCode::Default())) {
+                                    errors.append(
+                                        QString("failed to evaluate local transform: %1").arg(pathText(primPath)));
+                                    continue;
+                                }
+
+                                UsdGeomXformCache xformCache(UsdTimeCode::Default());
+                                const GfMatrix4d worldMatrix = xformCache.GetLocalToWorldTransform(prim);
+                                const GfVec3d worldCenter = worldRange.GetMidpoint();
+                                const GfVec3d localPivot = worldMatrix.GetInverse().Transform(worldCenter);
+
+                                TransformPropertyState item;
+                                QString error;
+                                if (!captureTransformPropertyState(editLayer, primPath, item, error)) {
+                                    errors.append(error);
+                                    continue;
+                                }
+
+                                UsdEditContext context(stage, UsdEditTarget(editLayer));
+                                if (!authorCanonicalTransformWithPivot(prim, localMatrix, localPivot, error)) {
+                                    errors.append(error.isEmpty()
+                                                      ? QString("failed to center pivot: %1").arg(pathText(primPath))
+                                                      : QString("%1: %2").arg(pathText(primPath), error));
+                                    continue;
+                                }
+
+                                state->items.append(item);
+                                path::appendUnique(affected, primPath);
+                            }
+                        }
+                    }
+                }
+
+                const bool success = errors.isEmpty() && !affected.isEmpty();
+                command::queueToSession(session, [session, affected, errors, success]() {
+                    using Status = Session::Notify::Status;
+                    command::finishDeferred(session,
+                                            success ? "Pivot centered"
+                                                    : appendError("Center pivot finished with errors",
+                                                                  summarizeErrors(errors)),
+                                            affected, success ? Status::Success : Status::Error);
+                });
+            });
+        },
+        [state](Session* session) {
+            if (!session || state->items.isEmpty())
+                return;
+
+            command::beginDeferred(session, "Undo center pivot", static_cast<int>(state->items.size()));
+
+            command::runWorker([session, state]() {
+                QList<SdfPath> restored;
+                QStringList errors;
+
+                {
+                    WRITE_LOCKER(locker, session->stageLock(), "stageLock");
+                    const UsdStageRefPtr stage = session->stageUnsafe();
+
+                    if (!stage) {
+                        errors.append("stage missing");
+                    }
+                    else {
+                        QString editError;
+                        const SdfLayerHandle editLayer = editlayer::opened(stage, editError);
+
+                        if (!editLayer) {
+                            errors.append(editError);
+                        }
+                        else {
+                            for (const TransformPropertyState& item : state->items) {
+                                QString error;
+                                if (restoreTransformPropertyState(editLayer, item, error))
+                                    path::appendUnique(restored, item.primPath);
+                                else
+                                    errors.append(error);
+                            }
+                        }
+                    }
+                }
+
+                const bool success = errors.isEmpty();
+                command::queueToSession(session, [session, restored, errors, success]() {
+                    using Status = Session::Notify::Status;
+                    command::finishDeferred(session,
+                                            success ? "Center pivot undone"
+                                                    : appendError("Undo center pivot failed", summarizeErrors(errors)),
+                                            restored, success ? Status::Success : Status::Error);
+                });
+            });
+        });
+}
+
+Command
+resetPivots(const QList<SdfPath>& paths)
+{
+    struct PivotState {
+        QList<TransformPropertyState> items;
+    };
+
+    auto state = std::make_shared<PivotState>();
+
+    return Command(
+        [paths, state](Session* session) {
+            if (!session || paths.isEmpty())
+                return;
+
+            const QList<SdfPath> unique = path::uniquePaths(paths);
+            command::beginDeferred(session, "Reset pivot", static_cast<int>(unique.size()));
+
+            command::runWorker([session, unique, state]() {
+                QList<SdfPath> affected;
+                QStringList errors;
+
+                {
+                    WRITE_LOCKER(locker, session->stageLock(), "stageLock");
+                    const UsdStageRefPtr stage = session->stageUnsafe();
+
+                    if (!stage) {
+                        errors.append("stage missing");
+                    }
+                    else {
+                        QString editError;
+                        const SdfLayerHandle editLayer = editlayer::opened(stage, editError);
+
+                        if (!editLayer) {
+                            errors.append(editError);
+                        }
+                        else {
+                            state->items.clear();
+
+                            for (const SdfPath& inputPath : unique) {
+                                const SdfPath primPath = inputPath.IsPropertyPath() ? inputPath.GetPrimPath()
+                                                                                    : inputPath;
+                                const UsdPrim prim = stage->GetPrimAtPath(primPath);
+                                const UsdGeomXformable xformable(prim);
+
+                                if (!prim || !prim.IsValid() || prim.IsInstanceProxy() || !xformable) {
+                                    errors.append(QString("prim is not transformable: %1").arg(pathText(primPath)));
+                                    continue;
+                                }
+
+                                GfMatrix4d localMatrix(1.0);
+                                bool resetsXformStack = false;
+                                if (!xformable.GetLocalTransformation(&localMatrix, &resetsXformStack,
+                                                                      UsdTimeCode::Default())) {
+                                    errors.append(
+                                        QString("failed to evaluate local transform: %1").arg(pathText(primPath)));
+                                    continue;
+                                }
+
+                                TransformPropertyState item;
+                                QString error;
+                                if (!captureTransformPropertyState(editLayer, primPath, item, error)) {
+                                    errors.append(error);
+                                    continue;
+                                }
+
+                                if (!clearEditLayerTransformProperties(editLayer, primPath, error)) {
+                                    errors.append(error.isEmpty()
+                                                      ? QString("failed to clear pivot transform properties: %1")
+                                                            .arg(pathText(primPath))
+                                                      : error);
+                                    continue;
+                                }
+
+                                UsdEditContext context(stage, UsdEditTarget(editLayer));
+                                if (!authorCanonicalMatrixTransform(prim, localMatrix, error)) {
+                                    QString restoreError;
+                                    restoreTransformPropertyState(editLayer, item, restoreError);
+
+                                    errors.append(error.isEmpty()
+                                                      ? QString("failed to reset pivot: %1").arg(pathText(primPath))
+                                                      : QString("%1: %2").arg(pathText(primPath), error));
+                                    continue;
+                                }
+
+                                state->items.append(item);
+                                path::appendUnique(affected, primPath);
+                            }
+                        }
+                    }
+                }
+
+                const bool success = errors.isEmpty() && !affected.isEmpty();
+                command::queueToSession(session, [session, affected, errors, success]() {
+                    using Status = Session::Notify::Status;
+                    command::finishDeferred(session,
+                                            success ? "Pivot reset"
+                                                    : appendError("Reset pivot finished with errors",
+                                                                  summarizeErrors(errors)),
+                                            affected, success ? Status::Success : Status::Error);
+                });
+            });
+        },
+        [state](Session* session) {
+            if (!session || state->items.isEmpty())
+                return;
+
+            command::beginDeferred(session, "Undo reset pivot", static_cast<int>(state->items.size()));
+
+            command::runWorker([session, state]() {
+                QList<SdfPath> restored;
+                QStringList errors;
+
+                {
+                    WRITE_LOCKER(locker, session->stageLock(), "stageLock");
+                    const UsdStageRefPtr stage = session->stageUnsafe();
+
+                    if (!stage) {
+                        errors.append("stage missing");
+                    }
+                    else {
+                        QString editError;
+                        const SdfLayerHandle editLayer = editlayer::opened(stage, editError);
+
+                        if (!editLayer) {
+                            errors.append(editError);
+                        }
+                        else {
+                            for (const TransformPropertyState& item : state->items) {
+                                QString error;
+                                if (restoreTransformPropertyState(editLayer, item, error))
+                                    path::appendUnique(restored, item.primPath);
+                                else
+                                    errors.append(error);
+                            }
+                        }
+                    }
+                }
+
+                const bool success = errors.isEmpty();
+                command::queueToSession(session, [session, restored, errors, success]() {
+                    using Status = Session::Notify::Status;
+                    command::finishDeferred(session,
+                                            success ? "Reset pivot undone"
+                                                    : appendError("Undo reset pivot failed", summarizeErrors(errors)),
+                                            restored, success ? Status::Success : Status::Error);
+                });
+            });
+        });
+}
+
+Command
+identityTransforms(const QList<SdfPath>& paths)
+{
+    return resetTransforms(paths);
 }
 
 

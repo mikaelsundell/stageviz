@@ -6,6 +6,7 @@
 #include "qtutils.h"
 #include <QFileInfo>
 #include <algorithm>
+#include <cmath>
 #include <functional>
 #include <pxr/base/gf/vec3d.h>
 #include <pxr/base/gf/vec3f.h>
@@ -45,6 +46,113 @@ namespace {
             ensureParentSpecs(layer, parent);
             SdfCreatePrimInLayer(layer, parent);
         }
+    }
+
+    bool matrixClose(const GfMatrix4d& a, const GfMatrix4d& b, double tolerance = 1.0e-8)
+    {
+        for (int row = 0; row < 4; ++row) {
+            for (int column = 0; column < 4; ++column) {
+                if (std::abs(a[row][column] - b[row][column]) > tolerance)
+                    return false;
+            }
+        }
+        return true;
+    }
+
+    bool localPivot(const UsdGeomXformable& xformable, GfVec3d& pivot)
+    {
+        if (!xformable)
+            return false;
+
+        const TfToken pivotToken("xformOp:translate:pivot");
+        const TfToken inversePivotToken("!invert!xformOp:translate:pivot");
+
+        VtTokenArray order;
+        if (!xformable.GetXformOpOrderAttr().Get(&order, UsdTimeCode::Default()))
+            return false;
+
+        int pivotIndex = -1;
+        int inversePivotIndex = -1;
+
+        for (int i = 0; i < static_cast<int>(order.size()); ++i) {
+            if (order[i] == pivotToken)
+                pivotIndex = i;
+            else if (order[i] == inversePivotToken)
+                inversePivotIndex = i;
+        }
+
+        if (pivotIndex < 0 || inversePivotIndex <= pivotIndex)
+            return false;
+
+        const UsdAttribute pivotAttr = xformable.GetPrim().GetAttribute(pivotToken);
+        if (!pivotAttr)
+            return false;
+
+        VtValue value;
+        if (!pivotAttr.Get(&value, UsdTimeCode::Default()))
+            return false;
+
+        if (value.IsHolding<GfVec3d>()) {
+            pivot = value.UncheckedGet<GfVec3d>();
+            return true;
+        }
+
+        if (value.IsHolding<GfVec3f>()) {
+            const GfVec3f v = value.UncheckedGet<GfVec3f>();
+            pivot = GfVec3d(v[0], v[1], v[2]);
+            return true;
+        }
+
+        return false;
+    }
+
+    bool setLocalMatrixWithPivot(const UsdGeomXformable& xformable, const GfMatrix4d& localMatrix,
+                                 const GfVec3d& pivotValue, QString& error)
+    {
+        if (!xformable) {
+            error = "prim is not xformable";
+            return false;
+        }
+
+        xformable.ClearXformOpOrder();
+
+        const UsdGeomXformOp pivotOp = xformable.AddTranslateOp(UsdGeomXformOp::PrecisionDouble, TfToken("pivot"),
+                                                                false);
+        const UsdGeomXformOp matrixOp = xformable.AddTransformOp(UsdGeomXformOp::PrecisionDouble);
+        const UsdGeomXformOp inversePivotOp = xformable.AddTranslateOp(UsdGeomXformOp::PrecisionDouble,
+                                                                       TfToken("pivot"), true);
+
+        if (!pivotOp || !matrixOp || !inversePivotOp || !pivotOp.Set(pivotValue, UsdTimeCode::Default())) {
+            error = "failed to preserve pivot transform ops";
+            return false;
+        }
+
+        GfMatrix4d pivotMatrix(1.0);
+        pivotMatrix.SetTranslate(pivotValue);
+
+        GfMatrix4d inversePivotMatrix(1.0);
+        inversePivotMatrix.SetTranslate(-pivotValue);
+
+        const GfMatrix4d candidates[] = {
+            pivotMatrix * localMatrix * inversePivotMatrix,
+            inversePivotMatrix * localMatrix * pivotMatrix,
+        };
+
+        for (const GfMatrix4d& candidate : candidates) {
+            if (!matrixOp.Set(candidate, UsdTimeCode::Default()))
+                continue;
+
+            GfMatrix4d evaluated(1.0);
+            bool resetsXformStack = false;
+            if (!xformable.GetLocalTransformation(&evaluated, &resetsXformStack, UsdTimeCode::Default()))
+                continue;
+
+            if (matrixClose(evaluated, localMatrix))
+                return true;
+        }
+
+        error = "failed to preserve local transform while retaining pivot";
+        return false;
     }
 }  // namespace
 
@@ -91,8 +199,7 @@ namespace editlayer {
             const SdfPrimSpecHandleVector stack = prim.GetPrimStack();
 
             if (stack.empty() || !stack.front() || stack.front()->GetLayer() != layer) {
-                error = QString("prim strongest opinion is not in edit layer: %1")
-                            .arg(qt::SdfPathToQString(primPath));
+                error = QString("prim strongest opinion is not in edit layer: %1").arg(qt::SdfPathToQString(primPath));
 
                 return false;
             }
@@ -861,15 +968,22 @@ namespace stage {
         }
 
         const GfMatrix4d local = matrix * parentWorld.GetInverse();
-        QString editError;
 
+        QString editError;
         const SdfLayerHandle editLayer = editlayer::opened(stage, editError);
         if (!editLayer) {
             error = editError;
             return false;
         }
 
-        UsdEditContext context(stage, stage->GetEditTarget());
+        GfVec3d pivotValue(0.0);
+        const bool preservePivot = localPivot(xformable, pivotValue);
+
+        UsdEditContext context(stage, UsdEditTarget(editLayer));
+
+        if (preservePivot)
+            return setLocalMatrixWithPivot(xformable, local, pivotValue, error);
+
         UsdGeomXformOp op = xformable.MakeMatrixXform();
         if (!op) {
             error = "could not create matrix xform op";
@@ -880,6 +994,7 @@ namespace stage {
             error = "USD rejected transform matrix";
             return false;
         }
+
         return true;
     }
 

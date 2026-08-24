@@ -6,6 +6,7 @@
 
 #include "stageviz.h"
 #include "treeitem.h"
+#include <QList>
 #include <QStringList>
 #include <pxr/usd/sdf/path.h>
 
@@ -35,7 +36,9 @@ public:
         EditorOptionsRole,
         EditorMinimumRole,
         EditorMaximumRole,
-        EditorDecimalsRole
+        EditorDecimalsRole,
+        MixedValueRole,
+        ValuePathRole
     };
 
     PropertyItem(QTreeWidget* parent);
@@ -49,6 +52,15 @@ public:
 
     SdfPath propertyPath() const;
     void setPropertyPath(const SdfPath& path);
+
+    QList<SdfPath> propertyPaths() const;
+    void setPropertyPaths(const QList<SdfPath>& paths);
+
+    SdfPath valuePath() const;
+    void setValuePath(const SdfPath& path);
+
+    bool mixedValue() const;
+    void setMixedValue(bool mixed);
 
     int arrayIndex() const;
     void setArrayIndex(int index);

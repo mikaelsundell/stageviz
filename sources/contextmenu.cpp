@@ -16,6 +16,8 @@
 #include <functional>
 #include <pxr/usd/sdf/primSpec.h>
 #include <pxr/usd/usd/prim.h>
+#include <pxr/usd/usdGeom/bboxCache.h>
+#include <pxr/usd/usdGeom/imageable.h>
 #include <pxr/usd/usdGeom/xformable.h>
 
 namespace stageviz {
@@ -83,7 +85,9 @@ ContextMenu::exec(QWidget* parent, ViewContext* context, UsdStageRefPtr usdStage
     bool canHideRecursive = false;
     bool canLoadSelected = false;
     bool canUnloadSelected = false;
-    bool canResetXform = !paths.isEmpty();
+    bool canTransform = !paths.isEmpty();
+    bool canCenterPivot = !paths.isEmpty();
+    bool canResetPivot = !paths.isEmpty();
     bool canResetOverrides = false;
 
     {
@@ -102,8 +106,17 @@ ContextMenu::exec(QWidget* parent, ViewContext* context, UsdStageRefPtr usdStage
                 hasExactPayloadSelection = true;
 
             const UsdPrim prim = usdStage->GetPrimAtPath(path);
-            if (!prim || !prim.IsValid() || prim.IsInstanceProxy() || !UsdGeomXformable(prim))
-                canResetXform = false;
+            if (!prim || !prim.IsValid() || prim.IsInstanceProxy() || !UsdGeomXformable(prim)) {
+                canTransform = false;
+                canCenterPivot = false;
+                canResetPivot = false;
+            }
+            else if (canCenterPivot) {
+                UsdGeomBBoxCache bboxCache(UsdTimeCode::Default(), UsdGeomImageable::GetOrderedPurposeTokens(), true);
+                const GfBBox3d bound = bboxCache.ComputeWorldBound(prim);
+                if (bound.ComputeAlignedRange().IsEmpty())
+                    canCenterPivot = false;
+            }
 
             if (prim && prim.IsValid() && !prim.IsInstanceProxy()) {
                 const SdfLayerHandle rootLayer = usdStage->GetRootLayer();
@@ -271,13 +284,24 @@ ContextMenu::exec(QWidget* parent, ViewContext* context, UsdStageRefPtr usdStage
 
     menu.addSeparator();
 
+    QMenu* pivotMenu = menu.addMenu("Pivot");
+    QAction* centerPivot = pivotMenu->addAction("Center");
+    QAction* resetPivot = pivotMenu->addAction("Reset");
+    centerPivot->setEnabled(canCenterPivot);
+    resetPivot->setEnabled(canResetPivot);
+    pivotMenu->setEnabled(canCenterPivot || canResetPivot);
+
+    QMenu* transformMenu = menu.addMenu("Transform");
+    QAction* identityTransform = transformMenu->addAction("Identity");
+    identityTransform->setEnabled(canTransform);
+    transformMenu->setEnabled(canTransform);
+
+    menu.addSeparator();
+
     QMenu* resetMenu = menu.addMenu("Reset");
-    QAction* resetXform = resetMenu->addAction("Transform");
-    resetMenu->addSeparator();
     QAction* resetOverridesAction = resetMenu->addAction("Overrides");
-    resetXform->setEnabled(canResetXform);
     resetOverridesAction->setEnabled(canResetOverrides);
-    resetMenu->setEnabled(canResetXform || canResetOverrides);
+    resetMenu->setEnabled(canResetOverrides);
 
     menu.addSeparator();
 
@@ -339,8 +363,18 @@ ContextMenu::exec(QWidget* parent, ViewContext* context, UsdStageRefPtr usdStage
         return;
     }
 
-    if (chosen == resetXform) {
-        context->run(new Command(resetTransforms(paths)));
+    if (chosen == centerPivot) {
+        context->run(new Command(centerPivots(paths)));
+        return;
+    }
+
+    if (chosen == resetPivot) {
+        context->run(new Command(resetPivots(paths)));
+        return;
+    }
+
+    if (chosen == identityTransform) {
+        context->run(new Command(identityTransforms(paths)));
         return;
     }
 

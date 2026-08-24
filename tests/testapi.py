@@ -202,6 +202,59 @@ def _root_has_prim(path):
     return bool(layer.GetPrimAtPath(Sdf.Path(path)))
 
 
+def _edit_layer_identifier():
+    session = stageviz.session()
+    if not hasattr(session, "editLayer"):
+        return ""
+    return session.editLayer()
+
+
+def _edit_layer():
+    stage = _stage()
+    identifier = _edit_layer_identifier()
+
+    if not stage or not identifier:
+        return None
+
+    for layer in stage.GetLayerStack(False):
+        if layer.identifier == identifier or layer.realPath == identifier:
+            return layer
+
+    return None
+
+
+def _edit_has_property(path):
+    layer = _edit_layer()
+    if not layer:
+        return False
+    return bool(layer.GetPropertyAtPath(Sdf.Path(path)))
+
+
+def _edit_has_prim(path):
+    layer = _edit_layer()
+    if not layer:
+        return False
+    return bool(layer.GetPrimAtPath(Sdf.Path(path)))
+
+
+def _layer_has_default(layer, path):
+    if not layer:
+        return False
+
+    prop = layer.GetPropertyAtPath(Sdf.Path(path))
+    return bool(prop and prop.HasInfo("default"))
+
+
+def _ensure_cube(path, size=2.0):
+    stage = _stage()
+    if not stage:
+        return None
+
+    cube = UsdGeom.Cube.Define(stage, path)
+    cube.CreateSizeAttr(float(size))
+    return cube.GetPrim()
+
+
 def _define_xform(stage, path):
     return UsdGeom.Xform.Define(stage, path).GetPrim()
 
@@ -247,6 +300,54 @@ def _set_complex_transform(path, translate, rotate, scale):
     xform.AddRotateXYZOp().Set(Gf.Vec3f(*rotate))
     xform.AddScaleOp().Set(Gf.Vec3f(*scale))
     return True
+
+
+def _transform_property_names(path):
+    layer = _edit_layer()
+    if not layer:
+        return []
+
+    spec = layer.GetPrimAtPath(Sdf.Path(path))
+    if not spec:
+        return []
+
+    names = []
+    for prop in spec.properties:
+        name = prop.name
+        if name == "xformOpOrder" or name.startswith("xformOp:"):
+            names.append(name)
+
+    return sorted(names)
+
+
+def _local_transform(path):
+    prim = _prim(path)
+    if not prim:
+        return None
+
+    xformable = UsdGeom.Xformable(prim)
+    if not xformable:
+        return None
+
+    value = xformable.GetLocalTransformation(Usd.TimeCode.Default())
+    if isinstance(value, tuple):
+        value = value[0]
+
+    return Gf.Matrix4d(value)
+
+
+def _identity_matrix():
+    return Gf.Matrix4d(1.0)
+
+
+def _xform_order(path):
+    prim = _prim(path)
+    if not prim:
+        return []
+
+    attr = UsdGeom.Xformable(prim).GetXformOpOrderAttr()
+    value = attr.Get() if attr else None
+    return [str(token) for token in value] if value is not None else []
 
 
 def _has_command(name):
@@ -388,6 +489,211 @@ def reload_fixture(main_path):
 
     _wait_until(lambda: _selection() == [], timeout=1.0)
     _wait_until(lambda: _mask() == [], timeout=1.0)
+
+
+def test_command_api():
+    expected = [
+        "select_paths",
+        "select_all",
+        "select_invert",
+        "select_invert_payload",
+        "isolate_paths",
+        "show_paths",
+        "hide_paths",
+        "load_payloads",
+        "unload_payloads",
+        "set_stage_up",
+        "set_default_prim",
+        "delete_paths",
+        "duplicate_paths",
+        "new_prim",
+        "new_scope",
+        "new_material",
+        "new_reference",
+        "new_payload",
+        "rename_path",
+        "new_xform",
+        "move_path",
+        "set_attribute_value",
+        "set_attribute_values",
+        "reset_attribute_values",
+        "reset_attribute_override",
+        "reset_attribute_overrides",
+        "center_pivots",
+        "reset_pivots",
+        "reset_transforms",
+        "identity_transforms",
+        "bind_material",
+    ]
+
+    # reset_overrides was added after the original Python command surface.
+    if _has_command("reset_overrides"):
+        expected.append("reset_overrides")
+
+    missing = [name for name in expected if not _has_command(name)]
+
+    _assert(
+        not missing,
+        "expected command API is exposed"
+        + (f": missing {missing}" if missing else ""),
+    )
+
+
+def test_session_edit_layer_api():
+    session = stageviz.session()
+
+    required = ("editLayer", "editLayers", "setEditLayer")
+    missing = [name for name in required if not hasattr(session, name)]
+
+    _assert(
+        not missing,
+        "session edit-layer API is exposed"
+        + (f": missing {missing}" if missing else ""),
+    )
+
+    if missing:
+        return
+
+    root = _root_layer()
+    _assert(bool(root), "root layer exists for edit-layer test")
+
+    if not root:
+        return
+
+    _assert_equal(
+        session.editLayer(),
+        root.identifier,
+        "edit layer defaults to root layer",
+    )
+
+    layers = list(session.editLayers())
+
+    _assert(
+        root.identifier in layers,
+        "editLayers includes root layer",
+    )
+
+    sublayers = [
+        identifier
+        for identifier in layers
+        if identifier != root.identifier
+    ]
+
+    _assert(
+        bool(sublayers),
+        "fixture exposes at least one local sublayer",
+    )
+
+    if not sublayers:
+        return
+
+    sublayer = sublayers[0]
+
+    _assert(
+        bool(session.setEditLayer(sublayer)),
+        "setEditLayer accepts local sublayer",
+    )
+
+    _assert_equal(
+        session.editLayer(),
+        sublayer,
+        "session switches active edit layer",
+    )
+
+    stage_target = _stage().GetEditTarget().GetLayer()
+    _assert(
+        bool(stage_target),
+        "USD stage has active edit target",
+    )
+
+    if stage_target:
+        _assert_equal(
+            stage_target.identifier,
+            sublayer,
+            "USD stage edit target follows Session edit layer",
+        )
+
+    rejected_missing = False
+    try:
+        rejected_missing = not bool(
+            session.setEditLayer("__stageviz_missing_layer__.usda")
+        )
+    except ValueError:
+        rejected_missing = True
+
+    _assert(
+        rejected_missing,
+        "setEditLayer rejects unknown layer",
+    )
+
+    _assert(
+        bool(session.setEditLayer(root.identifier)),
+        "setEditLayer switches back to root",
+    )
+
+    _assert_equal(
+        session.editLayer(),
+        root.identifier,
+        "edit layer restored to root",
+    )
+
+
+def test_property_edit_uses_selected_sublayer():
+    session = stageviz.session()
+
+    if not all(hasattr(session, name) for name in ("editLayer", "editLayers", "setEditLayer")):
+        print("[skip] session edit-layer API is not bound")
+        return
+
+    root = _root_layer()
+    layers = list(session.editLayers())
+    sublayers = [
+        identifier
+        for identifier in layers
+        if root and identifier != root.identifier
+    ]
+
+    if not sublayers:
+        print("[skip] no local sublayer available")
+        return
+
+    sublayer = sublayers[0]
+
+    _assert(
+        bool(session.setEditLayer(sublayer)),
+        "select sublayer for property authoring",
+    )
+
+    property_path = "/ExternalRoot.visibility"
+
+    _assert(
+        not _edit_has_property(property_path),
+        "selected edit layer has no visibility opinion initially",
+    )
+
+    _assert(
+        not _root_has_property(property_path),
+        "root layer has no visibility opinion initially",
+    )
+
+    stageviz.command.hide_paths(["/ExternalRoot"], recursive=False)
+
+    _assert(
+        _wait_until(lambda: str(_visibility("/ExternalRoot")) == "invisible"),
+        "hide_paths edits composed sublayer prim",
+    )
+
+    _assert(
+        _edit_has_property(property_path),
+        "visibility is authored in selected edit layer",
+    )
+
+    _assert(
+        not _root_has_property(property_path),
+        "visibility is not accidentally authored in root layer",
+    )
+
+    session.setEditLayer(root.identifier)
 
 
 def test_select_paths():
@@ -713,6 +1019,66 @@ def test_new_material():
         _assert(
             _wait_until(lambda: _exists(material_path) and _exists(shader_path)),
             "redo new_material restores material hierarchy",
+        )
+
+
+def test_bind_material():
+    if not _has_command("bind_material"):
+        print("[skip] bind_material is not bound")
+        return
+
+    stage = _stage()
+
+    if not _exists("/World/Looks"):
+        UsdGeom.Scope.Define(stage, "/World/Looks")
+
+    material_path = "/World/Looks/BoundMaterial"
+
+    if not _exists(material_path):
+        material = UsdShade.Material.Define(stage, material_path)
+        shader = UsdShade.Shader.Define(stage, f"{material_path}/PreviewSurface")
+        shader.CreateIdAttr("UsdPreviewSurface")
+        material.CreateSurfaceOutput().ConnectToSource(
+            shader.ConnectableAPI(),
+            "surface",
+        )
+
+    stageviz.command.bind_material(
+        ["/World/A", "/World/B"],
+        material_path,
+    )
+
+    def bound_material(path):
+        prim = _prim(path)
+        if not prim:
+            return ""
+        bound, _ = UsdShade.MaterialBindingAPI(prim).ComputeBoundMaterial()
+        return str(bound.GetPath()) if bound else ""
+
+    _assert(
+        _wait_until(
+            lambda: bound_material("/World/A") == material_path
+            and bound_material("/World/B") == material_path
+        ),
+        "bind_material binds material to all requested prims",
+    )
+
+    if _undo():
+        _assert(
+            _wait_until(
+                lambda: bound_material("/World/A") != material_path
+                and bound_material("/World/B") != material_path
+            ),
+            "undo bind_material restores previous bindings",
+        )
+
+    if _redo():
+        _assert(
+            _wait_until(
+                lambda: bound_material("/World/A") == material_path
+                and bound_material("/World/B") == material_path
+            ),
+            "redo bind_material restores bindings",
         )
 
 
@@ -1373,6 +1739,111 @@ def test_move_preserve_world_transform():
     )
 
 
+def test_move_preserve_world_transform_keeps_pivot_stack():
+    if not _has_command("center_pivots"):
+        print("[skip] center_pivots is not bound")
+        return
+
+    path = "/World/A/A1"
+    _ensure_cube(f"{path}/PivotGeom", size=3.0)
+
+    _assert(
+        _set_complex_transform(
+            "/World/A",
+            (8.0, -2.0, 3.0),
+            (12.0, 19.0, -7.0),
+            (1.1, 0.9, 1.2),
+        ),
+        "set source parent transform for pivot-preserving move",
+    )
+
+    _assert(
+        _set_complex_transform(
+            path,
+            (4.0, 1.0, -2.0),
+            (21.0, -16.0, 9.0),
+            (1.3, 0.8, 1.1),
+        ),
+        "set child transform for pivot-preserving move",
+    )
+
+    _assert(
+        _set_complex_transform(
+            "/World/B",
+            (-5.0, 7.0, 2.0),
+            (-8.0, 14.0, 23.0),
+            (0.9, 1.2, 1.0),
+        ),
+        "set destination parent transform for pivot-preserving move",
+    )
+
+    stageviz.command.center_pivots([path])
+
+    expected_order = [
+        "xformOp:translate:pivot",
+        "xformOp:transform",
+        "!invert!xformOp:translate:pivot",
+    ]
+
+    _assert(
+        _wait_until(lambda: _xform_order(path) == expected_order),
+        "center_pivots creates canonical paired pivot stack before move",
+    )
+
+    pivot_before = _prim(path).GetAttribute("xformOp:translate:pivot").Get()
+    world_before = _world_transform(path)
+
+    stageviz.command.move_path(
+        [path],
+        "/World/B",
+        insert_index=-1,
+        preserve_world_transform=True,
+    )
+
+    moved_path = "/World/B/A1"
+
+    _assert(
+        _wait_until(lambda: _exists(moved_path) and not _exists(path)),
+        "pivoted prim moved to destination parent",
+    )
+
+    _assert(
+        _matrix_close(_world_transform(moved_path), world_before),
+        "pivoted prim preserves world transform during move",
+    )
+
+    _assert_equal(
+        _xform_order(moved_path),
+        expected_order,
+        "world-transform authoring preserves pivot/matrix/inverse-pivot order",
+    )
+
+    pivot_after = _prim(moved_path).GetAttribute("xformOp:translate:pivot").Get()
+
+    _assert(
+        pivot_after is not None and pivot_before is not None
+        and all(abs(float(pivot_after[i]) - float(pivot_before[i])) < 1e-8 for i in range(3)),
+        "world-transform authoring preserves pivot value",
+    )
+
+    if _undo():
+        _assert(
+            _wait_until(lambda: _exists(path) and not _exists(moved_path)),
+            "undo pivot-preserving move restores original path",
+        )
+
+        _assert_equal(
+            _xform_order(path),
+            expected_order,
+            "undo pivot-preserving move restores canonical pivot order",
+        )
+
+        _assert(
+            _matrix_close(_world_transform(path), world_before),
+            "undo pivot-preserving move restores world transform",
+        )
+
+
 def test_move_multiple_siblings():
     stageviz.command.move_path(["/World/A/A1", "/World/A/A2"], "/World/B", insert_index=1)
 
@@ -1802,8 +2273,8 @@ def test_composed_visibility_override_and_undo():
     property_path = "/World/PayloadA/Geom.visibility"
 
     _assert(
-        not _root_has_property(property_path),
-        "composed visibility has no root-layer opinion initially",
+        not _edit_has_property(property_path),
+        "composed visibility has no edit-layer opinion initially",
     )
 
     stageviz.command.hide_paths(["/World/PayloadA/Geom"], recursive=False)
@@ -1816,8 +2287,8 @@ def test_composed_visibility_override_and_undo():
     )
 
     _assert(
-        _root_has_property(property_path),
-        "hide composed prim creates root-layer visibility override",
+        _edit_has_property(property_path),
+        "hide composed prim creates edit-layer visibility override",
     )
 
     if _undo():
@@ -1829,8 +2300,8 @@ def test_composed_visibility_override_and_undo():
         )
 
         _assert(
-            not _root_has_property(property_path),
-            "undo removes newly-created root-layer visibility override",
+            not _edit_has_property(property_path),
+            "undo removes newly-created edit-layer visibility override",
         )
 
 
@@ -2038,21 +2509,21 @@ def test_reset_attribute_override():
     UsdGeom.Imageable(prim).GetVisibilityAttr().Set(UsdGeom.Tokens.invisible)
 
     _assert(
-        _root_has_property(visibility_path),
-        "attribute override is authored in root layer",
+        _edit_has_property(visibility_path),
+        "attribute override is authored in edit layer",
     )
 
     _assert_equal(
         str(_visibility(path)),
         "invisible",
-        "composed attribute reflects root-layer override",
+        "composed attribute reflects edit-layer override",
     )
 
     stageviz.command.reset_attribute_override(visibility_path)
 
     _assert(
-        _wait_until(lambda: not _root_has_property(visibility_path)),
-        "reset_attribute_override removes only the root-layer attribute spec",
+        _wait_until(lambda: not _edit_has_property(visibility_path)),
+        "reset_attribute_override removes only the edit-layer attribute spec",
     )
 
     _assert(
@@ -2067,8 +2538,8 @@ def test_reset_attribute_override():
 
     if _undo():
         _assert(
-            _wait_until(lambda: _root_has_property(visibility_path)),
-            "undo reset_attribute_override restores root-layer attribute spec",
+            _wait_until(lambda: _edit_has_property(visibility_path)),
+            "undo reset_attribute_override restores edit-layer attribute spec",
         )
 
         _assert_equal(
@@ -2079,7 +2550,7 @@ def test_reset_attribute_override():
 
     if _redo():
         _assert(
-            _wait_until(lambda: not _root_has_property(visibility_path)),
+            _wait_until(lambda: not _edit_has_property(visibility_path)),
             "redo reset_attribute_override removes attribute override again",
         )
 
@@ -2114,6 +2585,503 @@ def test_reset_attribute_override_ignores_root_owned_prim():
         _exists(path),
         "reset_attribute_override never removes root-owned prim",
     )
+
+
+
+def test_pivot_attribute_edit_preserves_local_transform():
+    if not _has_command("set_attribute_value"):
+        print("[skip] set_attribute_value is not bound")
+        return
+
+    path = "/World/A"
+    _ensure_cube(f"{path}/PivotGeom", size=4.0)
+
+    _assert(
+        _set_complex_transform(
+            path,
+            (18.0, 0.0, 0.0),
+            (27.0, -38.0, 16.0),
+            (1.7, 0.65, 1.2),
+        ),
+        "complex transform prepared for pivot edit",
+    )
+
+    prim = _prim(path)
+    xformable = UsdGeom.Xformable(prim)
+
+    before = _local_transform(path)
+
+    # Create the Stageviz canonical pivot stack first.
+    stageviz.command.center_pivots([path])
+
+    _assert(
+        _wait_until(
+            lambda: bool(
+                _prim(path).GetAttribute("xformOp:translate:pivot")
+            )
+        ),
+        "pivot created before direct pivot edit",
+    )
+
+    before_edit = _local_transform(path)
+
+    _assert(
+        _matrix_close(before_edit, before, tolerance=1e-8),
+        "centering pivot preserves local transform",
+    )
+
+    stageviz.command.set_attribute_value(
+        f"{path}.xformOp:translate:pivot",
+        (3.0, -2.0, 7.0),
+    )
+
+    _assert(
+        _wait_until(
+            lambda: _matrix_close(
+                _local_transform(path),
+                before_edit,
+                tolerance=1e-8,
+            )
+        ),
+        "editing pivot attribute preserves local transform",
+    )
+
+    pivot = _prim(path).GetAttribute("xformOp:translate:pivot").Get()
+
+    _assert(
+        pivot is not None
+        and abs(float(pivot[0]) - 3.0) < 1e-8
+        and abs(float(pivot[1]) + 2.0) < 1e-8
+        and abs(float(pivot[2]) - 7.0) < 1e-8,
+        "pivot attribute receives requested value",
+    )
+
+    if _undo():
+        _assert(
+            _wait_until(
+                lambda: _matrix_close(
+                    _local_transform(path),
+                    before_edit,
+                    tolerance=1e-8,
+                )
+            ),
+            "undo pivot edit preserves local transform",
+        )
+
+    if _redo():
+        _assert(
+            _wait_until(
+                lambda: _matrix_close(
+                    _local_transform(path),
+                    before_edit,
+                    tolerance=1e-8,
+                )
+            ),
+            "redo pivot edit preserves local transform",
+        )
+
+
+def test_reset_pivots_removes_attribute_and_preserves_transform():
+    if not _has_command("center_pivots") or not _has_command("reset_pivots"):
+        print("[skip] pivot commands are not fully bound")
+        return
+
+    path = "/World/A"
+    _ensure_cube(f"{path}/PivotGeom", size=4.0)
+
+    _assert(
+        _set_complex_transform(
+            path,
+            (11.0, -3.0, 5.0),
+            (23.0, -31.0, 14.0),
+            (1.4, 0.8, 1.2),
+        ),
+        "complex transform prepared for reset pivot",
+    )
+
+    before = _local_transform(path)
+
+    stageviz.command.center_pivots([path])
+
+    pivot_path = f"{path}.xformOp:translate:pivot"
+
+    _assert(
+        _wait_until(lambda: _edit_has_property(pivot_path)),
+        "center_pivots authors pivot attribute",
+    )
+
+    centered = _local_transform(path)
+
+    _assert(
+        _matrix_close(centered, before, tolerance=1e-8),
+        "center_pivots preserves local transform before reset",
+    )
+
+    stageviz.command.reset_pivots([path])
+
+    _assert(
+        _wait_until(lambda: not _edit_has_property(pivot_path)),
+        "reset_pivots removes pivot attribute from edit layer",
+    )
+
+    _assert(
+        _matrix_close(_local_transform(path), before, tolerance=1e-8),
+        "reset_pivots preserves local transform",
+    )
+
+    properties = _transform_property_names(path)
+
+    _assert(
+        "xformOp:translate:pivot" not in properties,
+        "reset_pivots leaves no pivot property",
+    )
+
+    if _undo():
+        _assert(
+            _wait_until(lambda: _edit_has_property(pivot_path)),
+            "undo reset_pivots restores pivot attribute",
+        )
+
+        _assert(
+            _matrix_close(_local_transform(path), before, tolerance=1e-8),
+            "undo reset_pivots preserves local transform",
+        )
+
+    if _redo():
+        _assert(
+            _wait_until(lambda: not _edit_has_property(pivot_path)),
+            "redo reset_pivots removes pivot attribute again",
+        )
+
+        _assert(
+            _matrix_close(_local_transform(path), before, tolerance=1e-8),
+            "redo reset_pivots preserves local transform",
+        )
+
+def test_identity_transforms_removes_existing_ops():
+    if not _has_command("identity_transforms"):
+        print("[skip] identity_transforms is not bound")
+        return
+
+    path = "/World/A"
+
+    _assert(
+        _set_complex_transform(
+            path,
+            (6.0, -4.0, 2.0),
+            (17.0, 29.0, -33.0),
+            (1.8, 0.65, 1.25),
+        ),
+        "complex transform prepared for identity",
+    )
+
+    before = _local_transform(path)
+
+    _assert(
+        before is not None and not _matrix_close(before, _identity_matrix()),
+        "prepared transform is not identity",
+    )
+
+    before_properties = _transform_property_names(path)
+
+    _assert(
+        "xformOp:translate" in before_properties,
+        "translate op exists before identity",
+    )
+
+    _assert(
+        "xformOp:rotateXYZ" in before_properties,
+        "rotate op exists before identity",
+    )
+
+    _assert(
+        "xformOp:scale" in before_properties,
+        "scale op exists before identity",
+    )
+
+    stageviz.command.identity_transforms([path])
+
+    _assert(
+        _wait_until(
+            lambda: _matrix_close(
+                _local_transform(path),
+                _identity_matrix(),
+                tolerance=1e-8,
+            )
+        ),
+        "identity_transforms evaluates to local identity",
+    )
+
+    properties = _transform_property_names(path)
+
+    _assert_equal(
+        properties,
+        ["xformOp:transform", "xformOpOrder"],
+        "identity_transforms removes stale translate/rotate/scale ops",
+    )
+
+    if _undo():
+        _assert(
+            _wait_until(
+                lambda: _matrix_close(
+                    _local_transform(path),
+                    before,
+                    tolerance=1e-8,
+                )
+            ),
+            "undo identity_transforms restores original local transform",
+        )
+
+        _assert_equal(
+            _transform_property_names(path),
+            before_properties,
+            "undo identity_transforms restores original transform properties",
+        )
+
+    if _redo():
+        _assert(
+            _wait_until(
+                lambda: _matrix_close(
+                    _local_transform(path),
+                    _identity_matrix(),
+                    tolerance=1e-8,
+                )
+            ),
+            "redo identity_transforms returns to identity",
+        )
+
+        _assert_equal(
+            _transform_property_names(path),
+            ["xformOp:transform", "xformOpOrder"],
+            "redo identity_transforms removes stale transform ops again",
+        )
+
+
+def test_reset_transforms_removes_existing_ops():
+    if not _has_command("reset_transforms"):
+        print("[skip] reset_transforms is not bound")
+        return
+
+    path = "/World/A"
+
+    _assert(
+        _set_complex_transform(
+            path,
+            (9.0, 3.0, -2.0),
+            (-11.0, 37.0, 21.0),
+            (0.7, 1.6, 1.2),
+        ),
+        "complex transform prepared for reset_transforms",
+    )
+
+    stageviz.command.reset_transforms([path])
+
+    _assert(
+        _wait_until(
+            lambda: _matrix_close(
+                _local_transform(path),
+                _identity_matrix(),
+                tolerance=1e-8,
+            )
+        ),
+        "reset_transforms evaluates to local identity",
+    )
+
+    _assert_equal(
+        _transform_property_names(path),
+        ["xformOp:transform", "xformOpOrder"],
+        "reset_transforms leaves only canonical identity matrix op",
+    )
+
+
+def test_identity_transforms_exposes_weaker_transform():
+    if not _has_command("identity_transforms"):
+        print("[skip] identity_transforms is not bound")
+        return
+
+    session = stageviz.session()
+
+    if not all(hasattr(session, name) for name in ("editLayer", "editLayers", "setEditLayer")):
+        print("[skip] session edit-layer API is not bound")
+        return
+
+    root = _root_layer()
+    layers = list(session.editLayers())
+    sublayers = [
+        identifier
+        for identifier in layers
+        if root and identifier != root.identifier
+    ]
+
+    if not root or not sublayers:
+        print("[skip] no local sublayer available")
+        return
+
+    path = "/ExternalRoot"
+    weaker_layer = sublayers[0]
+
+    _assert(
+        bool(session.setEditLayer(weaker_layer)),
+        "select local sublayer for weaker transform",
+    )
+
+    _assert(
+        _set_translate(path, (4.0, 2.0, -1.0)),
+        "author weaker transform in local sublayer",
+    )
+
+    weaker = _local_transform(path)
+
+    _assert(
+        bool(session.setEditLayer(root.identifier)),
+        "switch back to root edit layer",
+    )
+
+    _assert(
+        _set_complex_transform(
+            path,
+            (20.0, 0.0, 0.0),
+            (17.0, -9.0, 6.0),
+            (2.0, 2.0, 2.0),
+        ),
+        "author stronger root-layer transform",
+    )
+
+    stronger = _local_transform(path)
+
+    _assert(
+        not _matrix_close(stronger, weaker),
+        "stronger edit-layer transform overrides weaker sublayer transform",
+    )
+
+    stageviz.command.identity_transforms([path])
+
+    _assert(
+        _wait_until(
+            lambda: _matrix_close(
+                _local_transform(path),
+                weaker,
+                tolerance=1e-8,
+            )
+        ),
+        "identity_transforms exposes weaker composed transform",
+    )
+
+    _assert_equal(
+        _transform_property_names(path),
+        [],
+        "identity_transforms removes all root edit-layer transform properties when weaker transform exists",
+    )
+
+
+def test_attribute_value_commands():
+    required = (
+        "set_attribute_value",
+        "set_attribute_values",
+        "reset_attribute_values",
+    )
+
+    if not all(_has_command(name) for name in required):
+        print("[skip] attribute value commands are not fully bound")
+        return
+
+    stage = _stage()
+    prim_a = _prim("/World/A")
+    prim_b = _prim("/World/B")
+
+    attr_a = prim_a.CreateAttribute(
+        "stageviz:testValue",
+        Sdf.ValueTypeNames.Double,
+    )
+    attr_b = prim_b.CreateAttribute(
+        "stageviz:testValue",
+        Sdf.ValueTypeNames.Double,
+    )
+
+    attr_a.Set(1.0)
+    attr_b.Set(2.0)
+
+    path_a = "/World/A.stageviz:testValue"
+    path_b = "/World/B.stageviz:testValue"
+
+    stageviz.command.set_attribute_value(path_a, 4.25)
+
+    _assert(
+        _wait_until(
+            lambda: abs(float(attr_a.Get()) - 4.25) < 1e-8
+        ),
+        "set_attribute_value authors one numeric value",
+    )
+
+    stageviz.command.set_attribute_values(
+        [path_a, path_b],
+        7.5,
+    )
+
+    _assert(
+        _wait_until(
+            lambda: abs(float(attr_a.Get()) - 7.5) < 1e-8
+            and abs(float(attr_b.Get()) - 7.5) < 1e-8
+        ),
+        "set_attribute_values authors one numeric value to several attributes",
+    )
+
+    stageviz.command.reset_attribute_values([path_a, path_b])
+
+    _assert(
+        _wait_until(
+            lambda: not _layer_has_default(_edit_layer(), path_a)
+            and not _layer_has_default(_edit_layer(), path_b)
+        ),
+        "reset_attribute_values clears authored defaults",
+    )
+
+
+def test_reset_attribute_overrides_batch():
+    if not _has_command("reset_attribute_overrides"):
+        print("[skip] reset_attribute_overrides is not bound")
+        return
+
+    stageviz.command.load_payloads(["/World/PayloadA"])
+
+    _assert(
+        _wait_until(lambda: _exists("/World/PayloadA/Geom"), timeout=5.0),
+        "payload child prepared for batch override reset",
+    )
+
+    path = "/World/PayloadA/Geom"
+    imageable = UsdGeom.Imageable(_prim(path))
+
+    imageable.CreateVisibilityAttr().Set(UsdGeom.Tokens.invisible)
+    imageable.CreatePurposeAttr().Set(UsdGeom.Tokens.render)
+
+    visibility = f"{path}.visibility"
+    purpose = f"{path}.purpose"
+
+    _assert(
+        _edit_has_property(visibility) and _edit_has_property(purpose),
+        "two composed attribute overrides prepared",
+    )
+
+    stageviz.command.reset_attribute_overrides([visibility, purpose])
+
+    _assert(
+        _wait_until(
+            lambda: not _edit_has_property(visibility)
+            and not _edit_has_property(purpose)
+        ),
+        "reset_attribute_overrides removes several overrides in one command",
+    )
+
+    if _undo():
+        _assert(
+            _wait_until(
+                lambda: _edit_has_property(visibility)
+                and _edit_has_property(purpose)
+            ),
+            "undo reset_attribute_overrides restores all removed overrides",
+        )
+
 
 def test_move_non_xformable_prim():
     stage = _stage()
@@ -2226,6 +3194,52 @@ def test_move_preserve_complex_world_transform():
         _assert(
             _matrix_close(restored, before, tolerance=1e-6),
             "undo complex reparent restores original world transform",
+        )
+
+
+def test_stage_load_resets_edit_layer(main_path):
+    session = stageviz.session()
+
+    if not all(hasattr(session, name) for name in ("editLayer", "editLayers", "setEditLayer")):
+        print("[skip] session edit-layer API is not bound")
+        return
+
+    root = _root_layer()
+    layers = list(session.editLayers())
+    sublayers = [
+        identifier
+        for identifier in layers
+        if root and identifier != root.identifier
+    ]
+
+    if not sublayers:
+        print("[skip] no local sublayer available")
+        return
+
+    _assert(
+        bool(session.setEditLayer(sublayers[0])),
+        "sublayer selected before stage reload",
+    )
+
+    loaded = session.load(main_path, stageviz.LoadNone)
+
+    _assert(
+        loaded,
+        "stage reload succeeds for edit-layer reset test",
+    )
+
+    new_root = _root_layer()
+
+    _assert(
+        bool(new_root),
+        "reloaded stage has root layer",
+    )
+
+    if new_root:
+        _assert_equal(
+            session.editLayer(),
+            new_root.identifier,
+            "loading stage resets edit layer to root",
         )
 
 
@@ -2616,6 +3630,9 @@ def run():
     _disable_preserve_state()
 
     tests = [
+        ("command API", test_command_api, ()),
+        ("session edit layer API", test_session_edit_layer_api, ()),
+        ("property edit uses selected sublayer", test_property_edit_uses_selected_sublayer, ()),
         ("select paths", test_select_paths, ()),
         ("select all and invert", test_select_all_and_invert, ()),
         ("isolate paths", test_isolate_paths, ()),
@@ -2625,6 +3642,7 @@ def run():
         ("new prim unique name", test_new_prim_unique_name, ()),
         ("new scope", test_new_scope, ()),
         ("new material", test_new_material, ()),
+        ("bind material", test_bind_material, ()),
         ("new reference", test_new_reference, (external,)),
         ("new reference default prim", test_new_reference_default_prim, (external,)),
         ("new payload", test_new_payload, (external,)),
@@ -2640,6 +3658,7 @@ def run():
         ("rename noop is safe", test_rename_noop_is_safe, ()),
         ("move selection/mask and insert order", test_move_selection_mask_and_insert_order, ()),
         ("move preserve world transform", test_move_preserve_world_transform, ()),
+        ("move preserve world transform keeps pivot stack", test_move_preserve_world_transform_keeps_pivot_stack, ()),
         ("move multiple siblings", test_move_multiple_siblings, ()),
         ("move rejects self parenting", test_move_rejects_self_parenting, ()),
         ("move rejects destination collision/no-op", test_move_rejects_destination_collision, ()),
@@ -2657,9 +3676,17 @@ def run():
         ("reset overrides", test_reset_overrides, ()),
         ("reset overrides root-owned policy", test_reset_overrides_ignores_root_owned_prim, ()),
         ("reset attribute override", test_reset_attribute_override, ()),
+        ("reset attribute overrides batch", test_reset_attribute_overrides_batch, ()),
         ("reset attribute override root-owned policy", test_reset_attribute_override_ignores_root_owned_prim, ()),
+        ("attribute value commands", test_attribute_value_commands, ()),
+        ("pivot attribute edit preserves local transform", test_pivot_attribute_edit_preserves_local_transform, ()),
+        ("reset pivots removes attribute", test_reset_pivots_removes_attribute_and_preserves_transform, ()),
+        ("identity transforms removes existing ops", test_identity_transforms_removes_existing_ops, ()),
+        ("reset transforms removes existing ops", test_reset_transforms_removes_existing_ops, ()),
+        ("identity transforms exposes weaker transform", test_identity_transforms_exposes_weaker_transform, ()),
         ("move non-xformable prim", test_move_non_xformable_prim, ()),
         ("move preserve complex transform", test_move_preserve_complex_world_transform, ()),
+        ("stage load resets edit layer", test_stage_load_resets_edit_layer, (main_path,)),
         ("failed load recovery", test_failed_load_leaves_valid_stage, ()),
         ("move payload root", test_move_payload_root_is_allowed, ()),
         ("move reference root", test_move_reference_root_is_allowed, ()),

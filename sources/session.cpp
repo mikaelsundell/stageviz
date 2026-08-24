@@ -1583,6 +1583,12 @@ Session::setMask(const QList<SdfPath>& paths)
 }
 
 void
+Session::notifyRedraw()
+{
+    Q_EMIT redrawRequested();
+}
+
+void
 Session::notifyStatus(Notify::Status status, const QString& message, const QString& details)
 {
     Q_EMIT notifyStatusChanged(status, message, details);

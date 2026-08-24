@@ -24,6 +24,13 @@ PropertyDelegate::createEditor(QWidget* parent, const QStyleOptionViewItem& opti
         return nullptr;
 
     const PropertyItem::Editor editorType = PropertyItem::Editor(index.data(PropertyItem::EditorRole).toInt());
+    const bool mixed = index.data(PropertyItem::MixedValueRole).toBool();
+
+    if (mixed && (editorType == PropertyItem::IntegerEditor || editorType == PropertyItem::FloatingEditor)) {
+        auto* line = new QLineEdit(parent);
+        line->setPlaceholderText("<mixed>");
+        return line;
+    }
 
     switch (editorType) {
     case PropertyItem::BoolEditor: {
@@ -75,8 +82,15 @@ void
 PropertyDelegate::setEditorData(QWidget* editor, const QModelIndex& index) const
 {
     const QString text = index.data(Qt::EditRole).toString();
+    const bool mixed = index.data(PropertyItem::MixedValueRole).toBool();
 
     if (auto* combo = qobject_cast<QComboBox*>(editor)) {
+        if (mixed) {
+            combo->setCurrentIndex(-1);
+            combo->setPlaceholderText("<mixed>");
+            return;
+        }
+
         int i = combo->findText(text);
         if (i < 0)
             i = combo->findText(text, Qt::MatchFixedString);
@@ -102,8 +116,14 @@ PropertyDelegate::setEditorData(QWidget* editor, const QModelIndex& index) const
     }
 
     if (auto* line = qobject_cast<QLineEdit*>(editor)) {
-        line->setText(text);
-        line->selectAll();
+        if (mixed) {
+            line->clear();
+            line->setPlaceholderText("<mixed>");
+        }
+        else {
+            line->setText(text);
+            line->selectAll();
+        }
         return;
     }
 

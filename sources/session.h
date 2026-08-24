@@ -474,6 +474,11 @@ public:
     ///@}
 
     /**
+     * @brief Requests a redraw of views connected to this session.
+     */
+    void notifyRedraw();
+
+    /**
      * @brief Sets a textual status message.
      */
     void notifyStatus(Notify::Status status, const QString& message, const QString& details = QString());
@@ -531,6 +536,11 @@ Q_SIGNALS:
      * @brief Emitted preservation of state changes.
      */
     void preserveStateChanged(bool enabled);
+
+    /**
+     * @brief Emitted when a redraw is requested.
+     */
+    void redrawRequested();
 
     /**
      * @brief Emitted when the status message changes.

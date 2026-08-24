@@ -112,6 +112,7 @@ public:
                                         float roughness, float specular);
 
     bool projectWorldToScreen(const GfVec3d& world, QPointF& screen);
+    bool transformSelectionPivot(GfVec3d& pivot);
     QPointF transformAxisDirection(int axis);
     GfVec3d transformAxisVector(int axis);
     double transformWorldPerPixel();
@@ -1396,6 +1397,74 @@ ImagingGLWidgetPrivate::projectWorldToScreen(const GfVec3d& world, QPointF& scre
     screen.setY(gate.top() + (1.0 - (ndc[1] * 0.5 + 0.5)) * gate.height());
     return true;
 }
+bool
+ImagingGLWidgetPrivate::transformSelectionPivot(GfVec3d& pivot)
+{
+    if (!d.stage || d.selection.isEmpty())
+        return false;
+
+    QList<SdfPath> paths;
+    paths.reserve(d.selection.size());
+
+    for (const SdfPath& selectedPath : d.selection) {
+        const SdfPath path = selectedPath.IsPropertyPath() ? selectedPath.GetPrimPath() : selectedPath;
+        if (!stage::isTransformEditable(d.stage, path))
+            continue;
+
+        if (!paths.contains(path))
+            paths.append(path);
+    }
+
+    if (paths.isEmpty())
+        return false;
+
+    if (paths.size() == 1) {
+        const SdfPath& path = paths.first();
+
+        GfMatrix4d matrix(1.0);
+        QString error;
+        if (!stage::worldTransform(d.stage, path, matrix, error))
+            return false;
+
+        pivot = matrix.ExtractTranslation();
+
+        QString pivotError;
+        stage::worldPivot(d.stage, path, pivot, pivotError);
+        return true;
+    }
+
+    UsdGeomBBoxCache bboxCache(UsdTimeCode::Default(),
+                               { UsdGeomTokens->default_, UsdGeomTokens->proxy, UsdGeomTokens->render }, true);
+
+    GfRange3d range;
+    bool hasBounds = false;
+
+    for (const SdfPath& path : paths) {
+        const UsdPrim prim = d.stage->GetPrimAtPath(path);
+        if (!prim)
+            continue;
+
+        const GfBBox3d bbox = bboxCache.ComputeWorldBound(prim);
+        const GfRange3d aligned = bbox.ComputeAlignedRange();
+        if (aligned.IsEmpty())
+            continue;
+
+        if (!hasBounds) {
+            range = aligned;
+            hasBounds = true;
+        }
+        else {
+            range.UnionWith(aligned);
+        }
+    }
+
+    if (!hasBounds)
+        return false;
+
+    pivot = range.GetMidpoint();
+    return true;
+}
+
 QPointF
 ImagingGLWidgetPrivate::transformAxisDirection(int axis)
 {
@@ -1574,11 +1643,14 @@ ImagingGLWidgetPrivate::beginTransformDrag(const QPointF& pos)
     QList<GfMatrix4d> before;
     QList<TransformRootState> rootBefore;
     GfVec3d pivot(0.0);
-    int count = 0;
     {
         READ_LOCKER(locker, d.context->stageLock(), "stageLock");
         if (!d.stage)
             return false;
+
+        if (!transformSelectionPivot(pivot))
+            return false;
+
         for (const SdfPath& selectedPath : d.selection) {
             const SdfPath path = selectedPath.IsPropertyPath() ? selectedPath.GetPrimPath() : selectedPath;
             if (!stage::isTransformEditable(d.stage, path))
@@ -1589,10 +1661,7 @@ ImagingGLWidgetPrivate::beginTransformDrag(const QPointF& pos)
                 continue;
             paths.append(path);
             before.append(matrix);
-            GfVec3d worldPivot(0.0);
-            QString pivotError;
-            if (!stage::worldPivot(d.stage, path, worldPivot, pivotError))
-                worldPivot = matrix.ExtractTranslation();
+
             TransformRootState rootState;
             if (const SdfLayerHandle rootLayer = d.stage->GetRootLayer()) {
                 rootState.hadPrimSpec = bool(rootLayer->GetPrimAtPath(path));
@@ -1608,13 +1677,11 @@ ImagingGLWidgetPrivate::beginTransformDrag(const QPointF& pos)
                     rootState.matrixOpDefault = rootLayer->GetField(matrixPath, SdfFieldKeys->Default);
             }
             rootBefore.append(rootState);
-            pivot += worldPivot;
-            ++count;
         }
     }
-    if (before.isEmpty() || count == 0)
+    if (before.isEmpty())
         return false;
-    d.transformPivot = pivot / static_cast<double>(count);
+    d.transformPivot = pivot;
     d.transformStartPivot = d.transformPivot;
     d.transformPaths = paths;
     d.transformBefore = before;
@@ -1815,33 +1882,14 @@ ImagingGLWidgetPrivate::drawTransformTransform(QPainter& painter)
 
     if (!d.transformDragging) {
         GfVec3d pivot(0.0);
-        int count = 0;
+
         {
             READ_LOCKER(locker, d.context->stageLock(), "stageLock");
-            if (!d.stage)
+            if (!d.stage || !transformSelectionPivot(pivot))
                 return;
-
-            for (const SdfPath& selectedPath : d.selection) {
-                const SdfPath path = selectedPath.IsPropertyPath() ? selectedPath.GetPrimPath() : selectedPath;
-                if (!stage::isTransformEditable(d.stage, path))
-                    continue;
-
-                GfMatrix4d matrix(1.0);
-                QString error;
-                if (!stage::worldTransform(d.stage, path, matrix, error))
-                    continue;
-
-                GfVec3d worldPivot(0.0);
-                QString pivotError;
-                if (!stage::worldPivot(d.stage, path, worldPivot, pivotError))
-                    worldPivot = matrix.ExtractTranslation();
-                pivot += worldPivot;
-                ++count;
-            }
         }
-        if (count == 0)
-            return;
-        d.transformPivot = pivot / static_cast<double>(count);
+
+        d.transformPivot = pivot;
     }
     QPointF center;
     if (!projectWorldToScreen(d.transformPivot, center))

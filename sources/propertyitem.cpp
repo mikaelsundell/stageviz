@@ -15,12 +15,15 @@ public:
         PropertyItem::Kind kind = PropertyItem::Group;
         PropertyItem::Editor editor = PropertyItem::NoEditor;
         SdfPath propertyPath;
+        QList<SdfPath> propertyPaths;
+        SdfPath valuePath;
         QStringList editorOptions;
         int arrayIndex = -1;
         int chunkStart = 0;
         int chunkCount = 0;
         bool chunkPopulated = false;
         bool valueEditable = false;
+        bool mixedValue = false;
         double editorMinimum = -1.0e12;
         double editorMaximum = 1.0e12;
         int editorDecimals = 6;
@@ -84,6 +87,48 @@ void
 PropertyItem::setPropertyPath(const SdfPath& path)
 {
     p->d.propertyPath = path;
+}
+
+QList<SdfPath>
+PropertyItem::propertyPaths() const
+{
+    if (!p->d.propertyPaths.isEmpty())
+        return p->d.propertyPaths;
+
+    return p->d.propertyPath.IsEmpty() ? QList<SdfPath>() : QList<SdfPath> { p->d.propertyPath };
+}
+
+void
+PropertyItem::setPropertyPaths(const QList<SdfPath>& paths)
+{
+    p->d.propertyPaths = paths;
+    p->d.propertyPath = paths.isEmpty() ? SdfPath() : paths.first();
+}
+
+SdfPath
+PropertyItem::valuePath() const
+{
+    return p->d.valuePath;
+}
+
+void
+PropertyItem::setValuePath(const SdfPath& path)
+{
+    p->d.valuePath = path;
+    setData(PropertyItem::Value, ValuePathRole, path.IsEmpty() ? QString() : QString::fromStdString(path.GetString()));
+}
+
+bool
+PropertyItem::mixedValue() const
+{
+    return p->d.mixedValue;
+}
+
+void
+PropertyItem::setMixedValue(bool mixed)
+{
+    p->d.mixedValue = mixed;
+    setData(PropertyItem::Value, MixedValueRole, mixed);
 }
 
 int

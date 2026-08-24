@@ -478,6 +478,17 @@ namespace stage {
     /**
      * @brief Authors a world transform for an xformable prim.
      *
+     * The transform is authored in the active edit layer. When the composed
+     * transform contains the standard paired USD pivot pattern
+     * xformOp:translate:pivot / !invert!xformOp:translate:pivot, the pivot is
+     * retained and the matrix operation is recomputed so the requested world
+     * transform is preserved. This prevents interactive transforms from
+     * orphaning an existing pivot attribute by collapsing xformOpOrder to a
+     * matrix-only stack.
+     *
+     * When no standard paired pivot exists, the transform is authored as a
+     * canonical matrix xform.
+     *
      * @param stage Stage containing the prim.
      * @param path Prim path to edit.
      * @param matrix Desired world transform.

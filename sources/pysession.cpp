@@ -643,6 +643,16 @@ PySession_viewState(PySessionObject* self)
 }
 
 static PyObject*
+PySession_notifyRedraw(PySessionObject* self)
+{
+    if (!checkSession(self->session))
+        return nullptr;
+
+    self->session->notifyRedraw();
+    Py_RETURN_NONE;
+}
+
+static PyObject*
 PySession_notifyStatus(PySessionObject* self, PyObject* args)
 {
     if (!checkSession(self->session))
@@ -776,6 +786,8 @@ static PyMethodDef PySession_methods[] = {
 
     { "viewState", reinterpret_cast<PyCFunction>(PySession_viewState), METH_NOARGS, "Get the view state wrapper" },
 
+    { "notifyRedraw", reinterpret_cast<PyCFunction>(PySession_notifyRedraw), METH_NOARGS,
+      "Request a redraw of views connected to the session" },
     { "notifyStatus", reinterpret_cast<PyCFunction>(PySession_notifyStatus), METH_VARARGS,
       "Set the session status with severity" },
     { "setStatus", reinterpret_cast<PyCFunction>(PySession_setStatus), METH_VARARGS,

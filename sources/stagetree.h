@@ -168,26 +168,8 @@ public:
     */
     void updatePrims(const NoticeBatch& batch);
 
-    /**
-     * @brief Updates the tree selection.
-     *
-     * Synchronizes the widget selection with the provided
-     * list of prim paths.
-     *
-     * @param paths Selected prim paths.
-     */
-    void updateSelection(const QList<SdfPath>& paths);
 
     ///@}
-
-Q_SIGNALS:
-
-    /**
-     * @brief Emitted when the prim selection changes.
-     *
-     * @param paths Selected prim paths.
-     */
-    void primSelectionChanged(const QList<SdfPath>& paths);
 
 protected:
     /** @name Event Handling */
