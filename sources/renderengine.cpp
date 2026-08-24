@@ -14,12 +14,16 @@
 #include <QtGui/qopengl.h>
 #include <algorithm>
 #include <memory>
+#include <pxr/base/gf/rotation.h>
 #include <pxr/imaging/cameraUtil/framing.h>
 #include <pxr/imaging/glf/simpleLight.h>
 #include <pxr/imaging/glf/simpleMaterial.h>
 #include <pxr/imaging/hd/mergingSceneIndex.h>
 #include <pxr/imaging/hd/sceneIndexPluginRegistry.h>
 #include <pxr/imaging/hgi/hgi.h>
+#include <pxr/usd/sdf/assetPath.h>
+#include <pxr/usd/usdGeom/metrics.h>
+#include <pxr/usd/usdGeom/tokens.h>
 #include <pxr/usdImaging/usdImaging/sceneIndices.h>
 #include <pxr/usdImaging/usdImaging/stageSceneIndex.h>
 
@@ -399,6 +403,28 @@ RenderEngine::Private::updateLighting()
         lights.push_back(light);
     }
 
+    if (settings.defaultDomeLightEnabled) {
+        GlfSimpleLight light;
+        light.SetAmbient(GfVec4f(0, 0, 0, 0));
+        light.SetPosition(GfVec4f(0, 0, 1, 0));
+        light.SetIsDomeLight(true);
+
+        // Glf/Hdx dome environments use Y as their vertical axis. Rotate the
+        // dome into the stage coordinate system when rendering a Z-up stage.
+        // Keep this correction separate from any future user-controlled HDRI
+        // rotation, which should rotate around the corrected stage-up axis.
+        if (stage && UsdGeomGetStageUpAxis(stage) == UsdGeomTokens->z) {
+            GfMatrix4d domeTransform(1.0);
+            domeTransform.SetRotate(GfRotation(GfVec3d(1.0, 0.0, 0.0), 90.0));
+            light.SetTransform(domeTransform);
+        }
+
+        if (!settings.domeLightTexture.isEmpty()) {
+            const std::string filename = settings.domeLightTexture.toStdString();
+            light.SetDomeLightTextureFile(SdfAssetPath(filename, filename));
+        }
+        lights.push_back(light);
+    }
     const GfVec4f ambient(settings.defaultAmbient, settings.defaultAmbient, settings.defaultAmbient, 1.0f);
     GlfSimpleMaterial material;
     material.SetAmbient(ambient);
@@ -420,6 +446,8 @@ RenderEngine::Private::render()
     updateMaterialOverrideSceneIndex();
     updateRenderParams();
     updateLighting();
+
+    engine->SetRendererSetting(TfToken("domeLightCameraVisibility"), VtValue(settings.domeLightCameraVisibility));
 
     engine->SetRendererAov(settings.aov);
     engine->SetRenderBufferSize(size);

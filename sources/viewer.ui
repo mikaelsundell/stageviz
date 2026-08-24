@@ -719,8 +719,6 @@
      </property>
      <addaction name="displayRenderShaded"/>
      <addaction name="displayRenderWireframe"/>
-     <addaction name="separator"/>
-     <addaction name="displayRenderClay"/>
     </widget>
     <widget class="QMenu" name="displayComplexity">
      <property name="title">
@@ -737,10 +735,6 @@
     <addaction name="separator"/>
     <addaction name="displayComplexity"/>
     <addaction name="separator"/>
-    <addaction name="displayCameraLight"/>
-    <addaction name="displaySceneLights"/>
-    <addaction name="displaySceneShaders"/>
-    <addaction name="separator"/>
     <addaction name="displayFrameAll"/>
     <addaction name="displayFrameSelected"/>
     <addaction name="displayResetView"/>
@@ -748,6 +742,34 @@
     <addaction name="displayTransform"/>
     <addaction name="separator"/>
     <addaction name="displayGrid"/>
+   </widget>
+   <widget class="QMenu" name="menuLight">
+    <property name="title">
+     <string>Light</string>
+    </property>
+    <addaction name="displayCameraLight"/>
+    <addaction name="displayDomeLight"/>
+    <addaction name="displaySceneLights"/>
+    <addaction name="separator"/>
+    <addaction name="displayDomeBackground"/>
+    <addaction name="separator"/>
+    <addaction name="lightLoadDomeTexture"/>
+    <addaction name="lightClearDomeTexture"/>
+    <addaction name="separator"/>
+    <addaction name="lightUseDefaultDomeTexture"/>
+   </widget>
+   <widget class="QMenu" name="menuMaterial">
+    <property name="title">
+     <string>Material</string>
+    </property>
+    <addaction name="materialScene"/>
+    <addaction name="displayRenderClay"/>
+    <addaction name="separator"/>
+    <addaction name="materialChrome"/>
+    <addaction name="materialGlossy"/>
+    <addaction name="materialReflection"/>
+    <addaction name="separator"/>
+    <addaction name="displaySceneShaders"/>
    </widget>
    <widget class="QMenu" name="menuFile">
     <property name="title">
@@ -880,6 +902,8 @@
     <property name="title">
      <string>View</string>
     </property>
+    <addaction name="viewTogglePanels"/>
+    <addaction name="separator"/>
     <widget class="QMenu" name="menu_3">
      <property name="title">
       <string>Head-up display</string>
@@ -900,6 +924,8 @@
    <addaction name="menuFile"/>
    <addaction name="menuEdit"/>
    <addaction name="menuDisplay"/>
+   <addaction name="menuLight"/>
+   <addaction name="menuMaterial"/>
    <addaction name="menuView"/>
    <addaction name="menuHelp"/>
   </widget>
@@ -1249,7 +1275,38 @@
     <bool>true</bool>
    </property>
    <property name="text">
-    <string>Default light</string>
+    <string>Camera light</string>
+   </property>
+  </action>
+  <action name="displayDomeLight">
+   <property name="checkable">
+    <bool>true</bool>
+   </property>
+   <property name="text">
+    <string>Dome light</string>
+   </property>
+  </action>
+  <action name="displayDomeBackground">
+   <property name="checkable">
+    <bool>true</bool>
+   </property>
+   <property name="text">
+    <string>Show dome background</string>
+   </property>
+  </action>
+  <action name="lightLoadDomeTexture">
+   <property name="text">
+    <string>Load HDRI ...</string>
+   </property>
+  </action>
+  <action name="lightClearDomeTexture">
+   <property name="text">
+    <string>Clear HDRI</string>
+   </property>
+  </action>
+  <action name="lightUseDefaultDomeTexture">
+   <property name="text">
+    <string>Use default HDRI</string>
    </property>
   </action>
   <action name="displaySceneLights">
@@ -1296,6 +1353,41 @@
     <string>W</string>
    </property>
   </action>
+  <action name="materialScene">
+   <property name="checkable">
+    <bool>true</bool>
+   </property>
+   <property name="checked">
+    <bool>true</bool>
+   </property>
+   <property name="text">
+    <string>Scene</string>
+   </property>
+  </action>
+  <action name="materialChrome">
+   <property name="checkable">
+    <bool>true</bool>
+   </property>
+   <property name="text">
+    <string>Chrome</string>
+   </property>
+  </action>
+  <action name="materialGlossy">
+   <property name="checkable">
+    <bool>true</bool>
+   </property>
+   <property name="text">
+    <string>Glossy</string>
+   </property>
+  </action>
+  <action name="materialReflection">
+   <property name="checkable">
+    <bool>true</bool>
+   </property>
+   <property name="text">
+    <string>Reflection</string>
+   </property>
+  </action>
   <action name="displayRenderClay">
    <property name="checkable">
     <bool>true</bool>
@@ -1309,6 +1401,14 @@
     <string>GPU Statistics</string>
    </property>
   </action>
+  <action name="viewTogglePanels">
+   <property name="text">
+    <string>Toggle side panels</string>
+   </property>
+   <property name="shortcut">
+    <string>Space</string>
+   </property>
+  </action>
   <action name="hudSceneStats">
    <property name="checkable">
     <bool>true</bool>
@@ -1320,7 +1420,7 @@
     <string>Scene tree</string>
    </property>
    <property name="shortcut">
-    <string>Space</string>
+    <string>Ctrl+Space</string>
    </property>
   </action>
   <action name="hudPerformanceStats">

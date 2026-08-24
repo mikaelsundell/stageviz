@@ -193,6 +193,76 @@ PyViewState_setDefaultCameraLightEnabled(PyViewStateObject* self, PyObject* args
 }
 
 static PyObject*
+PyViewState_defaultDomeLightEnabled(PyViewStateObject* self)
+{
+    if (!checkViewState(self->viewState))
+        return nullptr;
+
+    return PyBool_FromLong(self->viewState->defaultDomeLightEnabled());
+}
+
+static PyObject*
+PyViewState_setDefaultDomeLightEnabled(PyViewStateObject* self, PyObject* args)
+{
+    if (!checkViewState(self->viewState))
+        return nullptr;
+
+    int enabled = 0;
+    if (!PyArg_ParseTuple(args, "p", &enabled))
+        return nullptr;
+
+    self->viewState->setDefaultDomeLightEnabled(enabled != 0);
+    Py_RETURN_NONE;
+}
+
+static PyObject*
+PyViewState_domeLightTexture(PyViewStateObject* self)
+{
+    if (!checkViewState(self->viewState))
+        return nullptr;
+
+    const QByteArray value = self->viewState->domeLightTexture().toUtf8();
+    return PyUnicode_FromString(value.constData());
+}
+
+static PyObject*
+PyViewState_setDomeLightTexture(PyViewStateObject* self, PyObject* args)
+{
+    if (!checkViewState(self->viewState))
+        return nullptr;
+
+    const char* value = nullptr;
+    if (!PyArg_ParseTuple(args, "s", &value))
+        return nullptr;
+
+    self->viewState->setDomeLightTexture(QString::fromUtf8(value));
+    Py_RETURN_NONE;
+}
+
+static PyObject*
+PyViewState_domeLightCameraVisibility(PyViewStateObject* self)
+{
+    if (!checkViewState(self->viewState))
+        return nullptr;
+
+    return PyBool_FromLong(self->viewState->domeLightCameraVisibility());
+}
+
+static PyObject*
+PyViewState_setDomeLightCameraVisibility(PyViewStateObject* self, PyObject* args)
+{
+    if (!checkViewState(self->viewState))
+        return nullptr;
+
+    int visible = 0;
+    if (!PyArg_ParseTuple(args, "p", &visible))
+        return nullptr;
+
+    self->viewState->setDomeLightCameraVisibility(visible != 0);
+    Py_RETURN_NONE;
+}
+
+static PyObject*
 PyViewState_sceneLightsEnabled(PyViewStateObject* self)
 {
     if (!checkViewState(self->viewState))
@@ -448,6 +518,21 @@ static PyMethodDef PyViewState_methods[]
           METH_NOARGS, "Get the default camera light state" },
         { "setDefaultCameraLightEnabled", reinterpret_cast<PyCFunction>(PyViewState_setDefaultCameraLightEnabled),
           METH_VARARGS, "Set the default camera light state" },
+
+        { "defaultDomeLightEnabled", reinterpret_cast<PyCFunction>(PyViewState_defaultDomeLightEnabled), METH_NOARGS,
+          "Get the default viewport dome light state" },
+        { "setDefaultDomeLightEnabled", reinterpret_cast<PyCFunction>(PyViewState_setDefaultDomeLightEnabled),
+          METH_VARARGS, "Set the default viewport dome light state" },
+
+        { "domeLightTexture", reinterpret_cast<PyCFunction>(PyViewState_domeLightTexture), METH_NOARGS,
+          "Get the custom dome light HDRI path; empty uses OpenUSD's default dome texture" },
+        { "setDomeLightTexture", reinterpret_cast<PyCFunction>(PyViewState_setDomeLightTexture), METH_VARARGS,
+          "Set a custom dome light HDRI path; empty restores OpenUSD's default dome texture" },
+
+        { "domeLightCameraVisibility", reinterpret_cast<PyCFunction>(PyViewState_domeLightCameraVisibility),
+          METH_NOARGS, "Get whether the dome texture is visible to the camera" },
+        { "setDomeLightCameraVisibility", reinterpret_cast<PyCFunction>(PyViewState_setDomeLightCameraVisibility),
+          METH_VARARGS, "Set whether the dome texture is visible to the camera" },
 
         { "sceneLightsEnabled", reinterpret_cast<PyCFunction>(PyViewState_sceneLightsEnabled), METH_NOARGS,
           "Get the scene light state" },

@@ -153,6 +153,40 @@ public:
     void setDefaultCameraLightEnabled(bool enabled);
 
     /**
+     * @brief Returns whether the default viewport dome light is enabled.
+     */
+    bool defaultDomeLightEnabled() const;
+
+    /**
+     * @brief Enables or disables the default viewport dome light.
+     */
+    void setDefaultDomeLightEnabled(bool enabled);
+
+    /**
+     * @brief Returns the custom dome-light texture path.
+     *
+     * An empty path uses OpenUSD's packaged default dome texture.
+     */
+    QString domeLightTexture() const;
+
+    /**
+     * @brief Sets the custom dome-light texture path.
+     *
+     * An empty path restores OpenUSD's packaged default dome texture.
+     */
+    void setDomeLightTexture(const QString& filename);
+
+    /**
+     * @brief Returns whether the dome texture is visible to the camera.
+     */
+    bool domeLightCameraVisibility() const;
+
+    /**
+     * @brief Sets whether the dome texture is visible to the camera.
+     */
+    void setDomeLightCameraVisibility(bool visible);
+
+    /**
      * @brief Returns whether scene lights are enabled.
      */
     bool sceneLightsEnabled() const;
@@ -284,6 +318,21 @@ Q_SIGNALS:
      * @brief Emitted when the default camera light state changes.
      */
     void defaultCameraLightEnabledChanged(bool enabled);
+
+    /**
+     * @brief Emitted when the default viewport dome light state changes.
+     */
+    void defaultDomeLightEnabledChanged(bool enabled);
+
+    /**
+     * @brief Emitted when the viewport dome texture changes.
+     */
+    void domeLightTextureChanged(const QString& filename);
+
+    /**
+     * @brief Emitted when dome camera visibility changes.
+     */
+    void domeLightCameraVisibilityChanged(bool visible);
 
     /**
      * @brief Emitted when the scene light state changes.

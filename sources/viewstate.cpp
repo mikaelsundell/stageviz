@@ -19,6 +19,9 @@ public:
         ViewState::MaterialMode materialMode = ViewState::All;
         pxr::SdfPath overrideMaterial;
         bool defaultCameraLightEnabled = true;
+        bool defaultDomeLightEnabled = false;
+        QString domeLightTexture;
+        bool domeLightCameraVisibility = false;
         bool sceneLightsEnabled = true;
         bool sceneMaterialsEnabled = true;
         ViewState::DoubleSidedMode doubleSidedMode = ViewState::Primitive;
@@ -151,6 +154,55 @@ ViewState::setDefaultCameraLightEnabled(bool enabled)
 
     p->d.defaultCameraLightEnabled = enabled;
     Q_EMIT defaultCameraLightEnabledChanged(enabled);
+}
+
+bool
+ViewState::defaultDomeLightEnabled() const
+{
+    return p->d.defaultDomeLightEnabled;
+}
+
+void
+ViewState::setDefaultDomeLightEnabled(bool enabled)
+{
+    if (enabled == p->d.defaultDomeLightEnabled)
+        return;
+
+    p->d.defaultDomeLightEnabled = enabled;
+    Q_EMIT defaultDomeLightEnabledChanged(enabled);
+}
+
+QString
+ViewState::domeLightTexture() const
+{
+    return p->d.domeLightTexture;
+}
+
+void
+ViewState::setDomeLightTexture(const QString& filename)
+{
+    const QString normalized = filename.trimmed();
+    if (normalized == p->d.domeLightTexture)
+        return;
+
+    p->d.domeLightTexture = normalized;
+    Q_EMIT domeLightTextureChanged(normalized);
+}
+
+bool
+ViewState::domeLightCameraVisibility() const
+{
+    return p->d.domeLightCameraVisibility;
+}
+
+void
+ViewState::setDomeLightCameraVisibility(bool visible)
+{
+    if (visible == p->d.domeLightCameraVisibility)
+        return;
+
+    p->d.domeLightCameraVisibility = visible;
+    Q_EMIT domeLightCameraVisibilityChanged(visible);
 }
 
 bool

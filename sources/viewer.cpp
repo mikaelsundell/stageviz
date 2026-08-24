@@ -123,8 +123,18 @@ public Q_SLOTS:
     void resetView();
     void transform(bool checked);
     void cameraLight(bool checked);
+    void domeLight(bool checked);
+    void domeBackground(bool checked);
+    void loadDomeTexture();
+    void clearDomeTexture();
+    void useDefaultDomeTexture();
     void sceneLights(bool checked);
     void sceneShaders(bool checked);
+    void materialScene();
+    void materialChrome();
+    void materialGlossy();
+    void materialReflection();
+    void togglePanels();
     void grid(bool checked);
     void renderWireframe();
     void renderShaded();
@@ -168,6 +178,8 @@ public:
         QStringList arguments;
         QStringList extensions;
         QStringList recentFiles;
+        QList<int> panelSplitterSizes;
+        bool panelsHidden = false;
         QScopedPointer<MouseEvent> backgroundColorFilter;
         QScopedPointer<Ui_Viewer> ui;
         QPointer<Viewer> viewer;
@@ -278,8 +290,18 @@ ViewerPrivate::init()
     connect(d.ui->editDeleteSelected, &QAction::triggered, this, &ViewerPrivate::deleteSelected);
     connect(d.ui->displayIsolate, &QAction::toggled, this, &ViewerPrivate::isolate);
     connect(d.ui->displayCameraLight, &QAction::toggled, this, &ViewerPrivate::cameraLight);
+    connect(d.ui->displayDomeLight, &QAction::toggled, this, &ViewerPrivate::domeLight);
+    connect(d.ui->displayDomeBackground, &QAction::toggled, this, &ViewerPrivate::domeBackground);
+    connect(d.ui->lightLoadDomeTexture, &QAction::triggered, this, &ViewerPrivate::loadDomeTexture);
+    connect(d.ui->lightClearDomeTexture, &QAction::triggered, this, &ViewerPrivate::clearDomeTexture);
+    connect(d.ui->lightUseDefaultDomeTexture, &QAction::triggered, this, &ViewerPrivate::useDefaultDomeTexture);
     connect(d.ui->displaySceneLights, &QAction::toggled, this, &ViewerPrivate::sceneLights);
     connect(d.ui->displaySceneShaders, &QAction::toggled, this, &ViewerPrivate::sceneShaders);
+    connect(d.ui->materialScene, &QAction::triggered, this, &ViewerPrivate::materialScene);
+    connect(d.ui->materialChrome, &QAction::triggered, this, &ViewerPrivate::materialChrome);
+    connect(d.ui->materialGlossy, &QAction::triggered, this, &ViewerPrivate::materialGlossy);
+    connect(d.ui->materialReflection, &QAction::triggered, this, &ViewerPrivate::materialReflection);
+    connect(d.ui->viewTogglePanels, &QAction::triggered, this, &ViewerPrivate::togglePanels);
     connect(d.ui->displayGrid, &QAction::toggled, this, &ViewerPrivate::grid);
     connect(d.ui->displayRenderShaded, &QAction::triggered, this, &ViewerPrivate::renderShaded);
     connect(d.ui->displayRenderWireframe, &QAction::triggered, this, &ViewerPrivate::renderWireframe);
@@ -289,6 +311,15 @@ ViewerPrivate::init()
         actions->setExclusive(true);
         actions->addAction(d.ui->displayRenderShaded);
         actions->addAction(d.ui->displayRenderWireframe);
+    }
+    {
+        QActionGroup* actions = new QActionGroup(this);
+        actions->setExclusive(true);
+        actions->addAction(d.ui->materialScene);
+        actions->addAction(d.ui->displayRenderClay);
+        actions->addAction(d.ui->materialChrome);
+        actions->addAction(d.ui->materialGlossy);
+        actions->addAction(d.ui->materialReflection);
     }
     connect(d.ui->displayComplexityLow, &QAction::triggered, this, &ViewerPrivate::complexityLow);
     connect(d.ui->displayComplexityMedium, &QAction::triggered, this, &ViewerPrivate::complexityMedium);
@@ -370,11 +401,26 @@ ViewerPrivate::init()
         }
     });
     connect(viewState, &ViewState::materialModeChanged, this, &ViewerPrivate::updateMaterialMode);
+    connect(viewState, &ViewState::overrideMaterialChanged, this,
+            [this](const SdfPath&) { updateMaterialMode(session()->viewState()->materialMode()); });
     connect(viewState, &ViewState::backgroundColorChanged, this, [this](const QColor& color) {
         d.ui->backgroundColor->setStyleSheet("background-color: " + color.name() + ";");
     });
     connect(viewState, &ViewState::defaultCameraLightEnabledChanged, this,
             [this](bool enabled) { updateDockAction(d.ui->displayCameraLight, enabled); });
+    connect(viewState, &ViewState::defaultDomeLightEnabledChanged, this, [this](bool enabled) {
+        updateDockAction(d.ui->displayDomeLight, enabled);
+        const ViewState* state = session()->viewState();
+        updateDockAction(d.ui->lightUseDefaultDomeTexture, enabled && state && state->domeLightTexture().isEmpty());
+    });
+    connect(viewState, &ViewState::domeLightCameraVisibilityChanged, this,
+            [this](bool visible) { updateDockAction(d.ui->displayDomeBackground, visible); });
+    connect(viewState, &ViewState::domeLightTextureChanged, this, [this](const QString& filename) {
+        d.ui->lightClearDomeTexture->setEnabled(!filename.isEmpty());
+        const ViewState* state = session()->viewState();
+        updateDockAction(d.ui->lightUseDefaultDomeTexture,
+                         filename.isEmpty() && state && state->defaultDomeLightEnabled());
+    });
     connect(viewState, &ViewState::sceneLightsEnabledChanged, this,
             [this](bool enabled) { updateDockAction(d.ui->displaySceneLights, enabled); });
     connect(viewState, &ViewState::sceneMaterialsEnabledChanged, this,
@@ -406,8 +452,13 @@ ViewerPrivate::init()
     updateDockAction(d.ui->displayComplexityHigh, viewState->complexityLevel() == ViewState::High);
     updateDockAction(d.ui->displayComplexityVeryHigh, viewState->complexityLevel() == ViewState::VeryHigh);
     viewState->setDefaultCameraLightEnabled(d.ui->displayCameraLight->isChecked());
+    viewState->setDefaultDomeLightEnabled(d.ui->displayDomeLight->isChecked());
+    viewState->setDomeLightCameraVisibility(d.ui->displayDomeBackground->isChecked());
     viewState->setSceneLightsEnabled(d.ui->displaySceneLights->isChecked());
     viewState->setSceneMaterialsEnabled(d.ui->displaySceneShaders->isChecked());
+    d.ui->lightClearDomeTexture->setEnabled(!viewState->domeLightTexture().isEmpty());
+    updateDockAction(d.ui->lightUseDefaultDomeTexture,
+                     viewState->defaultDomeLightEnabled() && viewState->domeLightTexture().isEmpty());
     renderView()->setFocus();
     initSettings();
     updateAuxiliary(session()->auxiliary());
@@ -455,6 +506,8 @@ ViewerPrivate::initDocks()
     const int total = d.ui->splitter->width() > 0 ? d.ui->splitter->width() : d.viewer->width();
     const int center = std::max(400, total - left - right);
     d.ui->splitter->setSizes({ left, center, right });
+    d.panelSplitterSizes = { left, center, right };
+    d.panelsHidden = false;
 
     d.progressDialog = new ProgressDialog(d.viewer.data());
     d.progressDialog->setObjectName("progressDialog");
@@ -897,8 +950,16 @@ ViewerPrivate::enable(bool enable)
                                 d.ui->editDeleteSelected,
                                 d.ui->displayIsolate,
                                 d.ui->displayCameraLight,
+                                d.ui->displayDomeLight,
+                                d.ui->displayDomeBackground,
+                                d.ui->lightLoadDomeTexture,
+                                d.ui->lightUseDefaultDomeTexture,
                                 d.ui->displaySceneLights,
                                 d.ui->displaySceneShaders,
+                                d.ui->materialScene,
+                                d.ui->materialChrome,
+                                d.ui->materialGlossy,
+                                d.ui->materialReflection,
                                 d.ui->displayGrid,
                                 d.ui->displayFrameAll,
                                 d.ui->displayFrameSelected,
@@ -915,6 +976,10 @@ ViewerPrivate::enable(bool enable)
         if (action)
             action->setEnabled(enable);
     }
+
+    const ViewState* state = session()->viewState();
+    d.ui->lightClearDomeTexture->setEnabled(enable && state && !state->domeLightTexture().isEmpty());
+
     d.ui->editShow->setEnabled(enable);
     d.ui->editHide->setEnabled(enable);
     d.ui->backgroundColor->setEnabled(enable);
@@ -1391,7 +1456,18 @@ ViewerPrivate::saveSettings()
     settings()->setValue("grid", d.ui->displayGrid->isChecked());
     settings()->setValue("viewer/windowGeometry", d.viewer->saveGeometry());
     settings()->setValue("viewer/windowState", int(windowState));
-    settings()->setValue("viewer/splitterState", d.ui->splitter->saveState());
+
+    // Space temporarily maximizes the viewport. Do not persist that temporary
+    // collapsed state as the user's normal splitter layout.
+    if (d.ui->splitter && d.panelsHidden && d.panelSplitterSizes.size() == 3) {
+        const QList<int> hiddenSizes = d.ui->splitter->sizes();
+        d.ui->splitter->setSizes(d.panelSplitterSizes);
+        settings()->setValue("viewer/splitterState", d.ui->splitter->saveState());
+        d.ui->splitter->setSizes(hiddenSizes);
+    }
+    else if (d.ui->splitter) {
+        settings()->setValue("viewer/splitterState", d.ui->splitter->saveState());
+    }
 }
 
 void
@@ -1607,6 +1683,61 @@ ViewerPrivate::cameraLight(bool checked)
 }
 
 void
+ViewerPrivate::domeLight(bool checked)
+{
+    session()->viewState()->setDefaultDomeLightEnabled(checked);
+}
+
+void
+ViewerPrivate::domeBackground(bool checked)
+{
+    session()->viewState()->setDomeLightCameraVisibility(checked);
+}
+
+void
+ViewerPrivate::loadDomeTexture()
+{
+    ViewState* state = session()->viewState();
+    if (!state)
+        return;
+
+    const QString current = state->domeLightTexture();
+    const QString directory = current.isEmpty() ? settings()->value("domeLightDir", QDir::homePath()).toString()
+                                                : QFileInfo(current).absolutePath();
+    const QString filename = QFileDialog::getOpenFileName(d.viewer.data(), "Load HDRI", directory,
+                                                          "HDR Images (*.hdr *.exr);;All Files (*)");
+
+    if (filename.isEmpty())
+        return;
+
+    settings()->setValue("domeLightDir", QFileInfo(filename).absolutePath());
+    state->setDomeLightTexture(QFileInfo(filename).absoluteFilePath());
+    state->setDefaultDomeLightEnabled(true);
+}
+
+void
+ViewerPrivate::clearDomeTexture()
+{
+    ViewState* state = session()->viewState();
+    if (!state)
+        return;
+
+    state->setDomeLightTexture(QString());
+    state->setDefaultDomeLightEnabled(false);
+}
+
+void
+ViewerPrivate::useDefaultDomeTexture()
+{
+    ViewState* state = session()->viewState();
+    if (!state)
+        return;
+
+    state->setDomeLightTexture(QString());
+    state->setDefaultDomeLightEnabled(true);
+}
+
+void
 ViewerPrivate::sceneLights(bool checked)
 {
     session()->viewState()->setSceneLightsEnabled(checked);
@@ -1616,6 +1747,63 @@ void
 ViewerPrivate::sceneShaders(bool checked)
 {
     session()->viewState()->setSceneMaterialsEnabled(checked);
+}
+
+void
+ViewerPrivate::materialScene()
+{
+    ViewState* state = session()->viewState();
+    state->setOverrideMaterial(SdfPath());
+    state->setMaterialMode(ViewState::All);
+}
+
+void
+ViewerPrivate::materialChrome()
+{
+    session()->viewState()->setOverrideMaterial(SdfPath("/Materials/Chrome"));
+}
+
+void
+ViewerPrivate::materialGlossy()
+{
+    session()->viewState()->setOverrideMaterial(SdfPath("/Materials/Glossy"));
+}
+
+void
+ViewerPrivate::materialReflection()
+{
+    session()->viewState()->setOverrideMaterial(SdfPath("/Materials/Reflection"));
+}
+
+void
+ViewerPrivate::togglePanels()
+{
+    if (!d.ui->splitter)
+        return;
+
+    if (!d.panelsHidden) {
+        const QList<int> sizes = d.ui->splitter->sizes();
+        if (sizes.size() == 3 && (sizes[0] > 0 || sizes[2] > 0))
+            d.panelSplitterSizes = sizes;
+
+        const int total = std::max(1, d.ui->splitter->width());
+        d.ui->splitter->setSizes({ 0, total, 0 });
+        d.panelsHidden = true;
+    }
+    else {
+        QList<int> sizes = d.panelSplitterSizes;
+        if (sizes.size() != 3 || (sizes[0] <= 0 && sizes[2] <= 0)) {
+            const int left = 280;
+            const int right = 280;
+            const int total = std::max(1, d.ui->splitter->width());
+            sizes = { left, std::max(400, total - left - right), right };
+        }
+
+        d.ui->splitter->setSizes(sizes);
+        d.panelsHidden = false;
+    }
+
+    renderView()->setFocus();
 }
 
 void
@@ -1968,9 +2156,14 @@ ViewerPrivate::updatePreserveState(bool enabled)
 void
 ViewerPrivate::updateMaterialMode(ViewState::MaterialMode mode)
 {
-    d.ui->displayRenderClay->blockSignals(true);
-    d.ui->displayRenderClay->setChecked(mode == ViewState::Clay);
-    d.ui->displayRenderClay->blockSignals(false);
+    const SdfPath overridePath = session()->viewState()->overrideMaterial();
+
+    updateDockAction(d.ui->materialScene, mode == ViewState::All);
+    updateDockAction(d.ui->displayRenderClay, mode == ViewState::Clay);
+    updateDockAction(d.ui->materialChrome, mode == ViewState::Override && overridePath == SdfPath("/Materials/Chrome"));
+    updateDockAction(d.ui->materialGlossy, mode == ViewState::Override && overridePath == SdfPath("/Materials/Glossy"));
+    updateDockAction(d.ui->materialReflection,
+                     mode == ViewState::Override && overridePath == SdfPath("/Materials/Reflection"));
 }
 
 void

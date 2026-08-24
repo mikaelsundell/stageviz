@@ -66,6 +66,9 @@ public:
         bool sceneLightsEnabled = true;
         bool sceneMaterialsEnabled = true;
         bool defaultCameraLightEnabled = true;
+        bool defaultDomeLightEnabled = false;
+        QString domeLightTexture;
+        bool domeLightCameraVisibility = false;
         bool gammaCorrectColors = true;
         bool sampleAlphaToCoverageEnabled = true;
         bool flipFrontFacing = true;

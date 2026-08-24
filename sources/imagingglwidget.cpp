@@ -286,8 +286,26 @@ ImagingGLWidgetPrivate::initContext()
         updateRenderEngineSettings();
         d.glwidget->update();
     });
-    connect(viewState(), &ViewState::defaultCameraLightEnabledChanged, d.glwidget, qOverload<>(&QWidget::update));
-    connect(viewState(), &ViewState::sceneLightsEnabledChanged, d.glwidget, qOverload<>(&QWidget::update));
+    connect(viewState(), &ViewState::defaultCameraLightEnabledChanged, this, [this](bool) {
+        updateRenderEngineSettings();
+        d.glwidget->update();
+    });
+    connect(viewState(), &ViewState::defaultDomeLightEnabledChanged, this, [this](bool) {
+        updateRenderEngineSettings();
+        d.glwidget->update();
+    });
+    connect(viewState(), &ViewState::domeLightTextureChanged, this, [this](const QString&) {
+        updateRenderEngineSettings();
+        d.glwidget->update();
+    });
+    connect(viewState(), &ViewState::domeLightCameraVisibilityChanged, this, [this](bool) {
+        updateRenderEngineSettings();
+        d.glwidget->update();
+    });
+    connect(viewState(), &ViewState::sceneLightsEnabledChanged, this, [this](bool) {
+        updateRenderEngineSettings();
+        d.glwidget->update();
+    });
     connect(viewState(), &ViewState::renderModeChanged, d.glwidget, qOverload<>(&QWidget::update));
     connect(viewState(), &ViewState::complexityLevelChanged, d.glwidget, qOverload<>(&QWidget::update));
     connect(viewState(), &ViewState::rendererAovChanged, d.glwidget, qOverload<>(&QWidget::update));
@@ -1282,11 +1300,17 @@ ImagingGLWidgetPrivate::ensureAuxiliaryMaterials()
     WRITE_LOCKER(locker, session()->auxiliaryLock(), "auxiliaryLock");
     const SdfPath materialsPath("/Materials");
     const SdfPath clayPath("/Materials/Clay");
+    const SdfPath chromePath("/Materials/Chrome");
+    const SdfPath glossyPath("/Materials/Glossy");
+    const SdfPath reflectionPath("/Materials/Reflection");
     UsdGeomScope::Define(d.auxiliary, materialsPath);
 
-    // built-in Stageviz clay lives on the shared auxiliary stage just like any
-    // other render-support material.
+    // Built-in Stageviz inspection materials live on the shared auxiliary
+    // stage and never modify the document stage.
     authorAuxiliaryStandardSurface(clayPath, GfVec3f(0.55f, 0.18f, 0.16f), 0.0f, 0.68f, 0.35f);
+    authorAuxiliaryStandardSurface(chromePath, GfVec3f(0.62f), 1.0f, 0.06f, 1.0f);
+    authorAuxiliaryStandardSurface(glossyPath, GfVec3f(0.18f), 0.0f, 0.12f, 1.0f);
+    authorAuxiliaryStandardSurface(reflectionPath, GfVec3f(0.16f), 1.0f, 0.025f, 1.0f);
 }
 
 void
@@ -1372,6 +1396,9 @@ ImagingGLWidgetPrivate::updateRenderEngineSettings()
     settings.sceneLightsEnabled = state->sceneLightsEnabled();
     settings.sceneMaterialsEnabled = state->sceneMaterialsEnabled();
     settings.defaultCameraLightEnabled = state->defaultCameraLightEnabled();
+    settings.defaultDomeLightEnabled = state->defaultDomeLightEnabled();
+    settings.domeLightTexture = state->domeLightTexture();
+    settings.domeLightCameraVisibility = state->domeLightCameraVisibility();
     settings.defaultAmbient = d.defaultAmbient;
     settings.defaultSpecular = d.defaultSpecular;
     settings.defaultShininess = d.defaultShininess;

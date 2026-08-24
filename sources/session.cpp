@@ -922,6 +922,14 @@ SessionPrivate::loadState(const QString& filename)
             if (viewStateObject.contains("defaultCameraLightEnabled"))
                 d.viewState->setDefaultCameraLightEnabled(
                     viewStateObject.value("defaultCameraLightEnabled").toBool(d.viewState->defaultCameraLightEnabled()));
+            if (viewStateObject.contains("defaultDomeLightEnabled"))
+                d.viewState->setDefaultDomeLightEnabled(
+                    viewStateObject.value("defaultDomeLightEnabled").toBool(d.viewState->defaultDomeLightEnabled()));
+            if (viewStateObject.contains("domeLightTexture"))
+                d.viewState->setDomeLightTexture(viewStateObject.value("domeLightTexture").toString());
+            if (viewStateObject.contains("domeLightCameraVisibility"))
+                d.viewState->setDomeLightCameraVisibility(
+                    viewStateObject.value("domeLightCameraVisibility").toBool(d.viewState->domeLightCameraVisibility()));
             if (viewStateObject.contains("sceneLightsEnabled"))
                 d.viewState->setSceneLightsEnabled(
                     viewStateObject.value("sceneLightsEnabled").toBool(d.viewState->sceneLightsEnabled()));
@@ -1102,6 +1110,9 @@ SessionPrivate::saveState(const QString& filename)
         viewStateObject["materialMode"] = materialMode(d.viewState->materialMode());
         viewStateObject["overrideMaterial"] = qt::SdfPathToQString(d.viewState->overrideMaterial());
         viewStateObject["defaultCameraLightEnabled"] = d.viewState->defaultCameraLightEnabled();
+        viewStateObject["defaultDomeLightEnabled"] = d.viewState->defaultDomeLightEnabled();
+        viewStateObject["domeLightTexture"] = d.viewState->domeLightTexture();
+        viewStateObject["domeLightCameraVisibility"] = d.viewState->domeLightCameraVisibility();
         viewStateObject["sceneLightsEnabled"] = d.viewState->sceneLightsEnabled();
         viewStateObject["sceneMaterialsEnabled"] = d.viewState->sceneMaterialsEnabled();
         viewStateObject["doubleSidedMode"] = doubleSidedMode(d.viewState->doubleSidedMode());
