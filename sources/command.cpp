@@ -988,7 +988,7 @@ selectInvertPayload()
                     }
                     else {
                         previousSelection = session->selectionList()->paths();
-                        const QList<SdfPath> selectedPayloads = stage::resolvePayloadPaths(stage, previousSelection);
+                        const QList<SdfPath> selectedPayloads = stage::ancestorPayloadPaths(stage, previousSelection);
 
                         state->previousSelection = previousSelection;
                         hadSelectedPayloads = !selectedPayloads.isEmpty();
@@ -1003,7 +1003,7 @@ selectInvertPayload()
                             if (path.IsEmpty() || path == SdfPath::AbsoluteRootPath())
                                 continue;
 
-                            if (!prim.HasPayload())
+                            if (!stage::isPayload(stage, path))
                                 continue;
 
                             if (!prim.IsLoaded())

@@ -594,10 +594,10 @@ QTabBar QToolButton
     border: 1px solid $color.borderalt;
     padding: 0px;
     margin: 0px;
-    min-width: 22px;
-    max-width: 22px;
-    min-height: 34px;
-    max-height: 34px;
+    min-width: 12px;
+    max-width: 12px;
+    min-height: 24px;
+    max-height: 24px;
 }
 
 QTabBar QToolButton:hover,

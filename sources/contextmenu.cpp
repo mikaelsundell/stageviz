@@ -16,6 +16,7 @@
 #include <functional>
 #include <pxr/usd/sdf/primSpec.h>
 #include <pxr/usd/usd/prim.h>
+#include <pxr/usd/usd/variantSets.h>
 #include <pxr/usd/usdGeom/bboxCache.h>
 #include <pxr/usd/usdGeom/imageable.h>
 #include <pxr/usd/usdGeom/xformable.h>
@@ -211,11 +212,53 @@ ContextMenu::exec(QWidget* parent, ViewContext* context, UsdStageRefPtr usdStage
             const QString setName = setIt.key();
             QMenu* setMenu = variantMenu->addMenu(setName);
 
+            QList<SdfPath> setTargetPaths;
+            for (auto valueIt = setIt.value().cbegin(); valueIt != setIt.value().cend(); ++valueIt) {
+                for (const SdfPath& targetPath : valueIt.value()) {
+                    if (!setTargetPaths.contains(targetPath))
+                        setTargetPaths.append(targetPath);
+                }
+            }
+
+            QString commonSelection;
+            bool hasCommonSelection = !setTargetPaths.isEmpty();
+
+            for (const SdfPath& targetPath : setTargetPaths) {
+                const UsdPrim prim = usdStage->GetPrimAtPath(targetPath);
+                if (!prim) {
+                    hasCommonSelection = false;
+                    break;
+                }
+
+                const UsdVariantSet variantSet = prim.GetVariantSet(qt::QStringToString(setName));
+                if (!variantSet.IsValid()) {
+                    hasCommonSelection = false;
+                    break;
+                }
+
+                const QString selection = qt::StringToQString(variantSet.GetVariantSelection());
+                if (selection.isEmpty()) {
+                    hasCommonSelection = false;
+                    break;
+                }
+
+                if (commonSelection.isEmpty()) {
+                    commonSelection = selection;
+                }
+                else if (commonSelection != selection) {
+                    hasCommonSelection = false;
+                    break;
+                }
+            }
+
             for (auto valueIt = setIt.value().cbegin(); valueIt != setIt.value().cend(); ++valueIt) {
                 const QString value = valueIt.key();
                 const QList<SdfPath> targetPaths = valueIt.value();
 
                 QAction* action = setMenu->addAction(value);
+                action->setCheckable(true);
+                action->setChecked(hasCommonSelection && commonSelection == value);
+
                 QObject::connect(action, &QAction::triggered, parent,
                                  [context, usdStage, setName, value, targetPaths]() {
                                      QList<SdfPath> resolved;

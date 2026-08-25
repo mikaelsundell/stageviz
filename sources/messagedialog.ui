@@ -235,22 +235,5 @@
   <include location="viewer.qrc"/>
   <include location="stageviz.qrc"/>
  </resources>
- <connections>
-  <connection>
-   <sender>reject</sender>
-   <signal>clicked()</signal>
-   <receiver>MessageDialog</receiver>
-   <slot>close()</slot>
-   <hints>
-    <hint type="sourcelabel">
-     <x>199</x>
-     <y>571</y>
-    </hint>
-    <hint type="destinationlabel">
-     <x>199</x>
-     <y>299</y>
-    </hint>
-   </hints>
-  </connection>
- </connections>
+ <connections/>
 </ui>
