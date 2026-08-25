@@ -415,6 +415,24 @@ namespace snapshot {
 namespace stage {
 
     /**
+     * @brief Builds an asset path suitable for authoring into a destination layer.
+     *
+     * Converts @p filename to an absolute path first. When the destination
+     * layer is file-backed, the returned asset path is made relative to the
+     * destination layer directory. Anonymous or pathless destination layers
+     * receive the normalized absolute path instead.
+     *
+     * Native path separators are converted to forward slashes before the
+     * result is returned for USD composition arcs.
+     *
+     * @param destinationLayer Layer that will author the asset path.
+     * @param filename Source asset filename.
+     *
+     * @return Normalized asset path suitable for a reference, payload, or sublayer.
+     */
+    std::string compositionAssetPath(const SdfLayerHandle& destinationLayer, const QString& filename);
+
+    /**
  * @brief Collects nearest payload ancestor paths for the specified prim paths.
  *
  * Walks upward from each input path until it finds the nearest prim that
@@ -782,19 +800,22 @@ namespace stage {
     QList<SdfPath> payloadPaths(UsdStageRefPtr stage, const QList<SdfPath>& paths);
 
     /**
- * @brief Collects effectively visible prim paths from the stage.
+ * @brief Collects effectively visible renderable prim paths from the stage.
  *
- * Traverses the stage hierarchy and returns prim paths whose effective
- * visibility is visible at the default time. A prim is excluded when it or
- * any imageable ancestor is authored invisible.
+ * Traverses the stage hierarchy and returns paths for visible UsdGeomGprim
+ * prims at the default time.
  *
- * Invisible subtrees are skipped entirely. Non-imageable prims inherit the
- * visibility state of their parent and are included when their hierarchy
- * remains visible.
+ * Invisible imageable prims cause their entire subtree to be skipped, so
+ * geometry beneath an invisible ancestor is excluded. Non-imageable hierarchy
+ * prims are traversed but are not included in the returned paths.
+ *
+ * The resulting paths represent visible renderable geometry rather than
+ * visible hierarchy roots, making them suitable for population-based export
+ * without implicitly including hidden sibling geometry.
  *
  * @param stage USD stage to traverse.
  *
- * @return List of effectively visible prim paths.
+ * @return List of effectively visible UsdGeomGprim paths.
  */
     QList<SdfPath> visiblePaths(UsdStageRefPtr stage);
 

@@ -1271,6 +1271,7 @@ PropertyTreePrivate::addInfo(PropertyItem* parent, const QString& name, const QS
     item->setText(PropertyItem::Name, name);
     item->setText(PropertyItem::Value, value);
     setReadOnlyValueStyle(item);
+    item->setExpanded(true);
 
     if (!toolTip.isEmpty()) {
         item->setToolTip(PropertyItem::Name, toolTip);

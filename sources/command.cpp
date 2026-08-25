@@ -977,7 +977,7 @@ selectInvertPayload()
                 bool hadStage = true;
                 bool hadSelectedPayloads = false;
                 int completed = 0;
-                int total = 0;
+                qsizetype total = 0;
 
                 {
                     READ_LOCKER(locker, session->stageLock(), "stageLock");
@@ -988,13 +988,29 @@ selectInvertPayload()
                     }
                     else {
                         previousSelection = session->selectionList()->paths();
-                        const QList<SdfPath> selectedPayloads = stage::ancestorPayloadPaths(stage, previousSelection);
+                        const QList<SdfPath> resolvedPayloads = stage::ancestorPayloadPaths(stage, previousSelection);
+
+                        QList<SdfPath> selectedPayloads;
+                        selectedPayloads.reserve(resolvedPayloads.size());
+
+                        for (const SdfPath& resolvedPath : resolvedPayloads) {
+                            SdfPath topMostPath = resolvedPath;
+
+                            for (UsdPrim prim = stage->GetPrimAtPath(resolvedPath).GetParent();
+                                 prim && !prim.IsPseudoRoot(); prim = prim.GetParent()) {
+                                if (stage::isPayload(stage, prim.GetPath()))
+                                    topMostPath = prim.GetPath();
+                            }
+
+                            path::appendUnique(selectedPayloads, topMostPath);
+                        }
+
+                        selectedPayloads = path::topLevelPaths(selectedPayloads);
 
                         state->previousSelection = previousSelection;
                         hadSelectedPayloads = !selectedPayloads.isEmpty();
 
-                        QSet<SdfPath> selectedSet(selectedPayloads.begin(), selectedPayloads.end());
-
+                        QList<SdfPath> payloads;
                         for (const UsdPrim& prim : stage->TraverseAll()) {
                             if (!prim || !prim.IsValid())
                                 continue;
@@ -1009,15 +1025,24 @@ selectInvertPayload()
                             if (!prim.IsLoaded())
                                 continue;
 
-                            ++total;
+                            payloads.append(path);
+                        }
 
-                            if (!selectedSet.contains(path))
+                        payloads = path::topLevelPaths(payloads);
+                        total = payloads.size();
+
+                        const QSet<SdfPath> selectedSet(selectedPayloads.begin(), selectedPayloads.end());
+
+                        for (const SdfPath& path : payloads) {
+                            const bool selected = selectedSet.contains(path);
+
+                            if (!selected)
                                 invertedPayloads.append(path);
 
                             command::Result result;
                             result.path = path;
                             result.success = true;
-                            result.message = selectedSet.contains(path) ? "Payload skipped" : "Payload inverted";
+                            result.message = selected ? "Payload skipped" : "Payload inverted";
                             result.status = Status::Success;
                             pending.append(result);
                             ++completed;
@@ -1063,7 +1088,6 @@ selectInvertPayload()
                     }
 
                     session->selectionList()->updatePaths(invertedPayloads);
-
                     session->updateProgressNotify(Session::Notify(total > 0 ? "Payload selection inverted"
                                                                             : "Invert payload selection skipped",
                                                                   invertedPayloads, Status::Success),

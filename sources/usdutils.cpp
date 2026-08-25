@@ -4,6 +4,7 @@
 
 #include "usdutils.h"
 #include "qtutils.h"
+#include <QDir>
 #include <QFileInfo>
 #include <algorithm>
 #include <cmath>
@@ -23,6 +24,7 @@
 #include <pxr/usd/usd/primRange.h>
 #include <pxr/usd/usd/variantSets.h>
 #include <pxr/usd/usdGeom/bboxCache.h>
+#include <pxr/usd/usdGeom/gprim.h>
 #include <pxr/usd/usdGeom/imageable.h>
 #include <pxr/usd/usdGeom/tokens.h>
 #include <pxr/usd/usdGeom/xformCache.h>
@@ -760,6 +762,20 @@ namespace snapshot {
 }  // namespace snapshot
 
 namespace stage {
+    std::string compositionAssetPath(const SdfLayerHandle& destinationLayer, const QString& filename)
+    {
+        const QString absoluteFilename = QFileInfo(filename).absoluteFilePath();
+        if (!destinationLayer || destinationLayer->IsAnonymous())
+            return qt::QStringToString(QDir::fromNativeSeparators(absoluteFilename));
+
+        const QString destinationFilename = QString::fromStdString(destinationLayer->GetRealPath());
+        if (destinationFilename.isEmpty())
+            return qt::QStringToString(QDir::fromNativeSeparators(absoluteFilename));
+
+        const QDir directory(QFileInfo(destinationFilename).absolutePath());
+        return qt::QStringToString(QDir::fromNativeSeparators(directory.relativeFilePath(absoluteFilename)));
+    }
+
     QList<SdfPath> ancestorPayloadPaths(UsdStageRefPtr stage, const QList<SdfPath>& paths)
     {
         QList<SdfPath> result;
@@ -1593,36 +1609,35 @@ namespace stage {
 
     QList<SdfPath> visiblePaths(UsdStageRefPtr stage)
     {
-        QList<SdfPath> result;
+        QList<SdfPath> paths;
+
         if (!stage)
-            return result;
+            return paths;
 
-        std::function<void(const UsdPrim&, bool)> collect = [&](const UsdPrim& prim, bool parentVisible) {
+        UsdPrimRange range(stage->GetPseudoRoot());
+
+        for (auto it = range.begin(); it != range.end(); ++it) {
+            const UsdPrim prim = *it;
             if (!prim || !prim.IsValid())
-                return;
+                continue;
 
-            bool visible = parentVisible;
-            if (visible) {
-                UsdGeomImageable imageable(prim);
-                if (imageable) {
-                    TfToken visibility;
-                    if (imageable.GetVisibilityAttr().Get(&visibility) && visibility == UsdGeomTokens->invisible)
+            const UsdGeomImageable imageable(prim);
 
-                        visible = false;
+            if (imageable) {
+                TfToken visibility;
+                imageable.GetVisibilityAttr().Get(&visibility);
+
+                if (visibility == UsdGeomTokens->invisible) {
+                    it.PruneChildren();
+                    continue;
                 }
             }
-            if (!visible)
-                return;
 
-            result.append(prim.GetPath());
-            for (const UsdPrim& child : prim.GetChildren())
-                collect(child, true);
-        };
+            if (prim.IsA<UsdGeomGprim>())
+                paths.append(prim.GetPath());
+        }
 
-        for (const UsdPrim& child : stage->GetPseudoRoot().GetChildren())
-            collect(child, true);
-
-        return result;
+        return paths;
     }
 
     TfTokenVector remapChildOrder(const TfTokenVector& order, const TfToken& oldName, const TfToken& newName)

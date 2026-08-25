@@ -203,6 +203,7 @@ public:
     };
     Data d;
 };
+
 SessionPrivate::SessionPrivate() { d.stageWatcher.reset(new StageWatcher(this)); }
 SessionPrivate::~SessionPrivate() = default;
 
@@ -216,7 +217,6 @@ SessionPrivate::init()
     d.viewState.reset(new ViewState());
     d.auxiliary = UsdStage::CreateInMemory("stageviz_auxiliary.usda");
 }
-
 
 void
 SessionPrivate::initStage()
@@ -247,7 +247,6 @@ SessionPrivate::initStage()
     d.stageWatcher->watch(stage);
 }
 
-
 void
 SessionPrivate::beginProgressBlock(const QString& name, size_t count)
 {
@@ -261,7 +260,6 @@ SessionPrivate::beginProgressBlock(const QString& name, size_t count)
     }
 }
 
-
 void
 SessionPrivate::updateProgressNotify(const Session::Notify& notify, size_t completed)
 {
@@ -269,13 +267,11 @@ SessionPrivate::updateProgressNotify(const Session::Notify& notify, size_t compl
     Q_EMIT d.session->progressNotifyChanged(notify, completed, d.expectedChanges);
 }
 
-
 void
 SessionPrivate::cancelProgressBlock()
 {
     d.changeCancelled.store(true);
 }
-
 
 void
 SessionPrivate::endProgressBlock()
@@ -298,13 +294,11 @@ SessionPrivate::endProgressBlock()
     flushPrims();
 }
 
-
 bool
 SessionPrivate::isProgressBlockCancelled() const
 {
     return d.changeCancelled.load();
 }
-
 
 bool
 SessionPrivate::newStage(Session::LoadPolicy policy)
@@ -344,7 +338,6 @@ SessionPrivate::newStage(Session::LoadPolicy policy)
     updateStage();
     return true;
 }
-
 
 bool
 SessionPrivate::loadFromFile(const QString& filename, Session::LoadPolicy policy)
@@ -398,25 +391,6 @@ SessionPrivate::loadFromFile(const QString& filename, Session::LoadPolicy policy
     return true;
 }
 
-namespace {
-
-    std::string compositionAssetPath(const SdfLayerHandle& destinationLayer, const QString& filename)
-    {
-        const QString absoluteFilename = QFileInfo(filename).absoluteFilePath();
-        if (!destinationLayer || destinationLayer->IsAnonymous())
-            return QStringToString(QDir::fromNativeSeparators(absoluteFilename));
-
-        const QString destinationFilename = QString::fromStdString(destinationLayer->GetRealPath());
-        if (destinationFilename.isEmpty())
-            return QStringToString(QDir::fromNativeSeparators(absoluteFilename));
-
-        const QDir directory(QFileInfo(destinationFilename).absolutePath());
-        return QStringToString(QDir::fromNativeSeparators(directory.relativeFilePath(absoluteFilename)));
-    }
-
-}  // namespace
-
-
 bool
 SessionPrivate::mergeLayer(const SdfLayerHandle& sourceLayer)
 {
@@ -455,7 +429,6 @@ SessionPrivate::mergeLayer(const SdfLayerHandle& sourceLayer)
     return true;
 }
 
-
 void
 SessionPrivate::refreshAfterStageEdit()
 {
@@ -483,7 +456,6 @@ SessionPrivate::refreshAfterStageEdit()
     Q_EMIT d.session->boundingBoxChanged(bbox);
 }
 
-
 bool
 SessionPrivate::mergeFromFile(const QString& filename)
 {
@@ -506,7 +478,6 @@ SessionPrivate::mergeFromFile(const QString& filename)
     return mergeLayer(sourceLayer);
 }
 
-
 bool
 SessionPrivate::mergeFlattenedFromFile(const QString& filename)
 {
@@ -528,7 +499,6 @@ SessionPrivate::mergeFlattenedFromFile(const QString& filename)
 
     return mergeLayer(flattenedLayer);
 }
-
 
 bool
 SessionPrivate::mergeSublayerFromFile(const QString& filename)
@@ -554,7 +524,7 @@ SessionPrivate::mergeSublayerFromFile(const QString& filename)
             return false;
         }
 
-        const std::string assetPath = compositionAssetPath(destinationLayer, absFilename);
+        const std::string assetPath = stage::compositionAssetPath(destinationLayer, absFilename);
 
         std::vector<std::string> sublayers = destinationLayer->GetSubLayerPaths();
         if (std::find(sublayers.begin(), sublayers.end(), assetPath) != sublayers.end())
@@ -575,7 +545,6 @@ SessionPrivate::mergeSublayerFromFile(const QString& filename)
     refreshAfterStageEdit();
     return true;
 }
-
 
 bool
 SessionPrivate::mergeReferenceFromFile(const QString& filename, const SdfPath& targetPath)
@@ -606,14 +575,13 @@ SessionPrivate::mergeReferenceFromFile(const QString& filename, const SdfPath& t
         if (!sourceStage || !sourceStage->GetDefaultPrim())
             return false;
 
-        const std::string assetPath = compositionAssetPath(destinationLayer, absFilename);
+        const std::string assetPath = stage::compositionAssetPath(destinationLayer, absFilename);
         if (!targetPrim.GetReferences().AddReference(assetPath))
             return false;
     }
     refreshAfterStageEdit();
     return true;
 }
-
 
 bool
 SessionPrivate::mergePayloadFromFile(const QString& filename, const SdfPath& targetPath)
@@ -644,14 +612,13 @@ SessionPrivate::mergePayloadFromFile(const QString& filename, const SdfPath& tar
         if (!sourceStage || !sourceStage->GetDefaultPrim())
             return false;
 
-        const std::string assetPath = compositionAssetPath(destinationLayer, absFilename);
+        const std::string assetPath = stage::compositionAssetPath(destinationLayer, absFilename);
         if (!targetPrim.GetPayloads().AddPayload(assetPath))
             return false;
     }
     refreshAfterStageEdit();
     return true;
 }
-
 
 bool
 SessionPrivate::saveToFile(const QString& filename)
