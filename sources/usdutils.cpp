@@ -832,8 +832,8 @@ namespace payload {
 
         int neighborCount = 0;
 
-        while (neighborCount < candidates.size() && neighborCount < MaxNeighborPayloads
-               && candidates[neighborCount].distance <= MaximumDistance) {
+        while (neighborCount < candidates.size() && neighborCount < maxNeighborPayloads
+               && candidates[neighborCount].distance <= maximumDistance) {
             ++neighborCount;
         }
 
@@ -846,7 +846,7 @@ namespace payload {
             const double gap = next - current;
             const double baseline = std::max(current, 0.10);
 
-            if (gap >= MinimumGap && next >= baseline * GapRatio) {
+            if (gap >= minimumGap && next >= baseline * gapRatio) {
                 neighborCount = i + 1;
                 break;
             }
