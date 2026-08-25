@@ -737,7 +737,7 @@ namespace payload {
             return result;
         }
 
-        const QList<SdfPath> sourcePaths = stage::ancestorPayloadPaths(stage, inputPaths);
+        const QList<SdfPath> sourcePaths = stage::topMostPayloadPaths(stage, inputPaths);
         if (sourcePaths.isEmpty()) {
             error = "selection is not a payload or inside a loaded payload";
             return result;
@@ -821,19 +821,19 @@ namespace payload {
                       return a.path.GetString() < b.path.GetString();
                   });
 
-        // neighbor distance is normalized by the size of the selected source
+        // Neighbor distance is normalized by the size of the selected source
         // payload that is closest to each candidate. This remains scale
         // independent while preventing a large union box from swallowing
         // remote areas of the stage.
-        constexpr int maxNeighborPayloads = 32;
-        constexpr double maximumDistance = 1.5;
-        constexpr double minimumGap = 0.35;
-        constexpr double gapRatio = 2.5;
+        constexpr int MaxNeighborPayloads = 32;
+        constexpr double MaximumDistance = 2.0;
+        constexpr double MinimumGap = 0.35;
+        constexpr double GapRatio = 2.5;
 
         int neighborCount = 0;
 
-        while (neighborCount < candidates.size() && neighborCount < maxNeighborPayloads
-               && candidates[neighborCount].distance <= maximumDistance) {
+        while (neighborCount < candidates.size() && neighborCount < MaxNeighborPayloads
+               && candidates[neighborCount].distance <= MaximumDistance) {
             ++neighborCount;
         }
 
@@ -846,7 +846,7 @@ namespace payload {
             const double gap = next - current;
             const double baseline = std::max(current, 0.10);
 
-            if (gap >= minimumGap && next >= baseline * gapRatio) {
+            if (gap >= MinimumGap && next >= baseline * GapRatio) {
                 neighborCount = i + 1;
                 break;
             }
@@ -1032,6 +1032,30 @@ namespace stage {
             }
         }
         return result;
+    }
+
+    QList<SdfPath> topMostPayloadPaths(UsdStageRefPtr stage, const QList<SdfPath>& paths)
+    {
+        QList<SdfPath> result;
+        if (!stage || paths.isEmpty())
+            return result;
+
+        for (const SdfPath& inputPath : paths) {
+            const SdfPath primPath = inputPath.IsPropertyPath() ? inputPath.GetPrimPath() : inputPath;
+            UsdPrim prim = stage->GetPrimAtPath(primPath);
+            SdfPath topMostPath;
+
+            while (prim && !prim.IsPseudoRoot()) {
+                if (isPayload(stage, prim.GetPath()))
+                    topMostPath = prim.GetPath();
+
+                prim = prim.GetParent();
+            }
+
+            path::appendUnique(result, topMostPath);
+        }
+
+        return path::topLevelPaths(result);
     }
 
     GfBBox3d boundingBox(UsdStageRefPtr stage, const QList<SdfPath>& paths)

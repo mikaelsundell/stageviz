@@ -835,7 +835,7 @@ loadNeighborPayloads(const QList<SdfPath>& paths)
                     else {
                         targets = payload::neighboringPaths(stage, paths, error);
 
-                        const QList<SdfPath> sourcePaths = stage::ancestorPayloadPaths(stage, paths);
+                        const QList<SdfPath> sourcePaths = stage::topMostPayloadPaths(stage, paths);
                         for (const SdfPath& sourcePath : sourcePaths) {
                             if (!stage::isLoaded(stage, sourcePath))
                                 path::appendUnique(targets, sourcePath);
@@ -1184,24 +1184,8 @@ selectInvertPayload()
                     }
                     else {
                         previousSelection = session->selectionList()->paths();
-                        const QList<SdfPath> resolvedPayloads = stage::ancestorPayloadPaths(stage, previousSelection);
-
-                        QList<SdfPath> selectedPayloads;
-                        selectedPayloads.reserve(resolvedPayloads.size());
-
-                        for (const SdfPath& resolvedPath : resolvedPayloads) {
-                            SdfPath topMostPath = resolvedPath;
-
-                            for (UsdPrim prim = stage->GetPrimAtPath(resolvedPath).GetParent();
-                                 prim && !prim.IsPseudoRoot(); prim = prim.GetParent()) {
-                                if (stage::isPayload(stage, prim.GetPath()))
-                                    topMostPath = prim.GetPath();
-                            }
-
-                            path::appendUnique(selectedPayloads, topMostPath);
-                        }
-
-                        selectedPayloads = path::topLevelPaths(selectedPayloads);
+                        const QList<SdfPath> selectedPayloads
+                            = stage::topMostPayloadPaths(stage, previousSelection);
 
                         state->previousSelection = previousSelection;
                         hadSelectedPayloads = !selectedPayloads.isEmpty();

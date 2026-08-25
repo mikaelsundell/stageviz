@@ -346,7 +346,7 @@ namespace payload {
     /**
      * @brief Finds unloaded payloads spatially neighboring selected payloads.
      *
-     * Resolves the nearest payload ancestor for each input path and evaluates
+     * Resolves the top-most payload ancestor for each input path and evaluates
      * each source payload's extentsHint independently in world space.
      *
      * Candidate payloads must be currently unloaded and provide a usable
@@ -466,6 +466,20 @@ namespace stage {
  * @return List of nearest payload ancestor paths.
  */
     QList<SdfPath> ancestorPayloadPaths(UsdStageRefPtr stage, const QList<SdfPath>& paths);
+
+    /**
+     * @brief Collects the top-most payload ancestor paths for specified prim paths.
+     *
+     * Walks from each input prim to the pseudo-root and keeps the last payload
+     * encountered. Property paths are normalized to their owning prim path.
+     * Duplicate and descendant results are removed.
+     *
+     * @param stage USD stage to query.
+     * @param paths Prim or property paths to resolve upward from.
+     *
+     * @return List of top-most payload ancestor paths.
+     */
+    QList<SdfPath> topMostPayloadPaths(UsdStageRefPtr stage, const QList<SdfPath>& paths);
 
     /**
  * @brief Computes the combined world-space bounding box for prim paths.
