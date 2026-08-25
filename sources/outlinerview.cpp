@@ -168,10 +168,19 @@ OutlinerViewPrivate::maskChanged(const QList<SdfPath>& paths)
 {
     stageTree()->updateMask(paths);
 }
+
 void
 OutlinerViewPrivate::primsChanged(const NoticeBatch& batch)
 {
     stageTree()->updatePrims(batch);
+
+    const SelectionList* list = d.context->selectionList();
+    const QList<SdfPath> paths = list ? list->paths() : QList<SdfPath>();
+
+    if (paths.size() == 1)
+        updateDepth(paths.first());
+    else
+        updateDepth();
 }
 
 void

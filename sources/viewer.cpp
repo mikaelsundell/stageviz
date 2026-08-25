@@ -44,6 +44,7 @@
 #include <QTimer>
 #include <QToolButton>
 #include <QVBoxLayout>
+#include <pxr/usd/usdGeom/modelAPI.h>
 
 #include <QSizePolicy>
 // generated files
@@ -114,6 +115,7 @@ public Q_SLOTS:
     void stageUpZ();
     void payloadLoad();
     void payloadUnload();
+    void payloadLoadNeighbors();
     void payloadSelectInvert();
     void newXform();
     void deleteSelected();
@@ -285,6 +287,7 @@ ViewerPrivate::init()
     }
     connect(d.ui->editPayloadLoad, &QAction::triggered, this, &ViewerPrivate::payloadLoad);
     connect(d.ui->editPayloadUnload, &QAction::triggered, this, &ViewerPrivate::payloadUnload);
+    connect(d.ui->editPayloadLoadNeighbors, &QAction::triggered, this, &ViewerPrivate::payloadLoadNeighbors);
     connect(d.ui->editPayloadInvertSelected, &QAction::triggered, this, &ViewerPrivate::payloadSelectInvert);
     connect(d.ui->editNewXform, &QAction::triggered, this, &ViewerPrivate::newXform);
     connect(d.ui->editDeleteSelected, &QAction::triggered, this, &ViewerPrivate::deleteSelected);
@@ -945,6 +948,7 @@ ViewerPrivate::enable(bool enable)
                                 d.ui->editStageUpZ,
                                 d.ui->editPayloadLoad,
                                 d.ui->editPayloadUnload,
+                                d.ui->editPayloadLoadNeighbors,
                                 d.ui->editPayloadInvertSelected,
                                 d.ui->editNewXform,
                                 d.ui->editDeleteSelected,
@@ -983,6 +987,9 @@ ViewerPrivate::enable(bool enable)
     d.ui->editShow->setEnabled(enable);
     d.ui->editHide->setEnabled(enable);
     d.ui->backgroundColor->setEnabled(enable);
+
+    if (enable)
+        updateSelection(session()->selectionList()->paths());
 }
 
 void
@@ -1581,6 +1588,14 @@ ViewerPrivate::payloadUnload()
 }
 
 void
+ViewerPrivate::payloadLoadNeighbors()
+{
+    const QList<SdfPath> paths = session()->selectionList()->paths();
+    if (!paths.isEmpty())
+        session()->commandStack()->run(new Command(loadNeighborPayloads(paths)));
+}
+
+void
 ViewerPrivate::payloadSelectInvert()
 {
     if (session()->selectionList()->paths().size())
@@ -2044,7 +2059,6 @@ ViewerPrivate::updateSelection(const QList<SdfPath>& paths)
 {
     const bool hasSelection = !paths.isEmpty();
     d.ui->editSelectInvert->setEnabled(hasSelection);
-    d.ui->editPayloadInvertSelected->setEnabled(hasSelection);
 
     QList<QAction*> staleActions;
     for (QAction* action : d.ui->menuPayloads->actions()) {
@@ -2059,8 +2073,10 @@ ViewerPrivate::updateSelection(const QList<SdfPath>& paths)
                     for (QAction* valueAction : childMenu->actions())
                         valueAction->setShortcut(QKeySequence());
                 }
+
                 childAction->setShortcut(QKeySequence());
             }
+
             d.ui->menuPayloads->removeAction(action);
             menu->deleteLater();
         }
@@ -2073,6 +2089,8 @@ ViewerPrivate::updateSelection(const QList<SdfPath>& paths)
 
     d.ui->editPayloadLoad->setEnabled(false);
     d.ui->editPayloadUnload->setEnabled(false);
+    d.ui->editPayloadLoadNeighbors->setEnabled(false);
+    d.ui->editPayloadInvertSelected->setEnabled(false);
 
     if (!hasSelection)
         return;
@@ -2089,24 +2107,41 @@ ViewerPrivate::updateSelection(const QList<SdfPath>& paths)
         if (!stage)
             return;
 
-        payloadPaths = stage::resolvePayloadPaths(stage, paths);
-        variantTargets = payload::payloadVariantTargets(stage, paths);
+        // Only resolve payloads from the selected payload itself or from
+        // descendants inside a payload. Selecting an assembly above payloads
+        // must not implicitly operate on every payload below that assembly.
+        payloadPaths = stage::ancestorPayloadPaths(stage, paths);
 
-        for (const SdfPath& payloadPath : payloadPaths) {
-            const bool loaded = stage::isLoaded(stage, payloadPath);
-            if (loaded)
-                canUnloadSelected = true;
-            else
-                canLoadSelected = true;
-            if (canLoadSelected && canUnloadSelected)
-                break;
+        if (!payloadPaths.isEmpty()) {
+            variantTargets = payload::payloadVariantTargets(stage, paths);
+
+            for (const SdfPath& payloadPath : payloadPaths) {
+                const bool loaded = stage::isLoaded(stage, payloadPath);
+
+                if (loaded)
+                    canUnloadSelected = true;
+                else
+                    canLoadSelected = true;
+
+                if (canLoadSelected && canUnloadSelected)
+                    break;
+            }
         }
     }
+
+    const bool hasPayloadSelection = !payloadPaths.isEmpty();
 
     d.ui->editPayloadLoad->setEnabled(canLoadSelected);
     d.ui->editPayloadUnload->setEnabled(canUnloadSelected);
 
-    if (variantTargets.isEmpty())
+    // Loading neighbors is valid for both loaded and unloaded payloads.
+    // The command itself validates whether the selected payload has a usable
+    // extentsHint and reports a warning when it cannot perform the search.
+    d.ui->editPayloadLoadNeighbors->setEnabled(hasPayloadSelection);
+
+    d.ui->editPayloadInvertSelected->setEnabled(hasPayloadSelection);
+
+    if (!hasPayloadSelection || variantTargets.isEmpty())
         return;
 
     QAction* separator = d.ui->menuPayloads->addSeparator();
@@ -2116,6 +2151,7 @@ ViewerPrivate::updateSelection(const QList<SdfPath>& paths)
     variantMenu->menuAction()->setProperty("variantMenu", true);
 
     int index = 0;
+
     for (auto setIt = variantTargets.cbegin(); setIt != variantTargets.cend(); ++setIt) {
         const QString& setName = setIt.key();
 
@@ -2129,9 +2165,11 @@ ViewerPrivate::updateSelection(const QList<SdfPath>& paths)
 
             if (index < 9) {
                 const int key = Qt::Key_1 + index;
+
                 action->setShortcut(QKeySequence(Qt::SHIFT | key));
                 action->setShortcutContext(Qt::WidgetWithChildrenShortcut);
                 action->setAutoRepeat(false);
+
                 d.viewer->addAction(action);
             }
 
@@ -2144,7 +2182,6 @@ ViewerPrivate::updateSelection(const QList<SdfPath>& paths)
         }
     }
 }
-
 void
 ViewerPrivate::updatePreserveState(bool enabled)
 {

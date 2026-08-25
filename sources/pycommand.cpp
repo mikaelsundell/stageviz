@@ -378,6 +378,20 @@ PyCommand_loadPayloads(PyObject*, PyObject* args, PyObject* kwargs)
 }
 
 static PyObject*
+PyCommand_loadNeighborPayloads(PyObject*, PyObject* args)
+{
+    PyObject* pyPaths = nullptr;
+    if (!PyArg_ParseTuple(args, "O", &pyPaths))
+        return nullptr;
+
+    QList<SdfPath> paths;
+    if (!parsePathListArg(pyPaths, "paths", &paths))
+        return nullptr;
+
+    return runCommand(loadNeighborPayloads(paths));
+}
+
+static PyObject*
 PyCommand_unloadPayloads(PyObject*, PyObject* args)
 {
     PyObject* pyPaths = nullptr;
@@ -795,6 +809,8 @@ static PyMethodDef PyCommand_methods[] = {
     { "hide_paths", reinterpret_cast<PyCFunction>(PyCommand_hidePaths), METH_VARARGS | METH_KEYWORDS, "Hide paths." },
     { "load_payloads", reinterpret_cast<PyCFunction>(PyCommand_loadPayloads), METH_VARARGS | METH_KEYWORDS,
       "Load payloads. Optional keyword arguments: variant_set, variant_value." },
+    { "load_neighbor_payloads", reinterpret_cast<PyCFunction>(PyCommand_loadNeighborPayloads), METH_VARARGS,
+      "Load spatially neighboring payloads using extentsHint." },
     { "unload_payloads", reinterpret_cast<PyCFunction>(PyCommand_unloadPayloads), METH_VARARGS, "Unload payloads." },
     { "set_stage_up", reinterpret_cast<PyCFunction>(PyCommand_setStageUp), METH_VARARGS, "Set the stage up axis." },
     { "set_default_prim", reinterpret_cast<PyCFunction>(PyCommand_setDefaultPrim), METH_VARARGS,

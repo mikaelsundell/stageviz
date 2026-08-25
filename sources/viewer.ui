@@ -864,6 +864,7 @@
       <string>Payload</string>
      </property>
      <addaction name="editPayloadLoad" />
+     <addaction name="editPayloadLoadNeighbors" />
      <addaction name="editPayloadUnload" />
      <addaction name="separator" />
      <addaction name="editPayloadInvertSelected" />
@@ -1549,6 +1550,14 @@
    </property>
    <property name="shortcut">
     <string>Alt+U</string>
+   </property>
+  </action>
+  <action name="editPayloadLoadNeighbors">
+   <property name="text">
+    <string>Load Neighbors</string>
+   </property>
+   <property name="shortcut">
+    <string>Alt+N</string>
    </property>
   </action>
   <action name="editPayloadInvertSelected">

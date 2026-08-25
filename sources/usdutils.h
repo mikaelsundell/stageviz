@@ -344,6 +344,28 @@ namespace payload {
     PayloadVariantTargets payloadVariantTargets(UsdStageRefPtr stage, const QList<SdfPath>& paths);
 
     /**
+     * @brief Finds unloaded payloads spatially neighboring selected payloads.
+     *
+     * Resolves the nearest payload ancestor for each input path and evaluates
+     * each source payload's extentsHint independently in world space.
+     *
+     * Candidate payloads must be currently unloaded and provide a usable
+     * extentsHint. Each candidate is ranked by its minimum normalized
+     * box-to-box distance to any source payload. Source bounds are not unioned,
+     * so empty space between selected components does not enlarge the search.
+     *
+     * A normalized distance-gap heuristic and safety limit identify the local
+     * neighborhood without requiring a world-space radius.
+     *
+     * @param stage Stage containing the payloads.
+     * @param inputPaths Payload paths or descendant paths inside payloads.
+     * @param error Receives a descriptive failure reason.
+     *
+     * @return Unloaded neighboring payload paths ordered nearest first.
+     */
+    QList<SdfPath> neighboringPaths(UsdStageRefPtr stage, const QList<SdfPath>& inputPaths, QString& error);
+
+    /**
      * @brief Describes an asset referenced by a payload prim.
      *
      * Entries may represent either a payload authored directly on the prim or

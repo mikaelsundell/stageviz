@@ -806,6 +806,202 @@ loadPayloads(const QList<SdfPath>& paths, const QString& variantSet, const QStri
 }
 
 Command
+loadNeighborPayloads(const QList<SdfPath>& paths)
+{
+    auto state = std::make_shared<payload::State>();
+
+    return Command(
+        [paths, state](Session* session) {
+            if (!session || paths.isEmpty())
+                return;
+
+            state->previousSelection = session->selectionList()->paths();
+            state->previousMask = session->mask();
+
+            session->beginProgressBlock("Load neighbor payloads", 1);
+            session->setPrimsUpdate(Session::PrimsUpdate::Deferred);
+
+            command::runWorker([session, paths, state]() {
+                QList<SdfPath> targets;
+                QString error;
+
+                {
+                    READ_LOCKER(locker, session->stageLock(), "stageLock");
+                    const UsdStageRefPtr stage = session->stageUnsafe();
+
+                    if (!stage) {
+                        error = "stage missing";
+                    }
+                    else {
+                        targets = payload::neighboringPaths(stage, paths, error);
+
+                        const QList<SdfPath> sourcePaths = stage::ancestorPayloadPaths(stage, paths);
+                        for (const SdfPath& sourcePath : sourcePaths) {
+                            if (!stage::isLoaded(stage, sourcePath))
+                                path::appendUnique(targets, sourcePath);
+                        }
+
+                        QList<SdfPath> unloadedTargets;
+                        unloadedTargets.reserve(targets.size());
+
+                        for (const SdfPath& target : targets) {
+                            if (!stage::isLoaded(stage, target))
+                                unloadedTargets.append(target);
+                        }
+
+                        targets = unloadedTargets;
+                    }
+                }
+
+                if (targets.isEmpty()) {
+                    command::queueToSession(session, [session, error]() {
+                        using Status = Session::Notify::Status;
+                        session->setPrimsUpdate(Session::PrimsUpdate::Immediate);
+                        session->updateProgressNotify(
+                            Session::Notify(error.isEmpty() ? "No unloaded neighbor payloads found"
+                                                            : QString("Load neighbors skipped: %1").arg(error),
+                                            {}, error.isEmpty() ? Status::Success : Status::Warning),
+                            1);
+                        session->endProgressBlock();
+                    });
+                    return;
+                }
+
+                command::queueToSession(session, [session, count = targets.size()]() {
+                    session->updateProgressNotify(
+                        Session::Notify(QString("Loading %1 neighbor payloads").arg(count), {},
+                                        Session::Notify::Status::Success),
+                        0);
+                });
+
+                QList<command::Result> pending;
+                pending.reserve(16);
+
+                QList<payload::PayloadState> payloadStates;
+                payloadStates.reserve(targets.size());
+
+                int completed = 0;
+                for (const SdfPath& path : targets) {
+                    if (!session || session->isProgressBlockCancelled())
+                        break;
+
+                    command::Result result;
+                    result.path = path;
+                    result.message = "Neighbor payload failed";
+                    result.status = Session::Notify::Status::Error;
+
+                    payload::PayloadState payloadState;
+                    QString loadError;
+
+                    try {
+                        WRITE_LOCKER(locker, session->stageLock(), "stageLock");
+                        const UsdStageRefPtr stage = session->stageUnsafe();
+
+                        if (!stage) {
+                            result.success = false;
+                            loadError = "Stage not available";
+                        }
+                        else {
+                            result.success = payload::applyLoad(stage, path, false, std::string(), std::string(),
+                                                                payloadState, loadError);
+                        }
+                    } catch (...) {
+                        result.success = false;
+                        loadError = "exception";
+                    }
+
+                    result.message = result.success
+                                         ? "Neighbor payload loaded"
+                                         : (loadError.isEmpty() ? "Neighbor payload failed" : loadError);
+                    result.status = result.success ? Session::Notify::Status::Success : Session::Notify::Status::Error;
+
+                    if (result.success)
+                        payloadStates.append(payloadState);
+
+                    pending.append(result);
+                    ++completed;
+
+                    if (pending.size() >= 16) {
+                        const QList<command::Result> batch = pending;
+                        command::queueToSession(session, [session, batch, completed]() {
+                            command::flushResults(session, batch, completed);
+                        });
+                        pending.clear();
+                    }
+                }
+
+                state->payloadStates = payloadStates;
+
+                command::queueToSession(session, [session, pending, completed]() {
+                    if (!pending.isEmpty())
+                        command::flushResults(session, pending, completed);
+
+                    session->setPrimsUpdate(Session::PrimsUpdate::Immediate);
+                    session->endProgressBlock();
+                });
+            });
+        },
+        [state](Session* session) {
+            if (!session || state->payloadStates.isEmpty())
+                return;
+
+            session->beginProgressBlock("Undo load neighbor payloads", state->payloadStates.size());
+            session->setPrimsUpdate(Session::PrimsUpdate::Deferred);
+
+            command::runWorker([session, state]() {
+                QList<command::Result> pending;
+                pending.reserve(16);
+
+                int completed = 0;
+                for (const payload::PayloadState& payloadState : state->payloadStates) {
+                    if (!session || session->isProgressBlockCancelled())
+                        break;
+
+                    command::Result result;
+                    result.path = payloadState.path;
+                    result.message = "Neighbor payload undo failed";
+                    result.status = Session::Notify::Status::Error;
+
+                    QString error;
+                    try {
+                        WRITE_LOCKER(locker, session->stageLock(), "stageLock");
+                        const UsdStageRefPtr stage = session->stageUnsafe();
+                        result.success = payload::restoreState(stage, payloadState, error);
+                    } catch (...) {
+                        result.success = false;
+                        error = "exception";
+                    }
+
+                    result.message = result.success ? "Neighbor payload restored"
+                                                    : (error.isEmpty() ? "Neighbor payload undo failed" : error);
+                    result.status = result.success ? Session::Notify::Status::Success : Session::Notify::Status::Error;
+
+                    pending.append(result);
+                    ++completed;
+
+                    if (pending.size() >= 16) {
+                        const QList<command::Result> batch = pending;
+                        command::queueToSession(session, [session, batch, completed]() {
+                            command::flushResults(session, batch, completed);
+                        });
+                        pending.clear();
+                    }
+                }
+
+                command::queueToSession(session, [session, state, pending, completed]() {
+                    if (!pending.isEmpty())
+                        command::flushResults(session, pending, completed);
+
+                    session->selectionList()->updatePaths(state->previousSelection);
+                    session->setMask(state->previousMask);
+                    session->setPrimsUpdate(Session::PrimsUpdate::Immediate);
+                    session->endProgressBlock();
+                });
+            });
+        });
+}
+
+Command
 unloadPayloads(const QList<SdfPath>& paths)
 {
     auto state = std::make_shared<payload::State>();

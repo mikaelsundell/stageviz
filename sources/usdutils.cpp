@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <cmath>
 #include <functional>
+#include <limits>
 #include <pxr/base/gf/vec3d.h>
 #include <pxr/base/gf/vec3f.h>
 #include <pxr/base/vt/array.h>
@@ -26,6 +27,7 @@
 #include <pxr/usd/usdGeom/bboxCache.h>
 #include <pxr/usd/usdGeom/gprim.h>
 #include <pxr/usd/usdGeom/imageable.h>
+#include <pxr/usd/usdGeom/modelAPI.h>
 #include <pxr/usd/usdGeom/tokens.h>
 #include <pxr/usd/usdGeom/xform.h>
 #include <pxr/usd/usdGeom/xformCache.h>
@@ -159,6 +161,79 @@ namespace {
         error = "failed to preserve local transform while retaining pivot";
         return false;
     }
+
+    struct PayloadNeighborSource {
+        SdfPath path;
+        GfRange3d bounds;
+        double size = 0.0;
+    };
+
+    struct PayloadNeighborCandidate {
+        SdfPath path;
+        double distance = 0.0;
+    };
+
+    bool payloadExtentsHintWorldBounds(const UsdPrim& prim, UsdGeomXformCache& xformCache, GfRange3d& bounds)
+    {
+        bounds = GfRange3d();
+
+        if (!prim || !prim.IsValid())
+            return false;
+
+        const UsdGeomModelAPI model(prim);
+        if (!model)
+            return false;
+
+        VtVec3fArray extents;
+        if (!model.GetExtentsHint(&extents) || extents.size() < 2)
+            return false;
+
+        const GfMatrix4d world = xformCache.GetLocalToWorldTransform(prim);
+
+        for (size_t i = 0; i + 1 < extents.size(); i += 2) {
+            const GfVec3d minimum(extents[i]);
+            const GfVec3d maximum(extents[i + 1]);
+
+            for (int x = 0; x < 2; ++x) {
+                for (int y = 0; y < 2; ++y) {
+                    for (int z = 0; z < 2; ++z) {
+                        const GfVec3d corner(x ? maximum[0] : minimum[0], y ? maximum[1] : minimum[1],
+                                             z ? maximum[2] : minimum[2]);
+                        bounds.UnionWith(world.Transform(corner));
+                    }
+                }
+            }
+        }
+
+        return !bounds.IsEmpty();
+    }
+
+    double rangeDistance(const GfRange3d& a, const GfRange3d& b)
+    {
+        if (a.IsEmpty() || b.IsEmpty())
+            return std::numeric_limits<double>::max();
+
+        const GfVec3d aMin = a.GetMin();
+        const GfVec3d aMax = a.GetMax();
+        const GfVec3d bMin = b.GetMin();
+        const GfVec3d bMax = b.GetMax();
+
+        double distanceSquared = 0.0;
+
+        for (int axis = 0; axis < 3; ++axis) {
+            double separation = 0.0;
+
+            if (aMax[axis] < bMin[axis])
+                separation = bMin[axis] - aMax[axis];
+            else if (bMax[axis] < aMin[axis])
+                separation = aMin[axis] - bMax[axis];
+
+            distanceSquared += separation * separation;
+        }
+
+        return std::sqrt(distanceSquared);
+    }
+
 }  // namespace
 
 namespace editlayer {
@@ -650,6 +725,138 @@ namespace payload {
             for (const UsdPrim& prim : UsdPrimRange(root))
                 addPayloadVariants(prim);
         }
+        return result;
+    }
+
+    QList<SdfPath> neighboringPaths(UsdStageRefPtr stage, const QList<SdfPath>& inputPaths, QString& error)
+    {
+        QList<SdfPath> result;
+
+        if (!stage || inputPaths.isEmpty()) {
+            error = "stage or paths missing";
+            return result;
+        }
+
+        const QList<SdfPath> sourcePaths = stage::ancestorPayloadPaths(stage, inputPaths);
+        if (sourcePaths.isEmpty()) {
+            error = "selection is not a payload or inside a loaded payload";
+            return result;
+        }
+
+        UsdGeomXformCache xformCache(UsdTimeCode::Default());
+
+        QList<PayloadNeighborSource> sources;
+        sources.reserve(sourcePaths.size());
+
+        QSet<SdfPath> sourceSet;
+
+        for (const SdfPath& path : sourcePaths) {
+            const UsdPrim prim = stage->GetPrimAtPath(path);
+
+            GfRange3d bounds;
+            if (!payloadExtentsHintWorldBounds(prim, xformCache, bounds))
+                continue;
+
+            PayloadNeighborSource source;
+            source.path = path;
+            source.bounds = bounds;
+            source.size = std::max(bounds.GetSize().GetLength(), 1.0e-6);
+
+            sources.append(source);
+            sourceSet.insert(path);
+        }
+
+        if (sources.isEmpty()) {
+            error = "selected payload has no usable extentsHint";
+            return result;
+        }
+
+        QList<PayloadNeighborCandidate> candidates;
+
+        for (const UsdPrim& prim : stage->TraverseAll()) {
+            if (!prim || !prim.IsValid())
+                continue;
+
+            const SdfPath path = prim.GetPath();
+
+            if (sourceSet.contains(path))
+                continue;
+
+            if (!stage::isPayload(stage, path))
+                continue;
+
+            // Loaded payloads are not candidates and must not influence
+            // clustering on repeated Load Neighbors operations.
+            if (prim.IsLoaded())
+                continue;
+
+            GfRange3d candidateBounds;
+            if (!payloadExtentsHintWorldBounds(prim, xformCache, candidateBounds))
+                continue;
+
+            double minimumDistance = std::numeric_limits<double>::max();
+
+            for (const PayloadNeighborSource& source : sources) {
+                const double normalizedDistance = rangeDistance(source.bounds, candidateBounds) / source.size;
+                minimumDistance = std::min(minimumDistance, normalizedDistance);
+            }
+
+            if (!std::isfinite(minimumDistance))
+                continue;
+
+            PayloadNeighborCandidate candidate;
+            candidate.path = path;
+            candidate.distance = minimumDistance;
+            candidates.append(candidate);
+        }
+
+        if (candidates.isEmpty())
+            return result;
+
+        std::sort(candidates.begin(), candidates.end(),
+                  [](const PayloadNeighborCandidate& a, const PayloadNeighborCandidate& b) {
+                      if (a.distance != b.distance)
+                          return a.distance < b.distance;
+
+                      return a.path.GetString() < b.path.GetString();
+                  });
+
+        // neighbor distance is normalized by the size of the selected source
+        // payload that is closest to each candidate. This remains scale
+        // independent while preventing a large union box from swallowing
+        // remote areas of the stage.
+        constexpr int maxNeighborPayloads = 32;
+        constexpr double maximumDistance = 1.5;
+        constexpr double minimumGap = 0.35;
+        constexpr double gapRatio = 2.5;
+
+        int neighborCount = 0;
+
+        while (neighborCount < candidates.size() && neighborCount < MaxNeighborPayloads
+               && candidates[neighborCount].distance <= MaximumDistance) {
+            ++neighborCount;
+        }
+
+        if (neighborCount == 0)
+            return result;
+
+        for (int i = 0; i + 1 < neighborCount; ++i) {
+            const double current = candidates[i].distance;
+            const double next = candidates[i + 1].distance;
+            const double gap = next - current;
+            const double baseline = std::max(current, 0.10);
+
+            if (gap >= MinimumGap && next >= baseline * GapRatio) {
+                neighborCount = i + 1;
+                break;
+            }
+        }
+
+        result.reserve(neighborCount);
+
+        for (int i = 0; i < neighborCount; ++i)
+            result.append(candidates[i].path);
+
         return result;
     }
 
