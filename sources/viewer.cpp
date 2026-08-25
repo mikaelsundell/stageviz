@@ -2383,9 +2383,9 @@ Viewer::setArguments(const QStringList& arguments)
 
     for (int i = 0; i < arguments.size(); ++i) {
         if (arguments[i] == "--open" && i + 1 < arguments.size()) {
-            QString filename = arguments[i + 1];
+            const QString filename = arguments[i + 1];
             if (!filename.isEmpty()) {
-                p->loadFile(filename);
+                openFile(filename);
                 return;
             }
         }
@@ -2400,11 +2400,23 @@ Viewer::setArguments(const QStringList& arguments)
 #ifdef Q_OS_WIN
             decodedPath = QDir::fromNativeSeparators(decodedPath);
 #endif
-            p->loadFile(decodedPath);
+            openFile(decodedPath);
             return;
         }
-        p->loadFile(arg);
+        openFile(arg);
     }
+}
+
+void
+Viewer::openFile(const QString& filename)
+{
+    if (filename.isEmpty())
+        return;
+
+    if (!p->saveChanges())
+        return;
+
+    p->loadFile(filename);
 }
 
 void

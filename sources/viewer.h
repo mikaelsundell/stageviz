@@ -50,6 +50,15 @@ public:
      */
     void setArguments(const QStringList& arguments);
 
+    /**
+     * @brief Opens a supported USD file.
+     *
+     * Used by command-line startup and operating-system file-open events.
+     *
+     * @param filename File to open.
+     */
+    void openFile(const QString& filename);
+
     ///@}
 
 protected:

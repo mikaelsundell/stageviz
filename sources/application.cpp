@@ -12,6 +12,7 @@
 #include "style.h"
 #include <QApplication>
 #include <QDir>
+#include <QFileOpenEvent>
 #include <QPointer>
 #include <pxr/base/plug/plugin.h>
 #include <pxr/base/plug/registry.h>
@@ -89,6 +90,21 @@ Application::Application(int& argc, char** argv)
 }
 
 Application::~Application() {}
+
+bool
+Application::event(QEvent* event)
+{
+    if (event && event->type() == QEvent::FileOpen) {
+        auto* fileEvent = static_cast<QFileOpenEvent*>(event);
+
+        const QString filename = fileEvent->file();
+        if (!filename.isEmpty()) {
+            Q_EMIT fileOpenRequested(filename);
+            return true;
+        }
+    }
+    return QApplication::event(event);
+}
 
 Console*
 Application::console() const

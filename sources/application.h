@@ -6,6 +6,7 @@
 
 #include "stageviz.h"
 #include <QApplication>
+#include <QEvent>
 #include <QMainWindow>
 #include <QScopedPointer>
 
@@ -82,6 +83,15 @@ public:
      * stageviz::Application instance.
      */
     static Application* instance();
+
+Q_SIGNALS:
+    /**
+     * @brief Emitted when the operating system requests that a file is opened.
+     */
+    void fileOpenRequested(const QString& filename);
+
+protected:
+    bool event(QEvent* event) override;
 
 private:
     Q_DISABLE_COPY_MOVE(Application)

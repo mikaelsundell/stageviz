@@ -15,6 +15,12 @@ main(int argc, char* argv[])
     stageviz::Application app(argc, argv);
     schemas.waitForFinished();
     stageviz::Viewer viewer;
+    QObject::connect(
+        &app,
+        &stageviz::Application::fileOpenRequested,
+        &viewer,
+        &stageviz::Viewer::openFile);
+    viewer.setArguments(app.arguments());
     viewer.show();
     return app.exec();
 }
