@@ -545,6 +545,22 @@ namespace stage {
     SdfPath buildChildPath(UsdStageRefPtr stage, const SdfPath& parentPath, const QString& input, QString& error);
 
     /**
+     * @brief Creates a uniquely named UsdGeomXform below a parent path.
+     *
+     * Sanitizes @p name as a USD identifier, appends a numeric suffix when
+     * needed to avoid sibling collisions, and authors the resulting Xform in
+     * the stage's current edit target.
+     *
+     * @param stage USD stage where the Xform should be created.
+     * @param name Requested prim name.
+     * @param parentPath Parent prim path. Defaults to the stage pseudo-root.
+     *
+     * @return Path of the created Xform, or an empty path on failure.
+     */
+    SdfPath buildUniqueXform(UsdStageRefPtr stage, const QString& name,
+                             const SdfPath& parentPath = SdfPath::AbsoluteRootPath());
+
+    /**
  * @brief Captures the current child order for a parent prim.
  *
  * Collects the ordered child names of the specified parent prim.

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 // Copyright (c) 2025 - present Mikael Sundell
 // https://github.com/mikaelsundell/stageviz
+
 #include "session.h"
 #include "commandstack.h"
 #include "qtutils.h"
@@ -48,7 +49,7 @@ public:
     bool mergeReferenceFromFile(const QString& filename, const SdfPath& targetPath);
     bool mergePayloadFromFile(const QString& filename, const SdfPath& targetPath);
     bool mergeLayer(const SdfLayerHandle& sourceLayer);
-    void refreshAfterStageEdit();
+    void mergeReload();
     bool saveToFile(const QString& filename);
     bool copyToFile(const QString& filename);
     bool flattenPathsToFile(const QList<SdfPath>& paths, const QString& filename);
@@ -418,42 +419,20 @@ SessionPrivate::mergeLayer(const SdfLayerHandle& sourceLayer)
                 continue;
 
             const SdfPath sourcePath = sourcePrim->GetPath();
-            const SdfPath destinationPath = SdfPath::AbsoluteRootPath().AppendChild(sourcePath.GetNameToken());
+
+            QString error;
+            const SdfPath destinationPath = stage::buildChildPath(d.stage, SdfPath::AbsoluteRootPath(),
+                                                                  qt::StringToQString(sourcePath.GetName()), error);
+
+            if (destinationPath.IsEmpty())
+                return false;
 
             if (!SdfCopySpec(sourceLayer, sourcePath, destinationLayer, destinationPath))
                 return false;
         }
     }
-
-    refreshAfterStageEdit();
+    mergeReload();
     return true;
-}
-
-void
-SessionPrivate::refreshAfterStageEdit()
-{
-    const GfBBox3d bbox = boundingBox();
-
-    {
-        WRITE_LOCKER(locker, &d.stageLock, "stageLock");
-        d.bbox = bbox;
-        d.pendingNotices.entries.clear();
-    }
-
-    if (d.stageWatcher)
-        d.stageWatcher->takePending();
-
-    if (d.viewState && d.viewState->camera())
-        d.viewState->camera()->setBoundingBox(bbox);
-
-    NoticeBatch batch;
-    NoticeEntry entry;
-    entry.path = SdfPath::AbsoluteRootPath();
-    entry.changedInfoOnly = true;
-    batch.entries.append(entry);
-
-    Q_EMIT d.session->primsChanged(batch);
-    Q_EMIT d.session->boundingBoxChanged(bbox);
 }
 
 bool
@@ -542,7 +521,7 @@ SessionPrivate::mergeSublayerFromFile(const QString& filename)
     if (!changed)
         return false;
 
-    refreshAfterStageEdit();
+    mergeReload();
     return true;
 }
 
@@ -579,7 +558,7 @@ SessionPrivate::mergeReferenceFromFile(const QString& filename, const SdfPath& t
         if (!targetPrim.GetReferences().AddReference(assetPath))
             return false;
     }
-    refreshAfterStageEdit();
+    mergeReload();
     return true;
 }
 
@@ -616,8 +595,34 @@ SessionPrivate::mergePayloadFromFile(const QString& filename, const SdfPath& tar
         if (!targetPrim.GetPayloads().AddPayload(assetPath))
             return false;
     }
-    refreshAfterStageEdit();
+    mergeReload();
     return true;
+}
+
+void
+SessionPrivate::mergeReload()
+{
+    const GfBBox3d bbox = boundingBox();
+    {
+        WRITE_LOCKER(locker, &d.stageLock, "stageLock");
+        d.bbox = bbox;
+        d.pendingNotices.entries.clear();
+    }
+
+    if (d.stageWatcher)
+        d.stageWatcher->takePending();
+
+    if (d.viewState && d.viewState->camera())
+        d.viewState->camera()->setBoundingBox(bbox);
+
+    NoticeBatch batch;
+    NoticeEntry entry;
+    entry.path = SdfPath::AbsoluteRootPath();
+    entry.primResyncType = UsdNotice::ObjectsChanged::PrimResyncType::Other;
+    batch.entries.append(entry);
+
+    Q_EMIT d.session->primsChanged(batch);
+    Q_EMIT d.session->boundingBoxChanged(bbox);
 }
 
 bool

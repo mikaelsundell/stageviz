@@ -129,7 +129,7 @@ public Q_SLOTS:
     void clearDomeTexture();
     void useDefaultDomeTexture();
     void sceneLights(bool checked);
-    void sceneShaders(bool checked);
+    void useSceneShaders(bool checked);
     void materialScene();
     void materialChrome();
     void materialGlossy();
@@ -296,7 +296,7 @@ ViewerPrivate::init()
     connect(d.ui->lightClearDomeTexture, &QAction::triggered, this, &ViewerPrivate::clearDomeTexture);
     connect(d.ui->lightUseDefaultDomeTexture, &QAction::triggered, this, &ViewerPrivate::useDefaultDomeTexture);
     connect(d.ui->displaySceneLights, &QAction::toggled, this, &ViewerPrivate::sceneLights);
-    connect(d.ui->displaySceneShaders, &QAction::toggled, this, &ViewerPrivate::sceneShaders);
+    connect(d.ui->useSceneShaders, &QAction::toggled, this, &ViewerPrivate::useSceneShaders);
     connect(d.ui->materialScene, &QAction::triggered, this, &ViewerPrivate::materialScene);
     connect(d.ui->materialChrome, &QAction::triggered, this, &ViewerPrivate::materialChrome);
     connect(d.ui->materialGlossy, &QAction::triggered, this, &ViewerPrivate::materialGlossy);
@@ -424,7 +424,7 @@ ViewerPrivate::init()
     connect(viewState, &ViewState::sceneLightsEnabledChanged, this,
             [this](bool enabled) { updateDockAction(d.ui->displaySceneLights, enabled); });
     connect(viewState, &ViewState::sceneMaterialsEnabledChanged, this,
-            [this](bool enabled) { updateDockAction(d.ui->displaySceneShaders, enabled); });
+            [this](bool enabled) { updateDockAction(d.ui->useSceneShaders, enabled); });
     connect(viewState, &ViewState::gridEnabledChanged, this,
             [this](bool enabled) { updateDockAction(d.ui->displayGrid, enabled); });
     connect(viewState, &ViewState::renderModeChanged, this, [this](ViewState::RenderMode mode) {
@@ -455,7 +455,7 @@ ViewerPrivate::init()
     viewState->setDefaultDomeLightEnabled(d.ui->displayDomeLight->isChecked());
     viewState->setDomeLightCameraVisibility(d.ui->displayDomeBackground->isChecked());
     viewState->setSceneLightsEnabled(d.ui->displaySceneLights->isChecked());
-    viewState->setSceneMaterialsEnabled(d.ui->displaySceneShaders->isChecked());
+    viewState->setSceneMaterialsEnabled(d.ui->useSceneShaders->isChecked());
     d.ui->lightClearDomeTexture->setEnabled(!viewState->domeLightTexture().isEmpty());
     updateDockAction(d.ui->lightUseDefaultDomeTexture,
                      viewState->defaultDomeLightEnabled() && viewState->domeLightTexture().isEmpty());
@@ -955,7 +955,7 @@ ViewerPrivate::enable(bool enable)
                                 d.ui->lightLoadDomeTexture,
                                 d.ui->lightUseDefaultDomeTexture,
                                 d.ui->displaySceneLights,
-                                d.ui->displaySceneShaders,
+                                d.ui->useSceneShaders,
                                 d.ui->materialScene,
                                 d.ui->materialChrome,
                                 d.ui->materialGlossy,
@@ -1038,7 +1038,7 @@ ViewerPrivate::mergeFlattened()
 void
 ViewerPrivate::mergeSublayer()
 {
-    const QString filename = selectUsdFile("Add Sublayer");
+    const QString filename = selectUsdFile("Merge Sublayer");
     if (!filename.isEmpty())
         mergeSublayerFile(filename);
 }
@@ -1735,6 +1735,7 @@ ViewerPrivate::useDefaultDomeTexture()
 
     state->setDomeLightTexture(QString());
     state->setDefaultDomeLightEnabled(true);
+    updateDockAction(d.ui->lightUseDefaultDomeTexture, true);
 }
 
 void
@@ -1744,7 +1745,7 @@ ViewerPrivate::sceneLights(bool checked)
 }
 
 void
-ViewerPrivate::sceneShaders(bool checked)
+ViewerPrivate::useSceneShaders(bool checked)
 {
     session()->viewState()->setSceneMaterialsEnabled(checked);
 }
@@ -2454,18 +2455,105 @@ Viewer::dragEnterEvent(QDragEnterEvent* event)
 void
 Viewer::dropEvent(QDropEvent* event)
 {
+    if (!event || !event->mimeData()->hasUrls()) {
+        event->ignore();
+        return;
+    }
+
     const QList<QUrl> urls = event->mimeData()->urls();
-    if (urls.size() == 1) {
+
+    if (urls.size() != 1) {
+        event->ignore();
+        return;
+    }
+
+    const QString filename = urls.first().toLocalFile();
+
+    if (filename.isEmpty()) {
+        event->ignore();
+        return;
+    }
+
+    const QString extension = QFileInfo(filename).suffix().toLower();
+
+    if (!p->d.extensions.contains(extension)) {
+        event->ignore();
+        return;
+    }
+
+    QMenu menu(this);
+
+    QAction* openAction = menu.addAction("Open");
+
+    menu.addSeparator();
+
+    QAction* mergeAction = menu.addAction("Merge into Stage");
+    QAction* mergeFlattenedAction = menu.addAction("Merge Flattened");
+
+    menu.addSeparator();
+
+    QAction* mergeSublayerAction = menu.addAction("Merge Sublayer");
+    QAction* mergeReferenceAction = menu.addAction("Merge Reference");
+    QAction* mergePayloadAction = menu.addAction("Merge Payload");
+
+    QAction* selected = menu.exec(mapToGlobal(event->position().toPoint()));
+
+    if (!selected) {
+        event->ignore();
+        return;
+    }
+
+    auto compositionTarget = [&]() -> SdfPath {
+        const SdfPath selectedPath = p->compositionTarget();
+
+        if (!selectedPath.IsEmpty())
+            return selectedPath;
+
+        WRITE_LOCKER(locker, session()->stageLock(), "stageLock");
+
+        const UsdStageRefPtr stage = session()->stageUnsafe();
+        if (!stage)
+            return {};
+
+        return stage::buildUniqueXform(stage, QFileInfo(filename).completeBaseName());
+    };
+
+    if (selected == openAction) {
         if (!p->saveChanges()) {
             event->ignore();
             return;
         }
-        QString filename = urls.first().toLocalFile();
+
         p->loadFile(filename);
-        event->acceptProposedAction();
-        return;
     }
-    event->ignore();
+    else if (selected == mergeAction) {
+        p->mergeFile(filename);
+    }
+    else if (selected == mergeFlattenedAction) {
+        p->mergeFlattenedFile(filename);
+    }
+    else if (selected == mergeSublayerAction) {
+        p->mergeSublayerFile(filename);
+    }
+    else if (selected == mergeReferenceAction) {
+        const SdfPath targetPath = compositionTarget();
+
+        if (targetPath.IsEmpty()) {
+            event->ignore();
+            return;
+        }
+        p->mergeReferenceFile(filename, targetPath);
+    }
+    else if (selected == mergePayloadAction) {
+        const SdfPath targetPath = compositionTarget();
+        if (targetPath.IsEmpty()) {
+            event->ignore();
+            return;
+        }
+        p->mergePayloadFile(filename, targetPath);
+    }
+
+    event->acceptProposedAction();
 }
 
 }  // namespace stageviz

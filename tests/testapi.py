@@ -8,7 +8,11 @@ Stageviz smoke/regression tests.
 Run from the Stageviz Python editor.
 """
 
+import json
 import os
+import platform
+import statistics
+import sys
 import tempfile
 import time
 import traceback
@@ -18,6 +22,24 @@ import stageviz
 
 
 _FAILURES = []
+_PERF_RESULTS = {}
+_PERF_FIXTURE_RELOADS = []
+_PERF_FAILURES = []
+_PERF_WARNINGS = []
+
+_PERF_ENABLED = True
+_PERF_BASELINE_RESET = False
+_PERF_BASELINE_VERSION = 1
+_PERF_BASELINE_PATH = os.path.join(
+    os.path.expanduser("~"),
+    ".stageviz",
+    "testapi_performance.json",
+)
+
+_PERF_WARN_PERCENT = 35.0
+_PERF_FAIL_PERCENT = 100.0
+_PERF_WARN_SECONDS = 0.050
+_PERF_FAIL_SECONDS = 0.200
 
 
 def _fail(message):
@@ -121,11 +143,261 @@ def _wait_until(predicate, timeout=3.0, interval=0.02):
 
 def _run(label, func, args=()):
     print(f"\n--- {label} ---")
+    start = time.perf_counter()
+
     try:
         func(*args)
     except Exception as exc:
         _fail(f"{label}: exception: {exc}")
         traceback.print_exc()
+    finally:
+        elapsed = time.perf_counter() - start
+        _PERF_RESULTS[label] = elapsed
+        print(f"[TIME] {label}: {elapsed:.4f}s")
+
+
+def _performance_environment():
+    return {
+        "platform": platform.platform(),
+        "machine": platform.machine(),
+        "python": sys.version.split()[0],
+    }
+
+
+def _load_performance_baseline():
+    if not _PERF_ENABLED or not os.path.exists(_PERF_BASELINE_PATH):
+        return None
+
+    try:
+        with open(_PERF_BASELINE_PATH, "r", encoding="utf-8") as file:
+            baseline = json.load(file)
+    except Exception as exc:
+        print(f"[PERF WARN] could not read baseline: {exc}")
+        return None
+
+    if baseline.get("version") != _PERF_BASELINE_VERSION:
+        print(
+            "[PERF WARN] baseline version mismatch: "
+            f"expected {_PERF_BASELINE_VERSION}, got {baseline.get('version')!r}"
+        )
+        return None
+
+    return baseline
+
+
+def _save_performance_baseline(fixture_create, fixture_reload_median, suite_total):
+    directory = os.path.dirname(_PERF_BASELINE_PATH)
+    os.makedirs(directory, exist_ok=True)
+
+    data = {
+        "version": _PERF_BASELINE_VERSION,
+        "created": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "environment": _performance_environment(),
+        "thresholds": {
+            "warn_percent": _PERF_WARN_PERCENT,
+            "fail_percent": _PERF_FAIL_PERCENT,
+            "warn_seconds": _PERF_WARN_SECONDS,
+            "fail_seconds": _PERF_FAIL_SECONDS,
+        },
+        "tests": dict(_PERF_RESULTS),
+        "fixture": {
+            "create": fixture_create,
+            "reload_median": fixture_reload_median,
+        },
+        "suite": {
+            "total": suite_total,
+        },
+    }
+
+    temp_path = _PERF_BASELINE_PATH + ".tmp"
+
+    with open(temp_path, "w", encoding="utf-8") as file:
+        json.dump(data, file, indent=2, sort_keys=True)
+        file.write("\n")
+
+    os.replace(temp_path, _PERF_BASELINE_PATH)
+
+
+def _performance_level(current, baseline):
+    if baseline is None or baseline < 0.0:
+        return "ok", current, None
+
+    delta = current - baseline
+    percent = None
+
+    if baseline > 1e-9:
+        percent = (delta / baseline) * 100.0
+
+    fail_delta = max(
+        _PERF_FAIL_SECONDS,
+        baseline * (_PERF_FAIL_PERCENT / 100.0),
+    )
+    warn_delta = max(
+        _PERF_WARN_SECONDS,
+        baseline * (_PERF_WARN_PERCENT / 100.0),
+    )
+
+    if delta >= fail_delta:
+        return "fail", delta, percent
+
+    if delta >= warn_delta:
+        return "warn", delta, percent
+
+    return "ok", delta, percent
+
+
+def _format_performance_delta(delta, percent):
+    if percent is None:
+        return f"{delta:+.4f}s"
+    return f"{percent:+.1f}% ({delta:+.4f}s)"
+
+
+def _compare_performance_metric(label, current, baseline):
+    level, delta, percent = _performance_level(current, baseline)
+
+    if level == "fail":
+        message = (
+            f"{label}: baseline {baseline:.4f}s, current {current:.4f}s, "
+            f"delta {_format_performance_delta(delta, percent)}"
+        )
+        _PERF_FAILURES.append(message)
+        return
+
+    if level == "warn":
+        message = (
+            f"{label}: baseline {baseline:.4f}s, current {current:.4f}s, "
+            f"delta {_format_performance_delta(delta, percent)}"
+        )
+        _PERF_WARNINGS.append(message)
+
+
+def _compare_performance(baseline, fixture_create, fixture_reload_median, suite_total):
+    baseline_tests = baseline.get("tests", {})
+
+    for label, current in _PERF_RESULTS.items():
+        previous = baseline_tests.get(label)
+        if previous is None:
+            _PERF_WARNINGS.append(
+                f"{label}: new test has no performance baseline"
+            )
+            continue
+
+        _compare_performance_metric(label, current, float(previous))
+
+    missing_tests = sorted(set(baseline_tests) - set(_PERF_RESULTS))
+    for label in missing_tests:
+        _PERF_WARNINGS.append(
+            f"{label}: baseline test was not run in the current suite"
+        )
+
+    baseline_fixture = baseline.get("fixture", {})
+    if "create" in baseline_fixture:
+        _compare_performance_metric(
+            "fixture create",
+            fixture_create,
+            float(baseline_fixture["create"]),
+        )
+
+    if "reload_median" in baseline_fixture:
+        _compare_performance_metric(
+            "fixture reload median",
+            fixture_reload_median,
+            float(baseline_fixture["reload_median"]),
+        )
+
+    baseline_suite = baseline.get("suite", {})
+    if "total" in baseline_suite:
+        _compare_performance_metric(
+            "suite total",
+            suite_total,
+            float(baseline_suite["total"]),
+        )
+
+
+def _print_performance_summary(
+    baseline,
+    fixture_create,
+    fixture_reload_median,
+    suite_total,
+    functional_passed,
+):
+    print("\n=== Stageviz performance summary ===")
+    print(f"Baseline: {_PERF_BASELINE_PATH}")
+    print(f"Fixture create: {fixture_create:.4f}s")
+    print(f"Fixture reload median: {fixture_reload_median:.4f}s")
+    print(f"Suite total: {suite_total:.4f}s")
+
+    if not _PERF_ENABLED:
+        print("Performance regression checks are disabled.")
+        return True
+
+    if _PERF_BASELINE_RESET:
+        if not functional_passed:
+            print("[PERF WARN] baseline was not reset because functional tests failed.")
+            return True
+
+        try:
+            _save_performance_baseline(
+                fixture_create,
+                fixture_reload_median,
+                suite_total,
+            )
+            print("Performance baseline replaced.")
+        except Exception as exc:
+            _PERF_FAILURES.append(f"could not replace performance baseline: {exc}")
+            print(f"[PERF FAIL] {_PERF_FAILURES[-1]}")
+            return False
+
+        return True
+
+    if baseline is None:
+        if not functional_passed:
+            print("[PERF WARN] baseline was not created because functional tests failed.")
+            return True
+
+        try:
+            _save_performance_baseline(
+                fixture_create,
+                fixture_reload_median,
+                suite_total,
+            )
+            print("Performance baseline created.")
+        except Exception as exc:
+            _PERF_FAILURES.append(f"could not create performance baseline: {exc}")
+            print(f"[PERF FAIL] {_PERF_FAILURES[-1]}")
+            return False
+
+        return True
+
+    baseline_environment = baseline.get("environment", {})
+    current_environment = _performance_environment()
+
+    if baseline_environment and baseline_environment != current_environment:
+        print("[PERF WARN] baseline environment differs from current environment.")
+        print(f"  baseline: {baseline_environment}")
+        print(f"  current:  {current_environment}")
+
+    _compare_performance(
+        baseline,
+        fixture_create,
+        fixture_reload_median,
+        suite_total,
+    )
+
+    if _PERF_FAILURES:
+        print(f"[PERF FAIL] {len(_PERF_FAILURES)} performance regression(s)")
+        for message in _PERF_FAILURES:
+            print(f" - {message}")
+
+    if _PERF_WARNINGS:
+        print(f"[PERF WARN] {len(_PERF_WARNINGS)} performance warning(s)")
+        for message in _PERF_WARNINGS:
+            print(f" - {message}")
+
+    if not _PERF_FAILURES and not _PERF_WARNINGS:
+        print(f"[ OK ] {len(_PERF_RESULTS)} tests within performance tolerance")
+
+    return not _PERF_FAILURES
 
 
 def _stage():
@@ -407,11 +679,11 @@ def _create_external_file(path):
 def _create_merge_source(path, external):
     stage = Usd.Stage.CreateNew(path)
 
-    world = _define_xform(stage, "/World")
-    _define_xform(stage, "/World/Merged")
-    stage.SetDefaultPrim(world)
+    root = _define_xform(stage, "/MergeSource")
+    _define_xform(stage, "/MergeSource/Merged")
+    stage.SetDefaultPrim(root)
 
-    referenced = _define_xform(stage, "/World/MergedReference")
+    referenced = _define_xform(stage, "/MergeSource/MergedReference")
     referenced.GetReferences().AddReference(
         os.path.basename(external),
         "/ExternalRoot",
@@ -3484,13 +3756,54 @@ def test_merge_into_stage(merge_source):
 
     _assert(ok, "merge destructively imports source content")
     _assert(
-        _wait_until(lambda: _exists("/World/Merged")),
-        "merge imports authored prim",
+        _wait_until(
+            lambda: _exists("/MergeSource")
+            and _exists("/MergeSource/Merged")
+        ),
+        "merge imports authored source hierarchy",
     )
     _assert_equal(
         list(_root_layer().subLayerPaths),
         before_sublayers,
         "merge does not add the source as a sublayer",
+    )
+
+    ok_again = session.merge(merge_source)
+
+    _assert(
+        ok_again,
+        "merging the same file into the stage again succeeds",
+    )
+    _assert(
+        _wait_until(
+            lambda: _exists("/MergeSource_1")
+            and _exists("/MergeSource_1/Merged")
+        ),
+        "second destructive merge uses unique root identifier",
+    )
+
+    ok_third = session.mergeFromFile(merge_source)
+
+    _assert(
+        ok_third,
+        "mergeFromFile accepts the same file a third time",
+    )
+    _assert(
+        _wait_until(
+            lambda: _exists("/MergeSource_2")
+            and _exists("/MergeSource_2/Merged")
+        ),
+        "third destructive merge increments unique root identifier",
+    )
+
+    _assert_set_equal(
+        [
+            name
+            for name in _child_names("/")
+            if name.startswith("MergeSource")
+        ],
+        ["MergeSource", "MergeSource_1", "MergeSource_2"],
+        "destructive merge creates exactly the expected unique root identifiers",
     )
 
 
@@ -3501,16 +3814,22 @@ def test_merge_flattened(merge_source):
         hasattr(session, "mergeFlattened"),
         "session.mergeFlattened is exposed",
     )
+    _assert(
+        hasattr(session, "mergeFlattenedFromFile"),
+        "session.mergeFlattenedFromFile is exposed",
+    )
 
     ok = session.mergeFlattened(merge_source)
 
     _assert(ok, "mergeFlattened imports composed source content")
     _assert(
-        _wait_until(lambda: _exists("/World/MergedReference/Child")),
+        _wait_until(
+            lambda: _exists("/MergeSource/MergedReference/Child")
+        ),
         "mergeFlattened includes composed referenced content",
     )
 
-    prim = _prim("/World/MergedReference")
+    prim = _prim("/MergeSource/MergedReference")
     references = prim.GetMetadata("references") if prim else None
 
     has_reference = bool(
@@ -3521,6 +3840,56 @@ def test_merge_flattened(merge_source):
     _assert(
         not has_reference,
         "mergeFlattened removes the incoming reference arc",
+    )
+
+    ok_again = session.mergeFlattened(merge_source)
+
+    _assert(
+        ok_again,
+        "merging the same file flattened again succeeds",
+    )
+    _assert(
+        _wait_until(
+            lambda: _exists("/MergeSource_1")
+            and _exists("/MergeSource_1/MergedReference/Child")
+        ),
+        "second flattened merge uses unique root identifier",
+    )
+
+    prim_again = _prim("/MergeSource_1/MergedReference")
+    references_again = prim_again.GetMetadata("references") if prim_again else None
+    has_reference_again = bool(
+        references_again
+        and references_again.GetAddedOrExplicitItems()
+    )
+
+    _assert(
+        not has_reference_again,
+        "second flattened merge also contains no incoming reference arc",
+    )
+
+    ok_third = session.mergeFlattenedFromFile(merge_source)
+
+    _assert(
+        ok_third,
+        "mergeFlattenedFromFile accepts the same file a third time",
+    )
+    _assert(
+        _wait_until(
+            lambda: _exists("/MergeSource_2")
+            and _exists("/MergeSource_2/MergedReference/Child")
+        ),
+        "third flattened merge increments unique root identifier",
+    )
+
+    _assert_set_equal(
+        [
+            name
+            for name in _child_names("/")
+            if name.startswith("MergeSource")
+        ],
+        ["MergeSource", "MergeSource_1", "MergeSource_2"],
+        "flattened merge creates exactly the expected unique root identifiers",
     )
 
 
@@ -3538,7 +3907,7 @@ def test_merge_sublayer(merge_source):
 
     _assert(ok, "mergeSublayer succeeds")
     _assert(
-        _wait_until(lambda: _exists("/World/Merged")),
+        _wait_until(lambda: _exists("/MergeSource/Merged")),
         "sublayer content composes into stage",
     )
 
@@ -3571,8 +3940,13 @@ def test_merge_reference(merge_source):
         hasattr(session, "mergeReference"),
         "session.mergeReference is exposed",
     )
+    _assert(
+        hasattr(session, "mergeReferenceFromFile"),
+        "session.mergeReferenceFromFile is exposed",
+    )
 
     _define_xform(stage, "/World/ReferenceTarget")
+    _define_xform(stage, "/World/ReferenceTarget_1")
 
     ok = session.mergeReference(
         merge_source,
@@ -3587,6 +3961,22 @@ def test_merge_reference(merge_source):
         "reference composes source default prim below target",
     )
 
+    ok_again = session.mergeReferenceFromFile(
+        merge_source,
+        "/World/ReferenceTarget_1",
+    )
+
+    _assert(
+        ok_again,
+        "mergeReferenceFromFile accepts the same source on another target",
+    )
+    _assert(
+        _wait_until(
+            lambda: _exists("/World/ReferenceTarget_1/Merged")
+        ),
+        "second reference composes the same source below another target",
+    )
+
 
 def test_merge_payload(merge_source):
     session = stageviz.session()
@@ -3596,8 +3986,13 @@ def test_merge_payload(merge_source):
         hasattr(session, "mergePayload"),
         "session.mergePayload is exposed",
     )
+    _assert(
+        hasattr(session, "mergePayloadFromFile"),
+        "session.mergePayloadFromFile is exposed",
+    )
 
     _define_xform(stage, "/World/PayloadTarget")
+    _define_xform(stage, "/World/PayloadTarget_1")
 
     ok = session.mergePayload(
         merge_source,
@@ -3612,6 +4007,50 @@ def test_merge_payload(merge_source):
         bool(target and target.HasPayload()),
         "payload arc is authored on target",
     )
+    _assert(
+        bool(target and not target.IsLoaded()),
+        "payload respects LoadNone and remains unloaded",
+    )
+
+    stageviz.command.load_payloads(["/World/PayloadTarget"])
+
+    _assert(
+        _wait_until(
+            lambda: _exists("/World/PayloadTarget/Merged"),
+            timeout=5.0,
+        ),
+        "loading merged payload composes source default prim below target",
+    )
+
+    ok_again = session.mergePayloadFromFile(
+        merge_source,
+        "/World/PayloadTarget_1",
+    )
+
+    _assert(
+        ok_again,
+        "mergePayloadFromFile accepts the same source on another target",
+    )
+
+    target_again = _prim("/World/PayloadTarget_1")
+    _assert(
+        bool(target_again and target_again.HasPayload()),
+        "second payload arc is authored on another target",
+    )
+    _assert(
+        bool(target_again and not target_again.IsLoaded()),
+        "second payload also respects LoadNone",
+    )
+
+    stageviz.command.load_payloads(["/World/PayloadTarget_1"])
+
+    _assert(
+        _wait_until(
+            lambda: _exists("/World/PayloadTarget_1/Merged"),
+            timeout=5.0,
+        ),
+        "loading second payload composes the same source below another target",
+    )
 
 
 def test_save_reload(saved_path):
@@ -3624,8 +4063,29 @@ def test_save_reload(saved_path):
 
 
 def run():
+    _FAILURES.clear()
+    _PERF_RESULTS.clear()
+    _PERF_FIXTURE_RELOADS.clear()
+    _PERF_FAILURES.clear()
+    _PERF_WARNINGS.clear()
+
+    suite_start = time.perf_counter()
+    baseline = _load_performance_baseline()
+
+    fixture_start = time.perf_counter()
     root, main_path, merge_source, saved_path, external = create_fixture()
+    fixture_create = time.perf_counter() - fixture_start
+
     print(f"Stageviz command test root: {root}")
+    print(f"Performance baseline: {_PERF_BASELINE_PATH}")
+
+    if _PERF_ENABLED:
+        if _PERF_BASELINE_RESET:
+            print("Performance baseline reset requested.")
+        elif baseline is None:
+            print("No performance baseline found; this successful run will create one.")
+        else:
+            print("Performance regression comparison enabled.")
 
     _disable_preserve_state()
 
@@ -3701,17 +4161,54 @@ def run():
     ]
 
     for label, func, args in tests:
+        reload_start = time.perf_counter()
         reload_fixture(main_path)
+        reload_elapsed = time.perf_counter() - reload_start
+        _PERF_FIXTURE_RELOADS.append(reload_elapsed)
+        print(f"[TIME] fixture reload: {reload_elapsed:.4f}s")
+
         _run(label, func, args)
+
+    suite_total = time.perf_counter() - suite_start
+    fixture_reload_median = (
+        statistics.median(_PERF_FIXTURE_RELOADS)
+        if _PERF_FIXTURE_RELOADS
+        else 0.0
+    )
+
+    functional_passed = not _FAILURES
 
     print("\n=== Stageviz command test summary ===")
     if _FAILURES:
         print(f"FAILED: {len(_FAILURES)} failure(s)")
         for failure in _FAILURES:
             print(f" - {failure}")
+    else:
+        print("PASSED")
+
+    performance_passed = _print_performance_summary(
+        baseline,
+        fixture_create,
+        fixture_reload_median,
+        suite_total,
+        functional_passed,
+    )
+
+    print("\n=== Stageviz final result ===")
+
+    if not functional_passed:
+        print("FAILED: functional regression(s) detected")
         return False
 
-    print("PASSED")
+    if not performance_passed:
+        print("FAILED: performance regression(s) detected")
+        return False
+
+    if _PERF_WARNINGS:
+        print("PASSED WITH PERFORMANCE WARNINGS")
+    else:
+        print("PASSED")
+
     return True
 
 

@@ -324,7 +324,7 @@ StageTreePrivate::expandDepth(int targetDepth, const SdfPath& path)
                 expandNode(item->child(i), depthValue + 1);
         };
         for (int i = 0; i < d.tree->topLevelItemCount(); ++i) {
-            expandNode(d.tree->topLevelItem(i), 1);
+            expandNode(d.tree->topLevelItem(i), 0);
         }
     }
     else {
@@ -357,10 +357,7 @@ StageTreePrivate::expandDepth(int targetDepth, const SdfPath& path)
 int
 StageTreePrivate::maxDepth(const SdfPath& path) const
 {
-    QTreeWidgetItem* root = nullptr;
-    if (d.tree->topLevelItemCount() > 0)
-        root = d.tree->topLevelItem(0);
-    if (!root)
+    if (d.tree->topLevelItemCount() == 0)
         return 0;
 
     std::function<int(QTreeWidgetItem*, int)> subtreeDepth = [&](QTreeWidgetItem* item, int currentDepth) {
@@ -370,12 +367,20 @@ StageTreePrivate::maxDepth(const SdfPath& path) const
         return max;
     };
 
-    if (path.IsEmpty())
-        return subtreeDepth(root, 0);
+    if (path.IsEmpty()) {
+        int max = 0;
+        for (int i = 0; i < d.tree->topLevelItemCount(); ++i)
+            max = std::max(max, subtreeDepth(d.tree->topLevelItem(i), 0));
+        return max;
+    }
 
     QTreeWidgetItem* item = itemFromPath(path);
-    if (!item)
-        return subtreeDepth(root, 0);
+    if (!item) {
+        int max = 0;
+        for (int i = 0; i < d.tree->topLevelItemCount(); ++i)
+            max = std::max(max, subtreeDepth(d.tree->topLevelItem(i), 0));
+        return max;
+    }
 
     const int parentDepthValue = depth(path);
     const int childDepth = subtreeDepth(item, 0);

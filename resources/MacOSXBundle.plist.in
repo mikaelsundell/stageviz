@@ -23,12 +23,33 @@
     <key>CSResourcesFileMapped</key>
     <true/>
     <key>LSApplicationCategoryType</key>
-	<string>public.app-category.utilities</string>
+    <string>public.app-category.utilities</string>
     <key>LSMinimumSystemVersion</key>
-	<string>${MACOSX_DEPLOYMENT_TARGET}</string>
+    <string>${MACOSX_DEPLOYMENT_TARGET}</string>
     <key>CFBundleName</key>
     <string>${MACOSX_BUNDLE_BUNDLE_NAME}</string>
     <key>CFBundleDisplayName</key>
     <string>${MACOSX_BUNDLE_BUNDLE_NAME}</string>
+    <key>CFBundleDocumentTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleTypeName</key>
+            <string>Universal Scene Description</string>
+
+            <key>CFBundleTypeRole</key>
+            <string>Editor</string>
+
+            <key>LSHandlerRank</key>
+            <string>Owner</string>
+
+            <key>CFBundleTypeExtensions</key>
+            <array>
+                <string>usd</string>
+                <string>usda</string>
+                <string>usdc</string>
+                <string>usdz</string>
+            </array>
+        </dict>
+    </array>
 </dict>
 </plist>

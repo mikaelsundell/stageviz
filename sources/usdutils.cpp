@@ -27,9 +27,12 @@
 #include <pxr/usd/usdGeom/gprim.h>
 #include <pxr/usd/usdGeom/imageable.h>
 #include <pxr/usd/usdGeom/tokens.h>
+#include <pxr/usd/usdGeom/xform.h>
 #include <pxr/usd/usdGeom/xformCache.h>
 #include <pxr/usd/usdGeom/xformOp.h>
 #include <pxr/usd/usdGeom/xformable.h>
+#include <pxr/usd/usdShade/material.h>
+#include <pxr/usd/usdShade/materialBindingAPI.h>
 #include <stack>
 
 namespace stageviz {
@@ -229,20 +232,32 @@ namespace identifier {
         return TfMakeValidIdentifier(input);
     }
 
-    QString makeSafeIdentifier(const UsdStageRefPtr& stage, const SdfPath& parentPath, const QString& inputName)
+    QString
+    makeSafeIdentifier(const UsdStageRefPtr& stage, const SdfPath& parentPath, const QString& inputName)
     {
         const QString baseName = qt::StringToQString(makeValidIdentifier(qt::QStringToString(inputName)));
         if (!stage || !parentPath.IsAbsolutePath())
             return baseName;
 
-        const UsdPrim parentPrim = stage->GetPrimAtPath(parentPath);
-        if (!parentPrim || !parentPrim.IsValid())
+        const bool parentIsRoot = parentPath == SdfPath::AbsoluteRootPath();
+        const UsdPrim parentPrim = parentIsRoot ? UsdPrim() : stage->GetPrimAtPath(parentPath);
+
+        if (!parentIsRoot && (!parentPrim || !parentPrim.IsValid()))
             return baseName;
+
+        const SdfLayerHandle editLayer = stage->GetEditTarget().GetLayer();
 
         auto childExists = [&](const QString& name) {
             const SdfPath childPath = parentPath.AppendChild(TfToken(qt::QStringToString(name)));
+
             const UsdPrim childPrim = stage->GetPrimAtPath(childPath);
-            return childPrim && childPrim.IsValid();
+            if (childPrim && childPrim.IsValid())
+                return true;
+
+            if (editLayer && editLayer->GetPrimAtPath(childPath))
+                return true;
+
+            return false;
         };
 
         if (!childExists(baseName))
@@ -255,26 +270,36 @@ namespace identifier {
         }
     }
 
-    QString makeSafeIdentifier(const UsdStageRefPtr& stage, const SdfPath& parentPath, const QString& inputName,
-
-                               const SdfPath& ignorePath)
-
+    QString
+    makeSafeIdentifier(const UsdStageRefPtr& stage, const SdfPath& parentPath, const QString& inputName,
+                    const SdfPath& ignorePath)
     {
         const QString baseName = qt::StringToQString(makeValidIdentifier(qt::QStringToString(inputName)));
         if (!stage || !parentPath.IsAbsolutePath())
             return baseName;
 
-        const UsdPrim parentPrim = stage->GetPrimAtPath(parentPath);
-        if (!parentPrim || !parentPrim.IsValid())
+        const bool parentIsRoot = parentPath == SdfPath::AbsoluteRootPath();
+        const UsdPrim parentPrim = parentIsRoot ? UsdPrim() : stage->GetPrimAtPath(parentPath);
+
+        if (!parentIsRoot && (!parentPrim || !parentPrim.IsValid()))
             return baseName;
+
+        const SdfLayerHandle editLayer = stage->GetEditTarget().GetLayer();
 
         auto childExists = [&](const QString& name) {
             const SdfPath childPath = parentPath.AppendChild(TfToken(qt::QStringToString(name)));
+
             if (childPath == ignorePath)
                 return false;
 
             const UsdPrim childPrim = stage->GetPrimAtPath(childPath);
-            return childPrim && childPrim.IsValid();
+            if (childPrim && childPrim.IsValid())
+                return true;
+
+            if (editLayer && editLayer->GetPrimAtPath(childPath))
+                return true;
+
+            return false;
         };
 
         if (!childExists(baseName))
@@ -1100,6 +1125,23 @@ namespace stage {
         return childPath;
     }
 
+    SdfPath buildUniqueXform(UsdStageRefPtr stage, const QString& name, const SdfPath& parentPath)
+    {
+        if (!stage)
+            return {};
+
+        QString error;
+        const SdfPath path = buildChildPath(stage, parentPath, name, error);
+        if (path.IsEmpty())
+            return {};
+
+        const UsdGeomXform xform = UsdGeomXform::Define(stage, path);
+        if (!xform)
+            return {};
+
+        return path;
+    }
+
     bool captureChildOrder(UsdStageRefPtr stage, const SdfPath& parentPath, TfTokenVector& out)
     {
         if (!stage || parentPath.IsEmpty())
@@ -1610,19 +1652,18 @@ namespace stage {
     QList<SdfPath> visiblePaths(UsdStageRefPtr stage)
     {
         QList<SdfPath> paths;
-
         if (!stage)
             return paths;
 
-        UsdPrimRange range(stage->GetPseudoRoot());
+        QSet<SdfPath> uniquePaths;
 
+        UsdPrimRange range(stage->GetPseudoRoot());
         for (auto it = range.begin(); it != range.end(); ++it) {
             const UsdPrim prim = *it;
             if (!prim || !prim.IsValid())
                 continue;
 
             const UsdGeomImageable imageable(prim);
-
             if (imageable) {
                 TfToken visibility;
                 imageable.GetVisibilityAttr().Get(&visibility);
@@ -1633,9 +1674,25 @@ namespace stage {
                 }
             }
 
-            if (prim.IsA<UsdGeomGprim>())
-                paths.append(prim.GetPath());
+            if (!prim.IsA<UsdGeomGprim>())
+                continue;
+
+            uniquePaths.insert(prim.GetPath());
+
+            const UsdShadeMaterialBindingAPI bindingApi(prim);
+            const UsdShadeMaterial material = bindingApi.ComputeBoundMaterial();
+
+            if (material) {
+                const UsdPrim materialPrim = material.GetPrim();
+                if (materialPrim && materialPrim.IsValid())
+                    uniquePaths.insert(materialPrim.GetPath());
+            }
         }
+
+        paths.reserve(uniquePaths.size());
+
+        for (const SdfPath& path : uniquePaths)
+            paths.append(path);
 
         return paths;
     }

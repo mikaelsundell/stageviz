@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="UTF-8"?>
+<?xml version='1.0' encoding='utf-8'?>
 <ui version="4.0">
  <class>Viewer</class>
  <widget class="QMainWindow" name="Viewer">
@@ -24,7 +24,7 @@
     <enum>Qt::FocusPolicy::ClickFocus</enum>
    </property>
    <property name="styleSheet">
-    <string notr="true"/>
+    <string notr="true" />
    </property>
    <property name="MainWidget" stdset="0">
     <bool>true</bool>
@@ -96,7 +96,7 @@
            </sizepolicy>
           </property>
           <property name="styleSheet">
-           <string notr="true"/>
+           <string notr="true" />
           </property>
           <layout class="QVBoxLayout" name="verticalLayout_3">
            <property name="spacing">
@@ -152,7 +152,7 @@
                 </size>
                </property>
                <property name="styleSheet">
-                <string notr="true"/>
+                <string notr="true" />
                </property>
                <property name="DockWidget" stdset="0">
                 <bool>true</bool>
@@ -461,7 +461,7 @@
                    <number>4</number>
                   </property>
                   <item>
-                   <widget class="stageviz::RenderView" name="renderView" native="true"/>
+                   <widget class="stageviz::RenderView" name="renderView" native="true" />
                   </item>
                  </layout>
                 </widget>
@@ -646,7 +646,7 @@
                    </size>
                   </property>
                   <property name="styleSheet">
-                   <string notr="true"/>
+                   <string notr="true" />
                   </property>
                   <property name="frameShape">
                    <enum>QFrame::Shape::StyledPanel</enum>
@@ -717,59 +717,59 @@
      <property name="title">
       <string>Render</string>
      </property>
-     <addaction name="displayRenderShaded"/>
-     <addaction name="displayRenderWireframe"/>
+     <addaction name="displayRenderShaded" />
+     <addaction name="displayRenderWireframe" />
     </widget>
     <widget class="QMenu" name="displayComplexity">
      <property name="title">
       <string>Complexity</string>
      </property>
-     <addaction name="displayComplexityLow"/>
-     <addaction name="displayComplexityMedium"/>
-     <addaction name="displayComplexityHigh"/>
-     <addaction name="displayComplexityVeryHigh"/>
+     <addaction name="displayComplexityLow" />
+     <addaction name="displayComplexityMedium" />
+     <addaction name="displayComplexityHigh" />
+     <addaction name="displayComplexityVeryHigh" />
     </widget>
-    <addaction name="displayIsolate"/>
-    <addaction name="separator"/>
-    <addaction name="displayRender"/>
-    <addaction name="separator"/>
-    <addaction name="displayComplexity"/>
-    <addaction name="separator"/>
-    <addaction name="displayFrameAll"/>
-    <addaction name="displayFrameSelected"/>
-    <addaction name="displayResetView"/>
-    <addaction name="separator"/>
-    <addaction name="displayTransform"/>
-    <addaction name="separator"/>
-    <addaction name="displayGrid"/>
+    <addaction name="displayIsolate" />
+    <addaction name="separator" />
+    <addaction name="displayRender" />
+    <addaction name="separator" />
+    <addaction name="displayComplexity" />
+    <addaction name="separator" />
+    <addaction name="displayFrameAll" />
+    <addaction name="displayFrameSelected" />
+    <addaction name="displayResetView" />
+    <addaction name="separator" />
+    <addaction name="displayTransform" />
+    <addaction name="separator" />
+    <addaction name="displayGrid" />
    </widget>
    <widget class="QMenu" name="menuLight">
     <property name="title">
      <string>Light</string>
     </property>
-    <addaction name="displayCameraLight"/>
-    <addaction name="displayDomeLight"/>
-    <addaction name="displaySceneLights"/>
-    <addaction name="separator"/>
-    <addaction name="displayDomeBackground"/>
-    <addaction name="separator"/>
-    <addaction name="lightLoadDomeTexture"/>
-    <addaction name="lightClearDomeTexture"/>
-    <addaction name="separator"/>
-    <addaction name="lightUseDefaultDomeTexture"/>
+    <addaction name="displayCameraLight" />
+    <addaction name="displayDomeLight" />
+    <addaction name="displaySceneLights" />
+    <addaction name="separator" />
+    <addaction name="displayDomeBackground" />
+    <addaction name="separator" />
+    <addaction name="lightLoadDomeTexture" />
+    <addaction name="lightClearDomeTexture" />
+    <addaction name="separator" />
+    <addaction name="lightUseDefaultDomeTexture" />
    </widget>
    <widget class="QMenu" name="menuMaterial">
     <property name="title">
      <string>Material</string>
     </property>
-    <addaction name="materialScene"/>
-    <addaction name="displayRenderClay"/>
-    <addaction name="separator"/>
-    <addaction name="materialChrome"/>
-    <addaction name="materialGlossy"/>
-    <addaction name="materialReflection"/>
-    <addaction name="separator"/>
-    <addaction name="displaySceneShaders"/>
+    <addaction name="materialScene" />
+    <addaction name="displayRenderClay" />
+    <addaction name="separator" />
+    <addaction name="materialChrome" />
+    <addaction name="materialGlossy" />
+    <addaction name="materialReflection" />
+    <addaction name="separator" />
+    <addaction name="useSceneShaders" />
    </widget>
    <widget class="QMenu" name="menuFile">
     <property name="title">
@@ -779,60 +779,60 @@
      <property name="title">
       <string>Merge</string>
      </property>
-     <addaction name="fileMergeStage"/>
-     <addaction name="fileMergeFlattened"/>
-     <addaction name="separator"/>
-     <addaction name="fileMergeSublayer"/>
-     <addaction name="fileMergeReference"/>
-     <addaction name="fileMergePayload"/>
+     <addaction name="fileMergeStage" />
+     <addaction name="fileMergeFlattened" />
+     <addaction name="separator" />
+     <addaction name="fileMergeSublayer" />
+     <addaction name="fileMergeReference" />
+     <addaction name="fileMergePayload" />
     </widget>
     <widget class="QMenu" name="filePolicy">
      <property name="title">
       <string>Policy</string>
      </property>
-     <addaction name="policyAll"/>
-     <addaction name="policyPayload"/>
+     <addaction name="policyAll" />
+     <addaction name="policyPayload" />
     </widget>
     <widget class="QMenu" name="fileRecent">
      <property name="title">
       <string>Recent</string>
      </property>
-     <addaction name="actionClear"/>
+     <addaction name="actionClear" />
     </widget>
-    <addaction name="fileNew"/>
-    <addaction name="fileOpen"/>
-    <addaction name="fileMerge"/>
-    <addaction name="filePolicy"/>
-    <addaction name="fileRecent"/>
-    <addaction name="separator"/>
-    <addaction name="fileSave"/>
-    <addaction name="fileSaveAs"/>
-    <addaction name="fileSaveCopy"/>
-    <addaction name="separator"/>
-    <addaction name="fileExportAll"/>
-    <addaction name="fileExportSelected"/>
-    <addaction name="fileExportVisible"/>
-    <addaction name="fileExportImage"/>
-    <addaction name="separator"/>
-    <addaction name="filePreserveState"/>
-    <addaction name="separator"/>
-    <addaction name="fileReload"/>
-    <addaction name="fileClose"/>
-    <addaction name="separator"/>
-    <addaction name="fileSaveSettings"/>
-    <addaction name="separator"/>
-    <addaction name="fileExit"/>
+    <addaction name="fileNew" />
+    <addaction name="fileOpen" />
+    <addaction name="fileMerge" />
+    <addaction name="filePolicy" />
+    <addaction name="fileRecent" />
+    <addaction name="separator" />
+    <addaction name="fileSave" />
+    <addaction name="fileSaveAs" />
+    <addaction name="fileSaveCopy" />
+    <addaction name="separator" />
+    <addaction name="fileExportAll" />
+    <addaction name="fileExportSelected" />
+    <addaction name="fileExportVisible" />
+    <addaction name="fileExportImage" />
+    <addaction name="separator" />
+    <addaction name="filePreserveState" />
+    <addaction name="separator" />
+    <addaction name="fileReload" />
+    <addaction name="fileClose" />
+    <addaction name="separator" />
+    <addaction name="fileSaveSettings" />
+    <addaction name="separator" />
+    <addaction name="fileExit" />
    </widget>
    <widget class="QMenu" name="menuHelp">
     <property name="title">
      <string>Help</string>
     </property>
-    <addaction name="helpAbout"/>
-    <addaction name="helpCheckUpdates"/>
-    <addaction name="separator"/>
-    <addaction name="helpGithubReadme"/>
-    <addaction name="helpGithubIssues"/>
-    <addaction name="separator"/>
+    <addaction name="helpAbout" />
+    <addaction name="helpCheckUpdates" />
+    <addaction name="separator" />
+    <addaction name="helpGithubReadme" />
+    <addaction name="helpGithubIssues" />
+    <addaction name="separator" />
    </widget>
    <widget class="QMenu" name="menuEdit">
     <property name="title">
@@ -842,92 +842,92 @@
      <property name="title">
       <string>Show</string>
      </property>
-     <addaction name="editShowSelected"/>
-     <addaction name="editShowRecursive"/>
+     <addaction name="editShowSelected" />
+     <addaction name="editShowRecursive" />
     </widget>
     <widget class="QMenu" name="editHide">
      <property name="title">
       <string>Hide</string>
      </property>
-     <addaction name="editHideSelected"/>
-     <addaction name="editHideRecursive"/>
+     <addaction name="editHideSelected" />
+     <addaction name="editHideRecursive" />
     </widget>
     <widget class="QMenu" name="menu">
      <property name="title">
       <string>Stage up</string>
      </property>
-     <addaction name="editStageUpY"/>
-     <addaction name="editStageUpZ"/>
+     <addaction name="editStageUpY" />
+     <addaction name="editStageUpZ" />
     </widget>
     <widget class="QMenu" name="menuPayloads">
      <property name="title">
       <string>Payload</string>
      </property>
-     <addaction name="editPayloadLoad"/>
-     <addaction name="editPayloadUnload"/>
-     <addaction name="separator"/>
-     <addaction name="editPayloadInvertSelected"/>
+     <addaction name="editPayloadLoad" />
+     <addaction name="editPayloadUnload" />
+     <addaction name="separator" />
+     <addaction name="editPayloadInvertSelected" />
     </widget>
     <widget class="QMenu" name="menu_2">
      <property name="title">
       <string>Select visible</string>
      </property>
-     <addaction name="editSelectVisibleCapture"/>
-     <addaction name="separator"/>
-     <addaction name="editSelectVisibleSelect"/>
-     <addaction name="editSelectVisibleClear"/>
+     <addaction name="editSelectVisibleCapture" />
+     <addaction name="separator" />
+     <addaction name="editSelectVisibleSelect" />
+     <addaction name="editSelectVisibleClear" />
     </widget>
-    <addaction name="editUndo"/>
-    <addaction name="editRedo"/>
-    <addaction name="separator"/>
-    <addaction name="editClear"/>
-    <addaction name="separator"/>
-    <addaction name="editCopyImage"/>
-    <addaction name="separator"/>
-    <addaction name="editSelectAll"/>
-    <addaction name="editSelectInvert"/>
-    <addaction name="menu_2"/>
-    <addaction name="separator"/>
-    <addaction name="editShow"/>
-    <addaction name="editHide"/>
-    <addaction name="separator"/>
-    <addaction name="menu"/>
-    <addaction name="separator"/>
-    <addaction name="menuPayloads"/>
-    <addaction name="separator"/>
-    <addaction name="editNewXform"/>
-    <addaction name="editDeleteSelected"/>
+    <addaction name="editUndo" />
+    <addaction name="editRedo" />
+    <addaction name="separator" />
+    <addaction name="editClear" />
+    <addaction name="separator" />
+    <addaction name="editCopyImage" />
+    <addaction name="separator" />
+    <addaction name="editSelectAll" />
+    <addaction name="editSelectInvert" />
+    <addaction name="menu_2" />
+    <addaction name="separator" />
+    <addaction name="editShow" />
+    <addaction name="editHide" />
+    <addaction name="separator" />
+    <addaction name="menu" />
+    <addaction name="separator" />
+    <addaction name="menuPayloads" />
+    <addaction name="separator" />
+    <addaction name="editNewXform" />
+    <addaction name="editDeleteSelected" />
    </widget>
    <widget class="QMenu" name="menuView">
     <property name="title">
      <string>View</string>
     </property>
-    <addaction name="viewTogglePanels"/>
-    <addaction name="separator"/>
+    <addaction name="viewTogglePanels" />
+    <addaction name="separator" />
     <widget class="QMenu" name="menu_3">
      <property name="title">
       <string>Head-up display</string>
      </property>
-     <addaction name="hudSceneStats"/>
-     <addaction name="hudPerformanceStats"/>
-     <addaction name="hudCameraAxis"/>
+     <addaction name="hudSceneStats" />
+     <addaction name="hudPerformanceStats" />
+     <addaction name="hudCameraAxis" />
     </widget>
-    <addaction name="separator"/>
-    <addaction name="menu_3"/>
-    <addaction name="separator"/>
-    <addaction name="viewPython"/>
-    <addaction name="viewProgress"/>
-    <addaction name="separator"/>
-    <addaction name="viewConsole"/>
-    <addaction name="separator"/>
+    <addaction name="separator" />
+    <addaction name="menu_3" />
+    <addaction name="separator" />
+    <addaction name="viewPython" />
+    <addaction name="viewProgress" />
+    <addaction name="separator" />
+    <addaction name="viewConsole" />
+    <addaction name="separator" />
    </widget>
-   <addaction name="menuFile"/>
-   <addaction name="menuEdit"/>
-   <addaction name="menuDisplay"/>
-   <addaction name="menuLight"/>
-   <addaction name="menuMaterial"/>
-   <addaction name="menuView"/>
-   <addaction name="menuHelp"/>
+   <addaction name="menuFile" />
+   <addaction name="menuEdit" />
+   <addaction name="menuDisplay" />
+   <addaction name="menuLight" />
+   <addaction name="menuMaterial" />
+   <addaction name="menuView" />
+   <addaction name="menuHelp" />
   </widget>
   <action name="displayFrameAll">
    <property name="text">
@@ -985,7 +985,7 @@
     <string>Export visible ...</string>
    </property>
    <property name="shortcut">
-    <string>Ctrl+Shift+V</string>
+    <string>Ctrl+Alt+E</string>
    </property>
   </action>
   <action name="fileExportImage">
@@ -993,7 +993,7 @@
     <string>Export image ...</string>
    </property>
    <property name="shortcut">
-    <string>Ctrl+I</string>
+    <string>Ctrl+Alt+I</string>
    </property>
   </action>
   <action name="helpGithubReadme">
@@ -1016,7 +1016,7 @@
     <string>Copy image ...</string>
    </property>
    <property name="font">
-    <font/>
+    <font />
    </property>
    <property name="shortcut">
     <string>Ctrl+C</string>
@@ -1069,7 +1069,7 @@
    <property name="text">
     <string>New xform</string>
    </property>
-  </action>
+  <property name="shortcut"><string>Ctrl+Shift+N</string></property></action>
   <action name="editDeleteSelected">
    <property name="text">
     <string>Delete</string>
@@ -1102,7 +1102,7 @@
     <string>Reload</string>
    </property>
    <property name="shortcut">
-    <string>R</string>
+    <string>Ctrl+R</string>
    </property>
   </action>
   <action name="policyAll">
@@ -1137,7 +1137,7 @@
    <property name="text">
     <string>Close</string>
    </property>
-  </action>
+  <property name="shortcut"><string>Ctrl+W</string></property></action>
   <action name="viewProgress">
    <property name="checkable">
     <bool>true</bool>
@@ -1148,7 +1148,7 @@
    <property name="text">
     <string>Progress</string>
    </property>
-  </action>
+  <property name="shortcut"><string>Shift+P</string></property></action>
   <action name="editShowSelected">
    <property name="text">
     <string>Selected</string>
@@ -1162,7 +1162,7 @@
     <string>Recursive</string>
    </property>
    <property name="shortcut">
-    <string>Shift+S</string>
+    <string>Alt+Shift+S</string>
    </property>
   </action>
   <action name="editHideSelected">
@@ -1178,7 +1178,7 @@
     <string>Recursive</string>
    </property>
    <property name="shortcut">
-    <string>Alt+Shift+S</string>
+    <string>Shift+H</string>
    </property>
   </action>
   <action name="displayIsolate">
@@ -1220,7 +1220,7 @@
    <property name="text">
     <string>Save as ...</string>
    </property>
-  </action>
+  <property name="shortcut"><string>Ctrl+Shift+S</string></property></action>
   <action name="editUndo">
    <property name="enabled">
     <bool>false</bool>
@@ -1252,7 +1252,7 @@
    <property name="text">
     <string>Exit</string>
    </property>
-  </action>
+  <property name="shortcut"><string>Ctrl+Q</string></property></action>
   <action name="viewPython">
    <property name="checkable">
     <bool>true</bool>
@@ -1277,7 +1277,7 @@
    <property name="text">
     <string>Camera light</string>
    </property>
-  </action>
+  <property name="shortcut"><string>L</string></property></action>
   <action name="displayDomeLight">
    <property name="checkable">
     <bool>true</bool>
@@ -1285,7 +1285,7 @@
    <property name="text">
     <string>Dome light</string>
    </property>
-  </action>
+  <property name="shortcut"><string>D</string></property></action>
   <action name="displayDomeBackground">
    <property name="checkable">
     <bool>true</bool>
@@ -1293,22 +1293,25 @@
    <property name="text">
     <string>Show dome background</string>
    </property>
-  </action>
+  <property name="shortcut"><string>Shift+D</string></property></action>
   <action name="lightLoadDomeTexture">
    <property name="text">
     <string>Load HDRI ...</string>
    </property>
-  </action>
+  <property name="shortcut"><string>Ctrl+L</string></property></action>
   <action name="lightClearDomeTexture">
    <property name="text">
     <string>Clear HDRI</string>
    </property>
   </action>
   <action name="lightUseDefaultDomeTexture">
+ <property name="checkable">
+  <bool>true</bool>
+ </property>
    <property name="text">
     <string>Use default HDRI</string>
    </property>
-  </action>
+  <property name="shortcut"><string>Alt+D</string></property></action>
   <action name="displaySceneLights">
    <property name="checkable">
     <bool>true</bool>
@@ -1319,15 +1322,15 @@
    <property name="text">
     <string>Scene lights</string>
    </property>
-  </action>
-  <action name="displaySceneShaders">
+  <property name="shortcut"><string>Shift+L</string></property></action>
+  <action name="useSceneShaders">
    <property name="checkable">
     <bool>true</bool>
    </property>
    <property name="text">
-    <string>Scene shaders</string>
+    <string>Use scene shaders</string>
    </property>
-  </action>
+  <property name="shortcut"><string>Shift+S</string></property></action>
   <action name="displayRenderShaded">
    <property name="checkable">
     <bool>true</bool>
@@ -1363,7 +1366,7 @@
    <property name="text">
     <string>Scene</string>
    </property>
-  </action>
+  <property name="shortcut"><string>Alt+1</string></property></action>
   <action name="materialChrome">
    <property name="checkable">
     <bool>true</bool>
@@ -1371,7 +1374,7 @@
    <property name="text">
     <string>Chrome</string>
    </property>
-  </action>
+  <property name="shortcut"><string>Alt+3</string></property></action>
   <action name="materialGlossy">
    <property name="checkable">
     <bool>true</bool>
@@ -1379,7 +1382,7 @@
    <property name="text">
     <string>Glossy</string>
    </property>
-  </action>
+  <property name="shortcut"><string>Alt+4</string></property></action>
   <action name="materialReflection">
    <property name="checkable">
     <bool>true</bool>
@@ -1387,7 +1390,7 @@
    <property name="text">
     <string>Reflection</string>
    </property>
-  </action>
+  <property name="shortcut"><string>Alt+5</string></property></action>
   <action name="displayRenderClay">
    <property name="checkable">
     <bool>true</bool>
@@ -1395,7 +1398,7 @@
    <property name="text">
     <string>Clay</string>
    </property>
-  </action>
+  <property name="shortcut"><string>C</string></property></action>
   <action name="actionGPU_Statistics">
    <property name="text">
     <string>GPU Statistics</string>
@@ -1496,24 +1499,24 @@
     <string>Select invert</string>
    </property>
    <property name="shortcut">
-    <string>Ctrl+I</string>
+    <string>Ctrl+Shift+I</string>
    </property>
   </action>
   <action name="fileMergeStage">
    <property name="text">
     <string>Merge into stage ...</string>
    </property>
-  </action>
+  <property name="shortcut"><string>Ctrl+M</string></property></action>
   <action name="fileMergeFlattened">
    <property name="text">
     <string>Merge flattened ...</string>
    </property>
-  </action>
+  <property name="shortcut"><string>Ctrl+Shift+M</string></property></action>
   <action name="fileMergeSublayer">
    <property name="text">
     <string>Merge as sublayer ...</string>
    </property>
-  </action>
+  <property name="shortcut"><string>Ctrl+Alt+M</string></property></action>
   <action name="fileMergeReference">
    <property name="text">
     <string>Merge as reference ...</string>
@@ -1569,7 +1572,7 @@
     <string>Select</string>
    </property>
    <property name="shortcut">
-    <string>Meta+Ctrl+S</string>
+    <string>Alt+V</string>
    </property>
   </action>
   <action name="editSelectVisibleClear">
@@ -1577,7 +1580,7 @@
     <string>Clear</string>
    </property>
    <property name="shortcut">
-    <string>Meta+Ctrl+C</string>
+    <string>Alt+Shift+C</string>
    </property>
   </action>
   <action name="viewConsole">
@@ -1587,7 +1590,7 @@
    <property name="text">
     <string>Console</string>
    </property>
-  </action>
+  <property name="shortcut"><string>`</string></property></action>
   <action name="helpCheckUpdates">
    <property name="text">
     <string>Check for updates ...</string>
@@ -1661,7 +1664,7 @@
    <property name="text">
     <string>Grid</string>
    </property>
-  </action>
+  <property name="shortcut"><string>G</string></property></action>
  </widget>
  <customwidgets>
   <customwidget>
@@ -1671,7 +1674,7 @@
   </customwidget>
  </customwidgets>
  <resources>
-  <include location="viewer.qrc"/>
+  <include location="viewer.qrc" />
  </resources>
- <connections/>
+ <connections />
 </ui>
