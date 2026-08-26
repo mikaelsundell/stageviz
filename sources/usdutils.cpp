@@ -712,34 +712,38 @@ namespace payload {
         if (!stage || inputPaths.isEmpty())
             return result;
 
-        const QList<SdfPath> sourcePaths = stage::topMostPayloadPaths(stage, inputPaths);
-        if (sourcePaths.isEmpty())
-            return result;
+        const QList<SdfPath> selectedPaths = path::topLevelPaths(path::uniquePaths(inputPaths));
 
-        UsdGeomXformCache xformCache(UsdTimeCode::Default());
+        UsdGeomBBoxCache bboxCache(UsdTimeCode::Default(), UsdGeomImageable::GetOrderedPurposeTokens(), true);
 
         GfRange3d selectionBounds;
-        QSet<SdfPath> sourceSet;
 
-        for (const SdfPath& path : sourcePaths) {
-            const UsdPrim prim = stage->GetPrimAtPath(path);
+        for (const SdfPath& inputPath : selectedPaths) {
+            const SdfPath primPath = inputPath.IsPropertyPath() ? inputPath.GetPrimPath() : inputPath;
 
-            GfRange3d bounds;
-            if (!payloadExtentsHintWorldBounds(prim, xformCache, bounds))
+            const UsdPrim prim = stage->GetPrimAtPath(primPath);
+            if (!prim || !prim.IsValid() || !prim.IsA<UsdGeomImageable>())
                 continue;
 
-            selectionBounds.UnionWith(bounds);
-            sourceSet.insert(path);
+            const GfBBox3d bbox = bboxCache.ComputeWorldBound(prim);
+            selectionBounds.UnionWith(bbox.ComputeAlignedRange());
         }
 
         if (selectionBounds.IsEmpty())
             return result;
+
+        const QList<SdfPath> sourcePayloadPaths = stage::topMostPayloadPaths(stage, selectedPaths);
+
+        QSet<SdfPath> sourceSet;
+        for (const SdfPath& path : sourcePayloadPaths)
+            sourceSet.insert(path);
 
         constexpr double neighborScale = 1.5;
 
         const GfVec3d sourceCenter = selectionBounds.GetMidpoint();
         const GfVec3d sourceHalfSize = selectionBounds.GetSize() * 0.5;
         const GfVec3d searchHalfSize = sourceHalfSize * neighborScale;
+
         const GfRange3d searchBounds(sourceCenter - searchHalfSize, sourceCenter + searchHalfSize);
 
         QList<SdfPath> payloadPaths;
@@ -767,6 +771,8 @@ namespace payload {
         const GfVec3d searchMin = searchBounds.GetMin();
         const GfVec3d searchMax = searchBounds.GetMax();
 
+        UsdGeomXformCache xformCache(UsdTimeCode::Default());
+
         for (const SdfPath& path : candidatePaths) {
             const UsdPrim prim = stage->GetPrimAtPath(path);
 
@@ -783,6 +789,7 @@ namespace payload {
             const GfVec3d candidateCenter = candidateBounds.GetMidpoint();
 
             bool centerInside = true;
+
             for (int axis = 0; axis < 3; ++axis) {
                 if (candidateCenter[axis] < searchMin[axis] || candidateCenter[axis] > searchMax[axis]) {
                     centerInside = false;
@@ -796,6 +803,7 @@ namespace payload {
             PayloadNeighborCandidate candidate;
             candidate.path = path;
             candidate.distance = (candidateCenter - sourceCenter).GetLength();
+
             candidates.append(candidate);
         }
 
@@ -808,13 +816,12 @@ namespace payload {
                   });
 
         result.reserve(candidates.size());
+
         for (const PayloadNeighborCandidate& candidate : candidates)
             result.append(candidate.path);
 
         return result;
     }
-
-
 
     QList<AssetEntry> assetEntries(UsdStageRefPtr stage, const QList<SdfPath>& paths)
     {
@@ -880,7 +887,6 @@ namespace payload {
         }
         return result;
     }
-
 }  // namespace payload
 
 namespace snapshot {
