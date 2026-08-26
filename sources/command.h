@@ -155,22 +155,16 @@ loadPayloads(const QList<SdfPath>& paths, const QString& variantSet = QString(),
 /**
  * @brief Creates a command that loads spatially neighboring payloads.
  *
- * The input paths must identify payload prims or descendants inside loaded
- * payloads. Their payload ancestors are resolved and each source payload's
- * extentsHint is transformed independently to world space.
+ * The input paths are resolved to their top-most payload ancestors and their
+ * world-space extentsHint bounds are combined into one source bounding box.
  *
- * Currently unloaded payloads with extentsHint are ranked by their minimum
- * normalized world-space box-to-box distance to any selected source payload.
- * Source bounds are never unioned, so empty space between selected components
- * cannot artificially enlarge the search region. Already-loaded payloads do
- * not influence neighbor clustering.
+ * The source box is expanded by a factor of 2.0 around its center while
+ * preserving its proportions. Only unloaded top-level payloads with usable
+ * extentsHint are considered. A payload is treated as a neighbor when the
+ * center of its world-space extents lies inside the expanded search box.
  *
- * A scale-independent distance-gap heuristic chooses the local neighborhood
- * without requiring a user-specified world-space radius. A normalized-distance
- * safety limit prevents repeated invocations from eventually loading remote
- * payloads. If a selected source payload itself is unloaded, it is loaded
- * together with its neighbors.
- *
+ * Neighbor payloads are loaded nearest-first by center distance. If a selected
+ * source payload itself is unloaded, it is loaded together with its neighbors.
  * Undo restores the previous payload load states, selection, and mask.
  *
  * @param paths Payload prim paths or descendant paths inside payloads.

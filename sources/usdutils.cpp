@@ -162,11 +162,6 @@ namespace {
         return false;
     }
 
-    struct PayloadNeighborSource {
-        SdfPath path;
-        GfRange3d bounds;
-        double size = 0.0;
-    };
 
     struct PayloadNeighborCandidate {
         SdfPath path;
@@ -208,31 +203,6 @@ namespace {
         return !bounds.IsEmpty();
     }
 
-    double rangeDistance(const GfRange3d& a, const GfRange3d& b)
-    {
-        if (a.IsEmpty() || b.IsEmpty())
-            return std::numeric_limits<double>::max();
-
-        const GfVec3d aMin = a.GetMin();
-        const GfVec3d aMax = a.GetMax();
-        const GfVec3d bMin = b.GetMin();
-        const GfVec3d bMax = b.GetMax();
-
-        double distanceSquared = 0.0;
-
-        for (int axis = 0; axis < 3; ++axis) {
-            double separation = 0.0;
-
-            if (aMax[axis] < bMin[axis])
-                separation = bMin[axis] - aMax[axis];
-            else if (bMax[axis] < aMin[axis])
-                separation = aMin[axis] - bMax[axis];
-
-            distanceSquared += separation * separation;
-        }
-
-        return std::sqrt(distanceSquared);
-    }
 
 }  // namespace
 
@@ -733,7 +703,7 @@ namespace payload {
         if (!stage || inputPaths.isEmpty())
             return result;
 
-        const QList<SdfPath> sourcePaths = stage::ancestorPayloadPaths(stage, inputPaths);
+        const QList<SdfPath> sourcePaths = stage::topMostPayloadPaths(stage, inputPaths);
         if (sourcePaths.isEmpty())
             return result;
 
@@ -758,28 +728,12 @@ namespace payload {
 
         constexpr double neighborScale = 1.5;
 
-        const GfVec3d center = selectionBounds.GetMidpoint();
-        const GfVec3d halfSize = selectionBounds.GetSize() * 0.5;
-        const GfVec3d expandedHalfSize = halfSize * neighborScale;
+        const GfVec3d sourceCenter = selectionBounds.GetMidpoint();
+        const GfVec3d sourceHalfSize = selectionBounds.GetSize() * 0.5;
+        const GfVec3d searchHalfSize = sourceHalfSize * neighborScale;
+        const GfRange3d searchBounds(sourceCenter - searchHalfSize, sourceCenter + searchHalfSize);
 
-        const GfRange3d searchBounds(center - expandedHalfSize, center + expandedHalfSize);
-
-        auto intersects = [](const GfRange3d& a, const GfRange3d& b) {
-            if (a.IsEmpty() || b.IsEmpty())
-                return false;
-
-            const GfVec3d aMin = a.GetMin();
-            const GfVec3d aMax = a.GetMax();
-            const GfVec3d bMin = b.GetMin();
-            const GfVec3d bMax = b.GetMax();
-
-            for (int axis = 0; axis < 3; ++axis) {
-                if (aMax[axis] < bMin[axis] || bMax[axis] < aMin[axis])
-                    return false;
-            }
-
-            return true;
-        };
+        QList<SdfPath> payloadPaths;
 
         for (const UsdPrim& prim : stage->TraverseAll()) {
             if (!prim || !prim.IsValid())
@@ -793,6 +747,23 @@ namespace payload {
             if (!stage::isPayload(stage, path))
                 continue;
 
+            payloadPaths.append(path);
+        }
+
+        const QList<SdfPath> candidatePaths = path::topLevelPaths(payloadPaths);
+
+        QList<PayloadNeighborCandidate> candidates;
+        candidates.reserve(candidatePaths.size());
+
+        const GfVec3d searchMin = searchBounds.GetMin();
+        const GfVec3d searchMax = searchBounds.GetMax();
+
+        for (const SdfPath& path : candidatePaths) {
+            const UsdPrim prim = stage->GetPrimAtPath(path);
+
+            if (!prim || !prim.IsValid())
+                continue;
+
             if (prim.IsLoaded())
                 continue;
 
@@ -800,9 +771,36 @@ namespace payload {
             if (!payloadExtentsHintWorldBounds(prim, xformCache, candidateBounds))
                 continue;
 
-            if (intersects(searchBounds, candidateBounds))
-                result.append(path);
+            const GfVec3d candidateCenter = candidateBounds.GetMidpoint();
+
+            bool centerInside = true;
+            for (int axis = 0; axis < 3; ++axis) {
+                if (candidateCenter[axis] < searchMin[axis] || candidateCenter[axis] > searchMax[axis]) {
+                    centerInside = false;
+                    break;
+                }
+            }
+
+            if (!centerInside)
+                continue;
+
+            PayloadNeighborCandidate candidate;
+            candidate.path = path;
+            candidate.distance = (candidateCenter - sourceCenter).GetLength();
+            candidates.append(candidate);
         }
+
+        std::sort(candidates.begin(), candidates.end(),
+                  [](const PayloadNeighborCandidate& a, const PayloadNeighborCandidate& b) {
+                      if (a.distance != b.distance)
+                          return a.distance < b.distance;
+
+                      return a.path.GetString() < b.path.GetString();
+                  });
+
+        result.reserve(candidates.size());
+        for (const PayloadNeighborCandidate& candidate : candidates)
+            result.append(candidate.path);
 
         return result;
     }
@@ -984,6 +982,7 @@ namespace stage {
     QList<SdfPath> topMostPayloadPaths(UsdStageRefPtr stage, const QList<SdfPath>& paths)
     {
         QList<SdfPath> result;
+
         if (!stage || paths.isEmpty())
             return result;
 
@@ -1578,23 +1577,8 @@ namespace stage {
         if (!stage)
             return false;
 
-        UsdPrim prim = stage->GetPrimAtPath(path);
-        if (!prim)
-            return false;
-
-        if (prim.HasPayload())
-            return true;
-
-        for (const SdfPrimSpecHandle& spec : prim.GetPrimStack()) {
-            if (!spec)
-                continue;
-
-            auto payloads = spec->GetPayloadList();
-            if (!payloads.GetExplicitItems().empty() || !payloads.GetAddedItems().empty()
-                || !payloads.GetPrependedItems().empty())
-                return true;
-        }
-        return false;
+        const UsdPrim prim = stage->GetPrimAtPath(path);
+        return prim && prim.HasPayload();
     }
 
     bool isPayloadHierarchy(UsdStageRefPtr stage, const SdfPath& path)

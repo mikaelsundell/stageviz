@@ -826,8 +826,8 @@ loadNeighborPayloads(const QList<SdfPath>& paths)
 
                 {
                     READ_LOCKER(locker, session->stageLock(), "stageLock");
-                    const UsdStageRefPtr stage = session->stageUnsafe();
 
+                    const UsdStageRefPtr stage = session->stageUnsafe();
                     if (stage) {
                         targets = payload::neighboringPaths(stage, paths);
 
@@ -859,10 +859,13 @@ loadNeighborPayloads(const QList<SdfPath>& paths)
                                                       1);
                         session->endProgressBlock();
                     });
+
                     return;
                 }
 
                 command::queueToSession(session, [session, count = targets.size()]() {
+                    session->endProgressBlock();
+                    session->beginProgressBlock("Load neighbor payloads", count);
                     session->updateProgressNotify(Session::Notify(QString("Loading %1 neighbor payloads").arg(count),
                                                                   {}, Session::Notify::Status::Success),
                                                   0);
@@ -890,6 +893,7 @@ loadNeighborPayloads(const QList<SdfPath>& paths)
 
                     try {
                         WRITE_LOCKER(locker, session->stageLock(), "stageLock");
+
                         const UsdStageRefPtr stage = session->stageUnsafe();
 
                         if (!stage) {
@@ -918,9 +922,11 @@ loadNeighborPayloads(const QList<SdfPath>& paths)
 
                     if (pending.size() >= 16) {
                         const QList<command::Result> batch = pending;
+
                         command::queueToSession(session, [session, batch, completed]() {
                             command::flushResults(session, batch, completed);
                         });
+
                         pending.clear();
                     }
                 }
@@ -962,8 +968,8 @@ loadNeighborPayloads(const QList<SdfPath>& paths)
 
                     try {
                         WRITE_LOCKER(locker, session->stageLock(), "stageLock");
-                        const UsdStageRefPtr stage = session->stageUnsafe();
 
+                        const UsdStageRefPtr stage = session->stageUnsafe();
                         result.success = payload::restoreState(stage, payloadState, error);
                     } catch (...) {
                         result.success = false;
@@ -980,9 +986,11 @@ loadNeighborPayloads(const QList<SdfPath>& paths)
 
                     if (pending.size() >= 16) {
                         const QList<command::Result> batch = pending;
+
                         command::queueToSession(session, [session, batch, completed]() {
                             command::flushResults(session, batch, completed);
                         });
+
                         pending.clear();
                     }
                 }
@@ -999,6 +1007,7 @@ loadNeighborPayloads(const QList<SdfPath>& paths)
             });
         });
 }
+
 Command
 unloadPayloads(const QList<SdfPath>& paths)
 {

@@ -346,24 +346,27 @@ namespace payload {
     /**
  * @brief Finds unloaded payloads spatially neighboring selected payloads.
  *
- * Resolves the top-most payload ancestor for each input path and evaluates
+ * Resolves the nearest payload ancestor for each input path and evaluates
  * each source payload's extentsHint in world space.
  *
- * The source bounds are combined into a single world-space bounding box,
- * representing the complete selected region. The combined box is expanded
- * uniformly around its center to form the neighbor search region.
+ * The source bounds are combined into a single world-space bounding box so
+ * multiple selected payloads are treated as one spatial region. Candidate
+ * payloads must be currently unloaded and provide a usable extentsHint.
  *
- * Candidate payloads must be currently unloaded and provide a usable
- * extentsHint. A candidate is considered a neighbor when its world-space
- * bounding box intersects the expanded selection bounds.
+ * Candidates are ranked by the minimum world-space box-to-box distance from
+ * the combined selection bounds. Distances are normalized by the larger of
+ * the selection and candidate dimensions so the search remains independent
+ * of stage units and absolute model scale.
  *
- * Multiple selected payloads are therefore treated as one spatial region,
- * including the space between the selected components.
+ * A distance-gap heuristic keeps the nearest spatial cluster rather than
+ * relying on a fixed expanded bounding-box intersection. A normalized safety
+ * limit prevents repeated neighbor loads from progressively reaching remote
+ * payloads.
  *
  * @param stage Stage containing the payloads.
  * @param inputPaths Payload paths or descendant paths inside payloads.
  *
- * @return Unloaded payload paths intersecting the expanded selection bounds.
+ * @return Unloaded payload paths belonging to the nearest spatial cluster.
  */
     QList<SdfPath> neighboringPaths(UsdStageRefPtr stage, const QList<SdfPath>& inputPaths);
 
