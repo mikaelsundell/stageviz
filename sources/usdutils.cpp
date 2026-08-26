@@ -18,6 +18,7 @@
 #include <pxr/usd/sdf/primSpec.h>
 #include <pxr/usd/sdf/variantSetSpec.h>
 #include <pxr/usd/sdf/variantSpec.h>
+#include <pxr/usd/usd/attribute.h>
 #include <pxr/usd/usd/editContext.h>
 #include <pxr/usd/usd/editTarget.h>
 #include <pxr/usd/usd/namespaceEditor.h>
@@ -171,16 +172,24 @@ namespace {
     bool payloadExtentsHintWorldBounds(const UsdPrim& prim, UsdGeomXformCache& xformCache, GfRange3d& bounds)
     {
         bounds = GfRange3d();
-
         if (!prim || !prim.IsValid())
             return false;
 
-        const UsdGeomModelAPI model(prim);
-        if (!model)
-            return false;
-
         VtVec3fArray extents;
-        if (!model.GetExtentsHint(&extents) || extents.size() < 2)
+
+        const UsdGeomModelAPI model(prim);
+
+        if (model) {
+            if (!model.GetExtentsHint(&extents))
+                return false;
+        }
+        else {
+            const UsdAttribute attribute = prim.GetAttribute(UsdGeomTokens->extentsHint);
+            if (!attribute || !attribute.Get(&extents))
+                return false;
+        }
+
+        if (extents.size() < 2 || (extents.size() % 2) != 0)
             return false;
 
         const GfMatrix4d world = xformCache.GetLocalToWorldTransform(prim);
@@ -194,6 +203,7 @@ namespace {
                     for (int z = 0; z < 2; ++z) {
                         const GfVec3d corner(x ? maximum[0] : minimum[0], y ? maximum[1] : minimum[1],
                                              z ? maximum[2] : minimum[2]);
+
                         bounds.UnionWith(world.Transform(corner));
                     }
                 }
@@ -202,7 +212,6 @@ namespace {
 
         return !bounds.IsEmpty();
     }
-
 
 }  // namespace
 
@@ -804,6 +813,8 @@ namespace payload {
 
         return result;
     }
+
+
 
     QList<AssetEntry> assetEntries(UsdStageRefPtr stage, const QList<SdfPath>& paths)
     {

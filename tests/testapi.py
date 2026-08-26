@@ -17,7 +17,7 @@ import tempfile
 import time
 import traceback
 
-from pxr import Gf, Sdf, Usd, UsdGeom, UsdShade
+from pxr import Gf, Kind, Sdf, Usd, UsdGeom, UsdShade
 import stageviz
 
 
@@ -662,9 +662,13 @@ def _redo():
 
 def _create_payload_file(path, name):
     stage = Usd.Stage.CreateNew(path)
-    _define_xform(stage, f"/{name}")
+
+    root = _define_xform(stage, f"/{name}")
+    Usd.ModelAPI(root).SetKind(Kind.Tokens.component)
+
     _define_xform(stage, f"/{name}/Geom")
-    stage.SetDefaultPrim(stage.GetPrimAtPath(f"/{name}"))
+
+    stage.SetDefaultPrim(root)
     stage.GetRootLayer().Save()
 
 
@@ -716,11 +720,61 @@ def _create_main_file(path, payload_a, payload_b, external):
 
     stage.GetRootLayer().subLayerPaths.append(os.path.basename(external))
 
+    # Properly applied UsdGeomModelAPI source.
     p1 = _define_xform(stage, "/World/PayloadA")
     p1.GetPayloads().AddPayload(os.path.basename(payload_a), "/PayloadA")
+    Usd.ModelAPI(p1).SetKind(Kind.Tokens.component)
+    UsdGeom.ModelAPI.Apply(p1).SetExtentsHint([
+        Gf.Vec3f(-5.0, -5.0, -5.0),
+        Gf.Vec3f(5.0, 5.0, 5.0),
+    ])
 
+    # Authored extentsHint without applying UsdGeomModelAPI.
     p2 = _define_xform(stage, "/World/PayloadB")
     p2.GetPayloads().AddPayload(os.path.basename(payload_b), "/PayloadB")
+    Usd.ModelAPI(p2).SetKind(Kind.Tokens.component)
+    UsdGeom.Xformable(p2).AddTranslateOp().Set(Gf.Vec3d(6.0, 0.0, 0.0))
+    p2.CreateAttribute("extentsHint", Sdf.ValueTypeNames.Float3Array).Set([
+        Gf.Vec3f(-2.0, -2.0, -2.0),
+        Gf.Vec3f(2.0, 2.0, 2.0),
+    ])
+
+    payload_far = _define_xform(stage, "/World/PayloadFar")
+    payload_far.GetPayloads().AddPayload(os.path.basename(payload_b), "/PayloadB")
+    Usd.ModelAPI(payload_far).SetKind(Kind.Tokens.component)
+    UsdGeom.Xformable(payload_far).AddTranslateOp().Set(Gf.Vec3d(100.0, 0.0, 0.0))
+    payload_far.CreateAttribute("extentsHint", Sdf.ValueTypeNames.Float3Array).Set([
+        Gf.Vec3f(-2.0, -2.0, -2.0),
+        Gf.Vec3f(2.0, 2.0, 2.0),
+    ])
+
+    payload_wide = _define_xform(stage, "/World/PayloadWide")
+    payload_wide.GetPayloads().AddPayload(os.path.basename(payload_b), "/PayloadB")
+    Usd.ModelAPI(payload_wide).SetKind(Kind.Tokens.component)
+    UsdGeom.Xformable(payload_wide).AddTranslateOp().Set(Gf.Vec3d(80.0, 0.0, 0.0))
+    payload_wide.CreateAttribute("extentsHint", Sdf.ValueTypeNames.Float3Array).Set([
+        Gf.Vec3f(-100.0, -2.0, -2.0),
+        Gf.Vec3f(100.0, 2.0, 2.0),
+    ])
+
+    # Reverse coverage: raw extentsHint source with an applied ModelAPI neighbor.
+    fallback_source = _define_xform(stage, "/World/PayloadFallbackSource")
+    fallback_source.GetPayloads().AddPayload(os.path.basename(payload_a), "/PayloadA")
+    Usd.ModelAPI(fallback_source).SetKind(Kind.Tokens.component)
+    UsdGeom.Xformable(fallback_source).AddTranslateOp().Set(Gf.Vec3d(50.0, 0.0, 0.0))
+    fallback_source.CreateAttribute("extentsHint", Sdf.ValueTypeNames.Float3Array).Set([
+        Gf.Vec3f(-5.0, -5.0, -5.0),
+        Gf.Vec3f(5.0, 5.0, 5.0),
+    ])
+
+    model_neighbor = _define_xform(stage, "/World/PayloadModelNeighbor")
+    model_neighbor.GetPayloads().AddPayload(os.path.basename(payload_b), "/PayloadB")
+    Usd.ModelAPI(model_neighbor).SetKind(Kind.Tokens.component)
+    UsdGeom.Xformable(model_neighbor).AddTranslateOp().Set(Gf.Vec3d(56.0, 0.0, 0.0))
+    UsdGeom.ModelAPI.Apply(model_neighbor).SetExtentsHint([
+        Gf.Vec3f(-2.0, -2.0, -2.0),
+        Gf.Vec3f(2.0, 2.0, 2.0),
+    ])
 
     stage.GetRootLayer().Save()
 
@@ -773,6 +827,7 @@ def test_command_api():
         "show_paths",
         "hide_paths",
         "load_payloads",
+        "load_neighbor_payloads",
         "unload_payloads",
         "set_stage_up",
         "set_default_prim",
@@ -2407,6 +2462,256 @@ def test_payload_load_unload():
             _mask(),
             ["/World/PayloadA/Geom"],
             "undo unload_payloads restores previous mask",
+        )
+
+
+
+def _payload_world_bounds(path):
+    prim = _prim(path)
+    if not prim:
+        return None
+
+    attribute = prim.GetAttribute("extentsHint")
+    extents = attribute.Get() if attribute else None
+    if not extents or len(extents) < 2 or (len(extents) % 2) != 0:
+        return None
+
+    world = UsdGeom.XformCache(
+        Usd.TimeCode.Default()
+    ).GetLocalToWorldTransform(prim)
+
+    bounds = Gf.Range3d()
+
+    for index in range(0, len(extents), 2):
+        minimum = Gf.Vec3d(extents[index])
+        maximum = Gf.Vec3d(extents[index + 1])
+
+        for x in range(2):
+            for y in range(2):
+                for z in range(2):
+                    corner = Gf.Vec3d(
+                        maximum[0] if x else minimum[0],
+                        maximum[1] if y else minimum[1],
+                        maximum[2] if z else minimum[2],
+                    )
+                    bounds.UnionWith(world.Transform(corner))
+
+    return None if bounds.IsEmpty() else bounds
+
+
+def _point_inside(bounds, point):
+    if bounds is None or bounds.IsEmpty():
+        return False
+
+    minimum = bounds.GetMin()
+    maximum = bounds.GetMax()
+
+    return all(
+        minimum[axis] <= point[axis] <= maximum[axis]
+        for axis in range(3)
+    )
+
+
+def test_load_neighbor_payloads():
+    if not _has_command("load_neighbor_payloads"):
+        print("[skip] load_neighbor_payloads is not bound")
+        return
+
+    source_path = "/World/PayloadA"
+    source_child_path = "/World/PayloadA/Geom"
+    near_path = "/World/PayloadB"
+    far_path = "/World/PayloadFar"
+    wide_path = "/World/PayloadWide"
+
+    source_prim = _prim(source_path)
+    near_prim = _prim(near_path)
+
+    _assert(
+        bool(source_prim and UsdGeom.ModelAPI(source_prim)),
+        "neighbor source has applied UsdGeomModelAPI",
+    )
+    _assert(
+        bool(near_prim and not UsdGeom.ModelAPI(near_prim)),
+        "neighbor candidate exercises raw extentsHint fallback",
+    )
+
+    source_bounds = _payload_world_bounds(source_path)
+    near_bounds = _payload_world_bounds(near_path)
+    far_bounds = _payload_world_bounds(far_path)
+    wide_bounds = _payload_world_bounds(wide_path)
+
+    _assert(source_bounds is not None, "source payload world bounds are available")
+    _assert(near_bounds is not None, "near payload world bounds are available")
+    _assert(far_bounds is not None, "far payload world bounds are available")
+    _assert(wide_bounds is not None, "wide payload world bounds are available")
+
+    if not all(bounds is not None for bounds in (source_bounds, near_bounds, far_bounds, wide_bounds)):
+        return
+
+    source_center = source_bounds.GetMidpoint()
+    search_half_size = source_bounds.GetSize() * 0.5 * 1.5
+    search_bounds = Gf.Range3d(
+        source_center - search_half_size,
+        source_center + search_half_size,
+    )
+
+    _assert(
+        _point_inside(search_bounds, near_bounds.GetMidpoint()),
+        "near payload center is inside 1.5x source bounds",
+    )
+    _assert(
+        not _point_inside(search_bounds, far_bounds.GetMidpoint()),
+        "far payload center is outside 1.5x source bounds",
+    )
+    _assert(
+        not _point_inside(search_bounds, wide_bounds.GetMidpoint()),
+        "wide payload center is outside 1.5x source bounds",
+    )
+
+    stageviz.command.load_payloads([source_path])
+
+    _assert(
+        _wait_until(
+            lambda: bool(
+                _prim(source_path)
+                and _prim(source_path).IsLoaded()
+                and _exists(source_child_path)
+            ),
+            timeout=5.0,
+        ),
+        "source payload prepared for neighbor search",
+    )
+
+    stageviz.command.select_paths([source_child_path])
+    _assert(
+        _wait_until(lambda: _selection() == [source_child_path]),
+        "payload descendant selected for neighbor search",
+    )
+
+    stageviz.command.load_neighbor_payloads([source_child_path])
+
+    _assert(
+        _wait_until(
+            lambda: bool(_prim(near_path) and _prim(near_path).IsLoaded()),
+            timeout=5.0,
+        ),
+        "ModelAPI source loads nearby raw-extents payload",
+    )
+
+    _assert(
+        bool(_prim(far_path) and not _prim(far_path).IsLoaded()),
+        "neighbor search rejects payload center outside 1.5x source bounds",
+    )
+    _assert(
+        bool(_prim(wide_path) and not _prim(wide_path).IsLoaded()),
+        "neighbor search rejects huge intersecting bounds when candidate center is outside search box",
+    )
+
+    if _undo():
+        _assert(
+            _wait_until(
+                lambda: bool(_prim(near_path) and not _prim(near_path).IsLoaded()),
+                timeout=5.0,
+            ),
+            "undo neighbor search restores nearby payload load state",
+        )
+        _assert_equal(
+            _selection(),
+            [source_child_path],
+            "undo neighbor search restores previous selection",
+        )
+
+    if _redo():
+        _assert(
+            _wait_until(
+                lambda: bool(_prim(near_path) and _prim(near_path).IsLoaded()),
+                timeout=5.0,
+            ),
+            "redo neighbor search reloads nearby raw-extents payload",
+        )
+
+
+def test_load_neighbor_payloads_raw_source():
+    if not _has_command("load_neighbor_payloads"):
+        print("[skip] load_neighbor_payloads is not bound")
+        return
+
+    source_path = "/World/PayloadFallbackSource"
+    source_child_path = "/World/PayloadFallbackSource/Geom"
+    near_path = "/World/PayloadModelNeighbor"
+
+    source_prim = _prim(source_path)
+    near_prim = _prim(near_path)
+
+    _assert(
+        bool(source_prim and not UsdGeom.ModelAPI(source_prim)),
+        "neighbor source exercises raw extentsHint fallback",
+    )
+    _assert(
+        bool(near_prim and UsdGeom.ModelAPI(near_prim)),
+        "neighbor candidate has applied UsdGeomModelAPI",
+    )
+
+    source_bounds = _payload_world_bounds(source_path)
+    near_bounds = _payload_world_bounds(near_path)
+
+    _assert(source_bounds is not None, "raw-extents source world bounds are available")
+    _assert(near_bounds is not None, "ModelAPI neighbor world bounds are available")
+
+    if source_bounds is None or near_bounds is None:
+        return
+
+    source_center = source_bounds.GetMidpoint()
+    search_half_size = source_bounds.GetSize() * 0.5 * 1.5
+    search_bounds = Gf.Range3d(
+        source_center - search_half_size,
+        source_center + search_half_size,
+    )
+
+    _assert(
+        _point_inside(search_bounds, near_bounds.GetMidpoint()),
+        "ModelAPI candidate center is inside raw-source 1.5x bounds",
+    )
+
+    stageviz.command.load_payloads([source_path])
+    _assert(
+        _wait_until(
+            lambda: bool(
+                _prim(source_path)
+                and _prim(source_path).IsLoaded()
+                and _exists(source_child_path)
+            ),
+            timeout=5.0,
+        ),
+        "raw-extents source prepared for neighbor search",
+    )
+
+    stageviz.command.load_neighbor_payloads([source_child_path])
+
+    _assert(
+        _wait_until(
+            lambda: bool(_prim(near_path) and _prim(near_path).IsLoaded()),
+            timeout=5.0,
+        ),
+        "raw-extents source loads nearby ModelAPI payload",
+    )
+
+    if _undo():
+        _assert(
+            _wait_until(
+                lambda: bool(_prim(near_path) and not _prim(near_path).IsLoaded()),
+                timeout=5.0,
+            ),
+            "undo raw-source neighbor search restores ModelAPI payload load state",
+        )
+
+    if _redo():
+        _assert(
+            _wait_until(
+                lambda: bool(_prim(near_path) and _prim(near_path).IsLoaded()),
+                timeout=5.0,
+            ),
+            "redo raw-source neighbor search reloads ModelAPI payload",
         )
 
 
@@ -4127,6 +4432,8 @@ def run():
         ("default prim validation", test_default_prim_validation, ()),
         ("stage up", test_stage_up, ()),
         ("payload load/unload", test_payload_load_unload, ()),
+        ("load neighbor payloads", test_load_neighbor_payloads, ()),
+        ("load neighbor payloads raw source", test_load_neighbor_payloads_raw_source, ()),
         ("select invert payload", test_select_invert_payload, ()),
         ("root prim order", test_root_prim_order_create_move_and_undo, ()),
         ("root layer policy", test_root_layer_policy_rejects_sublayer_prim, ()),

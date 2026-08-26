@@ -346,27 +346,25 @@ namespace payload {
     /**
  * @brief Finds unloaded payloads spatially neighboring selected payloads.
  *
- * Resolves the nearest payload ancestor for each input path and evaluates
- * each source payload's extentsHint in world space.
+ * Resolves each input path to its top-most payload ancestor and evaluates
+ * the source payload extentsHint bounds in world space. Extents are read
+ * through UsdGeomModelAPI when available, with direct extentsHint attribute
+ * access as a fallback for payload prims that carry the metadata without the
+ * API schema being applied.
  *
- * The source bounds are combined into a single world-space bounding box so
- * multiple selected payloads are treated as one spatial region. Candidate
- * payloads must be currently unloaded and provide a usable extentsHint.
+ * The source bounds are combined into one world-space bounding box. That box
+ * is expanded by a factor of 1.5 around its center while preserving its
+ * proportions. Only unloaded top-level payloads with usable extentsHint are
+ * considered as candidates.
  *
- * Candidates are ranked by the minimum world-space box-to-box distance from
- * the combined selection bounds. Distances are normalized by the larger of
- * the selection and candidate dimensions so the search remains independent
- * of stage units and absolute model scale.
- *
- * A distance-gap heuristic keeps the nearest spatial cluster rather than
- * relying on a fixed expanded bounding-box intersection. A normalized safety
- * limit prevents repeated neighbor loads from progressively reaching remote
- * payloads.
+ * A candidate is included when the center of its world-space extents lies
+ * inside the expanded source box. Accepted candidates are sorted nearest-first
+ * by distance between the candidate center and the combined source center.
  *
  * @param stage Stage containing the payloads.
  * @param inputPaths Payload paths or descendant paths inside payloads.
  *
- * @return Unloaded payload paths belonging to the nearest spatial cluster.
+ * @return Unloaded neighboring payload paths sorted nearest-first.
  */
     QList<SdfPath> neighboringPaths(UsdStageRefPtr stage, const QList<SdfPath>& inputPaths);
 
@@ -748,14 +746,14 @@ namespace stage {
     bool isLoaded(UsdStageRefPtr stage, const SdfPath& path);
 
     /**
- * @brief Checks whether a prim has a payload.
+ * @brief Checks whether a composed prim has a payload.
  *
- * Tests both composed prim state and authored payload list opinions.
+ * Uses UsdPrim::HasPayload() on the composed stage prim.
  *
  * @param stage USD stage containing the prim.
  * @param path Prim path to evaluate.
  *
- * @return True if the prim has a payload.
+ * @return True if the composed prim has a payload.
  */
     bool isPayload(UsdStageRefPtr stage, const SdfPath& path);
 

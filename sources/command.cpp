@@ -817,9 +817,7 @@ loadNeighborPayloads(const QList<SdfPath>& paths)
 
             state->previousSelection = session->selectionList()->paths();
             state->previousMask = session->mask();
-
-            session->beginProgressBlock("Load neighbor payloads", 1);
-            session->setPrimsUpdate(Session::PrimsUpdate::Deferred);
+            state->payloadStates.clear();
 
             command::runWorker([session, paths, state]() {
                 QList<SdfPath> targets;
@@ -853,92 +851,96 @@ loadNeighborPayloads(const QList<SdfPath>& paths)
                     command::queueToSession(session, [session]() {
                         using Status = Session::Notify::Status;
 
-                        session->setPrimsUpdate(Session::PrimsUpdate::Immediate);
+                        session->beginProgressBlock("Load neighbor payloads", 1);
                         session->updateProgressNotify(Session::Notify("No unloaded neighbor payloads found", {},
                                                                       Status::Success),
                                                       1);
                         session->endProgressBlock();
                     });
-
                     return;
                 }
 
-                command::queueToSession(session, [session, count = targets.size()]() {
-                    session->endProgressBlock();
-                    session->beginProgressBlock("Load neighbor payloads", count);
-                    session->updateProgressNotify(Session::Notify(QString("Loading %1 neighbor payloads").arg(count),
-                                                                  {}, Session::Notify::Status::Success),
-                                                  0);
-                });
+                command::queueToSession(session, [session, state, targets]() {
+                    session->beginProgressBlock("Load neighbor payloads", targets.size());
+                    session->setPrimsUpdate(Session::PrimsUpdate::Deferred);
+                    session->updateProgressNotify(
+                        Session::Notify(QString("Loading %1 neighbor payloads").arg(targets.size()), {},
+                                        Session::Notify::Status::Success),
+                        0);
 
-                QList<command::Result> pending;
-                pending.reserve(16);
+                    command::runWorker([session, state, targets]() {
+                        QList<command::Result> pending;
+                        pending.reserve(16);
 
-                QList<payload::PayloadState> payloadStates;
-                payloadStates.reserve(targets.size());
+                        QList<payload::PayloadState> payloadStates;
+                        payloadStates.reserve(targets.size());
 
-                int completed = 0;
+                        int completed = 0;
 
-                for (const SdfPath& path : targets) {
-                    if (!session || session->isProgressBlockCancelled())
-                        break;
+                        for (const SdfPath& path : targets) {
+                            if (!session || session->isProgressBlockCancelled())
+                                break;
 
-                    command::Result result;
-                    result.path = path;
-                    result.message = "Neighbor payload failed";
-                    result.status = Session::Notify::Status::Error;
+                            command::Result result;
+                            result.path = path;
+                            result.message = "Neighbor payload failed";
+                            result.status = Session::Notify::Status::Error;
 
-                    payload::PayloadState payloadState;
-                    QString loadError;
+                            payload::PayloadState payloadState;
+                            QString loadError;
 
-                    try {
-                        WRITE_LOCKER(locker, session->stageLock(), "stageLock");
+                            try {
+                                WRITE_LOCKER(locker, session->stageLock(), "stageLock");
 
-                        const UsdStageRefPtr stage = session->stageUnsafe();
+                                const UsdStageRefPtr stage = session->stageUnsafe();
 
-                        if (!stage) {
-                            result.success = false;
-                            loadError = "Stage not available";
+                                if (!stage) {
+                                    result.success = false;
+                                    loadError = "Stage not available";
+                                }
+                                else {
+                                    result.success = payload::applyLoad(stage, path, false, std::string(),
+                                                                        std::string(), payloadState, loadError);
+                                }
+                            } catch (...) {
+                                result.success = false;
+                                loadError = "exception";
+                            }
+
+                            result.message = result.success
+                                                 ? "Neighbor payload loaded"
+                                                 : (loadError.isEmpty() ? "Neighbor payload failed" : loadError);
+
+                            result.status = result.success ? Session::Notify::Status::Success
+                                                           : Session::Notify::Status::Error;
+
+                            if (result.success)
+                                payloadStates.append(payloadState);
+
+                            pending.append(result);
+                            ++completed;
+
+                            if (pending.size() >= 16) {
+                                const QList<command::Result> batch = pending;
+
+                                command::queueToSession(session, [session, batch, completed]() {
+                                    command::flushResults(session, batch, completed);
+                                });
+
+                                pending.clear();
+                            }
                         }
-                        else {
-                            result.success = payload::applyLoad(stage, path, false, std::string(), std::string(),
-                                                                payloadState, loadError);
-                        }
-                    } catch (...) {
-                        result.success = false;
-                        loadError = "exception";
-                    }
 
-                    result.message = result.success ? "Neighbor payload loaded"
-                                                    : (loadError.isEmpty() ? "Neighbor payload failed" : loadError);
+                        state->payloadStates = payloadStates;
 
-                    result.status = result.success ? Session::Notify::Status::Success : Session::Notify::Status::Error;
+                        command::queueToSession(session, [session, pending, completed]() {
+                            if (!pending.isEmpty())
+                                command::flushResults(session, pending, completed);
 
-                    if (result.success)
-                        payloadStates.append(payloadState);
-
-                    pending.append(result);
-                    ++completed;
-
-                    if (pending.size() >= 16) {
-                        const QList<command::Result> batch = pending;
-
-                        command::queueToSession(session, [session, batch, completed]() {
-                            command::flushResults(session, batch, completed);
+                            session->setPrimsUpdate(Session::PrimsUpdate::Immediate);
+                            session->endProgressBlock();
                         });
-
-                        pending.clear();
-                    }
-                }
-
-                state->payloadStates = payloadStates;
-
-                command::queueToSession(session, [session, pending, completed]() {
-                    if (!pending.isEmpty())
-                        command::flushResults(session, pending, completed);
-
-                    session->setPrimsUpdate(Session::PrimsUpdate::Immediate);
-                    session->endProgressBlock();
+                    });
                 });
             });
         },

@@ -158,7 +158,7 @@ loadPayloads(const QList<SdfPath>& paths, const QString& variantSet = QString(),
  * The input paths are resolved to their top-most payload ancestors and their
  * world-space extentsHint bounds are combined into one source bounding box.
  *
- * The source box is expanded by a factor of 2.0 around its center while
+ * The source box is expanded by a factor of 1.5 around its center while
  * preserving its proportions. Only unloaded top-level payloads with usable
  * extentsHint are considered. A payload is treated as a neighbor when the
  * center of its world-space extents lies inside the expanded search box.
