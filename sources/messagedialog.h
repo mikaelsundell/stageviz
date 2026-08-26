@@ -21,6 +21,11 @@ class MessageDialogPrivate;
 class MessageDialog : public QDialog {
 public:
     /**
+     * @brief Result returned by a save-changes dialog.
+     */
+    enum class SaveResult { Save, DontSave, Cancel };
+
+    /**
      * @brief Shows an informational message.
      * @return true if the dialog was accepted, otherwise false.
      */
@@ -33,10 +38,19 @@ public:
     static bool warning(QWidget* parent, const QString& title, const QString& text);
 
     /**
-     * @brief Shows a question dialog.
-     * @return true if the user accepted/confirmed, otherwise false.
+     * @brief Shows a yes/no question dialog.
+     *
+     * Yes returns true. No, Escape, or closing the dialog returns false.
      */
     static bool question(QWidget* parent, const QString& title, const QString& text);
+
+    /**
+     * @brief Shows a save-changes question.
+     *
+     * Save and Don't Save are explicit choices. Escape or closing the dialog
+     * returns SaveResult::Cancel.
+     */
+    static SaveResult saveQuestion(QWidget* parent, const QString& title, const QString& text);
 
     /**
      * @brief Shows an about dialog with heading, details, and an optional URL.

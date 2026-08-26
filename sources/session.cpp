@@ -1268,22 +1268,16 @@ SessionPrivate::setStageUp(Session::StageUp stageUp)
 GfBBox3d
 SessionPrivate::boundingBox()
 {
-    UsdStageRefPtr stage;
-    QList<SdfPath> mask;
-    {
-        READ_LOCKER(locker, &d.stageLock, "stageLock");
-        stage = d.stage;
-        mask = d.mask;
-    }
-    Q_ASSERT(stage && "stage is not loaded");
-    if (!stage)
+    READ_LOCKER(locker, &d.stageLock, "stageLock");
+
+    if (!d.stage)
         return GfBBox3d();
 
-    if (mask.isEmpty()) {
+    if (d.mask.isEmpty()) {
         UsdGeomBBoxCache bboxCache(UsdTimeCode::Default(), UsdGeomImageable::GetOrderedPurposeTokens(), true);
-        return bboxCache.ComputeWorldBound(stage->GetPseudoRoot());
+        return bboxCache.ComputeWorldBound(d.stage->GetPseudoRoot());
     }
-    return stage::boundingBox(stage, mask);
+    return stage::boundingBox(d.stage, d.mask);
 }
 
 bool

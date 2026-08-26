@@ -2384,10 +2384,14 @@ ViewerPrivate::saveChanges()
 
     const QString name = session()->filename().isEmpty() ? "Untitled" : QFileInfo(session()->filename()).fileName();
 
-    if (MessageDialog::question(d.viewer.data(), tr("Save changes?"), tr("Save changes to %1?").arg(name))) {
-        return saveFile();
+    switch (MessageDialog::saveQuestion(d.viewer.data(), tr("Save changes?"), tr("Save changes to %1?").arg(name))) {
+    case MessageDialog::SaveResult::Save: return saveFile();
+
+    case MessageDialog::SaveResult::DontSave: return true;
+
+    case MessageDialog::SaveResult::Cancel:
+    default: return false;
     }
-    return true;
 }
 
 void

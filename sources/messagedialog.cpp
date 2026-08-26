@@ -17,6 +17,7 @@ public:
     MessageDialogPrivate();
     void init();
     bool exec();
+    int execResult();
 
 public:
     struct Data {
@@ -53,11 +54,17 @@ MessageDialogPrivate::init()
     d.ui->setupUi(d.dialog.data());
     // connect
     connect(d.ui->accept, &QPushButton::clicked, this, [this]() { d.dialog->done(QDialog::Accepted); });
-    connect(d.ui->reject, &QPushButton::clicked, this, [this]() { d.dialog->done(QDialog::Rejected); });
+    connect(d.ui->reject, &QPushButton::clicked, this, [this]() { d.dialog->done(2); });
 }
 
 bool
 MessageDialogPrivate::exec()
+{
+    return execResult() == QDialog::Accepted;
+}
+
+int
+MessageDialogPrivate::execResult()
 {
     d.dialog->setWindowTitle(d.type);
     d.ui->icon->setFixedSize(d.iconSize, d.iconSize);
@@ -115,7 +122,7 @@ MessageDialogPrivate::exec()
     else {
         d.dialog->setMaximumHeight(QWIDGETSIZE_MAX);
     }
-    return d.dialog->exec() == QDialog::Accepted;
+    return d.dialog->exec();
 }
 
 MessageDialog::MessageDialog(QWidget* parent)
@@ -166,6 +173,26 @@ MessageDialog::question(QWidget* parent, const QString& title, const QString& te
     box.p->d.showIcon = false;
     box.p->d.showReject = true;
     return box.p->exec();
+}
+
+MessageDialog::SaveResult
+MessageDialog::saveQuestion(QWidget* parent, const QString& title, const QString& text)
+{
+    MessageDialog box(parent);
+    box.p->d.type = "Question";
+    box.p->d.title = title;
+    box.p->d.text = text;
+    box.p->d.acceptText = tr("Save");
+    box.p->d.rejectText = tr("Don't Save");
+    box.p->d.showIcon = false;
+    box.p->d.showReject = true;
+
+    const int result = box.p->execResult();
+    if (result == QDialog::Accepted)
+        return SaveResult::Save;
+    if (result == 2)
+        return SaveResult::DontSave;
+    return SaveResult::Cancel;
 }
 
 bool

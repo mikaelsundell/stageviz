@@ -344,26 +344,28 @@ namespace payload {
     PayloadVariantTargets payloadVariantTargets(UsdStageRefPtr stage, const QList<SdfPath>& paths);
 
     /**
-     * @brief Finds unloaded payloads spatially neighboring selected payloads.
-     *
-     * Resolves the top-most payload ancestor for each input path and evaluates
-     * each source payload's extentsHint independently in world space.
-     *
-     * Candidate payloads must be currently unloaded and provide a usable
-     * extentsHint. Each candidate is ranked by its minimum normalized
-     * box-to-box distance to any source payload. Source bounds are not unioned,
-     * so empty space between selected components does not enlarge the search.
-     *
-     * A normalized distance-gap heuristic and safety limit identify the local
-     * neighborhood without requiring a world-space radius.
-     *
-     * @param stage Stage containing the payloads.
-     * @param inputPaths Payload paths or descendant paths inside payloads.
-     * @param error Receives a descriptive failure reason.
-     *
-     * @return Unloaded neighboring payload paths ordered nearest first.
-     */
-    QList<SdfPath> neighboringPaths(UsdStageRefPtr stage, const QList<SdfPath>& inputPaths, QString& error);
+ * @brief Finds unloaded payloads spatially neighboring selected payloads.
+ *
+ * Resolves the top-most payload ancestor for each input path and evaluates
+ * each source payload's extentsHint in world space.
+ *
+ * The source bounds are combined into a single world-space bounding box,
+ * representing the complete selected region. The combined box is expanded
+ * uniformly around its center to form the neighbor search region.
+ *
+ * Candidate payloads must be currently unloaded and provide a usable
+ * extentsHint. A candidate is considered a neighbor when its world-space
+ * bounding box intersects the expanded selection bounds.
+ *
+ * Multiple selected payloads are therefore treated as one spatial region,
+ * including the space between the selected components.
+ *
+ * @param stage Stage containing the payloads.
+ * @param inputPaths Payload paths or descendant paths inside payloads.
+ *
+ * @return Unloaded payload paths intersecting the expanded selection bounds.
+ */
+    QList<SdfPath> neighboringPaths(UsdStageRefPtr stage, const QList<SdfPath>& inputPaths);
 
     /**
      * @brief Describes an asset referenced by a payload prim.

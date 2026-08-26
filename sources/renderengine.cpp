@@ -381,7 +381,7 @@ RenderEngine::Private::updateRenderParams()
     params.showProxy = settings.showProxy;
     params.showRender = settings.showRender;
     params.highlight = true;
-    params.bboxes = selectionBBoxes;
+    //params.bboxes = selectionBBoxes;
     params.bboxLineColor = qt::QColorToGfVec4f(selectionColor);
     params.bboxLineDashSize = 3.0f;
 }

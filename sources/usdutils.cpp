@@ -307,8 +307,7 @@ namespace identifier {
         return TfMakeValidIdentifier(input);
     }
 
-    QString
-    makeSafeIdentifier(const UsdStageRefPtr& stage, const SdfPath& parentPath, const QString& inputName)
+    QString makeSafeIdentifier(const UsdStageRefPtr& stage, const SdfPath& parentPath, const QString& inputName)
     {
         const QString baseName = qt::StringToQString(makeValidIdentifier(qt::QStringToString(inputName)));
         if (!stage || !parentPath.IsAbsolutePath())
@@ -345,9 +344,8 @@ namespace identifier {
         }
     }
 
-    QString
-    makeSafeIdentifier(const UsdStageRefPtr& stage, const SdfPath& parentPath, const QString& inputName,
-                    const SdfPath& ignorePath)
+    QString makeSafeIdentifier(const UsdStageRefPtr& stage, const SdfPath& parentPath, const QString& inputName,
+                               const SdfPath& ignorePath)
     {
         const QString baseName = qt::StringToQString(makeValidIdentifier(qt::QStringToString(inputName)));
         if (!stage || !parentPath.IsAbsolutePath())
@@ -728,26 +726,20 @@ namespace payload {
         return result;
     }
 
-    QList<SdfPath> neighboringPaths(UsdStageRefPtr stage, const QList<SdfPath>& inputPaths, QString& error)
+    QList<SdfPath> neighboringPaths(UsdStageRefPtr stage, const QList<SdfPath>& inputPaths)
     {
         QList<SdfPath> result;
 
-        if (!stage || inputPaths.isEmpty()) {
-            error = "stage or paths missing";
+        if (!stage || inputPaths.isEmpty())
             return result;
-        }
 
-        const QList<SdfPath> sourcePaths = stage::topMostPayloadPaths(stage, inputPaths);
-        if (sourcePaths.isEmpty()) {
-            error = "selection is not a payload or inside a loaded payload";
+        const QList<SdfPath> sourcePaths = stage::ancestorPayloadPaths(stage, inputPaths);
+        if (sourcePaths.isEmpty())
             return result;
-        }
 
         UsdGeomXformCache xformCache(UsdTimeCode::Default());
 
-        QList<PayloadNeighborSource> sources;
-        sources.reserve(sourcePaths.size());
-
+        GfRange3d selectionBounds;
         QSet<SdfPath> sourceSet;
 
         for (const SdfPath& path : sourcePaths) {
@@ -757,21 +749,37 @@ namespace payload {
             if (!payloadExtentsHintWorldBounds(prim, xformCache, bounds))
                 continue;
 
-            PayloadNeighborSource source;
-            source.path = path;
-            source.bounds = bounds;
-            source.size = std::max(bounds.GetSize().GetLength(), 1.0e-6);
-
-            sources.append(source);
+            selectionBounds.UnionWith(bounds);
             sourceSet.insert(path);
         }
 
-        if (sources.isEmpty()) {
-            error = "selected payload has no usable extentsHint";
+        if (selectionBounds.IsEmpty())
             return result;
-        }
 
-        QList<PayloadNeighborCandidate> candidates;
+        constexpr double neighborScale = 1.5;
+
+        const GfVec3d center = selectionBounds.GetMidpoint();
+        const GfVec3d halfSize = selectionBounds.GetSize() * 0.5;
+        const GfVec3d expandedHalfSize = halfSize * neighborScale;
+
+        const GfRange3d searchBounds(center - expandedHalfSize, center + expandedHalfSize);
+
+        auto intersects = [](const GfRange3d& a, const GfRange3d& b) {
+            if (a.IsEmpty() || b.IsEmpty())
+                return false;
+
+            const GfVec3d aMin = a.GetMin();
+            const GfVec3d aMax = a.GetMax();
+            const GfVec3d bMin = b.GetMin();
+            const GfVec3d bMax = b.GetMax();
+
+            for (int axis = 0; axis < 3; ++axis) {
+                if (aMax[axis] < bMin[axis] || bMax[axis] < aMin[axis])
+                    return false;
+            }
+
+            return true;
+        };
 
         for (const UsdPrim& prim : stage->TraverseAll()) {
             if (!prim || !prim.IsValid())
@@ -785,8 +793,6 @@ namespace payload {
             if (!stage::isPayload(stage, path))
                 continue;
 
-            // Loaded payloads are not candidates and must not influence
-            // clustering on repeated Load Neighbors operations.
             if (prim.IsLoaded())
                 continue;
 
@@ -794,68 +800,9 @@ namespace payload {
             if (!payloadExtentsHintWorldBounds(prim, xformCache, candidateBounds))
                 continue;
 
-            double minimumDistance = std::numeric_limits<double>::max();
-
-            for (const PayloadNeighborSource& source : sources) {
-                const double normalizedDistance = rangeDistance(source.bounds, candidateBounds) / source.size;
-                minimumDistance = std::min(minimumDistance, normalizedDistance);
-            }
-
-            if (!std::isfinite(minimumDistance))
-                continue;
-
-            PayloadNeighborCandidate candidate;
-            candidate.path = path;
-            candidate.distance = minimumDistance;
-            candidates.append(candidate);
+            if (intersects(searchBounds, candidateBounds))
+                result.append(path);
         }
-
-        if (candidates.isEmpty())
-            return result;
-
-        std::sort(candidates.begin(), candidates.end(),
-                  [](const PayloadNeighborCandidate& a, const PayloadNeighborCandidate& b) {
-                      if (a.distance != b.distance)
-                          return a.distance < b.distance;
-
-                      return a.path.GetString() < b.path.GetString();
-                  });
-
-        // Neighbor distance is normalized by the size of the selected source
-        // payload that is closest to each candidate. This remains scale
-        // independent while preventing a large union box from swallowing
-        // remote areas of the stage.
-        constexpr int MaxNeighborPayloads = 32;
-        constexpr double MaximumDistance = 2.0;
-        constexpr double MinimumGap = 0.35;
-        constexpr double GapRatio = 2.5;
-
-        int neighborCount = 0;
-
-        while (neighborCount < candidates.size() && neighborCount < MaxNeighborPayloads
-               && candidates[neighborCount].distance <= MaximumDistance) {
-            ++neighborCount;
-        }
-
-        if (neighborCount == 0)
-            return result;
-
-        for (int i = 0; i + 1 < neighborCount; ++i) {
-            const double current = candidates[i].distance;
-            const double next = candidates[i + 1].distance;
-            const double gap = next - current;
-            const double baseline = std::max(current, 0.10);
-
-            if (gap >= MinimumGap && next >= baseline * GapRatio) {
-                neighborCount = i + 1;
-                break;
-            }
-        }
-
-        result.reserve(neighborCount);
-
-        for (int i = 0; i < neighborCount; ++i)
-            result.append(candidates[i].path);
 
         return result;
     }

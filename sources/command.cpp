@@ -823,17 +823,13 @@ loadNeighborPayloads(const QList<SdfPath>& paths)
 
             command::runWorker([session, paths, state]() {
                 QList<SdfPath> targets;
-                QString error;
 
                 {
                     READ_LOCKER(locker, session->stageLock(), "stageLock");
                     const UsdStageRefPtr stage = session->stageUnsafe();
 
-                    if (!stage) {
-                        error = "stage missing";
-                    }
-                    else {
-                        targets = payload::neighboringPaths(stage, paths, error);
+                    if (stage) {
+                        targets = payload::neighboringPaths(stage, paths);
 
                         const QList<SdfPath> sourcePaths = stage::topMostPayloadPaths(stage, paths);
                         for (const SdfPath& sourcePath : sourcePaths) {
@@ -854,24 +850,22 @@ loadNeighborPayloads(const QList<SdfPath>& paths)
                 }
 
                 if (targets.isEmpty()) {
-                    command::queueToSession(session, [session, error]() {
+                    command::queueToSession(session, [session]() {
                         using Status = Session::Notify::Status;
+
                         session->setPrimsUpdate(Session::PrimsUpdate::Immediate);
-                        session->updateProgressNotify(
-                            Session::Notify(error.isEmpty() ? "No unloaded neighbor payloads found"
-                                                            : QString("Load neighbors skipped: %1").arg(error),
-                                            {}, error.isEmpty() ? Status::Success : Status::Warning),
-                            1);
+                        session->updateProgressNotify(Session::Notify("No unloaded neighbor payloads found", {},
+                                                                      Status::Success),
+                                                      1);
                         session->endProgressBlock();
                     });
                     return;
                 }
 
                 command::queueToSession(session, [session, count = targets.size()]() {
-                    session->updateProgressNotify(
-                        Session::Notify(QString("Loading %1 neighbor payloads").arg(count), {},
-                                        Session::Notify::Status::Success),
-                        0);
+                    session->updateProgressNotify(Session::Notify(QString("Loading %1 neighbor payloads").arg(count),
+                                                                  {}, Session::Notify::Status::Success),
+                                                  0);
                 });
 
                 QList<command::Result> pending;
@@ -881,6 +875,7 @@ loadNeighborPayloads(const QList<SdfPath>& paths)
                 payloadStates.reserve(targets.size());
 
                 int completed = 0;
+
                 for (const SdfPath& path : targets) {
                     if (!session || session->isProgressBlockCancelled())
                         break;
@@ -910,9 +905,9 @@ loadNeighborPayloads(const QList<SdfPath>& paths)
                         loadError = "exception";
                     }
 
-                    result.message = result.success
-                                         ? "Neighbor payload loaded"
-                                         : (loadError.isEmpty() ? "Neighbor payload failed" : loadError);
+                    result.message = result.success ? "Neighbor payload loaded"
+                                                    : (loadError.isEmpty() ? "Neighbor payload failed" : loadError);
+
                     result.status = result.success ? Session::Notify::Status::Success : Session::Notify::Status::Error;
 
                     if (result.success)
@@ -953,6 +948,7 @@ loadNeighborPayloads(const QList<SdfPath>& paths)
                 pending.reserve(16);
 
                 int completed = 0;
+
                 for (const payload::PayloadState& payloadState : state->payloadStates) {
                     if (!session || session->isProgressBlockCancelled())
                         break;
@@ -963,9 +959,11 @@ loadNeighborPayloads(const QList<SdfPath>& paths)
                     result.status = Session::Notify::Status::Error;
 
                     QString error;
+
                     try {
                         WRITE_LOCKER(locker, session->stageLock(), "stageLock");
                         const UsdStageRefPtr stage = session->stageUnsafe();
+
                         result.success = payload::restoreState(stage, payloadState, error);
                     } catch (...) {
                         result.success = false;
@@ -974,6 +972,7 @@ loadNeighborPayloads(const QList<SdfPath>& paths)
 
                     result.message = result.success ? "Neighbor payload restored"
                                                     : (error.isEmpty() ? "Neighbor payload undo failed" : error);
+
                     result.status = result.success ? Session::Notify::Status::Success : Session::Notify::Status::Error;
 
                     pending.append(result);
@@ -1000,7 +999,6 @@ loadNeighborPayloads(const QList<SdfPath>& paths)
             });
         });
 }
-
 Command
 unloadPayloads(const QList<SdfPath>& paths)
 {
@@ -1184,8 +1182,7 @@ selectInvertPayload()
                     }
                     else {
                         previousSelection = session->selectionList()->paths();
-                        const QList<SdfPath> selectedPayloads
-                            = stage::topMostPayloadPaths(stage, previousSelection);
+                        const QList<SdfPath> selectedPayloads = stage::topMostPayloadPaths(stage, previousSelection);
 
                         state->previousSelection = previousSelection;
                         hadSelectedPayloads = !selectedPayloads.isEmpty();
