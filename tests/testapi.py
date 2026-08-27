@@ -666,7 +666,8 @@ def _create_payload_file(path, name):
     root = _define_xform(stage, f"/{name}")
     Usd.ModelAPI(root).SetKind(Kind.Tokens.component)
 
-    _define_xform(stage, f"/{name}/Geom")
+    geom = UsdGeom.Cube.Define(stage, f"/{name}/Geom")
+    geom.CreateSizeAttr(2.0)
 
     stage.SetDefaultPrim(root)
     stage.GetRootLayer().Save()
@@ -739,6 +740,23 @@ def _create_main_file(path, payload_a, payload_b, external):
         Gf.Vec3f(2.0, 2.0, 2.0),
     ])
 
+    payload_selected_near = _define_xform(stage, "/World/PayloadSelectedNear")
+    payload_selected_near.GetPayloads().AddPayload(
+        os.path.basename(payload_b),
+        "/PayloadB",
+    )
+    Usd.ModelAPI(payload_selected_near).SetKind(Kind.Tokens.component)
+    UsdGeom.Xformable(payload_selected_near).AddTranslateOp().Set(
+        Gf.Vec3d(1.0, 0.0, 0.0)
+    )
+    payload_selected_near.CreateAttribute(
+        "extentsHint",
+        Sdf.ValueTypeNames.Float3Array,
+    ).Set([
+        Gf.Vec3f(-0.25, -0.25, -0.25),
+        Gf.Vec3f(0.25, 0.25, 0.25),
+    ])
+
     payload_far = _define_xform(stage, "/World/PayloadFar")
     payload_far.GetPayloads().AddPayload(os.path.basename(payload_b), "/PayloadB")
     Usd.ModelAPI(payload_far).SetKind(Kind.Tokens.component)
@@ -775,6 +793,34 @@ def _create_main_file(path, payload_a, payload_b, external):
         Gf.Vec3f(-2.0, -2.0, -2.0),
         Gf.Vec3f(2.0, 2.0, 2.0),
     ])
+
+    model_selected_near = _define_xform(stage, "/World/PayloadModelSelectedNear")
+    model_selected_near.GetPayloads().AddPayload(
+        os.path.basename(payload_b),
+        "/PayloadB",
+    )
+    Usd.ModelAPI(model_selected_near).SetKind(Kind.Tokens.component)
+    UsdGeom.Xformable(model_selected_near).AddTranslateOp().Set(
+        Gf.Vec3d(51.0, 0.0, 0.0)
+    )
+    UsdGeom.ModelAPI.Apply(model_selected_near).SetExtentsHint([
+        Gf.Vec3f(-0.25, -0.25, -0.25),
+        Gf.Vec3f(0.25, 0.25, 0.25),
+    ])
+
+    nested_outer = _define_xform(stage, "/World/NestedOuter")
+    nested_outer.GetPayloads().AddPayload(
+        os.path.basename(payload_a),
+        "/PayloadA",
+    )
+    Usd.ModelAPI(nested_outer).SetKind(Kind.Tokens.component)
+
+    nested_inner = _define_xform(stage, "/World/NestedOuter/NestedInner")
+    nested_inner.GetPayloads().AddPayload(
+        os.path.basename(payload_b),
+        "/PayloadB",
+    )
+    Usd.ModelAPI(nested_inner).SetKind(Kind.Tokens.component)
 
     stage.GetRootLayer().Save()
 
@@ -822,6 +868,7 @@ def test_command_api():
         "select_paths",
         "select_all",
         "select_invert",
+        "select_payload",
         "select_invert_payload",
         "isolate_paths",
         "show_paths",
@@ -2466,6 +2513,29 @@ def test_payload_load_unload():
 
 
 
+def _prim_world_bounds(path):
+    prim = _prim(path)
+    if not prim or not prim.IsA(UsdGeom.Imageable):
+        return None
+
+    cache = UsdGeom.BBoxCache(
+        Usd.TimeCode.Default(),
+        UsdGeom.Imageable.GetOrderedPurposeTokens(),
+        useExtentsHint=True,
+    )
+    bounds = cache.ComputeWorldBound(prim).ComputeAlignedRange()
+    return None if bounds.IsEmpty() else bounds
+
+
+def _expanded_bounds(bounds, scale=1.5):
+    if bounds is None or bounds.IsEmpty():
+        return None
+
+    center = bounds.GetMidpoint()
+    half_size = bounds.GetSize() * 0.5 * scale
+    return Gf.Range3d(center - half_size, center + half_size)
+
+
 def _payload_world_bounds(path):
     prim = _prim(path)
     if not prim:
@@ -2519,54 +2589,24 @@ def test_load_neighbor_payloads():
 
     source_path = "/World/PayloadA"
     source_child_path = "/World/PayloadA/Geom"
-    near_path = "/World/PayloadB"
+    selected_near_path = "/World/PayloadSelectedNear"
+    old_root_near_path = "/World/PayloadB"
     far_path = "/World/PayloadFar"
     wide_path = "/World/PayloadWide"
 
     source_prim = _prim(source_path)
-    near_prim = _prim(near_path)
+    old_root_near_prim = _prim(old_root_near_path)
 
     _assert(
         bool(source_prim and UsdGeom.ModelAPI(source_prim)),
-        "neighbor source has applied UsdGeomModelAPI",
+        "neighbor source payload has applied UsdGeomModelAPI",
     )
     _assert(
-        bool(near_prim and not UsdGeom.ModelAPI(near_prim)),
+        bool(old_root_near_prim and not UsdGeom.ModelAPI(old_root_near_prim)),
         "neighbor candidate exercises raw extentsHint fallback",
     )
 
-    source_bounds = _payload_world_bounds(source_path)
-    near_bounds = _payload_world_bounds(near_path)
-    far_bounds = _payload_world_bounds(far_path)
-    wide_bounds = _payload_world_bounds(wide_path)
-
-    _assert(source_bounds is not None, "source payload world bounds are available")
-    _assert(near_bounds is not None, "near payload world bounds are available")
-    _assert(far_bounds is not None, "far payload world bounds are available")
-    _assert(wide_bounds is not None, "wide payload world bounds are available")
-
-    if not all(bounds is not None for bounds in (source_bounds, near_bounds, far_bounds, wide_bounds)):
-        return
-
-    source_center = source_bounds.GetMidpoint()
-    search_half_size = source_bounds.GetSize() * 0.5 * 1.5
-    search_bounds = Gf.Range3d(
-        source_center - search_half_size,
-        source_center + search_half_size,
-    )
-
-    _assert(
-        _point_inside(search_bounds, near_bounds.GetMidpoint()),
-        "near payload center is inside 1.5x source bounds",
-    )
-    _assert(
-        not _point_inside(search_bounds, far_bounds.GetMidpoint()),
-        "far payload center is outside 1.5x source bounds",
-    )
-    _assert(
-        not _point_inside(search_bounds, wide_bounds.GetMidpoint()),
-        "wide payload center is outside 1.5x source bounds",
-    )
+    payload_bounds = _payload_world_bounds(source_path)
 
     stageviz.command.load_payloads([source_path])
 
@@ -2579,7 +2619,60 @@ def test_load_neighbor_payloads():
             ),
             timeout=5.0,
         ),
-        "source payload prepared for neighbor search",
+        "source payload prepared for selected-prim neighbor search",
+    )
+
+    selected_bounds = _prim_world_bounds(source_child_path)
+    selected_near_bounds = _payload_world_bounds(selected_near_path)
+    old_root_near_bounds = _payload_world_bounds(old_root_near_path)
+    far_bounds = _payload_world_bounds(far_path)
+    wide_bounds = _payload_world_bounds(wide_path)
+
+    for bounds, label in (
+        (selected_bounds, "selected child world bounds are available"),
+        (payload_bounds, "owning payload extentsHint bounds are available"),
+        (selected_near_bounds, "selected-near payload bounds are available"),
+        (old_root_near_bounds, "old root-near payload bounds are available"),
+        (far_bounds, "far payload bounds are available"),
+        (wide_bounds, "wide payload bounds are available"),
+    ):
+        _assert(bounds is not None, label)
+
+    if any(
+        bounds is None
+        for bounds in (
+            selected_bounds,
+            payload_bounds,
+            selected_near_bounds,
+            old_root_near_bounds,
+            far_bounds,
+            wide_bounds,
+        )
+    ):
+        return
+
+    selected_search = _expanded_bounds(selected_bounds)
+    old_payload_search = _expanded_bounds(payload_bounds)
+
+    _assert(
+        _point_inside(selected_search, selected_near_bounds.GetMidpoint()),
+        "selected-near payload center is inside 1.5x selected child bounds",
+    )
+    _assert(
+        not _point_inside(selected_search, old_root_near_bounds.GetMidpoint()),
+        "old root-near payload is outside selected child search bounds",
+    )
+    _assert(
+        _point_inside(old_payload_search, old_root_near_bounds.GetMidpoint()),
+        "old root-near payload would match the former payload-root bounds",
+    )
+    _assert(
+        not _point_inside(selected_search, far_bounds.GetMidpoint()),
+        "far payload center is outside selected child search bounds",
+    )
+    _assert(
+        not _point_inside(selected_search, wide_bounds.GetMidpoint()),
+        "wide payload center is outside selected child search bounds",
     )
 
     stageviz.command.select_paths([source_child_path])
@@ -2592,28 +2685,44 @@ def test_load_neighbor_payloads():
 
     _assert(
         _wait_until(
-            lambda: bool(_prim(near_path) and _prim(near_path).IsLoaded()),
+            lambda: bool(
+                _prim(selected_near_path)
+                and _prim(selected_near_path).IsLoaded()
+            ),
             timeout=5.0,
         ),
-        "ModelAPI source loads nearby raw-extents payload",
+        "neighbor search loads top-most payload inside selected child bounds",
     )
-
+    _assert(
+        bool(
+            _prim(old_root_near_path)
+            and not _prim(old_root_near_path).IsLoaded()
+        ),
+        "neighbor search does not use owning payload bounds as source bounds",
+    )
     _assert(
         bool(_prim(far_path) and not _prim(far_path).IsLoaded()),
-        "neighbor search rejects payload center outside 1.5x source bounds",
+        "neighbor search rejects far top-most payload",
     )
     _assert(
         bool(_prim(wide_path) and not _prim(wide_path).IsLoaded()),
-        "neighbor search rejects huge intersecting bounds when candidate center is outside search box",
+        "neighbor search tests candidate center rather than bbox intersection",
+    )
+    _assert(
+        bool(_prim(source_path) and _prim(source_path).IsLoaded()),
+        "selected prim owning payload stays the source and is not a neighbor candidate",
     )
 
     if _undo():
         _assert(
             _wait_until(
-                lambda: bool(_prim(near_path) and not _prim(near_path).IsLoaded()),
+                lambda: bool(
+                    _prim(selected_near_path)
+                    and not _prim(selected_near_path).IsLoaded()
+                ),
                 timeout=5.0,
             ),
-            "undo neighbor search restores nearby payload load state",
+            "undo neighbor search restores selected-near payload load state",
         )
         _assert_equal(
             _selection(),
@@ -2624,10 +2733,13 @@ def test_load_neighbor_payloads():
     if _redo():
         _assert(
             _wait_until(
-                lambda: bool(_prim(near_path) and _prim(near_path).IsLoaded()),
+                lambda: bool(
+                    _prim(selected_near_path)
+                    and _prim(selected_near_path).IsLoaded()
+                ),
                 timeout=5.0,
             ),
-            "redo neighbor search reloads nearby raw-extents payload",
+            "redo neighbor search reloads selected-near top-most payload",
         )
 
 
@@ -2638,42 +2750,25 @@ def test_load_neighbor_payloads_raw_source():
 
     source_path = "/World/PayloadFallbackSource"
     source_child_path = "/World/PayloadFallbackSource/Geom"
-    near_path = "/World/PayloadModelNeighbor"
+    selected_near_path = "/World/PayloadModelSelectedNear"
+    old_root_near_path = "/World/PayloadModelNeighbor"
 
     source_prim = _prim(source_path)
-    near_prim = _prim(near_path)
+    old_root_near_prim = _prim(old_root_near_path)
 
     _assert(
         bool(source_prim and not UsdGeom.ModelAPI(source_prim)),
-        "neighbor source exercises raw extentsHint fallback",
+        "raw-extents source payload exercises direct extentsHint fallback",
     )
     _assert(
-        bool(near_prim and UsdGeom.ModelAPI(near_prim)),
-        "neighbor candidate has applied UsdGeomModelAPI",
+        bool(old_root_near_prim and UsdGeom.ModelAPI(old_root_near_prim)),
+        "ModelAPI candidate is available",
     )
 
-    source_bounds = _payload_world_bounds(source_path)
-    near_bounds = _payload_world_bounds(near_path)
-
-    _assert(source_bounds is not None, "raw-extents source world bounds are available")
-    _assert(near_bounds is not None, "ModelAPI neighbor world bounds are available")
-
-    if source_bounds is None or near_bounds is None:
-        return
-
-    source_center = source_bounds.GetMidpoint()
-    search_half_size = source_bounds.GetSize() * 0.5 * 1.5
-    search_bounds = Gf.Range3d(
-        source_center - search_half_size,
-        source_center + search_half_size,
-    )
-
-    _assert(
-        _point_inside(search_bounds, near_bounds.GetMidpoint()),
-        "ModelAPI candidate center is inside raw-source 1.5x bounds",
-    )
+    payload_bounds = _payload_world_bounds(source_path)
 
     stageviz.command.load_payloads([source_path])
+
     _assert(
         _wait_until(
             lambda: bool(
@@ -2683,36 +2778,231 @@ def test_load_neighbor_payloads_raw_source():
             ),
             timeout=5.0,
         ),
-        "raw-extents source prepared for neighbor search",
+        "raw-extents source prepared for selected-prim neighbor search",
+    )
+
+    selected_bounds = _prim_world_bounds(source_child_path)
+    selected_near_bounds = _payload_world_bounds(selected_near_path)
+    old_root_near_bounds = _payload_world_bounds(old_root_near_path)
+
+    for bounds, label in (
+        (selected_bounds, "raw-source selected child world bounds are available"),
+        (payload_bounds, "raw-source payload extentsHint bounds are available"),
+        (selected_near_bounds, "selected-near ModelAPI candidate bounds are available"),
+        (old_root_near_bounds, "old root-near ModelAPI candidate bounds are available"),
+    ):
+        _assert(bounds is not None, label)
+
+    if any(
+        bounds is None
+        for bounds in (
+            selected_bounds,
+            payload_bounds,
+            selected_near_bounds,
+            old_root_near_bounds,
+        )
+    ):
+        return
+
+    selected_search = _expanded_bounds(selected_bounds)
+    old_payload_search = _expanded_bounds(payload_bounds)
+
+    _assert(
+        _point_inside(selected_search, selected_near_bounds.GetMidpoint()),
+        "ModelAPI candidate center is inside selected child search bounds",
+    )
+    _assert(
+        not _point_inside(selected_search, old_root_near_bounds.GetMidpoint()),
+        "old ModelAPI near candidate is outside selected child search bounds",
+    )
+    _assert(
+        _point_inside(old_payload_search, old_root_near_bounds.GetMidpoint()),
+        "old ModelAPI near candidate would match payload-root bounds",
+    )
+
+    stageviz.command.select_paths([source_child_path])
+    _assert(
+        _wait_until(lambda: _selection() == [source_child_path]),
+        "raw-source child selected for neighbor search",
     )
 
     stageviz.command.load_neighbor_payloads([source_child_path])
 
     _assert(
         _wait_until(
-            lambda: bool(_prim(near_path) and _prim(near_path).IsLoaded()),
+            lambda: bool(
+                _prim(selected_near_path)
+                and _prim(selected_near_path).IsLoaded()
+            ),
             timeout=5.0,
         ),
-        "raw-extents source loads nearby ModelAPI payload",
+        "raw source loads top-most ModelAPI payload near selected child",
+    )
+    _assert(
+        bool(
+            _prim(old_root_near_path)
+            and not _prim(old_root_near_path).IsLoaded()
+        ),
+        "raw source does not load candidate only near payload-root bounds",
     )
 
     if _undo():
         _assert(
             _wait_until(
-                lambda: bool(_prim(near_path) and not _prim(near_path).IsLoaded()),
+                lambda: bool(
+                    _prim(selected_near_path)
+                    and not _prim(selected_near_path).IsLoaded()
+                ),
                 timeout=5.0,
             ),
-            "undo raw-source neighbor search restores ModelAPI payload load state",
+            "undo raw-source neighbor search restores selected-near payload",
+        )
+        _assert_equal(
+            _selection(),
+            [source_child_path],
+            "undo raw-source neighbor search restores previous selection",
         )
 
     if _redo():
         _assert(
             _wait_until(
-                lambda: bool(_prim(near_path) and _prim(near_path).IsLoaded()),
+                lambda: bool(
+                    _prim(selected_near_path)
+                    and _prim(selected_near_path).IsLoaded()
+                ),
                 timeout=5.0,
             ),
-            "redo raw-source neighbor search reloads ModelAPI payload",
+            "redo raw-source neighbor search reloads selected-near payload",
         )
+
+
+def test_select_payload():
+    if not _has_command("select_payload"):
+        print("[skip] select_payload is not bound")
+        return
+
+    stageviz.command.load_payloads(["/World/PayloadA", "/World/PayloadB"])
+
+    _assert(
+        _wait_until(
+            lambda: bool(
+                _exists("/World/PayloadA/Geom")
+                and _exists("/World/PayloadB/Geom")
+            ),
+            timeout=5.0,
+        ),
+        "payload descendants prepared for select_payload",
+    )
+
+    stageviz.command.select_paths(
+        ["/World/PayloadA/Geom", "/World/PayloadB/Geom"]
+    )
+
+    _assert(
+        _wait_until(
+            lambda: _selection()
+            == ["/World/PayloadA/Geom", "/World/PayloadB/Geom"]
+        ),
+        "payload descendants selected for select_payload",
+    )
+
+    stageviz.command.select_payload()
+
+    _assert(
+        _wait_until(
+            lambda: _selection()
+            == ["/World/PayloadA", "/World/PayloadB"]
+        ),
+        "select_payload selects each nearest owning payload",
+    )
+
+    if _undo():
+        _assert_equal(
+            _selection(),
+            ["/World/PayloadA/Geom", "/World/PayloadB/Geom"],
+            "undo select_payload restores previous descendant selection",
+        )
+
+    stageviz.command.select_paths(
+        ["/World/PayloadA/Geom", "/World/A"]
+    )
+
+    _assert(
+        _wait_until(
+            lambda: _selection()
+            == ["/World/PayloadA/Geom", "/World/A"]
+        ),
+        "mixed payload/non-payload selection prepared",
+    )
+
+    stageviz.command.select_payload()
+
+    _assert(
+        _wait_until(lambda: _selection() == ["/World/PayloadA"]),
+        "select_payload keeps only selections with an owning payload",
+    )
+
+    stageviz.command.load_payloads(
+        ["/World/NestedOuter", "/World/NestedOuter/NestedInner"]
+    )
+
+    _assert(
+        _wait_until(
+            lambda: bool(
+                _prim("/World/NestedOuter")
+                and _prim("/World/NestedOuter").IsLoaded()
+                and _prim("/World/NestedOuter/NestedInner")
+                and _prim("/World/NestedOuter/NestedInner").IsLoaded()
+                and _exists("/World/NestedOuter/NestedInner/Geom")
+            ),
+            timeout=5.0,
+        ),
+        "nested payload hierarchy prepared for select_payload",
+    )
+
+    stageviz.command.select_paths(
+        ["/World/NestedOuter/NestedInner/Geom"]
+    )
+    _assert(
+        _wait_until(
+            lambda: _selection()
+            == ["/World/NestedOuter/NestedInner/Geom"]
+        ),
+        "nested payload descendant selected",
+    )
+
+    stageviz.command.select_payload()
+
+    _assert(
+        _wait_until(
+            lambda: _selection()
+            == ["/World/NestedOuter/NestedInner"]
+        ),
+        "select_payload chooses nearest owning payload, not top-most payload",
+    )
+
+    if _undo():
+        _assert_equal(
+            _selection(),
+            ["/World/NestedOuter/NestedInner/Geom"],
+            "undo nearest select_payload restores nested descendant selection",
+        )
+
+    stageviz.command.select_paths(["/World/A"])
+
+    _assert(
+        _wait_until(lambda: _selection() == ["/World/A"]),
+        "non-payload selection prepared for select_payload",
+    )
+
+    stageviz.command.select_payload()
+
+    _wait(100)
+    _assert_equal(
+        _selection(),
+        ["/World/A"],
+        "select_payload leaves selection unchanged when no owning payload exists",
+    )
 
 
 def test_select_invert_payload():
@@ -2755,6 +3045,45 @@ def test_select_invert_payload():
             ["/World/PayloadA"],
             "undo select_invert_payload restores previous payload selection",
         )
+
+    stageviz.command.load_payloads(
+        ["/World/NestedOuter", "/World/NestedOuter/NestedInner"]
+    )
+
+    _assert(
+        _wait_until(
+            lambda: bool(
+                _prim("/World/NestedOuter")
+                and _prim("/World/NestedOuter").IsLoaded()
+                and _prim("/World/NestedOuter/NestedInner")
+                and _prim("/World/NestedOuter/NestedInner").IsLoaded()
+                and _exists("/World/NestedOuter/NestedInner/Geom")
+            ),
+            timeout=5.0,
+        ),
+        "nested payload hierarchy prepared for payload inversion",
+    )
+
+    stageviz.command.select_paths(
+        ["/World/NestedOuter/NestedInner/Geom"]
+    )
+    _assert(
+        _wait_until(
+            lambda: _selection()
+            == ["/World/NestedOuter/NestedInner/Geom"]
+        ),
+        "nested payload descendant selected for inversion",
+    )
+
+    stageviz.command.select_invert_payload()
+
+    _assert(
+        _wait_until(
+            lambda: "/World/NestedOuter" not in _selection()
+            and "/World/NestedOuter/NestedInner" not in _selection()
+        ),
+        "select_invert_payload treats nested selection as its top-most payload",
+    )
 
 
 def test_root_prim_order_create_move_and_undo():
@@ -4434,6 +4763,7 @@ def run():
         ("payload load/unload", test_payload_load_unload, ()),
         ("load neighbor payloads", test_load_neighbor_payloads, ()),
         ("load neighbor payloads raw source", test_load_neighbor_payloads_raw_source, ()),
+        ("select payload", test_select_payload, ()),
         ("select invert payload", test_select_invert_payload, ()),
         ("root prim order", test_root_prim_order_create_move_and_undo, ()),
         ("root layer policy", test_root_layer_policy_rejects_sublayer_prim, ()),

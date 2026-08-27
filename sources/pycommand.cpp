@@ -307,6 +307,12 @@ PyCommand_selectInvert(PyObject*, PyObject*)
 }
 
 static PyObject*
+PyCommand_selectPayload(PyObject*, PyObject*)
+{
+    return runCommand(selectPayload());
+}
+
+static PyObject*
 PyCommand_selectInvertPayload(PyObject*, PyObject*)
 {
     return runCommand(selectInvertPayload());
@@ -802,6 +808,8 @@ static PyMethodDef PyCommand_methods[] = {
       "Select prims. Optional keyword argument: recursive." },
     { "select_invert", reinterpret_cast<PyCFunction>(PyCommand_selectInvert), METH_NOARGS,
       "Invert the current selection." },
+    { "select_payload", reinterpret_cast<PyCFunction>(PyCommand_selectPayload), METH_NOARGS,
+      "Select the nearest owning payload for the current selection." },
     { "select_invert_payload", reinterpret_cast<PyCFunction>(PyCommand_selectInvertPayload), METH_NOARGS,
       "Invert the current payload selection." },
     { "isolate_paths", reinterpret_cast<PyCFunction>(PyCommand_isolatePaths), METH_VARARGS, "Isolate paths." },

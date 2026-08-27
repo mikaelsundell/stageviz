@@ -815,17 +815,16 @@ namespace stage {
     /**
  * @brief Moves multiple prims to new paths using UsdNamespaceEditor.
  *
- * Validates all source and destination paths against Stageviz's active
- * edit-layer policy, hierarchy rules, destination collisions, and
- * composition boundaries before applying the edits.
+ * Validates the complete move batch before authoring any namespace changes.
+ * Each validated move is then applied with a fresh UsdNamespaceEditor.
+ * This preserves USD's precise old-path to new-path namespace notices,
+ * which StageTree uses to migrate expansion and current-item state, while
+ * avoiding incorrect results from queueing several moves on one editor.
  *
  * Relocates authoring is disabled so namespace edits stay within the
- * structural editing policy enforced by Stageviz. USD 25.11 does not expose
- * GetLayersToEdit(), so edit-layer restrictions are enforced by
- * validatePrim() and validateParent() before edits are queued.
- *
- * Stage load rules affected by the moved hierarchies are remapped to their
- * new paths after the namespace edit succeeds.
+ * structural editing policy enforced by Stageviz. If a later move fails,
+ * previously applied moves are rolled back in reverse order and the
+ * original stage load rules are restored.
  *
  * @param stage USD stage containing the prims.
  * @param moves Source and destination path pairs to move.

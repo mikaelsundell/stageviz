@@ -222,6 +222,18 @@ build_stageviz() {
         echo "Run macdeployqt"
         "$prefix/bin/macdeployqt" "$app_bundle" ${debug}
 
+        echo "Deploy QtTest framework"
+        local qttest_framework="$prefix/lib/QtTest.framework"
+        local qttest_framework_dst="$app_bundle/Contents/Frameworks/QtTest.framework"
+        if [ -d "$qttest_framework" ]; then
+            rm -rf "$qttest_framework_dst"
+            cp -R "$qttest_framework" "$app_bundle/Contents/Frameworks/"
+        else
+            echo "QtTest.framework not found:"
+            echo "  $qttest_framework"
+            exit 1
+        fi
+
         echo "Copy xcode Python framework"
         copy_xcode_framework \
             "/Applications/Xcode.app/Contents/Developer/Library/Frameworks" \
