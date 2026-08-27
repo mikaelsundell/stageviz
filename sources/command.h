@@ -187,6 +187,19 @@ unloadPayloads(const QList<SdfPath>& paths);
  *
  * Undo restores the previous selection.
  */
+/**
+ * @brief Selects the nearest payload ancestor for the current selection.
+ *
+ * Each selected prim is walked upward until the first payload prim is found.
+ * If a selected prim is itself a payload, that prim is selected directly.
+ * Results are deduplicated, so multiple selected prims inside the same payload
+ * resolve to a single payload path.
+ *
+ * Undo restores the previous selection.
+ */
+Command
+selectPayload();
+
 Command
 selectInvertPayload();
 

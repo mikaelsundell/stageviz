@@ -867,6 +867,7 @@
      <addaction name="editPayloadLoadNeighbors" />
      <addaction name="editPayloadUnload" />
      <addaction name="separator" />
+     <addaction name="editPayloadSelect" />
      <addaction name="editPayloadInvertSelected" />
     </widget>
     <widget class="QMenu" name="menu_2">
@@ -1560,9 +1561,14 @@
     <string>Alt+N</string>
    </property>
   </action>
+  <action name="editPayloadSelect">
+   <property name="text">
+    <string>Select payload</string>
+   </property>
+  </action>
   <action name="editPayloadInvertSelected">
    <property name="text">
-    <string>Invert selected</string>
+    <string>Select invert</string>
    </property>
    <property name="shortcut">
     <string>Alt+I</string>

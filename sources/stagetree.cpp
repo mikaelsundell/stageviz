@@ -585,6 +585,14 @@ StageTreePrivate::itemSelectionChanged()
         if (!pathString.isEmpty())
             paths.append(SdfPath(QStringToString(pathString)));
     }
+
+    SelectionList* list = selectionList();
+    if (!list)
+        return;
+
+    if (paths == list->paths())
+        return;
+
     d.context->run(new Command(selectPaths(paths)));
 }
 
@@ -1000,9 +1008,7 @@ StageTreePrivate::updatePrims(const NoticeBatch& batch)
         {
             READ_LOCKER(locker, d.context->stageLock(), "stageLock");
             if (d.stage) {
-                prim = path == SdfPath::AbsoluteRootPath()
-                           ? d.stage->GetPseudoRoot()
-                           : d.stage->GetPrimAtPath(path);
+                prim = path == SdfPath::AbsoluteRootPath() ? d.stage->GetPseudoRoot() : d.stage->GetPrimAtPath(path);
             }
         }
 
@@ -1067,9 +1073,8 @@ StageTreePrivate::updatePrims(const NoticeBatch& batch)
             if (!d.stage)
                 continue;
 
-            parentPrim = parentPath == SdfPath::AbsoluteRootPath()
-                             ? d.stage->GetPseudoRoot()
-                             : d.stage->GetPrimAtPath(parentPath);
+            parentPrim = parentPath == SdfPath::AbsoluteRootPath() ? d.stage->GetPseudoRoot()
+                                                                   : d.stage->GetPrimAtPath(parentPath);
         }
 
         if (parentPrim)
@@ -1088,8 +1093,7 @@ StageTreePrivate::updatePrims(const NoticeBatch& batch)
         if (handledPaths.contains(entry.path))
             continue;
 
-        if (isRenameOrReparentSource(entry.primResyncType)
-            && !entry.associatedPath.IsEmpty()
+        if (isRenameOrReparentSource(entry.primResyncType) && !entry.associatedPath.IsEmpty()
             && handledPaths.contains(entry.associatedPath)) {
             continue;
         }
@@ -1131,15 +1135,11 @@ StageTreePrivate::updatePrims(const NoticeBatch& batch)
         case UsdNotice::ObjectsChanged::PrimResyncType::ReparentSource:
         case UsdNotice::ObjectsChanged::PrimResyncType::ReparentDestination:
         case UsdNotice::ObjectsChanged::PrimResyncType::RenameAndReparentSource:
-        case UsdNotice::ObjectsChanged::PrimResyncType::RenameAndReparentDestination:
-            rebuildPath(entry.path);
-            break;
+        case UsdNotice::ObjectsChanged::PrimResyncType::RenameAndReparentDestination: rebuildPath(entry.path); break;
 
         case UsdNotice::ObjectsChanged::PrimResyncType::Other:
         case UsdNotice::ObjectsChanged::PrimResyncType::Invalid:
-        default:
-            rebuildPath(entry.path);
-            break;
+        default: rebuildPath(entry.path); break;
         }
     }
 
@@ -1167,7 +1167,6 @@ StageTreePrivate::updatePrims(const NoticeBatch& batch)
 
     d.tree->setUpdatesEnabled(true);
     d.tree->update();
-
 }
 
 void
@@ -1507,7 +1506,6 @@ StageTreePrivate::remapSubtreePaths(const SdfPath& fromPath, const SdfPath& toPa
         }
 
         newParentItem->addChild(rootItem);
-
     }
 
     std::function<void(PrimItem*)> remap = [&](PrimItem* item) {
@@ -1516,8 +1514,7 @@ StageTreePrivate::remapSubtreePaths(const SdfPath& fromPath, const SdfPath& toPa
 
         const SdfPath oldItemPath = item->path();
 
-        if (!oldItemPath.IsEmpty()
-            && (oldItemPath == fromPath || oldItemPath.HasPrefix(fromPath))) {
+        if (!oldItemPath.IsEmpty() && (oldItemPath == fromPath || oldItemPath.HasPrefix(fromPath))) {
             const SdfPath newItemPath = oldItemPath.ReplacePrefix(fromPath, toPath);
 
             item->setPath(newItemPath);
@@ -1751,10 +1748,35 @@ StageTree::contextMenuEvent(QContextMenuEvent* event)
 void
 StageTree::keyPressEvent(QKeyEvent* event)
 {
+    if (event->key() == Qt::Key_Up && event->modifiers() == Qt::AltModifier) {
+        QTreeWidgetItem* item = currentItem();
+
+        if (!item) {
+            const QList<QTreeWidgetItem*> selected = selectedItems();
+            if (!selected.isEmpty())
+                item = selected.first();
+        }
+
+        if (item) {
+            QTreeWidgetItem* parent = item->parent();
+
+            if (parent) {
+                clearSelection();
+                parent->setSelected(true);
+                setCurrentItem(parent, PrimItem::Name);
+                scrollToItem(parent, QAbstractItemView::PositionAtCenter);
+
+                event->accept();
+                return;
+            }
+        }
+    }
+
     if (event->key() == Qt::Key_A && (event->modifiers() & Qt::ControlModifier)) {
         for (int i = 0; i < topLevelItemCount(); ++i)
             topLevelItem(i)->setSelected(true);
     }
+
     QTreeWidget::keyPressEvent(event);
 }
 

@@ -1156,6 +1156,48 @@ unloadPayloads(const QList<SdfPath>& paths)
 }
 
 Command
+selectPayload()
+{
+    struct SelectPayloadState {
+        QList<SdfPath> previousSelection;
+    };
+
+    auto state = std::make_shared<SelectPayloadState>();
+
+    return Command(
+        [state](Session* session) {
+            if (!session)
+                return;
+
+            const QList<SdfPath> selection = session->selectionList()->paths();
+            if (selection.isEmpty())
+                return;
+
+            QList<SdfPath> payloadPaths;
+            {
+                READ_LOCKER(locker, session->stageLock(), "stageLock");
+                const UsdStageRefPtr stage = session->stageUnsafe();
+                if (!stage)
+                    return;
+
+                payloadPaths = stage::ancestorPayloadPaths(stage, selection);
+            }
+
+            if (payloadPaths.isEmpty())
+                return;
+
+            state->previousSelection = selection;
+            session->selectionList()->updatePaths(payloadPaths);
+        },
+        [state](Session* session) {
+            if (!session)
+                return;
+
+            session->selectionList()->updatePaths(state->previousSelection);
+        });
+}
+
+Command
 selectInvertPayload()
 {
     struct SelectInvertPayloadState {
@@ -2984,8 +3026,7 @@ renamePath(const SdfPath& path, const QString& newNameInput)
                                 const UsdStageLoadRules rules = stage->GetLoadRules();
                                 UsdEditContext context(stage, UsdEditTarget(editLayer));
                                 if (stage::renamePrim(stage, path, newPath, error)) {
-                                    const UsdStageLoadRules remappedRules =
-                                        stage::remapLoadRules(rules, path, newPath);
+                                    const UsdStageLoadRules remappedRules = stage::remapLoadRules(rules, path, newPath);
 
                                     if (remappedRules.GetRules() != rules.GetRules())
                                         stage->SetLoadRules(remappedRules);
@@ -3059,8 +3100,8 @@ renamePath(const SdfPath& path, const QString& newNameInput)
                             const UsdStageLoadRules rules = stage->GetLoadRules();
                             UsdEditContext context(stage, UsdEditTarget(editLayer));
                             if (stage::renamePrim(stage, state->newPath, state->oldPath, error)) {
-                                const UsdStageLoadRules remappedRules =
-                                    stage::remapLoadRules(rules, state->newPath, state->oldPath);
+                                const UsdStageLoadRules remappedRules = stage::remapLoadRules(rules, state->newPath,
+                                                                                              state->oldPath);
 
                                 if (remappedRules.GetRules() != rules.GetRules())
                                     stage->SetLoadRules(remappedRules);
@@ -3237,7 +3278,7 @@ newXformPath(const SdfPath& parentPath, const QString& nameInput)
                                         for (const MoveItem& item : state->movedItems)
                                             moves.append(qMakePair(item.oldPath, item.newPath));
 
-                                                QString moveError;
+                                        QString moveError;
                                         if (!stage::movePrims(stage, moves, moveError)) {
                                             error = moveError.isEmpty() ? "failed to move selected paths" : moveError;
                                             stage::restoreChildOrders(stage, state->oldMoveParentOrders);
@@ -3564,7 +3605,7 @@ movePath(const QList<SdfPath>& paths, const SdfPath& newParentPath, int insertIn
                                             moves.append(qMakePair(item.oldPath, item.newPath));
                                     }
 
-                                        QString moveError;
+                                    QString moveError;
                                     if (!stage::movePrims(stage, moves, moveError)) {
                                         error = moveError.isEmpty() ? "failed to move paths" : moveError;
                                         stage::restoreChildOrders(stage, state->oldParentOrders);

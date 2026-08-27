@@ -116,6 +116,7 @@ public Q_SLOTS:
     void payloadLoad();
     void payloadUnload();
     void payloadLoadNeighbors();
+    void payloadSelect();
     void payloadSelectInvert();
     void newXform();
     void deleteSelected();
@@ -288,6 +289,7 @@ ViewerPrivate::init()
     connect(d.ui->editPayloadLoad, &QAction::triggered, this, &ViewerPrivate::payloadLoad);
     connect(d.ui->editPayloadUnload, &QAction::triggered, this, &ViewerPrivate::payloadUnload);
     connect(d.ui->editPayloadLoadNeighbors, &QAction::triggered, this, &ViewerPrivate::payloadLoadNeighbors);
+    connect(d.ui->editPayloadSelect, &QAction::triggered, this, &ViewerPrivate::payloadSelect);
     connect(d.ui->editPayloadInvertSelected, &QAction::triggered, this, &ViewerPrivate::payloadSelectInvert);
     connect(d.ui->editNewXform, &QAction::triggered, this, &ViewerPrivate::newXform);
     connect(d.ui->editDeleteSelected, &QAction::triggered, this, &ViewerPrivate::deleteSelected);
@@ -949,6 +951,7 @@ ViewerPrivate::enable(bool enable)
                                 d.ui->editPayloadLoad,
                                 d.ui->editPayloadUnload,
                                 d.ui->editPayloadLoadNeighbors,
+                                d.ui->editPayloadSelect,
                                 d.ui->editPayloadInvertSelected,
                                 d.ui->editNewXform,
                                 d.ui->editDeleteSelected,
@@ -1596,6 +1599,13 @@ ViewerPrivate::payloadLoadNeighbors()
 }
 
 void
+ViewerPrivate::payloadSelect()
+{
+    if (!session()->selectionList()->paths().isEmpty())
+        session()->commandStack()->run(new Command(selectPayload()));
+}
+
+void
 ViewerPrivate::payloadSelectInvert()
 {
     if (session()->selectionList()->paths().size())
@@ -2090,6 +2100,7 @@ ViewerPrivate::updateSelection(const QList<SdfPath>& paths)
     d.ui->editPayloadLoad->setEnabled(false);
     d.ui->editPayloadUnload->setEnabled(false);
     d.ui->editPayloadLoadNeighbors->setEnabled(false);
+    d.ui->editPayloadSelect->setEnabled(false);
     d.ui->editPayloadInvertSelected->setEnabled(false);
 
     if (!hasSelection)
@@ -2139,6 +2150,7 @@ ViewerPrivate::updateSelection(const QList<SdfPath>& paths)
     // extentsHint and reports a warning when it cannot perform the search.
     d.ui->editPayloadLoadNeighbors->setEnabled(hasPayloadSelection);
 
+    d.ui->editPayloadSelect->setEnabled(hasPayloadSelection);
     d.ui->editPayloadInvertSelected->setEnabled(hasPayloadSelection);
 
     if (!hasPayloadSelection || variantTargets.isEmpty())

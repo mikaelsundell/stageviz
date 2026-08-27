@@ -366,54 +366,54 @@ namespace path {
 }  // namespace path
 
 namespace payload {
-namespace {
-    struct NeighborCandidate {
-        SdfPath path;
-        double distance = 0.0;
-    };
+    namespace {
+        struct NeighborCandidate {
+            SdfPath path;
+            double distance = 0.0;
+        };
 
-    bool extentsHintWorldBounds(const UsdPrim& prim, UsdGeomXformCache& xformCache, GfRange3d& bounds)
-    {
-        bounds = GfRange3d();
-        if (!prim || !prim.IsValid())
-            return false;
-
-        VtVec3fArray extents;
-        const UsdGeomModelAPI model(prim);
-
-        if (model) {
-            if (!model.GetExtentsHint(&extents))
+        bool extentsHintWorldBounds(const UsdPrim& prim, UsdGeomXformCache& xformCache, GfRange3d& bounds)
+        {
+            bounds = GfRange3d();
+            if (!prim || !prim.IsValid())
                 return false;
-        }
-        else {
-            const UsdAttribute attribute = prim.GetAttribute(UsdGeomTokens->extentsHint);
-            if (!attribute || !attribute.Get(&extents))
+
+            VtVec3fArray extents;
+            const UsdGeomModelAPI model(prim);
+
+            if (model) {
+                if (!model.GetExtentsHint(&extents))
+                    return false;
+            }
+            else {
+                const UsdAttribute attribute = prim.GetAttribute(UsdGeomTokens->extentsHint);
+                if (!attribute || !attribute.Get(&extents))
+                    return false;
+            }
+
+            if (extents.size() < 2 || (extents.size() % 2) != 0)
                 return false;
-        }
 
-        if (extents.size() < 2 || (extents.size() % 2) != 0)
-            return false;
+            const GfMatrix4d world = xformCache.GetLocalToWorldTransform(prim);
 
-        const GfMatrix4d world = xformCache.GetLocalToWorldTransform(prim);
+            for (size_t i = 0; i + 1 < extents.size(); i += 2) {
+                const GfVec3d minimum(extents[i]);
+                const GfVec3d maximum(extents[i + 1]);
 
-        for (size_t i = 0; i + 1 < extents.size(); i += 2) {
-            const GfVec3d minimum(extents[i]);
-            const GfVec3d maximum(extents[i + 1]);
-
-            for (int x = 0; x < 2; ++x) {
-                for (int y = 0; y < 2; ++y) {
-                    for (int z = 0; z < 2; ++z) {
-                        const GfVec3d corner(x ? maximum[0] : minimum[0], y ? maximum[1] : minimum[1],
-                                             z ? maximum[2] : minimum[2]);
-                        bounds.UnionWith(world.Transform(corner));
+                for (int x = 0; x < 2; ++x) {
+                    for (int y = 0; y < 2; ++y) {
+                        for (int z = 0; z < 2; ++z) {
+                            const GfVec3d corner(x ? maximum[0] : minimum[0], y ? maximum[1] : minimum[1],
+                                                 z ? maximum[2] : minimum[2]);
+                            bounds.UnionWith(world.Transform(corner));
+                        }
                     }
                 }
             }
-        }
 
-        return !bounds.IsEmpty();
-    }
-}  // namespace
+            return !bounds.IsEmpty();
+        }
+    }  // namespace
 
     bool applyLoad(UsdStageRefPtr stage, const SdfPath& path, bool useVariant, const std::string& variantSetName,
                    const std::string& variantSelection, PayloadState& payloadState, QString& error)
@@ -708,13 +708,12 @@ namespace {
             candidates.append(candidate);
         }
 
-        std::sort(candidates.begin(), candidates.end(),
-                  [](const NeighborCandidate& a, const NeighborCandidate& b) {
-                      if (a.distance != b.distance)
-                          return a.distance < b.distance;
+        std::sort(candidates.begin(), candidates.end(), [](const NeighborCandidate& a, const NeighborCandidate& b) {
+            if (a.distance != b.distance)
+                return a.distance < b.distance;
 
-                      return a.path.GetString() < b.path.GetString();
-                  });
+            return a.path.GetString() < b.path.GetString();
+        });
 
         result.reserve(candidates.size());
 
@@ -857,114 +856,114 @@ namespace snapshot {
 }  // namespace snapshot
 
 namespace stage {
-namespace {
-    bool matricesClose(const GfMatrix4d& a, const GfMatrix4d& b, double tolerance = 1.0e-8)
-    {
-        for (int row = 0; row < 4; ++row) {
-            for (int column = 0; column < 4; ++column) {
-                if (std::abs(a[row][column] - b[row][column]) > tolerance)
-                    return false;
+    namespace {
+        bool matricesClose(const GfMatrix4d& a, const GfMatrix4d& b, double tolerance = 1.0e-8)
+        {
+            for (int row = 0; row < 4; ++row) {
+                for (int column = 0; column < 4; ++column) {
+                    if (std::abs(a[row][column] - b[row][column]) > tolerance)
+                        return false;
+                }
             }
-        }
-        return true;
-    }
-
-    bool readLocalPivot(const UsdGeomXformable& xformable, GfVec3d& pivot)
-    {
-        if (!xformable)
-            return false;
-
-        const TfToken pivotToken("xformOp:translate:pivot");
-        const TfToken inversePivotToken("!invert!xformOp:translate:pivot");
-
-        VtTokenArray order;
-        if (!xformable.GetXformOpOrderAttr().Get(&order, UsdTimeCode::Default()))
-            return false;
-
-        int pivotIndex = -1;
-        int inversePivotIndex = -1;
-
-        for (int i = 0; i < static_cast<int>(order.size()); ++i) {
-            if (order[i] == pivotToken)
-                pivotIndex = i;
-            else if (order[i] == inversePivotToken)
-                inversePivotIndex = i;
-        }
-
-        if (pivotIndex < 0 || inversePivotIndex <= pivotIndex)
-            return false;
-
-        const UsdAttribute pivotAttr = xformable.GetPrim().GetAttribute(pivotToken);
-        if (!pivotAttr)
-            return false;
-
-        VtValue value;
-        if (!pivotAttr.Get(&value, UsdTimeCode::Default()))
-            return false;
-
-        if (value.IsHolding<GfVec3d>()) {
-            pivot = value.UncheckedGet<GfVec3d>();
             return true;
         }
 
-        if (value.IsHolding<GfVec3f>()) {
-            const GfVec3f v = value.UncheckedGet<GfVec3f>();
-            pivot = GfVec3d(v[0], v[1], v[2]);
-            return true;
-        }
+        bool readLocalPivot(const UsdGeomXformable& xformable, GfVec3d& pivot)
+        {
+            if (!xformable)
+                return false;
 
-        return false;
-    }
+            const TfToken pivotToken("xformOp:translate:pivot");
+            const TfToken inversePivotToken("!invert!xformOp:translate:pivot");
 
-    bool setLocalMatrixWithPivot(const UsdGeomXformable& xformable, const GfMatrix4d& localMatrix,
-                                 const GfVec3d& pivotValue, QString& error)
-    {
-        if (!xformable) {
-            error = "prim is not xformable";
-            return false;
-        }
+            VtTokenArray order;
+            if (!xformable.GetXformOpOrderAttr().Get(&order, UsdTimeCode::Default()))
+                return false;
 
-        xformable.ClearXformOpOrder();
+            int pivotIndex = -1;
+            int inversePivotIndex = -1;
 
-        const UsdGeomXformOp pivotOp = xformable.AddTranslateOp(UsdGeomXformOp::PrecisionDouble, TfToken("pivot"),
-                                                                false);
-        const UsdGeomXformOp matrixOp = xformable.AddTransformOp(UsdGeomXformOp::PrecisionDouble);
-        const UsdGeomXformOp inversePivotOp = xformable.AddTranslateOp(UsdGeomXformOp::PrecisionDouble,
-                                                                       TfToken("pivot"), true);
+            for (int i = 0; i < static_cast<int>(order.size()); ++i) {
+                if (order[i] == pivotToken)
+                    pivotIndex = i;
+                else if (order[i] == inversePivotToken)
+                    inversePivotIndex = i;
+            }
 
-        if (!pivotOp || !matrixOp || !inversePivotOp || !pivotOp.Set(pivotValue, UsdTimeCode::Default())) {
-            error = "failed to preserve pivot transform ops";
-            return false;
-        }
+            if (pivotIndex < 0 || inversePivotIndex <= pivotIndex)
+                return false;
 
-        GfMatrix4d pivotMatrix(1.0);
-        pivotMatrix.SetTranslate(pivotValue);
+            const UsdAttribute pivotAttr = xformable.GetPrim().GetAttribute(pivotToken);
+            if (!pivotAttr)
+                return false;
 
-        GfMatrix4d inversePivotMatrix(1.0);
-        inversePivotMatrix.SetTranslate(-pivotValue);
+            VtValue value;
+            if (!pivotAttr.Get(&value, UsdTimeCode::Default()))
+                return false;
 
-        const GfMatrix4d candidates[] = {
-            pivotMatrix * localMatrix * inversePivotMatrix,
-            inversePivotMatrix * localMatrix * pivotMatrix,
-        };
-
-        for (const GfMatrix4d& candidate : candidates) {
-            if (!matrixOp.Set(candidate, UsdTimeCode::Default()))
-                continue;
-
-            GfMatrix4d evaluated(1.0);
-            bool resetsXformStack = false;
-            if (!xformable.GetLocalTransformation(&evaluated, &resetsXformStack, UsdTimeCode::Default()))
-                continue;
-
-            if (matricesClose(evaluated, localMatrix))
+            if (value.IsHolding<GfVec3d>()) {
+                pivot = value.UncheckedGet<GfVec3d>();
                 return true;
+            }
+
+            if (value.IsHolding<GfVec3f>()) {
+                const GfVec3f v = value.UncheckedGet<GfVec3f>();
+                pivot = GfVec3d(v[0], v[1], v[2]);
+                return true;
+            }
+
+            return false;
         }
 
-        error = "failed to preserve local transform while retaining pivot";
-        return false;
-    }
-}  // namespace
+        bool setLocalMatrixWithPivot(const UsdGeomXformable& xformable, const GfMatrix4d& localMatrix,
+                                     const GfVec3d& pivotValue, QString& error)
+        {
+            if (!xformable) {
+                error = "prim is not xformable";
+                return false;
+            }
+
+            xformable.ClearXformOpOrder();
+
+            const UsdGeomXformOp pivotOp = xformable.AddTranslateOp(UsdGeomXformOp::PrecisionDouble, TfToken("pivot"),
+                                                                    false);
+            const UsdGeomXformOp matrixOp = xformable.AddTransformOp(UsdGeomXformOp::PrecisionDouble);
+            const UsdGeomXformOp inversePivotOp = xformable.AddTranslateOp(UsdGeomXformOp::PrecisionDouble,
+                                                                           TfToken("pivot"), true);
+
+            if (!pivotOp || !matrixOp || !inversePivotOp || !pivotOp.Set(pivotValue, UsdTimeCode::Default())) {
+                error = "failed to preserve pivot transform ops";
+                return false;
+            }
+
+            GfMatrix4d pivotMatrix(1.0);
+            pivotMatrix.SetTranslate(pivotValue);
+
+            GfMatrix4d inversePivotMatrix(1.0);
+            inversePivotMatrix.SetTranslate(-pivotValue);
+
+            const GfMatrix4d candidates[] = {
+                pivotMatrix * localMatrix * inversePivotMatrix,
+                inversePivotMatrix * localMatrix * pivotMatrix,
+            };
+
+            for (const GfMatrix4d& candidate : candidates) {
+                if (!matrixOp.Set(candidate, UsdTimeCode::Default()))
+                    continue;
+
+                GfMatrix4d evaluated(1.0);
+                bool resetsXformStack = false;
+                if (!xformable.GetLocalTransformation(&evaluated, &resetsXformStack, UsdTimeCode::Default()))
+                    continue;
+
+                if (matricesClose(evaluated, localMatrix))
+                    return true;
+            }
+
+            error = "failed to preserve local transform while retaining pivot";
+            return false;
+        }
+    }  // namespace
 
     std::string compositionAssetPath(const SdfLayerHandle& destinationLayer, const QString& filename)
     {
