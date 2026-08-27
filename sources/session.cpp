@@ -107,10 +107,13 @@ public:
         {
             if (d.suppress.load())
                 return;
+
             UsdStageRefPtr senderStage = sender;
             if (!d.stage || !senderStage || d.stage != senderStage)
                 return;
+
             NoticeBatch batch;
+
             for (const SdfPath& path : notice.GetChangedInfoOnlyPaths()) {
                 NoticeEntry entry;
                 entry.path = path;
@@ -118,32 +121,41 @@ public:
                 entry.changedFields = notice.GetChangedFields(path);
                 batch.entries.append(entry);
             }
+
             for (const SdfPath& path : notice.GetResolvedAssetPathsResyncedPaths()) {
                 NoticeEntry entry;
                 entry.path = path;
                 entry.resolvedAssetPathsResynced = true;
                 batch.entries.append(entry);
             }
+
             for (const SdfPath& path : notice.GetResyncedPaths()) {
                 NoticeEntry entry;
                 entry.path = path;
+
                 if (path.IsPrimPath())
                     entry.primResyncType = notice.GetPrimResyncType(path, &entry.associatedPath);
+
                 batch.entries.append(entry);
             }
+
             if (batch.entries.isEmpty())
                 return;
+
             bool queueDispatch = false;
             {
                 QMutexLocker locker(&d.pendingMutex);
                 d.pending.entries.append(batch.entries);
+
                 if (!d.dispatchQueued) {
                     d.dispatchQueued = true;
                     queueDispatch = true;
                 }
             }
+
             if (!queueDispatch || !d.parent->d.session)
                 return;
+
             QMetaObject::invokeMethod(
                 d.parent->d.session, [this]() { dispatchPending(); }, Qt::QueuedConnection);
         }

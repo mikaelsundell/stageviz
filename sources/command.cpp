@@ -2983,9 +2983,12 @@ renamePath(const SdfPath& path, const QString& newNameInput)
 
                                 const UsdStageLoadRules rules = stage->GetLoadRules();
                                 UsdEditContext context(stage, UsdEditTarget(editLayer));
-
                                 if (stage::renamePrim(stage, path, newPath, error)) {
-                                    stage->SetLoadRules(stage::remapLoadRules(rules, path, newPath));
+                                    const UsdStageLoadRules remappedRules =
+                                        stage::remapLoadRules(rules, path, newPath);
+
+                                    if (remappedRules.GetRules() != rules.GetRules())
+                                        stage->SetLoadRules(remappedRules);
 
                                     if (!state->oldOrder.empty()) {
                                         state->newOrder = stage::remapChildOrder(state->oldOrder, path.GetNameToken(),
@@ -3055,9 +3058,12 @@ renamePath(const SdfPath& path, const QString& newNameInput)
                         else {
                             const UsdStageLoadRules rules = stage->GetLoadRules();
                             UsdEditContext context(stage, UsdEditTarget(editLayer));
-
                             if (stage::renamePrim(stage, state->newPath, state->oldPath, error)) {
-                                stage->SetLoadRules(stage::remapLoadRules(rules, state->newPath, state->oldPath));
+                                const UsdStageLoadRules remappedRules =
+                                    stage::remapLoadRules(rules, state->newPath, state->oldPath);
+
+                                if (remappedRules.GetRules() != rules.GetRules())
+                                    stage->SetLoadRules(remappedRules);
 
                                 if (!state->oldOrder.empty() && !state->parentPath.IsEmpty()
                                     && state->parentPath != SdfPath::AbsoluteRootPath()) {
@@ -3231,7 +3237,7 @@ newXformPath(const SdfPath& parentPath, const QString& nameInput)
                                         for (const MoveItem& item : state->movedItems)
                                             moves.append(qMakePair(item.oldPath, item.newPath));
 
-                                        QString moveError;
+                                                QString moveError;
                                         if (!stage::movePrims(stage, moves, moveError)) {
                                             error = moveError.isEmpty() ? "failed to move selected paths" : moveError;
                                             stage::restoreChildOrders(stage, state->oldMoveParentOrders);
@@ -3558,7 +3564,7 @@ movePath(const QList<SdfPath>& paths, const SdfPath& newParentPath, int insertIn
                                             moves.append(qMakePair(item.oldPath, item.newPath));
                                     }
 
-                                    QString moveError;
+                                        QString moveError;
                                     if (!stage::movePrims(stage, moves, moveError)) {
                                         error = moveError.isEmpty() ? "failed to move paths" : moveError;
                                         stage::restoreChildOrders(stage, state->oldParentOrders);

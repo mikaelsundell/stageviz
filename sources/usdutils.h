@@ -500,8 +500,10 @@ namespace stage {
     /**
      * @brief Returns whether a prim can be edited as a transform.
      *
-     * The prim must exist, be UsdGeomXformable, and satisfy Stageviz's
-     * strongest-edit-layer editing policy.
+     * The prim must exist, be UsdGeomXformable, not be an instance proxy,
+     * and the stage must have an active edit layer. Transform edits are
+     * property overrides, so the prim itself does not need to be authored
+     * strongest in the active edit layer.
      */
     bool isTransformEditable(UsdStageRefPtr stage, const SdfPath& path);
 
@@ -811,10 +813,16 @@ namespace stage {
     bool movePrim(UsdStageRefPtr stage, const SdfPath& from, const SdfPath& toParent, QString& error);
 
     /**
- * @brief Moves multiple prims to new paths using a single namespace edit.
+ * @brief Moves multiple prims to new paths using UsdNamespaceEditor.
  *
- * Validates all source and destination paths, hierarchy rules, destination
- * collisions, and composition boundaries before applying the edits.
+ * Validates all source and destination paths against Stageviz's active
+ * edit-layer policy, hierarchy rules, destination collisions, and
+ * composition boundaries before applying the edits.
+ *
+ * Relocates authoring is disabled so namespace edits stay within the
+ * structural editing policy enforced by Stageviz. USD 25.11 does not expose
+ * GetLayersToEdit(), so edit-layer restrictions are enforced by
+ * validatePrim() and validateParent() before edits are queued.
  *
  * Stage load rules affected by the moved hierarchies are remapped to their
  * new paths after the namespace edit succeeds.

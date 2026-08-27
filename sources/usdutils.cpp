@@ -15,6 +15,7 @@
 #include <pxr/base/vt/array.h>
 #include <pxr/base/vt/value.h>
 #include <pxr/usd/sdf/copyUtils.h>
+#include <pxr/usd/sdf/namespaceEdit.h>
 #include <pxr/usd/sdf/primSpec.h>
 #include <pxr/usd/sdf/variantSetSpec.h>
 #include <pxr/usd/sdf/variantSpec.h>
@@ -41,7 +42,7 @@
 namespace stageviz {
 
 namespace {
-    void ensureParentSpecs(const SdfLayerHandle& layer, const SdfPath& path)
+    void ensureParentPrimSpecs(const SdfLayerHandle& layer, const SdfPath& path)
     {
         if (!layer)
             return;
@@ -51,168 +52,10 @@ namespace {
             return;
 
         if (!layer->GetPrimAtPath(parent)) {
-            ensureParentSpecs(layer, parent);
+            ensureParentPrimSpecs(layer, parent);
             SdfCreatePrimInLayer(layer, parent);
         }
     }
-
-    bool matrixClose(const GfMatrix4d& a, const GfMatrix4d& b, double tolerance = 1.0e-8)
-    {
-        for (int row = 0; row < 4; ++row) {
-            for (int column = 0; column < 4; ++column) {
-                if (std::abs(a[row][column] - b[row][column]) > tolerance)
-                    return false;
-            }
-        }
-        return true;
-    }
-
-    bool localPivot(const UsdGeomXformable& xformable, GfVec3d& pivot)
-    {
-        if (!xformable)
-            return false;
-
-        const TfToken pivotToken("xformOp:translate:pivot");
-        const TfToken inversePivotToken("!invert!xformOp:translate:pivot");
-
-        VtTokenArray order;
-        if (!xformable.GetXformOpOrderAttr().Get(&order, UsdTimeCode::Default()))
-            return false;
-
-        int pivotIndex = -1;
-        int inversePivotIndex = -1;
-
-        for (int i = 0; i < static_cast<int>(order.size()); ++i) {
-            if (order[i] == pivotToken)
-                pivotIndex = i;
-            else if (order[i] == inversePivotToken)
-                inversePivotIndex = i;
-        }
-
-        if (pivotIndex < 0 || inversePivotIndex <= pivotIndex)
-            return false;
-
-        const UsdAttribute pivotAttr = xformable.GetPrim().GetAttribute(pivotToken);
-        if (!pivotAttr)
-            return false;
-
-        VtValue value;
-        if (!pivotAttr.Get(&value, UsdTimeCode::Default()))
-            return false;
-
-        if (value.IsHolding<GfVec3d>()) {
-            pivot = value.UncheckedGet<GfVec3d>();
-            return true;
-        }
-
-        if (value.IsHolding<GfVec3f>()) {
-            const GfVec3f v = value.UncheckedGet<GfVec3f>();
-            pivot = GfVec3d(v[0], v[1], v[2]);
-            return true;
-        }
-
-        return false;
-    }
-
-    bool setLocalMatrixWithPivot(const UsdGeomXformable& xformable, const GfMatrix4d& localMatrix,
-                                 const GfVec3d& pivotValue, QString& error)
-    {
-        if (!xformable) {
-            error = "prim is not xformable";
-            return false;
-        }
-
-        xformable.ClearXformOpOrder();
-
-        const UsdGeomXformOp pivotOp = xformable.AddTranslateOp(UsdGeomXformOp::PrecisionDouble, TfToken("pivot"),
-                                                                false);
-        const UsdGeomXformOp matrixOp = xformable.AddTransformOp(UsdGeomXformOp::PrecisionDouble);
-        const UsdGeomXformOp inversePivotOp = xformable.AddTranslateOp(UsdGeomXformOp::PrecisionDouble,
-                                                                       TfToken("pivot"), true);
-
-        if (!pivotOp || !matrixOp || !inversePivotOp || !pivotOp.Set(pivotValue, UsdTimeCode::Default())) {
-            error = "failed to preserve pivot transform ops";
-            return false;
-        }
-
-        GfMatrix4d pivotMatrix(1.0);
-        pivotMatrix.SetTranslate(pivotValue);
-
-        GfMatrix4d inversePivotMatrix(1.0);
-        inversePivotMatrix.SetTranslate(-pivotValue);
-
-        const GfMatrix4d candidates[] = {
-            pivotMatrix * localMatrix * inversePivotMatrix,
-            inversePivotMatrix * localMatrix * pivotMatrix,
-        };
-
-        for (const GfMatrix4d& candidate : candidates) {
-            if (!matrixOp.Set(candidate, UsdTimeCode::Default()))
-                continue;
-
-            GfMatrix4d evaluated(1.0);
-            bool resetsXformStack = false;
-            if (!xformable.GetLocalTransformation(&evaluated, &resetsXformStack, UsdTimeCode::Default()))
-                continue;
-
-            if (matrixClose(evaluated, localMatrix))
-                return true;
-        }
-
-        error = "failed to preserve local transform while retaining pivot";
-        return false;
-    }
-
-
-    struct PayloadNeighborCandidate {
-        SdfPath path;
-        double distance = 0.0;
-    };
-
-    bool payloadExtentsHintWorldBounds(const UsdPrim& prim, UsdGeomXformCache& xformCache, GfRange3d& bounds)
-    {
-        bounds = GfRange3d();
-        if (!prim || !prim.IsValid())
-            return false;
-
-        VtVec3fArray extents;
-
-        const UsdGeomModelAPI model(prim);
-
-        if (model) {
-            if (!model.GetExtentsHint(&extents))
-                return false;
-        }
-        else {
-            const UsdAttribute attribute = prim.GetAttribute(UsdGeomTokens->extentsHint);
-            if (!attribute || !attribute.Get(&extents))
-                return false;
-        }
-
-        if (extents.size() < 2 || (extents.size() % 2) != 0)
-            return false;
-
-        const GfMatrix4d world = xformCache.GetLocalToWorldTransform(prim);
-
-        for (size_t i = 0; i + 1 < extents.size(); i += 2) {
-            const GfVec3d minimum(extents[i]);
-            const GfVec3d maximum(extents[i + 1]);
-
-            for (int x = 0; x < 2; ++x) {
-                for (int y = 0; y < 2; ++y) {
-                    for (int z = 0; z < 2; ++z) {
-                        const GfVec3d corner(x ? maximum[0] : minimum[0], y ? maximum[1] : minimum[1],
-                                             z ? maximum[2] : minimum[2]);
-
-                        bounds.UnionWith(world.Transform(corner));
-                    }
-                }
-            }
-        }
-
-        return !bounds.IsEmpty();
-    }
-
 }  // namespace
 
 namespace editlayer {
@@ -268,8 +111,18 @@ namespace editlayer {
 
     bool validateParent(const UsdStageRefPtr& stage, const SdfPath& parentPath, QString& error, bool requireStrongest)
     {
+        if (!stage) {
+            error = "stage missing";
+            return false;
+        }
+
+        if (parentPath.IsEmpty() || !parentPath.IsAbsolutePath()) {
+            error = "invalid parent path";
+            return false;
+        }
+
         if (parentPath == SdfPath::AbsoluteRootPath())
-            return true;
+            return bool(opened(stage, error));
 
         return validatePrim(stage, parentPath, error, requireStrongest);
     }
@@ -513,6 +366,54 @@ namespace path {
 }  // namespace path
 
 namespace payload {
+namespace {
+    struct NeighborCandidate {
+        SdfPath path;
+        double distance = 0.0;
+    };
+
+    bool extentsHintWorldBounds(const UsdPrim& prim, UsdGeomXformCache& xformCache, GfRange3d& bounds)
+    {
+        bounds = GfRange3d();
+        if (!prim || !prim.IsValid())
+            return false;
+
+        VtVec3fArray extents;
+        const UsdGeomModelAPI model(prim);
+
+        if (model) {
+            if (!model.GetExtentsHint(&extents))
+                return false;
+        }
+        else {
+            const UsdAttribute attribute = prim.GetAttribute(UsdGeomTokens->extentsHint);
+            if (!attribute || !attribute.Get(&extents))
+                return false;
+        }
+
+        if (extents.size() < 2 || (extents.size() % 2) != 0)
+            return false;
+
+        const GfMatrix4d world = xformCache.GetLocalToWorldTransform(prim);
+
+        for (size_t i = 0; i + 1 < extents.size(); i += 2) {
+            const GfVec3d minimum(extents[i]);
+            const GfVec3d maximum(extents[i + 1]);
+
+            for (int x = 0; x < 2; ++x) {
+                for (int y = 0; y < 2; ++y) {
+                    for (int z = 0; z < 2; ++z) {
+                        const GfVec3d corner(x ? maximum[0] : minimum[0], y ? maximum[1] : minimum[1],
+                                             z ? maximum[2] : minimum[2]);
+                        bounds.UnionWith(world.Transform(corner));
+                    }
+                }
+            }
+        }
+
+        return !bounds.IsEmpty();
+    }
+}  // namespace
 
     bool applyLoad(UsdStageRefPtr stage, const SdfPath& path, bool useVariant, const std::string& variantSetName,
                    const std::string& variantSelection, PayloadState& payloadState, QString& error)
@@ -765,7 +666,7 @@ namespace payload {
 
         const QList<SdfPath> candidatePaths = path::topLevelPaths(payloadPaths);
 
-        QList<PayloadNeighborCandidate> candidates;
+        QList<NeighborCandidate> candidates;
         candidates.reserve(candidatePaths.size());
 
         const GfVec3d searchMin = searchBounds.GetMin();
@@ -783,7 +684,7 @@ namespace payload {
                 continue;
 
             GfRange3d candidateBounds;
-            if (!payloadExtentsHintWorldBounds(prim, xformCache, candidateBounds))
+            if (!extentsHintWorldBounds(prim, xformCache, candidateBounds))
                 continue;
 
             const GfVec3d candidateCenter = candidateBounds.GetMidpoint();
@@ -800,7 +701,7 @@ namespace payload {
             if (!centerInside)
                 continue;
 
-            PayloadNeighborCandidate candidate;
+            NeighborCandidate candidate;
             candidate.path = path;
             candidate.distance = (candidateCenter - sourceCenter).GetLength();
 
@@ -808,7 +709,7 @@ namespace payload {
         }
 
         std::sort(candidates.begin(), candidates.end(),
-                  [](const PayloadNeighborCandidate& a, const PayloadNeighborCandidate& b) {
+                  [](const NeighborCandidate& a, const NeighborCandidate& b) {
                       if (a.distance != b.distance)
                           return a.distance < b.distance;
 
@@ -817,7 +718,7 @@ namespace payload {
 
         result.reserve(candidates.size());
 
-        for (const PayloadNeighborCandidate& candidate : candidates)
+        for (const NeighborCandidate& candidate : candidates)
             result.append(candidate.path);
 
         return result;
@@ -921,7 +822,7 @@ namespace snapshot {
             if (!snapshotLayer)
                 continue;
 
-            ensureParentSpecs(snapshotLayer, specPath);
+            ensureParentPrimSpecs(snapshotLayer, specPath);
             if (SdfCopySpec(srcLayer, specPath, snapshotLayer, specPath)) {
                 out.stagePath = stagePath;
                 out.specPath = specPath;
@@ -937,7 +838,7 @@ namespace snapshot {
         if (!dstLayer || !state.snapshotLayer)
             return;
 
-        ensureParentSpecs(dstLayer, state.stagePath);
+        ensureParentPrimSpecs(dstLayer, state.stagePath);
         SdfCopySpec(state.snapshotLayer, state.specPath, dstLayer, state.stagePath);
     }
 
@@ -956,6 +857,115 @@ namespace snapshot {
 }  // namespace snapshot
 
 namespace stage {
+namespace {
+    bool matricesClose(const GfMatrix4d& a, const GfMatrix4d& b, double tolerance = 1.0e-8)
+    {
+        for (int row = 0; row < 4; ++row) {
+            for (int column = 0; column < 4; ++column) {
+                if (std::abs(a[row][column] - b[row][column]) > tolerance)
+                    return false;
+            }
+        }
+        return true;
+    }
+
+    bool readLocalPivot(const UsdGeomXformable& xformable, GfVec3d& pivot)
+    {
+        if (!xformable)
+            return false;
+
+        const TfToken pivotToken("xformOp:translate:pivot");
+        const TfToken inversePivotToken("!invert!xformOp:translate:pivot");
+
+        VtTokenArray order;
+        if (!xformable.GetXformOpOrderAttr().Get(&order, UsdTimeCode::Default()))
+            return false;
+
+        int pivotIndex = -1;
+        int inversePivotIndex = -1;
+
+        for (int i = 0; i < static_cast<int>(order.size()); ++i) {
+            if (order[i] == pivotToken)
+                pivotIndex = i;
+            else if (order[i] == inversePivotToken)
+                inversePivotIndex = i;
+        }
+
+        if (pivotIndex < 0 || inversePivotIndex <= pivotIndex)
+            return false;
+
+        const UsdAttribute pivotAttr = xformable.GetPrim().GetAttribute(pivotToken);
+        if (!pivotAttr)
+            return false;
+
+        VtValue value;
+        if (!pivotAttr.Get(&value, UsdTimeCode::Default()))
+            return false;
+
+        if (value.IsHolding<GfVec3d>()) {
+            pivot = value.UncheckedGet<GfVec3d>();
+            return true;
+        }
+
+        if (value.IsHolding<GfVec3f>()) {
+            const GfVec3f v = value.UncheckedGet<GfVec3f>();
+            pivot = GfVec3d(v[0], v[1], v[2]);
+            return true;
+        }
+
+        return false;
+    }
+
+    bool setLocalMatrixWithPivot(const UsdGeomXformable& xformable, const GfMatrix4d& localMatrix,
+                                 const GfVec3d& pivotValue, QString& error)
+    {
+        if (!xformable) {
+            error = "prim is not xformable";
+            return false;
+        }
+
+        xformable.ClearXformOpOrder();
+
+        const UsdGeomXformOp pivotOp = xformable.AddTranslateOp(UsdGeomXformOp::PrecisionDouble, TfToken("pivot"),
+                                                                false);
+        const UsdGeomXformOp matrixOp = xformable.AddTransformOp(UsdGeomXformOp::PrecisionDouble);
+        const UsdGeomXformOp inversePivotOp = xformable.AddTranslateOp(UsdGeomXformOp::PrecisionDouble,
+                                                                       TfToken("pivot"), true);
+
+        if (!pivotOp || !matrixOp || !inversePivotOp || !pivotOp.Set(pivotValue, UsdTimeCode::Default())) {
+            error = "failed to preserve pivot transform ops";
+            return false;
+        }
+
+        GfMatrix4d pivotMatrix(1.0);
+        pivotMatrix.SetTranslate(pivotValue);
+
+        GfMatrix4d inversePivotMatrix(1.0);
+        inversePivotMatrix.SetTranslate(-pivotValue);
+
+        const GfMatrix4d candidates[] = {
+            pivotMatrix * localMatrix * inversePivotMatrix,
+            inversePivotMatrix * localMatrix * pivotMatrix,
+        };
+
+        for (const GfMatrix4d& candidate : candidates) {
+            if (!matrixOp.Set(candidate, UsdTimeCode::Default()))
+                continue;
+
+            GfMatrix4d evaluated(1.0);
+            bool resetsXformStack = false;
+            if (!xformable.GetLocalTransformation(&evaluated, &resetsXformStack, UsdTimeCode::Default()))
+                continue;
+
+            if (matricesClose(evaluated, localMatrix))
+                return true;
+        }
+
+        error = "failed to preserve local transform while retaining pivot";
+        return false;
+    }
+}  // namespace
+
     std::string compositionAssetPath(const SdfLayerHandle& destinationLayer, const QString& filename)
     {
         const QString absoluteFilename = QFileInfo(filename).absoluteFilePath();
@@ -1212,7 +1222,7 @@ namespace stage {
         }
 
         GfVec3d pivotValue(0.0);
-        const bool preservePivot = localPivot(xformable, pivotValue);
+        const bool preservePivot = readLocalPivot(xformable, pivotValue);
 
         UsdEditContext context(stage, UsdEditTarget(editLayer));
 
@@ -1678,16 +1688,13 @@ namespace stage {
 
         QString editError;
         const SdfLayerHandle editLayer = editlayer::opened(stage, editError);
-
         if (!editLayer) {
             error = editError;
             return false;
         }
 
-        SdfBatchNamespaceEdit edits;
-        bool hasEdits = false;
-
-        QSet<SdfPath> destinations;
+        QSet<SdfPath> sourcePaths;
+        QSet<SdfPath> destinationPaths;
         UsdStageLoadRules loadRules = stage->GetLoadRules();
 
         for (const auto& move : moves) {
@@ -1708,12 +1715,36 @@ namespace stage {
                 return false;
             }
 
-            if (destinations.contains(to)) {
-                error = "duplicate move destination";
+            if (sourcePaths.contains(from)) {
+                error = QString("duplicate move source: %1").arg(qt::SdfPathToQString(from));
                 return false;
             }
 
-            destinations.insert(to);
+            if (destinationPaths.contains(to)) {
+                error = QString("duplicate move destination: %1").arg(qt::SdfPathToQString(to));
+                return false;
+            }
+
+            sourcePaths.insert(from);
+            destinationPaths.insert(to);
+        }
+
+        if (sourcePaths.isEmpty())
+            return true;
+
+        UsdNamespaceEditor::EditOptions options;
+        options.allowRelocatesAuthoring = false;
+        UsdNamespaceEditor editor(stage, options);
+
+        bool hasEdits = false;
+
+        for (const auto& move : moves) {
+            const SdfPath& from = move.first;
+            const SdfPath& to = move.second;
+
+            if (from == to)
+                continue;
+
             QString validationError;
             if (!editlayer::validatePrim(stage, from, validationError)) {
                 error = validationError;
@@ -1735,39 +1766,39 @@ namespace stage {
             }
 
             const UsdPrim existing = stage->GetPrimAtPath(to);
-            if (existing) {
-                bool sourceDestination = false;
-                for (const auto& other : moves) {
-                    if (other.first == to) {
-                        sourceDestination = true;
-                        break;
-                    }
-                }
-
-                if (!sourceDestination) {
-                    error = QString("destination already exists: %1").arg(qt::SdfPathToQString(to));
-                    return false;
-                }
+            if (existing && !sourcePaths.contains(to)) {
+                error = QString("destination already exists: %1").arg(qt::SdfPathToQString(to));
+                return false;
             }
 
-            edits.Add(from, to);
-            hasEdits = true;
+            if (!editor.MovePrimAtPath(from, to)) {
+                error = QString("USD rejected namespace move: %1 -> %2")
+                            .arg(qt::SdfPathToQString(from), qt::SdfPathToQString(to));
+                return false;
+            }
+
             loadRules = remapLoadRules(loadRules, from, to);
+            hasEdits = true;
         }
 
         if (!hasEdits)
             return true;
 
-        if (!editLayer->CanApply(edits)) {
-            error = "edit layer cannot apply namespace edit";
+        std::string whyNot;
+        if (!editor.CanApplyEdits(&whyNot)) {
+            error = whyNot.empty() ? QStringLiteral("USD namespace edits cannot be applied")
+                                   : qt::StringToQString(whyNot);
             return false;
         }
 
-        if (!editLayer->Apply(edits)) {
-            error = "edit layer namespace edit failed";
+        if (!editor.ApplyEdits()) {
+            error = "USD namespace edit failed";
             return false;
         }
-        stage->SetLoadRules(loadRules);
+
+        if (loadRules.GetRules() != stage->GetLoadRules().GetRules())
+            stage->SetLoadRules(loadRules);
+
         return true;
     }
 
@@ -1958,7 +1989,7 @@ namespace stage {
             return;
         }
 
-        ensureParentSpecs(editLayer, parentPath);
+        ensureParentPrimSpecs(editLayer, parentPath);
         if (!editLayer->GetPrimAtPath(parentPath))
             SdfCreatePrimInLayer(editLayer, parentPath);
 
