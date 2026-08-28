@@ -8,7 +8,6 @@
 #include "commandstack.h"
 #include "messagedialog.h"
 #include "notice.h"
-#include "propertydelegate.h"
 #include "propertyitem.h"
 #include "qtutils.h"
 #include "selectionlist.h"
@@ -17,6 +16,10 @@
 #include "tracelocks.h"
 #include "viewcontext.h"
 #include <QApplication>
+#include <QComboBox>
+#include <QDoubleSpinBox>
+#include <QLineEdit>
+#include <QSpinBox>
 #include <QClipboard>
 #include <QContextMenuEvent>
 #include <QFileInfo>
@@ -187,6 +190,147 @@ public:
     bool currentAttributeValues(const QList<SdfPath>& propertyPaths, QList<VtValue>& values) const;
 
 public:
+    class PropertyDelegate : public TreeWidget::ItemDelegate {
+    public:
+        explicit PropertyDelegate(QObject* parent = nullptr)
+            : TreeWidget::ItemDelegate(parent)
+        {}
+        ~PropertyDelegate() override = default;
+        QWidget* createEditor(QWidget* parent, const QStyleOptionViewItem& option,
+                              const QModelIndex& index) const override
+        {
+            if (!index.isValid() || index.column() != PropertyItem::Value)
+                return nullptr;
+
+            const PropertyItem::Editor editorType =
+                PropertyItem::Editor(index.data(PropertyItem::EditorRole).toInt());
+            const bool mixed = index.data(PropertyItem::MixedValueRole).toBool();
+
+            if (mixed && (editorType == PropertyItem::IntegerEditor
+                          || editorType == PropertyItem::FloatingEditor)) {
+                auto* line = new QLineEdit(parent);
+                line->setPlaceholderText("<mixed>");
+                return line;
+            }
+            switch (editorType) {
+            case PropertyItem::BoolEditor: {
+                auto* combo = new QComboBox(parent);
+                combo->addItem("false");
+                combo->addItem("true");
+                combo->setEditable(false);
+                return combo;
+            }
+            case PropertyItem::TokenEditor: {
+                const QStringList options = index.data(PropertyItem::EditorOptionsRole).toStringList();
+                if (options.isEmpty())
+                    break;
+
+                auto* combo = new QComboBox(parent);
+                combo->addItems(options);
+                combo->setEditable(false);
+                return combo;
+            }
+            case PropertyItem::IntegerEditor: {
+                auto* spin = new QSpinBox(parent);
+                const double minimum = index.data(PropertyItem::EditorMinimumRole).toDouble();
+                const double maximum = index.data(PropertyItem::EditorMaximumRole).toDouble();
+                spin->setRange(int(qMax(double(INT_MIN), minimum)), int(qMin(double(INT_MAX), maximum)));
+                return spin;
+            }
+            case PropertyItem::FloatingEditor: {
+                auto* spin = new QDoubleSpinBox(parent);
+                spin->setRange(index.data(PropertyItem::EditorMinimumRole).toDouble(),
+                               index.data(PropertyItem::EditorMaximumRole).toDouble());
+                spin->setDecimals(index.data(PropertyItem::EditorDecimalsRole).toInt());
+                spin->setSingleStep(0.1);
+                return spin;
+            }
+            case PropertyItem::TextEditor:
+                return new QLineEdit(parent);
+            case PropertyItem::NoEditor:
+            default:
+                break;
+            }
+            return TreeWidget::ItemDelegate::createEditor(parent, option, index);
+        }
+
+        void setEditorData(QWidget* editor, const QModelIndex& index) const override
+        {
+            const QString text = index.data(Qt::EditRole).toString();
+            const bool mixed = index.data(PropertyItem::MixedValueRole).toBool();
+
+            if (auto* combo = qobject_cast<QComboBox*>(editor)) {
+                if (mixed) {
+                    combo->setCurrentIndex(-1);
+                    combo->setPlaceholderText("<mixed>");
+                    return;
+                }
+
+                int i = combo->findText(text);
+                if (i < 0)
+                    i = combo->findText(text, Qt::MatchFixedString);
+                if (i >= 0)
+                    combo->setCurrentIndex(i);
+                return;
+            }
+
+            if (auto* spin = qobject_cast<QSpinBox*>(editor)) {
+                bool ok = false;
+                const int value = text.toInt(&ok);
+                if (ok)
+                    spin->setValue(value);
+                return;
+            }
+
+            if (auto* spin = qobject_cast<QDoubleSpinBox*>(editor)) {
+                bool ok = false;
+                const double value = text.toDouble(&ok);
+                if (ok)
+                    spin->setValue(value);
+                return;
+            }
+
+            if (auto* line = qobject_cast<QLineEdit*>(editor)) {
+                if (mixed) {
+                    line->clear();
+                    line->setPlaceholderText("<mixed>");
+                }
+                else {
+                    line->setText(text);
+                    line->selectAll();
+                }
+                return;
+            }
+
+            TreeWidget::ItemDelegate::setEditorData(editor, index);
+        }
+
+        void setModelData(QWidget* editor, QAbstractItemModel* model,
+                          const QModelIndex& index) const override
+        {
+            if (auto* combo = qobject_cast<QComboBox*>(editor)) {
+                model->setData(index, combo->currentText(), Qt::EditRole);
+                return;
+            }
+
+            if (auto* spin = qobject_cast<QSpinBox*>(editor)) {
+                model->setData(index, QString::number(spin->value()), Qt::EditRole);
+                return;
+            }
+
+            if (auto* spin = qobject_cast<QDoubleSpinBox*>(editor)) {
+                model->setData(index, QString::number(spin->value(), 'g', 12), Qt::EditRole);
+                return;
+            }
+
+            if (auto* line = qobject_cast<QLineEdit*>(editor)) {
+                model->setData(index, line->text(), Qt::EditRole);
+                return;
+            }
+
+            TreeWidget::ItemDelegate::setModelData(editor, model, index);
+        }
+    };
     struct Data {
         int chunkSize = 256;
         bool update = false;
@@ -198,6 +342,7 @@ public:
     };
     Data d;
 };
+
 
 template<typename T>
 QString
@@ -2078,7 +2223,7 @@ PropertyTree::PropertyTree(QWidget* parent)
     p->d.tree = this;
     p->init();
 
-    setItemDelegate(new PropertyDelegate(this));
+    setItemDelegate(new PropertyTreePrivate::PropertyDelegate(this));
 
     setColumnSelectable(PropertyItem::Name, true);
     setColumnSelectable(PropertyItem::Value, true);

@@ -182,8 +182,8 @@ MessageDialog::saveQuestion(QWidget* parent, const QString& title, const QString
     box.p->d.type = "Question";
     box.p->d.title = title;
     box.p->d.text = text;
-    box.p->d.acceptText = tr("Save");
-    box.p->d.rejectText = tr("Don't Save");
+    box.p->d.acceptText = tr("Yes");
+    box.p->d.rejectText = tr("No");
     box.p->d.showIcon = false;
     box.p->d.showReject = true;
 

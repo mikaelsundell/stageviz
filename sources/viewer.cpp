@@ -28,23 +28,29 @@
 #include "viewcamera.h"
 #include "viewstate.h"
 #include <QActionGroup>
+#include <QApplication>
 #include <QClipboard>
 #include <QColorDialog>
 #include <QDesktopServices>
 #include <QDragEnterEvent>
 #include <QElapsedTimer>
+#include <QEasingCurve>
 #include <QEvent>
+#include <QEventLoop>
 #include <QFileDialog>
 #include <QImageWriter>
 #include <QMimeData>
 #include <QObject>
 #include <QPointer>
+#include <QParallelAnimationGroup>
+#include <QPropertyAnimation>
 #include <QSettings>
 #include <QStatusBar>
 #include <QTimer>
 #include <QToolButton>
 #include <QVBoxLayout>
 #include <pxr/usd/usdGeom/modelAPI.h>
+#include <utility>
 
 #include <QSizePolicy>
 // generated files
@@ -165,6 +171,8 @@ public Q_SLOTS:
     void notifyStatusChanged(Session::Notify::Status status, const QString& message, const QString& details);
 
 public:
+    void updateToolsModal();
+    void updateToolsSuppressed(bool suppressed, bool animated = false);
     void updateDockAction(QAction* action, bool checked);
     void updateModified(bool modified);
     void updateRecentFiles(const QString& filename);
@@ -173,7 +181,11 @@ public:
     bool saveChanges();
     void clearChanges();
     bool hasChanges() const;
-
+    struct ToolWidget {
+        QPointer<QWidget> widget;
+        qreal opacity = 1.0;
+        bool enabled = true;
+    };
     struct Data {
         Session::LoadPolicy loadPolicy;
         bool modified;
@@ -183,6 +195,8 @@ public:
         QStringList recentFiles;
         QList<int> panelSplitterSizes;
         bool panelsHidden = false;
+        bool toolsSuppressed = false;
+        QList<ToolWidget> toolWidgets;
         QScopedPointer<MouseEvent> backgroundColorFilter;
         QScopedPointer<Ui_Viewer> ui;
         QPointer<Viewer> viewer;
@@ -220,6 +234,7 @@ ViewerPrivate::init()
     d.backgroundColorFilter.reset(new MouseEvent);
     d.ui->backgroundColor->installEventFilter(d.backgroundColorFilter.data());
     d.viewer->installEventFilter(this);
+    qApp->installEventFilter(this);
     d.ui->fileOpen->setIcon(style()->icon(Style::IconRole::Open));
     d.ui->fileExportAll->setIcon(style()->icon(Style::IconRole::Export));
     d.ui->fileExportImage->setIcon(style()->icon(Style::IconRole::ExportImage));
@@ -874,6 +889,17 @@ ViewerPrivate::showDialog(QDialog* dialog)
 bool
 ViewerPrivate::eventFilter(QObject* object, QEvent* event)
 {
+    if (qobject_cast<QDialog*>(object)) {
+        switch (event->type()) {
+        case QEvent::Show:
+        case QEvent::Hide:
+        case QEvent::Close:
+            QTimer::singleShot(0, this, [this]() { updateToolsModal(); });
+            break;
+        default: break;
+        }
+    }
+
     if (object == d.progressDialog) {
         switch (event->type()) {
         case QEvent::Show: updateDockAction(d.ui->viewProgress, true); break;
@@ -900,6 +926,8 @@ ViewerPrivate::eventFilter(QObject* object, QEvent* event)
         const Qt::WindowStates state = d.viewer->windowState();
         if (!(state & Qt::WindowMinimized) && d.viewer->isActiveWindow()) {
             QTimer::singleShot(0, d.viewer, [this]() {
+                if (d.toolsSuppressed || QApplication::activeModalWidget())
+                    return;
                 if (d.ui->viewProgress->isChecked() && d.progressDialog) {
                     d.progressDialog->show();
                     d.progressDialog->raise();
@@ -1945,8 +1973,12 @@ ViewerPrivate::openAbout()
         QTextStream in(&file);
         details = in.readAll();
     }
+    updateToolsSuppressed(true, true);
+    
     MessageDialog::about(d.viewer.data(), QString("%1 %2").arg(PROJECT_NAME).arg(PROJECT_VERSION), PROJECT_COPYRIGHT,
                          details, GITHUB_URL);
+    
+    updateToolsSuppressed(false, true);
 }
 
 void
@@ -2310,6 +2342,112 @@ ViewerPrivate::notifyStatusChanged(Session::Notify::Status status, const QString
 }
 
 void
+ViewerPrivate::updateToolsModal()
+{
+    const QWidget* modal = QApplication::activeModalWidget();
+    updateToolsSuppressed(modal != nullptr);
+}
+
+void
+ViewerPrivate::updateToolsSuppressed(bool suppressed, bool animated)
+{
+    if (d.toolsSuppressed == suppressed)
+        return;
+
+    d.toolsSuppressed = suppressed;
+
+    if (suppressed) {
+        d.toolWidgets.clear();
+
+        const QWidget* modal = QApplication::activeModalWidget();
+
+        for (QWidget* widget : QApplication::topLevelWidgets()) {
+            if (!widget || widget == modal || !widget->isVisible())
+                continue;
+
+            if (!(widget->windowFlags() & Qt::Tool))
+                continue;
+
+            QWidget* parent = widget->parentWidget();
+            while (parent && parent != d.viewer)
+                parent = parent->parentWidget();
+
+            if (parent != d.viewer)
+                continue;
+
+            ToolWidget state;
+            state.widget = widget;
+            state.opacity = widget->windowOpacity();
+            state.enabled = widget->isEnabled();
+            d.toolWidgets.append(state);
+            widget->setEnabled(false);
+        }
+
+        if (animated && !d.toolWidgets.isEmpty()) {
+            QParallelAnimationGroup group;
+            for (const ToolWidget& state : std::as_const(d.toolWidgets)) {
+                if (!state.widget)
+                    continue;
+                auto* animation = new QPropertyAnimation(state.widget, "windowOpacity", &group);
+                animation->setDuration(140);
+                animation->setStartValue(state.widget->windowOpacity());
+                animation->setEndValue(0.0);
+                animation->setEasingCurve(QEasingCurve::InOutQuad);
+                group.addAnimation(animation);
+            }
+            if (group.animationCount() > 0) {
+                QEventLoop loop;
+                connect(&group, &QParallelAnimationGroup::finished, &loop, &QEventLoop::quit);
+                group.start();
+                loop.exec();
+            }
+        }
+        else {
+            for (const ToolWidget& state : std::as_const(d.toolWidgets)) {
+                if (state.widget)
+                    state.widget->setWindowOpacity(0.0);
+            }
+        }
+
+        return;
+    }
+
+    const QList<ToolWidget> widgets = d.toolWidgets;
+    d.toolWidgets.clear();
+
+    if (animated && !widgets.isEmpty()) {
+        QParallelAnimationGroup group;
+        for (const ToolWidget& state : widgets) {
+            if (!state.widget)
+                continue;
+            auto* animation = new QPropertyAnimation(state.widget, "windowOpacity", &group);
+            animation->setDuration(140);
+            animation->setStartValue(state.widget->windowOpacity());
+            animation->setEndValue(state.opacity);
+            animation->setEasingCurve(QEasingCurve::InOutQuad);
+            group.addAnimation(animation);
+        }
+        if (group.animationCount() > 0) {
+            QEventLoop loop;
+            connect(&group, &QParallelAnimationGroup::finished, &loop, &QEventLoop::quit);
+            group.start();
+            loop.exec();
+        }
+    }
+    else {
+        for (const ToolWidget& state : widgets) {
+            if (state.widget)
+                state.widget->setWindowOpacity(state.opacity);
+        }
+    }
+
+    for (const ToolWidget& state : widgets) {
+        if (state.widget)
+            state.widget->setEnabled(state.enabled);
+    }
+}
+
+void
 ViewerPrivate::updateDockAction(QAction* action, bool checked)
 {
     if (!action)
@@ -2396,7 +2534,14 @@ ViewerPrivate::saveChanges()
 
     const QString name = session()->filename().isEmpty() ? "Untitled" : QFileInfo(session()->filename()).fileName();
 
-    switch (MessageDialog::saveQuestion(d.viewer.data(), tr("Save changes?"), tr("Save changes to %1?").arg(name))) {
+    updateToolsSuppressed(true, true);
+    
+    const MessageDialog::SaveResult result =
+        MessageDialog::saveQuestion(d.viewer.data(), tr("Save changes?"), tr("Save changes to %1?").arg(name));
+    
+    updateToolsSuppressed(false, true);
+
+    switch (result) {
     case MessageDialog::SaveResult::Save: return saveFile();
 
     case MessageDialog::SaveResult::DontSave: return true;
