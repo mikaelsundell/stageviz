@@ -8,10 +8,11 @@ StageTree interactive UI diagnostic.
 Run from the Stageviz Python editor.
 
 Policy assumptions:
-    - With Payload policy enabled:
-        payload rows are leaves and the visible hierarchy has checkboxes.
+    - StageTree never displays payload contents.
+    - With payload policy enabled:
+        payload rows show load-state checkboxes.
     - With policy All / payload policy disabled:
-        payload rows have no checkboxes and loaded payload contents are traversed.
+        payload rows do not show checkboxes.
 
 The test proceeds one step at a time and stops on the first failure.
 
@@ -631,8 +632,24 @@ def select_path(tree, path):
         )
         tree.setFocus()
 
-        return (
-            selection_model.isSelected(index)
+        # Selection can trigger a StageTree refresh. Process that refresh here,
+        # then reacquire the live index before deciding the selection is stable.
+        process_events()
+
+        item = find_item_by_path(
+            tree,
+            path,
+        )
+
+        if item is None:
+            return False
+
+        index = item.index
+        selection_model = tree.selectionModel()
+
+        return bool(
+            selection_model
+            and selection_model.isSelected(index)
             and current_path(tree) == path
         )
 
@@ -641,10 +658,8 @@ def select_path(tree, path):
             apply_selection,
             timeout=3.0,
         ),
-        f"{path} exists before selection",
+        f"{path} becomes selected/current",
     )
-
-    process_events()
 
 
 def has_checkbox(item):
@@ -960,15 +975,15 @@ def test_initial_tree(tree):
     PayloadB
     PayloadC
 
-StageTree never displays payload contents.
-
 If policy is Payload:
-    PayloadA/B/C should have unchecked checkboxes.
+    PayloadA/B/C are StageTree leaf rows with unchecked checkboxes.
+    Payload contents are not traversed in the tree.
 
 If policy is All:
-    PayloadA/B/C should have no checkboxes.
+    PayloadA/B/C have no checkboxes.
+    Loaded payload contents are traversed and shown below the payload rows.
 
-All three payloads should initially be unloaded.
+All three payloads should initially be unloaded in this LoadNone fixture.
 """,
     )
 
@@ -1085,7 +1100,7 @@ Expected visible hierarchy:
 
 World, Assembly and Door should be expanded.
 
-Payload rows remain leaf items regardless of whether they are loaded.
+In Payload policy, payload rows remain StageTree leaf items even when loaded.
 """,
     )
 
@@ -1173,19 +1188,18 @@ Before load:
 After load:
     PayloadA
 
-PayloadA MUST remain a leaf in StageTree.
-
 USD should contain:
     /World/PayloadA/Geom
     /World/PayloadA/Geom/Detail
 
-StageTree should NOT display either of those paths.
-
 If policy is Payload:
-    PayloadA checkbox should become checked.
+    PayloadA remains a StageTree leaf.
+    PayloadA/Geom and Detail stay hidden from StageTree.
+    PayloadA checkbox becomes checked.
 
 If policy is All:
-    PayloadA should still have no checkbox.
+    PayloadA has no checkbox.
+    PayloadA/Geom and Detail are traversed and shown.
 """,
     )
 
@@ -1226,20 +1240,20 @@ If policy is All:
     process_events()
     dump_tree(tree)
 
-    verify_payload_is_leaf(
-        tree,
-        "/World/PayloadA",
-    )
-
-    require(
-        find_item_by_path(
-            tree,
-            "/World/PayloadA/Geom",
-        ) is None,
-        "PayloadA/Geom is intentionally hidden from StageTree",
-    )
-
     if current_policy == "Payload":
+        verify_payload_is_leaf(
+            tree,
+            "/World/PayloadA",
+        )
+
+        require(
+            find_item_by_path(
+                tree,
+                "/World/PayloadA/Geom",
+            ) is None,
+            "PayloadA/Geom is intentionally hidden from StageTree in Payload policy",
+        )
+
         require(
             checkbox_state_for_path(
                 tree,
@@ -1271,6 +1285,11 @@ If policy is All:
             "PayloadA still has no checkbox in All policy",
         )
 
+        require(
+            path_exists_in_tree(tree, "/World/PayloadA/Geom"),
+            "PayloadA/Geom is visible in All policy",
+        )
+
 
 def test_payload_b_load(tree):
     current_policy = policy_name(tree)
@@ -1288,17 +1307,16 @@ Expected StageTree:
     PayloadB
     PayloadC
 
-All remain leaf rows.
-
 PayloadA and PayloadB are loaded in USD.
 
 If policy is Payload:
+    PayloadA/B/C remain StageTree leaf rows.
     PayloadA = checked
     PayloadB = checked
     PayloadC = unchecked
 
 If policy is All:
-    none of the payload rows have checkboxes.
+    payload rows have no checkboxes and loaded payload contents are traversed.
 """,
     )
 
@@ -1332,30 +1350,30 @@ If policy is All:
     process_events()
     dump_tree(tree)
 
-    verify_payload_is_leaf(
-        tree,
-        "/World/PayloadA",
-    )
-
-    verify_payload_is_leaf(
-        tree,
-        "/World/PayloadB",
-    )
-
-    verify_payload_is_leaf(
-        tree,
-        "/World/PayloadC",
-    )
-
-    require(
-        find_item_by_path(
-            tree,
-            "/World/PayloadB/Geom",
-        ) is None,
-        "PayloadB/Geom is intentionally hidden from StageTree",
-    )
-
     if current_policy == "Payload":
+        verify_payload_is_leaf(
+            tree,
+            "/World/PayloadA",
+        )
+
+        verify_payload_is_leaf(
+            tree,
+            "/World/PayloadB",
+        )
+
+        verify_payload_is_leaf(
+            tree,
+            "/World/PayloadC",
+        )
+
+        require(
+            find_item_by_path(
+                tree,
+                "/World/PayloadB/Geom",
+            ) is None,
+            "PayloadB/Geom is intentionally hidden from StageTree in Payload policy",
+        )
+
         require(
             checkbox_state_for_path(
                 tree,
@@ -1428,20 +1446,19 @@ After unload:
     PayloadB
     PayloadC
 
-All remain leaf items.
-
 USD:
     PayloadA = unloaded
     PayloadB = loaded
     PayloadC = unloaded
 
 If policy is Payload:
+    PayloadA/B/C remain StageTree leaf rows.
     PayloadA = unchecked
     PayloadB = checked
     PayloadC = unchecked
 
 If policy is All:
-    no checkboxes should be visible.
+    no checkboxes are visible and loaded payload contents are traversed.
 """,
     )
 
@@ -1475,22 +1492,22 @@ If policy is All:
     process_events()
     dump_tree(tree)
 
-    verify_payload_is_leaf(
-        tree,
-        "/World/PayloadA",
-    )
-
-    verify_payload_is_leaf(
-        tree,
-        "/World/PayloadB",
-    )
-
-    verify_payload_is_leaf(
-        tree,
-        "/World/PayloadC",
-    )
-
     if current_policy == "Payload":
+        verify_payload_is_leaf(
+            tree,
+            "/World/PayloadA",
+        )
+
+        verify_payload_is_leaf(
+            tree,
+            "/World/PayloadB",
+        )
+
+        verify_payload_is_leaf(
+            tree,
+            "/World/PayloadC",
+        )
+
         require(
             checkbox_state_for_path(
                 tree,
@@ -2375,9 +2392,10 @@ Expected StageTree policy:
 
 Expected:
     - PayloadA/B/C are unloaded
-    - payload rows remain leaf rows
+    - payload rows are StageTree leaves
     - payload rows show unchecked checkboxes
     - loading/unloading changes checkbox state only
+    - payload contents remain hidden from StageTree
     - normal expanded hierarchy remains stable
 """,
     )
@@ -2471,6 +2489,22 @@ Expected:
         "PayloadC checkbox becomes checked",
     )
 
+    require(
+        not path_exists_in_tree(
+            tree,
+            "/World/PayloadA/Geom",
+        ),
+        "PayloadA contents remain hidden in Payload policy",
+    )
+
+    require(
+        not path_exists_in_tree(
+            tree,
+            "/World/PayloadC/Geom",
+        ),
+        "PayloadC contents remain hidden in Payload policy",
+    )
+
     require_check_state(
         tree,
         "/World",
@@ -2554,13 +2588,18 @@ Expected:
         "/World/PayloadC",
     ):
         require(
-            bool(prim(path) and prim(path).IsLoaded()),
+            bool(
+                prim(path)
+                and prim(path).IsLoaded()
+            ),
             f"{path} is loaded under LoadAll",
         )
+
         require(
             path_exists_in_tree(tree, path),
             f"{path} exists in StageTree",
         )
+
         require(
             not has_checkbox_for_path(tree, path),
             f"{path} has no checkbox in All policy",
@@ -2570,14 +2609,17 @@ Expected:
         path_exists_in_tree(tree, "/World/PayloadA/Geom"),
         "PayloadA/Geom is visible in All policy",
     )
+
     require(
         path_exists_in_tree(tree, "/World/PayloadA/Geom/Detail"),
         "PayloadA/Geom/Detail is visible in All policy",
     )
+
     require(
         path_exists_in_tree(tree, "/World/PayloadB/Geom"),
         "PayloadB/Geom is visible in All policy",
     )
+
     require(
         path_exists_in_tree(tree, "/World/PayloadC/Geom"),
         "PayloadC/Geom is visible in All policy",
@@ -2620,6 +2662,7 @@ Expected:
         path_exists_in_tree(tree, "/World/PayloadA"),
         "PayloadA row remains after unload in All policy",
     )
+
     require(
         not has_checkbox_for_path(tree, "/World/PayloadA"),
         "PayloadA still has no checkbox after unload in All policy",
@@ -2629,10 +2672,12 @@ Expected:
         tree,
         "All policy still has no checkboxes anywhere after payload unload",
     )
+
     require(
         not path_exists_in_tree(tree, "/World/PayloadA/Geom/Detail"),
         "PayloadA/Geom/Detail disappears after unload",
     )
+
     require(
         path_is_expanded(tree, "/World/Assembly/Door"),
         "Door expansion survives payload unload in All policy",
@@ -2682,6 +2727,7 @@ Expected:
         tree,
         "All policy still has no checkboxes anywhere after payload reload",
     )
+
     require(
         path_is_expanded(tree, "/World/Assembly/Door"),
         "Door expansion survives payload reload in All policy",
