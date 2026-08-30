@@ -1748,7 +1748,9 @@ StageTree::contextMenuEvent(QContextMenuEvent* event)
 void
 StageTree::keyPressEvent(QKeyEvent* event)
 {
-    if (event->key() == Qt::Key_Up && event->modifiers() == Qt::AltModifier) {
+    const Qt::KeyboardModifiers modifiers = event->modifiers() & ~Qt::KeypadModifier;
+
+    if (event->key() == Qt::Key_Up && modifiers == Qt::AltModifier) {
         QTreeWidgetItem* item = currentItem();
 
         if (!item) {
