@@ -27,7 +27,7 @@ import tempfile
 import time
 import gc
 
-from pxr import Gf, Kind, Usd, UsdGeom
+from pxr import Gf, Kind, Sdf, Usd, UsdGeom
 
 import stageviz
 
@@ -134,6 +134,155 @@ def require(condition, message):
         stop(message)
 
     passed(message)
+
+
+TIMINGS = []
+
+
+def timed_wait(label, predicate, timeout=5.0):
+    """Measure from immediately after an action until USD + StageTree are stable."""
+    started = time.perf_counter()
+    success = wait_until(
+        predicate,
+        timeout=timeout,
+    )
+    elapsed_ms = (time.perf_counter() - started) * 1000.0
+
+    TIMINGS.append(
+        (
+            label,
+            elapsed_ms,
+            success,
+        )
+    )
+
+    status = "OK" if success else "TIMEOUT"
+    print(
+        f"[TIME] {label}: "
+        f"{elapsed_ms:.2f} ms "
+        f"({status})"
+    )
+
+    return success, elapsed_ms
+
+
+def require_timed(label, predicate, message, timeout=5.0):
+    success, elapsed_ms = timed_wait(
+        label,
+        predicate,
+        timeout=timeout,
+    )
+
+    require(
+        success,
+        message,
+    )
+
+    return elapsed_ms
+
+
+def tree_item_count(tree):
+    return sum(
+        1
+        for _ in _walk_model_indexes(tree)
+    )
+
+
+def snapshot_tree_state(tree, paths):
+    """
+    Snapshot UI state for stable paths.
+
+    Checkbox state is captured as the actual Qt::CheckStateRole value so
+    namespace edits can be checked for accidental checkbox changes.
+    """
+    snapshot = {}
+
+    for path in paths:
+        item = find_item_by_path(
+            tree,
+            path,
+        )
+
+        require(
+            item is not None,
+            f"{path} exists before UI-state snapshot",
+        )
+
+        snapshot[path] = {
+            "expanded": item.isExpanded(),
+            "selected": item.isSelected(),
+            "checkbox": checkbox_state_for_path(
+                tree,
+                path,
+            ),
+        }
+
+    return snapshot
+
+
+def require_tree_state_preserved(
+    tree,
+    snapshot,
+    path_remap=None,
+    check_selection=True,
+):
+    path_remap = path_remap or {}
+
+    for old_path, expected in snapshot.items():
+        path = path_remap.get(
+            old_path,
+            old_path,
+        )
+
+        item = find_item_by_path(
+            tree,
+            path,
+        )
+
+        require(
+            item is not None,
+            f"{path} exists after UI-state restore",
+        )
+
+        require(
+            item.isExpanded()
+            == expected["expanded"],
+            f"{path} preserves expanded={expected['expanded']}",
+        )
+
+        if check_selection:
+            require(
+                item.isSelected()
+                == expected["selected"],
+                f"{path} preserves selected={expected['selected']}",
+            )
+
+        require(
+            checkbox_state_for_path(
+                tree,
+                path,
+            )
+            == expected["checkbox"],
+            f"{path} preserves checkbox state",
+        )
+
+
+def print_timing_summary():
+    divider()
+    print("TIMING SUMMARY")
+    print()
+
+    if not TIMINGS:
+        print("No timed operations recorded.")
+        return
+
+    for label, elapsed_ms, success in TIMINGS:
+        status = "OK" if success else "TIMEOUT"
+        print(
+            f"{label:<46} "
+            f"{elapsed_ms:10.2f} ms  "
+            f"{status}"
+        )
 
 
 # ----------------------------------------------------------------------
@@ -293,6 +442,195 @@ def create_fixture():
     usd_stage.GetRootLayer().Save()
 
     return root, main
+
+
+def create_performance_fixture(
+    root,
+    branch_count=80,
+    children_per_branch=15,
+):
+    """
+    Create a moderately large normal hierarchy specifically for namespace
+    performance/state testing. It is separate from the functional fixture so
+    the normal diagnostic remains easy to inspect visually.
+    """
+    main = os.path.join(
+        root,
+        "stagetree_performance_test.usda",
+    )
+
+    usd_stage = Usd.Stage.CreateNew(main)
+
+    world = define_xform(
+        usd_stage,
+        "/World",
+    )
+
+    usd_stage.SetDefaultPrim(world)
+
+    define_xform(
+        usd_stage,
+        "/World/Source",
+    )
+
+    define_xform(
+        usd_stage,
+        "/World/Target",
+    )
+
+    define_xform(
+        usd_stage,
+        "/World/Source/Moving",
+    )
+
+    define_xform(
+        usd_stage,
+        "/World/Source/Moving/Child",
+    )
+
+    for branch_index in range(branch_count):
+        branch_path = (
+            f"/World/Branch_{branch_index:03d}"
+        )
+
+        define_xform(
+            usd_stage,
+            branch_path,
+        )
+
+        for child_index in range(children_per_branch):
+            define_xform(
+                usd_stage,
+                (
+                    f"{branch_path}/"
+                    f"Item_{child_index:03d}"
+                ),
+            )
+
+    usd_stage.GetRootLayer().Save()
+
+    return main
+
+
+
+def create_25k_benchmark_fixture(
+    root,
+    target_prim_count=25000,
+    branch_count=100,
+):
+    """
+    Create a fresh, non-payload USD layer containing exactly
+    target_prim_count authored prims below /World.
+
+    Use Sdf directly rather than repeatedly calling UsdStage.DefinePrim().
+    This avoids forcing USD stage recomposition thousands of times while the
+    benchmark fixture itself is being authored.
+    """
+    main = os.path.join(
+        root,
+        "stagetree_25k_benchmark.usda",
+    )
+
+    started = time.perf_counter()
+
+    layer = Sdf.Layer.CreateNew(main)
+
+    def define_xform_spec(path):
+        spec = Sdf.CreatePrimInLayer(
+            layer,
+            path,
+        )
+        spec.specifier = Sdf.SpecifierDef
+        spec.typeName = "Xform"
+        return spec
+
+    define_xform_spec("/World")
+    layer.defaultPrim = "World"
+
+    define_xform_spec("/World/Source")
+    define_xform_spec("/World/Source/Moving")
+    define_xform_spec("/World/Source/Moving/Child")
+    define_xform_spec("/World/Target")
+
+    fixed_count = 5
+    remaining = max(
+        0,
+        int(target_prim_count) - fixed_count,
+    )
+
+    branch_count = max(
+        1,
+        min(
+            int(branch_count),
+            remaining if remaining else 1,
+        ),
+    )
+
+    leaf_budget = max(
+        0,
+        remaining - branch_count,
+    )
+
+    base_children = (
+        leaf_budget // branch_count
+        if branch_count
+        else 0
+    )
+
+    extra_children = (
+        leaf_budget % branch_count
+        if branch_count
+        else 0
+    )
+
+    last_child_paths = []
+
+    for branch_index in range(branch_count):
+        branch_path = (
+            f"/World/Branch_{branch_index:03d}"
+        )
+
+        define_xform_spec(
+            branch_path,
+        )
+
+        child_count = (
+            base_children
+            + (
+                1
+                if branch_index < extra_children
+                else 0
+            )
+        )
+
+        last_child_path = ""
+
+        for child_index in range(child_count):
+            last_child_path = (
+                f"{branch_path}/"
+                f"Item_{child_index:03d}"
+            )
+
+            define_xform_spec(
+                last_child_path,
+            )
+
+        last_child_paths.append(
+            last_child_path
+        )
+
+    layer.Save()
+
+    elapsed = (
+        time.perf_counter()
+        - started
+    )
+
+    return (
+        main,
+        elapsed,
+        last_child_paths,
+    )
 
 
 def find_stage_tree():
@@ -1694,24 +2032,56 @@ DoorRenamed remains selected.
         "DoorRenamed",
     )
 
+    preserved_state = snapshot_tree_state(
+        tree,
+        (
+            "/",
+            "/World",
+            "/World/Assembly",
+            "/World/Assembly/Door",
+            "/World/Assembly/Wheel",
+            "/World/PayloadA",
+            "/World/PayloadB",
+            "/World/PayloadC",
+        ),
+    )
+
     QTest.keyClick(
         editor,
         Qt.Key_Return,
     )
 
-    require(
-        wait_until(
-            lambda: (
-                not exists(
-                    "/World/Assembly/Door"
-                )
-                and exists(
-                    "/World/Assembly/DoorRenamed"
-                )
-            ),
-            timeout=5.0,
+    require_timed(
+        "rename Door -> DoorRenamed (USD + tree stable)",
+        lambda: (
+            not exists(
+                "/World/Assembly/Door"
+            )
+            and exists(
+                "/World/Assembly/DoorRenamed"
+            )
+            and path_exists_in_tree(
+                tree,
+                "/World/Assembly/DoorRenamed",
+            )
+            and path_exists_in_tree(
+                tree,
+                "/World/Assembly/DoorRenamed/Handle",
+            )
+            and current_path(tree)
+            == "/World/Assembly/DoorRenamed"
         ),
-        "USD Door was renamed",
+        "USD Door was renamed and StageTree became stable",
+        timeout=5.0,
+    )
+
+    require_tree_state_preserved(
+        tree,
+        preserved_state,
+        path_remap={
+            "/World/Assembly/Door":
+                "/World/Assembly/DoorRenamed",
+        },
     )
 
     require(
@@ -1837,24 +2207,52 @@ Expected:
     print("ACTION: pressing Tab while inline editor is active")
     print()
 
+    preserved_state = snapshot_tree_state(
+        tree,
+        (
+            "/",
+            "/World",
+            "/World/Assembly",
+            "/World/Assembly/DoorRenamed",
+            "/World/Assembly/Wheel",
+            "/World/PayloadA",
+            "/World/PayloadB",
+            "/World/PayloadC",
+        ),
+    )
+
     QTest.keyClick(
         editor,
         Qt.Key_Tab,
     )
 
-    require(
-        wait_until(
-            lambda: (
-                not exists(
-                    "/World/Assembly/DoorRenamed"
-                )
-                and exists(
-                    "/World/Assembly/DoorFinal"
-                )
-            ),
-            timeout=5.0,
+    require_timed(
+        "Tab rename DoorRenamed -> DoorFinal (USD + tree stable)",
+        lambda: (
+            not exists(
+                "/World/Assembly/DoorRenamed"
+            )
+            and exists(
+                "/World/Assembly/DoorFinal"
+            )
+            and path_exists_in_tree(
+                tree,
+                "/World/Assembly/DoorFinal",
+            )
+            and current_path(tree)
+            == "/World/Assembly/DoorFinal"
         ),
-        "Tab commits DoorFinal rename",
+        "Tab commits DoorFinal rename and StageTree becomes stable",
+        timeout=5.0,
+    )
+
+    require_tree_state_preserved(
+        tree,
+        preserved_state,
+        path_remap={
+            "/World/Assembly/DoorRenamed":
+                "/World/Assembly/DoorFinal",
+        },
     )
 
     require(
@@ -1988,20 +2386,51 @@ Expected:
         "123",
     )
 
+    preserved_state = snapshot_tree_state(
+        tree,
+        (
+            "/",
+            "/World",
+            "/World/Assembly",
+            old_path,
+            "/World/Assembly/Wheel",
+            "/World/PayloadA",
+            "/World/PayloadB",
+            "/World/PayloadC",
+        ),
+    )
+
     QTest.keyClick(
         editor,
         Qt.Key_Return,
     )
 
-    require(
-        wait_until(
-            lambda: (
-                not exists(old_path)
-                and exists(expected_path)
-            ),
-            timeout=5.0,
+    require_timed(
+        "sanitized rename DoorFinal -> _23 (USD + tree stable)",
+        lambda: (
+            not exists(old_path)
+            and exists(expected_path)
+            and path_exists_in_tree(
+                tree,
+                expected_path,
+            )
+            and path_exists_in_tree(
+                tree,
+                expected_path + "/Handle",
+            )
+            and current_path(tree)
+            == expected_path
         ),
-        "USD sanitizes 123 to _23",
+        "USD sanitizes 123 to _23 and StageTree becomes stable",
+        timeout=5.0,
+    )
+
+    require_tree_state_preserved(
+        tree,
+        preserved_state,
+        path_remap={
+            old_path: expected_path,
+        },
     )
 
     require(
@@ -2125,6 +2554,20 @@ Expected UI state:
         "Door is expanded before move",
     )
 
+    preserved_state = snapshot_tree_state(
+        tree,
+        (
+            "/",
+            "/World",
+            "/World/Assembly",
+            "/World/Assembly/Door",
+            "/World/Assembly/Wheel",
+            "/World/PayloadA",
+            "/World/PayloadB",
+            "/World/PayloadC",
+        ),
+    )
+
     print()
     print("ACTION: moving Door below Wheel")
     print()
@@ -2138,24 +2581,33 @@ Expected UI state:
 
     new_path = "/World/Assembly/Wheel/Door"
 
-    require(
-        wait_until(
-            lambda: (
-                not exists("/World/Assembly/Door")
-                and exists(new_path)
-                and exists(new_path + "/Handle")
-            ),
-            timeout=5.0,
+    require_timed(
+        "reparent Door -> Wheel (USD + tree stable)",
+        lambda: (
+            not exists("/World/Assembly/Door")
+            and exists(new_path)
+            and exists(new_path + "/Handle")
+            and path_exists_in_tree(
+                tree,
+                new_path,
+            )
+            and path_exists_in_tree(
+                tree,
+                new_path + "/Handle",
+            )
+            and current_path(tree)
+            == new_path
         ),
-        "USD reparents Door subtree below Wheel",
+        "USD reparents Door subtree and StageTree becomes stable",
+        timeout=5.0,
     )
 
-    require(
-        wait_until(
-            lambda: path_exists_in_tree(tree, new_path),
-            timeout=5.0,
-        ),
-        "reparented Door appears in StageTree",
+    require_tree_state_preserved(
+        tree,
+        preserved_state,
+        path_remap={
+            "/World/Assembly/Door": new_path,
+        },
     )
 
     dump_tree(tree)
@@ -2813,6 +3265,611 @@ Expected StageTree:
     release_qt_wrappers()
 
 
+def test_large_tree_namespace_performance(root):
+    main = create_performance_fixture(
+        root,
+    )
+
+    tree = reload_fixture(
+        main,
+        stageviz.LoadNone,
+    )
+
+    step(
+        15,
+        "Large-tree namespace timing and state preservation",
+        """
+A separate hierarchy with roughly 1,200 normal prim rows is loaded.
+
+Source/Moving/Child is expanded and Moving is selected/current.
+Several unrelated branches are deliberately given a mixture of expanded and
+collapsed states.
+
+Move:
+
+    /World/Source/Moving
+
+to:
+
+    /World/Target/Moving
+
+Expected:
+    - the moved subtree stays expanded
+    - selection/current follows the new path
+    - unrelated branch expansion states are unchanged
+    - the operation prints command-to-stable timing
+    - the timing measures both USD completion and the final StageTree state,
+      not merely how long the Python command call takes
+
+This is intended to expose accidental O(N^2) StageTree state restoration.
+There is intentionally no strict millisecond pass/fail threshold because UI
+timing varies substantially between Debug/Release and machines.
+""",
+    )
+
+    require(
+        path_exists_in_tree(
+            tree,
+            "/World/Source/Moving",
+        ),
+        "Moving subtree exists in large fixture",
+    )
+
+    set_path_expanded(
+        tree,
+        "/World",
+        True,
+    )
+
+    set_path_expanded(
+        tree,
+        "/World/Source",
+        True,
+    )
+
+    set_path_expanded(
+        tree,
+        "/World/Source/Moving",
+        True,
+    )
+
+    set_path_expanded(
+        tree,
+        "/World/Target",
+        True,
+    )
+
+    tracked_branches = (
+        "/World/Branch_000",
+        "/World/Branch_010",
+        "/World/Branch_020",
+        "/World/Branch_030",
+        "/World/Branch_040",
+        "/World/Branch_050",
+        "/World/Branch_060",
+        "/World/Branch_070",
+    )
+
+    for index, path in enumerate(
+        tracked_branches,
+    ):
+        set_path_expanded(
+            tree,
+            path,
+            index % 2 == 0,
+        )
+
+    select_path(
+        tree,
+        "/World/Source/Moving",
+    )
+
+    state_paths = (
+        "/World",
+        "/World/Source",
+        "/World/Source/Moving",
+        "/World/Target",
+    ) + tracked_branches
+
+    preserved_state = snapshot_tree_state(
+        tree,
+        state_paths,
+    )
+
+    item_count = tree_item_count(
+        tree,
+    )
+
+    print()
+    print(
+        "Large-tree StageTree rows:",
+        item_count,
+    )
+    print()
+
+    old_path = "/World/Source/Moving"
+    new_path = "/World/Target/Moving"
+
+    print(
+        "ACTION: moving large-fixture subtree"
+    )
+    print()
+
+    command_started = time.perf_counter()
+
+    stageviz.command.move_path(
+        [old_path],
+        "/World/Target",
+        insert_index=0,
+        preserve_world_transform=True,
+    )
+
+    python_call_ms = (
+        time.perf_counter()
+        - command_started
+    ) * 1000.0
+
+    print(
+        f"[TIME] move_path Python call returned: "
+        f"{python_call_ms:.2f} ms"
+    )
+
+    elapsed_ms = require_timed(
+        (
+            "large-tree reparent "
+            f"({item_count} rows, USD + tree stable)"
+        ),
+        lambda: (
+            not exists(old_path)
+            and exists(new_path)
+            and exists(new_path + "/Child")
+            and not path_exists_in_tree(
+                tree,
+                old_path,
+            )
+            and path_exists_in_tree(
+                tree,
+                new_path,
+            )
+            and path_exists_in_tree(
+                tree,
+                new_path + "/Child",
+            )
+            and path_is_expanded(
+                tree,
+                new_path,
+            )
+            and path_is_selected(
+                tree,
+                new_path,
+            )
+            and current_path(tree)
+            == new_path
+        ),
+        "large-tree reparent reaches stable USD and StageTree state",
+        timeout=10.0,
+    )
+
+    require_tree_state_preserved(
+        tree,
+        preserved_state,
+        path_remap={
+            old_path: new_path,
+        },
+    )
+
+    require(
+        path_exists_in_tree(
+            tree,
+            new_path + "/Child",
+        ),
+        "large-tree moved child remains present",
+    )
+
+    print()
+    print(
+        "[PERF] large-tree namespace result: "
+        f"{elapsed_ms:.2f} ms stable latency "
+        f"for {item_count} StageTree rows"
+    )
+    print()
+
+    release_qt_wrappers()
+
+
+
+def test_25k_namespace_benchmark(root):
+    target_prim_count = 25000
+
+    step(
+        16,
+        "Fresh 25k StageTree namespace benchmark",
+        """
+A completely new USD stage is authored at the end of the UI suite.
+
+Target:
+    approximately 25,000 authored prims
+
+The stage contains:
+    /World
+      /Source
+        /Moving
+          /Child
+      /Target
+      /Branch_000 ...
+      /Branch_099 ...
+
+The broad unrelated hierarchy is intentional: rename/reparent only touches a
+very small subtree, while StageTree must preserve state correctly across the
+full visible tree.
+
+Measurements:
+    1. USD fixture creation/save time
+    2. StageViz session.load() -> StageTree fully populated
+    3. rename Moving -> MovingRenamed
+    4. reparent MovingRenamed -> Target
+
+Correctness checks:
+    - moved/renamed subtree remains expanded
+    - selection/current follows the namespace edit
+    - representative unrelated branches keep mixed expanded/collapsed states
+    - representative checkbox state is preserved
+    - old paths disappear and descendants remain at their remapped paths
+
+No hard millisecond threshold is applied yet. This produces a stable reference
+measurement for comparing builds and detecting scaling regressions.
+""",
+    )
+
+    print()
+    print(
+        f"Creating fresh benchmark stage with target "
+        f"{target_prim_count:,} prims..."
+    )
+    print()
+
+    (
+        main,
+        create_seconds,
+        last_child_paths,
+    ) = create_25k_benchmark_fixture(
+        root,
+        target_prim_count=target_prim_count,
+        branch_count=100,
+    )
+
+    expected_last_path = last_child_paths[-1]
+
+    print(
+        f"[TIME] 25k fixture create/save: "
+        f"{create_seconds * 1000.0:.2f} ms"
+    )
+
+    release_qt_wrappers()
+
+    load_started = time.perf_counter()
+
+    require(
+        stageviz.session().load(
+            main,
+            stageviz.LoadNone,
+        ),
+        "25k benchmark stage loads",
+    )
+
+    require(
+        wait_until(
+            lambda: bool(
+                stage()
+                and exists("/World")
+            ),
+            timeout=30.0,
+        ),
+        "25k benchmark USD stage becomes available",
+    )
+
+    tree = find_stage_tree()
+
+    require(
+        tree is not None,
+        "StageTree found for 25k benchmark",
+    )
+
+    print(
+        "25k tree population sentinel:",
+        expected_last_path,
+    )
+
+    require(
+        wait_until(
+            lambda: (
+                path_exists_in_tree(
+                    tree,
+                    "/World/Branch_099",
+                )
+                and path_exists_in_tree(
+                    tree,
+                    expected_last_path,
+                )
+            ),
+            timeout=30.0,
+        ),
+        "25k benchmark StageTree is fully populated",
+    )
+
+    load_ms = (
+        time.perf_counter()
+        - load_started
+    ) * 1000.0
+
+    item_count = tree_item_count(
+        tree,
+    )
+
+    print(
+        f"[TIME] 25k session.load -> tree stable: "
+        f"{load_ms:.2f} ms"
+    )
+    print(
+        f"[PERF] 25k StageTree rows: "
+        f"{item_count:,}"
+    )
+    print()
+
+    # Establish deliberately mixed view state across distant branches.
+    set_path_expanded(
+        tree,
+        "/World",
+        True,
+    )
+    set_path_expanded(
+        tree,
+        "/World/Source",
+        True,
+    )
+    set_path_expanded(
+        tree,
+        "/World/Source/Moving",
+        True,
+    )
+    set_path_expanded(
+        tree,
+        "/World/Target",
+        True,
+    )
+
+    tracked_branches = (
+        "/World/Branch_000",
+        "/World/Branch_011",
+        "/World/Branch_022",
+        "/World/Branch_033",
+        "/World/Branch_044",
+        "/World/Branch_055",
+        "/World/Branch_066",
+        "/World/Branch_077",
+        "/World/Branch_088",
+        "/World/Branch_099",
+    )
+
+    for index, path in enumerate(
+        tracked_branches,
+    ):
+        set_path_expanded(
+            tree,
+            path,
+            index % 2 == 0,
+        )
+
+    original_path = "/World/Source/Moving"
+    renamed_path = "/World/Source/MovingRenamed"
+    moved_path = "/World/Target/MovingRenamed"
+
+    select_path(
+        tree,
+        original_path,
+    )
+
+    tracked_state_paths = (
+        "/",
+        "/World",
+        "/World/Source",
+        original_path,
+        "/World/Target",
+    ) + tracked_branches
+
+    rename_state = snapshot_tree_state(
+        tree,
+        tracked_state_paths,
+    )
+
+    print()
+    print(
+        "ACTION: 25k rename "
+        "/World/Source/Moving -> MovingRenamed"
+    )
+    print()
+
+    command_started = time.perf_counter()
+
+    stageviz.command.rename_path(
+        original_path,
+        "MovingRenamed",
+    )
+
+    rename_python_ms = (
+        time.perf_counter()
+        - command_started
+    ) * 1000.0
+
+    print(
+        f"[TIME] 25k rename_path Python call returned: "
+        f"{rename_python_ms:.2f} ms"
+    )
+
+    rename_ms = require_timed(
+        (
+            f"25k rename "
+            f"({item_count} rows, USD + tree stable)"
+        ),
+        lambda: (
+            not exists(original_path)
+            and exists(renamed_path)
+            and exists(renamed_path + "/Child")
+            and not path_exists_in_tree(
+                tree,
+                original_path,
+            )
+            and path_exists_in_tree(
+                tree,
+                renamed_path,
+            )
+            and path_exists_in_tree(
+                tree,
+                renamed_path + "/Child",
+            )
+            and path_is_expanded(
+                tree,
+                renamed_path,
+            )
+            and path_is_selected(
+                tree,
+                renamed_path,
+            )
+            and current_path(tree)
+            == renamed_path
+        ),
+        "25k rename reaches stable USD and StageTree state",
+        timeout=30.0,
+    )
+
+    require_tree_state_preserved(
+        tree,
+        rename_state,
+        path_remap={
+            original_path: renamed_path,
+        },
+    )
+
+    # Snapshot again after rename so reparent is independently validated.
+    move_state_paths = (
+        "/",
+        "/World",
+        "/World/Source",
+        renamed_path,
+        "/World/Target",
+    ) + tracked_branches
+
+    move_state = snapshot_tree_state(
+        tree,
+        move_state_paths,
+    )
+
+    print()
+    print(
+        "ACTION: 25k reparent "
+        "/World/Source/MovingRenamed -> /World/Target"
+    )
+    print()
+
+    command_started = time.perf_counter()
+
+    stageviz.command.move_path(
+        [renamed_path],
+        "/World/Target",
+        insert_index=0,
+        preserve_world_transform=True,
+    )
+
+    move_python_ms = (
+        time.perf_counter()
+        - command_started
+    ) * 1000.0
+
+    print(
+        f"[TIME] 25k move_path Python call returned: "
+        f"{move_python_ms:.2f} ms"
+    )
+
+    move_ms = require_timed(
+        (
+            f"25k reparent "
+            f"({item_count} rows, USD + tree stable)"
+        ),
+        lambda: (
+            not exists(renamed_path)
+            and exists(moved_path)
+            and exists(moved_path + "/Child")
+            and not path_exists_in_tree(
+                tree,
+                renamed_path,
+            )
+            and path_exists_in_tree(
+                tree,
+                moved_path,
+            )
+            and path_exists_in_tree(
+                tree,
+                moved_path + "/Child",
+            )
+            and path_is_expanded(
+                tree,
+                moved_path,
+            )
+            and path_is_selected(
+                tree,
+                moved_path,
+            )
+            and current_path(tree)
+            == moved_path
+        ),
+        "25k reparent reaches stable USD and StageTree state",
+        timeout=30.0,
+    )
+
+    require_tree_state_preserved(
+        tree,
+        move_state,
+        path_remap={
+            renamed_path: moved_path,
+        },
+    )
+
+    print()
+    print("25K BENCHMARK SUMMARY")
+    print()
+    print(
+        f"Fixture create/save:                  "
+        f"{create_seconds * 1000.0:10.2f} ms"
+    )
+    print(
+        f"Session load -> tree stable:           "
+        f"{load_ms:10.2f} ms"
+    )
+    print(
+        f"Rename command call:                   "
+        f"{rename_python_ms:10.2f} ms"
+    )
+    print(
+        f"Rename -> USD + tree stable:           "
+        f"{rename_ms:10.2f} ms"
+    )
+    print(
+        f"Reparent command call:                 "
+        f"{move_python_ms:10.2f} ms"
+    )
+    print(
+        f"Reparent -> USD + tree stable:         "
+        f"{move_ms:10.2f} ms"
+    )
+    print(
+        f"StageTree rows:                        "
+        f"{item_count:10,d}"
+    )
+    print()
+
+    release_qt_wrappers()
+
+
 # ----------------------------------------------------------------------
 # Main
 # ----------------------------------------------------------------------
@@ -2889,6 +3946,10 @@ def run():
         test_payload_policy_after_reload(main)
         test_all_policy(main)
         test_invalid_move_keeps_tree_stable(main)
+        test_large_tree_namespace_performance(root)
+        test_25k_namespace_benchmark(root)
+
+        print_timing_summary()
 
         divider()
 
