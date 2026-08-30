@@ -41,7 +41,6 @@ public:
     void startScriptDrag(QPlainTextEdit* edit);
     void updateClearButton();
     bool isPointInSelection(QPlainTextEdit* edit, const QPoint& pos) const;
-
     void showEditorContextMenu(const QPoint& pos);
     bool findText(const QString& text, QTextDocument::FindFlags flags = {});
     void findNext();

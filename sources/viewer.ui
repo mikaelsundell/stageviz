@@ -1408,7 +1408,7 @@
   </action>
   <action name="viewTogglePanels">
    <property name="text">
-    <string>Toggle side panels</string>
+    <string>Toggle panels</string>
    </property>
    <property name="shortcut">
     <string>Space</string>

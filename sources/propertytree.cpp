@@ -16,21 +16,21 @@
 #include "tracelocks.h"
 #include "viewcontext.h"
 #include <QApplication>
-#include <QComboBox>
-#include <QDoubleSpinBox>
-#include <QLineEdit>
-#include <QSpinBox>
 #include <QClipboard>
+#include <QComboBox>
 #include <QContextMenuEvent>
+#include <QDoubleSpinBox>
 #include <QFileInfo>
 #include <QHeaderView>
 #include <QIcon>
+#include <QLineEdit>
 #include <QMap>
 #include <QMenu>
 #include <QPointer>
 #include <QScrollBar>
 #include <QSet>
 #include <QSignalBlocker>
+#include <QSpinBox>
 #include <algorithm>
 #include <climits>
 #include <cstdint>
@@ -202,12 +202,10 @@ public:
             if (!index.isValid() || index.column() != PropertyItem::Value)
                 return nullptr;
 
-            const PropertyItem::Editor editorType =
-                PropertyItem::Editor(index.data(PropertyItem::EditorRole).toInt());
+            const PropertyItem::Editor editorType = PropertyItem::Editor(index.data(PropertyItem::EditorRole).toInt());
             const bool mixed = index.data(PropertyItem::MixedValueRole).toBool();
 
-            if (mixed && (editorType == PropertyItem::IntegerEditor
-                          || editorType == PropertyItem::FloatingEditor)) {
+            if (mixed && (editorType == PropertyItem::IntegerEditor || editorType == PropertyItem::FloatingEditor)) {
                 auto* line = new QLineEdit(parent);
                 line->setPlaceholderText("<mixed>");
                 return line;
@@ -245,11 +243,9 @@ public:
                 spin->setSingleStep(0.1);
                 return spin;
             }
-            case PropertyItem::TextEditor:
-                return new QLineEdit(parent);
+            case PropertyItem::TextEditor: return new QLineEdit(parent);
             case PropertyItem::NoEditor:
-            default:
-                break;
+            default: break;
             }
             return TreeWidget::ItemDelegate::createEditor(parent, option, index);
         }
@@ -305,8 +301,7 @@ public:
             TreeWidget::ItemDelegate::setEditorData(editor, index);
         }
 
-        void setModelData(QWidget* editor, QAbstractItemModel* model,
-                          const QModelIndex& index) const override
+        void setModelData(QWidget* editor, QAbstractItemModel* model, const QModelIndex& index) const override
         {
             if (auto* combo = qobject_cast<QComboBox*>(editor)) {
                 model->setData(index, combo->currentText(), Qt::EditRole);

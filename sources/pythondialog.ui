@@ -219,9 +219,9 @@
                 </sizepolicy>
                </property>
               </widget>
-              <widget class="QPlainTextEdit" name="log">
+              <widget class="stageviz::PythonLogEdit" name="log">
                <property name="sizePolicy">
-                <sizepolicy hsizetype="Preferred" vsizetype="Minimum">
+                <sizepolicy hsizetype="Preferred" vsizetype="Preferred">
                  <horstretch>0</horstretch>
                  <verstretch>0</verstretch>
                 </sizepolicy>
@@ -245,6 +245,11 @@
    <class>stageviz::PythonEditor</class>
    <extends>QPlainTextEdit</extends>
    <header>../../../sources/pythoneditor.h</header>
+  </customwidget>
+  <customwidget>
+   <class>stageviz::PythonLogEdit</class>
+   <extends>QPlainTextEdit</extends>
+   <header>../../../sources/pythonlogedit.h</header>
   </customwidget>
  </customwidgets>
  <resources/>

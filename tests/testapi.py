@@ -822,6 +822,25 @@ def _create_main_file(path, payload_a, payload_b, external):
     )
     Usd.ModelAPI(nested_inner).SetKind(Kind.Tokens.component)
 
+    variant_payload = _define_xform(stage, "/World/VariantPayload")
+    Usd.ModelAPI(variant_payload).SetKind(Kind.Tokens.component)
+    variant_set = variant_payload.GetVariantSets().AddVariantSet("model")
+    variant_set.AddVariant("A")
+    variant_set.AddVariant("B")
+    variant_set.SetVariantSelection("A")
+    with variant_set.GetVariantEditContext():
+        variant_payload.GetPayloads().AddPayload(
+            os.path.basename(payload_a),
+            "/PayloadA",
+        )
+    variant_set.SetVariantSelection("B")
+    with variant_set.GetVariantEditContext():
+        variant_payload.GetPayloads().AddPayload(
+            os.path.basename(payload_b),
+            "/PayloadB",
+        )
+    variant_set.SetVariantSelection("A")
+
     stage.GetRootLayer().Save()
 
 
@@ -2511,6 +2530,105 @@ def test_payload_load_unload():
             "undo unload_payloads restores previous mask",
         )
 
+
+
+def test_payload_variant_session_state(root):
+    session = stageviz.session()
+    required = ("saveState", "loadState")
+    missing = [name for name in required if not hasattr(session, name)]
+    _assert(
+        not missing,
+        "session state API is exposed"
+        + (f": missing {missing}" if missing else ""),
+    )
+    if missing:
+        return
+
+    path = "/World/VariantPayload"
+    prim = _prim(path)
+    _assert(bool(prim and prim.HasPayload()), "variant payload is composed")
+    if not prim:
+        return
+
+    variant_set = prim.GetVariantSet("model")
+    _assert(bool(variant_set and variant_set.IsValid()), "variant payload has model variant set")
+    if not variant_set or not variant_set.IsValid():
+        return
+
+    _assert_equal(
+        variant_set.GetVariantSelection(),
+        "A",
+        "variant payload fixture starts on variant A",
+    )
+
+    variant_set.SetVariantSelection("B")
+    stageviz.command.load_payloads([path])
+
+    _assert(
+        _wait_until(
+            lambda: bool(
+                _prim(path)
+                and _prim(path).IsLoaded()
+                and _prim(path).GetVariantSet("model").GetVariantSelection() == "B"
+            ),
+            timeout=5.0,
+        ),
+        "variant B payload is loaded before saving session state",
+    )
+
+    state_path = os.path.join(root, "variant_payload.session")
+    _assert(bool(session.saveState(state_path)), "session state saves variant payload state")
+
+    try:
+        with open(state_path, "r", encoding="utf-8") as file:
+            state = json.load(file)
+    except Exception as exc:
+        _fail(f"read saved variant payload session state: {exc}")
+        return
+
+    _assert(
+        path in state.get("loadedPayloads", []),
+        "saved session records variant payload as loaded",
+    )
+    _assert(
+        {
+            "path": path,
+            "set": "model",
+            "value": "B",
+        }
+        in state.get("payloadVariants", []),
+        "saved session records payload variant selection",
+    )
+
+    stageviz.command.unload_payloads([path])
+    variant_set = _prim(path).GetVariantSet("model")
+    variant_set.SetVariantSelection("A")
+
+    _assert(
+        _wait_until(
+            lambda: bool(
+                _prim(path)
+                and not _prim(path).IsLoaded()
+                and _prim(path).GetVariantSet("model").GetVariantSelection() == "A"
+            ),
+            timeout=5.0,
+        ),
+        "variant payload state changed before session restore",
+    )
+
+    _assert(bool(session.loadState(state_path)), "session state restores variant payload state")
+
+    _assert(
+        _wait_until(
+            lambda: bool(
+                _prim(path)
+                and _prim(path).IsLoaded()
+                and _prim(path).GetVariantSet("model").GetVariantSelection() == "B"
+            ),
+            timeout=5.0,
+        ),
+        "session restore selects variant B before reloading payload",
+    )
 
 
 def _prim_world_bounds(path):
@@ -4761,6 +4879,7 @@ def run():
         ("default prim validation", test_default_prim_validation, ()),
         ("stage up", test_stage_up, ()),
         ("payload load/unload", test_payload_load_unload, ()),
+        ("payload variant session state", test_payload_variant_session_state, (root,)),
         ("load neighbor payloads", test_load_neighbor_payloads, ()),
         ("load neighbor payloads raw source", test_load_neighbor_payloads_raw_source, ()),
         ("select payload", test_select_payload, ()),

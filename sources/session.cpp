@@ -20,10 +20,12 @@
 #include <QMutex>
 #include <QMutexLocker>
 #include <QPointer>
+#include <algorithm>
 #include <pxr/base/tf/weakBase.h>
 #include <pxr/usd/sdf/copyUtils.h>
 #include <pxr/usd/usd/notice.h>
 #include <pxr/usd/usd/payloads.h>
+#include <pxr/usd/usd/variantSets.h>
 #include <pxr/usd/usdGeom/bboxCache.h>
 #include <pxr/usd/usdGeom/metrics.h>
 #include <pxr/usd/usdGeom/xform.h>
@@ -768,12 +770,51 @@ SessionPrivate::loadState(const QString& filename)
     const QJsonObject cameraObject = root.value("viewCamera").toObject();
     const QJsonObject viewStateObject = root.value("viewState").toObject();
     const QJsonArray payloads = root.value("loadedPayloads").toArray();
+    const QJsonArray payloadVariants = root.value("payloadVariants").toArray();
     {
         WRITE_LOCKER(locker, &d.stageLock, "stageLock");
         if (!d.stage)
             return false;
 
         StageBlocker blocker(d.stageWatcher.data());
+        for (const QJsonValue& value : payloadVariants) {
+            if (!value.isObject())
+                continue;
+
+            const QJsonObject object = value.toObject();
+            const QString pathString = object.value("path").toString().trimmed();
+            const QString setName = object.value("set").toString().trimmed();
+            const QString variantValue = object.value("value").toString().trimmed();
+            if (pathString.isEmpty() || setName.isEmpty() || variantValue.isEmpty())
+                continue;
+
+            const SdfPath path(qt::QStringToString(pathString));
+            if (!path.IsAbsolutePath() || !path.IsPrimPath())
+                continue;
+
+            UsdPrim prim = d.stage->GetPrimAtPath(path);
+            if (!prim || !prim.IsValid())
+                continue;
+
+            const std::string setNameString = qt::QStringToString(setName);
+            const std::string variantValueString = qt::QStringToString(variantValue);
+            UsdVariantSet variantSet = prim.GetVariantSet(setNameString);
+            if (!variantSet.IsValid())
+                continue;
+
+            const std::vector<std::string> names = variantSet.GetVariantNames();
+            if (std::find(names.begin(), names.end(), variantValueString) == names.end())
+                continue;
+
+            if (variantSet.GetVariantSelection() == variantValueString)
+                continue;
+
+            if (prim.IsLoaded())
+                prim.Unload();
+
+            variantSet.SetVariantSelection(variantValueString);
+        }
+
         for (const QJsonValue& value : payloads) {
             const QString pathString = value.toString().trimmed();
             if (pathString.isEmpty())
@@ -969,6 +1010,7 @@ SessionPrivate::saveState(const QString& filename)
 {
     QString stageFilename;
     QJsonArray payloads;
+    QJsonArray payloadVariants;
     {
         READ_LOCKER(locker, &d.stageLock, "stageLock");
         if (!d.stage)
@@ -983,17 +1025,37 @@ SessionPrivate::saveState(const QString& filename)
             if (!prim || !prim.IsValid())
                 continue;
 
-            if (stage::isPayload(d.stage, prim.GetPath()) && prim.IsLoaded())
+            if (stage::isPayload(d.stage, prim.GetPath()) && prim.IsLoaded()) {
                 payloads.append(qt::SdfPathToQString(prim.GetPath()));
+
+                const UsdVariantSets variantSets = prim.GetVariantSets();
+                const std::vector<std::string> setNames = variantSets.GetNames();
+                for (const std::string& setName : setNames) {
+                    const UsdVariantSet variantSet = prim.GetVariantSet(setName);
+                    if (!variantSet.IsValid())
+                        continue;
+
+                    const std::string selection = variantSet.GetVariantSelection();
+                    if (selection.empty())
+                        continue;
+
+                    QJsonObject object;
+                    object["path"] = qt::SdfPathToQString(prim.GetPath());
+                    object["set"] = qt::StringToQString(setName);
+                    object["value"] = qt::StringToQString(selection);
+                    payloadVariants.append(object);
+                }
+            }
 
             for (const UsdPrim& child : prim.GetChildren())
                 stack.push(child);
         }
     }
     QJsonObject root;
-    root["version"] = 2;
+    root["version"] = 3;
     root["stageFile"] = stageFilename;
     root["loadedPayloads"] = payloads;
+    root["payloadVariants"] = payloadVariants;
     if (d.viewState && d.viewState->camera()) {
         ViewCamera* camera = d.viewState->camera();
         auto cameraUp = [](ViewCamera::CameraUp value) {

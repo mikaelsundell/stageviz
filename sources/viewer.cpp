@@ -33,16 +33,16 @@
 #include <QColorDialog>
 #include <QDesktopServices>
 #include <QDragEnterEvent>
-#include <QElapsedTimer>
 #include <QEasingCurve>
+#include <QElapsedTimer>
 #include <QEvent>
 #include <QEventLoop>
 #include <QFileDialog>
 #include <QImageWriter>
 #include <QMimeData>
 #include <QObject>
-#include <QPointer>
 #include <QParallelAnimationGroup>
+#include <QPointer>
 #include <QPropertyAnimation>
 #include <QSettings>
 #include <QStatusBar>
@@ -893,9 +893,7 @@ ViewerPrivate::eventFilter(QObject* object, QEvent* event)
         switch (event->type()) {
         case QEvent::Show:
         case QEvent::Hide:
-        case QEvent::Close:
-            QTimer::singleShot(0, this, [this]() { updateToolsModal(); });
-            break;
+        case QEvent::Close: QTimer::singleShot(0, this, [this]() { updateToolsModal(); }); break;
         default: break;
         }
     }
@@ -1974,10 +1972,10 @@ ViewerPrivate::openAbout()
         details = in.readAll();
     }
     updateToolsSuppressed(true, true);
-    
+
     MessageDialog::about(d.viewer.data(), QString("%1 %2").arg(PROJECT_NAME).arg(PROJECT_VERSION), PROJECT_COPYRIGHT,
                          details, GITHUB_URL);
-    
+
     updateToolsSuppressed(false, true);
 }
 
@@ -2535,10 +2533,10 @@ ViewerPrivate::saveChanges()
     const QString name = session()->filename().isEmpty() ? "Untitled" : QFileInfo(session()->filename()).fileName();
 
     updateToolsSuppressed(true, true);
-    
-    const MessageDialog::SaveResult result =
-        MessageDialog::saveQuestion(d.viewer.data(), tr("Save changes?"), tr("Save changes to %1?").arg(name));
-    
+
+    const MessageDialog::SaveResult result = MessageDialog::saveQuestion(d.viewer.data(), tr("Save changes?"),
+                                                                         tr("Save changes to %1?").arg(name));
+
     updateToolsSuppressed(false, true);
 
     switch (result) {
