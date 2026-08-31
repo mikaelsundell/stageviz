@@ -22,7 +22,6 @@
 #include <pxr/usd/usd/attribute.h>
 #include <pxr/usd/usd/editContext.h>
 #include <pxr/usd/usd/editTarget.h>
-#include <pxr/usd/usd/namespaceEditor.h>
 #include <pxr/usd/usd/prim.h>
 #include <pxr/usd/usd/primRange.h>
 #include <pxr/usd/usd/variantSets.h>
@@ -1666,206 +1665,7 @@ namespace stage {
         return vis != UsdGeomTokens->invisible;
     }
 
-    bool movePrim(UsdStageRefPtr stage, const SdfPath& from, const SdfPath& toParent, QString& error)
-    {
-        if (from.IsEmpty() || toParent.IsEmpty()) {
-            error = "invalid path";
-            return false;
-        }
-        return movePrims(stage, { qMakePair(from, toParent.AppendChild(from.GetNameToken())) }, error);
-    }
 
-    bool movePrims(UsdStageRefPtr stage, const QList<QPair<SdfPath, SdfPath>>& moves, QString& error)
-    {
-        if (!stage) {
-            error = "invalid stage";
-            return false;
-        }
-
-        if (moves.isEmpty())
-            return true;
-
-        QString editError;
-        const SdfLayerHandle editLayer = editlayer::opened(stage, editError);
-        if (!editLayer) {
-            error = editError;
-            return false;
-        }
-
-        QSet<SdfPath> sourcePaths;
-        QSet<SdfPath> destinationPaths;
-        QList<QPair<SdfPath, SdfPath>> effectiveMoves;
-        effectiveMoves.reserve(moves.size());
-
-        for (const auto& move : moves) {
-            const SdfPath& from = move.first;
-            const SdfPath& to = move.second;
-
-            if (from.IsEmpty() || to.IsEmpty() || from == SdfPath::AbsoluteRootPath() || !from.IsPrimPath()
-                || !to.IsPrimPath()) {
-                error = "invalid move path";
-                return false;
-            }
-
-            if (from == to)
-                continue;
-
-            if (to.HasPrefix(from)) {
-                error = "cannot move a prim below itself";
-                return false;
-            }
-
-            if (sourcePaths.contains(from)) {
-                error = QString("duplicate move source: %1").arg(qt::SdfPathToQString(from));
-                return false;
-            }
-
-            if (destinationPaths.contains(to)) {
-                error = QString("duplicate move destination: %1").arg(qt::SdfPathToQString(to));
-                return false;
-            }
-
-            sourcePaths.insert(from);
-            destinationPaths.insert(to);
-            effectiveMoves.append(move);
-        }
-
-        if (effectiveMoves.isEmpty())
-            return true;
-
-        auto buildEditor = [stage]() {
-            UsdNamespaceEditor::EditOptions options;
-            options.allowRelocatesAuthoring = false;
-            return UsdNamespaceEditor(stage, options);
-        };
-
-        // validate the complete batch against the unchanged stage first.
-        // A fresh editor per move is intentional: USD then emits the exact
-        // oldPath -> newPath namespace notice for every move, which StageTree
-        // uses to transfer expansion/current-item state.
-        for (const auto& move : effectiveMoves) {
-            const SdfPath& from = move.first;
-            const SdfPath& to = move.second;
-
-            QString validationError;
-            if (!editlayer::validatePrim(stage, from, validationError)) {
-                error = validationError;
-                return false;
-            }
-
-            if (!editlayer::validateParent(stage, to.GetParentPath(), validationError)) {
-                error = validationError;
-                return false;
-            }
-
-            const SdfPath fromParentPath = from.GetParentPath();
-            const SdfPath toParentPath = to.GetParentPath();
-
-            if ((fromParentPath != SdfPath::AbsoluteRootPath() && isInsideCompositionArc(stage, fromParentPath))
-                || (toParentPath != SdfPath::AbsoluteRootPath() && isInsideCompositionArc(stage, toParentPath))) {
-                error = "cannot move into or out of composed prims";
-                return false;
-            }
-
-            const UsdPrim existing = stage->GetPrimAtPath(to);
-            if (existing && !sourcePaths.contains(to)) {
-                error = QString("destination already exists: %1").arg(qt::SdfPathToQString(to));
-                return false;
-            }
-
-            UsdNamespaceEditor editor = buildEditor();
-
-            if (!editor.MovePrimAtPath(from, to)) {
-                error = QString("USD rejected namespace move: %1 -> %2")
-                            .arg(qt::SdfPathToQString(from), qt::SdfPathToQString(to));
-                return false;
-            }
-
-            std::string whyNot;
-            if (!editor.CanApplyEdits(&whyNot)) {
-                error = whyNot.empty() ? QStringLiteral("USD namespace edit cannot be applied: %1 -> %2")
-                                             .arg(qt::SdfPathToQString(from), qt::SdfPathToQString(to))
-                                       : qt::StringToQString(whyNot);
-                return false;
-            }
-        }
-
-        const SdfPathSet originalLoadSet = stage->GetLoadSet();
-        SdfPathSet movedLoadedPaths;
-        SdfPathSet remappedLoadedPaths;
-
-        for (const SdfPath& loadedPath : originalLoadSet) {
-            for (const auto& move : effectiveMoves) {
-                const SdfPath& from = move.first;
-                const SdfPath& to = move.second;
-
-                if (loadedPath == from || loadedPath.HasPrefix(from)) {
-                    const SdfPath relativePath = loadedPath.MakeRelativePath(from);
-                    movedLoadedPaths.insert(loadedPath);
-                    remappedLoadedPaths.insert(to.AppendPath(relativePath));
-                    break;
-                }
-            }
-        }
-
-        QList<QPair<SdfPath, SdfPath>> appliedMoves;
-        appliedMoves.reserve(effectiveMoves.size());
-
-        auto applyMove = [&buildEditor](const SdfPath& from, const SdfPath& to, QString& moveError) {
-            UsdNamespaceEditor editor = buildEditor();
-
-            if (!editor.MovePrimAtPath(from, to)) {
-                moveError = QString("USD rejected namespace move: %1 -> %2")
-                                .arg(qt::SdfPathToQString(from), qt::SdfPathToQString(to));
-                return false;
-            }
-
-            std::string whyNot;
-            if (!editor.CanApplyEdits(&whyNot)) {
-                moveError = whyNot.empty() ? QStringLiteral("USD namespace edit cannot be applied: %1 -> %2")
-                                                 .arg(qt::SdfPathToQString(from), qt::SdfPathToQString(to))
-                                           : qt::StringToQString(whyNot);
-                return false;
-            }
-
-            if (!editor.ApplyEdits()) {
-                moveError = QString("USD namespace move failed: %1 -> %2")
-                                .arg(qt::SdfPathToQString(from), qt::SdfPathToQString(to));
-                return false;
-            }
-
-            return true;
-        };
-
-        for (const auto& move : effectiveMoves) {
-            const SdfPath& from = move.first;
-            const SdfPath& to = move.second;
-
-            QString moveError;
-            if (!applyMove(from, to, moveError)) {
-                QStringList rollbackErrors;
-
-                for (auto it = appliedMoves.crbegin(); it != appliedMoves.crend(); ++it) {
-                    QString rollbackError;
-                    if (!applyMove(it->second, it->first, rollbackError))
-                        rollbackErrors.append(rollbackError);
-                }
-
-                error = moveError;
-                if (!rollbackErrors.isEmpty())
-                    error += QString("; rollback failed: %1").arg(rollbackErrors.join("; "));
-
-                return false;
-            }
-
-            appliedMoves.append(move);
-        }
-
-        if (!remappedLoadedPaths.empty())
-            stage->LoadAndUnload(remappedLoadedPaths, movedLoadedPaths, UsdLoadWithoutDescendants);
-
-        return true;
-    }
 
     QList<SdfPath> leafPaths(UsdStageRefPtr stage, const QList<SdfPath>& mask, bool childMustBeWithinMask)
     {
@@ -1984,6 +1784,24 @@ namespace stage {
         return out;
     }
 
+    UsdStageLoadRules remapLoadRules(const UsdStageLoadRules& rules, const SdfPath& oldPath, const SdfPath& newPath)
+    {
+        UsdStageLoadRules out;
+        for (const auto& r : rules.GetRules()) {
+            const SdfPath& p = r.first;
+            const auto& policy = r.second;
+            if (p.HasPrefix(oldPath)) {
+                const SdfPath rel = p.MakeRelativePath(oldPath);
+                const SdfPath mapped = newPath.AppendPath(rel);
+                out.AddRule(mapped, policy);
+            }
+            else {
+                out.AddRule(p, policy);
+            }
+        }
+        return out;
+    }
+
     TfTokenVector removeChildOrderToken(const TfTokenVector& order, const TfToken& name)
     {
         TfTokenVector out;
@@ -2012,92 +1830,6 @@ namespace stage {
         return layer->Apply(edits);
     }
 
-    bool renamePrim(UsdStageRefPtr stage, const SdfPath& from, const SdfPath& to, QString& error)
-    {
-        if (!stage) {
-            error = "invalid stage";
-            return false;
-        }
-
-        if (from.IsEmpty() || to.IsEmpty() || !from.IsPrimPath() || !to.IsPrimPath()) {
-            error = "invalid rename path";
-            return false;
-        }
-
-        if (from == to)
-            return true;
-
-        const SdfPath parentPath = from.GetParentPath();
-        if (parentPath.IsEmpty() || parentPath != to.GetParentPath()) {
-            error = "invalid rename target";
-            return false;
-        }
-
-        QString validationError;
-        if (!editlayer::validatePrim(stage, from, validationError)) {
-            error = validationError;
-            return false;
-        }
-
-        if (!editlayer::validateParent(stage, parentPath, validationError)) {
-            error = validationError;
-            return false;
-        }
-
-        if (parentPath != SdfPath::AbsoluteRootPath() && isInsideCompositionArc(stage, parentPath)) {
-            error = "cannot rename inside composed prims";
-            return false;
-        }
-
-        const UsdPrim prim = stage->GetPrimAtPath(from);
-        if (!prim || !prim.IsValid()) {
-            error = QString("prim missing: %1").arg(qt::SdfPathToQString(from));
-            return false;
-        }
-
-        if (stage->GetPrimAtPath(to)) {
-            error = QString("destination already exists: %1").arg(qt::SdfPathToQString(to));
-            return false;
-        }
-
-        UsdNamespaceEditor::EditOptions options;
-        options.allowRelocatesAuthoring = false;
-        UsdNamespaceEditor editor(stage, options);
-
-        if (!editor.RenamePrim(prim, to.GetNameToken())) {
-            error = "RenamePrim failed";
-            return false;
-        }
-
-        std::string whyNot;
-        if (!editor.CanApplyEdits(&whyNot)) {
-            error = whyNot.empty() ? QStringLiteral("USD namespace rename cannot be applied")
-                                   : qt::StringToQString(whyNot);
-            return false;
-        }
-
-        const SdfPathSet loadSet = stage->GetLoadSet();
-        SdfPathSet movedLoadedPaths;
-        SdfPathSet remappedLoadedPaths;
-
-        for (const SdfPath& loadedPath : loadSet) {
-            if (loadedPath == from || loadedPath.HasPrefix(from)) {
-                const SdfPath relativePath = loadedPath.MakeRelativePath(from);
-                movedLoadedPaths.insert(loadedPath);
-                remappedLoadedPaths.insert(to.AppendPath(relativePath));
-            }
-        }
-
-        if (!editor.ApplyEdits()) {
-            error = "USD namespace rename failed";
-            return false;
-        }
-
-        if (!remappedLoadedPaths.empty())
-            stage->LoadAndUnload(remappedLoadedPaths, movedLoadedPaths, UsdLoadWithoutDescendants);
-
-        return true;
-    }
 
     void restoreChildOrder(UsdStageRefPtr stage, const SdfPath& parentPath, const TfTokenVector& childOrder)
     {

@@ -797,42 +797,7 @@ namespace stage {
  */
     bool isVisible(UsdStageRefPtr stage, const SdfPath& path);
 
-    /**
- * @brief Moves a prim to a new parent using UsdNamespaceEditor.
- *
- * Validates source, destination, hierarchy rules, and composition boundaries
- * before applying the namespace edit.
- *
- * @param stage USD stage containing the prim.
- * @param from Existing prim path.
- * @param toParent Destination parent prim path.
- * @param error Receives a failure reason.
- *
- * @return True if the prim was moved.
- */
-    bool movePrim(UsdStageRefPtr stage, const SdfPath& from, const SdfPath& toParent, QString& error);
 
-    /**
- * @brief Moves multiple prims to new paths using UsdNamespaceEditor.
- *
- * Validates the complete move batch before authoring any namespace changes.
- * Each validated move is then applied with a fresh UsdNamespaceEditor.
- * This preserves USD's precise old-path to new-path namespace notices,
- * which StageTree uses to migrate expansion and current-item state, while
- * avoiding incorrect results from queueing several moves on one editor.
- *
- * Relocates authoring is disabled so namespace edits stay within the
- * structural editing policy enforced by Stageviz. If a later move fails,
- * previously applied moves are rolled back in reverse order and the
- * original stage load rules are restored.
- *
- * @param stage USD stage containing the prims.
- * @param moves Source and destination path pairs to move.
- * @param error Receives a failure reason.
- *
- * @return True if all prim moves were successfully applied.
- */
-    bool movePrims(UsdStageRefPtr stage, const QList<QPair<SdfPath, SdfPath>>& moves, QString& error);
 
     /**
 * @brief Collects leaf prim paths from the stage.
@@ -934,20 +899,6 @@ namespace stage {
  */
     bool removePrimSpec(const SdfLayerHandle& layer, const SdfPath& specPath);
 
-    /**
- * @brief Renames a prim using UsdNamespaceEditor.
- *
- * Validates the source and target paths, checks whether namespace edits can
- * be applied, and performs the rename.
- *
- * @param stage USD stage containing the prim.
- * @param from Existing prim path.
- * @param to Target prim path.
- * @param error Receives a failure reason.
- *
- * @return True if the prim was renamed.
- */
-    bool renamePrim(UsdStageRefPtr stage, const SdfPath& from, const SdfPath& to, QString& error);
 
     /**
  * @brief Restores an authored child order for a parent prim.

@@ -7,6 +7,7 @@
 #include "commandutils.h"
 #include "qtutils.h"
 #include "tracelocks.h"
+#include "usdedit.h"
 #include "usdutils.h"
 #include <QPointer>
 #include <algorithm>
@@ -3024,7 +3025,8 @@ renamePath(const SdfPath& path, const QString& newNameInput)
                                     stage::captureChildOrder(stage, state->parentPath, state->oldOrder);
 
                                 UsdEditContext context(stage, UsdEditTarget(editLayer));
-                                if (stage::renamePrim(stage, path, newPath, error)) {
+                                edit::NamespaceEditor namespaceEditor(stage);
+                                if (namespaceEditor.renamePrim(path, newPath, error)) {
                                     if (!state->oldOrder.empty()) {
                                         state->newOrder = stage::remapChildOrder(state->oldOrder, path.GetNameToken(),
                                                                                  newPath.GetNameToken());
@@ -3092,7 +3094,8 @@ renamePath(const SdfPath& path, const QString& newNameInput)
                         }
                         else {
                             UsdEditContext context(stage, UsdEditTarget(editLayer));
-                            if (stage::renamePrim(stage, state->newPath, state->oldPath, error)) {
+                            edit::NamespaceEditor namespaceEditor(stage);
+                            if (namespaceEditor.renamePrim(state->newPath, state->oldPath, error)) {
                                 if (!state->oldOrder.empty() && !state->parentPath.IsEmpty()
                                     && state->parentPath != SdfPath::AbsoluteRootPath()) {
                                     stage::restoreChildOrder(stage, state->parentPath, state->oldOrder);
@@ -3266,7 +3269,8 @@ newXformPath(const SdfPath& parentPath, const QString& nameInput)
                                             moves.append(qMakePair(item.oldPath, item.newPath));
 
                                         QString moveError;
-                                        if (!stage::movePrims(stage, moves, moveError)) {
+                                        edit::NamespaceEditor namespaceEditor(stage);
+                                        if (!namespaceEditor.reparentPrims(moves, moveError)) {
                                             error = moveError.isEmpty() ? "failed to move selected paths" : moveError;
                                             stage::restoreChildOrders(stage, state->oldMoveParentOrders);
                                             stage::restoreChildOrder(stage, parentPath, state->oldParentOrder);
@@ -3358,7 +3362,8 @@ newXformPath(const SdfPath& parentPath, const QString& nameInput)
                             for (auto it = state->movedItems.crbegin(); it != state->movedItems.crend(); ++it)
                                 reverseMoves.append(qMakePair(it->newPath, it->oldPath));
 
-                            restored = stage::movePrims(stage, reverseMoves, error);
+                            edit::NamespaceEditor namespaceEditor(stage);
+                            restored = namespaceEditor.reparentPrims(reverseMoves, error);
 
                             if (restored) {
                                 for (auto it = state->oldMoveParentOrders.cbegin();
@@ -3593,7 +3598,8 @@ movePath(const QList<SdfPath>& paths, const SdfPath& newParentPath, int insertIn
                                     }
 
                                     QString moveError;
-                                    if (!stage::movePrims(stage, moves, moveError)) {
+                                    edit::NamespaceEditor namespaceEditor(stage);
+                                    if (!namespaceEditor.reparentPrims(moves, moveError)) {
                                         error = moveError.isEmpty() ? "failed to move paths" : moveError;
                                         stage::restoreChildOrders(stage, state->oldParentOrders);
                                         moved = false;
@@ -3737,7 +3743,8 @@ movePath(const QList<SdfPath>& paths, const SdfPath& newParentPath, int insertIn
                                     reverseMoves.append(qMakePair(it->newPath, it->oldPath));
                             }
 
-                            restored = stage::movePrims(stage, reverseMoves, error);
+                            edit::NamespaceEditor namespaceEditor(stage);
+                            restored = namespaceEditor.reparentPrims(reverseMoves, error);
 
                             if (restored && preserveTransform) {
                                 for (const MoveItem& item : state->items) {
