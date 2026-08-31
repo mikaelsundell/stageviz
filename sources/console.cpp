@@ -9,6 +9,7 @@
 #include <atomic>
 #include <cerrno>
 #include <cstdio>
+#include <mutex>
 #include <thread>
 
 #ifdef Q_OS_WIN
@@ -16,12 +17,19 @@
 #    include <io.h>
 #    include <windows.h>
 #else
+#    include <poll.h>
 #    include <unistd.h>
 #endif
 
 namespace stageviz {
 
 namespace {
+
+    constexpr qsizetype maxPendingCharacters = 1024 * 1024;
+    constexpr qsizetype maxHistoryCharacters = 1024 * 1024;
+    constexpr auto truncatedMessage = "[Stageviz console: earlier output was truncated]\n";
+
+    enum class WaitResult { Readable, Timeout, Closed };
 
 #ifdef Q_OS_WIN
     using fd_t = int;
@@ -53,6 +61,28 @@ namespace {
             return false;
         return true;
     }
+
+    WaitResult fd_wait_readable(fd_t fd, int timeoutMs)
+    {
+        const intptr_t nativeHandle = ::_get_osfhandle(fd);
+        if (nativeHandle == -1)
+            return WaitResult::Closed;
+
+        int waitedMs = 0;
+        for (;;) {
+            DWORD available = 0;
+            if (!::PeekNamedPipe(reinterpret_cast<HANDLE>(nativeHandle), nullptr, 0, nullptr, &available, nullptr))
+                return WaitResult::Closed;
+            if (available > 0)
+                return WaitResult::Readable;
+            if (timeoutMs <= waitedMs)
+                return WaitResult::Timeout;
+
+            const int sleepMs = qMin(10, timeoutMs - waitedMs);
+            ::Sleep(DWORD(sleepMs));
+            waitedMs += sleepMs;
+        }
+    }
 #else
     using fd_t = int;
     int fd_pipe(int fds[2]) { return ::pipe(fds); }
@@ -66,7 +96,35 @@ namespace {
         ::setvbuf(stdout, nullptr, _IONBF, 0);
         ::setvbuf(stderr, nullptr, _IONBF, 0);
     }
+
+    WaitResult fd_wait_readable(fd_t fd, int timeoutMs)
+    {
+        pollfd descriptor = { fd, POLLIN, 0 };
+        int result = 0;
+        do {
+            result = ::poll(&descriptor, 1, timeoutMs);
+        } while (result < 0 && errno == EINTR);
+
+        if (result == 0)
+            return WaitResult::Timeout;
+        if (result < 0)
+            return WaitResult::Closed;
+        if (descriptor.revents & POLLIN)
+            return WaitResult::Readable;
+        return WaitResult::Closed;
+    }
 #endif
+
+    bool appendBounded(QString& destination, const QString& text, qsizetype maximumCharacters)
+    {
+        destination += text;
+        const qsizetype excess = destination.size() - maximumCharacters;
+        if (excess > 0) {
+            destination.remove(0, excess);
+            return true;
+        }
+        return false;
+    }
 
     QString fdState(const char* name, fd_t fd)
     {
@@ -89,6 +147,8 @@ public:
     QStringList lines() const;
 
     void readerLoop();
+    void queueText(const QString& text);
+    void drainPending();
 
     struct Data {
         fd_t readFd = -1;
@@ -97,6 +157,10 @@ public:
         fd_t oldStderr = -1;
         std::atomic_bool running = false;
         QString buffer;
+        QString pending;
+        std::mutex pendingMutex;
+        bool drainScheduled = false;
+        bool pendingTruncated = false;
         std::thread readerThread;
         QPointer<Console> console;
     };
@@ -182,7 +246,6 @@ ConsolePrivate::stop()
         return;
     }
 
-    d.running = false;
     std::fflush(stdout);
     std::fflush(stderr);
 
@@ -214,6 +277,10 @@ ConsolePrivate::stop()
         fd_close(d.writeFd);
         d.writeFd = -1;
     }
+
+    // The reader uses a bounded wait, so it can stop even when a library has
+    // retained a duplicate of stdout or stderr and the pipe never reaches EOF.
+    d.running = false;
 
     if (d.readerThread.joinable()) {
         d.readerThread.join();
@@ -247,32 +314,81 @@ void
 ConsolePrivate::readerLoop()
 {
     char chunk[4096];
-    for (;;) {
+    auto readChunk = [&]() {
 #ifdef Q_OS_WIN
         const int count = fd_read(d.readFd, chunk, unsigned(sizeof(chunk)));
 #else
         const ssize_t count = fd_read(d.readFd, chunk, sizeof(chunk));
 #endif
         if (count > 0) {
-            const QString text = QString::fromLocal8Bit(chunk, int(count));
-            if (d.console) {
-                QMetaObject::invokeMethod(
-                    d.console.data(),
-                    [this, text]() {
-                        d.buffer += text;
-                        if (d.console)
-                            Q_EMIT d.console->textAppended(text);
-                    },
-                    Qt::QueuedConnection);
-            }
-            continue;
+            queueText(QString::fromLocal8Bit(chunk, int(count)));
+            return true;
         }
+        return false;
+    };
 
-        if (count == 0) {
+    while (d.running) {
+        const WaitResult result = fd_wait_readable(d.readFd, 100);
+        if (result == WaitResult::Closed)
             break;
-        }
-        break;
+        if (result == WaitResult::Readable && !readChunk())
+            break;
     }
+
+    // Preserve anything already buffered in the pipe at shutdown without
+    // waiting for duplicated writer descriptors to close.
+    while (fd_wait_readable(d.readFd, 0) == WaitResult::Readable) {
+        if (!readChunk())
+            break;
+    }
+}
+
+void
+ConsolePrivate::queueText(const QString& text)
+{
+    bool scheduleDrain = false;
+    {
+        std::lock_guard<std::mutex> guard(d.pendingMutex);
+        if (appendBounded(d.pending, text, maxPendingCharacters))
+            d.pendingTruncated = true;
+
+        if (!d.drainScheduled) {
+            d.drainScheduled = true;
+            scheduleDrain = true;
+        }
+    }
+
+    if (!scheduleDrain)
+        return;
+
+    const bool invoked = QMetaObject::invokeMethod(this, [this]() { drainPending(); }, Qt::QueuedConnection);
+    if (!invoked) {
+        std::lock_guard<std::mutex> guard(d.pendingMutex);
+        d.drainScheduled = false;
+    }
+}
+
+void
+ConsolePrivate::drainPending()
+{
+    QString text;
+    bool truncated = false;
+    {
+        std::lock_guard<std::mutex> guard(d.pendingMutex);
+        text.swap(d.pending);
+        truncated = d.pendingTruncated;
+        d.pendingTruncated = false;
+        d.drainScheduled = false;
+    }
+
+    if (truncated)
+        text.prepend(QString::fromLatin1(truncatedMessage));
+    if (text.isEmpty())
+        return;
+
+    appendBounded(d.buffer, text, maxHistoryCharacters);
+    if (d.console)
+        Q_EMIT d.console->textAppended(text);
 }
 
 Console::Console(QObject* parent)

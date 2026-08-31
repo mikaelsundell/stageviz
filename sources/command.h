@@ -314,6 +314,16 @@ Command
 defaultPrimPath(const SdfPath& path);
 
 /**
+ * @brief Creates a command that clears the stage default prim.
+ *
+ * The previous default prim is stored so the operation can be undone.
+ *
+ * @return Command that clears and restores the default prim metadata.
+ */
+Command
+clearDefaultPrim();
+
+/**
  * @brief Creates a command that deletes prims at the specified paths.
  *
  * Paths are reduced to minimal root paths to avoid redundant edits.

@@ -90,7 +90,12 @@ if ! command -v cmake &> /dev/null; then
 fi
 
 # check version
-if ! [[ $(cmake --version | grep -o '[0-9]\+\(\.[0-9]\+\)*' | head -n1) < "3.28.0" ]]; then
+cmake_version=$(cmake --version | sed -n '1s/[^0-9]*\([0-9][0-9.]*\).*/\1/p')
+cmake_major=${cmake_version%%.*}
+cmake_remainder=${cmake_version#*.}
+cmake_minor=${cmake_remainder%%.*}
+if [ -z "$cmake_version" ] || [ "$cmake_major" -gt 3 ] \
+    || { [ "$cmake_major" -eq 3 ] && [ "$cmake_minor" -ge 28 ]; }; then
     echo "cmake version is not compatible with Qt, must be before 3.28.0 for multi configuration"
     exit 1
 fi

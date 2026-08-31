@@ -1950,6 +1950,120 @@ defaultPrimPath(const SdfPath& path)
 }
 
 Command
+clearDefaultPrim()
+{
+    auto previousDefaultPrimPath = std::make_shared<SdfPath>();
+
+    return Command(
+        [previousDefaultPrimPath](Session* session) {
+            if (!session)
+                return;
+
+            session->beginProgressBlock("Clear default prim", 1);
+
+            command::runWorker([session, previousDefaultPrimPath]() {
+                bool hadStage = true;
+                bool success = false;
+                QString error;
+
+                {
+                    WRITE_LOCKER(locker, session->stageLock(), "stageLock");
+                    const UsdStageRefPtr stage = session->stageUnsafe();
+
+                    if (!stage) {
+                        hadStage = false;
+                    }
+                    else {
+                        const UsdPrim previousDefaultPrim = stage->GetDefaultPrim();
+                        if (!previousDefaultPrim) {
+                            error = "stage has no default prim";
+                        }
+                        else {
+                            QString editError;
+                            const SdfLayerHandle editLayer = editlayer::opened(stage, editError);
+                            if (!editLayer) {
+                                error = editError;
+                            }
+                            else {
+                                *previousDefaultPrimPath = previousDefaultPrim.GetPath();
+                                UsdEditContext context(stage, UsdEditTarget(editLayer));
+                                stage->ClearDefaultPrim();
+                                success = true;
+                            }
+                        }
+                    }
+                }
+
+                command::queueToSession(session, [session, previousDefaultPrimPath, hadStage, success, error]() {
+                    using Status = Session::Notify::Status;
+                    if (!hadStage || !success) {
+                        const QString message = error.isEmpty() ? "Clear default prim failed"
+                                                                : QString("Clear default prim failed: %1").arg(error);
+                        session->updateProgressNotify(
+                            Session::Notify(message, { *previousDefaultPrimPath }, Status::Error), 1);
+                    }
+                    else {
+                        session->updateProgressNotify(
+                            Session::Notify("Default prim cleared", { *previousDefaultPrimPath }, Status::Success), 1);
+                    }
+                    session->endProgressBlock();
+                });
+            });
+        },
+        [previousDefaultPrimPath](Session* session) {
+            if (!session || previousDefaultPrimPath->IsEmpty())
+                return;
+
+            session->beginProgressBlock("Undo clear default prim", 1);
+
+            command::runWorker([session, previousDefaultPrimPath]() {
+                bool success = false;
+                QString error;
+
+                {
+                    WRITE_LOCKER(locker, session->stageLock(), "stageLock");
+                    const UsdStageRefPtr stage = session->stageUnsafe();
+                    if (!stage) {
+                        error = "stage unavailable";
+                    }
+                    else {
+                        QString editError;
+                        const SdfLayerHandle editLayer = editlayer::opened(stage, editError);
+                        const UsdPrim prim = stage->GetPrimAtPath(*previousDefaultPrimPath);
+                        if (!editLayer) {
+                            error = editError;
+                        }
+                        else if (!prim || !prim.IsValid()) {
+                            error = "previous default prim missing";
+                        }
+                        else {
+                            UsdEditContext context(stage, UsdEditTarget(editLayer));
+                            stage->SetDefaultPrim(prim);
+                            success = true;
+                        }
+                    }
+                }
+
+                command::queueToSession(session, [session, previousDefaultPrimPath, success, error]() {
+                    using Status = Session::Notify::Status;
+                    if (!success) {
+                        const QString message = error.isEmpty() ? "Undo clear default prim failed"
+                                                                : QString("Undo clear default prim failed: %1").arg(error);
+                        session->updateProgressNotify(
+                            Session::Notify(message, { *previousDefaultPrimPath }, Status::Error), 1);
+                    }
+                    else {
+                        session->updateProgressNotify(
+                            Session::Notify("Clear default prim undone", { *previousDefaultPrimPath }, Status::Success),
+                            1);
+                    }
+                    session->endProgressBlock();
+                });
+            });
+        });
+}
+
+Command
 deletePaths(const QList<SdfPath>& inPaths)
 {
     auto state = std::make_shared<snapshot::DeleteState>();

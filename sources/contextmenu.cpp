@@ -367,7 +367,7 @@ ContextMenu::exec(QWidget* parent, ViewContext* context, UsdStageRefPtr usdStage
         return;
 
     if (chosen == setDefaultPrim) {
-        context->run(new Command(defaultPrimPath(paths.first())));
+        context->run(new Command(setDefaultPrim->isChecked() ? defaultPrimPath(paths.first()) : clearDefaultPrim()));
         return;
     }
 

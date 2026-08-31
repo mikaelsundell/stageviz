@@ -1180,6 +1180,7 @@ def test_command_api():
         "unload_payloads",
         "set_stage_up",
         "set_default_prim",
+        "clear_default_prim",
         "delete_paths",
         "duplicate_paths",
         "new_prim",
@@ -2709,6 +2710,26 @@ def test_default_prim_validation():
         )
 
 
+def test_clear_default_prim():
+    stageviz.command.set_default_prim("/World")
+    _assert(
+        _wait_until(lambda: _default_prim_path() == "/World"),
+        "default prim prepared for clear",
+    )
+
+    stageviz.command.clear_default_prim()
+    _assert(
+        _wait_until(lambda: _default_prim_path() == ""),
+        "clear_default_prim clears the default prim",
+    )
+
+    if _undo():
+        _assert(
+            _wait_until(lambda: _default_prim_path() == "/World"),
+            "undo clear_default_prim restores the previous default prim",
+        )
+
+
 def test_stage_up():
     stageviz.command.set_stage_up(stageviz.StageUpZ)
 
@@ -2884,7 +2905,20 @@ def test_payload_variant_session_state(root):
     )
 
     stageviz.command.unload_payloads([path])
-    variant_set = _prim(path).GetVariantSet("model")
+
+    _assert(
+        _wait_until(
+            lambda: bool(
+                _prim(path)
+                and not _prim(path).IsLoaded()
+            ),
+            timeout=5.0,
+        ),
+        "variant payload is fully unloaded before changing variant",
+    )
+
+    prim = _prim(path)
+    variant_set = prim.GetVariantSet("model")
     variant_set.SetVariantSelection("A")
 
     _assert(

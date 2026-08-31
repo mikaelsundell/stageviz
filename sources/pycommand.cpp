@@ -436,6 +436,12 @@ PyCommand_setDefaultPrim(PyObject*, PyObject* args)
 }
 
 static PyObject*
+PyCommand_clearDefaultPrim(PyObject*, PyObject*)
+{
+    return runCommand(clearDefaultPrim());
+}
+
+static PyObject*
 PyCommand_deletePaths(PyObject*, PyObject* args)
 {
     PyObject* pyPaths = nullptr;
@@ -823,6 +829,8 @@ static PyMethodDef PyCommand_methods[] = {
     { "set_stage_up", reinterpret_cast<PyCFunction>(PyCommand_setStageUp), METH_VARARGS, "Set the stage up axis." },
     { "set_default_prim", reinterpret_cast<PyCFunction>(PyCommand_setDefaultPrim), METH_VARARGS,
       "Set the default prim." },
+    { "clear_default_prim", reinterpret_cast<PyCFunction>(PyCommand_clearDefaultPrim), METH_NOARGS,
+      "Clear the default prim." },
     { "delete_paths", reinterpret_cast<PyCFunction>(PyCommand_deletePaths), METH_VARARGS, "Delete paths." },
     { "duplicate_paths", reinterpret_cast<PyCFunction>(PyCommand_duplicatePaths), METH_VARARGS,
       "Duplicate one or more prim paths." },

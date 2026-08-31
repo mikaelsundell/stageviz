@@ -22,6 +22,10 @@
 
 namespace stageviz {
 
+namespace {
+    constexpr int maxConsoleBlocks = 10000;
+}
+
 class ConsoleDialogPrivate : public QObject {
 public:
     ConsoleDialogPrivate();
@@ -53,6 +57,7 @@ ConsoleDialogPrivate::init()
     d.ui.reset(new Ui_ConsoleDialog());
     d.ui->setupUi(d.dialog.data());
     d.ui->log->setReadOnly(true);
+    d.ui->log->setMaximumBlockCount(maxConsoleBlocks);
     d.ui->log->setPlainText(console()->text());
     d.ui->log->setContextMenuPolicy(Qt::CustomContextMenu);
     d.ui->previous->setIcon(style()->icon(Style::IconRole::Left));
