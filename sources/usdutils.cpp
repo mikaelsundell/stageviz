@@ -1790,8 +1790,24 @@ namespace stage {
             }
         }
 
-        const UsdStageLoadRules originalLoadRules = stage->GetLoadRules();
-        UsdStageLoadRules loadRules = originalLoadRules;
+        const SdfPathSet originalLoadSet = stage->GetLoadSet();
+        SdfPathSet movedLoadedPaths;
+        SdfPathSet remappedLoadedPaths;
+
+        for (const SdfPath& loadedPath : originalLoadSet) {
+            for (const auto& move : effectiveMoves) {
+                const SdfPath& from = move.first;
+                const SdfPath& to = move.second;
+
+                if (loadedPath == from || loadedPath.HasPrefix(from)) {
+                    const SdfPath relativePath = loadedPath.MakeRelativePath(from);
+                    movedLoadedPaths.insert(loadedPath);
+                    remappedLoadedPaths.insert(to.AppendPath(relativePath));
+                    break;
+                }
+            }
+        }
+
         QList<QPair<SdfPath, SdfPath>> appliedMoves;
         appliedMoves.reserve(effectiveMoves.size());
 
@@ -1835,8 +1851,6 @@ namespace stage {
                         rollbackErrors.append(rollbackError);
                 }
 
-                stage->SetLoadRules(originalLoadRules);
-
                 error = moveError;
                 if (!rollbackErrors.isEmpty())
                     error += QString("; rollback failed: %1").arg(rollbackErrors.join("; "));
@@ -1845,11 +1859,10 @@ namespace stage {
             }
 
             appliedMoves.append(move);
-            loadRules = remapLoadRules(loadRules, from, to);
         }
 
-        if (loadRules.GetRules() != originalLoadRules.GetRules())
-            stage->SetLoadRules(loadRules);
+        if (!remappedLoadedPaths.empty())
+            stage->LoadAndUnload(remappedLoadedPaths, movedLoadedPaths, UsdLoadWithoutDescendants);
 
         return true;
     }
@@ -1971,24 +1984,6 @@ namespace stage {
         return out;
     }
 
-    UsdStageLoadRules remapLoadRules(const UsdStageLoadRules& rules, const SdfPath& oldPath, const SdfPath& newPath)
-    {
-        UsdStageLoadRules out;
-        for (const auto& r : rules.GetRules()) {
-            const SdfPath& p = r.first;
-            const auto& policy = r.second;
-            if (p.HasPrefix(oldPath)) {
-                const SdfPath rel = p.MakeRelativePath(oldPath);
-                const SdfPath mapped = newPath.AppendPath(rel);
-                out.AddRule(mapped, policy);
-            }
-            else {
-                out.AddRule(p, policy);
-            }
-        }
-        return out;
-    }
-
     TfTokenVector removeChildOrderToken(const TfTokenVector& order, const TfToken& name)
     {
         TfTokenVector out;
@@ -2081,16 +2076,25 @@ namespace stage {
             return false;
         }
 
-        const UsdStageLoadRules loadRules = stage->GetLoadRules();
+        const SdfPathSet loadSet = stage->GetLoadSet();
+        SdfPathSet movedLoadedPaths;
+        SdfPathSet remappedLoadedPaths;
+
+        for (const SdfPath& loadedPath : loadSet) {
+            if (loadedPath == from || loadedPath.HasPrefix(from)) {
+                const SdfPath relativePath = loadedPath.MakeRelativePath(from);
+                movedLoadedPaths.insert(loadedPath);
+                remappedLoadedPaths.insert(to.AppendPath(relativePath));
+            }
+        }
 
         if (!editor.ApplyEdits()) {
             error = "USD namespace rename failed";
             return false;
         }
 
-        const UsdStageLoadRules remappedRules = remapLoadRules(loadRules, from, to);
-        if (remappedRules.GetRules() != loadRules.GetRules())
-            stage->SetLoadRules(remappedRules);
+        if (!remappedLoadedPaths.empty())
+            stage->LoadAndUnload(remappedLoadedPaths, movedLoadedPaths, UsdLoadWithoutDescendants);
 
         return true;
     }

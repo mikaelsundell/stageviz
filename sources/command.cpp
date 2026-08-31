@@ -3023,14 +3023,8 @@ renamePath(const SdfPath& path, const QString& newNameInput)
                                 if (!state->parentPath.IsEmpty())
                                     stage::captureChildOrder(stage, state->parentPath, state->oldOrder);
 
-                                const UsdStageLoadRules rules = stage->GetLoadRules();
                                 UsdEditContext context(stage, UsdEditTarget(editLayer));
                                 if (stage::renamePrim(stage, path, newPath, error)) {
-                                    const UsdStageLoadRules remappedRules = stage::remapLoadRules(rules, path, newPath);
-
-                                    if (remappedRules.GetRules() != rules.GetRules())
-                                        stage->SetLoadRules(remappedRules);
-
                                     if (!state->oldOrder.empty()) {
                                         state->newOrder = stage::remapChildOrder(state->oldOrder, path.GetNameToken(),
                                                                                  newPath.GetNameToken());
@@ -3097,15 +3091,8 @@ renamePath(const SdfPath& path, const QString& newNameInput)
                             error = editError;
                         }
                         else {
-                            const UsdStageLoadRules rules = stage->GetLoadRules();
                             UsdEditContext context(stage, UsdEditTarget(editLayer));
                             if (stage::renamePrim(stage, state->newPath, state->oldPath, error)) {
-                                const UsdStageLoadRules remappedRules = stage::remapLoadRules(rules, state->newPath,
-                                                                                              state->oldPath);
-
-                                if (remappedRules.GetRules() != rules.GetRules())
-                                    stage->SetLoadRules(remappedRules);
-
                                 if (!state->oldOrder.empty() && !state->parentPath.IsEmpty()
                                     && state->parentPath != SdfPath::AbsoluteRootPath()) {
                                     stage::restoreChildOrder(stage, state->parentPath, state->oldOrder);
