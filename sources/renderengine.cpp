@@ -31,16 +31,6 @@ PXR_NAMESPACE_USING_DIRECTIVE
 
 namespace stageviz {
 namespace {
-
-    /**
-     * @brief Restores the OpenGL context that was current on entry.
-     *
-     * Offscreen material previews temporarily make their own context current.
-     * QOpenGLContext::doneCurrent() does not restore the context that was
-     * active before that switch, which can leave a QOpenGLWidget without its
-     * expected context during the next paint. This guard scopes that switch
-     * and restores the previous context and surface on every return path.
-     */
     class OpenGLContextRestore final {
     public:
         OpenGLContextRestore()
@@ -381,7 +371,6 @@ RenderEngine::Private::updateRenderParams()
     params.showProxy = settings.showProxy;
     params.showRender = settings.showRender;
     params.highlight = true;
-    //params.bboxes = selectionBBoxes;
     params.bboxLineColor = qt::QColorToGfVec4f(selectionColor);
     params.bboxLineDashSize = 3.0f;
 }
@@ -672,11 +661,7 @@ RenderEngine::renderImage()
 {
     if (p->contextMode != ContextMode::Offscreen)
         return {};
-
-    // Rendering a swatch temporarily switches away from the context owned by
-    // ImagingGLWidget. Always restore that previous context before returning;
-    // simply calling doneCurrent() would otherwise leave the viewport with no
-    // current context and can produce black or corrupted frames.
+    
     OpenGLContextRestore contextRestore;
 
     if (!p->ensureCurrentContext())
