@@ -443,12 +443,17 @@ void
 ImagingGLWidgetPrivate::paintEvent(QPaintEvent* event)
 {
     Q_UNUSED(event);
-    if (!d.renderEngine) {
-        return;
-    }
 
     QPainter painter(d.glwidget);
     painter.setRenderHint(QPainter::Antialiasing, true);
+
+    if (!d.stage) {
+        QColor background = Qt::black;
+        if (viewState() && viewState()->backgroundColor().isValid())
+            background = viewState()->backgroundColor();
+
+        painter.fillRect(d.glwidget->rect(), background);
+    }
 
     drawLetterbox(painter);
 
@@ -479,6 +484,7 @@ ImagingGLWidgetPrivate::paintEvent(QPaintEvent* event)
         const int axisHeight = qRound(d.axis.height() / d.axis.devicePixelRatio());
         painter.drawImage(QPoint(margin, d.glwidget->height() - margin - axisHeight), d.axis);
     }
+
     drawBorder(painter);
 }
 

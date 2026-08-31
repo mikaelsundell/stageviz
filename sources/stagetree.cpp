@@ -333,6 +333,9 @@ void
 StageTreePrivate::close()
 {
     QSignalBlocker blocker(d.tree);
+    d.pending = 0;
+    d.loadPaths.clear();
+    d.unloadPaths.clear();
     d.stage = nullptr;
     d.itemByPath.clear();
     d.tree->clear();
@@ -536,8 +539,8 @@ StageTreePrivate::addItem(PrimItem* parent, const SdfPath& path)
         if (!stage)
             return nullptr;
 
-        isPayload = d.payloadEnabled && stage::isPayload(stage, path);
-        if (isPayload)
+        isPayload = stage::isPayload(stage, path);
+        if (isPayload && d.payloadEnabled)
             isLoaded = stage->GetPrimAtPath(path).IsLoaded();
     }
 
@@ -553,7 +556,8 @@ StageTreePrivate::addItem(PrimItem* parent, const SdfPath& path)
     parent->addChild(item);
 
     if (isPayload) {
-        item->setCheckState(0, isLoaded ? Qt::Checked : Qt::Unchecked);
+        if (d.payloadEnabled)
+            item->setCheckState(0, isLoaded ? Qt::Checked : Qt::Unchecked);
         return item;
     }
 
@@ -725,6 +729,9 @@ StageTreePrivate::nameChanged(PrimItem* item)
     }
 
     d.context->run(new Command(renamePath(oldPath, newName)));
+
+    if (itemFromPath(oldPath))
+        item->setData(PrimItem::Name, PrimItem::EditName, QString());
 }
 
 void
@@ -838,19 +845,20 @@ StageTreePrivate::syncDirectChildrenOnly(PrimItem* parentItem, const UsdPrim& pa
         if (!d.stage)
             return;
 
-        if (d.payloadEnabled) {
-            isPayload = stage::isPayload(d.stage, parentPrim.GetPath());
+        isPayload = stage::isPayload(d.stage, parentPrim.GetPath());
+        if (isPayload && d.payloadEnabled)
             isLoaded = parentPrim.IsLoaded();
-        }
     }
 
     if (isPayload) {
         parentItem->invalidate();
-        itemCheckState(parentItem, true, false);
+        itemCheckState(parentItem, d.payloadEnabled, false);
 
-        const Qt::CheckState want = isLoaded ? Qt::Checked : Qt::Unchecked;
-        if (parentItem->checkState(PrimItem::Name) != want)
-            parentItem->setCheckState(PrimItem::Name, want);
+        if (d.payloadEnabled) {
+            const Qt::CheckState want = isLoaded ? Qt::Checked : Qt::Unchecked;
+            if (parentItem->checkState(PrimItem::Name) != want)
+                parentItem->setCheckState(PrimItem::Name, want);
+        }
 
         deleteChildren(parentItem);
 
@@ -882,10 +890,24 @@ StageTreePrivate::syncDirectChildrenOnly(PrimItem* parentItem, const UsdPrim& pa
         existing.insert(child->data(0, PrimItem::Path).toString(), child);
     }
 
-    for (auto it = existing.begin(); it != existing.end(); ++it) {
-        if (!stageSet.contains(it.key()))
-            deleteItem(it.value());
+    QList<PrimItem*> staleItems;
+    {
+        READ_LOCKER(locker, d.context->stageLock(), "stageLock");
+        if (!d.stage)
+            return;
+
+        for (auto it = existing.begin(); it != existing.end(); ++it) {
+            if (stageSet.contains(it.key()))
+                continue;
+
+            const SdfPath existingPath(QStringToString(it.key()));
+            if (!d.stage->GetPrimAtPath(existingPath))
+                staleItems.append(it.value());
+        }
     }
+
+    for (PrimItem* item : staleItems)
+        deleteItem(item);
 
     existing.clear();
     existing.reserve(parentItem->childCount());
@@ -952,10 +974,9 @@ StageTreePrivate::syncDirectChildrenOnly(PrimItem* parentItem, const UsdPrim& pa
             if (!childPrim)
                 continue;
 
-            if (d.payloadEnabled) {
-                isPayload = stage::isPayload(d.stage, childPath);
+            isPayload = stage::isPayload(d.stage, childPath);
+            if (isPayload && d.payloadEnabled)
                 isLoaded = childPrim.IsLoaded();
-            }
         }
 
         itemCheckState(childItem, d.payloadEnabled, false);
@@ -1282,17 +1303,18 @@ StageTreePrivate::updatePrim(const SdfPath& path)
         if (!prim)
             return;
 
-        if (d.payloadEnabled)
-            isPayload = stage::isPayload(d.stage, primPath);
+        isPayload = stage::isPayload(d.stage, primPath);
     }
 
     primItem->invalidate();
     itemCheckState(primItem, d.payloadEnabled, false);
 
     if (isPayload) {
-        const Qt::CheckState want = prim.IsLoaded() ? Qt::Checked : Qt::Unchecked;
-        if (primItem->checkState(0) != want)
-            primItem->setCheckState(0, want);
+        if (d.payloadEnabled) {
+            const Qt::CheckState want = prim.IsLoaded() ? Qt::Checked : Qt::Unchecked;
+            if (primItem->checkState(0) != want)
+                primItem->setCheckState(0, want);
+        }
 
         deleteChildren(primItem);
     }
@@ -1309,7 +1331,7 @@ StageTreePrivate::invalidateSubtree(PrimItem* item, const UsdPrim& prim)
     bool isPayload = false;
     {
         READ_LOCKER(locker, d.context->stageLock(), "stageLock");
-        if (d.stage && d.payloadEnabled)
+        if (d.stage)
             isPayload = stage::isPayload(d.stage, primPath);
     }
 
@@ -1317,9 +1339,11 @@ StageTreePrivate::invalidateSubtree(PrimItem* item, const UsdPrim& prim)
     itemCheckState(item, d.payloadEnabled, false);
 
     if (isPayload) {
-        const Qt::CheckState want = prim.IsLoaded() ? Qt::Checked : Qt::Unchecked;
-        if (item->checkState(0) != want)
-            item->setCheckState(0, want);
+        if (d.payloadEnabled) {
+            const Qt::CheckState want = prim.IsLoaded() ? Qt::Checked : Qt::Unchecked;
+            if (item->checkState(0) != want)
+                item->setCheckState(0, want);
+        }
 
         deleteChildren(item);
 
@@ -1383,19 +1407,22 @@ StageTreePrivate::invalidatePrim(const SdfPath& path)
             parentPrim = parentPath == SdfPath::AbsoluteRootPath() ? d.stage->GetPseudoRoot()
                                                                    : d.stage->GetPrimAtPath(parentPath);
 
-            if (d.payloadEnabled && parentPrim) {
+            if (parentPrim) {
                 parentIsPayload = stage::isPayload(d.stage, parentPath);
-                parentIsLoaded = parentPrim.IsLoaded();
+                if (parentIsPayload && d.payloadEnabled)
+                    parentIsLoaded = parentPrim.IsLoaded();
             }
         }
 
         if (parentIsPayload) {
             parentItem->invalidate();
-            itemCheckState(parentItem, true, false);
+            itemCheckState(parentItem, d.payloadEnabled, false);
 
-            const Qt::CheckState want = parentIsLoaded ? Qt::Checked : Qt::Unchecked;
-            if (parentItem->checkState(PrimItem::Name) != want)
-                parentItem->setCheckState(PrimItem::Name, want);
+            if (d.payloadEnabled) {
+                const Qt::CheckState want = parentIsLoaded ? Qt::Checked : Qt::Unchecked;
+                if (parentItem->checkState(PrimItem::Name) != want)
+                    parentItem->setCheckState(PrimItem::Name, want);
+            }
 
             deleteChildren(parentItem);
 
@@ -1427,19 +1454,20 @@ StageTreePrivate::invalidateChildren(PrimItem* parentItem, const UsdPrim& prim)
         if (!d.stage)
             return;
 
-        if (d.payloadEnabled) {
-            isPayload = stage::isPayload(d.stage, prim.GetPath());
+        isPayload = stage::isPayload(d.stage, prim.GetPath());
+        if (isPayload && d.payloadEnabled)
             isLoaded = prim.IsLoaded();
-        }
     }
 
     if (isPayload) {
         parentItem->invalidate();
-        itemCheckState(parentItem, true, false);
+        itemCheckState(parentItem, d.payloadEnabled, false);
 
-        const Qt::CheckState want = isLoaded ? Qt::Checked : Qt::Unchecked;
-        if (parentItem->checkState(PrimItem::Name) != want)
-            parentItem->setCheckState(PrimItem::Name, want);
+        if (d.payloadEnabled) {
+            const Qt::CheckState want = isLoaded ? Qt::Checked : Qt::Unchecked;
+            if (parentItem->checkState(PrimItem::Name) != want)
+                parentItem->setCheckState(PrimItem::Name, want);
+        }
 
         deleteChildren(parentItem);
 
@@ -1469,10 +1497,24 @@ StageTreePrivate::invalidateChildren(PrimItem* parentItem, const UsdPrim& prim)
         }
     }
 
-    for (auto it = existing.begin(); it != existing.end(); ++it) {
-        if (!stageSet.contains(it.key()))
-            deleteItem(it.value());
+    QList<PrimItem*> staleItems;
+    {
+        READ_LOCKER(locker, d.context->stageLock(), "stageLock");
+        if (!d.stage)
+            return;
+
+        for (auto it = existing.begin(); it != existing.end(); ++it) {
+            if (stageSet.contains(it.key()))
+                continue;
+
+            const SdfPath existingPath(QStringToString(it.key()));
+            if (!d.stage->GetPrimAtPath(existingPath))
+                staleItems.append(it.value());
+        }
     }
+
+    for (PrimItem* item : staleItems)
+        deleteItem(item);
 
     existing.clear();
     existing.reserve(parentItem->childCount());

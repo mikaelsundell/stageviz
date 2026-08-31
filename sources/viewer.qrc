@@ -1,5 +1,4 @@
 <RCC>
-
   <qresource prefix="icons">
     <file>../resources/AppIcon.png</file>
     <file>../resources/BranchOpen.png</file>
@@ -9,6 +8,7 @@
     <file>../resources/Closed.png</file>
     <file>../resources/Code.png</file>
     <file>../resources/Collapse.png</file>
+    <file>../resources/DefaultPrim.png</file>
     <file>../resources/DropDown.png</file>
     <file>../resources/Down.png</file>
     <file>../resources/Expand.png</file>

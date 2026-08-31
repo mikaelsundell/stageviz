@@ -37,6 +37,7 @@ public:
         bool isEditTarget = true;
         bool isRoot = false;
         bool isGprim = false;
+        bool isDefaultPrim = false;
 
         QString editName;
         QString name;
@@ -66,6 +67,7 @@ PrimItemPrivate::updateCache()
     d.isEditTarget = true;
     d.isRoot = false;
     d.isGprim = false;
+    d.isDefaultPrim = false;
     d.name.clear();
     d.typeName.clear();
 
@@ -84,6 +86,9 @@ PrimItemPrivate::updateCache()
         d.typeName = StringToQString(prim.GetTypeName().GetString());
         d.isEditTarget = stage::isEditTarget(d.stage, d.path);
         d.isGprim = prim.IsA<UsdGeomGprim>();
+
+        const UsdPrim defaultPrim = d.stage->GetDefaultPrim();
+        d.isDefaultPrim = defaultPrim && defaultPrim == prim;
 
         if (d.active && prim != d.stage->GetPseudoRoot())
             d.visible = stage::isVisible(d.stage, d.path);
@@ -161,6 +166,9 @@ PrimItem::data(int column, int role) const
 
         if (p->d.hasPayload)
             iconRole = Style::IconRole::Payload;
+
+        if (p->d.isDefaultPrim)
+            iconRole = Style::IconRole::DefaultPrim;
 
         return QIcon(style()->icon(iconRole, Style::UIScale::Medium));
     }

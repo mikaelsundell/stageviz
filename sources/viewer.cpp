@@ -185,6 +185,7 @@ public:
         QPointer<QWidget> widget;
         qreal opacity = 1.0;
         bool enabled = true;
+        QByteArray geometry;
     };
     struct Data {
         Session::LoadPolicy loadPolicy;
@@ -2377,15 +2378,19 @@ ViewerPrivate::updateToolsSuppressed(bool suppressed, bool animated)
             state.widget = widget;
             state.opacity = widget->windowOpacity();
             state.enabled = widget->isEnabled();
+            state.geometry = widget->saveGeometry();
             d.toolWidgets.append(state);
+
             widget->setEnabled(false);
         }
 
         if (animated && !d.toolWidgets.isEmpty()) {
             QParallelAnimationGroup group;
+
             for (const ToolWidget& state : std::as_const(d.toolWidgets)) {
                 if (!state.widget)
                     continue;
+
                 auto* animation = new QPropertyAnimation(state.widget, "windowOpacity", &group);
                 animation->setDuration(140);
                 animation->setStartValue(state.widget->windowOpacity());
@@ -2393,6 +2398,7 @@ ViewerPrivate::updateToolsSuppressed(bool suppressed, bool animated)
                 animation->setEasingCurve(QEasingCurve::InOutQuad);
                 group.addAnimation(animation);
             }
+
             if (group.animationCount() > 0) {
                 QEventLoop loop;
                 connect(&group, &QParallelAnimationGroup::finished, &loop, &QEventLoop::quit);
@@ -2407,24 +2413,45 @@ ViewerPrivate::updateToolsSuppressed(bool suppressed, bool animated)
             }
         }
 
+        for (const ToolWidget& state : std::as_const(d.toolWidgets)) {
+            if (state.widget)
+                state.widget->hide();
+        }
+
         return;
     }
 
     const QList<ToolWidget> widgets = d.toolWidgets;
     d.toolWidgets.clear();
 
+    for (const ToolWidget& state : widgets) {
+        if (!state.widget)
+            continue;
+
+        state.widget->setWindowOpacity(0.0);
+        state.widget->show();
+
+        if (!state.geometry.isEmpty())
+            state.widget->restoreGeometry(state.geometry);
+
+        state.widget->raise();
+    }
+
     if (animated && !widgets.isEmpty()) {
         QParallelAnimationGroup group;
+
         for (const ToolWidget& state : widgets) {
             if (!state.widget)
                 continue;
+
             auto* animation = new QPropertyAnimation(state.widget, "windowOpacity", &group);
             animation->setDuration(140);
-            animation->setStartValue(state.widget->windowOpacity());
+            animation->setStartValue(0.0);
             animation->setEndValue(state.opacity);
             animation->setEasingCurve(QEasingCurve::InOutQuad);
             group.addAnimation(animation);
         }
+
         if (group.animationCount() > 0) {
             QEventLoop loop;
             connect(&group, &QParallelAnimationGroup::finished, &loop, &QEventLoop::quit);
@@ -2533,6 +2560,10 @@ ViewerPrivate::saveChanges()
     const QString name = session()->filename().isEmpty() ? "Untitled" : QFileInfo(session()->filename()).fileName();
 
     updateToolsSuppressed(true, true);
+
+    d.viewer->raise();
+    d.viewer->activateWindow();
+    d.viewer->setFocus();
 
     const MessageDialog::SaveResult result = MessageDialog::saveQuestion(d.viewer.data(), tr("Save changes?"),
                                                                          tr("Save changes to %1?").arg(name));

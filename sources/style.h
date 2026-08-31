@@ -60,6 +60,7 @@ public:
         Clear,
         Code,
         Collapse,
+        DefaultPrim,
         Down,
         DropDown,
         Expand,

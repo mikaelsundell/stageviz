@@ -108,6 +108,7 @@ MessageDialogPrivate::execResult()
 
     if (d.showReject) {
         d.ui->reject->setText(d.rejectText);
+        d.ui->reject->setEnabled(true);
         d.ui->reject->show();
     }
     else {
@@ -122,6 +123,14 @@ MessageDialogPrivate::execResult()
     else {
         d.dialog->setMaximumHeight(QWIDGETSIZE_MAX);
     }
+
+    d.dialog->setWindowModality(Qt::WindowModal);
+    d.dialog->raise();
+    d.dialog->activateWindow();
+
+    d.ui->accept->setDefault(true);
+    d.ui->accept->setAutoDefault(true);
+
     return d.dialog->exec();
 }
 

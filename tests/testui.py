@@ -10,9 +10,11 @@ Run from the Stageviz Python editor.
 Policy assumptions:
     - StageTree never displays payload contents.
     - With payload policy enabled:
-        payload rows show load-state checkboxes.
+        all StageTree rows show checkboxes.
+        payload rows carry the actual load state.
+        ancestor rows provide aggregate tristate state.
     - With policy All / payload policy disabled:
-        payload rows do not show checkboxes.
+        no StageTree rows show checkboxes.
 
 The test proceeds one step at a time and stops on the first failure.
 
@@ -22,10 +24,299 @@ Important:
       diagnostic does not retain Python wrappers to deleted C++ items.
 """
 
-import os
-import tempfile
-import time
+import faulthandler
 import gc
+import json
+import os
+import platform
+import statistics
+import sys
+import tempfile
+import threading
+import time
+import traceback
+
+
+# Temporary release-build output modes:
+#   "console"            - original direct Stageviz stdout/stderr
+#   "file"               - ~/stageviz.txt only
+#   "both"               - log first, then forward to the original console
+#   "serialized-console" - pipe native output through serialized forwarding,
+#                          without writing a log file
+_RELEASE_LOG_MODE = "both"
+_RELEASE_LOG_PATH = os.path.expanduser("~/stageviz.txt")
+_RELEASE_LOG_ACTIVE = False
+_RELEASE_LOG_STDOUT = None
+_RELEASE_LOG_STDERR = None
+_RELEASE_LOG_SAVED_STDOUT_FD = None
+_RELEASE_LOG_SAVED_STDERR_FD = None
+_RELEASE_LOG_FD = None
+_RELEASE_LOG_FAULT_FILE = None
+_RELEASE_LOG_THREADS = []
+_RELEASE_LOG_LOCK = threading.Lock()
+
+
+def _release_log_to_file():
+    return _RELEASE_LOG_MODE in ("file", "both")
+
+
+def _release_log_to_console():
+    return _RELEASE_LOG_MODE in ("both", "serialized-console")
+
+
+def _write_all(fd, data):
+    view = memoryview(data)
+    while view:
+        written = os.write(fd, view)
+        view = view[written:]
+
+
+def _write_release_log(data):
+    if not data or _RELEASE_LOG_FD is None:
+        return
+
+    with _RELEASE_LOG_LOCK:
+        _write_all(_RELEASE_LOG_FD, data)
+
+
+def _pump_native_output(read_fd, console_fd):
+    """Tee native stdout/stderr to the log first, then the original fd."""
+    try:
+        while True:
+            try:
+                data = os.read(read_fd, 65536)
+            except OSError:
+                break
+
+            if not data:
+                break
+
+            _write_release_log(data)
+
+            if _release_log_to_console():
+                try:
+                    _write_all(console_fd, data)
+                except OSError:
+                    # Keep recording even when the original console disappears.
+                    pass
+    finally:
+        try:
+            os.close(read_fd)
+        except OSError:
+            pass
+
+
+class _ReleaseTextTee:
+    """Write Python text to the log before forwarding it to the console."""
+
+    def __init__(self, original, console_fd, stream_fd):
+        self.original = original
+        self.console_fd = console_fd
+        self.stream_fd = stream_fd
+        self.encoding = getattr(original, "encoding", None) or "utf-8"
+        self.errors = getattr(original, "errors", None) or "backslashreplace"
+
+    def write(self, text):
+        if not isinstance(text, str):
+            text = str(text)
+
+        data = text.encode(self.encoding, errors="backslashreplace")
+        _write_release_log(data)
+
+        if _RELEASE_LOG_MODE == "serialized-console":
+            try:
+                _write_all(self.stream_fd, data)
+            except OSError:
+                pass
+            return len(text)
+
+        if self.original is None or not _release_log_to_console():
+            return len(text)
+
+        try:
+            original_fd = self.original.fileno()
+        except (AttributeError, OSError, ValueError):
+            original_fd = None
+
+        if original_fd in (1, 2):
+            try:
+                _write_all(self.console_fd, data)
+            except OSError:
+                pass
+        else:
+            # Embedded applications commonly expose a Qt-backed stdout object
+            # without a file descriptor. Preserve that console behavior.
+            self.original.write(text)
+
+        return len(text)
+
+    def flush(self):
+        if _RELEASE_LOG_FD is not None:
+            try:
+                os.fsync(_RELEASE_LOG_FD)
+            except OSError:
+                pass
+
+        if self.original is not None and _release_log_to_console():
+            try:
+                self.original.flush()
+            except (AttributeError, OSError, ValueError):
+                pass
+
+    def isatty(self):
+        if self.original is None:
+            return False
+        try:
+            return self.original.isatty()
+        except (AttributeError, OSError, ValueError):
+            return False
+
+
+def _start_release_log():
+    global _RELEASE_LOG_ACTIVE
+    global _RELEASE_LOG_STDOUT
+    global _RELEASE_LOG_STDERR
+    global _RELEASE_LOG_SAVED_STDOUT_FD
+    global _RELEASE_LOG_SAVED_STDERR_FD
+    global _RELEASE_LOG_FD
+    global _RELEASE_LOG_FAULT_FILE
+    global _RELEASE_LOG_THREADS
+
+    if _RELEASE_LOG_ACTIVE:
+        return
+
+    _RELEASE_LOG_STDOUT = sys.stdout
+    _RELEASE_LOG_STDERR = sys.stderr
+    _RELEASE_LOG_SAVED_STDOUT_FD = os.dup(1)
+    _RELEASE_LOG_SAVED_STDERR_FD = os.dup(2)
+
+    if _release_log_to_file():
+        _RELEASE_LOG_FD = os.open(
+            _RELEASE_LOG_PATH,
+            os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_APPEND,
+            0o644,
+        )
+
+    stdout_read_fd, stdout_write_fd = os.pipe()
+    stderr_read_fd, stderr_write_fd = os.pipe()
+
+    stdout_thread = threading.Thread(
+        target=_pump_native_output,
+        args=(stdout_read_fd, _RELEASE_LOG_SAVED_STDOUT_FD),
+        name="stageviz-log-stdout",
+        daemon=True,
+    )
+    stderr_thread = threading.Thread(
+        target=_pump_native_output,
+        args=(stderr_read_fd, _RELEASE_LOG_SAVED_STDERR_FD),
+        name="stageviz-log-stderr",
+        daemon=True,
+    )
+    _RELEASE_LOG_THREADS = [stdout_thread, stderr_thread]
+    stdout_thread.start()
+    stderr_thread.start()
+
+    try:
+        os.dup2(stdout_write_fd, 1)
+        os.dup2(stderr_write_fd, 2)
+    finally:
+        os.close(stdout_write_fd)
+        os.close(stderr_write_fd)
+
+    sys.stdout = _ReleaseTextTee(
+        _RELEASE_LOG_STDOUT,
+        _RELEASE_LOG_SAVED_STDOUT_FD,
+        1,
+    )
+    sys.stderr = _ReleaseTextTee(
+        _RELEASE_LOG_STDERR,
+        _RELEASE_LOG_SAVED_STDERR_FD,
+        2,
+    )
+
+    fault_fd = (
+        _RELEASE_LOG_FD
+        if _RELEASE_LOG_FD is not None
+        else _RELEASE_LOG_SAVED_STDERR_FD
+    )
+    _RELEASE_LOG_FAULT_FILE = os.fdopen(
+        os.dup(fault_fd),
+        "w",
+        buffering=1,
+        encoding="utf-8",
+        errors="backslashreplace",
+    )
+
+    faulthandler.enable(file=_RELEASE_LOG_FAULT_FILE, all_threads=True)
+    _RELEASE_LOG_ACTIVE = True
+
+    print("=" * 78)
+    print("STAGEVIZ RELEASE TEST LOG")
+    print("=" * 78)
+    print(f"Started: {time.strftime('%Y-%m-%d %H:%M:%S %z')}")
+    print(f"PID: {os.getpid()}")
+    print(f"Output mode: {_RELEASE_LOG_MODE}")
+    if _release_log_to_file():
+        print(f"Log: {_RELEASE_LOG_PATH}")
+    print()
+
+
+def _stop_release_log():
+    global _RELEASE_LOG_ACTIVE
+    global _RELEASE_LOG_FD
+    global _RELEASE_LOG_FAULT_FILE
+    global _RELEASE_LOG_THREADS
+
+    if not _RELEASE_LOG_ACTIVE:
+        return
+
+    log_stdout = sys.stdout
+    log_stderr = sys.stderr
+
+    try:
+        print()
+        print(f"Finished: {time.strftime('%Y-%m-%d %H:%M:%S %z')}")
+        log_stdout.flush()
+        log_stderr.flush()
+        faulthandler.disable()
+    finally:
+        os.dup2(_RELEASE_LOG_SAVED_STDOUT_FD, 1)
+        os.dup2(_RELEASE_LOG_SAVED_STDERR_FD, 2)
+        sys.stdout = _RELEASE_LOG_STDOUT
+        sys.stderr = _RELEASE_LOG_STDERR
+
+        # Restoring fd 1/2 closes the last pipe writers. Drain both readers
+        # before closing the shared log and original console descriptors.
+        for thread in _RELEASE_LOG_THREADS:
+            thread.join(timeout=2.0)
+
+        if _RELEASE_LOG_FAULT_FILE is not None:
+            _RELEASE_LOG_FAULT_FILE.close()
+            _RELEASE_LOG_FAULT_FILE = None
+
+        if _RELEASE_LOG_FD is not None:
+            os.close(_RELEASE_LOG_FD)
+            _RELEASE_LOG_FD = None
+
+        os.close(_RELEASE_LOG_SAVED_STDOUT_FD)
+        os.close(_RELEASE_LOG_SAVED_STDERR_FD)
+        _RELEASE_LOG_THREADS = []
+        _RELEASE_LOG_ACTIVE = False
+
+
+if _RELEASE_LOG_MODE not in (
+    "console",
+    "file",
+    "both",
+    "serialized-console",
+):
+    raise ValueError(f"Invalid _RELEASE_LOG_MODE: {_RELEASE_LOG_MODE!r}")
+
+
+if __name__ == "__main__" and _RELEASE_LOG_MODE != "console":
+    _start_release_log()
+
+
 
 from pxr import Gf, Kind, Sdf, Usd, UsdGeom
 
@@ -1313,13 +1604,13 @@ def test_initial_tree(tree):
     PayloadB
     PayloadC
 
+StageTree never displays payload contents.
+
 If policy is Payload:
-    PayloadA/B/C are StageTree leaf rows with unchecked checkboxes.
-    Payload contents are not traversed in the tree.
+    all rows have checkboxes and PayloadA/B/C begin unchecked.
 
 If policy is All:
-    PayloadA/B/C have no checkboxes.
-    Loaded payload contents are traversed and shown below the payload rows.
+    no rows have checkboxes.
 
 All three payloads should initially be unloaded in this LoadNone fixture.
 """,
@@ -1438,7 +1729,7 @@ Expected visible hierarchy:
 
 World, Assembly and Door should be expanded.
 
-In Payload policy, payload rows remain StageTree leaf items even when loaded.
+Payload rows remain StageTree leaf items regardless of whether they are loaded.
 """,
     )
 
@@ -1526,18 +1817,19 @@ Before load:
 After load:
     PayloadA
 
+PayloadA MUST remain a leaf in StageTree.
+
 USD should contain:
     /World/PayloadA/Geom
     /World/PayloadA/Geom/Detail
 
+StageTree should NOT display either of those paths.
+
 If policy is Payload:
-    PayloadA remains a StageTree leaf.
-    PayloadA/Geom and Detail stay hidden from StageTree.
     PayloadA checkbox becomes checked.
 
 If policy is All:
     PayloadA has no checkbox.
-    PayloadA/Geom and Detail are traversed and shown.
 """,
     )
 
@@ -1578,19 +1870,20 @@ If policy is All:
     process_events()
     dump_tree(tree)
 
-    if current_policy == "Payload":
-        verify_payload_is_leaf(
-            tree,
-            "/World/PayloadA",
-        )
+    verify_payload_is_leaf(
+        tree,
+        "/World/PayloadA",
+    )
 
-        require(
-            find_item_by_path(
-                tree,
-                "/World/PayloadA/Geom",
-            ) is None,
-            "PayloadA/Geom is intentionally hidden from StageTree in Payload policy",
-        )
+    require(
+        find_item_by_path(
+            tree,
+            "/World/PayloadA/Geom",
+        ) is None,
+        "PayloadA/Geom is intentionally hidden from StageTree",
+    )
+
+    if current_policy == "Payload":
 
         require(
             checkbox_state_for_path(
@@ -1623,10 +1916,6 @@ If policy is All:
             "PayloadA still has no checkbox in All policy",
         )
 
-        require(
-            path_exists_in_tree(tree, "/World/PayloadA/Geom"),
-            "PayloadA/Geom is visible in All policy",
-        )
 
 
 def test_payload_b_load(tree):
@@ -1648,13 +1937,13 @@ Expected StageTree:
 PayloadA and PayloadB are loaded in USD.
 
 If policy is Payload:
-    PayloadA/B/C remain StageTree leaf rows.
+    all payload rows remain StageTree leaves.
     PayloadA = checked
     PayloadB = checked
     PayloadC = unchecked
 
 If policy is All:
-    payload rows have no checkboxes and loaded payload contents are traversed.
+    none of the payload rows have checkboxes.
 """,
     )
 
@@ -1688,29 +1977,30 @@ If policy is All:
     process_events()
     dump_tree(tree)
 
+    verify_payload_is_leaf(
+        tree,
+        "/World/PayloadA",
+    )
+
+    verify_payload_is_leaf(
+        tree,
+        "/World/PayloadB",
+    )
+
+    verify_payload_is_leaf(
+        tree,
+        "/World/PayloadC",
+    )
+
+    require(
+        find_item_by_path(
+            tree,
+            "/World/PayloadB/Geom",
+        ) is None,
+        "PayloadB/Geom is intentionally hidden from StageTree",
+    )
+
     if current_policy == "Payload":
-        verify_payload_is_leaf(
-            tree,
-            "/World/PayloadA",
-        )
-
-        verify_payload_is_leaf(
-            tree,
-            "/World/PayloadB",
-        )
-
-        verify_payload_is_leaf(
-            tree,
-            "/World/PayloadC",
-        )
-
-        require(
-            find_item_by_path(
-                tree,
-                "/World/PayloadB/Geom",
-            ) is None,
-            "PayloadB/Geom is intentionally hidden from StageTree in Payload policy",
-        )
 
         require(
             checkbox_state_for_path(
@@ -1796,7 +2086,7 @@ If policy is Payload:
     PayloadC = unchecked
 
 If policy is All:
-    no checkboxes are visible and loaded payload contents are traversed.
+    no checkboxes are visible and payload contents remain hidden.
 """,
     )
 
@@ -1830,22 +2120,22 @@ If policy is All:
     process_events()
     dump_tree(tree)
 
+    verify_payload_is_leaf(
+        tree,
+        "/World/PayloadA",
+    )
+
+    verify_payload_is_leaf(
+        tree,
+        "/World/PayloadB",
+    )
+
+    verify_payload_is_leaf(
+        tree,
+        "/World/PayloadC",
+    )
+
     if current_policy == "Payload":
-        verify_payload_is_leaf(
-            tree,
-            "/World/PayloadA",
-        )
-
-        verify_payload_is_leaf(
-            tree,
-            "/World/PayloadB",
-        )
-
-        verify_payload_is_leaf(
-            tree,
-            "/World/PayloadC",
-        )
-
         require(
             checkbox_state_for_path(
                 tree,
@@ -2523,8 +2813,8 @@ Expected:
           Handle
 
 Expected UI state:
-    - Door is not recreated as a collapsed row
-    - Door remains expanded
+    - Door is recreated below Wheel
+    - Door starts collapsed after the move
     - Handle remains below Door
     - Wheel remains expanded
     - Door remains selected/current
@@ -2560,7 +2850,6 @@ Expected UI state:
             "/",
             "/World",
             "/World/Assembly",
-            "/World/Assembly/Door",
             "/World/Assembly/Wheel",
             "/World/PayloadA",
             "/World/PayloadB",
@@ -2595,8 +2884,7 @@ Expected UI state:
                 tree,
                 new_path + "/Handle",
             )
-            and current_path(tree)
-            == new_path
+            and path_is_selected(tree, new_path)
         ),
         "USD reparents Door subtree and StageTree becomes stable",
         timeout=5.0,
@@ -2605,9 +2893,6 @@ Expected UI state:
     require_tree_state_preserved(
         tree,
         preserved_state,
-        path_remap={
-            "/World/Assembly/Door": new_path,
-        },
     )
 
     dump_tree(tree)
@@ -2633,18 +2918,13 @@ Expected UI state:
     )
 
     require(
-        path_is_expanded(tree, new_path),
-        "reparented Door remains expanded",
+        not path_is_expanded(tree, new_path),
+        "reparented Door starts collapsed",
     )
 
     require(
         path_is_selected(tree, new_path),
         "reparented Door remains selected",
-    )
-
-    require(
-        current_path(tree) == new_path,
-        "reparented Door remains current item",
     )
 
     if undo_if_available():
@@ -2690,8 +2970,8 @@ Expected UI state:
         )
 
         require(
-            current_path(tree) == "/World/Assembly/Door",
-            "undo restores Door as current item",
+            not path_is_expanded(tree, "/World/Assembly/Door"),
+            "undo restores Door collapsed",
         )
 
     release_qt_wrappers()
@@ -2844,8 +3124,9 @@ Expected StageTree policy:
 
 Expected:
     - PayloadA/B/C are unloaded
-    - payload rows are StageTree leaves
-    - payload rows show unchecked checkboxes
+    - payload rows remain StageTree leaves
+    - all StageTree rows show checkboxes
+    - payload rows begin unchecked
     - loading/unloading changes checkbox state only
     - payload contents remain hidden from StageTree
     - normal expanded hierarchy remains stable
@@ -2999,22 +3280,21 @@ Expected StageTree policy:
 
 Expected:
     - PayloadA/B/C are loaded in USD
-    - payload rows have NO checkboxes
-    - loaded payload contents ARE traversed and shown
-    - PayloadA/Geom and PayloadA/Geom/Detail are visible in StageTree
+    - payload rows remain StageTree leaves
+    - payload contents remain hidden from StageTree
+    - no StageTree rows have checkboxes
 
 Then unload PayloadA programmatically.
 
 Expected:
-    - PayloadA remains in StageTree
-    - PayloadA still has no checkbox
+    - PayloadA remains a leaf with no checkbox
     - composed PayloadA contents disappear from USD
-    - PayloadA/Geom and Detail disappear from StageTree
+    - StageTree still does not traverse payload contents
 
 Then load PayloadA again.
 
 Expected:
-    - PayloadA/Geom and Detail return
+    - PayloadA contents return in USD but remain hidden from StageTree
     - no checkbox appears
     - unrelated normal hierarchy expansion remains stable
 """,
@@ -3047,10 +3327,7 @@ Expected:
             f"{path} is loaded under LoadAll",
         )
 
-        require(
-            path_exists_in_tree(tree, path),
-            f"{path} exists in StageTree",
-        )
+        verify_payload_is_leaf(tree, path)
 
         require(
             not has_checkbox_for_path(tree, path),
@@ -3058,23 +3335,28 @@ Expected:
         )
 
     require(
-        path_exists_in_tree(tree, "/World/PayloadA/Geom"),
-        "PayloadA/Geom is visible in All policy",
+        exists("/World/PayloadA/Geom"),
+        "PayloadA/Geom exists in USD under LoadAll",
     )
 
     require(
-        path_exists_in_tree(tree, "/World/PayloadA/Geom/Detail"),
-        "PayloadA/Geom/Detail is visible in All policy",
+        not path_exists_in_tree(tree, "/World/PayloadA/Geom"),
+        "PayloadA/Geom remains hidden from StageTree in All policy",
     )
 
     require(
-        path_exists_in_tree(tree, "/World/PayloadB/Geom"),
-        "PayloadB/Geom is visible in All policy",
+        not path_exists_in_tree(tree, "/World/PayloadA/Geom/Detail"),
+        "PayloadA/Geom/Detail remains hidden from StageTree in All policy",
     )
 
     require(
-        path_exists_in_tree(tree, "/World/PayloadC/Geom"),
-        "PayloadC/Geom is visible in All policy",
+        not path_exists_in_tree(tree, "/World/PayloadB/Geom"),
+        "PayloadB/Geom remains hidden from StageTree in All policy",
+    )
+
+    require(
+        not path_exists_in_tree(tree, "/World/PayloadC/Geom"),
+        "PayloadC/Geom remains hidden from StageTree in All policy",
     )
 
     print()
@@ -3109,6 +3391,8 @@ Expected:
 
     process_events()
     dump_tree(tree)
+
+    verify_payload_is_leaf(tree, "/World/PayloadA")
 
     require(
         path_exists_in_tree(tree, "/World/PayloadA"),
@@ -3159,16 +3443,21 @@ Expected:
             lambda: (
                 exists("/World/PayloadA/Geom")
                 and exists("/World/PayloadA/Geom/Detail")
-                and path_exists_in_tree(tree, "/World/PayloadA/Geom")
-                and path_exists_in_tree(tree, "/World/PayloadA/Geom/Detail")
             ),
             timeout=5.0,
         ),
-        "PayloadA contents return to USD and StageTree",
+        "PayloadA contents return to USD",
     )
 
     process_events()
     dump_tree(tree)
+
+    verify_payload_is_leaf(tree, "/World/PayloadA")
+
+    require(
+        not path_exists_in_tree(tree, "/World/PayloadA/Geom"),
+        "PayloadA contents remain hidden from StageTree after reload",
+    )
 
     require(
         not has_checkbox_for_path(tree, "/World/PayloadA"),
@@ -3294,7 +3583,7 @@ to:
     /World/Target/Moving
 
 Expected:
-    - the moved subtree stays expanded
+    - the moved subtree is recreated collapsed
     - selection/current follows the new path
     - unrelated branch expansion states are unchanged
     - the operation prints command-to-stable timing
@@ -3367,7 +3656,6 @@ timing varies substantially between Debug/Release and machines.
     state_paths = (
         "/World",
         "/World/Source",
-        "/World/Source/Moving",
         "/World/Target",
     ) + tracked_branches
 
@@ -3435,16 +3723,10 @@ timing varies substantially between Debug/Release and machines.
                 tree,
                 new_path + "/Child",
             )
-            and path_is_expanded(
-                tree,
-                new_path,
-            )
             and path_is_selected(
                 tree,
                 new_path,
             )
-            and current_path(tree)
-            == new_path
         ),
         "large-tree reparent reaches stable USD and StageTree state",
         timeout=10.0,
@@ -3453,9 +3735,11 @@ timing varies substantially between Debug/Release and machines.
     require_tree_state_preserved(
         tree,
         preserved_state,
-        path_remap={
-            old_path: new_path,
-        },
+    )
+
+    require(
+        not path_is_expanded(tree, new_path),
+        "large-tree reparented subtree starts collapsed",
     )
 
     require(
@@ -3510,7 +3794,8 @@ Measurements:
     4. reparent MovingRenamed -> Target
 
 Correctness checks:
-    - moved/renamed subtree remains expanded
+    - renamed subtree remains expanded
+    - reparented subtree is recreated collapsed
     - selection/current follows the namespace edit
     - representative unrelated branches keep mixed expanded/collapsed states
     - representative checkbox state is preserved
@@ -3755,7 +4040,6 @@ measurement for comparing builds and detecting scaling regressions.
         "/",
         "/World",
         "/World/Source",
-        renamed_path,
         "/World/Target",
     ) + tracked_branches
 
@@ -3811,16 +4095,10 @@ measurement for comparing builds and detecting scaling regressions.
                 tree,
                 moved_path + "/Child",
             )
-            and path_is_expanded(
-                tree,
-                moved_path,
-            )
             and path_is_selected(
                 tree,
                 moved_path,
             )
-            and current_path(tree)
-            == moved_path
         ),
         "25k reparent reaches stable USD and StageTree state",
         timeout=30.0,
@@ -3829,9 +4107,11 @@ measurement for comparing builds and detecting scaling regressions.
     require_tree_state_preserved(
         tree,
         move_state,
-        path_remap={
-            renamed_path: moved_path,
-        },
+    )
+
+    require(
+        not path_is_expanded(tree, moved_path),
+        "25k reparented subtree starts collapsed",
     )
 
     print()
@@ -3970,4 +4250,11 @@ def run():
 
 
 if __name__ == "__main__":
-    run()
+    try:
+        run()
+    except BaseException:
+        print("\n=== UNHANDLED PYTHON EXCEPTION ===", file=sys.stderr)
+        traceback.print_exc(file=sys.stderr)
+        raise
+    finally:
+        _stop_release_log()

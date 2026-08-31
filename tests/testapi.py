@@ -8,14 +8,297 @@ Stageviz smoke/regression tests.
 Run from the Stageviz Python editor.
 """
 
+import faulthandler
 import json
 import os
 import platform
 import statistics
 import sys
 import tempfile
+import threading
 import time
 import traceback
+
+
+# Temporary release-build output modes:
+#   "console"            - original direct Stageviz stdout/stderr
+#   "file"               - ~/stageviz.txt only
+#   "both"               - log first, then forward to the original console
+#   "serialized-console" - pipe native output through serialized forwarding,
+#                          without writing a log file
+_RELEASE_LOG_MODE = "both"
+_RELEASE_LOG_PATH = os.path.expanduser("~/stageviz.txt")
+_RELEASE_LOG_ACTIVE = False
+_RELEASE_LOG_STDOUT = None
+_RELEASE_LOG_STDERR = None
+_RELEASE_LOG_SAVED_STDOUT_FD = None
+_RELEASE_LOG_SAVED_STDERR_FD = None
+_RELEASE_LOG_FD = None
+_RELEASE_LOG_FAULT_FILE = None
+_RELEASE_LOG_THREADS = []
+_RELEASE_LOG_LOCK = threading.Lock()
+
+
+def _release_log_to_file():
+    return _RELEASE_LOG_MODE in ("file", "both")
+
+
+def _release_log_to_console():
+    return _RELEASE_LOG_MODE in ("both", "serialized-console")
+
+
+def _write_all(fd, data):
+    view = memoryview(data)
+    while view:
+        written = os.write(fd, view)
+        view = view[written:]
+
+
+def _write_release_log(data):
+    if not data or _RELEASE_LOG_FD is None:
+        return
+
+    with _RELEASE_LOG_LOCK:
+        _write_all(_RELEASE_LOG_FD, data)
+
+
+def _pump_native_output(read_fd, console_fd):
+    """Tee native stdout/stderr to the log first, then the original fd."""
+    try:
+        while True:
+            try:
+                data = os.read(read_fd, 65536)
+            except OSError:
+                break
+
+            if not data:
+                break
+
+            _write_release_log(data)
+
+            if _release_log_to_console():
+                try:
+                    _write_all(console_fd, data)
+                except OSError:
+                    # Keep recording even when the original console disappears.
+                    pass
+    finally:
+        try:
+            os.close(read_fd)
+        except OSError:
+            pass
+
+
+class _ReleaseTextTee:
+    """Write Python text to the log before forwarding it to the console."""
+
+    def __init__(self, original, console_fd, stream_fd):
+        self.original = original
+        self.console_fd = console_fd
+        self.stream_fd = stream_fd
+        self.encoding = getattr(original, "encoding", None) or "utf-8"
+        self.errors = getattr(original, "errors", None) or "backslashreplace"
+
+    def write(self, text):
+        if not isinstance(text, str):
+            text = str(text)
+
+        data = text.encode(self.encoding, errors="backslashreplace")
+        _write_release_log(data)
+
+        if _RELEASE_LOG_MODE == "serialized-console":
+            try:
+                _write_all(self.stream_fd, data)
+            except OSError:
+                pass
+            return len(text)
+
+        if self.original is None or not _release_log_to_console():
+            return len(text)
+
+        try:
+            original_fd = self.original.fileno()
+        except (AttributeError, OSError, ValueError):
+            original_fd = None
+
+        if original_fd in (1, 2):
+            try:
+                _write_all(self.console_fd, data)
+            except OSError:
+                pass
+        else:
+            # Embedded applications commonly expose a Qt-backed stdout object
+            # without a file descriptor. Preserve that console behavior.
+            self.original.write(text)
+
+        return len(text)
+
+    def flush(self):
+        if _RELEASE_LOG_FD is not None:
+            try:
+                os.fsync(_RELEASE_LOG_FD)
+            except OSError:
+                pass
+
+        if self.original is not None and _release_log_to_console():
+            try:
+                self.original.flush()
+            except (AttributeError, OSError, ValueError):
+                pass
+
+    def isatty(self):
+        if self.original is None:
+            return False
+        try:
+            return self.original.isatty()
+        except (AttributeError, OSError, ValueError):
+            return False
+
+
+def _start_release_log():
+    global _RELEASE_LOG_ACTIVE
+    global _RELEASE_LOG_STDOUT
+    global _RELEASE_LOG_STDERR
+    global _RELEASE_LOG_SAVED_STDOUT_FD
+    global _RELEASE_LOG_SAVED_STDERR_FD
+    global _RELEASE_LOG_FD
+    global _RELEASE_LOG_FAULT_FILE
+    global _RELEASE_LOG_THREADS
+
+    if _RELEASE_LOG_ACTIVE:
+        return
+
+    _RELEASE_LOG_STDOUT = sys.stdout
+    _RELEASE_LOG_STDERR = sys.stderr
+    _RELEASE_LOG_SAVED_STDOUT_FD = os.dup(1)
+    _RELEASE_LOG_SAVED_STDERR_FD = os.dup(2)
+
+    if _release_log_to_file():
+        _RELEASE_LOG_FD = os.open(
+            _RELEASE_LOG_PATH,
+            os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_APPEND,
+            0o644,
+        )
+
+    stdout_read_fd, stdout_write_fd = os.pipe()
+    stderr_read_fd, stderr_write_fd = os.pipe()
+
+    stdout_thread = threading.Thread(
+        target=_pump_native_output,
+        args=(stdout_read_fd, _RELEASE_LOG_SAVED_STDOUT_FD),
+        name="stageviz-log-stdout",
+        daemon=True,
+    )
+    stderr_thread = threading.Thread(
+        target=_pump_native_output,
+        args=(stderr_read_fd, _RELEASE_LOG_SAVED_STDERR_FD),
+        name="stageviz-log-stderr",
+        daemon=True,
+    )
+    _RELEASE_LOG_THREADS = [stdout_thread, stderr_thread]
+    stdout_thread.start()
+    stderr_thread.start()
+
+    try:
+        os.dup2(stdout_write_fd, 1)
+        os.dup2(stderr_write_fd, 2)
+    finally:
+        os.close(stdout_write_fd)
+        os.close(stderr_write_fd)
+
+    sys.stdout = _ReleaseTextTee(
+        _RELEASE_LOG_STDOUT,
+        _RELEASE_LOG_SAVED_STDOUT_FD,
+        1,
+    )
+    sys.stderr = _ReleaseTextTee(
+        _RELEASE_LOG_STDERR,
+        _RELEASE_LOG_SAVED_STDERR_FD,
+        2,
+    )
+
+    fault_fd = (
+        _RELEASE_LOG_FD
+        if _RELEASE_LOG_FD is not None
+        else _RELEASE_LOG_SAVED_STDERR_FD
+    )
+    _RELEASE_LOG_FAULT_FILE = os.fdopen(
+        os.dup(fault_fd),
+        "w",
+        buffering=1,
+        encoding="utf-8",
+        errors="backslashreplace",
+    )
+
+    faulthandler.enable(file=_RELEASE_LOG_FAULT_FILE, all_threads=True)
+    _RELEASE_LOG_ACTIVE = True
+
+    print("=" * 78)
+    print("STAGEVIZ RELEASE TEST LOG")
+    print("=" * 78)
+    print(f"Started: {time.strftime('%Y-%m-%d %H:%M:%S %z')}")
+    print(f"PID: {os.getpid()}")
+    print(f"Output mode: {_RELEASE_LOG_MODE}")
+    if _release_log_to_file():
+        print(f"Log: {_RELEASE_LOG_PATH}")
+    print()
+
+
+def _stop_release_log():
+    global _RELEASE_LOG_ACTIVE
+    global _RELEASE_LOG_FD
+    global _RELEASE_LOG_FAULT_FILE
+    global _RELEASE_LOG_THREADS
+
+    if not _RELEASE_LOG_ACTIVE:
+        return
+
+    log_stdout = sys.stdout
+    log_stderr = sys.stderr
+
+    try:
+        print()
+        print(f"Finished: {time.strftime('%Y-%m-%d %H:%M:%S %z')}")
+        log_stdout.flush()
+        log_stderr.flush()
+        faulthandler.disable()
+    finally:
+        os.dup2(_RELEASE_LOG_SAVED_STDOUT_FD, 1)
+        os.dup2(_RELEASE_LOG_SAVED_STDERR_FD, 2)
+        sys.stdout = _RELEASE_LOG_STDOUT
+        sys.stderr = _RELEASE_LOG_STDERR
+
+        # Restoring fd 1/2 closes the last pipe writers. Drain both readers
+        # before closing the shared log and original console descriptors.
+        for thread in _RELEASE_LOG_THREADS:
+            thread.join(timeout=2.0)
+
+        if _RELEASE_LOG_FAULT_FILE is not None:
+            _RELEASE_LOG_FAULT_FILE.close()
+            _RELEASE_LOG_FAULT_FILE = None
+
+        if _RELEASE_LOG_FD is not None:
+            os.close(_RELEASE_LOG_FD)
+            _RELEASE_LOG_FD = None
+
+        os.close(_RELEASE_LOG_SAVED_STDOUT_FD)
+        os.close(_RELEASE_LOG_SAVED_STDERR_FD)
+        _RELEASE_LOG_THREADS = []
+        _RELEASE_LOG_ACTIVE = False
+
+
+if _RELEASE_LOG_MODE not in (
+    "console",
+    "file",
+    "both",
+    "serialized-console",
+):
+    raise ValueError(f"Invalid _RELEASE_LOG_MODE: {_RELEASE_LOG_MODE!r}")
+
+
+if __name__ == "__main__" and _RELEASE_LOG_MODE != "console":
+    _start_release_log()
+
 
 from pxr import Gf, Kind, Sdf, Usd, UsdGeom, UsdShade
 import stageviz
@@ -4969,4 +5252,11 @@ def run():
 
 
 if __name__ == "__main__":
-    run()
+    try:
+        run()
+    except BaseException:
+        print("\n=== UNHANDLED PYTHON EXCEPTION ===", file=sys.stderr)
+        traceback.print_exc(file=sys.stderr)
+        raise
+    finally:
+        _stop_release_log()

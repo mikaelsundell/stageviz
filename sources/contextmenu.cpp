@@ -75,6 +75,7 @@ ContextMenu::exec(QWidget* parent, ViewContext* context, UsdStageRefPtr usdStage
     const bool canSetDefaultPrim = paths.size() == 1 && !paths.first().IsEmpty()
                                    && paths.first() != SdfPath::AbsoluteRootPath()
                                    && paths.first().GetParentPath() == SdfPath::AbsoluteRootPath();
+    bool isDefaultPrim = false;
     const bool isolateChecked = maskContainsSelection(maskPaths, paths);
 
     QList<SdfPath> payloadPaths;
@@ -95,6 +96,11 @@ ContextMenu::exec(QWidget* parent, ViewContext* context, UsdStageRefPtr usdStage
         READ_LOCKER(locker, context->stageLock(), "stageLock");
         if (!usdStage)
             return;
+
+        if (canSetDefaultPrim) {
+            const UsdPrim defaultPrim = usdStage->GetDefaultPrim();
+            isDefaultPrim = defaultPrim && defaultPrim.GetPath() == paths.first();
+        }
 
         payloadPaths = payloadEnabled ? stage::resolvePayloadPaths(usdStage, topLevelPaths)
                                       : stage::payloadPaths(usdStage, topLevelPaths);
@@ -198,8 +204,11 @@ ContextMenu::exec(QWidget* parent, ViewContext* context, UsdStageRefPtr usdStage
     QMenu menu(parent);
 
     QAction* setDefaultPrim = nullptr;
-    if (canSetDefaultPrim)
+    if (canSetDefaultPrim) {
         setDefaultPrim = menu.addAction("Default prim");
+        setDefaultPrim->setCheckable(true);
+        setDefaultPrim->setChecked(isDefaultPrim);
+    }
 
     menu.addSeparator();
 

@@ -230,6 +230,7 @@ StylePrivate::updateTheme()
     d.icons[roleName(Style::IconRole::Clear)] = ":/icons/resources/Clear.png";
     d.icons[roleName(Style::IconRole::Code)] = ":/icons/resources/Code.png";
     d.icons[roleName(Style::IconRole::Collapse)] = ":/icons/resources/Collapse.png";
+    d.icons[roleName(Style::IconRole::DefaultPrim)] = ":/icons/resources/DefaultPrim.png";
     d.icons[roleName(Style::IconRole::Down)] = ":/icons/resources/Down.png";
     d.icons[roleName(Style::IconRole::DropDown)] = ":/icons/resources/DropDown.png";
     d.icons[roleName(Style::IconRole::Expand)] = ":/icons/resources/Expand.png";

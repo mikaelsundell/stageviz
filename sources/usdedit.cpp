@@ -164,6 +164,12 @@ namespace edit {
             return false;
         }
 
+        const UsdPrim defaultPrim = stage_->GetDefaultPrim();
+        if (defaultPrim && defaultPrim.GetPath() == from) {
+            error = "cannot rename default prim";
+            return false;
+        }
+
         if (stage_->GetPrimAtPath(to)) {
             error = QString("destination already exists: %1").arg(qt::SdfPathToQString(to));
             return false;
@@ -296,6 +302,12 @@ namespace edit {
         if (from.IsEmpty() || to.IsEmpty() || from == SdfPath::AbsoluteRootPath() || !from.IsPrimPath()
             || !to.IsPrimPath()) {
             error = "invalid move path";
+            return false;
+        }
+
+        const UsdPrim defaultPrim = stage_->GetDefaultPrim();
+        if (defaultPrim && defaultPrim.GetPath() == from) {
+            error = "cannot move default prim";
             return false;
         }
 
