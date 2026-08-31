@@ -219,7 +219,7 @@ StylePrivate::updateTheme()
     map(Style::ColorRole::Progress, QColor::fromHsl(216, 82, 20));
     map(Style::ColorRole::Render, QColor::fromHsl(0, 0, 60));
     map(Style::ColorRole::RenderAlt, QColor::fromHsl(210, 6, 25));
-    map(Style::ColorRole::Selection, QColor::fromHsl(55, 220, 180));
+    map(Style::ColorRole::Selection, QColor::fromHsl(35, 220, 120));
     map(Style::ColorRole::SelectionAlt, QColor::fromHsl(55, 140, 120));
     map(Style::ColorRole::Text, QColor::fromHsl(0, 0, 220));
     map(Style::ColorRole::Warning, QColor(220, 170, 40));

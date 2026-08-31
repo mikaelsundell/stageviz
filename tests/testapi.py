@@ -2521,6 +2521,207 @@ def test_move_preserve_world_transform_keeps_pivot_stack():
         )
 
 
+def test_float_pivot_precision_survives_edit_and_world_transform():
+    if not _has_command("set_attribute_value"):
+        print("[skip] set_attribute_value is not bound")
+        return
+
+    path = "/World/A/A1"
+    pivot_path = f"{path}.xformOp:translate:pivot"
+
+    _assert(
+        _set_complex_transform(
+            "/World/A",
+            (8.0, -2.0, 3.0),
+            (12.0, 19.0, -7.0),
+            (1.1, 0.9, 1.2),
+        ),
+        "set source parent transform for float-pivot regression",
+    )
+
+    _assert(
+        _set_complex_transform(
+            "/World/B",
+            (-5.0, 7.0, 2.0),
+            (-8.0, 14.0, 23.0),
+            (0.9, 1.2, 1.0),
+        ),
+        "set destination parent transform for float-pivot regression",
+    )
+
+    prim = _prim(path)
+    xformable = UsdGeom.Xformable(prim)
+    xformable.ClearXformOpOrder()
+
+    pivot_op = xformable.AddTranslateOp(
+        UsdGeom.XformOp.PrecisionFloat,
+        "pivot",
+        False,
+    )
+    matrix_op = xformable.AddTransformOp(
+        UsdGeom.XformOp.PrecisionDouble,
+    )
+    inverse_pivot_op = xformable.AddTranslateOp(
+        UsdGeom.XformOp.PrecisionFloat,
+        "pivot",
+        True,
+    )
+
+    pivot_before = Gf.Vec3f(1.25, -2.5, 3.75)
+    local_matrix = Gf.Matrix4d(1.0)
+    local_matrix.SetTranslate(Gf.Vec3d(4.0, 1.0, -2.0))
+
+    _assert(
+        bool(
+            pivot_op
+            and matrix_op
+            and inverse_pivot_op
+            and pivot_op.Set(pivot_before)
+            and matrix_op.Set(local_matrix)
+        ),
+        "float3 pivot stack prepared",
+    )
+
+    expected_order = [
+        "xformOp:translate:pivot",
+        "xformOp:transform",
+        "!invert!xformOp:translate:pivot",
+    ]
+
+    _assert_equal(
+        _xform_order(path),
+        expected_order,
+        "float3 pivot stack uses canonical order",
+    )
+
+    pivot_attr = _prim(path).GetAttribute("xformOp:translate:pivot")
+    _assert(
+        bool(pivot_attr and pivot_attr.GetTypeName() == Sdf.ValueTypeNames.Float3),
+        "pivot starts authored as float3",
+    )
+
+    local_before_edit = _local_transform(path)
+
+    # This exercises command.cpp::authorCanonicalTransformWithPivot().
+    stageviz.command.set_attribute_value(
+        pivot_path,
+        (2.5, -1.5, 5.25),
+    )
+
+    _assert(
+        _wait_until(
+            lambda: bool(
+                _prim(path)
+                and _prim(path).GetAttribute("xformOp:translate:pivot").Get()
+                and abs(
+                    float(
+                        _prim(path)
+                        .GetAttribute("xformOp:translate:pivot")
+                        .Get()[0]
+                    )
+                    - 2.5
+                )
+                < 1e-6
+            )
+        ),
+        "float3 pivot value is edited",
+    )
+
+    pivot_attr = _prim(path).GetAttribute("xformOp:translate:pivot")
+    _assert(
+        pivot_attr.GetTypeName() == Sdf.ValueTypeNames.Float3,
+        "pivot edit preserves float3 type",
+    )
+
+    _assert(
+        _matrix_close(
+            _local_transform(path),
+            local_before_edit,
+            tolerance=1e-6,
+        ),
+        "float3 pivot edit preserves local transform",
+    )
+
+    pivot_after_edit = pivot_attr.Get()
+    world_before_move = _world_transform(path)
+
+    # preserve_world_transform uses stage::setWorldTransform(), the same
+    # transform-authoring path used by interactive gizmo dragging.
+    stageviz.command.move_path(
+        [path],
+        "/World/B",
+        insert_index=-1,
+        preserve_world_transform=True,
+    )
+
+    moved_path = "/World/B/A1"
+
+    _assert(
+        _wait_until(
+            lambda: _exists(moved_path) and not _exists(path)
+        ),
+        "float-pivot prim moves with world-transform preservation",
+    )
+
+    moved_pivot_attr = _prim(moved_path).GetAttribute(
+        "xformOp:translate:pivot"
+    )
+
+    _assert(
+        bool(
+            moved_pivot_attr
+            and moved_pivot_attr.GetTypeName() == Sdf.ValueTypeNames.Float3
+        ),
+        "world-transform authoring preserves float3 pivot type",
+    )
+
+    _assert_equal(
+        _xform_order(moved_path),
+        expected_order,
+        "world-transform authoring preserves float pivot stack order",
+    )
+
+    moved_pivot = moved_pivot_attr.Get() if moved_pivot_attr else None
+    _assert(
+        moved_pivot is not None
+        and pivot_after_edit is not None
+        and all(
+            abs(float(moved_pivot[i]) - float(pivot_after_edit[i])) < 1e-6
+            for i in range(3)
+        ),
+        "world-transform authoring preserves float pivot value",
+    )
+
+    _assert(
+        _matrix_close(
+            _world_transform(moved_path),
+            world_before_move,
+            tolerance=1e-6,
+        ),
+        "float-pivot prim preserves world transform",
+    )
+
+    if _undo():
+        _assert(
+            _wait_until(
+                lambda: _exists(path) and not _exists(moved_path)
+            ),
+            "undo float-pivot move restores original path",
+        )
+
+        restored_pivot_attr = _prim(path).GetAttribute(
+            "xformOp:translate:pivot"
+        )
+        _assert(
+            bool(
+                restored_pivot_attr
+                and restored_pivot_attr.GetTypeName()
+                == Sdf.ValueTypeNames.Float3
+            ),
+            "undo float-pivot move restores float3 pivot type",
+        )
+
+
 def test_move_multiple_siblings():
     stageviz.command.move_path(["/World/A/A1", "/World/A/A2"], "/World/B", insert_index=1)
 
@@ -5188,6 +5389,7 @@ def run():
         ("move selection/mask and insert order", test_move_selection_mask_and_insert_order, ()),
         ("move preserve world transform", test_move_preserve_world_transform, ()),
         ("move preserve world transform keeps pivot stack", test_move_preserve_world_transform_keeps_pivot_stack, ()),
+        ("float pivot precision survives edit and world transform", test_float_pivot_precision_survives_edit_and_world_transform, ()),
         ("move multiple siblings", test_move_multiple_siblings, ()),
         ("move rejects self parenting", test_move_rejects_self_parenting, ()),
         ("move rejects destination collision/no-op", test_move_rejects_destination_collision, ()),

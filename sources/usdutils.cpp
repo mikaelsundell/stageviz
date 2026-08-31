@@ -922,15 +922,30 @@ namespace stage {
                 return false;
             }
 
+            UsdGeomXformOp::Precision pivotPrecision = UsdGeomXformOp::PrecisionDouble;
+            const UsdAttribute existingPivot = xformable.GetPrim().GetAttribute(TfToken("xformOp:translate:pivot"));
+            if (existingPivot && existingPivot.GetTypeName() == SdfValueTypeNames->Float3)
+                pivotPrecision = UsdGeomXformOp::PrecisionFloat;
+
             xformable.ClearXformOpOrder();
 
-            const UsdGeomXformOp pivotOp = xformable.AddTranslateOp(UsdGeomXformOp::PrecisionDouble, TfToken("pivot"),
-                                                                    false);
+            const UsdGeomXformOp pivotOp = xformable.AddTranslateOp(pivotPrecision, TfToken("pivot"), false);
             const UsdGeomXformOp matrixOp = xformable.AddTransformOp(UsdGeomXformOp::PrecisionDouble);
-            const UsdGeomXformOp inversePivotOp = xformable.AddTranslateOp(UsdGeomXformOp::PrecisionDouble,
-                                                                           TfToken("pivot"), true);
+            const UsdGeomXformOp inversePivotOp = xformable.AddTranslateOp(pivotPrecision, TfToken("pivot"), true);
 
-            if (!pivotOp || !matrixOp || !inversePivotOp || !pivotOp.Set(pivotValue, UsdTimeCode::Default())) {
+            if (!pivotOp || !matrixOp || !inversePivotOp) {
+                error = "failed to preserve pivot transform ops";
+                return false;
+            }
+
+            const bool pivotSet = pivotPrecision == UsdGeomXformOp::PrecisionFloat
+                                      ? pivotOp.Set(GfVec3f(static_cast<float>(pivotValue[0]),
+                                                          static_cast<float>(pivotValue[1]),
+                                                          static_cast<float>(pivotValue[2])),
+                                                    UsdTimeCode::Default())
+                                      : pivotOp.Set(pivotValue, UsdTimeCode::Default());
+
+            if (!pivotSet) {
                 error = "failed to preserve pivot transform ops";
                 return false;
             }

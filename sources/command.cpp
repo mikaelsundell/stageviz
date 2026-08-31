@@ -12,6 +12,8 @@
 #include <QPointer>
 #include <algorithm>
 #include <cmath>
+#include <pxr/base/gf/vec3f.h>
+#include <pxr/base/gf/vec3h.h>
 #include <pxr/usd/sdf/copyUtils.h>
 #include <pxr/usd/sdf/layer.h>
 #include <pxr/usd/sdf/namespaceEdit.h>
@@ -346,15 +348,39 @@ namespace {
             return false;
         }
 
+        UsdGeomXformOp::Precision pivotPrecision = UsdGeomXformOp::PrecisionDouble;
+        const UsdAttribute existingPivotAttr = prim.GetAttribute(TfToken("xformOp:translate:pivot"));
+        if (existingPivotAttr) {
+            const UsdGeomXformOp existingPivotOp(existingPivotAttr);
+            if (existingPivotOp)
+                pivotPrecision = existingPivotOp.GetPrecision();
+        }
+
         xformable.ClearXformOpOrder();
 
-        const UsdGeomXformOp pivotOp = xformable.AddTranslateOp(UsdGeomXformOp::PrecisionDouble, TfToken("pivot"),
-                                                                false);
+        const UsdGeomXformOp pivotOp = xformable.AddTranslateOp(pivotPrecision, TfToken("pivot"), false);
         const UsdGeomXformOp matrixOp = xformable.AddTransformOp(UsdGeomXformOp::PrecisionDouble);
-        const UsdGeomXformOp inversePivotOp = xformable.AddTranslateOp(UsdGeomXformOp::PrecisionDouble,
-                                                                       TfToken("pivot"), true);
+        const UsdGeomXformOp inversePivotOp = xformable.AddTranslateOp(pivotPrecision, TfToken("pivot"), true);
 
-        if (!pivotOp || !matrixOp || !inversePivotOp || !pivotOp.Set(localPivot)) {
+        bool pivotSet = false;
+        if (pivotOp) {
+            switch (pivotPrecision) {
+            case UsdGeomXformOp::PrecisionHalf:
+                pivotSet = pivotOp.Set(GfVec3h(static_cast<float>(localPivot[0]), static_cast<float>(localPivot[1]),
+                                               static_cast<float>(localPivot[2])));
+                break;
+            case UsdGeomXformOp::PrecisionFloat:
+                pivotSet = pivotOp.Set(GfVec3f(static_cast<float>(localPivot[0]), static_cast<float>(localPivot[1]),
+                                               static_cast<float>(localPivot[2])));
+                break;
+            case UsdGeomXformOp::PrecisionDouble:
+            default:
+                pivotSet = pivotOp.Set(localPivot);
+                break;
+            }
+        }
+
+        if (!pivotOp || !matrixOp || !inversePivotOp || !pivotSet) {
             error = "failed to author pivot transform ops";
             return false;
         }
