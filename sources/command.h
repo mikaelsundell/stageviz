@@ -123,10 +123,9 @@ bindMaterial(const QList<SdfPath>& paths, const SdfPath& materialPath);
 /**
  * @brief Creates a command that loads payloads resolved from the specified paths.
  *
- * Each input path is interpreted as either:
- * - A payload prim path, or
- * - A path within or above a payload hierarchy, resolved via
- *   stage::selectionPayloadPaths().
+ * Each input path is expected to identify a payload prim. Callers that start
+ * from arbitrary prim selections should resolve those selections to payload
+ * paths before constructing the command.
  *
  * If a variant set and value are provided, the variant selection is applied
  * before loading.
@@ -145,10 +144,11 @@ loadPayloads(const QList<SdfPath>& paths, const QString& variantSet = QString(),
 /**
  * @brief Creates a command that unloads payloads resolved from the specified paths.
  *
- * Each input path is expected to identify a payload prim. Successfully unloaded
- * payload paths are removed from the current selection and mask.
+ * Each input path is expected to identify a payload prim. After unloading,
+ * selections and masks on the payload root are preserved, while selections or
+ * masks on descendants that disappear are remapped to the payload root.
  *
- * Undo restores the previous load state, selection, and mask.
+ * Undo restores the previous load state, selection, and mask exactly.
  *
  * @param paths Payload prim paths to unload.
  */

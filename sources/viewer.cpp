@@ -157,8 +157,11 @@ public Q_SLOTS:
     void toggleConsole(bool checked);
     void openAbout();
     void checkUpdates();
-    void openGithubReadme();
-    void openGithubIssues();
+    void openDocumentation();
+    void openPythonApiReference();
+    void openPythonDialogsReference();
+    void openAgentSkill();
+    void reportIssue();
     void backgroundColor();
     void updateMask(const QList<SdfPath>& paths);
     void updatePrims(const NoticeBatch& batch);
@@ -360,8 +363,11 @@ ViewerPrivate::init()
     connect(d.ui->displayTransform, &QAction::toggled, this, &ViewerPrivate::transform);
     connect(d.ui->helpAbout, &QAction::triggered, this, &ViewerPrivate::openAbout);
     connect(d.ui->helpCheckUpdates, &QAction::triggered, this, &ViewerPrivate::checkUpdates);
-    connect(d.ui->helpGithubReadme, &QAction::triggered, this, &ViewerPrivate::openGithubReadme);
-    connect(d.ui->helpGithubIssues, &QAction::triggered, this, &ViewerPrivate::openGithubIssues);
+    connect(d.ui->helpDocumentation, &QAction::triggered, this, &ViewerPrivate::openDocumentation);
+    connect(d.ui->helpPythonApiReference, &QAction::triggered, this, &ViewerPrivate::openPythonApiReference);
+    connect(d.ui->helpPythonDialogReference, &QAction::triggered, this, &ViewerPrivate::openPythonDialogsReference);
+    connect(d.ui->helpAgentSkill, &QAction::triggered, this, &ViewerPrivate::openAgentSkill);
+    connect(d.ui->helpReportIssue, &QAction::triggered, this, &ViewerPrivate::reportIssue);
     {
         d.ui->open->setDefaultAction(d.ui->fileOpen);
         d.ui->exportImage->setDefaultAction(d.ui->fileExportImage);
@@ -2069,15 +2075,33 @@ ViewerPrivate::checkUpdates()
 }
 
 void
-ViewerPrivate::openGithubReadme()
+ViewerPrivate::openDocumentation()
 {
-    QDesktopServices::openUrl(QUrl("https://github.com/mikaelsundell/stageviz/blob/master/README.md"));
+    QDesktopServices::openUrl(QUrl(QStringLiteral(GITHUB_URL "/blob/master/README.md")));
 }
 
 void
-ViewerPrivate::openGithubIssues()
+ViewerPrivate::openPythonApiReference()
 {
-    QDesktopServices::openUrl(QUrl("https://github.com/mikaelsundell/stageviz/issues"));
+    QDesktopServices::openUrl(QUrl(QStringLiteral(GITHUB_URL "/blob/master/skills/references/python-api.md")));
+}
+
+void
+ViewerPrivate::openPythonDialogsReference()
+{
+    QDesktopServices::openUrl(QUrl(QStringLiteral(GITHUB_URL "/blob/master/skills/references/python-dialogs.md")));
+}
+
+void
+ViewerPrivate::openAgentSkill()
+{
+    QDesktopServices::openUrl(QUrl(QStringLiteral(GITHUB_URL "/blob/master/skills/SKILL.md")));
+}
+
+void
+ViewerPrivate::reportIssue()
+{
+    QDesktopServices::openUrl(QUrl(QStringLiteral(GITHUB_URL "/issues")));
 }
 
 void

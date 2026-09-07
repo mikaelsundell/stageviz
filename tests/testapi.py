@@ -3001,14 +3001,14 @@ def test_payload_load_unload():
 
     _assert_equal(
         _selection(),
-        [],
-        "unload_payloads removes affected payload child selection",
+        ["/World/PayloadA"],
+        "unload_payloads remaps affected payload child selection to payload root",
     )
 
     _assert_equal(
         _mask(),
-        [],
-        "unload_payloads removes affected payload child mask",
+        ["/World/PayloadA"],
+        "unload_payloads remaps affected payload child mask to payload root",
     )
 
     if _undo():

@@ -830,9 +830,12 @@
     <addaction name="helpAbout" />
     <addaction name="helpCheckUpdates" />
     <addaction name="separator" />
-    <addaction name="helpGithubReadme" />
-    <addaction name="helpGithubIssues" />
+    <addaction name="helpDocumentation" />
+    <addaction name="helpPythonApiReference" />
+    <addaction name="helpPythonDialogReference" />
+    <addaction name="helpAgentSkill" />
     <addaction name="separator" />
+    <addaction name="helpReportIssue" />
    </widget>
    <widget class="QMenu" name="menuEdit">
     <property name="title">
@@ -998,14 +1001,29 @@
     <string>Ctrl+Alt+I</string>
    </property>
   </action>
-  <action name="helpGithubReadme">
+  <action name="helpDocumentation">
    <property name="text">
-    <string>Open Github README</string>
+    <string>Documentation</string>
    </property>
   </action>
-  <action name="helpGithubIssues">
+  <action name="helpPythonApiReference">
    <property name="text">
-    <string>Open Github Issues</string>
+    <string>Python API Reference</string>
+   </property>
+  </action>
+  <action name="helpPythonDialogReference">
+   <property name="text">
+    <string>Python Reference</string>
+   </property>
+  </action>
+  <action name="helpAgentSkill">
+   <property name="text">
+    <string>Agent Skill</string>
+   </property>
+  </action>
+  <action name="helpReportIssue">
+   <property name="text">
+    <string>Report an Issue</string>
    </property>
   </action>
   <action name="helpAbout">

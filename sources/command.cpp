@@ -68,6 +68,64 @@ namespace {
         return result.join("; ");
     }
 
+    QList<SdfPath> remapPayloadAffectedPaths(const QList<SdfPath>& paths, const QList<SdfPath>& payloadPaths)
+    {
+        QList<SdfPath> result;
+        result.reserve(paths.size());
+
+        for (const SdfPath& inputPath : paths) {
+            const SdfPath primPath = inputPath.IsPropertyPath() ? inputPath.GetPrimPath() : inputPath;
+            bool remapped = false;
+
+            for (const SdfPath& payloadPath : payloadPaths) {
+                if (primPath == payloadPath || primPath.HasPrefix(payloadPath)) {
+                    path::appendUnique(result, payloadPath);
+                    remapped = true;
+                    break;
+                }
+            }
+
+            if (!remapped)
+                path::appendUnique(result, inputPath);
+        }
+
+        return result;
+    }
+
+    QList<SdfPath> remapMissingPayloadDescendants(UsdStageRefPtr stage, const QList<SdfPath>& paths,
+                                                  const QList<SdfPath>& payloadPaths)
+    {
+        if (!stage || payloadPaths.isEmpty())
+            return paths;
+
+        QList<SdfPath> result;
+        result.reserve(paths.size());
+
+        for (const SdfPath& inputPath : paths) {
+            const SdfPath primPath = inputPath.IsPropertyPath() ? inputPath.GetPrimPath() : inputPath;
+            const UsdPrim prim = stage->GetPrimAtPath(primPath);
+
+            if (prim && prim.IsValid()) {
+                path::appendUnique(result, inputPath);
+                continue;
+            }
+
+            bool remapped = false;
+            for (const SdfPath& payloadPath : payloadPaths) {
+                if (primPath.HasPrefix(payloadPath)) {
+                    path::appendUnique(result, payloadPath);
+                    remapped = true;
+                    break;
+                }
+            }
+
+            if (!remapped)
+                path::appendUnique(result, inputPath);
+        }
+
+        return result;
+    }
+
     struct RootPropertyState {
         SdfPath propertyPath;
         bool hadSpec = false;
@@ -374,9 +432,7 @@ namespace {
                                                static_cast<float>(localPivot[2])));
                 break;
             case UsdGeomXformOp::PrecisionDouble:
-            default:
-                pivotSet = pivotOp.Set(localPivot);
-                break;
+            default: pivotSet = pivotOp.Set(localPivot); break;
             }
         }
 
@@ -765,7 +821,26 @@ loadPayloads(const QList<SdfPath>& paths, const QString& variantSet, const QStri
 
                 state->payloadStates = payloadStates;
 
-                command::queueToSession(session, [session]() {
+                QList<SdfPath> loadedPaths;
+                loadedPaths.reserve(payloadStates.size());
+                for (const payload::PayloadState& payloadState : payloadStates)
+                    path::appendUnique(loadedPaths, payloadState.path);
+
+                QList<SdfPath> selection = state->previousSelection;
+                QList<SdfPath> mask = state->previousMask;
+
+                if (useVariant && !loadedPaths.isEmpty()) {
+                    READ_LOCKER(locker, session->stageLock(), "stageLock");
+                    const UsdStageRefPtr stage = session->stageUnsafe();
+                    selection = remapMissingPayloadDescendants(stage, selection, loadedPaths);
+                    mask = remapMissingPayloadDescendants(stage, mask, loadedPaths);
+                }
+
+                command::queueToSession(session, [session, selection, mask, useVariant]() {
+                    if (useVariant) {
+                        session->selectionList()->updatePaths(selection);
+                        session->setMask(mask);
+                    }
                     session->setPrimsUpdate(Session::PrimsUpdate::Immediate);
                     session->endProgressBlock();
                 });
@@ -1116,8 +1191,8 @@ unloadPayloads(const QList<SdfPath>& paths)
 
                 command::queueToSession(session, [session, state, unloadedPaths]() {
                     session->selectionList()->updatePaths(
-                        path::removeAffectedPaths(state->previousSelection, unloadedPaths));
-                    session->setMask(path::removeAffectedPaths(state->previousMask, unloadedPaths));
+                        remapPayloadAffectedPaths(state->previousSelection, unloadedPaths));
+                    session->setMask(remapPayloadAffectedPaths(state->previousMask, unloadedPaths));
                     session->setPrimsUpdate(Session::PrimsUpdate::Immediate);
                     session->endProgressBlock();
                 });
@@ -2025,12 +2100,14 @@ clearDefaultPrim()
                     if (!hadStage || !success) {
                         const QString message = error.isEmpty() ? "Clear default prim failed"
                                                                 : QString("Clear default prim failed: %1").arg(error);
-                        session->updateProgressNotify(
-                            Session::Notify(message, { *previousDefaultPrimPath }, Status::Error), 1);
+                        session->updateProgressNotify(Session::Notify(message, { *previousDefaultPrimPath },
+                                                                      Status::Error),
+                                                      1);
                     }
                     else {
-                        session->updateProgressNotify(
-                            Session::Notify("Default prim cleared", { *previousDefaultPrimPath }, Status::Success), 1);
+                        session->updateProgressNotify(Session::Notify("Default prim cleared",
+                                                                      { *previousDefaultPrimPath }, Status::Success),
+                                                      1);
                     }
                     session->endProgressBlock();
                 });
@@ -2073,15 +2150,17 @@ clearDefaultPrim()
                 command::queueToSession(session, [session, previousDefaultPrimPath, success, error]() {
                     using Status = Session::Notify::Status;
                     if (!success) {
-                        const QString message = error.isEmpty() ? "Undo clear default prim failed"
-                                                                : QString("Undo clear default prim failed: %1").arg(error);
-                        session->updateProgressNotify(
-                            Session::Notify(message, { *previousDefaultPrimPath }, Status::Error), 1);
+                        const QString message = error.isEmpty()
+                                                    ? "Undo clear default prim failed"
+                                                    : QString("Undo clear default prim failed: %1").arg(error);
+                        session->updateProgressNotify(Session::Notify(message, { *previousDefaultPrimPath },
+                                                                      Status::Error),
+                                                      1);
                     }
                     else {
-                        session->updateProgressNotify(
-                            Session::Notify("Clear default prim undone", { *previousDefaultPrimPath }, Status::Success),
-                            1);
+                        session->updateProgressNotify(Session::Notify("Clear default prim undone",
+                                                                      { *previousDefaultPrimPath }, Status::Success),
+                                                      1);
                     }
                     session->endProgressBlock();
                 });

@@ -940,8 +940,8 @@ namespace stage {
 
             const bool pivotSet = pivotPrecision == UsdGeomXformOp::PrecisionFloat
                                       ? pivotOp.Set(GfVec3f(static_cast<float>(pivotValue[0]),
-                                                          static_cast<float>(pivotValue[1]),
-                                                          static_cast<float>(pivotValue[2])),
+                                                            static_cast<float>(pivotValue[1]),
+                                                            static_cast<float>(pivotValue[2])),
                                                     UsdTimeCode::Default())
                                       : pivotOp.Set(pivotValue, UsdTimeCode::Default());
 

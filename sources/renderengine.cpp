@@ -661,7 +661,7 @@ RenderEngine::renderImage()
 {
     if (p->contextMode != ContextMode::Offscreen)
         return {};
-    
+
     OpenGLContextRestore contextRestore;
 
     if (!p->ensureCurrentContext())

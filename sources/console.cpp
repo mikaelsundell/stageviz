@@ -361,7 +361,8 @@ ConsolePrivate::queueText(const QString& text)
     if (!scheduleDrain)
         return;
 
-    const bool invoked = QMetaObject::invokeMethod(this, [this]() { drainPending(); }, Qt::QueuedConnection);
+    const bool invoked = QMetaObject::invokeMethod(
+        this, [this]() { drainPending(); }, Qt::QueuedConnection);
     if (!invoked) {
         std::lock_guard<std::mutex> guard(d.pendingMutex);
         d.drainScheduled = false;

@@ -314,21 +314,24 @@ ContextMenu::exec(QWidget* parent, ViewContext* context, UsdStageRefPtr usdStage
     menu.addSeparator();
 
     QMenu* copyMenu = menu.addMenu("Copy");
-    QAction* copyPath = copyMenu->addAction("Path");
     QAction* copyName = copyMenu->addAction("Name");
+
+    copyMenu->addSeparator();
+
+    QAction* copyPath = copyMenu->addAction("Path");
     QAction* copyPayload = nullptr;
     QAction* copyPaths = nullptr;
     QAction* copyNames = nullptr;
 
-    copyPath->setEnabled(!paths.isEmpty());
     copyName->setEnabled(!paths.isEmpty());
+    copyPath->setEnabled(!paths.isEmpty());
 
     if (hasExactPayloadSelection)
         copyPayload = copyMenu->addAction("Payload");
 
     if (paths.size() > 1) {
-        copyPaths = copyMenu->addAction("Paths");
         copyNames = copyMenu->addAction("Names");
+        copyPaths = copyMenu->addAction("Paths");
     }
 
     if (paths.isEmpty())
@@ -371,13 +374,13 @@ ContextMenu::exec(QWidget* parent, ViewContext* context, UsdStageRefPtr usdStage
         return;
     }
 
-    if (chosen == copyPath) {
-        copyToClipboard(pathStrings.first());
+    if (chosen == copyName) {
+        copyToClipboard(nameStrings.first());
         return;
     }
 
-    if (chosen == copyName) {
-        copyToClipboard(nameStrings.first());
+    if (chosen == copyPath) {
+        copyToClipboard(pathStrings.first());
         return;
     }
 
@@ -393,13 +396,13 @@ ContextMenu::exec(QWidget* parent, ViewContext* context, UsdStageRefPtr usdStage
         return;
     }
 
-    if (chosen == copyPaths) {
-        copyToClipboard(pathStrings.join('\n'));
+    if (chosen == copyNames) {
+        copyToClipboard(nameStrings.join('\n'));
         return;
     }
 
-    if (chosen == copyNames) {
-        copyToClipboard(nameStrings.join('\n'));
+    if (chosen == copyPaths) {
+        copyToClipboard(pathStrings.join('\n'));
         return;
     }
 

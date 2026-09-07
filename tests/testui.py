@@ -1231,60 +1231,111 @@ def current_path(tree):
     return _path_from_index(index)
 
 
+def selected_paths(tree):
+    selection_model = tree.selectionModel()
+
+    if selection_model is None:
+        return []
+
+    paths = []
+
+    for index in _walk_model_indexes(tree):
+        if selection_model.isSelected(index):
+            path = _path_from_index(index)
+
+            if path:
+                paths.append(path)
+
+    return paths
+
+
+def require_tree_selection_empty(tree, message):
+    require(
+        wait_until(
+            lambda: (
+                selected_paths(tree) == []
+                and current_path(tree) == ""
+            ),
+            timeout=3.0,
+        ),
+        message,
+    )
+
+
 def select_path(tree, path):
-    def apply_selection():
-        item = find_item_by_path(
-            tree,
-            path,
-        )
+    item = find_item_by_path(
+        tree,
+        path,
+    )
 
-        if item is None:
-            return False
+    require(
+        item is not None,
+        f"{path} exists before selection",
+    )
 
-        index = item.index
-        selection_model = tree.selectionModel()
-
-        if selection_model is None:
-            return False
-
-        selection_model.clearSelection()
-        selection_model.select(
-            index,
-            QItemSelectionModel.ClearAndSelect
-            | QItemSelectionModel.Rows,
-        )
-
-        tree.setCurrentIndex(index)
-        tree.scrollTo(
-            index,
-            QAbstractItemView.PositionAtCenter,
-        )
-        tree.setFocus()
-
-        # Selection can trigger a StageTree refresh. Process that refresh here,
-        # then reacquire the live index before deciding the selection is stable.
-        process_events()
-
-        item = find_item_by_path(
-            tree,
-            path,
-        )
-
-        if item is None:
-            return False
-
-        index = item.index
-        selection_model = tree.selectionModel()
-
-        return bool(
-            selection_model
-            and selection_model.isSelected(index)
-            and current_path(tree) == path
-        )
+    # SelectionList is the authoritative selection owner. Do not repeatedly
+    # mutate QItemSelectionModel inside wait_until(): clearing/selecting there
+    # emits StageTree itemSelectionChanged and can enqueue alternating empty
+    # and non-empty select_paths commands.
+    stageviz.command.select_paths(
+        [path]
+    )
 
     require(
         wait_until(
-            apply_selection,
+            lambda: (
+                list(stageviz.session().paths())
+                == [Sdf.Path(path)]
+                and path_is_selected(
+                    tree,
+                    path,
+                )
+            ),
+            timeout=3.0,
+        ),
+        f"{path} becomes selected",
+    )
+
+    # currentIndex is UI navigation state. Set it without modifying selection,
+    # then reacquire the QModelIndex because StageTree may have refreshed while
+    # the semantic selection command was being processed.
+    item = find_item_by_path(
+        tree,
+        path,
+    )
+
+    require(
+        item is not None,
+        f"{path} still exists before setting current item",
+    )
+
+    selection_model = tree.selectionModel()
+
+    require(
+        selection_model is not None,
+        "StageTree selection model is available",
+    )
+
+    selection_model.setCurrentIndex(
+        item.index,
+        QItemSelectionModel.NoUpdate,
+    )
+
+    tree.scrollTo(
+        item.index,
+        QAbstractItemView.PositionAtCenter,
+    )
+    tree.setFocus()
+
+    require(
+        wait_until(
+            lambda: (
+                path_is_selected(
+                    tree,
+                    path,
+                )
+                and current_path(tree) == path
+            ),
             timeout=3.0,
         ),
         f"{path} becomes selected/current",
@@ -3279,24 +3330,38 @@ Expected StageTree policy:
     All
 
 Expected:
-    - PayloadA/B/C are loaded in USD
-    - payload rows remain StageTree leaves
-    - payload contents remain hidden from StageTree
-    - no StageTree rows have checkboxes
+    - PayloadA/B/C are loaded in USD.
+    - StageTree shows the full composed hierarchy, including loaded payload
+      descendants.
+    - no StageTree rows have checkboxes.
+
+Expected hierarchy includes:
+
+    /World/PayloadA
+        /World/PayloadA/Geom
+            /World/PayloadA/Geom/Detail
+
+    /World/PayloadB
+        /World/PayloadB/Geom
+            /World/PayloadB/Geom/Detail
+
+    /World/PayloadC
+        /World/PayloadC/Geom
+            /World/PayloadC/Geom/Detail
 
 Then unload PayloadA programmatically.
 
 Expected:
-    - PayloadA remains a leaf with no checkbox
-    - composed PayloadA contents disappear from USD
-    - StageTree still does not traverse payload contents
+    - PayloadA root row remains.
+    - PayloadA/Geom and PayloadA/Geom/Detail disappear from USD and StageTree.
+    - no checkbox appears anywhere.
 
 Then load PayloadA again.
 
 Expected:
-    - PayloadA contents return in USD but remain hidden from StageTree
-    - no checkbox appears
-    - unrelated normal hierarchy expansion remains stable
+    - PayloadA/Geom and PayloadA/Geom/Detail return to USD and StageTree.
+    - no checkbox appears.
+    - unrelated normal hierarchy expansion remains stable.
 """,
     )
 
@@ -3314,11 +3379,13 @@ Expected:
     set_path_expanded(tree, "/World/Assembly", True)
     set_path_expanded(tree, "/World/Assembly/Door", True)
 
-    for path in (
+    payload_paths = (
         "/World/PayloadA",
         "/World/PayloadB",
         "/World/PayloadC",
-    ):
+    )
+
+    for path in payload_paths:
         require(
             bool(
                 prim(path)
@@ -3327,11 +3394,24 @@ Expected:
             f"{path} is loaded under LoadAll",
         )
 
-        verify_payload_is_leaf(tree, path)
+        require(
+            path_exists_in_tree(tree, path),
+            f"{path} exists in StageTree under All policy",
+        )
 
         require(
             not has_checkbox_for_path(tree, path),
             f"{path} has no checkbox in All policy",
+        )
+
+        require(
+            path_exists_in_tree(tree, f"{path}/Geom"),
+            f"{path}/Geom is visible in StageTree in All policy",
+        )
+
+        require(
+            path_exists_in_tree(tree, f"{path}/Geom/Detail"),
+            f"{path}/Geom/Detail is visible in StageTree in All policy",
         )
 
     require(
@@ -3340,23 +3420,8 @@ Expected:
     )
 
     require(
-        not path_exists_in_tree(tree, "/World/PayloadA/Geom"),
-        "PayloadA/Geom remains hidden from StageTree in All policy",
-    )
-
-    require(
-        not path_exists_in_tree(tree, "/World/PayloadA/Geom/Detail"),
-        "PayloadA/Geom/Detail remains hidden from StageTree in All policy",
-    )
-
-    require(
-        not path_exists_in_tree(tree, "/World/PayloadB/Geom"),
-        "PayloadB/Geom remains hidden from StageTree in All policy",
-    )
-
-    require(
-        not path_exists_in_tree(tree, "/World/PayloadC/Geom"),
-        "PayloadC/Geom remains hidden from StageTree in All policy",
+        exists("/World/PayloadA/Geom/Detail"),
+        "PayloadA/Geom/Detail exists in USD under LoadAll",
     )
 
     print()
@@ -3382,21 +3447,21 @@ Expected:
         wait_until(
             lambda: (
                 not exists("/World/PayloadA/Geom")
+                and not exists("/World/PayloadA/Geom/Detail")
                 and not path_exists_in_tree(tree, "/World/PayloadA/Geom")
+                and not path_exists_in_tree(tree, "/World/PayloadA/Geom/Detail")
             ),
             timeout=5.0,
         ),
-        "PayloadA composed contents disappear from USD and StageTree",
+        "PayloadA descendants disappear from USD and StageTree",
     )
 
     process_events()
     dump_tree(tree)
 
-    verify_payload_is_leaf(tree, "/World/PayloadA")
-
     require(
         path_exists_in_tree(tree, "/World/PayloadA"),
-        "PayloadA row remains after unload in All policy",
+        "PayloadA root row remains after unload in All policy",
     )
 
     require(
@@ -3407,11 +3472,6 @@ Expected:
     require_no_checkboxes_anywhere(
         tree,
         "All policy still has no checkboxes anywhere after payload unload",
-    )
-
-    require(
-        not path_exists_in_tree(tree, "/World/PayloadA/Geom/Detail"),
-        "PayloadA/Geom/Detail disappears after unload",
     )
 
     require(
@@ -3443,21 +3503,16 @@ Expected:
             lambda: (
                 exists("/World/PayloadA/Geom")
                 and exists("/World/PayloadA/Geom/Detail")
+                and path_exists_in_tree(tree, "/World/PayloadA/Geom")
+                and path_exists_in_tree(tree, "/World/PayloadA/Geom/Detail")
             ),
             timeout=5.0,
         ),
-        "PayloadA contents return to USD",
+        "PayloadA descendants return to USD and StageTree",
     )
 
     process_events()
     dump_tree(tree)
-
-    verify_payload_is_leaf(tree, "/World/PayloadA")
-
-    require(
-        not path_exists_in_tree(tree, "/World/PayloadA/Geom"),
-        "PayloadA contents remain hidden from StageTree after reload",
-    )
 
     require(
         not has_checkbox_for_path(tree, "/World/PayloadA"),
@@ -3476,6 +3531,241 @@ Expected:
 
     release_qt_wrappers()
 
+def test_payload_selection_synchronization(main):
+    tree = reload_fixture(
+        main,
+        stageviz.LoadNone,
+    )
+
+    step(
+        14,
+        "Payload selection synchronization",
+        """
+This is the regression test for StageTree payload selection ownership.
+
+1. Load PayloadA.
+2. Select the payload root and unload it.
+   Expected:
+       - /World/PayloadA remains selected/current.
+3. Reload PayloadA and select a hidden payload descendant.
+   Expected:
+       - SelectionList contains /World/PayloadA/Geom.
+       - StageTree represents that selection with /World/PayloadA.
+4. Unload PayloadA.
+   Expected:
+       - semantic selection remaps to /World/PayloadA.
+       - StageTree keeps /World/PayloadA selected/current.
+5. Clear selection through stageviz.command.select_paths([]).
+   Expected:
+       - SelectionList is empty.
+       - QItemSelectionModel is empty.
+       - currentItem/currentIndex is empty.
+       - no ancestor selection highlight remains.
+6. Load and unload PayloadA again.
+   Expected:
+       - empty selection stays empty across payload notices.
+
+The final checks specifically guard against the former state where the
+selection model was empty but QTreeWidgetItem::isSelected() still reported the
+payload row selected, causing World and / to keep the ancestor highlight.
+""",
+    )
+
+    require(
+        policy_name(tree) == "Payload",
+        "payload selection regression runs in Payload policy",
+    )
+
+    payload_path = "/World/PayloadA"
+    child_path = "/World/PayloadA/Geom"
+
+    stageviz.command.load_payloads(
+        [payload_path]
+    )
+
+    require(
+        wait_until(
+            lambda: bool(
+                prim(payload_path)
+                and prim(payload_path).IsLoaded()
+                and exists(child_path)
+            ),
+            timeout=5.0,
+        ),
+        "PayloadA is loaded for selection regression",
+    )
+
+    select_path(
+        tree,
+        payload_path,
+    )
+
+    require(
+        wait_until(
+            lambda: (
+                list(stageviz.session().paths())
+                == [Sdf.Path(payload_path)]
+                and selected_paths(tree)
+                == [payload_path]
+                and current_path(tree)
+                == payload_path
+            ),
+            timeout=3.0,
+        ),
+        "payload root selection is synchronized",
+    )
+
+    stageviz.command.unload_payloads(
+        [payload_path]
+    )
+
+    require(
+        wait_until(
+            lambda: bool(
+                prim(payload_path)
+                and not prim(payload_path).IsLoaded()
+            ),
+            timeout=5.0,
+        ),
+        "PayloadA unloads while root is selected",
+    )
+
+    require(
+        wait_until(
+            lambda: (
+                list(stageviz.session().paths())
+                == [Sdf.Path(payload_path)]
+                and selected_paths(tree)
+                == [payload_path]
+                and current_path(tree)
+                == payload_path
+            ),
+            timeout=3.0,
+        ),
+        "payload root remains selected/current after unload",
+    )
+
+    stageviz.command.load_payloads(
+        [payload_path]
+    )
+
+    require(
+        wait_until(
+            lambda: exists(child_path),
+            timeout=5.0,
+        ),
+        "PayloadA descendant returns after reload",
+    )
+
+    stageviz.command.select_paths(
+        [child_path]
+    )
+
+    require(
+        wait_until(
+            lambda: (
+                list(stageviz.session().paths())
+                == [Sdf.Path(child_path)]
+                and selected_paths(tree)
+                == [payload_path]
+            ),
+            timeout=3.0,
+        ),
+        "hidden payload descendant is represented by payload root in StageTree",
+    )
+
+    stageviz.command.unload_payloads(
+        [payload_path]
+    )
+
+    require(
+        wait_until(
+            lambda: bool(
+                prim(payload_path)
+                and not prim(payload_path).IsLoaded()
+            ),
+            timeout=5.0,
+        ),
+        "PayloadA unloads while descendant is selected",
+    )
+
+    require(
+        wait_until(
+            lambda: (
+                list(stageviz.session().paths())
+                == [Sdf.Path(payload_path)]
+                and selected_paths(tree)
+                == [payload_path]
+                and current_path(tree)
+                == payload_path
+            ),
+            timeout=3.0,
+        ),
+        "payload descendant selection remaps to payload root after unload",
+    )
+
+    stageviz.command.select_paths([])
+
+    require(
+        wait_until(
+            lambda: list(stageviz.session().paths()) == [],
+            timeout=3.0,
+        ),
+        "SelectionList clears",
+    )
+
+    require_tree_selection_empty(
+        tree,
+        "StageTree clears selection/current and all QTreeWidgetItem selection state",
+    )
+
+    stageviz.command.load_payloads(
+        [payload_path]
+    )
+
+    require(
+        wait_until(
+            lambda: bool(
+                prim(payload_path)
+                and prim(payload_path).IsLoaded()
+            ),
+            timeout=5.0,
+        ),
+        "PayloadA reloads after selection clear",
+    )
+
+    require_tree_selection_empty(
+        tree,
+        "payload load notice does not resurrect StageTree selection",
+    )
+
+    stageviz.command.unload_payloads(
+        [payload_path]
+    )
+
+    require(
+        wait_until(
+            lambda: bool(
+                prim(payload_path)
+                and not prim(payload_path).IsLoaded()
+            ),
+            timeout=5.0,
+        ),
+        "PayloadA unloads again after selection clear",
+    )
+
+    require_tree_selection_empty(
+        tree,
+        "payload unload notice does not resurrect StageTree selection",
+    )
+
+    require(
+        list(stageviz.session().paths()) == [],
+        "SelectionList remains empty across payload load/unload notices",
+    )
+
+    release_qt_wrappers()
+
 
 def test_invalid_move_keeps_tree_stable(main):
     tree = reload_fixture(
@@ -3484,7 +3774,7 @@ def test_invalid_move_keeps_tree_stable(main):
     )
 
     step(
-        14,
+        15,
         "Rejected namespace move",
         """
 Attempt to move Assembly below its own descendant Door.
@@ -3565,7 +3855,7 @@ def test_large_tree_namespace_performance(root):
     )
 
     step(
-        15,
+        16,
         "Large-tree namespace timing and state preservation",
         """
 A separate hierarchy with roughly 1,200 normal prim rows is loaded.
@@ -3766,7 +4056,7 @@ def test_25k_namespace_benchmark(root):
     target_prim_count = 25000
 
     step(
-        16,
+        17,
         "Fresh 25k StageTree namespace benchmark",
         """
 A completely new USD stage is authored at the end of the UI suite.
@@ -4225,6 +4515,7 @@ def run():
         test_delete_subtree(main)
         test_payload_policy_after_reload(main)
         test_all_policy(main)
+        test_payload_selection_synchronization(main)
         test_invalid_move_keeps_tree_stable(main)
         test_large_tree_namespace_performance(root)
         test_25k_namespace_benchmark(root)

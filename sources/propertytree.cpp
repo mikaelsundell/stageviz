@@ -52,8 +52,10 @@
 #include <pxr/base/gf/vec4i.h>
 #include <pxr/base/tf/token.h>
 #include <pxr/base/vt/array.h>
+#include <pxr/base/vt/dictionary.h>
 #include <pxr/base/vt/value.h>
 #include <pxr/usd/sdf/assetPath.h>
+#include <pxr/usd/sdf/payload.h>
 #include <pxr/usd/usd/attribute.h>
 #include <pxr/usd/usd/modelAPI.h>
 #include <pxr/usd/usd/prim.h>
@@ -155,7 +157,6 @@ public:
     SdfPath selectableValuePath(const PropertyItem* item) const;
 
     struct TreeState {
-        QSet<QString> expanded;
         QString current;
         int scrollValue = 0;
     };
@@ -163,6 +164,7 @@ public:
     QString itemKey(const PropertyItem* item) const;
     TreeState captureTreeState() const;
     void restoreTreeState(const TreeState& state);
+    void restoreExpansionState();
 
     PropertyItem* addSection(const QString& name, const QString& value = QString());
     PropertyItem* addInfo(PropertyItem* parent, const QString& name, const QString& value,
@@ -173,6 +175,8 @@ public:
     void addPrimSection(const UsdPrim& prim);
     void addMultiPrimSection(const QList<UsdPrim>& prims);
     void addCompositionSection(const UsdPrim& prim);
+    void addMetadataSection(const UsdPrim& prim);
+    void addDictionaryEntries(PropertyItem* parent, const VtDictionary& dictionary);
     void addAttributesSection(const UsdPrim& prim);
     void addMultiAttributesSection(const QList<UsdPrim>& prims);
     void addRelationshipsSection(const UsdPrim& prim);
@@ -185,6 +189,7 @@ public:
     void populateChunk(PropertyItem* item);
     void itemChanged(QTreeWidgetItem* item, int column);
     void itemExpanded(QTreeWidgetItem* item);
+    void itemCollapsed(QTreeWidgetItem* item);
     void restoreItemText(PropertyItem* item);
     bool currentAttributeValue(const SdfPath& propertyPath, VtValue& value) const;
     bool currentAttributeValues(const QList<SdfPath>& propertyPaths, QList<VtValue>& values) const;
@@ -331,6 +336,7 @@ public:
         bool update = false;
         SdfPath path;
         QList<SdfPath> paths;
+        QMap<QString, bool> expansionState;
         UsdStageRefPtr stage;
         QPointer<ViewContext> context;
         QPointer<PropertyTree> tree;
@@ -1126,23 +1132,6 @@ PropertyTreePrivate::captureTreeState() const
     if (auto* current = dynamic_cast<PropertyItem*>(d.tree->currentItem()))
         state.current = itemKey(current);
 
-    std::function<void(QTreeWidgetItem*)> capture = [&](QTreeWidgetItem* parent) {
-        if (!parent)
-            return;
-
-        for (int i = 0; i < parent->childCount(); ++i) {
-            QTreeWidgetItem* child = parent->child(i);
-
-            if (auto* item = dynamic_cast<PropertyItem*>(child)) {
-                if (item->isExpanded())
-                    state.expanded.insert(itemKey(item));
-            }
-
-            capture(child);
-        }
-    };
-
-    capture(d.tree->invisibleRootItem());
     return state;
 }
 
@@ -1172,11 +1161,6 @@ PropertyTreePrivate::restoreTreeState(const TreeState& state)
             if (!state.current.isEmpty() && key == state.current)
                 currentItem = item;
 
-            const bool expanded = state.expanded.contains(key);
-            if (expanded && item->kind() == PropertyItem::ArrayChunk)
-                populateChunk(item);
-
-            item->setExpanded(expanded);
             restore(item);
         }
     };
@@ -1190,6 +1174,44 @@ PropertyTreePrivate::restoreTreeState(const TreeState& state)
         scrollBar->setValue(state.scrollValue);
 }
 
+void
+PropertyTreePrivate::restoreExpansionState()
+{
+    if (!d.tree)
+        return;
+
+    std::function<void(QTreeWidgetItem*)> restore = [&](QTreeWidgetItem* parent) {
+        if (!parent)
+            return;
+
+        for (int i = 0; i < parent->childCount(); ++i) {
+            QTreeWidgetItem* child = parent->child(i);
+            auto* item = dynamic_cast<PropertyItem*>(child);
+
+            if (!item) {
+                restore(child);
+                continue;
+            }
+
+            const QString key = itemKey(item);
+            const auto found = d.expansionState.constFind(key);
+
+            if (found != d.expansionState.constEnd()) {
+                const bool expanded = found.value();
+
+                if (expanded && item->kind() == PropertyItem::ArrayChunk)
+                    populateChunk(item);
+
+                item->setExpanded(expanded);
+            }
+
+            restore(item);
+        }
+    };
+
+    restore(d.tree->invisibleRootItem());
+}
+
 
 QString
 PropertyTreePrivate::metadataText(const VtValue& value)
@@ -1200,6 +1222,42 @@ PropertyTreePrivate::metadataText(const VtValue& value)
     std::ostringstream stream;
     stream << value;
     return QString::fromStdString(stream.str()).trimmed();
+}
+
+void
+PropertyTreePrivate::addDictionaryEntries(PropertyItem* parent, const VtDictionary& dictionary)
+{
+    if (!parent)
+        return;
+
+    for (const auto& entry : dictionary) {
+        const QString name = StringToQString(entry.first);
+        const VtValue& value = entry.second;
+
+        if (value.IsHolding<VtDictionary>()) {
+            const VtDictionary& childDictionary = value.UncheckedGet<VtDictionary>();
+            PropertyItem* item = addInfo(parent, name, QString("%1 entries").arg(childDictionary.size()));
+            addDictionaryEntries(item, childDictionary);
+            continue;
+        }
+
+        const QString text = scalarEditable(value) ? scalarText(value) : metadataText(value);
+        PropertyItem* item = addInfo(parent, name, text, QString::fromStdString(value.GetTypeName()));
+        if (item)
+            item->setExpanded(false);
+    }
+}
+
+void
+PropertyTreePrivate::addMetadataSection(const UsdPrim& prim)
+{
+    const VtDictionary customData = prim.GetCustomData();
+    if (customData.empty())
+        return;
+
+    PropertyItem* section = addSection("Metadata");
+    PropertyItem* customDataItem = addInfo(section, "Custom Data", QString("%1 entries").arg(customData.size()));
+    addDictionaryEntries(customDataItem, customData);
 }
 
 QString
@@ -1323,7 +1381,7 @@ PropertyTreePrivate::hasUnderlyingPrimOpinion(const UsdPrim& prim, const SdfLaye
 bool
 PropertyTreePrivate::isOverrideItem(const PropertyItem* item) const
 {
-    if (!item || item->kind() != PropertyItem::Attribute || !d.stage)
+    if (!item || !d.stage || item->propertyPaths().isEmpty())
         return false;
 
     const SdfLayerHandle editLayer = d.stage->GetEditTarget().GetLayer();
@@ -1331,6 +1389,9 @@ PropertyTreePrivate::isOverrideItem(const PropertyItem* item) const
         return false;
 
     for (const SdfPath& propertyPath : item->propertyPaths()) {
+        if (propertyPath.IsEmpty() || !propertyPath.IsPropertyPath())
+            continue;
+
         const UsdPrim prim = d.stage->GetPrimAtPath(propertyPath.GetPrimPath());
         if (editLayer->GetPropertyAtPath(propertyPath) && hasUnderlyingPrimOpinion(prim, editLayer))
             return true;
@@ -1550,14 +1611,54 @@ PropertyTreePrivate::addCompositionSection(const UsdPrim& prim)
     }
 
     if (prim.HasPayload()) {
-        PropertyItem* payload = addInfo(section, "Payload", "Yes");
+        struct PayloadEntry {
+            QString operation;
+            SdfPayload payload;
+        };
+
+        QList<PayloadEntry> payloadEntries;
+        SdfPayloadListOp payloadList;
+
+        if (prim.GetMetadata(SdfFieldKeys->Payload, &payloadList)) {
+            auto appendPayloads = [&](const QString& operation, const SdfPayloadVector& payloads) {
+                for (const SdfPayload& value : payloads)
+                    payloadEntries.append({ operation, value });
+            };
+
+            appendPayloads(QStringLiteral("Explicit"), payloadList.GetExplicitItems());
+            appendPayloads(QStringLiteral("Prepend"), payloadList.GetPrependedItems());
+            appendPayloads(QStringLiteral("Append"), payloadList.GetAppendedItems());
+        }
+
+        PropertyItem* payload = addInfo(section, "Payload",
+                                        payloadEntries.size() > 1 ? QString("%1 arcs").arg(payloadEntries.size())
+                                                                  : QStringLiteral("Yes"));
         hasComposition = true;
 
-        VtValue metadata;
-        if (prim.GetMetadata(SdfFieldKeys->Payload, &metadata) && !metadata.IsEmpty()) {
-            const QString text = metadataText(metadata);
-            if (!text.isEmpty())
-                addInfo(payload, "Metadata", text, text);
+        auto addPayloadEntry = [&](PropertyItem* parent, const PayloadEntry& entry) {
+            const QString assetPath = qt::StringToQString(entry.payload.GetAssetPath());
+            const SdfPath primPath = entry.payload.GetPrimPath();
+
+            addInfo(parent, "Asset", assetPath.isEmpty() ? QStringLiteral("<current layer>") : assetPath, assetPath);
+
+            if (primPath.IsEmpty()) {
+                addInfo(parent, "Prim Path", "<defaultPrim>", QStringLiteral("Uses the payload layer's defaultPrim."));
+            }
+            else {
+                addInfo(parent, "Prim Path", qt::SdfPathToQString(primPath));
+            }
+
+            addInfo(parent, "List Operation", entry.operation);
+        };
+
+        if (payloadEntries.size() == 1) {
+            addPayloadEntry(payload, payloadEntries.first());
+        }
+        else {
+            for (int index = 0; index < payloadEntries.size(); ++index) {
+                PropertyItem* entry = addInfo(payload, QString("[%1]").arg(index), payloadEntries[index].operation);
+                addPayloadEntry(entry, payloadEntries[index]);
+            }
         }
     }
 
@@ -1728,6 +1829,7 @@ PropertyTreePrivate::addRelationshipsSection(const UsdPrim& prim)
 {
     const std::vector<UsdRelationship> relationships = prim.GetRelationships();
     PropertyItem* section = addSection("Relationships", QString::number(relationships.size()));
+    const SdfLayerHandle editLayer = d.stage ? d.stage->GetEditTarget().GetLayer() : SdfLayerHandle();
 
     for (const UsdRelationship& relationship : relationships) {
         SdfPathVector targets;
@@ -1744,6 +1846,52 @@ PropertyTreePrivate::addRelationshipsSection(const UsdPrim& prim)
                                            : QString("%1 targets").arg(targets.size()));
         }
 
+        if (!item)
+            continue;
+
+        // Relationships are Sdf properties just like attributes. Keep the
+        // property path on the row so edit-layer override detection and Reset >
+        // Override work for material:binding and any other relationship.
+        item->setPropertyPath(relationship.GetPath());
+
+        QStringList toolTips;
+        toolTips.append(QStringLiteral("Type: Relationship"));
+
+        const auto propertyStack = relationship.GetPropertyStack();
+        if (!propertyStack.empty() && propertyStack.front() && propertyStack.front()->GetLayer()) {
+            const SdfLayerHandle layer = propertyStack.front()->GetLayer();
+            const QString realPath = qt::StringToQString(layer->GetRealPath());
+            const QString identifier = qt::StringToQString(layer->GetIdentifier());
+            toolTips.append(QString("Strongest opinion: %1").arg(!realPath.isEmpty() ? realPath : identifier));
+        }
+
+        const bool editLayerOverride = editLayer && bool(editLayer->GetPropertyAtPath(relationship.GetPath()))
+                                       && hasUnderlyingPrimOpinion(prim, editLayer);
+
+        if (editLayerOverride) {
+            toolTips.append(QStringLiteral("Edit-layer override"));
+            item->setIcon(PropertyItem::Name, QIcon(style()->icon(Style::Override, Style::UIScale::Small)));
+
+            QFont nameFont = item->font(PropertyItem::Name);
+            nameFont.setBold(true);
+            item->setFont(PropertyItem::Name, nameFont);
+        }
+
+        item->setToolTip(PropertyItem::Name, toolTips.join('\n'));
+
+        QString valueToolTip;
+        if (targets.empty())
+            valueToolTip = QStringLiteral("No relationship targets");
+        else if (targets.size() == 1)
+            valueToolTip = qt::SdfPathToQString(targets.front());
+        else
+            valueToolTip = QString("%1 relationship targets").arg(targets.size());
+
+        if (editLayerOverride)
+            valueToolTip += QStringLiteral("\nEdit-layer override");
+
+        item->setToolTip(PropertyItem::Value, valueToolTip);
+
         if (targets.size() > 1) {
             for (size_t index = 0; index < targets.size(); ++index)
                 addPathInfo(item, QString("[%1]").arg(index), targets[index]);
@@ -1758,6 +1906,7 @@ PropertyTreePrivate::init()
 
     connect(d.tree.data(), &QTreeWidget::itemChanged, this, &PropertyTreePrivate::itemChanged);
     connect(d.tree.data(), &QTreeWidget::itemExpanded, this, &PropertyTreePrivate::itemExpanded);
+    connect(d.tree.data(), &QTreeWidget::itemCollapsed, this, &PropertyTreePrivate::itemCollapsed);
     connect(session(), &Session::editLayerChanged, this, [this](SdfLayerHandle) {
         if (!d.stage)
             return;
@@ -1821,6 +1970,8 @@ PropertyTreePrivate::updateStage(UsdStageRefPtr stage)
 
     const std::string filePath = stage->GetRootLayer()->GetRealPath();
     addChild("filePath", QFileInfo(StringToQString(filePath)).fileName());
+
+    restoreExpansionState();
 
     d.update = false;
 }
@@ -2013,6 +2164,7 @@ PropertyTreePrivate::updateSelection(const QList<SdfPath>& paths)
                 const UsdPrim& prim = prims.first();
                 addPrimSection(prim);
                 addCompositionSection(prim);
+                addMetadataSection(prim);
                 addAttributesSection(prim);
                 addRelationshipsSection(prim);
             }
@@ -2021,6 +2173,8 @@ PropertyTreePrivate::updateSelection(const QList<SdfPath>& paths)
                 addMultiAttributesSection(prims);
             }
         }
+
+        restoreExpansionState();
 
         if (preserveState)
             restoreTreeState(treeState);
@@ -2110,7 +2264,21 @@ PropertyTreePrivate::itemExpanded(QTreeWidgetItem* baseItem)
     if (!item)
         return;
 
+    d.expansionState[itemKey(item)] = true;
     populateChunk(item);
+}
+
+void
+PropertyTreePrivate::itemCollapsed(QTreeWidgetItem* baseItem)
+{
+    if (d.update)
+        return;
+
+    auto* item = dynamic_cast<PropertyItem*>(baseItem);
+    if (!item)
+        return;
+
+    d.expansionState[itemKey(item)] = false;
 }
 
 void

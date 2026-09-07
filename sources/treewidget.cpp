@@ -265,7 +265,9 @@ TreeWidgetPrivate::eventFilter(QObject* watched, QEvent* event)
 
             if (!d.tree->itemAt(mouse->pos())) {
                 d.tree->clearSelection();
+                d.tree->setCurrentItem(nullptr);
                 Q_EMIT d.tree->itemSelectionChanged();
+                d.tree->viewport()->update();
                 clearHit();
                 return true;
             }
@@ -364,11 +366,25 @@ TreeWidgetPrivate::clearHit()
 bool
 TreeWidgetPrivate::hasSelectedChildren(QTreeWidgetItem* item) const
 {
+    if (!item || !d.tree || !d.tree->selectionModel())
+        return false;
+
+    QItemSelectionModel* selectionModel = d.tree->selectionModel();
+
     for (int i = 0; i < item->childCount(); ++i) {
         QTreeWidgetItem* child = item->child(i);
-        if (child->isSelected() || hasSelectedChildren(child))
+        if (!child)
+            continue;
+
+        const QModelIndex childIndex = d.tree->indexFromItem(child, 0);
+        if (childIndex.isValid() && selectionModel->rowIntersectsSelection(childIndex.row(), childIndex.parent())) {
+            return true;
+        }
+
+        if (hasSelectedChildren(child))
             return true;
     }
+
     return false;
 }
 

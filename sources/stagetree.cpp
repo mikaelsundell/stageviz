@@ -555,9 +555,8 @@ StageTreePrivate::addItem(PrimItem* parent, const SdfPath& path)
     itemCheckState(item, d.payloadEnabled);
     parent->addChild(item);
 
-    if (isPayload) {
-        if (d.payloadEnabled)
-            item->setCheckState(0, isLoaded ? Qt::Checked : Qt::Unchecked);
+    if (isPayload && d.payloadEnabled) {
+        item->setCheckState(0, isLoaded ? Qt::Checked : Qt::Unchecked);
         return item;
     }
 
@@ -850,15 +849,13 @@ StageTreePrivate::syncDirectChildrenOnly(PrimItem* parentItem, const UsdPrim& pa
             isLoaded = parentPrim.IsLoaded();
     }
 
-    if (isPayload) {
+    if (isPayload && d.payloadEnabled) {
         parentItem->invalidate();
-        itemCheckState(parentItem, d.payloadEnabled, false);
+        itemCheckState(parentItem, true, false);
 
-        if (d.payloadEnabled) {
-            const Qt::CheckState want = isLoaded ? Qt::Checked : Qt::Unchecked;
-            if (parentItem->checkState(PrimItem::Name) != want)
-                parentItem->setCheckState(PrimItem::Name, want);
-        }
+        const Qt::CheckState want = isLoaded ? Qt::Checked : Qt::Unchecked;
+        if (parentItem->checkState(PrimItem::Name) != want)
+            parentItem->setCheckState(PrimItem::Name, want);
 
         deleteChildren(parentItem);
 
@@ -981,7 +978,7 @@ StageTreePrivate::syncDirectChildrenOnly(PrimItem* parentItem, const UsdPrim& pa
 
         itemCheckState(childItem, d.payloadEnabled, false);
 
-        if (isPayload) {
+        if (isPayload && d.payloadEnabled) {
             const Qt::CheckState want = isLoaded ? Qt::Checked : Qt::Unchecked;
             if (childItem->checkState(0) != want)
                 childItem->setCheckState(0, want);
@@ -1036,20 +1033,8 @@ StageTreePrivate::updatePrims(const NoticeBatch& batch)
     };
 
     // Preserve only UI state that can actually be disturbed by a namespace
-    // edit. Existing PrimItem objects survive rename/reparent, so unrelated
-    // rows keep their Qt state naturally.
-    QList<SdfPath> selectedPaths;
-    selectedPaths.reserve(d.tree->selectedItems().size());
-
-    for (QTreeWidgetItem* baseItem : d.tree->selectedItems()) {
-        PrimItem* item = static_cast<PrimItem*>(baseItem);
-        if (!item)
-            continue;
-
-        const SdfPath path = item->path();
-        if (!path.IsEmpty())
-            selectedPaths.append(path);
-    }
+    // edit. Selection itself is owned by SelectionList and is synchronized
+    // from that authoritative state after the tree update.
 
     SdfPath currentPath;
     if (QTreeWidgetItem* currentItem = d.tree->currentItem()) {
@@ -1261,26 +1246,31 @@ StageTreePrivate::updatePrims(const NoticeBatch& batch)
             item->setExpanded(state.expanded);
     }
 
-    // Restore selected/current paths through the namespace remap. This is
-    // proportional to selection size, not total tree size.
-    d.tree->clearSelection();
+    // SelectionList is the sole source of truth for selection. Never restore
+    // selection from cached Qt item state: payload/namespace notices can arrive
+    // after the semantic selection has already been cleared.
+    SelectionList* list = selectionList();
+    const QList<SdfPath> selectionPaths = list ? list->paths() : QList<SdfPath>();
 
-    for (const SdfPath& path : selectedPaths) {
-        const SdfPath finalPath = remapPath(path);
+    updateSelection(selectionPaths);
 
-        if (PrimItem* item = itemFromPath(finalPath))
-            item->setSelected(true);
+    // currentItem is UI navigation state only. Preserve it through namespace
+    // edits when it still corresponds to the semantic selection, but never let
+    // restoring currentItem create a Qt selection after SelectionList cleared.
+    if (selectionPaths.isEmpty()) {
+        d.tree->setCurrentItem(nullptr);
     }
-
-    if (!currentPath.IsEmpty()) {
+    else if (!currentPath.IsEmpty()) {
         const SdfPath finalCurrentPath = remapPath(currentPath);
 
-        if (PrimItem* currentItem = itemFromPath(finalCurrentPath))
-            d.tree->setCurrentItem(currentItem, PrimItem::Name);
+        if (PrimItem* currentItem = itemFromPath(finalCurrentPath)) {
+            if (currentItem->isSelected())
+                d.tree->setCurrentItem(currentItem, PrimItem::Name, QItemSelectionModel::NoUpdate);
+        }
     }
 
     d.tree->setUpdatesEnabled(true);
-    d.tree->update();
+    d.tree->viewport()->update();
 }
 
 void
@@ -1309,12 +1299,10 @@ StageTreePrivate::updatePrim(const SdfPath& path)
     primItem->invalidate();
     itemCheckState(primItem, d.payloadEnabled, false);
 
-    if (isPayload) {
-        if (d.payloadEnabled) {
-            const Qt::CheckState want = prim.IsLoaded() ? Qt::Checked : Qt::Unchecked;
-            if (primItem->checkState(0) != want)
-                primItem->setCheckState(0, want);
-        }
+    if (isPayload && d.payloadEnabled) {
+        const Qt::CheckState want = prim.IsLoaded() ? Qt::Checked : Qt::Unchecked;
+        if (primItem->checkState(0) != want)
+            primItem->setCheckState(0, want);
 
         deleteChildren(primItem);
     }
@@ -1338,12 +1326,10 @@ StageTreePrivate::invalidateSubtree(PrimItem* item, const UsdPrim& prim)
     item->invalidate();
     itemCheckState(item, d.payloadEnabled, false);
 
-    if (isPayload) {
-        if (d.payloadEnabled) {
-            const Qt::CheckState want = prim.IsLoaded() ? Qt::Checked : Qt::Unchecked;
-            if (item->checkState(0) != want)
-                item->setCheckState(0, want);
-        }
+    if (isPayload && d.payloadEnabled) {
+        const Qt::CheckState want = prim.IsLoaded() ? Qt::Checked : Qt::Unchecked;
+        if (item->checkState(0) != want)
+            item->setCheckState(0, want);
 
         deleteChildren(item);
 
@@ -1414,15 +1400,13 @@ StageTreePrivate::invalidatePrim(const SdfPath& path)
             }
         }
 
-        if (parentIsPayload) {
+        if (parentIsPayload && d.payloadEnabled) {
             parentItem->invalidate();
-            itemCheckState(parentItem, d.payloadEnabled, false);
+            itemCheckState(parentItem, true, false);
 
-            if (d.payloadEnabled) {
-                const Qt::CheckState want = parentIsLoaded ? Qt::Checked : Qt::Unchecked;
-                if (parentItem->checkState(PrimItem::Name) != want)
-                    parentItem->setCheckState(PrimItem::Name, want);
-            }
+            const Qt::CheckState want = parentIsLoaded ? Qt::Checked : Qt::Unchecked;
+            if (parentItem->checkState(PrimItem::Name) != want)
+                parentItem->setCheckState(PrimItem::Name, want);
 
             deleteChildren(parentItem);
 
@@ -1459,15 +1443,13 @@ StageTreePrivate::invalidateChildren(PrimItem* parentItem, const UsdPrim& prim)
             isLoaded = prim.IsLoaded();
     }
 
-    if (isPayload) {
+    if (isPayload && d.payloadEnabled) {
         parentItem->invalidate();
-        itemCheckState(parentItem, d.payloadEnabled, false);
+        itemCheckState(parentItem, true, false);
 
-        if (d.payloadEnabled) {
-            const Qt::CheckState want = isLoaded ? Qt::Checked : Qt::Unchecked;
-            if (parentItem->checkState(PrimItem::Name) != want)
-                parentItem->setCheckState(PrimItem::Name, want);
-        }
+        const Qt::CheckState want = isLoaded ? Qt::Checked : Qt::Unchecked;
+        if (parentItem->checkState(PrimItem::Name) != want)
+            parentItem->setCheckState(PrimItem::Name, want);
 
         deleteChildren(parentItem);
 
@@ -1700,14 +1682,12 @@ StageTreePrivate::updateSelection(const QList<SdfPath>& paths)
 {
     SignalGuard::Scope guard(this);
 
-    // Only touch rows whose selection can actually change. The previous
-    // implementation recursively visited every StageTree item and, in
-    // Payload policy, compared every leaf against every selected path.
-    const QList<QTreeWidgetItem*> previousSelection = d.tree->selectedItems();
+    d.tree->clearSelection();
 
-    for (QTreeWidgetItem* baseItem : previousSelection) {
-        if (baseItem)
-            baseItem->setSelected(false);
+    if (paths.isEmpty()) {
+        d.tree->setCurrentItem(nullptr);
+        d.tree->viewport()->update();
+        return;
     }
 
     QSet<PrimItem*> targetItems;
@@ -1754,7 +1734,7 @@ StageTreePrivate::updateSelection(const QList<SdfPath>& paths)
             item->setSelected(true);
     }
 
-    d.tree->update();
+    d.tree->viewport()->update();
 }
 
 PrimItem*
