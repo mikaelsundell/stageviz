@@ -449,7 +449,9 @@ RenderEngine::Private::render()
     engine->SetRenderViewport(renderViewport);
 
     const GfFrustum frustum = camera.GetFrustum();
-    engine->SetCameraState(frustum.ComputeViewMatrix(), frustum.ComputeProjectionMatrix());
+    const GfMatrix4d viewMatrix = frustum.ComputeViewMatrix();
+    const GfMatrix4d projectionMatrix = frustum.ComputeProjectionMatrix();
+    engine->SetCameraState(viewMatrix, projectionMatrix);
     engine->SetSelectionColor(qt::QColorToGfVec4f(selectionColor));
 
     Hgi* hgi = engine->GetHgi();
@@ -469,6 +471,52 @@ RenderEngine::Private::render()
         engine->PrepareBatch(root, params);
         engine->RenderBatch(paths, params);
     }
+
+    // Render selected prims once more after the normal scene pass. Coincident
+    // surfaces can otherwise leave Hydra's selection highlight hidden behind an
+    // unselected prim at the exact same depth.
+    //
+    // Do not use backend-specific OpenGL depth state here: the active Hgi may
+    // be Metal. Instead, bias only clip-space Z in the projection matrix for
+    // the selected pass. For Gf's row-vector matrix convention, subtracting a
+    // small multiple of the W column from the Z column gives:
+    //
+    //     z' = z - bias * w
+    //
+    // and therefore shifts NDC depth toward the camera without changing X/Y,
+    // authored USD geometry, or the normal scene pass. The same camera state is
+    // consumed by Hydra regardless of whether Hgi is Metal or OpenGL.
+    if (!selected.isEmpty()) {
+        SdfPathVector selectedPaths;
+        selectedPaths.reserve(selected.size());
+        for (const SdfPath& path : selected) {
+            if (!path.IsEmpty())
+                selectedPaths.push_back(path.IsPropertyPath() ? path.GetPrimPath() : path);
+        }
+
+        if (!selectedPaths.empty()) {
+            GfMatrix4d selectionProjection = projectionMatrix;
+            constexpr double selectionDepthBias = 2.0e-5;
+            for (int row = 0; row < 4; ++row)
+                selectionProjection[row][2] -= selectionDepthBias * selectionProjection[row][3];
+
+            engine->SetCameraState(viewMatrix, selectionProjection);
+
+            // One extra selected-geometry pass combines shaded selection with
+            // a wireframe-on-surface overlay. The projection bias makes the
+            // selected surface deterministically win coincident depth ties.
+            UsdImagingGLRenderParams selectionParams = params;
+            selectionParams.drawMode = UsdImagingGLDrawMode::DRAW_WIREFRAME_ON_SURFACE;
+
+            engine->PrepareBatch(root, selectionParams);
+            engine->RenderBatch(selectedPaths, selectionParams);
+
+            // Restore the exact camera state expected by picking and the next
+            // normal frame.
+            engine->SetCameraState(viewMatrix, projectionMatrix);
+        }
+    }
+
     hgi->EndFrame();
     return true;
 }

@@ -1013,7 +1013,7 @@
   </action>
   <action name="helpPythonDialogReference">
    <property name="text">
-    <string>Python Reference</string>
+    <string>Python Dialog Reference</string>
    </property>
   </action>
   <action name="helpAgentSkill">
