@@ -19,7 +19,9 @@
 #include <pxr/imaging/glf/simpleLight.h>
 #include <pxr/imaging/glf/simpleMaterial.h>
 #include <pxr/imaging/hd/mergingSceneIndex.h>
+#include <pxr/imaging/hdx/renderSetupTask.h>
 #include <pxr/imaging/hd/sceneIndexPluginRegistry.h>
+#include <pxr/imaging/hdx/taskControllerSceneIndex.h>
 #include <pxr/imaging/hgi/hgi.h>
 #include <pxr/usd/sdf/assetPath.h>
 #include <pxr/usd/usdGeom/metrics.h>
@@ -77,6 +79,35 @@ namespace {
 
         SceneIndices& sceneIndices() { return *m_sceneIndices; }
         const SceneIndices& sceneIndices() const { return *m_sceneIndices; }
+
+        void renderBatchWithDepthBias(const SdfPathVector& paths, const UsdImagingGLRenderParams& params,
+                                      float constantFactor, float slopeFactor)
+        {
+            if (!_taskControllerSceneIndex || paths.empty())
+                return;
+
+            // Match UsdImagingGLEngine::RenderBatch, but override the Hydra
+            // render-pass depth state after _PrepareRender() and before task
+            // execution. This is backend-independent and is translated by
+            // Storm/Hgi to Metal, OpenGL, or another active Hgi backend.
+            _UpdateHydraCollection(&_renderCollection, paths, params);
+            _taskControllerSceneIndex->SetCollection(_renderCollection);
+
+            _PrepareRender(params);
+
+            HdxRenderTaskParams renderParams = _MakeHydraUsdImagingGLRenderParams(params);
+            renderParams.depthBiasUseDefault = false;
+            renderParams.depthBiasEnable = true;
+            renderParams.depthBiasConstantFactor = constantFactor;
+            renderParams.depthBiasSlopeFactor = slopeFactor;
+            renderParams.depthFunc = HdCmpFuncLEqual;
+            renderParams.depthMaskEnable = true;
+            _taskControllerSceneIndex->SetRenderParams(renderParams);
+
+            _SetBBoxParams(params.bboxes, params.bboxLineColor, params.bboxLineDashSize);
+            _taskControllerSceneIndex->SetEnableSelection(params.highlight);
+            _Execute(params, _taskControllerSceneIndex->GetRenderingTaskPaths());
+        }
 
     private:
         using SceneIndicesPtr = std::shared_ptr<SceneIndices>;
@@ -474,18 +505,14 @@ RenderEngine::Private::render()
 
     // Render selected prims once more after the normal scene pass. Coincident
     // surfaces can otherwise leave Hydra's selection highlight hidden behind an
-    // unselected prim at the exact same depth.
+    // unselected prim at exactly the same depth.
     //
-    // Do not use backend-specific OpenGL depth state here: the active Hgi may
-    // be Metal. Instead, bias only clip-space Z in the projection matrix for
-    // the selected pass. For Gf's row-vector matrix convention, subtracting a
-    // small multiple of the W column from the Z column gives:
-    //
-    //     z' = z - bias * w
-    //
-    // and therefore shifts NDC depth toward the camera without changing X/Y,
-    // authored USD geometry, or the normal scene pass. The same camera state is
-    // consumed by Hydra regardless of whether Hgi is Metal or OpenGL.
+    // Use Hydra render-pass depth bias rather than changing the projection
+    // matrix or touching backend-specific OpenGL state. HdxRenderTaskParams is
+    // consumed by Storm and translated through Hgi, so this follows the same
+    // path on Metal and OpenGL. A constant factor of -1 is intentionally small:
+    // it only breaks equal/near-equal depth ties instead of moving selected
+    // geometry by a fixed clip-space amount that grows visually when zooming.
     if (!selected.isEmpty()) {
         SdfPathVector selectedPaths;
         selectedPaths.reserve(selected.size());
@@ -495,25 +522,13 @@ RenderEngine::Private::render()
         }
 
         if (!selectedPaths.empty()) {
-            GfMatrix4d selectionProjection = projectionMatrix;
-            constexpr double selectionDepthBias = 2.0e-5;
-            for (int row = 0; row < 4; ++row)
-                selectionProjection[row][2] -= selectionDepthBias * selectionProjection[row][3];
-
-            engine->SetCameraState(viewMatrix, selectionProjection);
-
-            // One extra selected-geometry pass combines shaded selection with
-            // a wireframe-on-surface overlay. The projection bias makes the
-            // selected surface deterministically win coincident depth ties.
             UsdImagingGLRenderParams selectionParams = params;
             selectionParams.drawMode = UsdImagingGLDrawMode::DRAW_WIREFRAME_ON_SURFACE;
 
-            engine->PrepareBatch(root, selectionParams);
-            engine->RenderBatch(selectedPaths, selectionParams);
-
-            // Restore the exact camera state expected by picking and the next
-            // normal frame.
-            engine->SetCameraState(viewMatrix, projectionMatrix);
+            constexpr float selectionDepthBiasConstant = -2.0f;
+            constexpr float selectionDepthBiasSlope = 0.0f;
+            engine->renderBatchWithDepthBias(selectedPaths, selectionParams, selectionDepthBiasConstant,
+                                             selectionDepthBiasSlope);
         }
     }
 

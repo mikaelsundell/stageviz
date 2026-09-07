@@ -43,6 +43,7 @@
 #include <QObject>
 #include <QParallelAnimationGroup>
 #include <QPointer>
+#include <QProcess>
 #include <QPropertyAnimation>
 #include <QSettings>
 #include <QStatusBar>
@@ -95,6 +96,7 @@ public Q_SLOTS:
     void save();
     void saveAs();
     void saveCopy();
+    void revealInFolder();
     void preserveState();
     void exportAll();
     void exportSelected();
@@ -227,6 +229,14 @@ ViewerPrivate::init()
 {
     d.ui.reset(new Ui_Viewer());
     d.ui->setupUi(d.viewer.data());
+#ifdef Q_OS_MAC
+    d.ui->fileRevealInFolder->setText("Reveal in Finder");
+#elif defined(Q_OS_WIN)
+    d.ui->fileRevealInFolder->setText("Reveal in Explorer");
+#else
+    d.ui->fileRevealInFolder->setText("Reveal in Folder");
+#endif
+    d.ui->fileRevealInFolder->setEnabled(false);
     attach(d.ui->displayIsolate);
     initDocks();
     ViewState* viewState = session()->viewState();
@@ -275,6 +285,7 @@ ViewerPrivate::init()
     connect(d.ui->fileSave, &QAction::triggered, this, &ViewerPrivate::save);
     connect(d.ui->fileSaveAs, &QAction::triggered, this, &ViewerPrivate::saveAs);
     connect(d.ui->fileSaveCopy, &QAction::triggered, this, &ViewerPrivate::saveCopy);
+    connect(d.ui->fileRevealInFolder, &QAction::triggered, this, &ViewerPrivate::revealInFolder);
     connect(d.ui->filePreserveState, &QAction::triggered, this, &ViewerPrivate::preserveState);
     connect(d.ui->fileExportAll, &QAction::triggered, this, &ViewerPrivate::exportAll);
     connect(d.ui->fileExportSelected, &QAction::triggered, this, &ViewerPrivate::exportSelected);
@@ -1214,6 +1225,42 @@ ViewerPrivate::saveCopy()
     else {
         session()->notifyStatus(Session::Notify::Status::Error, QString("Failed to save copy: %1").arg(filename));
     }
+}
+
+void
+ViewerPrivate::revealInFolder()
+{
+    const QString filename = session()->filename();
+    if (filename.isEmpty())
+        return;
+
+    const QFileInfo fileInfo(filename);
+    if (!fileInfo.exists()) {
+        session()->notifyStatus(Session::Notify::Status::Warning,
+                                QString("File does not exist: %1").arg(filename));
+        return;
+    }
+
+    const QString absoluteFilePath = fileInfo.absoluteFilePath();
+
+#ifdef Q_OS_MAC
+    if (!QProcess::startDetached(QStringLiteral("/usr/bin/open"),
+                                 { QStringLiteral("-R"), absoluteFilePath })) {
+        session()->notifyStatus(Session::Notify::Status::Warning,
+                                QString("Could not reveal file in Finder: %1").arg(absoluteFilePath));
+    }
+#elif defined(Q_OS_WIN)
+    if (!QProcess::startDetached(QStringLiteral("explorer.exe"),
+                                 { QStringLiteral("/select,"), QDir::toNativeSeparators(absoluteFilePath) })) {
+        session()->notifyStatus(Session::Notify::Status::Warning,
+                                QString("Could not reveal file in Explorer: %1").arg(absoluteFilePath));
+    }
+#else
+    if (!QDesktopServices::openUrl(QUrl::fromLocalFile(fileInfo.absolutePath()))) {
+        session()->notifyStatus(Session::Notify::Status::Warning,
+                                QString("Could not reveal file in folder: %1").arg(absoluteFilePath));
+    }
+#endif
 }
 
 void
@@ -2530,6 +2577,9 @@ ViewerPrivate::updateRecentFiles(const QString& filename)
 void
 ViewerPrivate::updateWindowTitle()
 {
+    const QString currentFilename = session()->filename();
+    d.ui->fileRevealInFolder->setEnabled(!currentFilename.isEmpty() && QFileInfo::exists(currentFilename));
+
 #ifdef QT_DEBUG
     const QString title = QStringLiteral("%1 %2 (%3 %4)")
                               .arg(QStringLiteral(PROJECT_NAME), QStringLiteral(PROJECT_VERSION),

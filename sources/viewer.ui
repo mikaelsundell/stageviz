@@ -816,6 +816,8 @@
     <addaction name="separator" />
     <addaction name="filePreserveState" />
     <addaction name="separator" />
+    <addaction name="fileRevealInFolder" />
+    <addaction name="separator" />
     <addaction name="fileReload" />
     <addaction name="fileClose" />
     <addaction name="separator" />
@@ -1685,6 +1687,14 @@
    </property>
    <property name="text">
     <string>Preserve state</string>
+   </property>
+  </action>
+  <action name="fileRevealInFolder">
+   <property name="enabled">
+    <bool>false</bool>
+   </property>
+   <property name="text">
+    <string>Reveal in Folder</string>
    </property>
   </action>
   <action name="displayGrid">
