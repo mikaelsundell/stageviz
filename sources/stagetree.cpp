@@ -26,6 +26,7 @@
 #include <QStyledItemDelegate>
 #include <QTimer>
 #include <functional>
+#include <pxr/usd/sdf/primSpec.h>
 #include <pxr/usd/usd/prim.h>
 
 PXR_NAMESPACE_USING_DIRECTIVE
@@ -112,6 +113,8 @@ public:
     void updateStage(UsdStageRefPtr stage);
     void updatePrims(const NoticeBatch& batch);
     void updateSelection(const QList<SdfPath>& paths);
+    void rebuildOverrideCache();
+    void applyOverrideState(PrimItem* item);
     SelectionList* selectionList() const;
 
 public Q_SLOTS:
@@ -151,6 +154,8 @@ public:
         QList<SdfPath> loadPaths;
         QList<SdfPath> unloadPaths;
         QList<SdfPath> maskPaths;
+        QSet<SdfPath> directOverridePaths;
+        QSet<SdfPath> descendantOverridePaths;
         QHash<QString, PrimItem*> itemByPath;
         UsdStageRefPtr stage;
         QPointer<ViewContext> context;
@@ -176,7 +181,9 @@ StageTreePrivate::init()
     d.tree->setDropIndicatorShown(false);
     d.tree->setDragDropMode(QAbstractItemView::DragDrop);
     d.tree->setDefaultDropAction(Qt::MoveAction);
+    d.tree->setColumnCount(3);
     d.tree->setColumnSelectable(PrimItem::Name, true);
+    d.tree->setColumnSelectable(PrimItem::Override, false);
     d.tree->setColumnSelectable(PrimItem::Visibility, false);
     d.tree->setSelectionMode(QAbstractItemView::ExtendedSelection);
     d.tree->setSelectionBehavior(QAbstractItemView::SelectRows);
@@ -330,12 +337,71 @@ StageTreePrivate::isAncestorOrSelf(const SdfPath& ancestor, const SdfPath& path)
 }
 
 void
+StageTreePrivate::applyOverrideState(PrimItem* item)
+{
+    if (!item)
+        return;
+
+    const SdfPath path = item->path();
+    item->setOverrideState(d.directOverridePaths.contains(path), d.descendantOverridePaths.contains(path));
+}
+
+void
+StageTreePrivate::rebuildOverrideCache()
+{
+    d.directOverridePaths.clear();
+    d.descendantOverridePaths.clear();
+
+    {
+        READ_LOCKER(locker, d.context->stageLock(), "stageLock");
+
+        if (!d.stage)
+            return;
+
+        const SdfLayerHandle editLayer = d.stage->GetEditTarget().GetLayer();
+        if (!editLayer)
+            return;
+
+        std::function<void(const SdfPrimSpecHandle&)> collect = [&](const SdfPrimSpecHandle& primSpec) {
+            if (!primSpec)
+                return;
+
+            if (primSpec->GetSpecifier() == SdfSpecifierOver && !primSpec->GetProperties().empty()) {
+                const SdfPath directPath = primSpec->GetPath();
+                d.directOverridePaths.insert(directPath);
+
+                SdfPath ancestorPath = directPath.GetParentPath();
+                while (!ancestorPath.IsEmpty()) {
+                    d.descendantOverridePaths.insert(ancestorPath);
+
+                    if (ancestorPath == SdfPath::AbsoluteRootPath())
+                        break;
+
+                    ancestorPath = ancestorPath.GetParentPath();
+                }
+            }
+
+            for (const SdfPrimSpecHandle& child : primSpec->GetNameChildren())
+                collect(child);
+        };
+
+        for (const SdfPrimSpecHandle& rootPrim : editLayer->GetRootPrims())
+            collect(rootPrim);
+    }
+
+    for (auto it = d.itemByPath.begin(); it != d.itemByPath.end(); ++it)
+        applyOverrideState(it.value());
+}
+
+void
 StageTreePrivate::close()
 {
     QSignalBlocker blocker(d.tree);
     d.pending = 0;
     d.loadPaths.clear();
     d.unloadPaths.clear();
+    d.directOverridePaths.clear();
+    d.descendantOverridePaths.clear();
     d.stage = nullptr;
     d.itemByPath.clear();
     d.tree->clear();
@@ -546,6 +612,7 @@ StageTreePrivate::addItem(PrimItem* parent, const SdfPath& path)
 
     PrimItem* item = new PrimItem(parent, stage, path);
     indexItem(item);
+    applyOverrideState(item);
     item->invalidate();
 
     Qt::ItemFlags flags = item->flags();
@@ -786,6 +853,8 @@ StageTreePrivate::updateStage(UsdStageRefPtr stage)
     if (!stage)
         return;
 
+    rebuildOverrideCache();
+
     UsdPrim prim;
     {
         READ_LOCKER(locker, d.context->stageLock(), "stageLock");
@@ -794,6 +863,7 @@ StageTreePrivate::updateStage(UsdStageRefPtr stage)
 
     PrimItem* rootItem = new PrimItem(d.tree.data(), stage, prim.GetPath());
     indexItem(rootItem);
+    applyOverrideState(rootItem);
 
     Qt::ItemFlags flags = rootItem->flags();
     flags |= Qt::ItemIsDropEnabled;
@@ -813,6 +883,8 @@ StageTreePrivate::updateStage(UsdStageRefPtr stage)
 void
 StageTree::updateEditLayer()
 {
+    p->rebuildOverrideCache();
+
     std::function<void(QTreeWidgetItem*)> invalidate = [&](QTreeWidgetItem* baseItem) {
         if (!baseItem)
             return;
@@ -1245,6 +1317,11 @@ StageTreePrivate::updatePrims(const NoticeBatch& batch)
         if (PrimItem* item = itemFromPath(finalPath))
             item->setExpanded(state.expanded);
     }
+
+    // Refresh edit-layer override state after all structural/property updates.
+    // The scan touches only authored prim specs in the active edit layer, not
+    // the complete composed stage.
+    rebuildOverrideCache();
 
     // SelectionList is the sole source of truth for selection. Never restore
     // selection from cached Qt item state: payload/namespace notices can arrive

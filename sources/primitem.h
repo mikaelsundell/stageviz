@@ -31,7 +31,8 @@ public:
      */
     enum Column {
         Name = 0,       ///< Name column.
-        Visibility = 1  ///< Visibility state column.
+        Visibility = 1, ///< Visibility state column.
+        Override = 2    ///< Edit-layer override state column.
     };
 
     /**
@@ -89,6 +90,16 @@ public:
       * on the next access or update.
       */
     void invalidate();
+
+    /**
+     * @brief Sets the cached edit-layer override state for this prim.
+     *
+     * @param direct True when this exact prim has direct property overrides
+     *               authored in the active edit layer.
+     * @param descendant True when one or more descendant prims have direct
+     *                   property overrides in the active edit layer.
+     */
+    void setOverrideState(bool direct, bool descendant);
 
     /**
      * @brief Returns semantic state flags for the item.

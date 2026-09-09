@@ -5,6 +5,7 @@
 #include "outlinerview.h"
 #include "application.h"
 #include "notice.h"
+#include "primitem.h"
 #include "signalguard.h"
 #include "stagetree.h"
 #include "style.h"
@@ -67,7 +68,9 @@ OutlinerViewPrivate::init()
     d.context->setSelectionList(session()->selectionList());
 
     attach(d.ui->depth);
+    stageTree()->setColumnCount(3);
     stageTree()->setHeaderLabels(QStringList() << "Name"
+                                               << ""
                                                << "");
     stageTree()->setContext(d.context.data());
     stageTree()->installEventFilter(this);
@@ -104,9 +107,11 @@ OutlinerViewPrivate::eventFilter(QObject* obj, QEvent* event)
             if (tree == stageTree()) {
                 auto* header = tree->header();
                 header->setStretchLastSection(false);
-                header->setSectionResizeMode(0, QHeaderView::Stretch);
-                header->setSectionResizeMode(1, QHeaderView::Fixed);
-                tree->setColumnWidth(1, 60);
+                header->setSectionResizeMode(PrimItem::Name, QHeaderView::Stretch);
+                header->setSectionResizeMode(PrimItem::Visibility, QHeaderView::Fixed);
+                header->setSectionResizeMode(PrimItem::Override, QHeaderView::Fixed);
+                tree->setColumnWidth(PrimItem::Visibility, 20);
+                tree->setColumnWidth(PrimItem::Override, 35);
             }
         }
     }

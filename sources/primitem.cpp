@@ -38,6 +38,8 @@ public:
         bool isRoot = false;
         bool isGprim = false;
         bool isDefaultPrim = false;
+        bool hasDirectOverride = false;
+        bool hasDescendantOverride = false;
 
         QString editName;
         QString name;
@@ -142,12 +144,23 @@ PrimItem::data(int column, int role) const
 
     if (role == Qt::DisplayRole || role == Qt::EditRole) {
         switch (column) {
+        case Override:
         case Visibility: return QString();
         default: break;
         }
     }
 
     if (role == Qt::ToolTipRole) {
+        if (column == Override) {
+            if (p->d.hasDirectOverride)
+                return QStringLiteral("Direct edit-layer override");
+
+            if (p->d.hasDescendantOverride)
+                return QStringLiteral("Contains edit-layer overrides");
+
+            return QVariant();
+        }
+
         if (p->d.name.isEmpty())
             return QVariant();
 
@@ -172,6 +185,16 @@ PrimItem::data(int column, int role) const
             iconRole = Style::IconRole::DefaultPrim;
 
         return QIcon(style()->icon(iconRole, Style::UIScale::Medium));
+    }
+
+    if (role == Qt::DecorationRole && column == Override) {
+        if (p->d.hasDirectOverride)
+            return style()->icon(Style::IconRole::Override, Style::UIScale::Medium);
+
+        if (p->d.hasDescendantOverride)
+            return style()->icon(Style::IconRole::Over, Style::UIScale::Medium);
+
+        return QVariant();
     }
 
     if (role == Qt::DecorationRole && column == Visibility) {
@@ -231,6 +254,16 @@ PrimItem::invalidate()
 {
     p->d.dirty = true;
     p->d.editName.clear();
+}
+
+void
+PrimItem::setOverrideState(bool direct, bool descendant)
+{
+    if (p->d.hasDirectOverride == direct && p->d.hasDescendantOverride == descendant)
+        return;
+
+    p->d.hasDirectOverride = direct;
+    p->d.hasDescendantOverride = descendant;
 }
 
 TreeItem::ItemStates

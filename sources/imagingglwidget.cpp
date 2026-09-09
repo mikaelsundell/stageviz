@@ -26,6 +26,7 @@
 #include <QDropEvent>
 #include <QElapsedTimer>
 #include <QFontDatabase>
+#include <QInputDevice>
 #include <QLocale>
 #include <QMimeData>
 #include <QMouseEvent>
@@ -984,11 +985,12 @@ ImagingGLWidgetPrivate::wheelEvent(QWheelEvent* event)
         return;
 
     const QPoint pixelDelta = event->pixelDelta();
+    const QPoint angleDelta = event->angleDelta();
 
-    // High-resolution pixel deltas are produced by trackpads on macOS.
-    // Two-finger movement pans by default. Holding Shift changes the same
-    // gesture to zoom. A conventional mouse wheel continues to zoom.
-    if (!pixelDelta.isNull()) {
+    const QPointingDevice* device = event->pointingDevice();
+    const bool isTrackpad = device && device->type() == QInputDevice::DeviceType::TouchPad;
+
+    if (isTrackpad && !pixelDelta.isNull()) {
         if (event->modifiers() & Qt::ShiftModifier) {
             const double delta = static_cast<double>(pixelDelta.y()) / 300.0;
             const double clamped = std::clamp(delta, -0.5, 0.5);
@@ -1007,14 +1009,21 @@ ImagingGLWidgetPrivate::wheelEvent(QWheelEvent* event)
         d.glwidget->update();
         return;
     }
+    
+    QPoint zoomDelta = angleDelta;
+    double scale = 1000.0;
 
-    const QPoint angleDelta = event->angleDelta();
-    if (angleDelta.isNull()) {
+    if (zoomDelta.isNull() && !pixelDelta.isNull()) {
+        zoomDelta = pixelDelta;
+        scale = 300.0;
+    }
+
+    if (zoomDelta.isNull()) {
         event->ignore();
         return;
     }
 
-    const double delta = static_cast<double>(angleDelta.y()) / 1000.0;
+    const double delta = static_cast<double>(zoomDelta.y()) / scale;
     const double clamped = std::clamp(delta, -0.5, 0.5);
     viewCamera()->distance(1.0 - clamped);
 
