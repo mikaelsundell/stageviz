@@ -1171,7 +1171,9 @@ def test_command_api():
         "select_all",
         "select_invert",
         "select_payload",
-        "select_invert_payload",
+        "select_layer",
+        "select_invert_in_payload",
+        "select_invert_in_layer",
         "isolate_paths",
         "show_paths",
         "hide_paths",
@@ -3641,84 +3643,198 @@ def test_select_payload():
     )
 
 
-def test_select_invert_payload():
-    if not _has_command("select_invert_payload"):
-        print("[skip] select_invert_payload is not bound")
+def test_select_layer():
+    if not _has_command("select_layer"):
+        print("[skip] select_layer is not bound")
         return
 
-    stageviz.command.load_payloads(["/World/PayloadA", "/World/PayloadB"])
+    stageviz.command.load_payloads(["/World/PayloadA"])
 
     _assert(
         _wait_until(
             lambda: bool(
                 _prim("/World/PayloadA")
                 and _prim("/World/PayloadA").IsLoaded()
-                and _prim("/World/PayloadB")
-                and _prim("/World/PayloadB").IsLoaded()
+                and _exists("/World/PayloadA/Geom")
             ),
             timeout=5.0,
         ),
-        "payloads prepared for select_invert_payload",
+        "payload hierarchy prepared for select_layer",
     )
 
+    stageviz.command.select_paths(["/World/PayloadA/Geom"])
+
+    _assert(
+        _wait_until(lambda: _selection() == ["/World/PayloadA/Geom"]),
+        "payload descendant selected for select_layer",
+    )
+
+    stageviz.command.select_layer()
+
+    _assert(
+        _wait_until(lambda: _selection() == ["/World/PayloadA"]),
+        "select_layer selects nearest payload authored in active edit layer",
+    )
+
+    if _undo():
+        _assert_equal(
+            _selection(),
+            ["/World/PayloadA/Geom"],
+            "undo select_layer restores previous descendant selection",
+        )
+
+    stageviz.command.select_paths(["/World/A"])
+
+    _assert(
+        _wait_until(lambda: _selection() == ["/World/A"]),
+        "non-payload selection prepared for select_layer",
+    )
+
+    stageviz.command.select_layer()
+
+    _wait(100)
+    _assert_equal(
+        _selection(),
+        ["/World/A"],
+        "select_layer leaves selection unchanged when no layer payload exists",
+    )
+
+
+def test_select_invert_in_payload():
+    if not _has_command("select_invert_in_payload"):
+        print("[skip] select_invert_in_payload is not bound")
+        return
+
+    stageviz.command.load_payloads(["/World/PayloadA"])
+
+    _assert(
+        _wait_until(
+            lambda: bool(
+                _prim("/World/PayloadA")
+                and _prim("/World/PayloadA").IsLoaded()
+                and _exists("/World/PayloadA/Geom")
+            ),
+            timeout=5.0,
+        ),
+        "payload hierarchy prepared for invert in payload",
+    )
+
+    # Add a second leaf as a root-layer opinion below the payload scope so the
+    # inversion has an unambiguous second target without changing the shared
+    # payload fixture on disk.
+    extra_path = "/World/PayloadA/ExtraLeaf"
+    _define_xform(_stage(), extra_path)
+
+    _assert(
+        _wait_until(lambda: _exists(extra_path)),
+        "second payload-scope leaf prepared",
+    )
+
+    stageviz.command.select_paths(["/World/PayloadA/Geom"])
+
+    _assert(
+        _wait_until(lambda: _selection() == ["/World/PayloadA/Geom"]),
+        "payload leaf selected for invert in payload",
+    )
+
+    stageviz.command.select_invert_in_payload()
+
+    _assert_equal(
+        _selection(),
+        [extra_path],
+        "invert in payload selects only unselected leaves inside nearest payload",
+    )
+
+    _assert(
+        "/World/A" not in _selection()
+        and "/World/PayloadB" not in _selection(),
+        "invert in payload does not escape the nearest payload scope",
+    )
+
+    if _undo():
+        _assert_equal(
+            _selection(),
+            ["/World/PayloadA/Geom"],
+            "undo invert in payload restores previous payload leaf selection",
+        )
+
+
+def test_select_invert_in_layer():
+    if not _has_command("select_invert_in_layer"):
+        print("[skip] select_invert_in_layer is not bound")
+        return
+
+    # Invert-in-layer operates on payload roots authored in the active edit
+    # layer. Payloads do not need to be loaded for this selection operation.
     stageviz.command.select_paths(["/World/PayloadA"])
 
     _assert(
         _wait_until(lambda: _selection() == ["/World/PayloadA"]),
-        "payload selection prepared for select_invert_payload",
+        "layer payload selected for invert in layer",
     )
 
-    stageviz.command.select_invert_payload()
+    stageviz.command.select_invert_in_layer()
+
+    inverted = _selection()
 
     _assert(
-        _wait_until(lambda: _selection() == ["/World/PayloadB"]),
-        "select_invert_payload selects loaded payloads not already selected",
+        "/World/PayloadA" not in inverted,
+        "invert in layer excludes the selected layer payload",
+    )
+
+    _assert(
+        "/World/PayloadB" in inverted,
+        "invert in layer includes another payload authored in active edit layer",
+    )
+
+    _assert(
+        "/World/A" not in inverted and "/World/B" not in inverted,
+        "invert in layer selects payload roots rather than ordinary prims",
+    )
+
+    _assert(
+        bool(inverted)
+        and all(
+            bool(_prim(path) and _prim(path).HasPayload())
+            for path in inverted
+        ),
+        "invert in layer result contains only composed payload prims",
     )
 
     if _undo():
         _assert_equal(
             _selection(),
             ["/World/PayloadA"],
-            "undo select_invert_payload restores previous payload selection",
+            "undo invert in layer restores previous layer payload selection",
         )
 
-    stageviz.command.load_payloads(
-        ["/World/NestedOuter", "/World/NestedOuter/NestedInner"]
-    )
+    # The command must also resolve a descendant back to the payload authored
+    # by the active edit layer before performing the inversion.
+    stageviz.command.load_payloads(["/World/PayloadA"])
 
     _assert(
         _wait_until(
-            lambda: bool(
-                _prim("/World/NestedOuter")
-                and _prim("/World/NestedOuter").IsLoaded()
-                and _prim("/World/NestedOuter/NestedInner")
-                and _prim("/World/NestedOuter/NestedInner").IsLoaded()
-                and _exists("/World/NestedOuter/NestedInner/Geom")
-            ),
+            lambda: _exists("/World/PayloadA/Geom"),
             timeout=5.0,
         ),
-        "nested payload hierarchy prepared for payload inversion",
+        "payload descendant prepared for layer inversion",
     )
 
-    stageviz.command.select_paths(
-        ["/World/NestedOuter/NestedInner/Geom"]
-    )
-    _assert(
-        _wait_until(
-            lambda: _selection()
-            == ["/World/NestedOuter/NestedInner/Geom"]
-        ),
-        "nested payload descendant selected for inversion",
-    )
-
-    stageviz.command.select_invert_payload()
+    stageviz.command.select_paths(["/World/PayloadA/Geom"])
 
     _assert(
-        _wait_until(
-            lambda: "/World/NestedOuter" not in _selection()
-            and "/World/NestedOuter/NestedInner" not in _selection()
-        ),
-        "select_invert_payload treats nested selection as its top-most payload",
+        _wait_until(lambda: _selection() == ["/World/PayloadA/Geom"]),
+        "payload descendant selected for invert in layer",
+    )
+
+    stageviz.command.select_invert_in_layer()
+
+    inverted_from_descendant = _selection()
+
+    _assert(
+        "/World/PayloadA" not in inverted_from_descendant
+        and "/World/PayloadB" in inverted_from_descendant,
+        "invert in layer resolves descendant to nearest active-layer payload",
     )
 
 
@@ -5402,7 +5518,9 @@ def run():
         ("load neighbor payloads", test_load_neighbor_payloads, ()),
         ("load neighbor payloads raw source", test_load_neighbor_payloads_raw_source, ()),
         ("select payload", test_select_payload, ()),
-        ("select invert payload", test_select_invert_payload, ()),
+        ("select layer", test_select_layer, ()),
+        ("invert in payload", test_select_invert_in_payload, ()),
+        ("invert in layer", test_select_invert_in_layer, ()),
         ("root prim order", test_root_prim_order_create_move_and_undo, ()),
         ("root layer policy", test_root_layer_policy_rejects_sublayer_prim, ()),
         ("composition boundary", test_composition_boundary_rejects_namespace_edit, ()),

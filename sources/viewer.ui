@@ -873,7 +873,10 @@
      <addaction name="editPayloadUnload" />
      <addaction name="separator" />
      <addaction name="editPayloadSelect" />
-     <addaction name="editPayloadInvertSelected" />
+     <addaction name="editLayerSelect" />
+     <addaction name="separator" />
+     <addaction name="editPayloadInvert" />
+     <addaction name="editLayerInvert" />
     </widget>
     <widget class="QMenu" name="menu_2">
      <property name="title">
@@ -1586,12 +1589,19 @@
     <string>Select payload</string>
    </property>
   </action>
-  <action name="editPayloadInvertSelected">
+  <action name="editLayerSelect">
    <property name="text">
-    <string>Select invert</string>
+    <string>Select Layer</string>
    </property>
-   <property name="shortcut">
-    <string>Alt+I</string>
+  </action>
+  <action name="editPayloadInvert">
+   <property name="text">
+    <string>Invert in Payload</string>
+   </property>
+  </action>
+  <action name="editLayerInvert">
+   <property name="text">
+    <string>Invert in Layer</string>
    </property>
   </action>
   <action name="editSelectVisibleCapture">

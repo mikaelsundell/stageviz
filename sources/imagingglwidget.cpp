@@ -732,14 +732,18 @@ ImagingGLWidgetPrivate::mousePressEvent(QMouseEvent* event)
     if (!d.stage)
         return;
 
-    if (event->modifiers() & (Qt::AltModifier | Qt::MetaModifier)) {
+    if (event->button() == Qt::MiddleButton) {
+        d.drag = true;
+        d.sweep = false;
+        d.transformDragging = false;
+        viewCamera()->setCameraMode(ViewCamera::Truck);
+    }
+    else if (event->modifiers() & (Qt::AltModifier | Qt::MetaModifier)) {
         d.drag = true;
         d.sweep = false;
         d.transformDragging = false;
         if (event->button() == Qt::LeftButton)
             viewCamera()->setCameraMode(ViewCamera::Tumble);
-        else if (event->button() == Qt::MiddleButton)
-            viewCamera()->setCameraMode(ViewCamera::Truck);
         else if (event->button() == Qt::RightButton)
             viewCamera()->setCameraMode(ViewCamera::Zoom);
     }
@@ -976,10 +980,46 @@ ImagingGLWidgetPrivate::sweepEvent(const QRect& rect, QMouseEvent* event)
 void
 ImagingGLWidgetPrivate::wheelEvent(QWheelEvent* event)
 {
-    double delta = static_cast<double>(event->angleDelta().y()) / 1000.0;
-    double clamped = std::max(-0.5, std::min(0.5, delta));
-    double factor = 1.0 - clamped;
-    viewCamera()->distance(factor);
+    if (!event || !viewCamera())
+        return;
+
+    const QPoint pixelDelta = event->pixelDelta();
+
+    // High-resolution pixel deltas are produced by trackpads on macOS.
+    // Two-finger movement pans by default. Holding Shift changes the same
+    // gesture to zoom. A conventional mouse wheel continues to zoom.
+    if (!pixelDelta.isNull()) {
+        if (event->modifiers() & Qt::ShiftModifier) {
+            const double delta = static_cast<double>(pixelDelta.y()) / 300.0;
+            const double clamped = std::clamp(delta, -0.5, 0.5);
+            viewCamera()->distance(1.0 - clamped);
+        }
+        else {
+            const double height = std::max(1, widgetSize()[1]);
+            const double factor = viewCamera()->mapToFrustumHeight(height);
+
+            viewCamera()->truck(
+                -static_cast<double>(pixelDelta.x()) * factor,
+                static_cast<double>(pixelDelta.y()) * factor);
+        }
+
+        event->accept();
+        d.glwidget->update();
+        return;
+    }
+
+    const QPoint angleDelta = event->angleDelta();
+    if (angleDelta.isNull()) {
+        event->ignore();
+        return;
+    }
+
+    const double delta = static_cast<double>(angleDelta.y()) / 1000.0;
+    const double clamped = std::clamp(delta, -0.5, 0.5);
+    viewCamera()->distance(1.0 - clamped);
+
+    event->accept();
+    d.glwidget->update();
 }
 
 void

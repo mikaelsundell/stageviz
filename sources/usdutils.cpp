@@ -57,76 +57,68 @@ namespace {
     }
 }  // namespace
 
-namespace editlayer {
-    SdfLayerHandle opened(const UsdStageRefPtr& stage, QString& error)
+namespace layer {
+    bool validatePrim(const UsdStageRefPtr& stage, const SdfLayerHandle& layer, const SdfPath& path, QString& error,
+                      bool requireStrongest)
     {
         if (!stage) {
             error = "stage missing";
-            return {};
+            return false;
         }
-        const SdfLayerHandle layer = stage->GetEditTarget().GetLayer();
         if (!layer) {
-            error = "edit layer missing";
-            return {};
+            error = "layer missing";
+            return false;
         }
-        return layer;
-    }
 
-    bool validatePrim(const UsdStageRefPtr& stage, const SdfPath& path, QString& error, bool requireStrongest)
-    {
         const SdfPath primPath = path.IsPropertyPath() ? path.GetPrimPath() : path;
         if (primPath.IsEmpty() || primPath == SdfPath::AbsoluteRootPath()) {
             error = "invalid prim path";
             return false;
         }
 
-        const SdfLayerHandle layer = opened(stage, error);
-        if (!layer)
-            return false;
-
         const UsdPrim prim = stage->GetPrimAtPath(primPath);
-
         if (!prim || !prim.IsValid()) {
             error = QString("prim missing: %1").arg(qt::SdfPathToQString(primPath));
             return false;
         }
 
         if (!layer->GetPrimAtPath(primPath)) {
-            error = QString("prim is not authored in edit layer: %1").arg(qt::SdfPathToQString(primPath));
+            error = QString("prim is not authored in layer: %1").arg(qt::SdfPathToQString(primPath));
             return false;
         }
 
         if (requireStrongest) {
             const SdfPrimSpecHandleVector stack = prim.GetPrimStack();
-
             if (stack.empty() || !stack.front() || stack.front()->GetLayer() != layer) {
-                error = QString("prim strongest opinion is not in edit layer: %1").arg(qt::SdfPathToQString(primPath));
-
+                error = QString("prim strongest opinion is not in layer: %1").arg(qt::SdfPathToQString(primPath));
                 return false;
             }
         }
         return true;
     }
 
-    bool validateParent(const UsdStageRefPtr& stage, const SdfPath& parentPath, QString& error, bool requireStrongest)
+    bool validateParent(const UsdStageRefPtr& stage, const SdfLayerHandle& layer, const SdfPath& parentPath,
+                        QString& error, bool requireStrongest)
     {
         if (!stage) {
             error = "stage missing";
             return false;
         }
-
+        if (!layer) {
+            error = "layer missing";
+            return false;
+        }
         if (parentPath.IsEmpty() || !parentPath.IsAbsolutePath()) {
             error = "invalid parent path";
             return false;
         }
-
         if (parentPath == SdfPath::AbsoluteRootPath())
-            return bool(opened(stage, error));
+            return true;
 
-        return validatePrim(stage, parentPath, error, requireStrongest);
+        return validatePrim(stage, layer, parentPath, error, requireStrongest);
     }
 
-}  // namespace editlayer
+}  // namespace layer
 
 namespace identifier {
 
@@ -150,7 +142,7 @@ namespace identifier {
         if (!parentIsRoot && (!parentPrim || !parentPrim.IsValid()))
             return baseName;
 
-        const SdfLayerHandle editLayer = stage->GetEditTarget().GetLayer();
+        const SdfLayerHandle layer = stage->GetEditTarget().GetLayer();
 
         auto childExists = [&](const QString& name) {
             const SdfPath childPath = parentPath.AppendChild(TfToken(qt::QStringToString(name)));
@@ -159,7 +151,7 @@ namespace identifier {
             if (childPrim && childPrim.IsValid())
                 return true;
 
-            if (editLayer && editLayer->GetPrimAtPath(childPath))
+            if (layer && layer->GetPrimAtPath(childPath))
                 return true;
 
             return false;
@@ -188,7 +180,7 @@ namespace identifier {
         if (!parentIsRoot && (!parentPrim || !parentPrim.IsValid()))
             return baseName;
 
-        const SdfLayerHandle editLayer = stage->GetEditTarget().GetLayer();
+        const SdfLayerHandle layer = stage->GetEditTarget().GetLayer();
 
         auto childExists = [&](const QString& name) {
             const SdfPath childPath = parentPath.AppendChild(TfToken(qt::QStringToString(name)));
@@ -200,7 +192,7 @@ namespace identifier {
             if (childPrim && childPrim.IsValid())
                 return true;
 
-            if (editLayer && editLayer->GetPrimAtPath(childPath))
+            if (layer && layer->GetPrimAtPath(childPath))
                 return true;
 
             return false;
@@ -632,7 +624,7 @@ namespace payload {
         if (selectionBounds.IsEmpty())
             return result;
 
-        const QList<SdfPath> sourcePayloadPaths = stage::topMostPayloadPaths(stage, selectedPaths);
+        const QList<SdfPath> sourcePayloadPaths = stage::outermostPayloadPaths(stage, selectedPaths);
 
         QSet<SdfPath> sourceSet;
         for (const SdfPath& path : sourcePayloadPaths)
@@ -993,7 +985,66 @@ namespace stage {
         return qt::QStringToString(QDir::fromNativeSeparators(directory.relativeFilePath(absoluteFilename)));
     }
 
-    QList<SdfPath> ancestorPayloadPaths(UsdStageRefPtr stage, const QList<SdfPath>& paths)
+    bool isPayloadInLayer(UsdStageRefPtr stage, const SdfLayerHandle& layer, const SdfPath& path)
+    {
+        if (!stage || !layer || path.IsEmpty())
+            return false;
+
+        const SdfPath primPath = path.IsPropertyPath() ? path.GetPrimPath() : path;
+        const UsdPrim prim = stage->GetPrimAtPath(primPath);
+        if (!prim || !prim.IsValid())
+            return false;
+
+        for (const SdfPrimSpecHandle& spec : prim.GetPrimStack()) {
+            if (!spec || spec->GetLayer() != layer)
+                continue;
+
+            if (!spec->GetPayloadList().GetAppliedItems().empty())
+                return true;
+        }
+
+        return false;
+    }
+
+    QList<SdfPath> layerPayloadPaths(UsdStageRefPtr stage, const SdfLayerHandle& layer)
+    {
+        QList<SdfPath> result;
+        if (!stage || !layer)
+            return result;
+
+        for (const UsdPrim& prim : stage->TraverseAll()) {
+            if (!prim || !prim.IsValid())
+                continue;
+
+            if (isPayloadInLayer(stage, layer, prim.GetPath()))
+                path::appendUnique(result, prim.GetPath());
+        }
+        return result;
+    }
+
+    QList<SdfPath> nearestLayerPayloadPaths(UsdStageRefPtr stage, const SdfLayerHandle& layer,
+                                            const QList<SdfPath>& paths)
+    {
+        QList<SdfPath> result;
+        if (!stage || !layer || paths.isEmpty())
+            return result;
+
+        for (const SdfPath& inputPath : paths) {
+            const SdfPath primPath = inputPath.IsPropertyPath() ? inputPath.GetPrimPath() : inputPath;
+            UsdPrim prim = stage->GetPrimAtPath(primPath);
+
+            while (prim && !prim.IsPseudoRoot()) {
+                if (isPayloadInLayer(stage, layer, prim.GetPath())) {
+                    path::appendUnique(result, prim.GetPath());
+                    break;
+                }
+                prim = prim.GetParent();
+            }
+        }
+        return result;
+    }
+
+    QList<SdfPath> nearestPayloadPaths(UsdStageRefPtr stage, const QList<SdfPath>& paths)
     {
         QList<SdfPath> result;
         if (!stage || paths.isEmpty())
@@ -1019,7 +1070,7 @@ namespace stage {
         return result;
     }
 
-    QList<SdfPath> topMostPayloadPaths(UsdStageRefPtr stage, const QList<SdfPath>& paths)
+    QList<SdfPath> outermostPayloadPaths(UsdStageRefPtr stage, const QList<SdfPath>& paths)
     {
         QList<SdfPath> result;
 
@@ -1029,16 +1080,16 @@ namespace stage {
         for (const SdfPath& inputPath : paths) {
             const SdfPath primPath = inputPath.IsPropertyPath() ? inputPath.GetPrimPath() : inputPath;
             UsdPrim prim = stage->GetPrimAtPath(primPath);
-            SdfPath topMostPath;
+            SdfPath outermostPath;
 
             while (prim && !prim.IsPseudoRoot()) {
                 if (isPayload(stage, prim.GetPath()))
-                    topMostPath = prim.GetPath();
+                    outermostPath = prim.GetPath();
 
                 prim = prim.GetParent();
             }
 
-            path::appendUnique(result, topMostPath);
+            path::appendUnique(result, outermostPath);
         }
 
         return path::topLevelPaths(result);
@@ -1070,7 +1121,7 @@ namespace stage {
             return false;
 
         // Transform editing is a property override, not a namespace edit.
-        // Composed prims may therefore receive a stronger edit-layer opinion.
+        // Composed prims may therefore receive a stronger edit-target opinion.
         return bool(stage->GetEditTarget().GetLayer());
     }
 
@@ -1227,17 +1278,16 @@ namespace stage {
 
         const GfMatrix4d local = matrix * parentWorld.GetInverse();
 
-        QString editError;
-        const SdfLayerHandle editLayer = editlayer::opened(stage, editError);
-        if (!editLayer) {
-            error = editError;
+        const SdfLayerHandle layer = stage->GetEditTarget().GetLayer();
+        if (!layer) {
+            error = "edit layer missing";
             return false;
         }
 
         GfVec3d pivotValue(0.0);
         const bool preservePivot = readLocalPivot(xformable, pivotValue);
 
-        UsdEditContext context(stage, UsdEditTarget(editLayer));
+        UsdEditContext context(stage, stage->GetEditTarget());
 
         if (preservePivot)
             return setLocalMatrixWithPivot(xformable, local, pivotValue, error);
@@ -1383,7 +1433,7 @@ namespace stage {
             restoreChildOrder(stage, it.key(), it.value());
     }
 
-    QList<SdfPath> descendantsPayloadPaths(UsdStageRefPtr stage, const QList<SdfPath>& paths)
+    QList<SdfPath> descendantPayloadPaths(UsdStageRefPtr stage, const QList<SdfPath>& paths)
     {
         QList<SdfPath> result;
         if (!stage || paths.isEmpty())
@@ -1414,7 +1464,7 @@ namespace stage {
         return result;
     }
 
-    QList<SdfPath> filterStrongestEditablePaths(UsdStageRefPtr stage, const QList<SdfPath>& paths)
+    QList<SdfPath> filterStrongestLayerPaths(UsdStageRefPtr stage, const SdfLayerHandle& layer, const QList<SdfPath>& paths)
     {
         QList<SdfPath> result;
 
@@ -1423,7 +1473,7 @@ namespace stage {
 
         for (const SdfPath& path : paths) {
             const SdfPath primPath = path.IsPropertyPath() ? path.GetPrimPath() : path;
-            if (isStrongestEditable(stage, primPath))
+            if (isStrongestInLayer(stage, layer, primPath))
                 result.append(primPath);
         }
         return result;
@@ -1553,22 +1603,25 @@ namespace stage {
         if (!isAuthored(stage, path))
             return false;
 
-        if (!isEditTarget(stage, path))
+        const SdfLayerHandle layer = stage->GetEditTarget().GetLayer();
+        if (!layer)
+            return false;
+
+        if (!isAuthoredInLayer(stage, layer, path))
             return false;
 
         return true;
     }
 
-    bool isEditTarget(UsdStageRefPtr stage, const SdfPath& path)
+    bool isAuthoredInLayer(UsdStageRefPtr stage, const SdfLayerHandle& layer, const SdfPath& path)
     {
         if (!stage)
             return false;
 
-        SdfLayerHandle editLayer = stage->GetEditTarget().GetLayer();
-        if (!editLayer)
+        if (!layer)
             return false;
 
-        return editLayer->GetPrimAtPath(path) != nullptr;
+        return layer->GetPrimAtPath(path) != nullptr;
     }
 
     bool isInsideCompositionArc(UsdStageRefPtr stage, const SdfPath& path)
@@ -1639,7 +1692,7 @@ namespace stage {
         return false;
     }
 
-    bool isStrongestEditable(UsdStageRefPtr stage, const SdfPath& path)
+    bool isStrongestInLayer(UsdStageRefPtr stage, const SdfLayerHandle& layer, const SdfPath& path)
     {
         if (!stage)
             return false;
@@ -1648,8 +1701,7 @@ namespace stage {
         if (!prim)
             return false;
 
-        const SdfLayerHandle editLayer = stage->GetEditTarget().GetLayer();
-        if (!editLayer)
+        if (!layer)
             return false;
 
         const auto& stack = prim.GetPrimStack();
@@ -1660,7 +1712,7 @@ namespace stage {
         if (!strongest)
             return false;
 
-        return strongest->GetLayer() == editLayer;
+        return strongest->GetLayer() == layer;
     }
 
     bool isVisible(UsdStageRefPtr stage, const SdfPath& path)
@@ -1679,8 +1731,6 @@ namespace stage {
 
         return vis != UsdGeomTokens->invisible;
     }
-
-
 
     QList<SdfPath> leafPaths(UsdStageRefPtr stage, const QList<SdfPath>& mask, bool childMustBeWithinMask)
     {
@@ -1851,19 +1901,18 @@ namespace stage {
         if (!stage || parentPath.IsEmpty())
             return;
 
-        QString error;
-        const SdfLayerHandle editLayer = editlayer::opened(stage, error);
-        if (!editLayer)
+        const SdfLayerHandle layer = stage->GetEditTarget().GetLayer();
+        if (!layer)
             return;
 
         if (parentPath == SdfPath::AbsoluteRootPath()) {
-            editLayer->SetRootPrimOrder(childOrder);
+            layer->SetRootPrimOrder(childOrder);
             return;
         }
 
-        ensureParentPrimSpecs(editLayer, parentPath);
-        if (!editLayer->GetPrimAtPath(parentPath))
-            SdfCreatePrimInLayer(editLayer, parentPath);
+        ensureParentPrimSpecs(layer, parentPath);
+        if (!layer->GetPrimAtPath(parentPath))
+            SdfCreatePrimInLayer(layer, parentPath);
 
         const UsdPrim parent = stage->GetPrimAtPath(parentPath);
         if (parent) {
@@ -1897,21 +1946,21 @@ namespace stage {
             if (path.IsEmpty())
                 continue;
 
-            SdfPath rootMostPayloadPath;
+            SdfPath outermostPayloadPath;
             SdfPath currentPath = path;
             while (!currentPath.IsEmpty() && currentPath != SdfPath::AbsoluteRootPath()) {
                 if (stage::isPayload(stage, currentPath))
-                    rootMostPayloadPath = currentPath;
+                    outermostPayloadPath = currentPath;
 
                 currentPath = currentPath.GetParentPath();
             }
 
-            if (!rootMostPayloadPath.IsEmpty()) {
-                appendUnique(rootMostPayloadPath);
+            if (!outermostPayloadPath.IsEmpty()) {
+                appendUnique(outermostPayloadPath);
                 continue;
             }
 
-            const QList<SdfPath> descendantPayloads = stage::descendantsPayloadPaths(stage, { path });
+            const QList<SdfPath> descendantPayloads = stage::descendantPayloadPaths(stage, { path });
             for (const SdfPath& descendantPayload : descendantPayloads)
                 appendUnique(descendantPayload);
         }
@@ -1923,13 +1972,12 @@ namespace stage {
         if (!stage)
             return;
 
-        QString error;
-        const SdfLayerHandle editLayer = editlayer::opened(stage, error);
-        if (!editLayer)
+        const SdfLayerHandle layer = stage->GetEditTarget().GetLayer();
+        if (!layer)
             return;
 
-        // visibility is a property opinion. Always author it into the opened
-        // edit layer so composed assets are overridden without editing them.
+        // Visibility is a property opinion authored into the stage's current
+        // edit target so composed assets are overridden without editing them.
         UsdEditContext context(stage, stage->GetEditTarget());
 
         for (const SdfPath& path : paths) {

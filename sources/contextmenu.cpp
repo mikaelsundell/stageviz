@@ -126,26 +126,16 @@ ContextMenu::exec(QWidget* parent, ViewContext* context, UsdStageRefPtr usdStage
             }
 
             if (prim && prim.IsValid() && !prim.IsInstanceProxy()) {
-                const SdfLayerHandle rootLayer = usdStage->GetRootLayer();
-                const SdfPrimSpecHandle rootSpec = rootLayer ? rootLayer->GetPrimAtPath(prim.GetPath())
+                const SdfLayerHandle editLayer = usdStage->GetEditTarget().GetLayer();
+                const SdfPrimSpecHandle editSpec = editLayer ? editLayer->GetPrimAtPath(prim.GetPath())
                                                              : SdfPrimSpecHandle();
 
-                if (rootSpec) {
-                    const bool hasDirectOpinions = !rootSpec->GetProperties().empty()
-                                                   || !rootSpec->GetMetaDataInfoKeys().empty();
+                if (editSpec) {
+                    const bool hasDirectOpinions = !editSpec->GetProperties().empty()
+                                                   || !editSpec->GetMetaDataInfoKeys().empty();
 
-                    if (hasDirectOpinions) {
-                        for (const SdfPrimSpecHandle& primSpec : prim.GetPrimStack()) {
-                            if (!primSpec)
-                                continue;
-
-                            const SdfLayerHandle layer = primSpec->GetLayer();
-                            if (layer && layer != rootLayer) {
-                                canResetOverrides = true;
-                                break;
-                            }
-                        }
-                    }
+                    if (hasDirectOpinions)
+                        canResetOverrides = true;
                 }
             }
 

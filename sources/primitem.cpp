@@ -34,7 +34,7 @@ public:
         bool visible = true;
         bool active = true;
         bool hasPayload = false;
-        bool isEditTarget = true;
+        bool isAuthoredInEditTarget = true;
         bool isRoot = false;
         bool isGprim = false;
         bool isDefaultPrim = false;
@@ -64,7 +64,7 @@ PrimItemPrivate::updateCache()
     d.visible = true;
     d.active = false;
     d.hasPayload = false;
-    d.isEditTarget = true;
+    d.isAuthoredInEditTarget = true;
     d.isRoot = false;
     d.isGprim = false;
     d.isDefaultPrim = false;
@@ -84,7 +84,8 @@ PrimItemPrivate::updateCache()
         d.hasPayload = prim.HasPayload();
         d.name = StringToQString(prim.GetName().GetString());
         d.typeName = StringToQString(prim.GetTypeName().GetString());
-        d.isEditTarget = stage::isEditTarget(d.stage, d.path);
+        const SdfLayerHandle editLayer = d.stage->GetEditTarget().GetLayer();
+        d.isAuthoredInEditTarget = editLayer && stage::isAuthoredInLayer(d.stage, editLayer, d.path);
         d.isGprim = prim.IsA<UsdGeomGprim>();
 
         const UsdPrim defaultPrim = d.stage->GetDefaultPrim();
@@ -245,7 +246,7 @@ PrimItem::itemStates() const
     if (p->d.visible)
         states |= Visible;
 
-    if (!p->d.isEditTarget)
+    if (!p->d.isAuthoredInEditTarget)
         states |= ReadOnly;
 
     return states;

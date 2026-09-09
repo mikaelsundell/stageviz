@@ -13,86 +13,29 @@ PXR_NAMESPACE_USING_DIRECTIVE
 
 namespace stageviz {
 
-namespace editlayer {
+namespace layer {
 
     /**
-     * @brief Result container for edit-layer path validation.
+     * @brief Validates that a prim is authored in a specific layer.
      *
-     * Stores the opened edit layer together with the normalized prim path
-     * that was validated. Property paths are normalized to their owning prim
-     * path before validation.
+     * Property paths are normalized to their owning prim path. When
+     * @p requireStrongest is true, the strongest composed prim spec must also
+     * belong to @p layer.
      */
-    struct Validation {
-        SdfLayerHandle layer;
-        SdfPath primPath;
-    };
+    bool validatePrim(const UsdStageRefPtr& stage, const SdfLayerHandle& layer, const SdfPath& path, QString& error,
+                      bool requireStrongest = true);
 
     /**
-     * @brief Returns the stage's opened edit layer.
+     * @brief Validates a destination parent against a specific layer.
      *
-     * This function defines the current Stageviz structural editing scope.
-     * Namespace and structural edits are restricted to the stage's opened
-     * edit layer and do not target sublayers, session layers, referenced
-     * layers, payload layers, or other composed layers.
-     *
-     * @param stage Stage whose edit layer should be returned.
-     * @param error Receives a descriptive failure reason.
-     *
-     * @return Opened edit layer, or an invalid handle on failure.
-     */
-    SdfLayerHandle opened(const UsdStageRefPtr& stage, QString& error);
-
-    /**
-     * @brief Validates that a prim may be edited in the opened edit layer.
-     *
-     * Property paths are normalized to their owning prim path. Validation
-     * requires that the stage and prim exist and that the opened edit layer
-     * contains a prim specification at the normalized path.
-     *
-     * When @p requireStrongest is true, the strongest composed prim
-     * specification must also belong to the opened edit layer. This prevents
-     * Stageviz from structurally editing a weaker edit-layer opinion while a
-     * stronger opinion from another layer controls the composed prim.
-     *
-     * @param stage Stage containing the prim.
-     * @param path Prim or property path to validate.
-     * @param error Receives a descriptive failure reason.
-     * @param requireStrongest Require the opened edit layer to provide the
-     * strongest prim specification.
-     *
-     * @return True when the prim is valid for edit-layer editing.
-     */
-    bool validatePrim(const UsdStageRefPtr& stage, const SdfPath& path, QString& error, bool requireStrongest = true);
-
-    /**
-     * @brief Validates a destination parent for edit-layer structural edits.
-     *
-     * The absolute root path is always accepted as a valid parent when the
-     * stage has an opened edit layer. Other parent paths are validated using
-     * the same edit-layer ownership and strongest-opinion policy as
+     * The absolute root is accepted when both stage and layer are valid.
+     * Other paths use the same ownership/strongest-opinion policy as
      * validatePrim().
-     *
-     * This function does not validate operation-specific hierarchy rules such
-     * as self-parenting, destination collisions, or composition-arc
-     * boundaries. Those checks remain the responsibility of the namespace
-     * edit operation.
-     *
-     * @param stage Stage containing the destination parent.
-     * @param parentPath Parent prim path or the absolute root path.
-     * @param error Receives a descriptive failure reason.
-     * @param requireStrongest Require the opened edit layer to provide the
-     * strongest parent prim specification.
-     *
-     * @return True when the parent is valid for edit-layer editing.
      */
-    bool validateParent(const UsdStageRefPtr& stage, const SdfPath& parentPath, QString& error,
-                        bool requireStrongest = true);
+    bool validateParent(const UsdStageRefPtr& stage, const SdfLayerHandle& layer, const SdfPath& parentPath,
+                        QString& error, bool requireStrongest = true);
 
-}  // namespace editlayer
-
-// Transitional compatibility alias for callers that still use the former
-// rootlayer namespace. New code should use editlayer directly.
-namespace rootlayer = editlayer;
+}  // namespace layer
 
 namespace identifier {
 
@@ -457,32 +400,32 @@ namespace stage {
      */
     std::string compositionAssetPath(const SdfLayerHandle& destinationLayer, const QString& filename);
 
-    /**
- * @brief Collects nearest payload ancestor paths for the specified prim paths.
- *
- * Walks upward from each input path until it finds the nearest prim that
- * directly authors or contains a payload.
- *
- * @param stage USD stage to query.
- * @param paths Prim paths to resolve upward from.
- *
- * @return List of nearest payload ancestor paths.
- */
-    QList<SdfPath> ancestorPayloadPaths(UsdStageRefPtr stage, const QList<SdfPath>& paths);
+    /** @brief Returns true when a payload opinion for @p path is authored in @p layer. */
+    bool isPayloadInLayer(UsdStageRefPtr stage, const SdfLayerHandle& layer, const SdfPath& path);
+
+    /** @brief Collects composed payload prims whose payload opinion is authored in @p layer. */
+    QList<SdfPath> layerPayloadPaths(UsdStageRefPtr stage, const SdfLayerHandle& layer);
+
+    /** @brief Finds the nearest enclosing payload authored in @p layer for each input path. */
+    QList<SdfPath> nearestLayerPayloadPaths(UsdStageRefPtr stage, const SdfLayerHandle& layer,
+                                            const QList<SdfPath>& paths);
 
     /**
-     * @brief Collects the top-most payload ancestor paths for specified prim paths.
+     * @brief Collects nearest payload ancestor paths for the specified prim paths.
      *
-     * Walks from each input prim to the pseudo-root and keeps the last payload
-     * encountered. Property paths are normalized to their owning prim path.
-     * Duplicate and descendant results are removed.
-     *
-     * @param stage USD stage to query.
-     * @param paths Prim or property paths to resolve upward from.
-     *
-     * @return List of top-most payload ancestor paths.
+     * Walks upward from each input path until it finds the nearest composed
+     * payload prim, regardless of which layer authored the payload opinion.
      */
-    QList<SdfPath> topMostPayloadPaths(UsdStageRefPtr stage, const QList<SdfPath>& paths);
+    QList<SdfPath> nearestPayloadPaths(UsdStageRefPtr stage, const QList<SdfPath>& paths);
+
+    /**
+     * @brief Collects the outermost payload ancestor paths for specified prim paths.
+     *
+     * Walks from each input prim to the pseudo-root and keeps the outermost
+     * payload encountered. Property paths are normalized to their owning prim
+     * path. Duplicate and descendant results are removed.
+     */
+    QList<SdfPath> outermostPayloadPaths(UsdStageRefPtr stage, const QList<SdfPath>& paths);
 
     /**
  * @brief Computes the combined world-space bounding box for prim paths.
@@ -501,9 +444,8 @@ namespace stage {
      * @brief Returns whether a prim can be edited as a transform.
      *
      * The prim must exist, be UsdGeomXformable, not be an instance proxy,
-     * and the stage must have an active edit layer. Transform edits are
-     * property overrides, so the prim itself does not need to be authored
-     * strongest in the active edit layer.
+     * and the stage must have a valid current edit target. Transform edits are property overrides,
+     * so the prim itself does not need to be authored strongest in that layer.
      */
     bool isTransformEditable(UsdStageRefPtr stage, const SdfPath& path);
 
@@ -537,7 +479,7 @@ namespace stage {
     /**
      * @brief Authors a world transform for an xformable prim.
      *
-     * The transform is authored in the active edit layer. When the composed
+     * The transform is authored in the stage's current edit target. When the composed
      * transform contains the standard paired USD pivot pattern
      * xformOp:translate:pivot / !invert!xformOp:translate:pivot, the pivot is
      * retained and the matrix operation is recomputed so the requested world
@@ -589,8 +531,7 @@ namespace stage {
      * @brief Creates a uniquely named UsdGeomXform below a parent path.
      *
      * Sanitizes @p name as a USD identifier, appends a numeric suffix when
-     * needed to avoid sibling collisions, and authors the resulting Xform in
-     * the stage's current edit target.
+     * needed to avoid sibling collisions, and authors the resulting Xform in the stage's current edit target.
      *
      * @param stage USD stage where the Xform should be created.
      * @param name Requested prim name.
@@ -628,19 +569,20 @@ namespace stage {
  *
  * @return List of descendant payload paths.
  */
-    QList<SdfPath> descendantsPayloadPaths(UsdStageRefPtr stage, const QList<SdfPath>& paths);
+    QList<SdfPath> descendantPayloadPaths(UsdStageRefPtr stage, const QList<SdfPath>& paths);
 
     /**
- * @brief Filters paths to those strongest-editable in the current edit target.
+ * @brief Filters paths whose strongest prim spec belongs to the supplied layer.
  *
  * Property paths are normalized to prim paths before testing.
  *
  * @param stage USD stage to query.
  * @param paths Prim or property paths to evaluate.
  *
- * @return Strongest-editable prim paths.
+ * @return Prim paths whose strongest spec belongs to the supplied layer.
  */
-    QList<SdfPath> filterStrongestEditablePaths(UsdStageRefPtr stage, const QList<SdfPath>& paths);
+    QList<SdfPath> filterStrongestLayerPaths(UsdStageRefPtr stage, const SdfLayerHandle& layer,
+                                           const QList<SdfPath>& paths);
 
     /**
  * @brief Finds variant sets for the specified prim paths.
@@ -699,7 +641,7 @@ namespace stage {
     /**
  * @brief Checks whether a prim is editable under the current policy.
  *
- * A prim is editable when it is valid, active, authored in the edit target,
+ * A prim is editable when it is valid, active, authored in the current edit target,
  * and not inside a payload hierarchy.
  *
  * @param stage USD stage containing the prim.
@@ -710,16 +652,16 @@ namespace stage {
     bool isEditable(UsdStageRefPtr stage, const SdfPath& path);
 
     /**
- * @brief Checks whether a prim exists in the current edit target.
+ * @brief Checks whether a prim is authored in a specific layer.
  *
- * Tests whether the active edit target layer has a prim spec at @p path.
+ * Tests whether @p layer contains a prim spec at @p path.
  *
  * @param stage USD stage containing the prim.
  * @param path Prim path to evaluate.
  *
- * @return True if the edit target contains the prim spec.
+ * @return True if the supplied layer contains the prim spec.
  */
-    bool isEditTarget(UsdStageRefPtr stage, const SdfPath& path);
+    bool isAuthoredInLayer(UsdStageRefPtr stage, const SdfLayerHandle& layer, const SdfPath& path);
 
     /**
  * @brief Checks whether a path is inside a composed hierarchy.
@@ -772,17 +714,16 @@ namespace stage {
     bool isPayloadHierarchy(UsdStageRefPtr stage, const SdfPath& path);
 
     /**
- * @brief Checks whether a prim is strongest-editable in the edit target.
+ * @brief Checks whether a prim's strongest composed spec belongs to a layer.
  *
- * A prim is strongest-editable when its strongest composed prim spec is in
- * the current edit target layer.
+ * The function compares the strongest prim-stack entry against @p layer.
  *
  * @param stage USD stage containing the prim.
  * @param path Prim path to evaluate.
  *
- * @return True if the strongest spec is in the edit target.
+ * @return True if the strongest spec belongs to the supplied layer.
  */
-    bool isStrongestEditable(UsdStageRefPtr stage, const SdfPath& path);
+    bool isStrongestInLayer(UsdStageRefPtr stage, const SdfLayerHandle& layer, const SdfPath& path);
 
     /**
  * @brief Returns the authored visibility state of a prim.
@@ -903,7 +844,7 @@ namespace stage {
     /**
  * @brief Restores an authored child order for a parent prim.
  *
- * Ensures parent specs exist in the edit target and authors the provided
+ * Ensures parent specs exist in the current edit target and authors the provided
  * child reorder on the parent prim.
  *
  * @param stage USD stage containing the parent.
@@ -916,7 +857,7 @@ namespace stage {
  * @brief Resolves selection paths to payload paths for load/unload commands.
  *
  * Uses payload ancestors when available; otherwise searches descendants.
- * The result is deduplicated and reduced to top-most paths.
+ * The result is deduplicated and reduced to outermost paths.
  *
  * @param stage USD stage to query.
  * @param paths Selected prim paths to resolve.

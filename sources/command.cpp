@@ -55,6 +55,21 @@ namespace {
         return error.isEmpty() ? message : QString("%1: %2").arg(message, error);
     }
 
+    SdfLayerHandle currentEditLayer(const UsdStageRefPtr& stage, QString& error)
+    {
+        if (!stage) {
+            error = "stage missing";
+            return {};
+        }
+
+        const SdfLayerHandle layer = stage->GetEditTarget().GetLayer();
+        if (!layer) {
+            error = "edit layer missing";
+            return {};
+        }
+        return layer;
+    }
+
     QString summarizeErrors(const QStringList& errors, int maxCount = 3)
     {
         if (errors.isEmpty())
@@ -212,18 +227,15 @@ namespace {
         return result;
     }
 
-    bool restoreTransformRootState(UsdStageRefPtr stage, const SdfPath& primPath, const TransformRootState& state,
-                                   QString& error)
+    bool restoreTransformRootState(UsdStageRefPtr stage, const SdfLayerHandle& editLayer,
+                                   const SdfPath& primPath, const TransformRootState& state, QString& error)
     {
         if (!stage) {
             error = "stage missing";
             return false;
         }
-
-        QString editError;
-        const SdfLayerHandle editLayer = editlayer::opened(stage, editError);
         if (!editLayer) {
-            error = editError;
+            error = "edit layer missing";
             return false;
         }
 
@@ -485,7 +497,6 @@ namespace {
 
         return true;
     }
-
 
     struct MaterialBindingState {
         SdfPath primPath;
@@ -931,7 +942,7 @@ loadNeighborPayloads(const QList<SdfPath>& paths)
                     if (stage) {
                         targets = payload::neighboringPaths(stage, paths);
 
-                        const QList<SdfPath> sourcePaths = stage::topMostPayloadPaths(stage, paths);
+                        const QList<SdfPath> sourcePaths = stage::outermostPayloadPaths(stage, paths);
                         for (const SdfPath& sourcePath : sourcePaths) {
                             if (!stage::isLoaded(stage, sourcePath))
                                 path::appendUnique(targets, sourcePath);
@@ -1282,7 +1293,7 @@ selectPayload()
                 if (!stage)
                     return;
 
-                payloadPaths = stage::ancestorPayloadPaths(stage, selection);
+                payloadPaths = stage::nearestPayloadPaths(stage, selection);
             }
 
             if (payloadPaths.isEmpty())
@@ -1300,149 +1311,143 @@ selectPayload()
 }
 
 Command
-selectInvertPayload()
+selectLayer()
 {
-    struct SelectInvertPayloadState {
+    struct SelectLayerState {
         QList<SdfPath> previousSelection;
     };
 
-    auto state = std::make_shared<SelectInvertPayloadState>();
+    auto state = std::make_shared<SelectLayerState>();
 
     return Command(
         [state](Session* session) {
             if (!session)
                 return;
 
-            session->beginProgressBlock("Invert payload selection", 1);
+            const QList<SdfPath> selection = session->selectionList()->paths();
+            if (selection.isEmpty())
+                return;
 
-            command::runWorker([session, state]() {
-                using Status = Session::Notify::Status;
+            QList<SdfPath> layerPaths;
+            {
+                READ_LOCKER(locker, session->stageLock(), "stageLock");
+                const UsdStageRefPtr stage = session->stageUnsafe();
+                if (!stage)
+                    return;
 
-                QList<SdfPath> previousSelection;
-                QList<SdfPath> invertedPayloads;
-                QList<command::Result> pending;
-                pending.reserve(16);
+                QString error;
+                const SdfLayerHandle editLayer = currentEditLayer(stage, error);
+                if (!editLayer)
+                    return;
 
-                bool hadStage = true;
-                bool hadSelectedPayloads = false;
-                int completed = 0;
-                qsizetype total = 0;
+                layerPaths = stage::nearestLayerPayloadPaths(stage, editLayer, selection);
+            }
 
-                {
-                    READ_LOCKER(locker, session->stageLock(), "stageLock");
-                    const UsdStageRefPtr stage = session->stageUnsafe();
+            if (layerPaths.isEmpty())
+                return;
 
-                    if (!stage) {
-                        hadStage = false;
-                    }
-                    else {
-                        previousSelection = session->selectionList()->paths();
-                        const QList<SdfPath> selectedPayloads = stage::topMostPayloadPaths(stage, previousSelection);
-
-                        state->previousSelection = previousSelection;
-                        hadSelectedPayloads = !selectedPayloads.isEmpty();
-
-                        QList<SdfPath> payloads;
-                        for (const UsdPrim& prim : stage->TraverseAll()) {
-                            if (!prim || !prim.IsValid())
-                                continue;
-
-                            const SdfPath path = prim.GetPath();
-                            if (path.IsEmpty() || path == SdfPath::AbsoluteRootPath())
-                                continue;
-
-                            if (!stage::isPayload(stage, path))
-                                continue;
-
-                            if (!prim.IsLoaded())
-                                continue;
-
-                            payloads.append(path);
-                        }
-
-                        payloads = path::topLevelPaths(payloads);
-                        total = payloads.size();
-
-                        const QSet<SdfPath> selectedSet(selectedPayloads.begin(), selectedPayloads.end());
-
-                        for (const SdfPath& path : payloads) {
-                            const bool selected = selectedSet.contains(path);
-
-                            if (!selected)
-                                invertedPayloads.append(path);
-
-                            command::Result result;
-                            result.path = path;
-                            result.success = true;
-                            result.message = selected ? "Payload skipped" : "Payload inverted";
-                            result.status = Status::Success;
-                            pending.append(result);
-                            ++completed;
-
-                            if (pending.size() >= 16) {
-                                const QList<command::Result> batch = pending;
-                                command::queueToSession(session, [session, batch, completed]() {
-                                    command::flushResults(session, batch, completed);
-                                });
-                                pending.clear();
-                            }
-
-                            if (session->isProgressBlockCancelled())
-                                break;
-                        }
-                    }
-                }
-
-                if (!pending.isEmpty()) {
-                    const QList<command::Result> batch = pending;
-                    command::queueToSession(session, [session, batch, completed]() {
-                        command::flushResults(session, batch, completed);
-                    });
-                }
-
-                command::queueToSession(session, [session, hadStage, hadSelectedPayloads, invertedPayloads, total]() {
-                    using Status = Session::Notify::Status;
-
-                    if (!hadStage) {
-                        session->updateProgressNotify(Session::Notify("Invert payload selection failed", {},
-                                                                      Status::Error),
-                                                      1);
-                        session->endProgressBlock();
-                        return;
-                    }
-
-                    if (!hadSelectedPayloads) {
-                        session->updateProgressNotify(Session::Notify("Invert payload selection skipped", {},
-                                                                      Status::Success),
-                                                      1);
-                        session->endProgressBlock();
-                        return;
-                    }
-
-                    session->selectionList()->updatePaths(invertedPayloads);
-                    session->updateProgressNotify(Session::Notify(total > 0 ? "Payload selection inverted"
-                                                                            : "Invert payload selection skipped",
-                                                                  invertedPayloads, Status::Success),
-                                                  qMax(1, total));
-
-                    session->endProgressBlock();
-                });
-            });
+            state->previousSelection = selection;
+            session->selectionList()->updatePaths(layerPaths);
         },
+        [state](Session* session) {
+            if (session)
+                session->selectionList()->updatePaths(state->previousSelection);
+        });
+}
+
+Command
+selectInvertInPayload()
+{
+    struct SelectInvertState {
+        QList<SdfPath> previousSelection;
+    };
+
+    auto state = std::make_shared<SelectInvertState>();
+
+    return Command(
         [state](Session* session) {
             if (!session)
                 return;
 
-            session->beginProgressBlock("Undo invert payload selection", 1);
+            const QList<SdfPath> previousSelection = session->selectionList()->paths();
+            if (previousSelection.isEmpty())
+                return;
 
-            command::queueToSession(session, [session, state]() {
-                using Status = Session::Notify::Status;
+            QList<SdfPath> invertedSelection;
+            {
+                READ_LOCKER(locker, session->stageLock(), "stageLock");
+                const UsdStageRefPtr stage = session->stageUnsafe();
+                if (!stage)
+                    return;
+
+                const QList<SdfPath> scopes = stage::nearestPayloadPaths(stage, previousSelection);
+                if (scopes.isEmpty())
+                    return;
+
+                const QList<SdfPath> domain = stage::leafPaths(stage, scopes, false);
+                for (const SdfPath& path : domain) {
+                    if (!path::isCoveredByRoots(previousSelection, path))
+                        invertedSelection.append(path);
+                }
+            }
+
+            state->previousSelection = previousSelection;
+            session->selectionList()->updatePaths(invertedSelection);
+        },
+        [state](Session* session) {
+            if (session)
                 session->selectionList()->updatePaths(state->previousSelection);
-                session->updateProgressNotify(Session::Notify("Invert payload selection undone",
-                                                              state->previousSelection, Status::Success),
-                                              1);
-                session->endProgressBlock();
-            });
+        });
+}
+
+Command
+selectInvertInLayer()
+{
+    struct SelectInvertState {
+        QList<SdfPath> previousSelection;
+    };
+
+    auto state = std::make_shared<SelectInvertState>();
+
+    return Command(
+        [state](Session* session) {
+            if (!session)
+                return;
+
+            const QList<SdfPath> previousSelection = session->selectionList()->paths();
+            if (previousSelection.isEmpty())
+                return;
+
+            QList<SdfPath> invertedSelection;
+            {
+                READ_LOCKER(locker, session->stageLock(), "stageLock");
+                const UsdStageRefPtr stage = session->stageUnsafe();
+                if (!stage)
+                    return;
+
+                QString error;
+                const SdfLayerHandle editLayer = currentEditLayer(stage, error);
+                if (!editLayer)
+                    return;
+
+                const QList<SdfPath> selectedPayloads
+                    = stage::nearestLayerPayloadPaths(stage, editLayer, previousSelection);
+                if (selectedPayloads.isEmpty())
+                    return;
+
+                const QList<SdfPath> domain = stage::layerPayloadPaths(stage, editLayer);
+                for (const SdfPath& path : domain) {
+                    if (!path::isCoveredByRoots(selectedPayloads, path))
+                        invertedSelection.append(path);
+                }
+            }
+
+            state->previousSelection = previousSelection;
+            session->selectionList()->updatePaths(invertedSelection);
+        },
+        [state](Session* session) {
+            if (session)
+                session->selectionList()->updatePaths(state->previousSelection);
         });
 }
 
@@ -1684,7 +1689,7 @@ showPaths(const QList<SdfPath>& paths, bool recursive)
                     }
                     else {
                         QString editError;
-                        const SdfLayerHandle editLayer = editlayer::opened(stage, editError);
+                        const SdfLayerHandle editLayer = currentEditLayer(stage, editError);
                         if (!editLayer) {
                             error = editError;
                         }
@@ -1722,7 +1727,7 @@ showPaths(const QList<SdfPath>& paths, bool recursive)
                     WRITE_LOCKER(locker, session->stageLock(), "stageLock");
                     const UsdStageRefPtr stage = session->stageUnsafe();
                     QString editError;
-                    const SdfLayerHandle editLayer = editlayer::opened(stage, editError);
+                    const SdfLayerHandle editLayer = currentEditLayer(stage, editError);
 
                     if (!stage || !editLayer) {
                         success = false;
@@ -1777,7 +1782,7 @@ hidePaths(const QList<SdfPath>& paths, bool recursive)
                     }
                     else {
                         QString editError;
-                        const SdfLayerHandle editLayer = editlayer::opened(stage, editError);
+                        const SdfLayerHandle editLayer = currentEditLayer(stage, editError);
                         if (!editLayer) {
                             error = editError;
                         }
@@ -1815,7 +1820,7 @@ hidePaths(const QList<SdfPath>& paths, bool recursive)
                     WRITE_LOCKER(locker, session->stageLock(), "stageLock");
                     const UsdStageRefPtr stage = session->stageUnsafe();
                     QString editError;
-                    const SdfLayerHandle editLayer = editlayer::opened(stage, editError);
+                    const SdfLayerHandle editLayer = currentEditLayer(stage, editError);
 
                     if (!stage || !editLayer) {
                         success = false;
@@ -1931,7 +1936,7 @@ defaultPrimPath(const SdfPath& path)
                             state->previousDefaultPrimPath = SdfPath();
 
                         QString editError;
-                        const SdfLayerHandle editLayer = editlayer::opened(stage, editError);
+                        const SdfLayerHandle editLayer = currentEditLayer(stage, editError);
                         const UsdPrim prim = stage->GetPrimAtPath(path);
                         if (!editLayer) {
                             error = editError;
@@ -1942,7 +1947,7 @@ defaultPrimPath(const SdfPath& path)
                         else if (path.GetParentPath() != SdfPath::AbsoluteRootPath()) {
                             error = "default prim must be a root prim";
                         }
-                        else if (!editlayer::validatePrim(stage, path, error)) {}
+                        else if (!layer::validatePrim(stage, editLayer, path, error)) {}
                         else {
                             UsdEditContext context(stage, UsdEditTarget(editLayer));
                             stage->SetDefaultPrim(prim);
@@ -1998,7 +2003,7 @@ defaultPrimPath(const SdfPath& path)
                     }
                     else {
                         QString editError;
-                        const SdfLayerHandle editLayer = editlayer::opened(stage, editError);
+                        const SdfLayerHandle editLayer = currentEditLayer(stage, editError);
                         if (!editLayer) {
                             error = editError;
                         }
@@ -2081,7 +2086,7 @@ clearDefaultPrim()
                         }
                         else {
                             QString editError;
-                            const SdfLayerHandle editLayer = editlayer::opened(stage, editError);
+                            const SdfLayerHandle editLayer = currentEditLayer(stage, editError);
                             if (!editLayer) {
                                 error = editError;
                             }
@@ -2131,7 +2136,7 @@ clearDefaultPrim()
                     }
                     else {
                         QString editError;
-                        const SdfLayerHandle editLayer = editlayer::opened(stage, editError);
+                        const SdfLayerHandle editLayer = currentEditLayer(stage, editError);
                         const UsdPrim prim = stage->GetPrimAtPath(*previousDefaultPrimPath);
                         if (!editLayer) {
                             error = editError;
@@ -2193,7 +2198,7 @@ deletePaths(const QList<SdfPath>& inPaths)
                     const UsdStageRefPtr stage = session->stageUnsafe();
                     if (stage) {
                         QString editError;
-                        const SdfLayerHandle editLayer = editlayer::opened(stage, editError);
+                        const SdfLayerHandle editLayer = currentEditLayer(stage, editError);
                         if (!editLayer) {
                             error = editError;
                         }
@@ -2209,7 +2214,7 @@ deletePaths(const QList<SdfPath>& inPaths)
                                                                                     : candidate;
 
                                 QString pathError;
-                                if (editlayer::validatePrim(stage, primPath, pathError)) {
+                                if (layer::validatePrim(stage, editLayer, primPath, pathError)) {
                                     editable.append(primPath);
                                 }
                                 else {
@@ -2323,7 +2328,7 @@ deletePaths(const QList<SdfPath>& inPaths)
                     const UsdStageRefPtr stage = session->stageUnsafe();
                     if (stage) {
                         QString editError;
-                        const SdfLayerHandle editLayer = editlayer::opened(stage, editError);
+                        const SdfLayerHandle editLayer = currentEditLayer(stage, editError);
                         if (!editLayer) {
                             error = editError;
                         }
@@ -2420,7 +2425,7 @@ duplicatePaths(const QList<SdfPath>& inPaths)
                     }
                     else {
                         QString editError;
-                        const SdfLayerHandle editLayer = editlayer::opened(stage, editError);
+                        const SdfLayerHandle editLayer = currentEditLayer(stage, editError);
 
                         if (!editLayer) {
                             errors.append(editError);
@@ -2465,7 +2470,7 @@ duplicatePaths(const QList<SdfPath>& inPaths)
 
                                 if (parentPath != SdfPath::AbsoluteRootPath()) {
                                     QString parentError;
-                                    if (!editlayer::validateParent(stage, parentPath, parentError)) {
+                                    if (!layer::validateParent(stage, editLayer, parentPath, parentError)) {
                                         errors.append(parentError);
                                         continue;
                                     }
@@ -2567,7 +2572,7 @@ duplicatePaths(const QList<SdfPath>& inPaths)
                     }
                     else {
                         QString editError;
-                        const SdfLayerHandle editLayer = editlayer::opened(stage, editError);
+                        const SdfLayerHandle editLayer = currentEditLayer(stage, editError);
 
                         if (!editLayer) {
                             success = false;
@@ -2661,12 +2666,12 @@ newPrimPath(const SdfPath& parentPath, const QString& nameInput, const TfToken& 
                     }
                     else {
                         QString editError;
-                        const SdfLayerHandle editLayer = editlayer::opened(stage, editError);
+                        const SdfLayerHandle editLayer = currentEditLayer(stage, editError);
 
                         if (!editLayer) {
                             error = editError;
                         }
-                        else if (!editlayer::validateParent(stage, parentPath, error)) {}
+                        else if (!layer::validateParent(stage, editLayer, parentPath, error)) {}
                         else {
                             newPath = stage::buildChildPath(stage, parentPath, nameInput, error);
 
@@ -2736,7 +2741,7 @@ newPrimPath(const SdfPath& parentPath, const QString& nameInput, const TfToken& 
                     }
                     else {
                         QString editError;
-                        const SdfLayerHandle editLayer = editlayer::opened(stage, editError);
+                        const SdfLayerHandle editLayer = currentEditLayer(stage, editError);
 
                         if (!editLayer) {
                             error = editError;
@@ -2822,12 +2827,12 @@ newMaterialPath(const SdfPath& parentPath, const QString& nameInput)
                     }
                     else {
                         QString editError;
-                        const SdfLayerHandle editLayer = editlayer::opened(stage, editError);
+                        const SdfLayerHandle editLayer = currentEditLayer(stage, editError);
 
                         if (!editLayer) {
                             error = editError;
                         }
-                        else if (!editlayer::validateParent(stage, parentPath, error)) {}
+                        else if (!layer::validateParent(stage, editLayer, parentPath, error)) {}
                         else {
                             materialPath = stage::buildChildPath(stage, parentPath, nameInput, error);
 
@@ -2931,7 +2936,7 @@ newMaterialPath(const SdfPath& parentPath, const QString& nameInput)
                     }
                     else {
                         QString editError;
-                        const SdfLayerHandle editLayer = editlayer::opened(stage, editError);
+                        const SdfLayerHandle editLayer = currentEditLayer(stage, editError);
 
                         if (!editLayer) {
                             error = editError;
@@ -3024,12 +3029,12 @@ namespace {
                         }
                         else {
                             QString editError;
-                            const SdfLayerHandle editLayer = editlayer::opened(stage, editError);
+                            const SdfLayerHandle editLayer = currentEditLayer(stage, editError);
 
                             if (!editLayer) {
                                 error = editError;
                             }
-                            else if (!editlayer::validateParent(stage, parentPath, error)) {}
+                            else if (!layer::validateParent(stage, editLayer, parentPath, error)) {}
                             else {
                                 newPath = stage::buildChildPath(stage, parentPath, nameInput, error);
 
@@ -3123,7 +3128,7 @@ namespace {
                         }
                         else {
                             QString editError;
-                            const SdfLayerHandle editLayer = editlayer::opened(stage, editError);
+                            const SdfLayerHandle editLayer = currentEditLayer(stage, editError);
 
                             if (!editLayer) {
                                 error = editError;
@@ -3221,11 +3226,11 @@ renamePath(const SdfPath& path, const QString& newNameInput)
                     }
                     else {
                         QString editError;
-                        const SdfLayerHandle editLayer = editlayer::opened(stage, editError);
+                        const SdfLayerHandle editLayer = currentEditLayer(stage, editError);
                         if (!editLayer) {
                             error = editError;
                         }
-                        else if (!editlayer::validatePrim(stage, path, error)) {}
+                        else if (!layer::validatePrim(stage, editLayer, path, error)) {}
                         else {
                             newPath = stage::buildRenamePath(stage, path, newNameInput, error);
 
@@ -3244,7 +3249,7 @@ renamePath(const SdfPath& path, const QString& newNameInput)
                                     stage::captureChildOrder(stage, state->parentPath, state->oldOrder);
 
                                 UsdEditContext context(stage, UsdEditTarget(editLayer));
-                                edit::NamespaceEditor namespaceEditor(stage);
+                                edit::NamespaceEditor namespaceEditor(stage, stage->GetEditTarget());
                                 if (namespaceEditor.renamePrim(path, newPath, error)) {
                                     if (!state->oldOrder.empty()) {
                                         state->newOrder = stage::remapChildOrder(state->oldOrder, path.GetNameToken(),
@@ -3307,13 +3312,13 @@ renamePath(const SdfPath& path, const QString& newNameInput)
                     }
                     else {
                         QString editError;
-                        const SdfLayerHandle editLayer = editlayer::opened(stage, editError);
+                        const SdfLayerHandle editLayer = currentEditLayer(stage, editError);
                         if (!editLayer) {
                             error = editError;
                         }
                         else {
                             UsdEditContext context(stage, UsdEditTarget(editLayer));
-                            edit::NamespaceEditor namespaceEditor(stage);
+                            edit::NamespaceEditor namespaceEditor(stage, stage->GetEditTarget());
                             if (namespaceEditor.renamePrim(state->newPath, state->oldPath, error)) {
                                 if (!state->oldOrder.empty() && !state->parentPath.IsEmpty()
                                     && state->parentPath != SdfPath::AbsoluteRootPath()) {
@@ -3403,26 +3408,25 @@ newXformPath(const SdfPath& parentPath, const QString& nameInput)
                         if (selection.size() > 1)
                             movePaths = selection;
 
-                        newPath = stage::buildChildPath(stage, parentPath, nameInput, error);
-
-                        if (newPath.IsEmpty()) {
-                            noop = true;
+                        QString editError;
+                        const SdfLayerHandle editLayer = currentEditLayer(stage, editError);
+                        if (!editLayer) {
+                            error = editError;
                         }
+                        else if (!layer::validateParent(stage, editLayer, parentPath, error)) {}
                         else {
-                            state->parentPath = parentPath;
-                            state->createdPath = newPath;
-                            state->oldParentOrder.clear();
-                            state->newParentOrder.clear();
-                            state->oldMoveParentOrders.clear();
-                            state->movedItems.clear();
+                            newPath = stage::buildChildPath(stage, parentPath, nameInput, error);
 
-                            QString editError;
-                            const SdfLayerHandle editLayer = editlayer::opened(stage, editError);
-                            if (!editLayer) {
-                                error = editError;
+                            if (newPath.IsEmpty()) {
+                                noop = true;
                             }
-                            else if (!editlayer::validateParent(stage, parentPath, error)) {}
                             else {
+                                state->parentPath = parentPath;
+                                state->createdPath = newPath;
+                                state->oldParentOrder.clear();
+                                state->newParentOrder.clear();
+                                state->oldMoveParentOrders.clear();
+                                state->movedItems.clear();
                                 const bool parentIsRoot = parentPath == SdfPath::AbsoluteRootPath();
                                 stage::captureChildOrder(stage, parentPath, state->oldParentOrder);
 
@@ -3455,7 +3459,7 @@ newXformPath(const SdfPath& parentPath, const QString& nameInput)
                                         }
 
                                         QString authoredError;
-                                        if (!editlayer::validatePrim(stage, movePath, authoredError)) {
+                                        if (!layer::validatePrim(stage, editLayer, movePath, authoredError)) {
                                             error = authoredError;
                                             movedSelection = false;
                                             break;
@@ -3488,7 +3492,7 @@ newXformPath(const SdfPath& parentPath, const QString& nameInput)
                                             moves.append(qMakePair(item.oldPath, item.newPath));
 
                                         QString moveError;
-                                        edit::NamespaceEditor namespaceEditor(stage);
+                                        edit::NamespaceEditor namespaceEditor(stage, stage->GetEditTarget());
                                         if (!namespaceEditor.reparentPrims(moves, moveError)) {
                                             error = moveError.isEmpty() ? "failed to move selected paths" : moveError;
                                             stage::restoreChildOrders(stage, state->oldMoveParentOrders);
@@ -3570,7 +3574,7 @@ newXformPath(const SdfPath& parentPath, const QString& nameInput)
                     }
                     else {
                         QString editError;
-                        const SdfLayerHandle editLayer = editlayer::opened(stage, editError);
+                        const SdfLayerHandle editLayer = currentEditLayer(stage, editError);
                         if (!editLayer) {
                             error = editError;
                         }
@@ -3581,7 +3585,7 @@ newXformPath(const SdfPath& parentPath, const QString& nameInput)
                             for (auto it = state->movedItems.crbegin(); it != state->movedItems.crend(); ++it)
                                 reverseMoves.append(qMakePair(it->newPath, it->oldPath));
 
-                            edit::NamespaceEditor namespaceEditor(stage);
+                            edit::NamespaceEditor namespaceEditor(stage, stage->GetEditTarget());
                             restored = namespaceEditor.reparentPrims(reverseMoves, error);
 
                             if (restored) {
@@ -3695,11 +3699,11 @@ movePath(const QList<SdfPath>& paths, const SdfPath& newParentPath, int insertIn
                         }
                         else {
                             QString editError;
-                            const SdfLayerHandle editLayer = editlayer::opened(stage, editError);
+                            const SdfLayerHandle editLayer = currentEditLayer(stage, editError);
                             if (!editLayer) {
                                 error = editError;
                             }
-                            else if (!editlayer::validateParent(stage, newParentPath, error)) {}
+                            else if (!layer::validateParent(stage, editLayer, newParentPath, error)) {}
                             else {
                                 state->items.clear();
                                 state->newParentPath = newParentPath;
@@ -3738,7 +3742,7 @@ movePath(const QList<SdfPath>& paths, const SdfPath& newParentPath, int insertIn
                                     }
 
                                     QString authoredError;
-                                    if (!editlayer::validatePrim(stage, path, authoredError)) {
+                                    if (!layer::validatePrim(stage, editLayer, path, authoredError)) {
                                         error = authoredError;
                                         valid = false;
                                         break;
@@ -3817,7 +3821,7 @@ movePath(const QList<SdfPath>& paths, const SdfPath& newParentPath, int insertIn
                                     }
 
                                     QString moveError;
-                                    edit::NamespaceEditor namespaceEditor(stage);
+                                    edit::NamespaceEditor namespaceEditor(stage, stage->GetEditTarget());
                                     if (!namespaceEditor.reparentPrims(moves, moveError)) {
                                         error = moveError.isEmpty() ? "failed to move paths" : moveError;
                                         stage::restoreChildOrders(stage, state->oldParentOrders);
@@ -3949,7 +3953,7 @@ movePath(const QList<SdfPath>& paths, const SdfPath& newParentPath, int insertIn
                     }
                     else {
                         QString editError;
-                        const SdfLayerHandle editLayer = editlayer::opened(stage, editError);
+                        const SdfLayerHandle editLayer = currentEditLayer(stage, editError);
                         if (!editLayer) {
                             error = editError;
                         }
@@ -3962,7 +3966,7 @@ movePath(const QList<SdfPath>& paths, const SdfPath& newParentPath, int insertIn
                                     reverseMoves.append(qMakePair(it->newPath, it->oldPath));
                             }
 
-                            edit::NamespaceEditor namespaceEditor(stage);
+                            edit::NamespaceEditor namespaceEditor(stage, stage->GetEditTarget());
                             restored = namespaceEditor.reparentPrims(reverseMoves, error);
 
                             if (restored && preserveTransform) {
@@ -4030,7 +4034,6 @@ movePath(const QList<SdfPath>& paths, const SdfPath& newParentPath, int insertIn
         });
 }
 
-
 Command
 setAttributeValues(const QList<SdfPath>& attributePaths, const VtValue& value)
 {
@@ -4071,7 +4074,7 @@ setAttributeValues(const QList<SdfPath>& attributePaths, const VtValue& value)
                     }
                     else {
                         QString editError;
-                        const SdfLayerHandle editLayer = editlayer::opened(stage, editError);
+                        const SdfLayerHandle editLayer = currentEditLayer(stage, editError);
 
                         if (!editLayer) {
                             errors.append(editError);
@@ -4218,7 +4221,7 @@ setAttributeValues(const QList<SdfPath>& attributePaths, const VtValue& value)
                     }
                     else {
                         QString editError;
-                        const SdfLayerHandle editLayer = editlayer::opened(stage, editError);
+                        const SdfLayerHandle editLayer = currentEditLayer(stage, editError);
 
                         if (!editLayer) {
                             errors.append(editError);
@@ -4301,7 +4304,7 @@ resetAttributeValues(const QList<SdfPath>& attributePaths)
                     }
                     else {
                         QString editError;
-                        const SdfLayerHandle editLayer = editlayer::opened(stage, editError);
+                        const SdfLayerHandle editLayer = currentEditLayer(stage, editError);
 
                         if (!editLayer) {
                             errors.append(editError);
@@ -4358,7 +4361,7 @@ resetAttributeValues(const QList<SdfPath>& attributePaths)
                     }
                     else {
                         QString editError;
-                        const SdfLayerHandle editLayer = editlayer::opened(stage, editError);
+                        const SdfLayerHandle editLayer = currentEditLayer(stage, editError);
 
                         if (!editLayer) {
                             errors.append(editError);
@@ -4426,7 +4429,7 @@ resetAttributeOverrides(const QList<SdfPath>& attributePaths)
                     }
                     else {
                         QString editError;
-                        const SdfLayerHandle editLayer = editlayer::opened(stage, editError);
+                        const SdfLayerHandle editLayer = currentEditLayer(stage, editError);
 
                         if (!editLayer) {
                             errors.append(editError);
@@ -4527,7 +4530,7 @@ resetAttributeOverrides(const QList<SdfPath>& attributePaths)
                     }
                     else {
                         QString editError;
-                        const SdfLayerHandle editLayer = editlayer::opened(stage, editError);
+                        const SdfLayerHandle editLayer = currentEditLayer(stage, editError);
 
                         if (!editLayer) {
                             errors.append(editError);
@@ -4568,6 +4571,7 @@ resetAttributeOverride(const SdfPath& attributePath)
 {
     return resetAttributeOverrides({ attributePath });
 }
+
 Command
 resetTransforms(const QList<SdfPath>& paths)
 {
@@ -4598,7 +4602,7 @@ resetTransforms(const QList<SdfPath>& paths)
                     }
                     else {
                         QString editError;
-                        const SdfLayerHandle editLayer = editlayer::opened(stage, editError);
+                        const SdfLayerHandle editLayer = currentEditLayer(stage, editError);
 
                         if (!editLayer) {
                             errors.append(editError);
@@ -4695,7 +4699,7 @@ resetTransforms(const QList<SdfPath>& paths)
                     }
                     else {
                         QString editError;
-                        const SdfLayerHandle editLayer = editlayer::opened(stage, editError);
+                        const SdfLayerHandle editLayer = currentEditLayer(stage, editError);
 
                         if (!editLayer) {
                             errors.append(editError);
@@ -4756,7 +4760,7 @@ centerPivots(const QList<SdfPath>& paths)
                     }
                     else {
                         QString editError;
-                        const SdfLayerHandle editLayer = editlayer::opened(stage, editError);
+                        const SdfLayerHandle editLayer = currentEditLayer(stage, editError);
 
                         if (!editLayer) {
                             errors.append(editError);
@@ -4850,7 +4854,7 @@ centerPivots(const QList<SdfPath>& paths)
                     }
                     else {
                         QString editError;
-                        const SdfLayerHandle editLayer = editlayer::opened(stage, editError);
+                        const SdfLayerHandle editLayer = currentEditLayer(stage, editError);
 
                         if (!editLayer) {
                             errors.append(editError);
@@ -4909,7 +4913,7 @@ resetPivots(const QList<SdfPath>& paths)
                     }
                     else {
                         QString editError;
-                        const SdfLayerHandle editLayer = editlayer::opened(stage, editError);
+                        const SdfLayerHandle editLayer = currentEditLayer(stage, editError);
 
                         if (!editLayer) {
                             errors.append(editError);
@@ -5000,7 +5004,7 @@ resetPivots(const QList<SdfPath>& paths)
                     }
                     else {
                         QString editError;
-                        const SdfLayerHandle editLayer = editlayer::opened(stage, editError);
+                        const SdfLayerHandle editLayer = currentEditLayer(stage, editError);
 
                         if (!editLayer) {
                             errors.append(editError);
@@ -5034,7 +5038,6 @@ identityTransforms(const QList<SdfPath>& paths)
 {
     return resetTransforms(paths);
 }
-
 
 Command
 resetOverrides(const QList<SdfPath>& paths)
@@ -5072,7 +5075,7 @@ resetOverrides(const QList<SdfPath>& paths)
                     }
                     else {
                         QString editError;
-                        const SdfLayerHandle editLayer = editlayer::opened(stage, editError);
+                        const SdfLayerHandle editLayer = currentEditLayer(stage, editError);
 
                         if (!editLayer) {
                             errors.append(editError);
@@ -5215,7 +5218,7 @@ resetOverrides(const QList<SdfPath>& paths)
                     }
                     else {
                         QString editError;
-                        const SdfLayerHandle editLayer = editlayer::opened(stage, editError);
+                        const SdfLayerHandle editLayer = currentEditLayer(stage, editError);
 
                         if (!editLayer) {
                             errors.append(editError);
@@ -5286,7 +5289,13 @@ setTransforms(const QList<SdfPath>& paths, const QList<GfMatrix4d>& before, cons
                     errors.append("stage missing");
                 }
                 else {
-                    for (qsizetype i = 0; i < paths.size(); ++i) {
+                    QString editError;
+                    const SdfLayerHandle editLayer = currentEditLayer(stage, editError);
+                    if (!editLayer) {
+                        success = false;
+                        errors.append(editError);
+                    }
+                    else for (qsizetype i = 0; i < paths.size(); ++i) {
                         const SdfPath& path = paths.at(i);
                         const GfMatrix4d& matrix = matrices.at(i);
 
@@ -5337,9 +5346,15 @@ setTransforms(const QList<SdfPath>& paths, const QList<GfMatrix4d>& before, cons
                         errors.append("stage missing");
                     }
                     else {
-                        for (qsizetype i = 0; i < paths.size(); ++i) {
+                        QString editError;
+                        const SdfLayerHandle editLayer = currentEditLayer(stage, editError);
+                        if (!editLayer) {
+                            success = false;
+                            errors.append(editError);
+                        }
+                        else for (qsizetype i = 0; i < paths.size(); ++i) {
                             QString error;
-                            if (!restoreTransformRootState(stage, paths.at(i), rootBefore.at(i), error)) {
+                            if (!restoreTransformRootState(stage, editLayer, paths.at(i), rootBefore.at(i), error)) {
                                 success = false;
                                 errors.append(error.isEmpty() ? QString("failed: %1").arg(pathText(paths.at(i)))
                                                               : error);

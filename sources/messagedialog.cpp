@@ -5,6 +5,7 @@
 #include "messagedialog.h"
 
 #include <QPointer>
+#include <QShortcut>
 
 // generated files
 #include "ui_messagedialog.h"
@@ -15,6 +16,7 @@ class MessageDialogPrivate : public QObject {
     Q_OBJECT
 public:
     MessageDialogPrivate();
+
     void init();
     bool exec();
     int execResult();
@@ -35,6 +37,7 @@ public:
         QPointer<MessageDialog> dialog;
         QScopedPointer<Ui_MessageDialog> ui;
     };
+
     Data d;
 };
 
@@ -52,9 +55,28 @@ MessageDialogPrivate::init()
     // ui
     d.ui.reset(new Ui_MessageDialog());
     d.ui->setupUi(d.dialog.data());
+
     // connect
-    connect(d.ui->accept, &QPushButton::clicked, this, [this]() { d.dialog->done(QDialog::Accepted); });
-    connect(d.ui->reject, &QPushButton::clicked, this, [this]() { d.dialog->done(2); });
+    connect(d.ui->accept, &QPushButton::clicked, this, [this]() {
+        d.dialog->done(QDialog::Accepted);
+    });
+
+    connect(d.ui->reject, &QPushButton::clicked, this, [this]() {
+        d.dialog->done(2);
+    });
+
+    // shortcuts
+    auto* yesShortcut = new QShortcut(QKeySequence(Qt::Key_Y), d.dialog.data());
+    connect(yesShortcut, &QShortcut::activated, this, [this]() {
+        if (d.ui->accept->isVisible() && d.ui->accept->isEnabled())
+            d.dialog->done(QDialog::Accepted);
+    });
+
+    auto* noShortcut = new QShortcut(QKeySequence(Qt::Key_N), d.dialog.data());
+    connect(noShortcut, &QShortcut::activated, this, [this]() {
+        if (d.showReject && d.ui->reject->isVisible() && d.ui->reject->isEnabled())
+            d.dialog->done(2);
+    });
 }
 
 bool
@@ -67,6 +89,7 @@ int
 MessageDialogPrivate::execResult()
 {
     d.dialog->setWindowTitle(d.type);
+
     d.ui->icon->setFixedSize(d.iconSize, d.iconSize);
     d.ui->icon->setScaledContents(true);
 
@@ -125,6 +148,7 @@ MessageDialogPrivate::execResult()
     }
 
     d.dialog->setWindowModality(Qt::WindowModal);
+
     d.dialog->raise();
     d.dialog->activateWindow();
 
@@ -148,12 +172,14 @@ bool
 MessageDialog::information(QWidget* parent, const QString& title, const QString& text)
 {
     MessageDialog box(parent);
+
     box.p->d.type = "Information";
     box.p->d.title = title;
     box.p->d.text = text;
     box.p->d.acceptText = tr("Close");
     box.p->d.iconSize = 64;
     box.p->d.showReject = false;
+
     return box.p->exec();
 }
 
@@ -161,12 +187,14 @@ bool
 MessageDialog::warning(QWidget* parent, const QString& title, const QString& text)
 {
     MessageDialog box(parent);
+
     box.p->d.type = "Warning";
     box.p->d.title = title;
     box.p->d.text = text;
     box.p->d.acceptText = tr("Close");
     box.p->d.showIcon = false;
     box.p->d.showReject = false;
+
     return box.p->exec();
 }
 
@@ -174,6 +202,7 @@ bool
 MessageDialog::question(QWidget* parent, const QString& title, const QString& text)
 {
     MessageDialog box(parent);
+
     box.p->d.type = "Question";
     box.p->d.title = title;
     box.p->d.text = text;
@@ -181,6 +210,7 @@ MessageDialog::question(QWidget* parent, const QString& title, const QString& te
     box.p->d.rejectText = tr("No");
     box.p->d.showIcon = false;
     box.p->d.showReject = true;
+
     return box.p->exec();
 }
 
@@ -188,19 +218,23 @@ MessageDialog::SaveResult
 MessageDialog::saveQuestion(QWidget* parent, const QString& title, const QString& text)
 {
     MessageDialog box(parent);
+
     box.p->d.type = "Question";
     box.p->d.title = title;
     box.p->d.text = text;
-    box.p->d.acceptText = tr("Yes");
-    box.p->d.rejectText = tr("No");
+    box.p->d.acceptText = tr("Save");
+    box.p->d.rejectText = tr("Don't Save");
     box.p->d.showIcon = false;
     box.p->d.showReject = true;
 
     const int result = box.p->execResult();
+
     if (result == QDialog::Accepted)
         return SaveResult::Save;
+
     if (result == 2)
         return SaveResult::DontSave;
+
     return SaveResult::Cancel;
 }
 
@@ -209,6 +243,7 @@ MessageDialog::about(QWidget* parent, const QString& title, const QString& headi
                      const QString& url)
 {
     MessageDialog box(parent);
+
     box.p->d.type = title;
     box.p->d.title = title;
     box.p->d.url = url;
@@ -217,6 +252,7 @@ MessageDialog::about(QWidget* parent, const QString& title, const QString& headi
     box.p->d.acceptText = tr("Close");
     box.p->d.showReject = false;
     box.p->d.fixedHeight = false;
+
     return box.p->exec();
 }
 
@@ -225,6 +261,7 @@ MessageDialog::update(QWidget* parent, const QString& title, const QString& head
                       const QString& url)
 {
     MessageDialog box(parent);
+
     box.p->d.type = "Update";
     box.p->d.title = title;
     box.p->d.url = url;
@@ -233,6 +270,7 @@ MessageDialog::update(QWidget* parent, const QString& title, const QString& head
     box.p->d.acceptText = tr("Download");
     box.p->d.rejectText = tr("Skip");
     box.p->d.showReject = true;
+
     return box.p->exec();
 }
 

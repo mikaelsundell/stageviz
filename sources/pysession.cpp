@@ -422,7 +422,12 @@ PySession_editLayer(PySessionObject* self)
     if (!checkSession(self->session))
         return nullptr;
 
-    const SdfLayerHandle layer = self->session->editLayer();
+    QReadLocker locker(self->session->stageLock());
+    const UsdStageRefPtr stage = self->session->stageUnsafe();
+    if (!stage)
+        Py_RETURN_NONE;
+
+    const SdfLayerHandle layer = stage->GetEditTarget().GetLayer();
     if (!layer)
         Py_RETURN_NONE;
 
@@ -706,13 +711,13 @@ static PyMethodDef PySession_methods[] = {
     { "loadFromFile", reinterpret_cast<PyCFunction>(PySession_load), METH_VARARGS | METH_KEYWORDS,
       "Load a USD stage from file" },
     { "merge", reinterpret_cast<PyCFunction>(PySession_merge), METH_VARARGS,
-      "Destructively merge authored USD content into the current root layer" },
+      "Destructively merge authored USD content into the current edit layer" },
     { "mergeFromFile", reinterpret_cast<PyCFunction>(PySession_merge), METH_VARARGS,
-      "Destructively merge authored USD content into the current root layer" },
+      "Destructively merge authored USD content into the current edit layer" },
     { "mergeFlattened", reinterpret_cast<PyCFunction>(PySession_mergeFlattened), METH_VARARGS,
-      "Flatten an incoming USD stage and destructively merge it into the current root layer" },
+      "Flatten an incoming USD stage and destructively merge it into the current edit layer" },
     { "mergeFlattenedFromFile", reinterpret_cast<PyCFunction>(PySession_mergeFlattened), METH_VARARGS,
-      "Flatten an incoming USD stage and destructively merge it into the current root layer" },
+      "Flatten an incoming USD stage and destructively merge it into the current edit layer" },
     { "mergeSublayer", reinterpret_cast<PyCFunction>(PySession_mergeSublayer), METH_VARARGS,
       "Merge a USD file as a sublayer of the current root layer" },
     { "mergeSublayerFromFile", reinterpret_cast<PyCFunction>(PySession_mergeSublayer), METH_VARARGS,

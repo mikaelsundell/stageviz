@@ -7,22 +7,25 @@
 #include "usdutils.h"
 #include <QSet>
 #include <pxr/usd/sdf/namespaceEdit.h>
+#include <pxr/usd/usd/editContext.h>
+#include <pxr/usd/usd/editTarget.h>
 #include <pxr/usd/usd/namespaceEditor.h>
 #include <pxr/usd/usdGeom/xform.h>
 
 namespace stageviz {
 namespace edit {
 
-    NamespaceEditor::NamespaceEditor(const UsdStageRefPtr& stage)
+    NamespaceEditor::NamespaceEditor(const UsdStageRefPtr& stage, const UsdEditTarget& editTarget)
         : stage_(stage)
+        , editTarget_(editTarget)
     {}
 
     bool NamespaceEditor::addXform(const SdfPath& path, QString& error)
     {
         changes_.clear();
 
-        if (!stage_) {
-            error = "invalid stage";
+        if (!stage_ || !editTarget_.GetLayer()) {
+            error = !stage_ ? "invalid stage" : "invalid edit target";
             return false;
         }
 
@@ -33,7 +36,7 @@ namespace edit {
 
         const SdfPath parentPath = path.GetParentPath();
         QString validationError;
-        if (!editlayer::validateParent(stage_, parentPath, validationError)) {
+        if (!layer::validateParent(stage_, editTarget_.GetLayer(), parentPath, validationError)) {
             error = validationError;
             return false;
         }
@@ -48,6 +51,7 @@ namespace edit {
             return false;
         }
 
+        UsdEditContext editContext(stage_, editTarget_);
         const UsdGeomXform xform = UsdGeomXform::Define(stage_, path);
         if (!xform || !xform.GetPrim()) {
             error = "failed to define Xform";
@@ -64,21 +68,14 @@ namespace edit {
     {
         changes_.clear();
 
-        if (!stage_) {
-            error = "invalid stage";
+        if (!stage_ || !editTarget_.GetLayer()) {
+            error = !stage_ ? "invalid stage" : "invalid edit target";
             return false;
         }
 
         const QList<SdfPath> roots = path::minimalRootPaths(path::uniquePaths(paths));
         if (roots.isEmpty())
             return true;
-
-        QString editError;
-        const SdfLayerHandle editLayer = editlayer::opened(stage_, editError);
-        if (!editLayer) {
-            error = editError;
-            return false;
-        }
 
         SdfBatchNamespaceEdit batch;
 
@@ -89,7 +86,7 @@ namespace edit {
             }
 
             QString validationError;
-            if (!editlayer::validatePrim(stage_, root, validationError)) {
+            if (!layer::validatePrim(stage_, editTarget_.GetLayer(), root, validationError)) {
                 error = validationError;
                 return false;
             }
@@ -103,12 +100,12 @@ namespace edit {
             batch.Add(root, SdfPath::EmptyPath());
         }
 
-        if (!editLayer->CanApply(batch)) {
+        if (!editTarget_.GetLayer()->CanApply(batch)) {
             error = "Sdf namespace remove batch cannot be applied";
             return false;
         }
 
-        if (!editLayer->Apply(batch)) {
+        if (!editTarget_.GetLayer()->Apply(batch)) {
             error = "Sdf namespace remove batch failed";
             return false;
         }
@@ -123,8 +120,8 @@ namespace edit {
     {
         changes_.clear();
 
-        if (!stage_) {
-            error = "invalid stage";
+        if (!stage_ || !editTarget_.GetLayer()) {
+            error = !stage_ ? "invalid stage" : "invalid edit target";
             return false;
         }
 
@@ -143,12 +140,12 @@ namespace edit {
         }
 
         QString validationError;
-        if (!editlayer::validatePrim(stage_, from, validationError)) {
+        if (!layer::validatePrim(stage_, editTarget_.GetLayer(), from, validationError)) {
             error = validationError;
             return false;
         }
 
-        if (!editlayer::validateParent(stage_, parentPath, validationError)) {
+        if (!layer::validateParent(stage_, editTarget_.GetLayer(), parentPath, validationError)) {
             error = validationError;
             return false;
         }
@@ -175,6 +172,7 @@ namespace edit {
             return false;
         }
 
+        UsdEditContext editContext(stage_, editTarget_);
         UsdNamespaceEditor::EditOptions options;
         options.allowRelocatesAuthoring = false;
         UsdNamespaceEditor editor(stage_, options);
@@ -214,20 +212,13 @@ namespace edit {
     {
         changes_.clear();
 
-        if (!stage_) {
-            error = "invalid stage";
+        if (!stage_ || !editTarget_.GetLayer()) {
+            error = !stage_ ? "invalid stage" : "invalid edit target";
             return false;
         }
 
         if (moves.isEmpty())
             return true;
-
-        QString editError;
-        const SdfLayerHandle editLayer = editlayer::opened(stage_, editError);
-        if (!editLayer) {
-            error = editError;
-            return false;
-        }
 
         QSet<SdfPath> sourcePaths;
         QSet<SdfPath> destinationPaths;
@@ -272,12 +263,12 @@ namespace edit {
         for (const auto& move : effectiveMoves)
             batch.Add(move.first, move.second, SdfNamespaceEdit::AtEnd);
 
-        if (!editLayer->CanApply(batch)) {
+        if (!editTarget_.GetLayer()->CanApply(batch)) {
             error = "Sdf namespace move batch cannot be applied";
             return false;
         }
 
-        if (!editLayer->Apply(batch)) {
+        if (!editTarget_.GetLayer()->Apply(batch)) {
             error = "Sdf namespace move batch failed";
             return false;
         }
@@ -317,12 +308,12 @@ namespace edit {
         }
 
         QString validationError;
-        if (!editlayer::validatePrim(stage_, from, validationError)) {
+        if (!layer::validatePrim(stage_, editTarget_.GetLayer(), from, validationError)) {
             error = validationError;
             return false;
         }
 
-        if (!editlayer::validateParent(stage_, to.GetParentPath(), validationError)) {
+        if (!layer::validateParent(stage_, editTarget_.GetLayer(), to.GetParentPath(), validationError)) {
             error = validationError;
             return false;
         }

@@ -8,6 +8,7 @@
 #include <QList>
 #include <QSet>
 #include <QString>
+#include <pxr/usd/usd/editTarget.h>
 #include <pxr/usd/usd/stage.h>
 
 PXR_NAMESPACE_USING_DIRECTIVE
@@ -21,11 +22,11 @@ namespace edit {
  *
  * NamespaceEditor centralizes prim add, remove, rename, and reparent
  * operations used by Stageviz commands. Structural edits are restricted to
- * the active edit layer and preserve the loaded state of affected payloads.
+ * the supplied edit target and preserve the loaded state of affected payloads.
  *
  * Rename currently uses UsdNamespaceEditor so USD emits semantic
  * RenameSource/RenameDestination notices required by StageTree. Reparent and
- * removal use SdfBatchNamespaceEdit so multiple edit-layer operations can be
+ * removal use SdfBatchNamespaceEdit so multiple layer operations can be
  * applied as one batch without repeated UsdNamespaceEditor dependency scans.
  */
     class NamespaceEditor {
@@ -45,13 +46,14 @@ namespace edit {
      * @brief Constructs a namespace editor for a stage.
      *
      * @param stage Stage that owns the namespace being edited.
+     * @param editTarget Edit target used for structural authoring.
      */
-        explicit NamespaceEditor(const UsdStageRefPtr& stage);
+        NamespaceEditor(const UsdStageRefPtr& stage, const UsdEditTarget& editTarget);
 
         /**
      * @brief Adds an Xform prim at an absolute path.
      *
-     * The parent must be valid for Stageviz edit-layer authoring and the
+     * The parent must be valid for Stageviz layer authoring and the
      * destination path must not already exist.
      *
      * @param path Absolute path of the Xform to create.
@@ -62,7 +64,7 @@ namespace edit {
         bool addXform(const SdfPath& path, QString& error);
 
         /**
-     * @brief Removes one prim hierarchy from the active edit layer.
+     * @brief Removes one prim hierarchy from the supplied edit target.
      *
      * @param path Root prim path to remove.
      * @param error Receives a descriptive failure reason.
@@ -114,7 +116,7 @@ namespace edit {
      *
      * All source and destination paths are validated against the unchanged
      * stage before the batch is applied. Stageviz composition-arc and
-     * strongest-edit-layer restrictions remain in force. Loaded payload paths
+     * strongest-layer restrictions remain in force. Loaded payload paths
      * below moved roots are remapped after the namespace edit without replacing
      * the stage's complete load-rule set.
      *
@@ -141,6 +143,7 @@ namespace edit {
         void restoreLoadState(const SdfPathSet& oldLoadedPaths, const SdfPathSet& newLoadedPaths) const;
 
         UsdStageRefPtr stage_;
+        UsdEditTarget editTarget_;
         QList<Change> changes_;
     };
 

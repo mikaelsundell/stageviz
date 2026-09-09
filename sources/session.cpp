@@ -23,6 +23,7 @@
 #include <algorithm>
 #include <pxr/base/tf/weakBase.h>
 #include <pxr/usd/sdf/copyUtils.h>
+#include <pxr/usd/usd/editTarget.h>
 #include <pxr/usd/usd/notice.h>
 #include <pxr/usd/usd/payloads.h>
 #include <pxr/usd/usd/variantSets.h>
@@ -194,7 +195,6 @@ public:
     struct Data {
         UsdStageRefPtr stage;
         UsdStageRefPtr auxiliary;
-        UsdEditTarget editTarget;
         Session::LoadPolicy loadPolicy = Session::LoadPolicy::All;
         Session::PrimsUpdate primsUpdate = Session::PrimsUpdate::Immediate;
         Session::StageStatus stageStatus = Session::StageStatus::Closed;
@@ -332,8 +332,7 @@ SessionPrivate::newStage(Session::LoadPolicy policy)
             return false;
         }
         d.stage = stage;
-        d.editTarget = UsdEditTarget(d.stage->GetRootLayer());
-        d.stage->SetEditTarget(d.editTarget);
+        d.stage->SetEditTarget(UsdEditTarget(d.stage->GetRootLayer()));
         UsdGeomSetStageMetersPerUnit(d.stage, UsdGeomLinearUnits::millimeters);
         UsdGeomXform root = UsdGeomXform::Define(d.stage, SdfPath("/World"));
         d.stage->SetDefaultPrim(root.GetPrim());
@@ -378,8 +377,7 @@ SessionPrivate::loadFromFile(const QString& filename, Session::LoadPolicy policy
         d.mask.clear();
         d.pendingNotices.entries.clear();
         if (d.stage) {
-            d.editTarget = UsdEditTarget(d.stage->GetRootLayer());
-            d.stage->SetEditTarget(d.editTarget);
+            d.stage->SetEditTarget(UsdEditTarget(d.stage->GetRootLayer()));
             d.filename = absFilename;
             loaded = true;
             preserveState = d.preserveState;
@@ -414,12 +412,13 @@ SessionPrivate::mergeLayer(const SdfLayerHandle& sourceLayer)
 
     {
         WRITE_LOCKER(locker, &d.stageLock, "stageLock");
+
         if (!d.stage)
             return false;
 
         StageBlocker blocker(d.stageWatcher.data());
 
-        const SdfLayerHandle destinationLayer = d.stage->GetRootLayer();
+        const SdfLayerHandle destinationLayer = d.stage->GetEditTarget().GetLayer();
         if (!destinationLayer)
             return false;
 
@@ -435,8 +434,11 @@ SessionPrivate::mergeLayer(const SdfLayerHandle& sourceLayer)
             const SdfPath sourcePath = sourcePrim->GetPath();
 
             QString error;
-            const SdfPath destinationPath = stage::buildChildPath(d.stage, SdfPath::AbsoluteRootPath(),
-                                                                  qt::StringToQString(sourcePath.GetName()), error);
+            const SdfPath destinationPath
+                = stage::buildChildPath(d.stage,
+                                        SdfPath::AbsoluteRootPath(),
+                                        qt::StringToQString(sourcePath.GetName()),
+                                        error);
 
             if (destinationPath.IsEmpty())
                 return false;
@@ -507,7 +509,7 @@ SessionPrivate::mergeSublayerFromFile(const QString& filename)
             return false;
 
         StageBlocker blocker(d.stageWatcher.data());
-        const SdfLayerHandle destinationLayer = d.stage->GetRootLayer();
+        const SdfLayerHandle destinationLayer = d.stage->GetEditTarget().GetLayer();
         if (!destinationLayer)
             return false;
 
@@ -550,7 +552,7 @@ SessionPrivate::mergeReferenceFromFile(const QString& filename, const SdfPath& t
 
         StageBlocker blocker(d.stageWatcher.data());
 
-        const SdfLayerHandle destinationLayer = d.stage->GetRootLayer();
+        const SdfLayerHandle destinationLayer = d.stage->GetEditTarget().GetLayer();
         if (!destinationLayer)
             return false;
 
@@ -587,7 +589,7 @@ SessionPrivate::mergePayloadFromFile(const QString& filename, const SdfPath& tar
 
         StageBlocker blocker(d.stageWatcher.data());
 
-        const SdfLayerHandle destinationLayer = d.stage->GetRootLayer();
+        const SdfLayerHandle destinationLayer = d.stage->GetEditTarget().GetLayer();
         if (!destinationLayer)
             return false;
 
@@ -1186,7 +1188,6 @@ SessionPrivate::close()
         StageBlocker blocker(d.stageWatcher.data());
         d.stageWatcher->init();
         d.stage = nullptr;
-        d.editTarget = UsdEditTarget();
         d.stageStatus = Session::StageStatus::Closed;
         d.pendingNotices.entries.clear();
         d.changeDepth = 0;
@@ -1437,7 +1438,7 @@ SessionPrivate::updateStage()
         stage = d.stage;
         loadPolicy = d.loadPolicy;
         stageStatus = d.stageStatus;
-        editLayer = d.editTarget.GetLayer();
+        editLayer = d.stage ? d.stage->GetEditTarget().GetLayer() : SdfLayerHandle();
         bbox = d.bbox;
     }
     Q_EMIT d.session->stageChanged(stage, loadPolicy, stageStatus);
@@ -1699,32 +1700,6 @@ Session::stageUnsafe() const
     return p->d.stage;
 }
 
-UsdEditTarget
-Session::editTarget() const
-{
-    READ_LOCKER(locker, stageLock(), "stageLock");
-    return p->d.editTarget;
-}
-
-UsdEditTarget
-Session::editTargetUnsafe() const
-{
-    return p->d.editTarget;
-}
-
-SdfLayerHandle
-Session::editLayer() const
-{
-    READ_LOCKER(locker, stageLock(), "stageLock");
-    return p->d.editTarget.GetLayer();
-}
-
-SdfLayerHandle
-Session::editLayerUnsafe() const
-{
-    return p->d.editTarget.GetLayer();
-}
-
 bool
 Session::setEditLayer(const SdfLayerHandle& layer)
 {
@@ -1738,13 +1713,17 @@ Session::setEditLayer(const SdfLayerHandle& layer)
         if (!target.GetLayer())
             return false;
 
-        if (p->d.editTarget.GetLayer() == target.GetLayer())
+        if (p->d.stage->GetEditTarget().GetLayer() == target.GetLayer())
             return true;
 
-        p->d.editTarget = target;
         p->d.stage->SetEditTarget(target);
         changedLayer = target.GetLayer();
     }
+
+    // Commands author against the stage's current edit target. Do not let
+    // undo/redo history cross an edit-target change.
+    if (p->d.commandStack)
+        p->d.commandStack->clear();
 
     Q_EMIT editLayerChanged(changedLayer);
     return true;

@@ -12,7 +12,6 @@
 #include <QReadWriteLock>
 #include <QVariant>
 #include <pxr/base/gf/bbox3d.h>
-#include <pxr/usd/usd/editTarget.h>
 #include <pxr/usd/usd/stage.h>
 
 PXR_NAMESPACE_USING_DIRECTIVE
@@ -190,7 +189,7 @@ public:
     bool loadFromFile(const QString& filename, LoadPolicy policy = LoadPolicy::All);
 
     /**
-     * @brief Destructively merges authored USD content into the current root layer.
+     * @brief Destructively merges authored USD content into the current edit target.
      *
      * The incoming file itself is not added as a sublayer, reference, or payload.
      * Existing destination content is preserved where it does not conflict with
@@ -206,11 +205,11 @@ public:
     bool mergeFromFile(const QString& filename);
 
     /**
-     * @brief Flattens an incoming USD stage and merges it into the current root layer.
+     * @brief Flattens an incoming USD stage and merges it into the current edit target.
      *
      * The complete composed incoming stage is flattened before merging, baking
      * incoming references, payloads, sublayers, and variants into authored
-     * content in the current root layer.
+     * content in the current edit target.
      *
      * @param filename USD file to flatten and merge.
      *
@@ -219,7 +218,7 @@ public:
     bool mergeFlattenedFromFile(const QString& filename);
 
     /**
-     * @brief Merge a USD file as a sublayer of the current root layer.
+     * @brief Merge a USD file as a sublayer of the current edit layer.
      *
      * @param filename USD file to add.
      *
@@ -385,38 +384,12 @@ public:
     UsdStageRefPtr stageUnsafe() const;
 
     /**
-     * @brief Returns the current Stageviz USD edit target.
-     *
-     * The edit target determines where normal Stageviz authoring operations
-     * are written. New and loaded stages default to their root layer.
-     */
-    UsdEditTarget editTarget() const;
-
-    /**
-     * @brief Returns the current edit target without acquiring the stage lock.
-     *
-     * The caller must already hold stageLock().
-     */
-    UsdEditTarget editTargetUnsafe() const;
-
-    /**
-     * @brief Returns the layer used by the current Stageviz edit target.
-     */
-    SdfLayerHandle editLayer() const;
-
-    /**
-     * @brief Returns the current edit layer without acquiring the stage lock.
-     *
-     * The caller must already hold stageLock().
-     */
-    SdfLayerHandle editLayerUnsafe() const;
-
-    /**
      * @brief Sets the Stageviz edit layer.
      *
      * Only layers in the stage's local layer stack are accepted. The stage
      * creates the corresponding local-layer edit target so layer offsets are
-     * preserved correctly.
+     * preserved correctly. Changing the edit layer clears command history so
+     * undo/redo never crosses edit-target boundaries.
      *
      * @param layer Local layer to use for subsequent Stageviz authoring.
      * @return True if the layer is valid and became the active edit layer.

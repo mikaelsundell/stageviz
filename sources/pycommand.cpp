@@ -313,9 +313,21 @@ PyCommand_selectPayload(PyObject*, PyObject*)
 }
 
 static PyObject*
-PyCommand_selectInvertPayload(PyObject*, PyObject*)
+PyCommand_selectLayer(PyObject*, PyObject*)
 {
-    return runCommand(selectInvertPayload());
+    return runCommand(selectLayer());
+}
+
+static PyObject*
+PyCommand_selectInvertInPayload(PyObject*, PyObject*)
+{
+    return runCommand(selectInvertInPayload());
+}
+
+static PyObject*
+PyCommand_selectInvertInLayer(PyObject*, PyObject*)
+{
+    return runCommand(selectInvertInLayer());
 }
 
 static PyObject*
@@ -815,9 +827,13 @@ static PyMethodDef PyCommand_methods[] = {
     { "select_invert", reinterpret_cast<PyCFunction>(PyCommand_selectInvert), METH_NOARGS,
       "Invert the current selection." },
     { "select_payload", reinterpret_cast<PyCFunction>(PyCommand_selectPayload), METH_NOARGS,
-      "Select the nearest owning payload for the current selection." },
-    { "select_invert_payload", reinterpret_cast<PyCFunction>(PyCommand_selectInvertPayload), METH_NOARGS,
-      "Invert the current payload selection." },
+      "Select the nearest payload containing the current selection." },
+    { "select_layer", reinterpret_cast<PyCFunction>(PyCommand_selectLayer), METH_NOARGS,
+      "Select the nearest payload authored in the active edit layer." },
+    { "select_invert_in_payload", reinterpret_cast<PyCFunction>(PyCommand_selectInvertInPayload), METH_NOARGS,
+      "Invert the selection within the nearest payload." },
+    { "select_invert_in_layer", reinterpret_cast<PyCFunction>(PyCommand_selectInvertInLayer), METH_NOARGS,
+      "Invert the payload selection within the active edit layer." },
     { "isolate_paths", reinterpret_cast<PyCFunction>(PyCommand_isolatePaths), METH_VARARGS, "Isolate paths." },
     { "show_paths", reinterpret_cast<PyCFunction>(PyCommand_showPaths), METH_VARARGS | METH_KEYWORDS, "Show paths." },
     { "hide_paths", reinterpret_cast<PyCFunction>(PyCommand_hidePaths), METH_VARARGS | METH_KEYWORDS, "Hide paths." },
@@ -866,7 +882,7 @@ static PyMethodDef PyCommand_methods[] = {
     { "identity_transforms", reinterpret_cast<PyCFunction>(PyCommand_identityTransforms), METH_VARARGS,
       "Set local transforms to identity using edit-layer-aware transform reset behavior." },
     { "reset_overrides", reinterpret_cast<PyCFunction>(PyCommand_resetOverrides), METH_VARARGS,
-      "Reset direct root-layer overrides." },
+      "Reset direct overrides in the active edit layer." },
     { "bind_material", reinterpret_cast<PyCFunction>(PyCommand_bindMaterial), METH_VARARGS,
       "Bind an existing USD material to one or more prim paths." },
     { nullptr, nullptr, 0, nullptr }

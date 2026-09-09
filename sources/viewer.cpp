@@ -125,7 +125,9 @@ public Q_SLOTS:
     void payloadUnload();
     void payloadLoadNeighbors();
     void payloadSelect();
-    void payloadSelectInvert();
+    void layerSelect();
+    void payloadInvert();
+    void layerInvert();
     void newXform();
     void deleteSelected();
     void isolate(bool checked);
@@ -320,7 +322,9 @@ ViewerPrivate::init()
     connect(d.ui->editPayloadUnload, &QAction::triggered, this, &ViewerPrivate::payloadUnload);
     connect(d.ui->editPayloadLoadNeighbors, &QAction::triggered, this, &ViewerPrivate::payloadLoadNeighbors);
     connect(d.ui->editPayloadSelect, &QAction::triggered, this, &ViewerPrivate::payloadSelect);
-    connect(d.ui->editPayloadInvertSelected, &QAction::triggered, this, &ViewerPrivate::payloadSelectInvert);
+    connect(d.ui->editLayerSelect, &QAction::triggered, this, &ViewerPrivate::layerSelect);
+    connect(d.ui->editPayloadInvert, &QAction::triggered, this, &ViewerPrivate::payloadInvert);
+    connect(d.ui->editLayerInvert, &QAction::triggered, this, &ViewerPrivate::layerInvert);
     connect(d.ui->editNewXform, &QAction::triggered, this, &ViewerPrivate::newXform);
     connect(d.ui->editDeleteSelected, &QAction::triggered, this, &ViewerPrivate::deleteSelected);
     connect(d.ui->displayIsolate, &QAction::toggled, this, &ViewerPrivate::isolate);
@@ -996,7 +1000,9 @@ ViewerPrivate::enable(bool enable)
                                 d.ui->editPayloadUnload,
                                 d.ui->editPayloadLoadNeighbors,
                                 d.ui->editPayloadSelect,
-                                d.ui->editPayloadInvertSelected,
+                                d.ui->editLayerSelect,
+                                d.ui->editPayloadInvert,
+                                d.ui->editLayerInvert,
                                 d.ui->editNewXform,
                                 d.ui->editDeleteSelected,
                                 d.ui->displayIsolate,
@@ -1686,10 +1692,24 @@ ViewerPrivate::payloadSelect()
 }
 
 void
-ViewerPrivate::payloadSelectInvert()
+ViewerPrivate::layerSelect()
 {
-    if (session()->selectionList()->paths().size())
-        session()->commandStack()->run(new Command(selectInvertPayload()));
+    if (!session()->selectionList()->paths().isEmpty())
+        session()->commandStack()->run(new Command(selectLayer()));
+}
+
+void
+ViewerPrivate::payloadInvert()
+{
+    if (!session()->selectionList()->paths().isEmpty())
+        session()->commandStack()->run(new Command(selectInvertInPayload()));
+}
+
+void
+ViewerPrivate::layerInvert()
+{
+    if (!session()->selectionList()->paths().isEmpty())
+        session()->commandStack()->run(new Command(selectInvertInLayer()));
 }
 
 void
@@ -2203,12 +2223,15 @@ ViewerPrivate::updateSelection(const QList<SdfPath>& paths)
     d.ui->editPayloadUnload->setEnabled(false);
     d.ui->editPayloadLoadNeighbors->setEnabled(false);
     d.ui->editPayloadSelect->setEnabled(false);
-    d.ui->editPayloadInvertSelected->setEnabled(false);
+    d.ui->editLayerSelect->setEnabled(false);
+    d.ui->editPayloadInvert->setEnabled(false);
+    d.ui->editLayerInvert->setEnabled(false);
 
     if (!hasSelection)
         return;
 
     QList<SdfPath> payloadPaths;
+    QList<SdfPath> layerPayloadPaths;
     payload::PayloadVariantTargets variantTargets;
     bool canLoadSelected = false;
     bool canUnloadSelected = false;
@@ -2223,7 +2246,10 @@ ViewerPrivate::updateSelection(const QList<SdfPath>& paths)
         // Only resolve payloads from the selected payload itself or from
         // descendants inside a payload. Selecting an assembly above payloads
         // must not implicitly operate on every payload below that assembly.
-        payloadPaths = stage::ancestorPayloadPaths(stage, paths);
+        payloadPaths = stage::nearestPayloadPaths(stage, paths);
+        const SdfLayerHandle editLayer = stage->GetEditTarget().GetLayer();
+        if (editLayer)
+            layerPayloadPaths = stage::nearestLayerPayloadPaths(stage, editLayer, paths);
 
         if (!payloadPaths.isEmpty()) {
             variantTargets = payload::payloadVariantTargets(stage, paths);
@@ -2243,6 +2269,7 @@ ViewerPrivate::updateSelection(const QList<SdfPath>& paths)
     }
 
     const bool hasPayloadSelection = !payloadPaths.isEmpty();
+    const bool hasLayerPayloadSelection = !layerPayloadPaths.isEmpty();
 
     d.ui->editPayloadLoad->setEnabled(canLoadSelected);
     d.ui->editPayloadUnload->setEnabled(canUnloadSelected);
@@ -2253,7 +2280,9 @@ ViewerPrivate::updateSelection(const QList<SdfPath>& paths)
     d.ui->editPayloadLoadNeighbors->setEnabled(hasPayloadSelection);
 
     d.ui->editPayloadSelect->setEnabled(hasPayloadSelection);
-    d.ui->editPayloadInvertSelected->setEnabled(hasPayloadSelection);
+    d.ui->editLayerSelect->setEnabled(hasLayerPayloadSelection);
+    d.ui->editPayloadInvert->setEnabled(hasPayloadSelection);
+    d.ui->editLayerInvert->setEnabled(hasLayerPayloadSelection);
 
     if (!hasPayloadSelection || variantTargets.isEmpty())
         return;
@@ -2828,7 +2857,9 @@ Viewer::dropEvent(QDropEvent* event)
         if (!stage)
             return {};
 
-        return stage::buildUniqueXform(stage, QFileInfo(filename).completeBaseName());
+        return stage::buildUniqueXform(
+            stage,
+            QFileInfo(filename).completeBaseName());
     };
 
     if (selected == openAction) {
@@ -2855,14 +2886,17 @@ Viewer::dropEvent(QDropEvent* event)
             event->ignore();
             return;
         }
+
         p->mergeReferenceFile(filename, targetPath);
     }
     else if (selected == mergePayloadAction) {
         const SdfPath targetPath = compositionTarget();
+
         if (targetPath.IsEmpty()) {
             event->ignore();
             return;
         }
+
         p->mergePayloadFile(filename, targetPath);
     }
 

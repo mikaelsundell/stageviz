@@ -155,11 +155,11 @@ loadPayloads(const QList<SdfPath>& paths, const QString& variantSet = QString(),
 /**
  * @brief Creates a command that loads spatially neighboring payloads.
  *
- * The input paths are resolved to their top-most payload ancestors and their
+ * The input paths are resolved to their outermost payload ancestors and their
  * world-space extentsHint bounds are combined into one source bounding box.
  *
  * The source box is expanded by a factor of 1.5 around its center while
- * preserving its proportions. Only unloaded top-level payloads with usable
+ * preserving its proportions. Only unloaded outermost payloads with usable
  * extentsHint are considered. A payload is treated as a neighbor when the
  * center of its world-space extents lies inside the expanded search box.
  *
@@ -176,18 +176,6 @@ Command
 unloadPayloads(const QList<SdfPath>& paths);
 
 /**
- * @brief Creates a command that inverts the current selection at payload-root level.
- *
- * The current selection is resolved to payload prim paths using
- * stage::selectionPayloadPaths(). The command then selects all other payload
- * prim paths found in the stage, excluding those already resolved.
- *
- * Multiple selected prims within the same payload hierarchy resolve to a single
- * payload root. The resulting selection contains top-level, deduplicated payload paths.
- *
- * Undo restores the previous selection.
- */
-/**
  * @brief Selects the nearest payload ancestor for the current selection.
  *
  * Each selected prim is walked upward until the first payload prim is found.
@@ -200,8 +188,35 @@ unloadPayloads(const QList<SdfPath>& paths);
 Command
 selectPayload();
 
+/**
+ * @brief Selects the nearest enclosing payload authored in the active edit layer.
+ *
+ * This provides the layer-level navigation counterpart to selectPayload().
+ * Nested payloads from weaker/composed layers are skipped until a payload
+ * opinion authored in the current edit layer is found.
+ */
 Command
-selectInvertPayload();
+selectLayer();
+
+/**
+ * @brief Inverts selection within the nearest enclosing payload scope.
+ *
+ * The current selection is resolved to nearest payload ancestors and the
+ * normal leaf-selection inversion is performed only within those payloads.
+ * Undo restores the previous selection.
+ */
+Command
+selectInvertInPayload();
+
+/**
+ * @brief Inverts payload selection within the current edit layer.
+ *
+ * The current selection is resolved to the nearest payload authored in the
+ * active edit layer. The result selects all other payload roots authored in
+ * that same layer. Undo restores the previous selection.
+ */
+Command
+selectInvertInLayer();
 
 /**
  * @brief Creates a command that sets the session mask to the specified paths.
