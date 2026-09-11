@@ -7,6 +7,7 @@
 #include "commandstack.h"
 #include "consoledialog.h"
 #include "githubclient.h"
+#include "materialdialog.h"
 #include "messagedialog.h"
 #include "mouseevent.h"
 #include "notice.h"
@@ -80,6 +81,7 @@ public:
     ProgressDialog* progressDialog();
     PythonDialog* pythonDialog();
     ConsoleDialog* consoleDialog();
+    MaterialDialog* materialDialog();
     RenderView* renderView();
     void showDialog(QDialog* window);
     bool eventFilter(QObject* object, QEvent* event);
@@ -214,6 +216,7 @@ public:
         QPointer<ProgressDialog> progressDialog;
         QPointer<PythonDialog> pythonDialog;
         QPointer<ConsoleDialog> consoleDialog;
+        QPointer<MaterialDialog> materialDialog;
     };
     Data d;
 };
@@ -251,6 +254,7 @@ ViewerPrivate::init()
     d.ui->backgroundColor->installEventFilter(d.backgroundColorFilter.data());
     d.viewer->installEventFilter(this);
     qApp->installEventFilter(this);
+    d.ui->fileNew->setIcon(style()->icon(Style::IconRole::New));
     d.ui->fileOpen->setIcon(style()->icon(Style::IconRole::Open));
     d.ui->fileExportAll->setIcon(style()->icon(Style::IconRole::Export));
     d.ui->fileExportImage->setIcon(style()->icon(Style::IconRole::ExportImage));
@@ -336,6 +340,15 @@ ViewerPrivate::init()
     connect(d.ui->lightUseDefaultDomeTexture, &QAction::triggered, this, &ViewerPrivate::useDefaultDomeTexture);
     connect(d.ui->displaySceneLights, &QAction::toggled, this, &ViewerPrivate::sceneLights);
     connect(d.ui->useSceneShaders, &QAction::toggled, this, &ViewerPrivate::useSceneShaders);
+    connect(d.ui->materialEditor, &QAction::triggered, this, [this]() {
+        if (!d.materialDialog)
+            return;
+
+        if (!d.materialDialog->isVisible() || d.materialDialog->isMinimized() || !d.materialDialog->isActiveWindow())
+            showDialog(d.materialDialog);
+        else
+            d.materialDialog->hide();
+    });
     connect(d.ui->materialScene, &QAction::triggered, this, &ViewerPrivate::materialScene);
     connect(d.ui->materialChrome, &QAction::triggered, this, &ViewerPrivate::materialChrome);
     connect(d.ui->materialGlossy, &QAction::triggered, this, &ViewerPrivate::materialGlossy);
@@ -384,6 +397,7 @@ ViewerPrivate::init()
     connect(d.ui->helpAgentSkill, &QAction::triggered, this, &ViewerPrivate::openAgentSkill);
     connect(d.ui->helpReportIssue, &QAction::triggered, this, &ViewerPrivate::reportIssue);
     {
+        d.ui->newStage->setDefaultAction(d.ui->fileNew);
         d.ui->open->setDefaultAction(d.ui->fileOpen);
         d.ui->exportImage->setDefaultAction(d.ui->fileExportImage);
         d.ui->exportAll->setDefaultAction(d.ui->fileExportAll);
@@ -572,6 +586,17 @@ ViewerPrivate::initDocks()
     d.pythonDialog->setWindowTitle("Python");
     d.pythonDialog->installEventFilter(this);
     d.pythonDialog->hide();
+
+    d.materialDialog = new MaterialDialog(d.viewer.data());
+    d.materialDialog->setObjectName("materialDialog");
+    d.materialDialog->setAttribute(Qt::WA_DeleteOnClose, false);
+    d.materialDialog->setWindowFlags(Qt::Tool | Qt::WindowTitleHint | Qt::WindowCloseButtonHint);
+#ifdef Q_OS_MAC
+    d.materialDialog->setAttribute(Qt::WA_MacAlwaysShowToolWindow, true);
+#endif
+    d.materialDialog->setWindowTitle("Material Editor");
+    d.materialDialog->installEventFilter(this);
+    d.materialDialog->hide();
 
     d.consoleDialog = new ConsoleDialog(d.viewer.data());
     d.consoleDialog->setWindowFlags(Qt::Tool | Qt::WindowTitleHint | Qt::WindowCloseButtonHint);
@@ -887,6 +912,12 @@ ViewerPrivate::consoleDialog()
     return d.consoleDialog.data();
 }
 
+MaterialDialog*
+ViewerPrivate::materialDialog()
+{
+    return d.materialDialog.data();
+}
+
 RenderView*
 ViewerPrivate::renderView()
 {
@@ -1013,6 +1044,7 @@ ViewerPrivate::enable(bool enable)
                                 d.ui->lightUseDefaultDomeTexture,
                                 d.ui->displaySceneLights,
                                 d.ui->useSceneShaders,
+                                d.ui->materialEditor,
                                 d.ui->materialScene,
                                 d.ui->materialChrome,
                                 d.ui->materialGlossy,
@@ -1242,16 +1274,14 @@ ViewerPrivate::revealInFolder()
 
     const QFileInfo fileInfo(filename);
     if (!fileInfo.exists()) {
-        session()->notifyStatus(Session::Notify::Status::Warning,
-                                QString("File does not exist: %1").arg(filename));
+        session()->notifyStatus(Session::Notify::Status::Warning, QString("File does not exist: %1").arg(filename));
         return;
     }
 
     const QString absoluteFilePath = fileInfo.absoluteFilePath();
 
 #ifdef Q_OS_MAC
-    if (!QProcess::startDetached(QStringLiteral("/usr/bin/open"),
-                                 { QStringLiteral("-R"), absoluteFilePath })) {
+    if (!QProcess::startDetached(QStringLiteral("/usr/bin/open"), { QStringLiteral("-R"), absoluteFilePath })) {
         session()->notifyStatus(Session::Notify::Status::Warning,
                                 QString("Could not reveal file in Finder: %1").arg(absoluteFilePath));
     }
@@ -2774,6 +2804,11 @@ Viewer::closeEvent(QCloseEvent* event)
         p->d.consoleDialog->close();
     }
 
+    if (p->d.materialDialog) {
+        p->d.materialDialog->hide();
+        p->d.materialDialog->close();
+    }
+
     event->accept();
 }
 
@@ -2857,9 +2892,7 @@ Viewer::dropEvent(QDropEvent* event)
         if (!stage)
             return {};
 
-        return stage::buildUniqueXform(
-            stage,
-            QFileInfo(filename).completeBaseName());
+        return stage::buildUniqueXform(stage, QFileInfo(filename).completeBaseName());
     };
 
     if (selected == openAction) {

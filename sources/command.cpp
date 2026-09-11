@@ -227,8 +227,8 @@ namespace {
         return result;
     }
 
-    bool restoreTransformRootState(UsdStageRefPtr stage, const SdfLayerHandle& editLayer,
-                                   const SdfPath& primPath, const TransformRootState& state, QString& error)
+    bool restoreTransformRootState(UsdStageRefPtr stage, const SdfLayerHandle& editLayer, const SdfPath& primPath,
+                                   const TransformRootState& state, QString& error)
     {
         if (!stage) {
             error = "stage missing";
@@ -1430,8 +1430,8 @@ selectInvertInLayer()
                 if (!editLayer)
                     return;
 
-                const QList<SdfPath> selectedPayloads
-                    = stage::nearestLayerPayloadPaths(stage, editLayer, previousSelection);
+                const QList<SdfPath> selectedPayloads = stage::nearestLayerPayloadPaths(stage, editLayer,
+                                                                                        previousSelection);
                 if (selectedPayloads.isEmpty())
                     return;
 
@@ -5295,20 +5295,21 @@ setTransforms(const QList<SdfPath>& paths, const QList<GfMatrix4d>& before, cons
                         success = false;
                         errors.append(editError);
                     }
-                    else for (qsizetype i = 0; i < paths.size(); ++i) {
-                        const SdfPath& path = paths.at(i);
-                        const GfMatrix4d& matrix = matrices.at(i);
+                    else
+                        for (qsizetype i = 0; i < paths.size(); ++i) {
+                            const SdfPath& path = paths.at(i);
+                            const GfMatrix4d& matrix = matrices.at(i);
 
-                        QString error;
-                        if (!stage::setWorldTransform(stage, path, matrix, error)) {
-                            success = false;
-                            errors.append(error.isEmpty() ? QString("failed: %1").arg(qt::SdfPathToQString(path))
-                                                          : error);
-                            continue;
+                            QString error;
+                            if (!stage::setWorldTransform(stage, path, matrix, error)) {
+                                success = false;
+                                errors.append(error.isEmpty() ? QString("failed: %1").arg(qt::SdfPathToQString(path))
+                                                              : error);
+                                continue;
+                            }
+
+                            path::appendUnique(changed, path);
                         }
-
-                        path::appendUnique(changed, path);
-                    }
                 }
             }
 
@@ -5352,16 +5353,17 @@ setTransforms(const QList<SdfPath>& paths, const QList<GfMatrix4d>& before, cons
                             success = false;
                             errors.append(editError);
                         }
-                        else for (qsizetype i = 0; i < paths.size(); ++i) {
-                            QString error;
-                            if (!restoreTransformRootState(stage, editLayer, paths.at(i), rootBefore.at(i), error)) {
-                                success = false;
-                                errors.append(error.isEmpty() ? QString("failed: %1").arg(pathText(paths.at(i)))
-                                                              : error);
-                                continue;
+                        else
+                            for (qsizetype i = 0; i < paths.size(); ++i) {
+                                QString error;
+                                if (!restoreTransformRootState(stage, editLayer, paths.at(i), rootBefore.at(i), error)) {
+                                    success = false;
+                                    errors.append(error.isEmpty() ? QString("failed: %1").arg(pathText(paths.at(i)))
+                                                                  : error);
+                                    continue;
+                                }
+                                path::appendUnique(changed, paths.at(i));
                             }
-                            path::appendUnique(changed, paths.at(i));
-                        }
                     }
                 }
 

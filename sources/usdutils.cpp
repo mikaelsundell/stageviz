@@ -1464,7 +1464,8 @@ namespace stage {
         return result;
     }
 
-    QList<SdfPath> filterStrongestLayerPaths(UsdStageRefPtr stage, const SdfLayerHandle& layer, const QList<SdfPath>& paths)
+    QList<SdfPath> filterStrongestLayerPaths(UsdStageRefPtr stage, const SdfLayerHandle& layer,
+                                             const QList<SdfPath>& paths)
     {
         QList<SdfPath> result;
 

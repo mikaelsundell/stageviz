@@ -72,6 +72,9 @@
           <pointsize>11</pointsize>
          </font>
         </property>
+        <property name="placeholderText">
+         <string>Filter tree...</string>
+        </property>
        </widget>
       </item>
       <item>

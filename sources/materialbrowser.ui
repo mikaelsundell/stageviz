@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>MaterialBrowser</class>
+ <widget class="QWidget" name="MaterialBrowser">
+  <property name="geometry">
+   <rect><x>0</x><y>0</y><width>620</width><height>600</height></rect>
+  </property>
+  <layout class="QVBoxLayout" name="verticalLayout">
+   <property name="spacing"><number>4</number></property>
+   <property name="leftMargin"><number>0</number></property>
+   <property name="topMargin"><number>0</number></property>
+   <property name="rightMargin"><number>0</number></property>
+   <property name="bottomMargin"><number>0</number></property>
+   <item>
+    <layout class="QHBoxLayout" name="filterLayout">
+     <property name="spacing"><number>4</number></property>
+     <item>
+      <widget class="QLineEdit" name="filter">
+       <property name="placeholderText"><string>Filter materials...</string></property>
+      </widget>
+     </item>
+     <item><widget class="QToolButton" name="clear"><property name="toolTip"><string>Clear</string></property></widget></item>
+     <item><widget class="QToolButton" name="view"><property name="toolTip"><string>View</string></property></widget></item>
+    </layout>
+   </item>
+   <item>
+    <widget class="QStackedWidget" name="stackedWidget">
+     <property name="currentIndex"><number>1</number></property>
+     <widget class="QTreeWidget" name="details">
+      <column><property name="text"><string>Name</string></property></column>
+      <column><property name="text"><string>Type</string></property></column>
+      <column><property name="text"><string>Path</string></property></column>
+     </widget>
+     <widget class="QListWidget" name="icons"/>
+     <widget class="QListWidget" name="list"/>
+    </widget>
+   </item>
+   <item>
+    <layout class="QHBoxLayout" name="footerLayout">
+     <item><widget class="QLabel" name="count"><property name="text"><string>0 materials</string></property></widget></item>
+     <item><spacer name="footerSpacer"><property name="orientation"><enum>Qt::Horizontal</enum></property><property name="sizeHint" stdset="0"><size><width>40</width><height>20</height></size></property></spacer></item>
+     <item><widget class="QSlider" name="swatchSize"><property name="minimum"><number>64</number></property><property name="maximum"><number>160</number></property><property name="value"><number>144</number></property><property name="orientation"><enum>Qt::Horizontal</enum></property><property name="maximumSize"><size><width>120</width><height>16777215</height></size></property></widget></item>
+    </layout>
+   </item>
+  </layout>
+ </widget>
+ <resources/>
+ <connections/>
+</ui>

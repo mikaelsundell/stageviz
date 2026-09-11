@@ -1456,6 +1456,11 @@ PropertyTreePrivate::addSection(const QString& name, const QString& value)
     item->setKind(PropertyItem::Group);
     item->setText(PropertyItem::Name, name);
     item->setText(PropertyItem::Value, value);
+
+    QFont font = item->font(PropertyItem::Name);
+    font.setBold(true);
+    item->setFont(PropertyItem::Name, font);
+
     setReadOnlyValueStyle(item);
     item->setExpanded(true);
     return item;
@@ -1949,6 +1954,11 @@ PropertyTreePrivate::updateStage(UsdStageRefPtr stage)
     PropertyItem* stageItem = new PropertyItem(d.tree.data());
     stageItem->setKind(PropertyItem::Group);
     stageItem->setText(PropertyItem::Name, "Stage");
+
+    QFont font = stageItem->font(PropertyItem::Name);
+    font.setBold(true);
+    stageItem->setFont(PropertyItem::Name, font);
+
     stageItem->setExpanded(true);
 
     auto addChild = [&](const QString& name, const QString& value) {

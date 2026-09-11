@@ -249,8 +249,14 @@ REM clean surrounding quotes and trailing parenthesis
 set "version=!version:"=!"
 set "version=!version:)=!"
 
-for /f "tokens=2 delims==" %%I in ('wmic os get localdatetime /value ^| find "LocalDateTime"') do set "datetime=%%I"
-set "current_date=%datetime:~2,6%"
+REM generate deployment date as YYMMDD using PowerShell
+set "current_date="
+for /f %%I in ('powershell -NoProfile -Command "Get-Date -Format yyMMdd"') do set "current_date=%%I"
+
+if not defined current_date (
+    echo Failed to determine current date
+    goto :error
+)
 
 set "zipfile=%deploy_dir%\%app_name%_%version%_%current_date%_%current_build_type%.zip"
 echo Creating zip file: %zipfile%

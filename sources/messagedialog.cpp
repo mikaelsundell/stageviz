@@ -57,13 +57,9 @@ MessageDialogPrivate::init()
     d.ui->setupUi(d.dialog.data());
 
     // connect
-    connect(d.ui->accept, &QPushButton::clicked, this, [this]() {
-        d.dialog->done(QDialog::Accepted);
-    });
+    connect(d.ui->accept, &QPushButton::clicked, this, [this]() { d.dialog->done(QDialog::Accepted); });
 
-    connect(d.ui->reject, &QPushButton::clicked, this, [this]() {
-        d.dialog->done(2);
-    });
+    connect(d.ui->reject, &QPushButton::clicked, this, [this]() { d.dialog->done(2); });
 
     // shortcuts
     auto* yesShortcut = new QShortcut(QKeySequence(Qt::Key_Y), d.dialog.data());

@@ -434,11 +434,8 @@ SessionPrivate::mergeLayer(const SdfLayerHandle& sourceLayer)
             const SdfPath sourcePath = sourcePrim->GetPath();
 
             QString error;
-            const SdfPath destinationPath
-                = stage::buildChildPath(d.stage,
-                                        SdfPath::AbsoluteRootPath(),
-                                        qt::StringToQString(sourcePath.GetName()),
-                                        error);
+            const SdfPath destinationPath = stage::buildChildPath(d.stage, SdfPath::AbsoluteRootPath(),
+                                                                  qt::StringToQString(sourcePath.GetName()), error);
 
             if (destinationPath.IsEmpty())
                 return false;

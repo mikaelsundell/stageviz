@@ -19,6 +19,11 @@ inline constexpr char script[] = "application/x-stageviz-python-script";
 inline constexpr char primPath[] = "application/x-stageviz-prim-path";
 
 /**
+ * @brief Mime type for dragged or dropped material paths.
+ */
+inline constexpr char material[] = "application/x-stageviz-material";
+
+/**
  * @brief Object property storing the current drag/drop target item pointer.
  */
 inline constexpr char dropItemPtrProperty[] = "_stageviz_drop_item_ptr";

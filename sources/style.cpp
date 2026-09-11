@@ -241,12 +241,15 @@ StylePrivate::updateTheme()
     d.icons[roleName(Style::IconRole::Geometry)] = ":/icons/resources/Geometry.png";
     d.icons[roleName(Style::IconRole::Hidden)] = ":/icons/resources/Hidden.png";
     d.icons[roleName(Style::IconRole::Left)] = ":/icons/resources/Left.png";
+    d.icons[roleName(Style::IconRole::List)] = ":/icons/resources/List.png";
     d.icons[roleName(Style::IconRole::Material)] = ":/icons/resources/Material.png";
+    d.icons[roleName(Style::IconRole::New)] = ":/icons/resources/New.png";
     d.icons[roleName(Style::IconRole::Open)] = ":/icons/resources/Open.png";
     d.icons[roleName(Style::IconRole::Over)] = ":/icons/resources/Over.png";
     d.icons[roleName(Style::IconRole::Override)] = ":/icons/resources/Override.png";
     d.icons[roleName(Style::IconRole::PartiallyChecked)] = ":/icons/resources/PartiallyChecked.png";
     d.icons[roleName(Style::IconRole::Payload)] = ":/icons/resources/Payload.png";
+    d.icons[roleName(Style::IconRole::Pick)] = ":/icons/resources/Pick.png";
     d.icons[roleName(Style::IconRole::Prim)] = ":/icons/resources/Prim.png";
     d.icons[roleName(Style::IconRole::Redo)] = ":/icons/resources/Redo.png";
     d.icons[roleName(Style::IconRole::Right)] = ":/icons/resources/Right.png";

@@ -30,9 +30,9 @@ public:
      * @brief Column indices used by the stage tree.
      */
     enum Column {
-        Name = 0,       ///< Name column.
-        Visibility = 1, ///< Visibility state column.
-        Override = 2    ///< Edit-layer override state column.
+        Name = 0,        ///< Name column.
+        Visibility = 1,  ///< Visibility state column.
+        Override = 2     ///< Edit-layer override state column.
     };
 
     /**

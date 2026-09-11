@@ -582,7 +582,7 @@ namespace stage {
  * @return Prim paths whose strongest spec belongs to the supplied layer.
  */
     QList<SdfPath> filterStrongestLayerPaths(UsdStageRefPtr stage, const SdfLayerHandle& layer,
-                                           const QList<SdfPath>& paths);
+                                             const QList<SdfPath>& paths);
 
     /**
  * @brief Finds variant sets for the specified prim paths.

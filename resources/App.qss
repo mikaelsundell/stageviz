@@ -497,6 +497,14 @@ QAbstractSpinBox
     padding-right: 20px;
 }
 
+QSpinBox:disabled,
+QDoubleSpinBox:disabled,
+QAbstractSpinBox:disabled
+{
+    color: $color.text.disabled;
+    background-color: $color.basealt;
+}
+
 QSpinBox::up-button,
 QSpinBox::down-button,
 QDoubleSpinBox::up-button,
@@ -678,6 +686,18 @@ QSlider {
     background: transparent;
 }
 
+QSlider:disabled {
+    background: transparent;
+}
+
+QSlider::groove:horizontal:disabled {
+    background: $color.basealt;
+}
+
+QSlider::handle:horizontal:disabled {
+    background: $color.borderalt;
+}
+
 QSlider::groove:horizontal {
     height: 4px;
     border-radius: 4px;
@@ -755,6 +775,18 @@ QTreeView
     border: 1px solid $color.borderalt;
     background-color: $color.item;
     selection-background-color: $color.highlight;
+}
+
+QTreeView:disabled
+{
+    color: $color.text.disabled;
+    selection-background-color: $color.item;
+}
+
+QTreeView::item:disabled
+{
+    color: $color.text.disabled;
+    selection-background-color: $color.item;
 }
 
 QTreeView QHeaderView

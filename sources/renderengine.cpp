@@ -19,8 +19,8 @@
 #include <pxr/imaging/glf/simpleLight.h>
 #include <pxr/imaging/glf/simpleMaterial.h>
 #include <pxr/imaging/hd/mergingSceneIndex.h>
-#include <pxr/imaging/hdx/renderSetupTask.h>
 #include <pxr/imaging/hd/sceneIndexPluginRegistry.h>
+#include <pxr/imaging/hdx/renderSetupTask.h>
 #include <pxr/imaging/hdx/taskControllerSceneIndex.h>
 #include <pxr/imaging/hgi/hgi.h>
 #include <pxr/usd/sdf/assetPath.h>
@@ -256,6 +256,7 @@ RenderEngine::Private::initialize()
 
     UsdImagingGLEngine::Parameters engineParams {};
     engineParams.displayUnloadedPrimsWithBounds = false;
+
     // Offscreen preview rendering shares GPU resources with the interactive
     // viewport. Keep its Hydra scene processing synchronous so background
     // work cannot overlap a context hand-off back to QOpenGLWidget.

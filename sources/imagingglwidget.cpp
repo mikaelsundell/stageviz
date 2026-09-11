@@ -6,6 +6,7 @@
 #include "application.h"
 #include "command.h"
 #include "contextmenu.h"
+#include "mime.h"
 #include "notice.h"
 #include "os.h"
 #include "qtutils.h"
@@ -30,6 +31,7 @@
 #include <QLocale>
 #include <QMimeData>
 #include <QMouseEvent>
+#include <QNativeGestureEvent>
 #include <QObject>
 #include <QOpenGLContext>
 #include <QPainter>
@@ -89,6 +91,7 @@ public:
     void mouseReleaseEvent(QMouseEvent* event);
     void sweepEvent(const QRect& rect, QMouseEvent* event);
     void wheelEvent(QWheelEvent* event);
+    bool eventFilter(QObject* object, QEvent* event) override;
     void updateStage(UsdStageRefPtr stage);
     void updateAuxiliary(UsdStageRefPtr auxiliary);
     void updateStageUp(const TfToken& upAxis);
@@ -201,6 +204,7 @@ ImagingGLWidgetPrivate::init()
     format.setColorSpace(QColorSpace::SRgb);
     d.glwidget->setFormat(format);
     d.glwidget->setAcceptDrops(true);
+    d.glwidget->installEventFilter(this);
     d.count = 0;
     d.frame = 0;
     d.defaultAmbient = 0.4f;
@@ -613,9 +617,7 @@ ImagingGLWidgetPrivate::pickNearestPath(const QPoint& pos)
 void
 ImagingGLWidgetPrivate::dragEnterEvent(QDragEnterEvent* event)
 {
-    static constexpr const char* MaterialMimeType = "application/x-stageviz-material";
-
-    if (!event || !event->mimeData() || !event->mimeData()->hasFormat(MaterialMimeType)) {
+    if (!event || !event->mimeData() || !event->mimeData()->hasFormat(mime::material)) {
         if (event)
             event->ignore();
         return;
@@ -628,9 +630,7 @@ ImagingGLWidgetPrivate::dragEnterEvent(QDragEnterEvent* event)
 void
 ImagingGLWidgetPrivate::dragMoveEvent(QDragMoveEvent* event)
 {
-    static constexpr const char* MaterialMimeType = "application/x-stageviz-material";
-
-    if (!event || !event->mimeData() || !event->mimeData()->hasFormat(MaterialMimeType)) {
+    if (!event || !event->mimeData() || !event->mimeData()->hasFormat(mime::material)) {
         if (event)
             event->ignore();
         return;
@@ -649,15 +649,13 @@ ImagingGLWidgetPrivate::dragMoveEvent(QDragMoveEvent* event)
 void
 ImagingGLWidgetPrivate::dropEvent(QDropEvent* event)
 {
-    static constexpr const char* MaterialMimeType = "application/x-stageviz-material";
-
-    if (!event || !event->mimeData() || !event->mimeData()->hasFormat(MaterialMimeType) || !d.context || !d.stage) {
+    if (!event || !event->mimeData() || !event->mimeData()->hasFormat(mime::material) || !d.context || !d.stage) {
         if (event)
             event->ignore();
         return;
     }
 
-    const QString materialText = QString::fromUtf8(event->mimeData()->data(MaterialMimeType)).trimmed();
+    const QString materialText = QString::fromUtf8(event->mimeData()->data(mime::material)).trimmed();
     const SdfPath materialPath(materialText.toStdString());
     if (materialPath.IsEmpty() || !materialPath.IsAbsolutePath() || !materialPath.IsPrimPath()) {
         event->ignore();
@@ -978,6 +976,36 @@ ImagingGLWidgetPrivate::sweepEvent(const QRect& rect, QMouseEvent* event)
     d.glwidget->update();
 }
 
+bool
+ImagingGLWidgetPrivate::eventFilter(QObject* object, QEvent* event)
+{
+#ifdef Q_OS_MAC
+    if (object == d.glwidget && event && event->type() == QEvent::NativeGesture) {
+        auto* gesture = static_cast<QNativeGestureEvent*>(event);
+
+        if (gesture->gestureType() == Qt::ZoomNativeGesture) {
+            if (!viewCamera())
+                return false;
+
+            // macOS trackpad pinch:
+            // pinch inward  -> zoom out
+            // pinch outward -> zoom in
+            const double delta = std::clamp(gesture->value(), -0.5, 0.5);
+            viewCamera()->distance(1.0 - delta);
+
+            event->accept();
+            d.glwidget->update();
+            return true;
+        }
+    }
+#else
+    Q_UNUSED(object);
+    Q_UNUSED(event);
+#endif
+
+    return QObject::eventFilter(object, event);
+}
+
 void
 ImagingGLWidgetPrivate::wheelEvent(QWheelEvent* event)
 {
@@ -1000,16 +1028,15 @@ ImagingGLWidgetPrivate::wheelEvent(QWheelEvent* event)
             const double height = std::max(1, widgetSize()[1]);
             const double factor = viewCamera()->mapToFrustumHeight(height);
 
-            viewCamera()->truck(
-                -static_cast<double>(pixelDelta.x()) * factor,
-                static_cast<double>(pixelDelta.y()) * factor);
+            viewCamera()->truck(-static_cast<double>(pixelDelta.x()) * factor,
+                                static_cast<double>(pixelDelta.y()) * factor);
         }
 
         event->accept();
         d.glwidget->update();
         return;
     }
-    
+
     QPoint zoomDelta = angleDelta;
     double scale = 1000.0;
 
