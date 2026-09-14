@@ -165,13 +165,13 @@
                  <number>4</number>
                 </property>
                 <property name="topMargin">
-                 <number>8</number>
+                 <number>4</number>
                 </property>
                 <property name="rightMargin">
                  <number>4</number>
                 </property>
                 <property name="bottomMargin">
-                 <number>8</number>
+                 <number>4</number>
                 </property>
                 <item>
                  <widget class="QToolButton" name="newStage">
@@ -233,8 +233,8 @@
                   </property>
                   <property name="maximumSize">
                    <size>
-                    <width>34</width>
-                    <height>34</height>
+                    <width>32</width>
+                    <height>32</height>
                    </size>
                   </property>
                   <property name="text">
@@ -512,13 +512,13 @@
                  <number>4</number>
                 </property>
                 <property name="topMargin">
-                 <number>8</number>
+                 <number>4</number>
                 </property>
                 <property name="rightMargin">
                  <number>4</number>
                 </property>
                 <property name="bottomMargin">
-                 <number>8</number>
+                 <number>4</number>
                 </property>
                 <item>
                  <widget class="QToolButton" name="shaded">
@@ -1400,6 +1400,9 @@
    <property name="checkable">
     <bool>true</bool>
    </property>
+   <property name="checked">
+    <bool>true</bool>
+   </property>
    <property name="text">
     <string>Use scene shaders</string>
    </property>
@@ -1435,6 +1438,9 @@
   <action name="materialEditor">
    <property name="text">
     <string>Materials</string>
+   </property>
+   <property name="shortcut">
+    <string>M</string>
    </property>
   </action>
   <action name="materialScene">

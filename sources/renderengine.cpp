@@ -526,6 +526,13 @@ RenderEngine::Private::render()
             UsdImagingGLRenderParams selectionParams = params;
             selectionParams.drawMode = UsdImagingGLDrawMode::DRAW_WIREFRAME_ON_SURFACE;
 
+            // Keep the selection overlay visually independent of the material
+            // assigned to the selected primitive. The normal scene pass has
+            // already rendered the material; this second pass is only for
+            // selection presentation.
+            selectionParams.enableSceneMaterials = false;
+            selectionParams.enableLighting = false;
+
             constexpr float selectionDepthBiasConstant = -2.0f;
             constexpr float selectionDepthBiasSlope = 0.0f;
             engine->renderBatchWithDepthBias(selectedPaths, selectionParams, selectionDepthBiasConstant,

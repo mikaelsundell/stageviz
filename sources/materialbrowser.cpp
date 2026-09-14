@@ -6,14 +6,19 @@
 #include "application.h"
 #include "materialitem.h"
 #include "mime.h"
+#include "settings.h"
 #include "style.h"
 #include <QAbstractItemView>
 #include <QAction>
 #include <QActionGroup>
 #include <QApplication>
+#include <QClipboard>
+#include <QContextMenuEvent>
 #include <QCursor>
 #include <QDrag>
 #include <QHeaderView>
+#include <QKeyEvent>
+#include <QKeySequence>
 #include <QLineEdit>
 #include <QListWidget>
 #include <QMenu>
@@ -23,6 +28,7 @@
 #include <QSet>
 #include <QSlider>
 #include <QStackedWidget>
+#include <QStyledItemDelegate>
 #include <QTimer>
 #include <QToolButton>
 #include <QTreeWidget>
@@ -32,6 +38,30 @@
 #include "ui_materialbrowser.h"
 
 namespace stageviz {
+
+class MaterialBrowserItemDelegate : public QStyledItemDelegate {
+public:
+    explicit MaterialBrowserItemDelegate(QObject* parent = nullptr)
+        : QStyledItemDelegate(parent)
+    {}
+
+protected:
+    bool eventFilter(QObject* editor, QEvent* event) override
+    {
+        if (editor && event && event->type() == QEvent::KeyPress) {
+            auto* keyEvent = static_cast<QKeyEvent*>(event);
+            if (keyEvent->key() == Qt::Key_Tab && keyEvent->modifiers() == Qt::NoModifier) {
+                QWidget* widget = qobject_cast<QWidget*>(editor);
+                Q_EMIT commitData(widget);
+                Q_EMIT closeEditor(widget, QAbstractItemDelegate::NoHint);
+                keyEvent->accept();
+                return true;
+            }
+        }
+
+        return QStyledItemDelegate::eventFilter(editor, event);
+    }
+};
 
 class MaterialBrowserPrivate : public QObject {
 public:
@@ -44,6 +74,9 @@ public:
     void syncSelection(QAbstractItemView* source);
     void updateViewSizes();
     void showViewMenu();
+    void showContextMenu(QAbstractItemView* view, const QPoint& position);
+    void beginRename(QAbstractItemView* view, int row = -1);
+    void commitRename(int row, const QString& name);
     QAbstractItemView* currentView() const;
     QImage placeholderImage() const;
 
@@ -67,6 +100,7 @@ public:
         int dragSourceRow = -1;
         bool materialDragActive = false;
         bool syncingSelection = false;
+        bool updatingRows = false;
         MaterialBrowser::ViewMode mode = MaterialBrowser::Icons;
     };
     Data d;
@@ -89,6 +123,9 @@ MaterialBrowserPrivate::init()
         browser->setDragEnabled(false);
         browser->setDragDropMode(QAbstractItemView::NoDragDrop);
         browser->setDefaultDropAction(Qt::CopyAction);
+        browser->setEditTriggers(QAbstractItemView::NoEditTriggers);
+        browser->setItemDelegate(new MaterialBrowserItemDelegate(browser));
+        browser->installEventFilter(d.browser.data());
         browser->viewport()->installEventFilter(d.browser.data());
     }
 
@@ -96,20 +133,28 @@ MaterialBrowserPrivate::init()
     d.ui->icons->setMovement(QListView::Static);
     d.ui->icons->setResizeMode(QListView::Adjust);
     d.ui->icons->setWrapping(true);
-    d.ui->icons->setSpacing(2);
+    d.ui->icons->setSpacing(8);
     d.ui->icons->setUniformItemSizes(true);
     d.ui->icons->setWordWrap(false);
+    d.ui->icons->setTextElideMode(Qt::ElideRight);
 
     d.ui->list->setViewMode(QListView::ListMode);
     d.ui->list->setUniformItemSizes(true);
-
     d.ui->details->setRootIsDecorated(false);
-    d.ui->details->setAlternatingRowColors(true);
+    d.ui->details->setItemsExpandable(false);
+    d.ui->details->setIndentation(0);
     d.ui->details->setSortingEnabled(false);
-    d.ui->details->header()->setStretchLastSection(true);
-    d.ui->details->header()->setSectionResizeMode(MaterialItem::Name, QHeaderView::ResizeToContents);
-    d.ui->details->header()->setSectionResizeMode(MaterialItem::Type, QHeaderView::ResizeToContents);
-    d.ui->details->header()->setSectionResizeMode(MaterialItem::Path, QHeaderView::Stretch);
+
+    QHeaderView* header = d.ui->details->header();
+    header->setStretchLastSection(false);
+    header->setSectionsMovable(true);
+    header->setSectionsClickable(true);
+    header->setMinimumSectionSize(40);
+    header->setSectionResizeMode(MaterialItem::Name, QHeaderView::Interactive);
+    header->setSectionResizeMode(MaterialItem::Type, QHeaderView::Interactive);
+    header->setSectionResizeMode(MaterialItem::Path, QHeaderView::Stretch);
+    header->resizeSection(MaterialItem::Name, 180);
+    header->resizeSection(MaterialItem::Type, 220);
 
     d.ui->clear->setIcon(style()->icon(Style::IconRole::Clear));
     d.ui->view->setIcon(style()->icon(Style::IconRole::List));
@@ -159,6 +204,26 @@ MaterialBrowserPrivate::init()
             [this]() { d.browser->setViewMode(MaterialBrowser::List); });
     connect(d.detailView, &QAction::triggered, d.browser.data(),
             [this]() { d.browser->setViewMode(MaterialBrowser::Details); });
+    connect(d.ui->icons, &QAbstractItemView::doubleClicked, d.browser.data(),
+            [this](const QModelIndex& index) { beginRename(d.ui->icons, index.row()); });
+    connect(d.ui->list, &QAbstractItemView::doubleClicked, d.browser.data(),
+            [this](const QModelIndex& index) { beginRename(d.ui->list, index.row()); });
+    connect(d.ui->details, &QAbstractItemView::doubleClicked, d.browser.data(),
+            [this](const QModelIndex& index) { beginRename(d.ui->details, index.row()); });
+    connect(d.ui->icons, &QListWidget::itemChanged, d.browser.data(), [this](QListWidgetItem* item) {
+        if (item)
+            commitRename(item->data(Qt::UserRole).toInt(), item->text());
+    });
+    connect(d.ui->list, &QListWidget::itemChanged, d.browser.data(), [this](QListWidgetItem* item) {
+        if (item)
+            commitRename(item->data(Qt::UserRole).toInt(), item->text());
+    });
+    connect(d.ui->details, &QTreeWidget::itemChanged, d.browser.data(), [this](QTreeWidgetItem* baseItem, int column) {
+        if (column != MaterialItem::Name)
+            return;
+        if (auto* item = dynamic_cast<MaterialItem*>(baseItem))
+            commitRename(item->sourceRow(), item->text(MaterialItem::Name));
+    });
     connect(d.ui->icons, &QListWidget::itemSelectionChanged, d.browser.data(),
             [this]() { syncSelection(d.ui->icons); });
     connect(d.ui->list, &QListWidget::itemSelectionChanged, d.browser.data(), [this]() { syncSelection(d.ui->list); });
@@ -180,6 +245,143 @@ MaterialBrowserPrivate::showViewMenu()
 }
 
 void
+MaterialBrowserPrivate::showContextMenu(QAbstractItemView* view, const QPoint& position)
+{
+    if (!view)
+        return;
+
+    const QModelIndex index = view->indexAt(position);
+    if (index.isValid() && !d.browser->selectedRows().contains(index.row()))
+        d.browser->selectRow(index.row());
+
+    const QList<MaterialEntry> materials = d.browser->selectedEntries();
+
+    QMenu menu(view);
+
+    QAction* assign = nullptr;
+    QAction* copyName = nullptr;
+    QAction* copyPath = nullptr;
+    QAction* deleteMaterial = nullptr;
+
+    if (index.isValid()) {
+        assign = menu.addAction(tr("Assign"));
+        assign->setEnabled(materials.size() == 1);
+
+        menu.addSeparator();
+
+        QMenu* copy = menu.addMenu(tr("Copy"));
+        copyName = copy->addAction(tr("Name"));
+        copyPath = copy->addAction(tr("Path"));
+
+        menu.addSeparator();
+    }
+
+    QAction* newMaterial = menu.addAction(tr("New Material"));
+
+    if (index.isValid())
+        deleteMaterial = menu.addAction(tr("Delete"));
+
+    QAction* action = menu.exec(view->viewport()->mapToGlobal(position));
+    if (!action)
+        return;
+
+    if (action == assign) {
+        Q_EMIT d.browser->assignRequested();
+    }
+    else if (action == copyName) {
+        QStringList values;
+        for (const MaterialEntry& material : materials)
+            values.append(material.name);
+        QApplication::clipboard()->setText(values.join('\n'));
+    }
+    else if (action == copyPath) {
+        QStringList values;
+        for (const MaterialEntry& material : materials)
+            values.append(QString::fromStdString(material.materialPath.GetString()));
+        QApplication::clipboard()->setText(values.join('\n'));
+    }
+    else if (action == newMaterial) {
+        Q_EMIT d.browser->newMaterialRequested();
+    }
+    else if (action == deleteMaterial) {
+        Q_EMIT d.browser->deleteRequested();
+    }
+}
+
+void
+MaterialBrowserPrivate::beginRename(QAbstractItemView* view, int row)
+{
+    if (!view)
+        return;
+
+    if (row < 0) {
+        const QModelIndex current = view->currentIndex();
+        if (current.isValid())
+            row = current.row();
+    }
+
+    if (row < 0 || row >= d.entries.size())
+        return;
+
+    if (view == d.ui->icons) {
+        if (QListWidgetItem* item = d.ui->icons->item(row)) {
+            d.ui->icons->setCurrentItem(item);
+            d.ui->icons->editItem(item);
+        }
+    }
+    else if (view == d.ui->list) {
+        if (QListWidgetItem* item = d.ui->list->item(row)) {
+            d.ui->list->setCurrentItem(item);
+            d.ui->list->editItem(item);
+        }
+    }
+    else if (view == d.ui->details) {
+        if (QTreeWidgetItem* item = d.ui->details->topLevelItem(row)) {
+            d.ui->details->setCurrentItem(item, MaterialItem::Name);
+            d.ui->details->editItem(item, MaterialItem::Name);
+        }
+    }
+}
+
+void
+MaterialBrowserPrivate::commitRename(int row, const QString& name)
+{
+    if (d.updatingRows || row < 0 || row >= d.entries.size())
+        return;
+
+    const MaterialEntry& entry = d.entries[row];
+    const QString trimmed = name.trimmed();
+
+    // QAbstractItemDelegate may emit itemChanged more than once while closing
+    // an editor. Never forward an empty transient value to the rename command.
+    if (trimmed.isEmpty() || trimmed == entry.name) {
+        d.updatingRows = true;
+        if (QListWidgetItem* item = d.ui->icons->item(row))
+            item->setText(entry.name);
+        if (QListWidgetItem* item = d.ui->list->item(row))
+            item->setText(entry.name);
+        if (QTreeWidgetItem* item = d.ui->details->topLevelItem(row))
+            item->setText(MaterialItem::Name, entry.name);
+        d.updatingRows = false;
+        return;
+    }
+
+    Q_EMIT d.browser->renameRequested(entry.materialPath, trimmed);
+
+    // Keep all views on the authored value until the stage notice refreshes
+    // the material list. This also lets the command perform sanitizing and
+    // uniquing exactly like StageTree.
+    d.updatingRows = true;
+    if (QListWidgetItem* item = d.ui->icons->item(row))
+        item->setText(entry.name);
+    if (QListWidgetItem* item = d.ui->list->item(row))
+        item->setText(entry.name);
+    if (QTreeWidgetItem* item = d.ui->details->topLevelItem(row))
+        item->setText(MaterialItem::Name, entry.name);
+    d.updatingRows = false;
+}
+
+void
 MaterialBrowserPrivate::insertRow(int row)
 {
     if (row < 0 || row >= d.entries.size())
@@ -190,14 +392,15 @@ MaterialBrowserPrivate::insertRow(int row)
     const QString type = MaterialUtils::shaderTypeLabel(entry.shaderId);
 
     auto* iconItem = new QListWidgetItem();
-    iconItem->setFlags(iconItem->flags() | Qt::ItemIsDragEnabled);
+    iconItem->setFlags(iconItem->flags() | Qt::ItemIsDragEnabled | Qt::ItemIsEditable);
     d.ui->icons->insertItem(row, iconItem);
 
     auto* listItem = new QListWidgetItem();
-    listItem->setFlags(listItem->flags() | Qt::ItemIsDragEnabled);
+    listItem->setFlags(listItem->flags() | Qt::ItemIsDragEnabled | Qt::ItemIsEditable);
     d.ui->list->insertItem(row, listItem);
 
     auto* detailItem = new MaterialItem(d.ui->details);
+    detailItem->setFlags(detailItem->flags() | Qt::ItemIsEditable);
     const int appendedRow = d.ui->details->indexOfTopLevelItem(detailItem);
     if (appendedRow != row) {
         d.ui->details->takeTopLevelItem(appendedRow);
@@ -235,12 +438,13 @@ MaterialBrowserPrivate::rebuild()
 
     for (int row = 0; row < d.entries.size(); ++row) {
         auto* iconItem = new QListWidgetItem(d.ui->icons);
-        iconItem->setFlags(iconItem->flags() | Qt::ItemIsDragEnabled);
+        iconItem->setFlags(iconItem->flags() | Qt::ItemIsDragEnabled | Qt::ItemIsEditable);
 
         auto* listItem = new QListWidgetItem(d.ui->list);
-        listItem->setFlags(listItem->flags() | Qt::ItemIsDragEnabled);
+        listItem->setFlags(listItem->flags() | Qt::ItemIsDragEnabled | Qt::ItemIsEditable);
 
-        new MaterialItem(d.ui->details);
+        auto* detailItem = new MaterialItem(d.ui->details);
+        detailItem->setFlags(detailItem->flags() | Qt::ItemIsEditable);
         updateRow(row);
     }
 
@@ -262,6 +466,9 @@ MaterialBrowserPrivate::updateRow(int row)
     if (row < 0 || row >= d.entries.size())
         return;
 
+    const bool wasUpdating = d.updatingRows;
+    d.updatingRows = true;
+
     const MaterialEntry& entry = d.entries[row];
     const QString path = QString::fromStdString(entry.materialPath.GetString());
     const QString type = MaterialUtils::shaderTypeLabel(entry.shaderId);
@@ -274,7 +481,7 @@ MaterialBrowserPrivate::updateRow(int row)
     }
 
     if (QListWidgetItem* item = d.ui->icons->item(row)) {
-        item->setText(QString());
+        item->setText(entry.name);
         item->setToolTip(QString("%1\n%2").arg(path, type));
         item->setIcon(icon);
     }
@@ -297,6 +504,8 @@ MaterialBrowserPrivate::updateRow(int row)
         item->setToolTip(MaterialItem::Name, QString("%1\n%2").arg(path, type));
         item->setIcon(MaterialItem::Name, icon);
     }
+
+    d.updatingRows = wasUpdating;
 }
 
 void
@@ -365,15 +574,18 @@ MaterialBrowserPrivate::updateViewSizes()
     const int size = std::clamp(d.ui->swatchSize->value(), d.swatchMinimum, d.swatchMaximum);
     d.swatchSize = size;
 
+    const int nameHeight = d.ui->icons->fontMetrics().height() + 4;
+    const QSize gridSize(size + d.swatchPadding * 2, size + nameHeight + d.swatchPadding * 2);
+
     d.ui->icons->setIconSize(QSize(size, size));
-    d.ui->icons->setGridSize(QSize(size + d.swatchPadding, size + d.swatchPadding));
+    d.ui->icons->setGridSize(gridSize);
 
     for (int row = 0; row < d.ui->icons->count(); ++row) {
         QListWidgetItem* item = d.ui->icons->item(row);
         if (!item)
             continue;
 
-        item->setSizeHint(QSize(size + d.swatchPadding, size + d.swatchPadding));
+        item->setSizeHint(gridSize);
 
         const QImage image = d.swatches.value(row);
         if (!image.isNull()) {
@@ -383,7 +595,17 @@ MaterialBrowserPrivate::updateViewSizes()
     }
 
     d.ui->list->setIconSize(QSize(std::min(size, 56), std::min(size, 56)));
-    d.ui->details->setIconSize(QSize(std::min(size, 40), std::min(size, 40)));
+
+    const int detailIconSize = std::min(size, 40);
+    const int detailRowHeight = detailIconSize + 12;
+
+    d.ui->details->setIconSize(QSize(detailIconSize, detailIconSize));
+
+    for (int row = 0; row < d.ui->details->topLevelItemCount(); ++row) {
+        if (QTreeWidgetItem* item = d.ui->details->topLevelItem(row))
+            item->setSizeHint(MaterialItem::Name, QSize(0, detailRowHeight));
+    }
+
     d.ui->icons->doItemsLayout();
 }
 
@@ -401,7 +623,7 @@ QImage
 MaterialBrowserPrivate::placeholderImage() const
 {
     QImage image(d.swatchMaximum, d.swatchMaximum, QImage::Format_RGBA8888);
-    image.fill(QColor::fromRgbF(0.23, 0.23, 0.24, 1.0));
+    image.fill(style()->color(Style::ColorRole::Render));
     return image;
 }
 
@@ -430,31 +652,10 @@ MaterialBrowser::setEntries(const QList<MaterialEntry>& entries)
         oldValid.insert(path, p->d.swatchValid.value(row, false));
     }
 
-    // Keep the browser presentation order stable. Existing materials retain
-    // their current row; genuinely new materials are appended at the end.
-    QList<MaterialEntry> orderedEntries;
-    orderedEntries.reserve(entries.size());
-
-    for (const MaterialEntry& oldEntry : p->d.entries) {
-        const auto it = std::find_if(entries.cbegin(), entries.cend(), [&oldEntry](const MaterialEntry& entry) {
-            return entry.materialPath == oldEntry.materialPath;
-        });
-        if (it != entries.cend())
-            orderedEntries.append(*it);
-    }
-
-    for (const MaterialEntry& entry : entries) {
-        const bool exists
-            = std::any_of(orderedEntries.cbegin(), orderedEntries.cend(),
-                          [&entry](const MaterialEntry& value) { return value.materialPath == entry.materialPath; });
-
-        if (!exists)
-            orderedEntries.append(entry);
-    }
-
-    // Detect the common structural change: existing rows are untouched and one
-    // or more newly discovered materials were appended at the end.
-    const int previousCount = p->d.entries.size();
+    // The caller supplies materials in stage order. Keep that order
+    // authoritative in every browser view.
+    QList<MaterialEntry> orderedEntries = entries;
+    const int previousCount = static_cast<int>(p->d.entries.size());
     bool appendOnly = orderedEntries.size() >= previousCount;
 
     if (appendOnly) {
@@ -559,6 +760,19 @@ MaterialBrowser::rowForMaterialPath(const SdfPath& path) const
     return -1;
 }
 
+void
+MaterialBrowser::remapEntryPath(const SdfPath& oldPath, const SdfPath& newPath)
+{
+    if (oldPath.IsEmpty() || newPath.IsEmpty() || oldPath == newPath)
+        return;
+
+    const int row = rowForMaterialPath(oldPath);
+    if (row < 0)
+        return;
+
+    p->d.entries[row].materialPath = newPath;
+}
+
 bool
 MaterialBrowser::updateEntry(int row, const MaterialEntry& entry)
 {
@@ -638,6 +852,48 @@ MaterialBrowser::selectRow(int row)
 }
 
 void
+MaterialBrowser::selectRows(const QList<int>& rows)
+{
+    QSet<int> selected;
+    for (int row : rows) {
+        if (row >= 0 && row < p->d.entries.size())
+            selected.insert(row);
+    }
+
+    p->d.syncingSelection = true;
+    p->d.ui->icons->clearSelection();
+    p->d.ui->list->clearSelection();
+    p->d.ui->details->clearSelection();
+
+    for (int row : selected) {
+        if (QListWidgetItem* item = p->d.ui->icons->item(row))
+            item->setSelected(true);
+        if (QListWidgetItem* item = p->d.ui->list->item(row))
+            item->setSelected(true);
+        if (QTreeWidgetItem* item = p->d.ui->details->topLevelItem(row))
+            item->setSelected(true);
+    }
+
+    p->d.syncingSelection = false;
+
+    if (!selected.isEmpty()) {
+        QList<int> ordered = selected.values();
+        std::sort(ordered.begin(), ordered.end());
+        const int row = ordered.first();
+
+        if (p->d.mode == Icons)
+            p->d.ui->icons->scrollToItem(p->d.ui->icons->item(row), QAbstractItemView::PositionAtCenter);
+        else if (p->d.mode == List)
+            p->d.ui->list->scrollToItem(p->d.ui->list->item(row), QAbstractItemView::PositionAtCenter);
+        else
+            p->d.ui->details->scrollToItem(p->d.ui->details->topLevelItem(row),
+                                           QAbstractItemView::PositionAtCenter);
+    }
+
+    Q_EMIT selectionChanged();
+}
+
+void
 MaterialBrowser::setViewMode(ViewMode mode)
 {
     p->d.mode = mode;
@@ -645,6 +901,7 @@ MaterialBrowser::setViewMode(ViewMode mode)
     p->d.listView->setChecked(mode == List);
     p->d.detailView->setChecked(mode == Details);
     p->d.ui->stackedWidget->setCurrentIndex(mode == Icons ? 1 : (mode == List ? 2 : 0));
+    p->d.ui->swatchSize->setEnabled(mode == Icons);
     refreshVisibleSwatches();
 }
 
@@ -740,8 +997,52 @@ MaterialBrowser::refreshVisibleSwatches()
 bool
 MaterialBrowser::eventFilter(QObject* object, QEvent* event)
 {
+    const bool browserView = object == p->d.ui->icons || object == p->d.ui->list || object == p->d.ui->details;
     const bool browserViewport = object == p->d.ui->icons->viewport() || object == p->d.ui->list->viewport()
                                  || object == p->d.ui->details->viewport();
+
+    if (browserView && event->type() == QEvent::ShortcutOverride) {
+        auto* keyEvent = static_cast<QKeyEvent*>(event);
+        if (keyEvent->matches(QKeySequence::SelectAll)) {
+            keyEvent->accept();
+            return true;
+        }
+    }
+
+    if (browserView && event->type() == QEvent::KeyPress) {
+        auto* keyEvent = static_cast<QKeyEvent*>(event);
+
+        if (keyEvent->matches(QKeySequence::SelectAll)) {
+            auto* view = static_cast<QAbstractItemView*>(object);
+            view->selectAll();
+            keyEvent->accept();
+            return true;
+        }
+
+        if (keyEvent->key() == Qt::Key_Tab && keyEvent->modifiers() == Qt::NoModifier) {
+            p->beginRename(static_cast<QAbstractItemView*>(object));
+            keyEvent->accept();
+            return true;
+        }
+    }
+
+    if (browserViewport && event->type() == QEvent::ContextMenu) {
+        auto* contextEvent = static_cast<QContextMenuEvent*>(event);
+
+        QAbstractItemView* view = nullptr;
+        if (object == p->d.ui->icons->viewport())
+            view = p->d.ui->icons;
+        else if (object == p->d.ui->list->viewport())
+            view = p->d.ui->list;
+        else if (object == p->d.ui->details->viewport())
+            view = p->d.ui->details;
+
+        if (view) {
+            p->showContextMenu(view, contextEvent->pos());
+            contextEvent->accept();
+            return true;
+        }
+    }
 
     if (browserViewport && event->type() == QEvent::MouseButtonPress) {
         const auto* mouse = static_cast<QMouseEvent*>(event);

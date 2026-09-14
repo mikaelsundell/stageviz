@@ -690,6 +690,10 @@ ViewerPrivate::initSettings()
     d.ui->displayGrid->setChecked(grid);
     session()->viewState()->setGridEnabled(grid);
 
+    const bool sceneShaders = settings()->value("sceneShaders", true).toBool();
+    d.ui->useSceneShaders->setChecked(sceneShaders);
+    session()->viewState()->setSceneMaterialsEnabled(sceneShaders);
+
     d.recentFiles = settings()->value("recentFiles", QStringList()).toStringList();
     initRecentFiles();
 
@@ -1580,6 +1584,7 @@ ViewerPrivate::saveSettings()
     settings()->setValue("performanceStats", d.ui->hudPerformanceStats->isChecked());
     settings()->setValue("cameraAxis", d.ui->hudCameraAxis->isChecked());
     settings()->setValue("grid", d.ui->displayGrid->isChecked());
+    settings()->setValue("sceneShaders", d.ui->useSceneShaders->isChecked());
     settings()->setValue("viewer/windowGeometry", d.viewer->saveGeometry());
     settings()->setValue("viewer/windowState", int(windowState));
 

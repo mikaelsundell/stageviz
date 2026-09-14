@@ -16,12 +16,15 @@
 #include "settings.h"
 #include "style.h"
 #include "tracelocks.h"
+#include "usdutils.h"
 #include <QAction>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QMenu>
+#include <QPixmap>
 #include <QPointer>
 #include <QSet>
+#include <QShowEvent>
 #include <QTimer>
 #include <QToolButton>
 #include <algorithm>
@@ -42,6 +45,7 @@ public:
     void refresh();
     void updatePrims(const NoticeBatch& batch);
     void updateSelection();
+    void updatePropertySwatch();
     void requestSwatch(int row);
     void updateSwatch(const QString& materialPath, const QImage& image);
     void previewFloat(const QString& parameter, double value);
@@ -53,6 +57,8 @@ public:
     void loadMaterialX();
     void applyToSelection();
     void selectFromStage();
+    void deleteMaterials();
+    void renameMaterial(const SdfPath& path, const QString& name);
     void setStatus(const QString& text);
 
 public:
@@ -61,6 +67,9 @@ public:
         QScopedPointer<Ui_MaterialDialog> ui;
         QPointer<MaterialRenderer> renderer;
         QTimer* refreshTimer = nullptr;
+        SdfPath pendingMaterialSelection;
+        SdfPath pendingRenameSource;
+        SdfPath pendingRenameDestination;
     };
     Data d;
 };
@@ -74,8 +83,14 @@ MaterialDialogPrivate::init()
     d.renderer = new MaterialRenderer(this);
 
     d.ui->newMaterial->setIcon(style()->icon(Style::IconRole::New));
-    d.ui->loadMaterial->setIcon(style()->icon(Style::IconRole::Open));
+    d.ui->load->setIcon(style()->icon(Style::IconRole::Open));
+    d.ui->select->setIcon(style()->icon(Style::IconRole::Select));
     d.ui->newMaterial->setText(QString());
+    d.ui->load->setText(QString());
+    d.ui->select->setText(QString());
+    d.ui->newMaterial->setToolTip(tr("New material"));
+    d.ui->load->setToolTip(tr("Load MaterialX"));
+    d.ui->select->setToolTip(tr("Select materials from selection"));
     d.ui->newMaterial->setContextMenuPolicy(Qt::CustomContextMenu);
 
     d.ui->splitter->setChildrenCollapsible(false);
@@ -83,6 +98,13 @@ MaterialDialogPrivate::init()
     d.ui->splitter->setCollapsible(1, true);
     d.ui->splitter->setStretchFactor(0, 1);
     d.ui->splitter->setStretchFactor(1, 0);
+
+    d.ui->propertySplitter->setChildrenCollapsible(false);
+    d.ui->propertySplitter->setCollapsible(0, false);
+    d.ui->propertySplitter->setCollapsible(1, false);
+    d.ui->propertySplitter->setStretchFactor(0, 0);
+    d.ui->propertySplitter->setStretchFactor(1, 1);
+    d.ui->propertySplitter->setSizes({ 180, 340 });
 
     const int total = d.ui->splitter->width() > 0 ? d.ui->splitter->width() : d.dialog->width();
     const int property = total / 2;
@@ -97,6 +119,11 @@ MaterialDialogPrivate::init()
     connect(d.refreshTimer, &QTimer::timeout, this, [this]() { refresh(); });
     connect(d.ui->materialBrowser, &MaterialBrowser::selectionChanged, this, [this]() { updateSelection(); });
     connect(d.ui->materialBrowser, &MaterialBrowser::swatchRequested, this, [this](int row) { requestSwatch(row); });
+    connect(d.ui->materialBrowser, &MaterialBrowser::assignRequested, this, [this]() { applyToSelection(); });
+    connect(d.ui->materialBrowser, &MaterialBrowser::newMaterialRequested, this, [this]() { createPreviewSurface(); });
+    connect(d.ui->materialBrowser, &MaterialBrowser::deleteRequested, this, [this]() { deleteMaterials(); });
+    connect(d.ui->materialBrowser, &MaterialBrowser::renameRequested, this,
+            [this](const SdfPath& path, const QString& name) { renameMaterial(path, name); });
     connect(d.ui->materialTree, &MaterialTree::floatPreviewChanged, this,
             [this](const QString& parameter, double value) { previewFloat(parameter, value); });
     connect(d.ui->materialTree, &MaterialTree::colorPreviewChanged, this,
@@ -116,7 +143,8 @@ MaterialDialogPrivate::init()
         if (menu.exec(d.ui->newMaterial->mapToGlobal(QPoint(0, d.ui->newMaterial->height()))) == standardSurface)
             createStandardSurface();
     });
-    connect(d.ui->loadMaterial, &QToolButton::clicked, this, [this]() { loadMaterialX(); });
+    connect(d.ui->load, &QToolButton::clicked, this, [this]() { loadMaterialX(); });
+    connect(d.ui->select, &QToolButton::clicked, this, [this]() { selectFromStage(); });
     connect(session(), &Session::stageChanged, this, [this](UsdStageRefPtr, Session::LoadPolicy, Session::StageStatus) {
         d.renderer->clear();
         d.refreshTimer->start(0);
@@ -142,7 +170,24 @@ MaterialDialogPrivate::refresh()
         READ_LOCKER(locker, session()->stageLock(), "stageLock");
         entries = MaterialUtils::sceneMaterials(session()->stageUnsafe());
     }
+
+    if (!d.pendingRenameSource.IsEmpty() && !d.pendingRenameDestination.IsEmpty()) {
+        d.ui->materialBrowser->remapEntryPath(d.pendingRenameSource, d.pendingRenameDestination);
+        d.pendingRenameSource = SdfPath();
+        d.pendingRenameDestination = SdfPath();
+    }
+
     d.ui->materialBrowser->setEntries(entries);
+
+    if (!d.pendingMaterialSelection.IsEmpty()) {
+        const int row = d.ui->materialBrowser->rowForMaterialPath(d.pendingMaterialSelection);
+        if (row >= 0) {
+            d.ui->materialBrowser->selectRow(row);
+            d.pendingMaterialSelection = SdfPath();
+            return;
+        }
+    }
+
     updateSelection();
 }
 
@@ -287,6 +332,7 @@ MaterialDialogPrivate::updateSelection()
         d.ui->name->setText("Material");
         d.ui->name->setToolTip(QString());
         d.ui->materialTree->clearMaterials();
+        updatePropertySwatch();
         return;
     }
 
@@ -301,6 +347,36 @@ MaterialDialogPrivate::updateSelection()
         d.ui->name->setText(QString("%1 materials").arg(entries.size()));
         d.ui->name->setToolTip("Editing common supported values");
     }
+
+    updatePropertySwatch();
+}
+
+void
+MaterialDialogPrivate::updatePropertySwatch()
+{
+    const QList<MaterialEntry> entries = d.ui->materialBrowser->selectedEntries();
+    if (entries.size() != 1) {
+        d.ui->swatch->clear();
+        d.ui->swatch->setToolTip(QString());
+        return;
+    }
+
+    const MaterialEntry& entry = entries.first();
+    const int row = d.ui->materialBrowser->rowForMaterialPath(entry.materialPath);
+    const QImage image = row >= 0 ? d.ui->materialBrowser->swatch(row) : QImage();
+
+    d.ui->swatch->setToolTip(QString::fromStdString(entry.materialPath.GetString()));
+
+    if (image.isNull()) {
+        d.ui->swatch->clear();
+        return;
+    }
+
+    QSize target = d.ui->swatch->contentsRect().size();
+    if (target.width() <= 0 || target.height() <= 0)
+        target = QSize(128, 128);
+
+    d.ui->swatch->setPixmap(QPixmap::fromImage(image).scaled(target, Qt::KeepAspectRatio, Qt::SmoothTransformation));
 }
 
 void
@@ -315,8 +391,10 @@ void
 MaterialDialogPrivate::updateSwatch(const QString& materialPath, const QImage& image)
 {
     const int row = d.ui->materialBrowser->rowForMaterialPath(SdfPath(materialPath.toStdString()));
-    if (row >= 0)
+    if (row >= 0) {
         d.ui->materialBrowser->setSwatch(row, image);
+        updatePropertySwatch();
+    }
 }
 
 void
@@ -534,15 +612,19 @@ void
 MaterialDialogPrivate::selectFromStage()
 {
     const QList<SdfPath> paths = session()->selectionList()->paths();
-    if (paths.isEmpty())
+    if (paths.isEmpty()) {
+        d.ui->materialBrowser->selectRows({});
         return;
+    }
 
-    SdfPath materialPath;
+    QSet<QString> materialPaths;
     {
         READ_LOCKER(locker, session()->stageLock(), "stageLock");
         const UsdStageRefPtr stage = session()->stageUnsafe();
-        if (!stage)
+        if (!stage) {
+            d.ui->materialBrowser->selectRows({});
             return;
+        }
 
         for (const SdfPath& path : paths) {
             const UsdPrim prim = stage->GetPrimAtPath(path.IsPropertyPath() ? path.GetPrimPath() : path);
@@ -550,19 +632,64 @@ MaterialDialogPrivate::selectFromStage()
                 continue;
 
             const UsdShadeMaterial bound = UsdShadeMaterialBindingAPI(prim).ComputeBoundMaterial();
-            if (bound) {
-                materialPath = bound.GetPath();
-                break;
-            }
+            if (bound)
+                materialPaths.insert(QString::fromStdString(bound.GetPath().GetString()));
         }
     }
 
-    if (materialPath.IsEmpty())
+    QList<int> rows;
+    for (const QString& path : materialPaths) {
+        const int row = d.ui->materialBrowser->rowForMaterialPath(SdfPath(path.toStdString()));
+        if (row >= 0)
+            rows.append(row);
+    }
+
+    std::sort(rows.begin(), rows.end());
+    d.ui->materialBrowser->selectRows(rows);
+}
+
+void
+MaterialDialogPrivate::deleteMaterials()
+{
+    const QList<MaterialEntry> materials = d.ui->materialBrowser->selectedEntries();
+    if (materials.isEmpty())
         return;
 
-    const int row = d.ui->materialBrowser->rowForMaterialPath(materialPath);
-    if (row >= 0)
-        d.ui->materialBrowser->selectRow(row);
+    QList<SdfPath> paths;
+    paths.reserve(materials.size());
+
+    for (const MaterialEntry& material : materials)
+        paths.append(material.materialPath);
+
+    session()->commandStack()->run(new Command(deletePaths(paths)));
+}
+
+void
+MaterialDialogPrivate::renameMaterial(const SdfPath& path, const QString& name)
+{
+    const QString trimmed = name.trimmed();
+    if (path.IsEmpty() || trimmed.isEmpty())
+        return;
+
+    SdfPath destination;
+    {
+        READ_LOCKER(locker, session()->stageLock(), "stageLock");
+        const UsdStageRefPtr usdStage = session()->stageUnsafe();
+        if (!usdStage)
+            return;
+
+        QString error;
+        destination = stage::buildRenamePath(usdStage, path, trimmed, error);
+    }
+
+    if (destination.IsEmpty() || destination == path)
+        return;
+
+    d.pendingRenameSource = path;
+    d.pendingRenameDestination = destination;
+    d.pendingMaterialSelection = destination;
+
+    session()->commandStack()->run(new Command(renamePath(path, trimmed)));
 }
 
 MaterialDialog::MaterialDialog(QWidget* parent)
@@ -571,6 +698,15 @@ MaterialDialog::MaterialDialog(QWidget* parent)
 {
     p->d.dialog = this;
     p->init();
+}
+
+void
+MaterialDialog::showEvent(QShowEvent* event)
+{
+    QDialog::showEvent(event);
+
+    if (p)
+        p->refresh();
 }
 
 MaterialDialog::~MaterialDialog() = default;

@@ -26,6 +26,9 @@ public:
     explicit MaterialDialog(QWidget* parent = nullptr);
     virtual ~MaterialDialog();
 
+protected:
+    void showEvent(QShowEvent* event) override;
+
 private:
     QScopedPointer<MaterialDialogPrivate> p;
 };

@@ -3,7 +3,9 @@
 // https://github.com/mikaelsundell/stageviz
 
 #include "materialrenderer.h"
+#include "application.h"
 #include "renderengine.h"
+#include "style.h"
 #include <QColor>
 #include <QDir>
 #include <QFile>
@@ -45,12 +47,10 @@ public:
     class MaterialRenderWorker : public QObject {
     public:
         using Result = std::function<void(const QString&, const QImage&, const QString&, quint64)>;
-
         void render(const QString& path, const MaterialParameters& parameters, quint64 serial, Result result)
         {
             QString error;
             QImage image;
-
             if (!ensureRenderer(error) || !MaterialRendererPrivate::updatePreviewMaterial(m_stage, parameters)) {
                 if (error.isEmpty())
                     error = QStringLiteral("Could not update material preview shader");
@@ -60,7 +60,6 @@ public:
                 if (image.isNull())
                     error = QStringLiteral("Material preview render failed");
             }
-
             result(path, image, error, serial);
         }
 
@@ -82,17 +81,18 @@ public:
             if (!m_stage)
                 return false;
 
-            m_renderEngine = std::make_unique<RenderEngine>(RenderEngine::ContextMode::Offscreen);
-
             RenderEngine::Settings settings;
-            settings.clearColor = QColor::fromRgbF(0.14, 0.14, 0.15, 1.0);
+            settings.clearColor = style()->color(Style::ColorRole::Render);
             settings.sceneMaterialsEnabled = true;
             settings.sceneLightsEnabled = true;
             settings.defaultCameraLightEnabled = true;
 
+            m_renderEngine = std::make_unique<RenderEngine>(RenderEngine::ContextMode::Offscreen);
             m_renderEngine->setStage(m_stage);
             m_renderEngine->setSettings(settings);
-            m_renderEngine->setSize(GfVec2i(256, 256));
+            m_renderEngine->setStage(m_stage);
+            m_renderEngine->setSettings(settings);
+            m_renderEngine->setSize(GfVec2i(512, 512));
 
             const UsdGeomCamera camera(m_stage->GetPrimAtPath(SdfPath("/Stageviz/Camera")));
             if (!camera) {
@@ -100,21 +100,17 @@ public:
                 reset();
                 return false;
             }
-
             m_renderEngine->setCamera(camera.GetCamera(UsdTimeCode::Default()));
             return true;
         }
-
         UsdStageRefPtr m_stage;
         std::unique_ptr<RenderEngine> m_renderEngine;
     };
-
     struct Pending {
         MaterialParameters parameters;
         quint64 serial = 0;
         bool forceRender = false;
     };
-
     struct Data {
         QPointer<MaterialRenderer> renderer;
         QThread* thread = nullptr;
@@ -124,7 +120,6 @@ public:
         QSet<QString> active;
         quint64 serial = 0;
     };
-
     Data d;
 };
 

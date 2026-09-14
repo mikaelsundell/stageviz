@@ -242,7 +242,15 @@ ImagingGLWidgetPrivate::initGL()
 
     d.renderEngine->setStage(d.stage);
     d.renderEngine->setAuxiliaryStage(d.auxiliary);
-    d.renderEngine->setSelected(d.selection);
+
+    QList<SdfPath> visibleSelection;
+    visibleSelection.reserve(d.selection.size());
+    for (const SdfPath& path : d.selection) {
+        if (isPathMaskedIn(path))
+            visibleSelection.append(path);
+    }
+
+    d.renderEngine->setSelected(visibleSelection);
     d.renderEngine->setSelectionBBoxes(d.selectionBBoxes);
     d.renderEngine->setSelectionColor(style()->color(Style::ColorRole::Selection));
     updateRenderEngineSettings();
@@ -415,7 +423,15 @@ ImagingGLWidgetPrivate::paintGL()
     d.renderEngine->setSize(widgetSize());
     d.renderEngine->setViewport(renderViewport());
     d.renderEngine->setMask(d.mask);
-    d.renderEngine->setSelected(d.selection);
+
+    QList<SdfPath> visibleSelection;
+    visibleSelection.reserve(d.selection.size());
+    for (const SdfPath& path : d.selection) {
+        if (isPathMaskedIn(path))
+            visibleSelection.append(path);
+    }
+
+    d.renderEngine->setSelected(visibleSelection);
     d.renderEngine->setSelectionBBoxes(d.selectionBBoxes);
     d.renderEngine->setSelectionColor(style()->color(Style::ColorRole::Selection));
     updateRenderEngineSettings();
@@ -1123,6 +1139,22 @@ ImagingGLWidgetPrivate::updateMask(const QList<SdfPath>& paths)
 {
     SignalGuard::Scope guard(this);
     d.mask = paths;
+
+    rebuildSelectionBBoxes();
+
+    if (d.renderEngine) {
+        QList<SdfPath> visibleSelection;
+        visibleSelection.reserve(d.selection.size());
+        for (const SdfPath& path : d.selection) {
+            if (isPathMaskedIn(path))
+                visibleSelection.append(path);
+        }
+
+        d.renderEngine->setMask(d.mask);
+        d.renderEngine->setSelected(visibleSelection);
+        d.renderEngine->setSelectionBBoxes(d.selectionBBoxes);
+    }
+
     d.glwidget->update();
 }
 
@@ -1254,10 +1286,21 @@ ImagingGLWidgetPrivate::updateSelection(const QList<SdfPath>& paths)
 {
     SignalGuard::Scope guard(this);
     d.selection = paths;
-    if (d.renderEngine) {
-        d.renderEngine->setSelected(paths);
-    }
+
     rebuildSelectionBBoxes();
+
+    if (d.renderEngine) {
+        QList<SdfPath> visibleSelection;
+        visibleSelection.reserve(d.selection.size());
+        for (const SdfPath& path : d.selection) {
+            if (isPathMaskedIn(path))
+                visibleSelection.append(path);
+        }
+
+        d.renderEngine->setSelected(visibleSelection);
+        d.renderEngine->setSelectionBBoxes(d.selectionBBoxes);
+    }
+
     if (viewState() && viewState()->sceneStatsEnabled()) {
         updateSceneStats();
     }
@@ -1281,7 +1324,11 @@ ImagingGLWidgetPrivate::rebuildSelectionBBoxes()
 
     d.selectionBBoxes.reserve(d.selection.size());
     for (const SdfPath& path : d.selection) {
-        UsdPrim prim = d.stage->GetPrimAtPath(path);
+        if (!isPathMaskedIn(path))
+            continue;
+
+        const SdfPath primPath = path.IsPropertyPath() ? path.GetPrimPath() : path;
+        UsdPrim prim = d.stage->GetPrimAtPath(primPath);
         if (!prim)
             continue;
 

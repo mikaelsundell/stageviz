@@ -203,6 +203,7 @@ QLineEdit
 QListWidget
 {
     color: $color.text;
+    font-size: $font.size.medium;
     background-color: $color.item;
     border: 1px solid $color.borderalt;
     outline: none;
@@ -213,6 +214,12 @@ QListWidget[ShelfList="true"]
 {
     background-color: transparent;
     border: 0px;
+}
+
+QListWidget#list::item:selected
+{
+    color: $color.text;
+    background-color: $color.highlight;
 }
 
 QListWidget::item
@@ -230,15 +237,10 @@ QListWidget::item:alternate
     background-color: $color.itemalt;
 }
 
-QListWidget::item:selected
+QListWidget#icons::item:selected
 {
     color: $color.text;
     background-color: $color.highlight;
-}
-
-QListWidget::item:hover:!selected
-{
-    background-color: $color.itemalt;
 }
 
 QMenuBar {

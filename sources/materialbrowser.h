@@ -32,11 +32,13 @@ public:
     const MaterialEntry* entry(int row) const;
 
     int rowForMaterialPath(const SdfPath& path) const;
+    void remapEntryPath(const SdfPath& oldPath, const SdfPath& newPath);
     bool updateEntry(int row, const MaterialEntry& entry);
 
     QList<int> selectedRows() const;
     QList<MaterialEntry> selectedEntries() const;
     void selectRow(int row);
+    void selectRows(const QList<int>& rows);
 
     void setViewMode(ViewMode mode);
     ViewMode viewMode() const;
@@ -63,6 +65,10 @@ public:
 Q_SIGNALS:
     void selectionChanged();
     void swatchRequested(int row);
+    void assignRequested();
+    void newMaterialRequested();
+    void deleteRequested();
+    void renameRequested(const SdfPath& path, const QString& name);
 
 protected:
     bool eventFilter(QObject* object, QEvent* event) override;

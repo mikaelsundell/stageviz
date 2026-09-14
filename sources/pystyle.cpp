@@ -170,7 +170,7 @@ addStyleEnums()
                                            { "Prim", static_cast<long>(Style::IconRole::Prim) },
                                            { "Redo", static_cast<long>(Style::IconRole::Redo) },
                                            { "Right", static_cast<long>(Style::IconRole::Right) },
-                                           { "Run", static_cast<long>(Style::IconRole::Run) },
+                                           { "Select", static_cast<long>(Style::IconRole::Select) },
                                            { "Shaded", static_cast<long>(Style::IconRole::Shaded) },
                                            { "Transform", static_cast<long>(Style::IconRole::Transform) },
                                            { "Undo", static_cast<long>(Style::IconRole::Undo) },

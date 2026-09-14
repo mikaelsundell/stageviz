@@ -217,7 +217,7 @@ StylePrivate::updateTheme()
     map(Style::ColorRole::Item, QColor::fromHsl(220, 6, 50));
     map(Style::ColorRole::ItemAlt, QColor::fromHsl(220, 6, 42));
     map(Style::ColorRole::Progress, QColor::fromHsl(216, 82, 20));
-    map(Style::ColorRole::Render, QColor::fromHsl(0, 0, 60));
+    map(Style::ColorRole::Render, QColor::fromHsl(220, 6, 42));
     map(Style::ColorRole::RenderAlt, QColor::fromHsl(210, 6, 25));
     map(Style::ColorRole::Selection, QColor::fromHsl(35, 240, 160));
     map(Style::ColorRole::SelectionAlt, QColor::fromHsl(55, 140, 120));
@@ -254,7 +254,9 @@ StylePrivate::updateTheme()
     d.icons[roleName(Style::IconRole::Redo)] = ":/icons/resources/Redo.png";
     d.icons[roleName(Style::IconRole::Right)] = ":/icons/resources/Right.png";
     d.icons[roleName(Style::IconRole::Run)] = ":/icons/resources/Run.png";
+    d.icons[roleName(Style::IconRole::Select)] = ":/icons/resources/Select.png";
     d.icons[roleName(Style::IconRole::Shaded)] = ":/icons/resources/Shaded.png";
+    d.icons[roleName(Style::IconRole::Star)] = ":/icons/resources/Star.png";
     d.icons[roleName(Style::IconRole::Transform)] = ":/icons/resources/Transform.png";
     d.icons[roleName(Style::IconRole::Undo)] = ":/icons/resources/Undo.png";
     d.icons[roleName(Style::IconRole::Up)] = ":/icons/resources/Up.png";
