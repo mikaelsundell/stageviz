@@ -277,28 +277,9 @@ ContextMenu::exec(QWidget* parent, ViewContext* context, UsdStageRefPtr usdStage
                 action->setChecked(hasCommonSelection && commonSelection == value);
 
                 QObject::connect(action, &QAction::triggered, parent,
-                                 [context, usdStage, setName, value, targetPaths]() {
-                                     QList<SdfPath> payloadTargets;
-                                     QList<SdfPath> variantTargets;
-
-                                     {
-                                         READ_LOCKER(locker, context->stageLock(), "stageLock");
-                                         if (!usdStage)
-                                             return;
-
-                                         for (const SdfPath& targetPath : targetPaths) {
-                                             if (stage::isPayload(usdStage, targetPath))
-                                                 payloadTargets.append(targetPath);
-                                             else
-                                                 variantTargets.append(targetPath);
-                                         }
-                                     }
-
-                                     if (!variantTargets.isEmpty())
-                                         context->run(new Command(setVariantSelection(variantTargets, setName, value)));
-
-                                     if (!payloadTargets.isEmpty())
-                                         context->run(new Command(loadPayloads(payloadTargets, setName, value)));
+                                 [context, setName, value, targetPaths]() {
+                                     if (!targetPaths.isEmpty())
+                                         context->run(new Command(setVariantSelection(targetPaths, setName, value)));
                                  });
             }
         }

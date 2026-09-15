@@ -30,13 +30,12 @@
 #include <pxr/usd/usd/editTarget.h>
 #include <pxr/usd/usd/notice.h>
 #include <pxr/usd/usd/payloads.h>
+#include <pxr/usd/usd/primRange.h>
 #include <pxr/usd/usd/stageLoadRules.h>
-#include <pxr/usd/usd/variantSets.h>
 #include <pxr/usd/usdGeom/bboxCache.h>
 #include <pxr/usd/usdGeom/metrics.h>
 #include <pxr/usd/usdGeom/xform.h>
 #include <pxr/usd/usdUtils/dependencies.h>
-#include <stack>
 
 namespace stageviz {
 class SessionPrivate : public QSharedData {
@@ -895,7 +894,6 @@ SessionPrivate::loadState(const QString& filename)
     const QJsonObject cameraObject = root.value("viewCamera").toObject();
     const QJsonObject viewStateObject = root.value("viewState").toObject();
     const QJsonArray payloads = root.value("loadedPayloads").toArray();
-    const QJsonArray payloadVariants = root.value("payloadVariants").toArray();
     const bool restoreLoadRules = root.contains("loadRules") || root.contains("loadedPayloads");
     UsdStageLoadRules loadRules = UsdStageLoadRules::LoadNone();
     if (root.contains("loadRules")) {
@@ -946,44 +944,6 @@ SessionPrivate::loadState(const QString& filename)
             return false;
 
         StageBlocker blocker(d.stageWatcher.data());
-        for (const QJsonValue& value : payloadVariants) {
-            if (!value.isObject())
-                continue;
-
-            const QJsonObject object = value.toObject();
-            const QString pathString = object.value("path").toString().trimmed();
-            const QString setName = object.value("set").toString().trimmed();
-            const QString variantValue = object.value("value").toString().trimmed();
-            if (pathString.isEmpty() || setName.isEmpty() || variantValue.isEmpty())
-                continue;
-
-            const SdfPath path(qt::QStringToString(pathString));
-            if (!path.IsAbsolutePath() || !path.IsPrimPath())
-                continue;
-
-            UsdPrim prim = d.stage->GetPrimAtPath(path);
-            if (!prim || !prim.IsValid())
-                continue;
-
-            const std::string setNameString = qt::QStringToString(setName);
-            const std::string variantValueString = qt::QStringToString(variantValue);
-            UsdVariantSet variantSet = prim.GetVariantSet(setNameString);
-            if (!variantSet.IsValid())
-                continue;
-
-            const std::vector<std::string> names = variantSet.GetVariantNames();
-            if (std::find(names.begin(), names.end(), variantValueString) == names.end())
-                continue;
-
-            if (variantSet.GetVariantSelection() == variantValueString)
-                continue;
-
-            if (prim.IsLoaded())
-                prim.Unload();
-
-            variantSet.SetVariantSelection(variantValueString);
-        }
-
         if (restoreLoadRules)
             d.stage->SetLoadRules(loadRules);
     }
@@ -1162,7 +1122,6 @@ SessionPrivate::saveState(const QString& filename)
 {
     QString stageFilename;
     QJsonArray payloads;
-    QJsonArray payloadVariants;
     QJsonArray loadRules;
     {
         READ_LOCKER(locker, &d.stageLock, "stageLock");
@@ -1178,45 +1137,18 @@ SessionPrivate::saveState(const QString& filename)
                                                                           : "none";
             loadRules.append(object);
         }
-        std::stack<UsdPrim> stack;
-        stack.push(d.stage->GetPseudoRoot());
-        while (!stack.empty()) {
-            const UsdPrim prim = stack.top();
-            stack.pop();
+        for (const UsdPrim& prim : d.stage->TraverseAll()) {
             if (!prim || !prim.IsValid())
                 continue;
 
-            if (stage::isPayload(d.stage, prim.GetPath()) && prim.IsLoaded()) {
+            if (stage::isPayload(d.stage, prim.GetPath()) && prim.IsLoaded())
                 payloads.append(qt::SdfPathToQString(prim.GetPath()));
-
-                const UsdVariantSets variantSets = prim.GetVariantSets();
-                const std::vector<std::string> setNames = variantSets.GetNames();
-                for (const std::string& setName : setNames) {
-                    const UsdVariantSet variantSet = prim.GetVariantSet(setName);
-                    if (!variantSet.IsValid())
-                        continue;
-
-                    const std::string selection = variantSet.GetVariantSelection();
-                    if (selection.empty())
-                        continue;
-
-                    QJsonObject object;
-                    object["path"] = qt::SdfPathToQString(prim.GetPath());
-                    object["set"] = qt::StringToQString(setName);
-                    object["value"] = qt::StringToQString(selection);
-                    payloadVariants.append(object);
-                }
-            }
-
-            for (const UsdPrim& child : prim.GetChildren())
-                stack.push(child);
         }
     }
     QJsonObject root;
-    root["version"] = 4;
+    root["version"] = 5;
     root["stageFile"] = stageFilename;
     root["loadedPayloads"] = payloads;
-    root["payloadVariants"] = payloadVariants;
     root["loadRules"] = loadRules;
     if (d.viewState && d.viewState->camera()) {
         ViewCamera* camera = d.viewState->camera();

@@ -699,7 +699,7 @@ setVariantSelection(const QList<SdfPath>& paths, const QString& setName, const Q
                                 state->captured = true;
                             }
 
-                            UsdEditContext context(stage, UsdEditTarget(editLayer));
+                            UsdEditContext context(stage, stage->GetEditTarget());
 
                             for (const variant::SelectionState::Item& item : state->items) {
                                 const UsdPrim prim = stage->GetPrimAtPath(item.path);
