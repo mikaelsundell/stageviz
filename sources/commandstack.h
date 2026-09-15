@@ -39,8 +39,12 @@ public:
      */
     virtual ~CommandStack();
 
-    /** @name Command Execution */
-    ///@{
+    /**
+     * @name Command Execution
+     */
+    /**
+     * @{
+     */
 
     /**
      * @brief Run a command and adds it to the stack.
@@ -64,12 +68,18 @@ public:
      */
     bool canClear() const;
 
-    ///@}
+    /**
+     * @}
+     */
 
 public Q_SLOTS:
 
-    /** @name History Navigation */
-    ///@{
+    /**
+     * @name History Navigation
+     */
+    /**
+     * @{
+     */
 
     /**
      * @brief Undoes the most recently executed command.
@@ -86,7 +96,9 @@ public Q_SLOTS:
      */
     void clear();
 
-    ///@}
+    /**
+     * @}
+     */
 
 Q_SIGNALS:
     /**
@@ -115,6 +127,10 @@ Q_SIGNALS:
     void canRedoChanged(bool enabled);
 
 private:
+    /**
+     * @brief Clears history if the active stage or edit target changed outside the command stack.
+     */
+    void synchronizeEditTarget();
     QScopedPointer<CommandStackPrivate> p;
 };
 

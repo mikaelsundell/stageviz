@@ -276,11 +276,10 @@ ContextMenu::exec(QWidget* parent, ViewContext* context, UsdStageRefPtr usdStage
                 action->setCheckable(true);
                 action->setChecked(hasCommonSelection && commonSelection == value);
 
-                QObject::connect(action, &QAction::triggered, parent,
-                                 [context, setName, value, targetPaths]() {
-                                     if (!targetPaths.isEmpty())
-                                         context->run(new Command(setVariantSelection(targetPaths, setName, value)));
-                                 });
+                QObject::connect(action, &QAction::triggered, parent, [context, setName, value, targetPaths]() {
+                    if (!targetPaths.isEmpty())
+                        context->run(new Command(setVariantSelection(targetPaths, setName, value)));
+                });
             }
         }
     }

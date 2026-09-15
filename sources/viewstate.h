@@ -69,18 +69,28 @@ public:
      */
     ~ViewState() override;
 
-    /** @name Camera */
-    ///@{
+    /**
+     * @name Camera
+     */
+    /**
+     * @{
+     */
 
     /**
      * @brief Returns the interactive view camera.
      */
     ViewCamera* camera() const;
 
-    ///@}
+    /**
+     * @}
+     */
 
-    /** @name Presentation */
-    ///@{
+    /**
+     * @name Presentation
+     */
+    /**
+     * @{
+     */
 
     /**
      * @brief Returns the viewport background color.
@@ -137,10 +147,16 @@ public:
      */
     void setOverrideMaterial(const pxr::SdfPath& materialPath);
 
-    ///@}
+    /**
+     * @}
+     */
 
-    /** @name Lighting and Materials */
-    ///@{
+    /**
+     * @name Lighting and Materials
+     */
+    /**
+     * @{
+     */
 
     /**
      * @brief Returns whether the default camera light is enabled.
@@ -216,10 +232,16 @@ public:
      */
     void setDoubleSidedMode(DoubleSidedMode mode);
 
-    ///@}
+    /**
+     * @}
+     */
 
-    /** @name Rendering */
-    ///@{
+    /**
+     * @name Rendering
+     */
+    /**
+     * @{
+     */
 
     /**
      * @brief Returns the viewport render mode.
@@ -251,10 +273,16 @@ public:
      */
     void setRendererAov(const QString& aov);
 
-    ///@}
+    /**
+     * @}
+     */
 
-    /** @name HUD */
-    ///@{
+    /**
+     * @name HUD
+     */
+    /**
+     * @{
+     */
 
     /**
      * @brief Returns whether scene statistics are displayed.
@@ -286,7 +314,9 @@ public:
      */
     void setCameraAxisEnabled(bool enabled);
 
-    ///@}
+    /**
+     * @}
+     */
 
 Q_SIGNALS:
     /**

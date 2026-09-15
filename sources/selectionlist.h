@@ -43,8 +43,12 @@ public:
      */
     ~SelectionList();
 
-    /** @name Selection Queries */
-    ///@{
+    /**
+     * @name Selection Queries
+     */
+    /**
+     * @{
+     */
 
     /**
      * @brief Returns whether the specified path is selected.
@@ -68,10 +72,16 @@ public:
      */
     bool isValid() const;
 
-    ///@}
+    /**
+     * @}
+     */
 
-    /** @name Selection Modification */
-    ///@{
+    /**
+     * @name Selection Modification
+     */
+    /**
+     * @{
+     */
 
     /**
      * @brief Adds prim paths to the selection.
@@ -108,7 +118,9 @@ public:
      */
     void clear();
 
-    ///@}
+    /**
+     * @}
+     */
 
 Q_SIGNALS:
 

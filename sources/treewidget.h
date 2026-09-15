@@ -34,6 +34,10 @@ public:
      */
     class ItemDelegate : public QStyledItemDelegate {
     public:
+        /**
+         * @struct Layout
+         * @brief Geometry and visibility flags shared by painting and hit testing, in view coordinates.
+         */
         struct Layout {
             QRect contentRect;
             QRect checkRect;
@@ -45,15 +49,33 @@ public:
             bool hasDecoration = false;
         };
 
+        /**
+         * @brief Creates the shared tree delegate.
+         */
         explicit ItemDelegate(QObject* parent = nullptr);
+        /**
+         * @brief Releases the delegate.
+         */
         ~ItemDelegate() override;
 
+        /**
+         * @brief Computes the content, checkbox, decoration, and text rectangles for a row.
+         */
         Layout layout(const QStyleOptionViewItem& option, const QModelIndex& index) const;
+        /**
+         * @brief Reports whether pos lies inside the row's checkbox interaction region.
+         */
         bool hitCheckbox(const QStyleOptionViewItem& option, const QModelIndex& index, const QPoint& pos) const;
 
+        /**
+         * @brief Handles checkbox editing using the shared row hit regions.
+         */
         bool editorEvent(QEvent* event, QAbstractItemModel* model, const QStyleOptionViewItem& option,
                          const QModelIndex& index) override;
 
+        /**
+         * @brief Paints the row using the shared layout and item states.
+         */
         void paint(QPainter* painter, const QStyleOptionViewItem& option, const QModelIndex& index) const override;
     };
 

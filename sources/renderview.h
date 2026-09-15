@@ -37,11 +37,17 @@ public:
      */
     RenderView(QWidget* parent = nullptr);
 
-    /** @brief Destroys the RenderView instance. */
+    /**
+     * @brief Destroys the RenderView instance.
+     */
     virtual ~RenderView();
 
-    /** @name Capture */
-    ///@{
+    /**
+     * @name Capture
+     */
+    /**
+     * @{
+     */
 
     /**
      * @brief Captures the current viewport image.
@@ -49,10 +55,16 @@ public:
      */
     QImage captureImage();
 
-    ///@}
+    /**
+     * @}
+     */
 
-    /** @name Visible Capture */
-    ///@{
+    /**
+     * @name Visible Capture
+     */
+    /**
+     * @{
+     */
 
     /**
      * @brief Captures visible prim paths from the current view.
@@ -62,7 +74,9 @@ public:
      */
     void captureVisible();
 
-    /** @brief Clears the captured visible prim paths. */
+    /**
+     * @brief Clears the captured visible prim paths.
+     */
     void clearVisibleCapture();
 
     /**
@@ -71,10 +85,16 @@ public:
      */
     QList<SdfPath> visibleCapturePaths() const;
 
-    ///@}
+    /**
+     * @}
+     */
 
-    /** @name Transform */
-    ///@{
+    /**
+     * @name Transform
+     */
+    /**
+     * @{
+     */
 
     /**
      * @brief Returns whether transform interaction is enabled.
@@ -88,10 +108,16 @@ public:
      */
     void setTransformEnabled(bool enabled);
 
-    ///@}
+    /**
+     * @}
+     */
 
-    /** @name Scene Updates */
-    ///@{
+    /**
+     * @name Scene Updates
+     */
+    /**
+     * @{
+     */
 
     /**
      * @brief Updates the Stageviz-owned auxiliary USD stage presented by the viewport.
@@ -100,7 +126,9 @@ public:
      */
     void updateAuxiliary(UsdStageRefPtr auxiliary);
 
-    ///@}
+    /**
+     * @}
+     */
 
 private:
     QScopedPointer<RenderViewPrivate> p;

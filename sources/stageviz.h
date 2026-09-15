@@ -4,4 +4,8 @@
 
 #pragma once
 
+/**
+ * @file stageviz.h
+ * @brief Exposes the build-generated Stageviz configuration to project headers.
+ */
 #include "config.h"

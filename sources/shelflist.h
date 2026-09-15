@@ -13,6 +13,7 @@ namespace stageviz {
 class ShelfListPrivate;
 
 /**
+ * @class ShelfList
  * @brief List widget used by the shelf view for drag-and-drop script items.
  *
  * ShelfList is a QListWidget specialization that tracks the pressed item index

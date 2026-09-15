@@ -189,16 +189,15 @@ namespace edit {
             return false;
         }
 
-        SdfPathSet oldLoadedPaths;
-        SdfPathSet newLoadedPaths;
-        captureLoadState({ qMakePair(from, to) }, oldLoadedPaths, newLoadedPaths);
+        const UsdStageLoadRules loadRules = remappedLoadRules({ qMakePair(from, to) });
 
         if (!editor.ApplyEdits()) {
             error = "USD namespace rename failed";
             return false;
         }
 
-        restoreLoadState(oldLoadedPaths, newLoadedPaths);
+        if (stage_->GetLoadRules() != loadRules)
+            stage_->SetLoadRules(loadRules);
         changes_.append({ Change::Type::Rename, from, to });
         return true;
     }
@@ -255,13 +254,14 @@ namespace edit {
                 return false;
         }
 
-        SdfPathSet oldLoadedPaths;
-        SdfPathSet newLoadedPaths;
-        captureLoadState(effectiveMoves, oldLoadedPaths, newLoadedPaths);
+        const UsdStageLoadRules loadRules = remappedLoadRules(effectiveMoves);
 
         // USD's namespace editor repairs relationship targets, connections and
         // composition dependencies. It currently applies one move at a time,
-        // so retain every participating layer for rollback of a partial batch.
+        // so retain local authoring layers for rollback of a partial batch.
+        // This editor only accepts local edits and registers no dependent
+        // stages. Referenced/payload asset contents are not authoring targets;
+        // copying GetUsedLayers() here needlessly duplicates loaded assemblies.
         struct Transaction {
             UsdStageRefPtr stage;
             UsdStageLoadRules loadRules;
@@ -279,10 +279,11 @@ namespace edit {
                     if (current != previous)
                         entry.first->TransferContent(entry.second);
                 }
-                stage->SetLoadRules(loadRules);
+                if (stage->GetLoadRules() != loadRules)
+                    stage->SetLoadRules(loadRules);
             }
         } transaction { stage_, stage_->GetLoadRules(), {}, false };
-        for (const auto& layer : stage_->GetUsedLayers()) {
+        for (const auto& layer : stage_->GetLayerStack()) {
             const SdfLayerRefPtr snapshot = SdfLayer::CreateAnonymous();
             if (!snapshot) {
                 error = "cannot snapshot layers before moving prims";
@@ -309,7 +310,8 @@ namespace edit {
             }
         }
 
-        restoreLoadState(oldLoadedPaths, newLoadedPaths);
+        if (stage_->GetLoadRules() != loadRules)
+            stage_->SetLoadRules(loadRules);
 
         for (const auto& move : effectiveMoves) {
             const Change::Type type = move.first.GetParentPath() == move.second.GetParentPath()
@@ -373,38 +375,37 @@ namespace edit {
         return true;
     }
 
-    void NamespaceEditor::captureLoadState(const QList<QPair<SdfPath, SdfPath>>& moves, SdfPathSet& oldLoadedPaths,
-                                           SdfPathSet& newLoadedPaths) const
+    UsdStageLoadRules NamespaceEditor::remappedLoadRules(const QList<QPair<SdfPath, SdfPath>>& moves) const
     {
-        oldLoadedPaths.clear();
-        newLoadedPaths.clear();
-
-        if (!stage_ || moves.isEmpty())
-            return;
-
-        const SdfPathSet loadSet = stage_->GetLoadSet();
-
-        for (const SdfPath& loadedPath : loadSet) {
+        const UsdStageLoadRules original = stage_->GetLoadRules();
+        UsdStageLoadRules result;
+        for (const auto& rule : original.GetRules()) {
+            SdfPath path = rule.first;
+            bool moved = false;
             for (const auto& move : moves) {
-                const SdfPath& from = move.first;
-                const SdfPath& to = move.second;
-
-                if (loadedPath == from || loadedPath.HasPrefix(from)) {
-                    const SdfPath relativePath = loadedPath.MakeRelativePath(from);
-                    oldLoadedPaths.insert(loadedPath);
-                    newLoadedPaths.insert(to.AppendPath(relativePath));
+                if (path.HasPrefix(move.first)) {
+                    path = path.ReplacePrefix(move.first, move.second);
+                    moved = true;
                     break;
                 }
             }
+            // Rules at a previously empty destination must not override the
+            // policy of the subtree being moved there.
+            if (!moved) {
+                bool replaced = false;
+                for (const auto& move : moves)
+                    replaced |= path.HasPrefix(move.second);
+                if (replaced)
+                    continue;
+            }
+            result.AddRule(path, rule.second);
         }
-    }
-
-    void NamespaceEditor::restoreLoadState(const SdfPathSet& oldLoadedPaths, const SdfPathSet& newLoadedPaths) const
-    {
-        if (!stage_ || newLoadedPaths.empty())
-            return;
-
-        stage_->LoadAndUnload(newLoadedPaths, oldLoadedPaths, UsdLoadWithoutDescendants);
+        // Preserve inherited policy too when the destination parent has a
+        // different loading policy. Explicit descendant rules remain intact.
+        for (const auto& move : moves)
+            result.AddRule(move.second, original.GetEffectiveRuleForPath(move.first));
+        result.Minimize();
+        return result;
     }
 
 }  // namespace edit

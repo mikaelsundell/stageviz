@@ -24,7 +24,13 @@ class ConsolePrivate;
 class Console : public QObject {
     Q_OBJECT
 public:
+    /**
+     * @brief Creates the console backend; call start() to begin capture.
+     */
     explicit Console(QObject* parent = nullptr);
+    /**
+     * @brief Stops capture and releases console resources.
+     */
     ~Console() override;
 
     /**

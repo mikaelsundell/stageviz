@@ -14,6 +14,13 @@
 
 namespace stageviz {
 class StylePrivate;
+/**
+ * @class Style
+ * @brief Stores application colors, icons, UI sizes, and stylesheet settings.
+ *
+ * Widgets use semantic roles to share a consistent appearance. Rendering color
+ * space is configured here alongside the UI styling resources.
+ */
 class Style : public QObject {
     Q_OBJECT
 public:
@@ -101,6 +108,9 @@ public:
     enum UIScale { Small, Medium, Large };
     Q_ENUM(UIScale)
 
+    /**
+     * @brief Selects normal or disabled presentation for UI resources.
+     */
     enum UIState { Normal, Disabled };
     Q_ENUM(UIState)
 
@@ -114,8 +124,12 @@ public:
      */
     ~Style() override;
 
-    /** @name Theme */
-    ///@{
+    /**
+     * @name Theme
+     */
+    /**
+     * @{
+     */
 
     /**
      * @brief Returns color for a role.
@@ -167,10 +181,16 @@ public:
      */
     void refresh();
 
-    ///@}
+    /**
+     * @}
+     */
 
-    /** @name Rendering */
-    ///@{
+    /**
+     * @name Rendering
+     */
+    /**
+     * @{
+     */
 
     /**
      * @brief Sets rendering color space.
@@ -182,13 +202,19 @@ public:
      */
     QColorSpace colorSpace() const;
 
-    ///@}
-
-    /** @name Stylesheet */
-    ///@{
+    /**
+     * @}
+     */
 
     /**
-     * @brief Sets rrendering stylesheet.
+     * @name Stylesheet
+     */
+    /**
+     * @{
+     */
+
+    /**
+     * @brief Sets the application stylesheet.
      */
     void setStyleSheet(const QString& styleSheet);
 
@@ -197,7 +223,9 @@ public:
      */
     QString styleSheet() const;
 
-    ///@}
+    /**
+     * @}
+     */
 
 Q_SIGNALS:
 

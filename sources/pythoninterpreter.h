@@ -45,8 +45,12 @@ public:
      */
     ~PythonInterpreter();
 
-    /** @name Script Execution */
-    ///@{
+    /**
+     * @name Script Execution
+     */
+    /**
+     * @{
+     */
 
     /**
      * @brief Executes a Python script.
@@ -59,7 +63,9 @@ public:
      */
     QString executeScript(const QString& script);
 
-    ///@}
+    /**
+     * @}
+     */
 
 private:
     QScopedPointer<PythonInterpreterPrivate> p;

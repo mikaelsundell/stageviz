@@ -23,7 +23,9 @@ typedef struct {
     PyObject_HEAD RenderEngine* renderer;
 } PyRenderEngineObject;
 
-/** CPython type for `stageviz.RenderEngine`. */
+/**
+ * @brief CPython type for `stageviz.RenderEngine`.
+ */
 extern PyTypeObject PyRenderEngineType;
 
 /**

@@ -41,8 +41,12 @@ public:
      */
     ~Application() override;
 
-    /** @name Subsystems */
-    ///@{
+    /**
+     * @name Subsystems
+     */
+    /**
+     * @{
+     */
 
     /**
      * @brief Returns the console subsystem.
@@ -74,7 +78,9 @@ public:
      */
     QWidget* window() const;
 
-    ///@}
+    /**
+     * @}
+     */
 
     /**
      * @brief Returns the global Application instance.
@@ -91,6 +97,9 @@ Q_SIGNALS:
     void fileOpenRequested(const QString& filename);
 
 protected:
+    /**
+     * @brief Handles application events, including operating-system file-open requests.
+     */
     bool event(QEvent* event) override;
 
 private:

@@ -3291,6 +3291,10 @@ def test_payload_load_rules_session_state(root):
         "saved session contains serialized loadRules",
     )
     _assert(
+        not state.get("payloadVariants"),
+        "payload loadRules session state does not store variant selections",
+    )
+    _assert(
         loaded_path in state.get("loadedPayloads", []),
         "legacy loadedPayloads records loaded payload",
     )
@@ -3412,6 +3416,7 @@ def test_payload_variant_session_state(root):
     session = stageviz.session()
     required = ("saveState", "loadState")
     missing = [name for name in required if not hasattr(session, name)]
+
     _assert(
         not missing,
         "session state API is exposed"
@@ -3420,14 +3425,23 @@ def test_payload_variant_session_state(root):
     if missing:
         return
 
+    if not _has_command("set_variant_selection"):
+        print("[skip] set_variant_selection is not bound")
+        return
+
     path = "/World/VariantPayload"
+    set_name = "model"
+
     prim = _prim(path)
     _assert(bool(prim and prim.HasPayload()), "variant payload is composed")
     if not prim:
         return
 
-    variant_set = prim.GetVariantSet("model")
-    _assert(bool(variant_set and variant_set.IsValid()), "variant payload has model variant set")
+    variant_set = prim.GetVariantSet(set_name)
+    _assert(
+        bool(variant_set and variant_set.IsValid()),
+        "variant payload has model variant set",
+    )
     if not variant_set or not variant_set.IsValid():
         return
 
@@ -3436,8 +3450,38 @@ def test_payload_variant_session_state(root):
         "A",
         "variant payload fixture starts on variant A",
     )
+    _assert(
+        not prim.IsLoaded(),
+        "variant payload starts unloaded under LoadNone",
+    )
 
-    variant_set.SetVariantSelection("B")
+    # New architecture:
+    #   - variant selections are authored as USD opinions in the active edit layer
+    #   - payload loaded/unloaded state is persisted in the .session loadRules
+    stageviz.command.set_variant_selection([path], set_name, "B")
+
+    _assert(
+        _wait_until(
+            lambda: bool(
+                _prim(path)
+                and _prim(path).GetVariantSet(set_name).GetVariantSelection() == "B"
+            ),
+            timeout=5.0,
+        ),
+        "variant B is authored before loading payload",
+    )
+
+    _assert_equal(
+        _edit_variant_selection(path, set_name),
+        "B",
+        "payload variant selection is authored in active edit layer",
+    )
+
+    _assert(
+        not _prim(path).IsLoaded(),
+        "setting payload variant does not load payload",
+    )
+
     stageviz.command.load_payloads([path])
 
     _assert(
@@ -3445,15 +3489,19 @@ def test_payload_variant_session_state(root):
             lambda: bool(
                 _prim(path)
                 and _prim(path).IsLoaded()
-                and _prim(path).GetVariantSet("model").GetVariantSelection() == "B"
+                and _prim(path).GetVariantSet(set_name).GetVariantSelection() == "B"
+                and _exists(f"{path}/Geom")
             ),
             timeout=5.0,
         ),
-        "variant B payload is loaded before saving session state",
+        "payload loads using authored variant B",
     )
 
     state_path = os.path.join(root, "variant_payload.session")
-    _assert(bool(session.saveState(state_path)), "session state saves variant payload state")
+    _assert(
+        bool(session.saveState(state_path)),
+        "session state saves variant payload load state",
+    )
 
     try:
         with open(state_path, "r", encoding="utf-8") as file:
@@ -3463,19 +3511,19 @@ def test_payload_variant_session_state(root):
         return
 
     _assert(
+        bool(state.get("loadRules")),
+        "variant payload session contains serialized loadRules",
+    )
+    _assert(
         path in state.get("loadedPayloads", []),
         "saved session records variant payload as loaded",
     )
     _assert(
-        {
-            "path": path,
-            "set": "model",
-            "value": "B",
-        }
-        in state.get("payloadVariants", []),
-        "saved session records payload variant selection",
+        not state.get("payloadVariants"),
+        "session does not duplicate USD variant selections",
     )
 
+    # Change only runtime payload state. The authored USD variant stays B.
     stageviz.command.unload_payloads([path])
 
     _assert(
@@ -3486,37 +3534,45 @@ def test_payload_variant_session_state(root):
             ),
             timeout=5.0,
         ),
-        "variant payload is fully unloaded before changing variant",
+        "variant payload is unloaded before session restore",
     )
 
-    prim = _prim(path)
-    variant_set = prim.GetVariantSet("model")
-    variant_set.SetVariantSelection("A")
+    _assert_equal(
+        _prim(path).GetVariantSet(set_name).GetVariantSelection(),
+        "B",
+        "variant B remains selected while payload is unloaded",
+    )
+    _assert_equal(
+        _edit_variant_selection(path, set_name),
+        "B",
+        "variant B remains authored in edit layer while payload is unloaded",
+    )
 
     _assert(
-        _wait_until(
-            lambda: bool(
-                _prim(path)
-                and not _prim(path).IsLoaded()
-                and _prim(path).GetVariantSet("model").GetVariantSelection() == "A"
-            ),
-            timeout=5.0,
-        ),
-        "variant payload state changed before session restore",
+        bool(session.loadState(state_path)),
+        "session state restores variant payload load state",
     )
-
-    _assert(bool(session.loadState(state_path)), "session state restores variant payload state")
 
     _assert(
         _wait_until(
             lambda: bool(
                 _prim(path)
                 and _prim(path).IsLoaded()
-                and _prim(path).GetVariantSet("model").GetVariantSelection() == "B"
             ),
             timeout=5.0,
         ),
-        "session restore selects variant B before reloading payload",
+        "session restore reloads payload from saved loadRules",
+    )
+
+    _assert_equal(
+        _prim(path).GetVariantSet(set_name).GetVariantSelection(),
+        "B",
+        "session restore leaves USD variant selection unchanged",
+    )
+    _assert_equal(
+        _edit_variant_selection(path, set_name),
+        "B",
+        "session restore leaves edit-layer variant opinion unchanged",
     )
 
 

@@ -10,7 +10,9 @@
 
 namespace stageviz::python {
 
-/** Add the stageviz.command module to the root stageviz Python module. */
+/**
+ * @brief Add the stageviz.command module to the root stageviz Python module.
+ */
 int
 addPyCommandModule(PyObject* module);
 

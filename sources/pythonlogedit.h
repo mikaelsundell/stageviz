@@ -32,6 +32,9 @@ public:
      */
     virtual ~PythonLogEdit();
 
+    /**
+     * @brief Returns the minimum size used when laying out the log view.
+     */
     QSize minimumSizeHint() const override;
 };
 

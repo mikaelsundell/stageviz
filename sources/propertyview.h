@@ -27,6 +27,9 @@ class PropertyViewPrivate;
 class PropertyView : public QWidget {
     Q_OBJECT
 public:
+    /**
+     * @brief Creates the property view and its child widgets.
+     */
     explicit PropertyView(QWidget* parent = nullptr);
     ~PropertyView() override;
 

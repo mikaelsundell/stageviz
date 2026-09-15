@@ -45,8 +45,12 @@ public:
      */
     virtual ~PropertyTree();
 
-    /** @name Context */
-    ///@{
+    /**
+     * @name Context
+     */
+    /**
+     * @{
+     */
 
     /**
      * @brief Returns the current view context.
@@ -60,20 +64,32 @@ public:
      */
     void setContext(ViewContext* context);
 
-    ///@}
+    /**
+     * @}
+     */
 
-    /** @name Tree Control */
-    ///@{
+    /**
+     * @name Tree Control
+     */
+    /**
+     * @{
+     */
 
     /**
      * @brief Clears the current property view.
      */
     void close();
 
-    ///@}
+    /**
+     * @}
+     */
 
-    /** @name Stage Updates */
-    ///@{
+    /**
+     * @name Stage Updates
+     */
+    /**
+     * @{
+     */
 
     /**
      * @brief Updates the property tree for the given USD stage.
@@ -83,13 +99,13 @@ public:
     void updateStage(UsdStageRefPtr stage);
 
     /**
-    * @brief Updates prims using a USD notice batch.
-    *
-    * Entries follow UsdNotice::ObjectsChanged semantics:
-    * info-only changes, asset resyncs, and structural resyncs.
-    *
-    * @param batch Batched USD change entries.
-    */
+     * @brief Updates prims using a USD notice batch.
+     *
+     * Entries follow UsdNotice::ObjectsChanged semantics:
+     * info-only changes, asset resyncs, and structural resyncs.
+     *
+     * @param batch Batched USD change entries.
+     */
     void updatePrims(const NoticeBatch& batch);
 
     /**
@@ -99,7 +115,9 @@ public:
      */
     void updateSelection(const QList<SdfPath>& paths);
 
-    ///@}
+    /**
+     * @}
+     */
 
 protected:
     /**

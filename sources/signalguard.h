@@ -38,8 +38,12 @@ public:
      */
     ~SignalGuard();
 
-    /** @name Guard Management */
-    ///@{
+    /**
+     * @name Guard Management
+     */
+    /**
+     * @{
+     */
 
     /**
      * @brief Attaches a QObject to the guard.
@@ -72,7 +76,9 @@ public:
      */
     bool isGuarding() const;
 
-    ///@}
+    /**
+     * @}
+     */
 
     /**
      * @class Scope

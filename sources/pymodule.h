@@ -10,12 +10,16 @@
 
 namespace stageviz::python {
 
-/** Initialize the stageviz Python module. */
+/**
+ * @brief Initialize the stageviz Python module.
+ */
 PyMODINIT_FUNC
 PyInit_stageviz(void);
 
 }  // namespace stageviz::python
 
-/** Python entry point used when registering the embedded stageviz module. */
+/**
+ * @brief Python entry point used when registering the embedded stageviz module.
+ */
 extern "C" PyObject*
 PyInit_stageviz_wrapper();

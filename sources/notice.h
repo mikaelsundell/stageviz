@@ -30,22 +30,34 @@ namespace stageviz {
  * - changed fields (for info-only cases)
  */
 struct NoticeEntry {
-    /* Path of the affected object (prim or property) */
+    /**
+     * @brief Path of the affected object (prim or property).
+     */
     SdfPath path;
 
-    /* Associated path for namespace edits (rename/reparent pairs) */
+    /**
+     * @brief Associated path for namespace edits (rename/reparent pairs).
+     */
     SdfPath associatedPath;
 
-    /* Classification for prim resyncs (from USD) */
+    /**
+     * @brief Classification for prim resyncs (from USD).
+     */
     UsdNotice::ObjectsChanged::PrimResyncType primResyncType = UsdNotice::ObjectsChanged::PrimResyncType::Invalid;
 
-    /* True if this path is in GetChangedInfoOnlyPaths() */
+    /**
+     * @brief True if this path is in GetChangedInfoOnlyPaths().
+     */
     bool changedInfoOnly = false;
 
-    /* True if this path is in GetResolvedAssetPathsResyncedPaths() */
+    /**
+     * @brief True if this path is in GetResolvedAssetPathsResyncedPaths().
+     */
     bool resolvedAssetPathsResynced = false;
 
-    /* Changed fields for this object (may be empty) */
+    /**
+     * @brief Changed fields for this object (may be empty).
+     */
     TfTokenVector changedFields;
 };
 
@@ -53,11 +65,14 @@ struct NoticeEntry {
  * @struct NoticeBatch
  * @brief Batched USD object changes.
  *
- * This represents a coalesced set of UsdNotice::ObjectsChanged data.
+ * This represents a batch of UsdNotice::ObjectsChanged data.
  * Used by Session to deliver updates to widgets in both immediate
  * and deferred modes.
  */
 struct NoticeBatch {
+    /**
+     * @brief Changes accumulated in arrival order; paths may occur more than once.
+     */
     QList<NoticeEntry> entries;
 };
 

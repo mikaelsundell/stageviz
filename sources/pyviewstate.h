@@ -21,14 +21,20 @@ typedef struct PyViewStateObject {
     PyObject_HEAD ViewState* viewState;
 } PyViewStateObject;
 
-/** CPython type for `stageviz.ViewState`. */
+/**
+ * @brief CPython type for `stageviz.ViewState`.
+ */
 extern PyTypeObject PyViewStateType;
 
-/** Initialize the ViewState Python type. */
+/**
+ * @brief Initialize the ViewState Python type.
+ */
 bool
 initPyViewStateType();
 
-/** Add the ViewState type to a Python module. */
+/**
+ * @brief Add the ViewState type to a Python module.
+ */
 int
 addPyViewStateType(PyObject* module);
 

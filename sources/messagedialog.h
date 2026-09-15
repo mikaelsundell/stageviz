@@ -12,6 +12,7 @@ namespace stageviz {
 class MessageDialogPrivate;
 
 /**
+ * @class MessageDialog
  * @brief Application-styled modal message dialog.
  *
  * MessageDialog provides convenience entry points for common dialog types while
@@ -67,7 +68,13 @@ public:
                        const QString& url = QString());
 
 private:
+    /**
+     * @brief Constructs the dialog used by the static message helpers.
+     */
     MessageDialog(QWidget* parent = nullptr);
+    /**
+     * @brief Releases the dialog and its private state.
+     */
     ~MessageDialog();
 
 private:

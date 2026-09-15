@@ -43,41 +43,74 @@ public:
      * @brief Stage loading policy.
      */
     enum LoadPolicy {
-        All,  ///< Fully load the stage, including payloads.
-        None  ///< Open the stage without loading payloads.
+        /**
+         * @brief Fully load the stage, including payloads.
+         */
+        All,
+        /**
+         * @brief Open the stage without loading payloads.
+         */
+        None
     };
 
     /**
      * @brief Progress block state.
      */
     enum ProgressMode {
-        Idle,    ///< No progress operation running.
-        Running  ///< Progress operation active.
+        /**
+         * @brief No progress operation running.
+         */
+        Idle,
+        /**
+         * @brief Progress operation active.
+         */
+        Running
     };
 
     /**
      * @brief Controls how prim changes are propagated.
      */
     enum PrimsUpdate {
-        Immediate,  ///< Emit prim changes immediately.
-        Deferred    ///< Buffer and emit changes on flush.
+        /**
+         * @brief Emit prim changes immediately.
+         */
+        Immediate,
+        /**
+         * @brief Buffer and emit changes on flush.
+         */
+        Deferred
     };
 
     /**
      * @brief Stage loading status.
      */
     enum StageStatus {
-        Loaded,  ///< Stage successfully loaded.
-        Failed,  ///< Stage loading failed.
-        Closed   ///< Stage has been closed.
+        /**
+         * @brief Stage successfully loaded.
+         */
+        Loaded,
+        /**
+         * @brief Stage loading failed.
+         */
+        Failed,
+        /**
+         * @brief Stage has been closed.
+         */
+        Closed
     };
 
     /**
      * @brief Stage up axis.
      */
     enum StageUp {
-        Y,  ///< Y-up.
-        Z,  ///< Z-up.
+        /**
+         * @brief Y-up.
+         */
+        Y,
+        /**
+         * @brief Z-up.
+         */
+        Z,
     };
 
 public:
@@ -91,10 +124,22 @@ public:
     struct Notify {
         enum class Status { Success, Progress, Warning, Error };
 
-        QString message;                  ///< Notification message.
-        QList<SdfPath> paths;             ///< Associated prim paths.
-        QVariantMap details;              ///< Additional metadata.
-        Status status = Status::Success;  ///< Notification severity.
+        /**
+         * @brief Notification message.
+         */
+        QString message;
+        /**
+         * @brief Associated prim paths.
+         */
+        QList<SdfPath> paths;
+        /**
+         * @brief Additional metadata.
+         */
+        QVariantMap details;
+        /**
+         * @brief Notification severity.
+         */
+        Status status = Status::Success;
 
         Notify() = default;
 
@@ -130,8 +175,12 @@ public:
      */
     ~Session();
 
-    /** @name Progress Reporting */
-    ///@{
+    /**
+     * @name Progress Reporting
+     */
+    /**
+     * @{
+     */
 
     /**
      * @brief Begins a progress block.
@@ -164,10 +213,16 @@ public:
      */
     bool isProgressBlockCancelled() const;
 
-    ///@}
+    /**
+     * @}
+     */
 
-    /** @name Stage Operations */
-    ///@{
+    /**
+     * @name Stage Operations
+     */
+    /**
+     * @{
+     */
 
     /**
      * @brief Creates a new empty USD stage in memory.
@@ -253,15 +308,22 @@ public:
     /**
      * @brief Saves the root layer and modified file-backed local sublayers.
      *
-     * Each file is replaced atomically. A failed layer save returns false so
-     * callers retain their unsaved-change state; earlier successful layer
-     * writes are not rolled back. Save As anchors root-layer asset paths to
-     * their original location. Anonymous sublayers require a filename first.
+     * Backing layers use USD's save path and retain a recovery export on write
+     * failure. Earlier successful layer writes are not rolled back. Save As
+     * anchors root-layer asset paths to their original location. Anonymous
+     * sublayers require a filename first.
+     *
+     * @param filename Destination root-layer filename.
+     * @return True if all required layer and optional session-state writes succeed.
      */
     bool saveToFile(const QString& filename);
 
     /**
-     * @brief Copies the current stage to file.
+     * @brief Exports a root-layer copy without changing the current filename.
+     *
+     * Asset paths retain their original anchors. Dirty sublayers are not saved.
+     * @param filename Destination for the root-layer copy.
+     * @return True if the copy and optional session-state write succeed.
      */
     bool copyToFile(const QString& filename);
 
@@ -271,7 +333,13 @@ public:
     bool flattenToFile(const QString& filename);
 
     /**
-     * @brief Flattens specific prim paths to a file.
+     * @brief Exports the composed content of selected prim hierarchies.
+     *
+     * The export preserves session-layer opinions, muted layers, resolver
+     * context, and payload load rules. Population expands to include dependencies.
+     * @param paths Root prim paths to include; an empty selection fails.
+     * @param filename Destination flattened USD file.
+     * @return True if export succeeds.
      */
     bool flattenPathsToFile(const QList<SdfPath>& paths, const QString& filename);
 
@@ -305,10 +373,16 @@ public:
      */
     bool isLoaded() const;
 
-    ///@}
+    /**
+     * @}
+     */
 
-    /** @name Auxiliary Stage */
-    ///@{
+    /**
+     * @name Auxiliary Stage
+     */
+    /**
+     * @{
+     */
 
     /**
      * @brief Returns the Stageviz-owned auxiliary USD stage.
@@ -336,10 +410,16 @@ public:
      */
     QReadWriteLock* auxiliaryLock() const;
 
-    ///@}
+    /**
+     * @}
+     */
 
-    /** @name Scene State */
-    ///@{
+    /**
+     * @name Scene State
+     */
+    /**
+     * @{
+     */
 
     /**
      * @brief Returns the current mask.
@@ -406,7 +486,9 @@ public:
      */
     QReadWriteLock* stageLock() const;
 
-    ///@}
+    /**
+     * @}
+     */
 
     /**
      * @brief Returns the current prim update behavior.
@@ -426,18 +508,28 @@ public:
      */
     void flushPrimsUpdates();
 
-    /** @name Command State */
-    ///@{
+    /**
+     * @name Command State
+     */
+    /**
+     * @{
+     */
 
     /**
      * @brief Returns the command stack used for undo and redo.
      */
     CommandStack* commandStack() const;
 
-    ///@}
+    /**
+     * @}
+     */
 
-    /** @name View State */
-    ///@{
+    /**
+     * @name View State
+     */
+    /**
+     * @{
+     */
 
     /**
      * @brief Returns the shared selection state.
@@ -449,7 +541,9 @@ public:
      */
     ViewState* viewState() const;
 
-    ///@}
+    /**
+     * @}
+     */
 
     /**
      * @brief Requests a redraw of views connected to this session.

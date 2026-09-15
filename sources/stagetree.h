@@ -42,8 +42,12 @@ public:
      */
     virtual ~StageTree();
 
-    /** @name Context */
-    ///@{
+    /**
+     * @name Context
+     */
+    /**
+     * @{
+     */
 
     /**
      * @brief Returns the current view context.
@@ -57,10 +61,16 @@ public:
      */
     void setContext(ViewContext* context);
 
-    ///@}
+    /**
+     * @}
+     */
 
-    /** @name Tree Control */
-    ///@{
+    /**
+     * @name Tree Control
+     */
+    /**
+     * @{
+     */
 
     /**
      * @brief Clears and closes the current stage view.
@@ -78,26 +88,32 @@ public:
     void expand();
 
     /**
-      * @brief Expands the tree to the specified depth.
-      *
-      * If a path is provided, the expansion is applied relative to that node.
-      */
+     * @brief Expands the tree to the specified depth.
+     *
+     * If a path is provided, the expansion is applied relative to that node.
+     */
     void expandDepth(int depth, const SdfPath& path = SdfPath());
 
     /**
-      * @brief Returns the depth of a node in the tree.
-      */
+     * @brief Returns the depth of a node in the tree.
+     */
     int depth(const SdfPath& path = SdfPath()) const;
 
     /**
-      * @brief Returns the maximum depth reachable from a node.
-      */
+     * @brief Returns the maximum depth reachable from a node.
+     */
     int maxDepth(const SdfPath& path = SdfPath()) const;
 
-    ///@}
+    /**
+     * @}
+     */
 
-    /** @name Filtering */
-    ///@{
+    /**
+     * @name Filtering
+     */
+    /**
+     * @{
+     */
 
     /**
      * @brief Returns the active prim name filter.
@@ -111,10 +127,16 @@ public:
      */
     void setFilter(const QString& filter);
 
-    ///@}
+    /**
+     * @}
+     */
 
-    /** @name Payload Control */
-    ///@{
+    /**
+     * @name Payload Control
+     */
+    /**
+     * @{
+     */
 
     /**
      * @brief Returns whether payload loading is enabled.
@@ -128,10 +150,16 @@ public:
      */
     void setPayloadEnabled(bool enabled);
 
-    ///@}
+    /**
+     * @}
+     */
 
-    /** @name Stage Updates */
-    ///@{
+    /**
+     * @name Stage Updates
+     */
+    /**
+     * @{
+     */
 
     /**
      * @brief Refreshes cached edit-layer ownership state without rebuilding the tree.
@@ -159,21 +187,27 @@ public:
     void updateStage(UsdStageRefPtr stage);
 
     /**
-    * @brief Updates prims using a USD notice batch.
-    *
-    * Entries follow UsdNotice::ObjectsChanged semantics:
-    * info-only changes, asset resyncs, and structural resyncs.
-    *
-    * @param batch Batched USD change entries.
-    */
+     * @brief Updates prims using a USD notice batch.
+     *
+     * Entries follow UsdNotice::ObjectsChanged semantics:
+     * info-only changes, asset resyncs, and structural resyncs.
+     *
+     * @param batch Batched USD change entries.
+     */
     void updatePrims(const NoticeBatch& batch);
 
 
-    ///@}
+    /**
+     * @}
+     */
 
 protected:
-    /** @name Event Handling */
-    ///@{
+    /**
+     * @name Event Handling
+     */
+    /**
+     * @{
+     */
 
     /**
      * @brief Starts a drag operation from the current tree selection.
@@ -235,7 +269,9 @@ protected:
      */
     void mouseMoveEvent(QMouseEvent* event) override;
 
-    ///@}
+    /**
+     * @}
+     */
 
 private:
     Q_DISABLE_COPY_MOVE(StageTree)

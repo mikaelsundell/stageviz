@@ -1,39 +1,17 @@
 // SPDX-License-Identifier: BSD-3-Clause
 // Copyright (c) 2025 - present Mikael Sundell
 // https://github.com/mikaelsundell/stageviz
-//
-// Debug lock helpers for QReadWriteLock.
-//
-// Usage:
-//
-//   #include "debuglock.h"
-//
-//   void foo()
-//   {
-//       STAGE_READ_LOCKER(locker);
-//       // ...
-//   }
-//
-//   void bar()
-//   {
-//       STAGE_WRITE_LOCKER(locker);
-//       // ...
-//   }
-//
-// By default this uses plain QReadLocker / QWriteLocker.
-//
-// To enable tracing, define:
-//
-//   #define STAGEVIZ_TRACE_LOCKS 1
-//
-// before including this header, or add it to your build defines.
-//
-// Optional threshold tuning:
-//
-//   #define STAGEVIZ_TRACE_LOCKS_WAIT_MS  1.0
-//   #define STAGEVIZ_TRACE_LOCKS_HOLD_MS  2.0
-//
-// The header assumes CommandDispatcher::stageLock() returns QReadWriteLock*.
+/**
+ * @file tracelocks.h
+ * @brief Scoped read/write locking with optional wait and hold-time diagnostics.
+ *
+ * READ_LOCKER(locker, lock, "name") and WRITE_LOCKER(locker, lock, "name")
+ * accept a QReadWriteLock pointer and a diagnostic label. By default they use
+ * QReadLocker and QWriteLocker. Define STAGEVIZ_TRACE_LOCKS=1 before inclusion
+ * to record source locations and log waits or holds exceeding the thresholds.
+ * STAGEVIZ_TRACE_LOCKS_WAIT_MS and STAGEVIZ_TRACE_LOCKS_HOLD_MS configure those
+ * thresholds in milliseconds.
+ */
 
 #pragma once
 
@@ -57,18 +35,30 @@
 
 namespace stageviz::debug {
 
+/**
+ * @brief Returns the current Qt thread identifier as an integer for logging.
+ */
 inline quintptr
 currentThreadId()
 {
     return reinterpret_cast<quintptr>(QThread::currentThreadId());
 }
 
+/**
+ * @brief Converts a millisecond threshold to integer nanoseconds.
+ */
 inline qint64
 msToNs(double ms)
 {
     return static_cast<qint64>(ms * 1000000.0);
 }
 
+/**
+ * @class DebugReadLocker
+ * @brief Owns a scoped read lock and logs long acquisition or hold times.
+ *
+ * A null lock is accepted. Moving transfers responsibility for unlocking.
+ */
 class DebugReadLocker {
 public:
     DebugReadLocker(QReadWriteLock* lock, const char* name, const char* file, int line, const char* function)
@@ -174,6 +164,12 @@ private:
     bool m_locked = true;
 };
 
+/**
+ * @class DebugWriteLocker
+ * @brief Owns a scoped write lock and logs long acquisition or hold times.
+ *
+ * A null lock is accepted. Moving transfers responsibility for unlocking.
+ */
 class DebugWriteLocker {
 public:
     DebugWriteLocker(QReadWriteLock* lock, const char* name, const char* file, int line, const char* function)

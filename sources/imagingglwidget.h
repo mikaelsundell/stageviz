@@ -48,8 +48,12 @@ public:
      */
     virtual ~ImagingGLWidget();
 
-    /** @name Context */
-    ///@{
+    /**
+     * @name Context
+     */
+    /**
+     * @{
+     */
 
     /**
      * @brief Returns the current view context.
@@ -68,10 +72,16 @@ public:
      */
     void setContext(ViewContext* context);
 
-    ///@}
+    /**
+     * @}
+     */
 
-    /** @name Capture */
-    ///@{
+    /**
+     * @name Capture
+     */
+    /**
+     * @{
+     */
 
     /**
      * @brief Captures the current rendered viewport image.
@@ -80,10 +90,16 @@ public:
      */
     QImage captureImage();
 
-    ///@}
+    /**
+     * @}
+     */
 
-    /** @name Transform */
-    ///@{
+    /**
+     * @name Transform
+     */
+    /**
+     * @{
+     */
 
     /**
      * @brief Returns whether transform interaction is enabled.
@@ -99,10 +115,16 @@ public:
      */
     void setTransformEnabled(bool enabled);
 
-    ///@}
+    /**
+     * @}
+     */
 
-    /** @name Lifecycle */
-    ///@{
+    /**
+     * @name Lifecycle
+     */
+    /**
+     * @{
+     */
 
     /**
      * @brief Clears the current rendering and interaction state.
@@ -112,10 +134,16 @@ public:
      */
     void close();
 
-    ///@}
+    /**
+     * @}
+     */
 
-    /** @name Renderer Outputs */
-    ///@{
+    /**
+     * @name Renderer Outputs
+     */
+    /**
+     * @{
+     */
 
     /**
      * @brief Returns available renderer AOVs.
@@ -124,10 +152,16 @@ public:
      */
     QList<QString> rendererAovs() const;
 
-    ///@}
+    /**
+     * @}
+     */
 
-    /** @name Visible Capture */
-    ///@{
+    /**
+     * @name Visible Capture
+     */
+    /**
+     * @{
+     */
 
     /**
      * @brief Captures visible prim paths from the current view.
@@ -149,10 +183,16 @@ public:
      */
     QList<SdfPath> visibleCapturePaths() const;
 
-    ///@}
+    /**
+     * @}
+     */
 
-    /** @name Scene Updates */
-    ///@{
+    /**
+     * @name Scene Updates
+     */
+    /**
+     * @{
+     */
 
     /**
      * @brief Updates the primary USD stage used for rendering.
@@ -209,7 +249,9 @@ public:
      */
     void updatePrims(const NoticeBatch& batch);
 
-    ///@}
+    /**
+     * @}
+     */
 
 Q_SIGNALS:
     /**
@@ -227,8 +269,12 @@ Q_SIGNALS:
     void captureReady(qint64 elapsed);
 
 protected:
-    /** @name OpenGL Events */
-    ///@{
+    /**
+     * @name OpenGL Events
+     */
+    /**
+     * @{
+     */
 
     /**
      * @brief Initializes OpenGL state and the viewport render engine.
@@ -247,10 +293,16 @@ protected:
      */
     void paintEvent(QPaintEvent* event) override;
 
-    ///@}
+    /**
+     * @}
+     */
 
-    /** @name Drag and Drop */
-    ///@{
+    /**
+     * @name Drag and Drop
+     */
+    /**
+     * @{
+     */
 
     /**
      * @brief Accepts Stageviz material drags over the viewport.
@@ -282,10 +334,16 @@ protected:
      */
     void dropEvent(QDropEvent* event) override;
 
-    ///@}
+    /**
+     * @}
+     */
 
-    /** @name Mouse Interaction */
-    ///@{
+    /**
+     * @name Mouse Interaction
+     */
+    /**
+     * @{
+     */
 
     /**
      * @brief Opens the viewport context menu at the requested position.
@@ -329,7 +387,9 @@ protected:
      */
     void wheelEvent(QWheelEvent* event) override;
 
-    ///@}
+    /**
+     * @}
+     */
 
 private:
     QScopedPointer<ImagingGLWidgetPrivate> p;

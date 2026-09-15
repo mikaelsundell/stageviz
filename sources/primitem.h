@@ -30,9 +30,18 @@ public:
      * @brief Column indices used by the stage tree.
      */
     enum Column {
-        Name = 0,        ///< Name column.
-        Visibility = 1,  ///< Visibility state column.
-        Override = 2     ///< Edit-layer override state column.
+        /**
+         * @brief Name column.
+         */
+        Name = 0,
+        /**
+         * @brief Visibility state column.
+         */
+        Visibility = 1,
+        /**
+         * @brief Edit-layer override state column.
+         */
+        Override = 2
     };
 
     /**
@@ -84,11 +93,11 @@ public:
     void setPath(const SdfPath& path);
 
     /**
-      * @brief Marks the item's cached data as invalid.
-      *
-      * Forces the item to refresh its cached state (e.g. visibility, payload)
-      * on the next access or update.
-      */
+     * @brief Marks the item's cached data as invalid.
+     *
+     * Forces the item to refresh its cached state (e.g. visibility, payload)
+     * on the next access or update.
+     */
     void invalidate();
 
     /**

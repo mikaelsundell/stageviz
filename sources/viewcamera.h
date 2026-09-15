@@ -87,8 +87,12 @@ public:
      */
     bool isIdentity() const;
 
-    /** @name Framing and Navigation */
-    ///@{
+    /**
+     * @name Framing and Navigation
+     */
+    /**
+     * @{
+     */
 
     /**
      * @brief Frames the specified bounding box.
@@ -145,20 +149,32 @@ public:
      */
     double mapToFrustumHeight(int height);
 
-    ///@}
+    /**
+     * @}
+     */
 
-    /** @name Camera Access */
-    ///@{
+    /**
+     * @name Camera Access
+     */
+    /**
+     * @{
+     */
 
     /**
      * @brief Returns the USD camera representation.
      */
     GfCamera camera() const;
 
-    ///@}
+    /**
+     * @}
+     */
 
-    /** @name Projection */
-    ///@{
+    /**
+     * @name Projection
+     */
+    /**
+     * @{
+     */
 
     /**
      * @brief Returns the output camera aspect ratio.
@@ -290,10 +306,16 @@ public:
      */
     void setSensorHeight(double height);
 
-    ///@}
+    /**
+     * @}
+     */
 
-    /** @name Scene Framing */
-    ///@{
+    /**
+     * @name Scene Framing
+     */
+    /**
+     * @{
+     */
 
     /**
      * @brief Returns the current focus point.
@@ -330,10 +352,16 @@ public:
      */
     void setFit(double fit);
 
-    ///@}
+    /**
+     * @}
+     */
 
-    /** @name Orientation */
-    ///@{
+    /**
+     * @name Orientation
+     */
+    /**
+     * @{
+     */
 
     /**
      * @brief Returns the camera up-axis.
@@ -375,10 +403,16 @@ public:
      */
     void setAxisRoll(double roll);
 
-    ///@}
+    /**
+     * @}
+     */
 
-    /** @name Interaction */
-    ///@{
+    /**
+     * @name Interaction
+     */
+    /**
+     * @{
+     */
 
     /**
      * @brief Returns the current camera interaction mode.
@@ -390,10 +424,16 @@ public:
      */
     void setCameraMode(ViewCamera::CameraMode cameraMode);
 
-    ///@}
+    /**
+     * @}
+     */
 
-    /** @name Clipping */
-    ///@{
+    /**
+     * @name Clipping
+     */
+    /**
+     * @{
+     */
 
     /**
      * @brief Returns the near clipping plane distance.
@@ -415,10 +455,16 @@ public:
      */
     void setFarClipping(double far);
 
-    ///@}
+    /**
+     * @}
+     */
 
-    /** @name Distance */
-    ///@{
+    /**
+     * @name Distance
+     */
+    /**
+     * @{
+     */
 
     /**
      * @brief Returns the camera distance from the focus point.
@@ -433,7 +479,9 @@ public:
      */
     void setCameraDistance(double distance);
 
-    ///@}
+    /**
+     * @}
+     */
 
     /**
      * @brief Compatibility alias for resetView().

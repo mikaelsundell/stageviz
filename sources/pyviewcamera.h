@@ -22,14 +22,20 @@ typedef struct PyViewCameraObject {
     PyObject_HEAD ViewCamera* camera;
 } PyViewCameraObject;
 
-/** CPython type for `stageviz.ViewCamera`. */
+/**
+ * @brief CPython type for `stageviz.ViewCamera`.
+ */
 extern PyTypeObject PyViewCameraType;
 
-/** Initialize the ViewCamera Python type. */
+/**
+ * @brief Initialize the ViewCamera Python type.
+ */
 bool
 initPyViewCameraType();
 
-/** Add the ViewCamera type to a Python module. */
+/**
+ * @brief Add the ViewCamera type to a Python module.
+ */
 int
 addPyViewCameraType(PyObject* module);
 

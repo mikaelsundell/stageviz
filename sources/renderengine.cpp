@@ -19,9 +19,8 @@
 #include <pxr/imaging/glf/simpleLight.h>
 #include <pxr/imaging/glf/simpleMaterial.h>
 #include <pxr/imaging/hd/mergingSceneIndex.h>
-#include <pxr/imaging/hd/sceneIndexPluginRegistry.h>
-#include <pxr/imaging/hdx/renderSetupTask.h>
 #include <pxr/imaging/hdx/taskControllerSceneIndex.h>
+#include <pxr/imaging/hd/sceneIndexPluginRegistry.h>
 #include <pxr/imaging/hgi/hgi.h>
 #include <pxr/usd/sdf/assetPath.h>
 #include <pxr/usd/usdGeom/metrics.h>
@@ -80,33 +79,13 @@ namespace {
         SceneIndices& sceneIndices() { return *m_sceneIndices; }
         const SceneIndices& sceneIndices() const { return *m_sceneIndices; }
 
-        void renderBatchWithDepthBias(const SdfPathVector& paths, const UsdImagingGLRenderParams& params,
-                                      float constantFactor, float slopeFactor)
+        void setSelectionOutline(bool enabled, unsigned int radius)
         {
-            if (!_taskControllerSceneIndex || paths.empty())
+            if (!_taskControllerSceneIndex)
                 return;
 
-            // Match UsdImagingGLEngine::RenderBatch, but override the Hydra
-            // render-pass depth state after _PrepareRender() and before task
-            // execution. This is backend-independent and is translated by
-            // Storm/Hgi to Metal, OpenGL, or another active Hgi backend.
-            _UpdateHydraCollection(&_renderCollection, paths, params);
-            _taskControllerSceneIndex->SetCollection(_renderCollection);
-
-            _PrepareRender(params);
-
-            HdxRenderTaskParams renderParams = _MakeHydraUsdImagingGLRenderParams(params);
-            renderParams.depthBiasUseDefault = false;
-            renderParams.depthBiasEnable = true;
-            renderParams.depthBiasConstantFactor = constantFactor;
-            renderParams.depthBiasSlopeFactor = slopeFactor;
-            renderParams.depthFunc = HdCmpFuncLEqual;
-            renderParams.depthMaskEnable = true;
-            _taskControllerSceneIndex->SetRenderParams(renderParams);
-
-            _SetBBoxParams(params.bboxes, params.bboxLineColor, params.bboxLineDashSize);
-            _taskControllerSceneIndex->SetEnableSelection(params.highlight);
-            _Execute(params, _taskControllerSceneIndex->GetRenderingTaskPaths());
+            _taskControllerSceneIndex->SetSelectionEnableOutline(enabled);
+            _taskControllerSceneIndex->SetSelectionOutlineRadius(radius);
         }
 
     private:
@@ -137,18 +116,21 @@ namespace {
                 Q_UNUSED(renderInstanceId);
                 Q_UNUSED(inputArgs);
 
-                HdMergingSceneIndexRefPtr mergingSceneIndex = HdMergingSceneIndex::New();
-                mergingSceneIndex->AddInputScene(inputScene, SdfPath::AbsoluteRootPath());
+                // Apply document material overrides before merging the
+                // auxiliary scene. This keeps viewport support content such as
+                // the grid outside document-specific material overrides.
+                TfRefPtr<MaterialOverrideSceneIndex> materialOverrideSceneIndex =
+                    MaterialOverrideSceneIndex::New(inputScene);
 
-                TfRefPtr<MaterialOverrideSceneIndex> materialOverrideSceneIndex = MaterialOverrideSceneIndex::New(
-                    mergingSceneIndex);
+                HdMergingSceneIndexRefPtr mergingSceneIndex = HdMergingSceneIndex::New();
+                mergingSceneIndex->AddInputScene(materialOverrideSceneIndex, SdfPath::AbsoluteRootPath());
 
                 if (SceneIndices* sceneIndices = constructingSceneIndices()) {
                     sceneIndices->merging = mergingSceneIndex;
                     sceneIndices->materialOverride = materialOverrideSceneIndex;
                 }
 
-                return materialOverrideSceneIndex;
+                return mergingSceneIndex;
             };
 
             HdSceneIndexPluginRegistry::GetInstance().RegisterSceneIndexForRenderer(
@@ -156,8 +138,9 @@ namespace {
             registered = true;
         }
 
-        static UsdImagingGLEngine::Parameters prepareParameters(UsdImagingGLEngine::Parameters params,
-                                                                const SceneIndicesPtr& sceneIndices)
+        static UsdImagingGLEngine::Parameters prepareParameters(
+            UsdImagingGLEngine::Parameters params,
+            const SceneIndicesPtr& sceneIndices)
         {
             registerSceneIndexFilters();
             constructingSceneIndices() = sceneIndices.get();
@@ -271,12 +254,12 @@ RenderEngine::Private::initialize()
     updateMaterialOverrideSceneIndex();
     ensureAuxiliarySceneIndex();
 
-    SdfPathVector selectedPaths;
-    selectedPaths.reserve(selected.size());
-    for (const SdfPath& path : selected)
-        selectedPaths.push_back(path);
-    engine->SetSelected(selectedPaths);
+    // Use Hydra's public selection overlay. Keeping selection inside the
+    // normal Render()/RenderBatch() path avoids the task-context and
+    // first-frame issues caused by custom _Execute() passes.
+    engine->SetSelected(SdfPathVector());
     engine->SetSelectionColor(qt::QColorToGfVec4f(selectionColor));
+
     return true;
 }
 
@@ -468,7 +451,9 @@ RenderEngine::Private::render()
     updateRenderParams();
     updateLighting();
 
-    engine->SetRendererSetting(TfToken("domeLightCameraVisibility"), VtValue(settings.domeLightCameraVisibility));
+    engine->SetRendererSetting(
+        TfToken("domeLightCameraVisibility"),
+        VtValue(settings.domeLightCameraVisibility));
 
     engine->SetRendererAov(settings.aov);
     engine->SetRenderBufferSize(size);
@@ -484,60 +469,27 @@ RenderEngine::Private::render()
     const GfMatrix4d viewMatrix = frustum.ComputeViewMatrix();
     const GfMatrix4d projectionMatrix = frustum.ComputeProjectionMatrix();
     engine->SetCameraState(viewMatrix, projectionMatrix);
-    engine->SetSelectionColor(qt::QColorToGfVec4f(selectionColor));
 
     Hgi* hgi = engine->GetHgi();
     if (!hgi)
         return false;
 
+    UsdImagingGLRenderParams documentParams = params;
     hgi->StartFrame();
+
     const UsdPrim root = stage->GetPseudoRoot();
+    engine->PrepareBatch(root, documentParams);
+
     if (mask.isEmpty()) {
-        engine->Render(root, params);
+        engine->Render(root, documentParams);
     }
     else {
-        SdfPathVector paths;
-        paths.reserve(mask.size());
+        SdfPathVector renderPaths;
+        renderPaths.reserve(mask.size());
         for (const SdfPath& path : mask)
-            paths.push_back(path);
-        engine->PrepareBatch(root, params);
-        engine->RenderBatch(paths, params);
-    }
+            renderPaths.push_back(path);
 
-    // Render selected prims once more after the normal scene pass. Coincident
-    // surfaces can otherwise leave Hydra's selection highlight hidden behind an
-    // unselected prim at exactly the same depth.
-    //
-    // Use Hydra render-pass depth bias rather than changing the projection
-    // matrix or touching backend-specific OpenGL state. HdxRenderTaskParams is
-    // consumed by Storm and translated through Hgi, so this follows the same
-    // path on Metal and OpenGL. A constant factor of -1 is intentionally small:
-    // it only breaks equal/near-equal depth ties instead of moving selected
-    // geometry by a fixed clip-space amount that grows visually when zooming.
-    if (!selected.isEmpty()) {
-        SdfPathVector selectedPaths;
-        selectedPaths.reserve(selected.size());
-        for (const SdfPath& path : selected) {
-            if (!path.IsEmpty())
-                selectedPaths.push_back(path.IsPropertyPath() ? path.GetPrimPath() : path);
-        }
-
-        if (!selectedPaths.empty()) {
-            UsdImagingGLRenderParams selectionParams = params;
-            selectionParams.drawMode = UsdImagingGLDrawMode::DRAW_WIREFRAME_ON_SURFACE;
-
-            // Keep the selection overlay visually independent of the material
-            // assigned to the selected primitive. The normal scene pass has
-            // already rendered the material; this second pass is only for
-            // selection presentation.
-            selectionParams.enableSceneMaterials = false;
-            selectionParams.enableLighting = false;
-
-            constexpr float selectionDepthBiasConstant = -2.0f;
-            constexpr float selectionDepthBiasSlope = 0.0f;
-            engine->renderBatchWithDepthBias(selectedPaths, selectionParams, selectionDepthBiasConstant,
-                                             selectionDepthBiasSlope);
-        }
+        engine->RenderBatch(renderPaths, documentParams);
     }
 
     hgi->EndFrame();
@@ -671,14 +623,25 @@ RenderEngine::setMask(const QList<SdfPath>& paths)
 void
 RenderEngine::setSelected(const QList<SdfPath>& paths)
 {
-    p->selected = paths;
-    if (!p->engine)
-        return;
-    SdfPathVector selected;
-    selected.reserve(paths.size());
-    for (const SdfPath& path : paths)
-        selected.push_back(path);
-    p->engine->SetSelected(selected);
+    p->selected.clear();
+    p->selected.reserve(paths.size());
+
+    SdfPathVector selectedPaths;
+    selectedPaths.reserve(paths.size());
+
+    for (const SdfPath& path : paths) {
+        const SdfPath primPath = path.IsPropertyPath() ? path.GetPrimPath() : path;
+        if (primPath.IsEmpty() || primPath == SdfPath::AbsoluteRootPath())
+            continue;
+
+        if (p->stage && !p->stage->GetPrimAtPath(primPath))
+            continue;
+
+        p->selected.append(primPath);
+        selectedPaths.push_back(primPath);
+    }
+    if (p->engine)
+        p->engine->SetSelected(selectedPaths);
 }
 
 void
@@ -691,6 +654,7 @@ void
 RenderEngine::setSelectionColor(const QColor& color)
 {
     p->selectionColor = color;
+
     if (p->engine)
         p->engine->SetSelectionColor(qt::QColorToGfVec4f(color));
 }
@@ -763,9 +727,18 @@ RenderEngine::testIntersection(const GfMatrix4d& viewMatrix, const GfMatrix4d& p
 {
     if (!p->engine && !p->initialize())
         return false;
+
     p->updateRenderParams();
-    return p->engine->TestIntersection(viewMatrix, projectionMatrix, root, p->params, hitPoint, hitNormal, hitPrimPath,
-                                       hitInstancerPath);
+
+    return p->engine->TestIntersection(
+        viewMatrix,
+        projectionMatrix,
+        root,
+        p->params,
+        hitPoint,
+        hitNormal,
+        hitPrimPath,
+        hitInstancerPath);
 }
 
 bool
@@ -773,10 +746,31 @@ RenderEngine::testIntersection(const UsdImagingGLEngine::PickParams& pickParams,
                                const GfMatrix4d& projectionMatrix, const UsdPrim& root,
                                UsdImagingGLEngine::IntersectionResultVector* results)
 {
+    if (!results)
+        return false;
     if (!p->engine && !p->initialize())
         return false;
+
     p->updateRenderParams();
-    return p->engine->TestIntersection(pickParams, viewMatrix, projectionMatrix, root, p->params, results);
+
+    UsdImagingGLEngine::IntersectionResultVector rawResults;
+    if (!p->engine->TestIntersection(pickParams, viewMatrix, projectionMatrix, root, p->params, &rawResults)) {
+        results->clear();
+        return false;
+    }
+
+    results->clear();
+    results->reserve(rawResults.size());
+
+    for (const auto& result : rawResults) {
+        if (result.hitPrimPath.IsEmpty())
+            continue;
+        if (p->stage && !p->stage->GetPrimAtPath(result.hitPrimPath))
+            continue;
+
+        results->push_back(result);
+    }
+    return !results->empty();
 }
 
 QList<QString>

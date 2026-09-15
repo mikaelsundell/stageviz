@@ -15,6 +15,7 @@ namespace stageviz {
 class ShelfWidgetPrivate;
 
 /**
+ * @class ShelfWidget
  * @brief A small shelf view for storing reusable Python script snippets.
  *
  * ShelfWidget presents scripts as icon items with a user-visible title and the
@@ -135,23 +136,23 @@ public:
     void fromVariantList(const QVariantList& scripts);
 
     /**
-      * @brief Return the preferred size of the shelf widget.
-      *
-      * The shelf reports a compact default height suitable for a single row of
-      * shelf items, while still allowing parent layouts or splitters to resize it.
-      *
-      * @return Preferred widget size.
-      */
+     * @brief Return the preferred size of the shelf widget.
+     *
+     * The shelf reports a compact default height suitable for a single row of
+     * shelf items, while still allowing parent layouts or splitters to resize it.
+     *
+     * @return Preferred widget size.
+     */
     QSize sizeHint() const override;
 
     /**
-      * @brief Return the minimum useful size of the shelf widget.
-      *
-      * This ensures the shelf remains usable when compressed, without forcing an
-      * overly large page height in parent layouts.
-      *
-      * @return Minimum recommended widget size.
-      */
+     * @brief Return the minimum useful size of the shelf widget.
+     *
+     * This ensures the shelf remains usable when compressed, without forcing an
+     * overly large page height in parent layouts.
+     *
+     * @return Minimum recommended widget size.
+     */
     QSize minimumSizeHint() const override;
 
 Q_SIGNALS:

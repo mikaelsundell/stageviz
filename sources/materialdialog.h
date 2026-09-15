@@ -23,10 +23,19 @@ class MaterialDialogPrivate;
 class MaterialDialog : public QDialog {
     Q_OBJECT
 public:
+    /**
+     * @brief Creates the material browser/editor and its controllers.
+     */
     explicit MaterialDialog(QWidget* parent = nullptr);
+    /**
+     * @brief Releases the dialog and its owned controllers.
+     */
     virtual ~MaterialDialog();
 
 protected:
+    /**
+     * @brief Refreshes material presentation when the dialog becomes visible.
+     */
     void showEvent(QShowEvent* event) override;
 
 private:

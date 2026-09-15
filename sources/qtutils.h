@@ -24,8 +24,12 @@ PXR_NAMESPACE_USING_DIRECTIVE
 namespace stageviz {
 namespace qt {
 
-    /** @name Qt / Image Conversions */
-    ///@{
+    /**
+     * @name Qt / Image Conversions
+     */
+    /**
+     * @{
+     */
     /**
      * @brief Returns the current application device pixel ratio.
      *
@@ -114,10 +118,16 @@ namespace qt {
      */
     QIcon pngBytesToIcon(const QByteArray& bytes);
 
-    ///@}
+    /**
+     * @}
+     */
 
-    /** @name Qt / String and text Conversions */
-    ///@{
+    /**
+     * @name Qt / String and text Conversions
+     */
+    /**
+     * @{
+     */
 
     /**
      * @brief Normalizes all line ending variants to LF newlines.
@@ -170,11 +180,17 @@ namespace qt {
      */
     QString stripPrefix(const QString& text, const QString& prefix);
 
-    ///@}
+    /**
+     * @}
+     */
 
 
-    /** @name Qt / USD Conversions */
-    ///@{
+    /**
+     * @name Qt / USD Conversions
+     */
+    /**
+     * @{
+     */
 
     /**
      * @brief Converts a QString to std::string.
@@ -228,7 +244,9 @@ namespace qt {
      */
     GfVec4f QColorToGfVec4f(const QColor& color);
 
-    ///@}
+    /**
+     * @}
+     */
 
 }  // namespace qt
 }  // namespace stageviz
@@ -251,8 +269,12 @@ qHash(const SdfPath& path, size_t seed = 0)
 
 PXR_NAMESPACE_CLOSE_SCOPE
 
-/** @name Debug Utilities */
-///@{
+/**
+ * @name Debug Utilities
+ */
+/**
+ * @{
+ */
 
 /**
  * @brief Checks for OpenGL errors and reports the source location.
@@ -279,10 +301,16 @@ DebugStagePrims(const UsdStageRefPtr& stage);
 void
 DebugBoundingBoxes(const UsdStageRefPtr& stage);
 
-///@}
+/**
+ * @}
+ */
 
-/** @name QDebug Stream Operators */
-///@{
+/**
+ * @name QDebug Stream Operators
+ */
+/**
+ * @{
+ */
 
 /**
  * @brief Debug stream operator for GfBBox3d.
@@ -446,4 +474,6 @@ operator<<(QDebug debug, const UsdImagingGLRenderParams::BBoxVector& bboxes);
 QDebug
 operator<<(QDebug debug, const UsdImagingGLRenderParams::ClipPlanesVector& clipPlanes);
 
-///@}
+/**
+ * @}
+ */

@@ -23,14 +23,20 @@ typedef struct {
     PyObject_HEAD Application* application;
 } PyApplicationObject;
 
-/** CPython type for `stageviz.Application`. */
+/**
+ * @brief CPython type for `stageviz.Application`.
+ */
 extern PyTypeObject PyApplicationType;
 
-/** Initialize the Application Python type. */
+/**
+ * @brief Initialize the Application Python type.
+ */
 bool
 initPyApplicationType();
 
-/** Add the Application type to a Python module. */
+/**
+ * @brief Add the Application type to a Python module.
+ */
 int
 addPyApplicationType(PyObject* module);
 

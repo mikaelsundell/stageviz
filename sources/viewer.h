@@ -37,8 +37,12 @@ public:
      */
     virtual ~Viewer();
 
-    /** @name Application Arguments */
-    ///@{
+    /**
+     * @name Application Arguments
+     */
+    /**
+     * @{
+     */
 
     /**
      * @brief Sets command line arguments for the viewer.
@@ -59,13 +63,22 @@ public:
      */
     void openFile(const QString& filename);
 
-    ///@}
+    /**
+     * @}
+     */
 
 protected:
+    /**
+     * @brief Handles shutdown of the main viewer window.
+     */
     void closeEvent(QCloseEvent* event) override;
 
-    /** @name Drag and Drop */
-    ///@{
+    /**
+     * @name Drag and Drop
+     */
+    /**
+     * @{
+     */
 
     /**
      * @brief Handles drag enter events.
@@ -87,7 +100,9 @@ protected:
      */
     void dropEvent(QDropEvent* event) override;
 
-    ///@}
+    /**
+     * @}
+     */
 
 
 private:

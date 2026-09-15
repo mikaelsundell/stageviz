@@ -2865,7 +2865,7 @@ Expected:
 
 Expected UI state:
     - Door is recreated below Wheel
-    - Door starts collapsed after the move
+    - Door preserves its expanded state after the move
     - Handle remains below Door
     - Wheel remains expanded
     - Door remains selected/current
@@ -2901,6 +2901,7 @@ Expected UI state:
             "/",
             "/World",
             "/World/Assembly",
+            "/World/Assembly/Door",
             "/World/Assembly/Wheel",
             "/World/PayloadA",
             "/World/PayloadB",
@@ -2944,6 +2945,10 @@ Expected UI state:
     require_tree_state_preserved(
         tree,
         preserved_state,
+        path_remap={
+            "/World/Assembly/Door":
+                "/World/Assembly/Wheel/Door",
+        },
     )
 
     dump_tree(tree)
@@ -2969,8 +2974,8 @@ Expected UI state:
     )
 
     require(
-        not path_is_expanded(tree, new_path),
-        "reparented Door starts collapsed",
+        path_is_expanded(tree, new_path),
+        "reparented Door preserves expanded state",
     )
 
     require(
@@ -3021,8 +3026,8 @@ Expected UI state:
         )
 
         require(
-            not path_is_expanded(tree, "/World/Assembly/Door"),
-            "undo restores Door collapsed",
+            path_is_expanded(tree, "/World/Assembly/Door"),
+            "undo restores Door expanded",
         )
 
     release_qt_wrappers()
@@ -3873,7 +3878,7 @@ to:
     /World/Target/Moving
 
 Expected:
-    - the moved subtree is recreated collapsed
+    - the moved subtree preserves its expanded state
     - selection/current follows the new path
     - unrelated branch expansion states are unchanged
     - the operation prints command-to-stable timing
@@ -3946,6 +3951,7 @@ timing varies substantially between Debug/Release and machines.
     state_paths = (
         "/World",
         "/World/Source",
+        "/World/Source/Moving",
         "/World/Target",
     ) + tracked_branches
 
@@ -4025,11 +4031,14 @@ timing varies substantially between Debug/Release and machines.
     require_tree_state_preserved(
         tree,
         preserved_state,
+        path_remap={
+            old_path: new_path,
+        },
     )
 
     require(
-        not path_is_expanded(tree, new_path),
-        "large-tree reparented subtree starts collapsed",
+        path_is_expanded(tree, new_path),
+        "large-tree reparented subtree preserves expanded state",
     )
 
     require(
@@ -4085,7 +4094,7 @@ Measurements:
 
 Correctness checks:
     - renamed subtree remains expanded
-    - reparented subtree is recreated collapsed
+    - reparented subtree preserves its expanded state
     - selection/current follows the namespace edit
     - representative unrelated branches keep mixed expanded/collapsed states
     - representative checkbox state is preserved
@@ -4330,6 +4339,7 @@ measurement for comparing builds and detecting scaling regressions.
         "/",
         "/World",
         "/World/Source",
+        renamed_path,
         "/World/Target",
     ) + tracked_branches
 
@@ -4397,11 +4407,14 @@ measurement for comparing builds and detecting scaling regressions.
     require_tree_state_preserved(
         tree,
         move_state,
+        path_remap={
+            renamed_path: moved_path,
+        },
     )
 
     require(
-        not path_is_expanded(tree, moved_path),
-        "25k reparented subtree starts collapsed",
+        path_is_expanded(tree, moved_path),
+        "25k reparented subtree preserves expanded state",
     )
 
     print()

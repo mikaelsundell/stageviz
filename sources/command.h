@@ -79,12 +79,19 @@ public:
     bool isUndoable() const { return static_cast<bool>(m_undo); }
 
 private:
-    Func m_redo;  ///< Redo operation.
-    Func m_undo;  ///< Undo operation.
+    /**
+     * @brief Redo operation.
+     */
+    Func m_redo;
+    /**
+     * @brief Undo operation.
+     */
+    Func m_undo;
 };
 
 
 /**
+ * @struct TransformRootState
  * @brief Captures the edit-layer transform opinions that existed before an
  * interactive transform preview authored a stronger matrix override.
  *
@@ -102,8 +109,12 @@ struct TransformRootState {
     VtValue matrixOpDefault;
 };
 
-/** @name Command Factory Helpers */
-///@{
+/**
+ * @name Command Factory Helpers
+ */
+/**
+ * @{
+ */
 
 /**
  * @brief Creates an undoable command that binds a material to prims.
@@ -164,17 +175,6 @@ loadPayloads(const QList<SdfPath>& paths, const QString& variantSet = QString(),
              const QString& variantValue = QString());
 
 /**
- * @brief Creates a command that unloads payloads resolved from the specified paths.
- *
- * Each input path is expected to identify a payload prim. After unloading,
- * selections and masks on the payload root are preserved, while selections or
- * masks on descendants that disappear are remapped to the payload root.
- *
- * Undo restores the previous load state, selection, and mask exactly.
- *
- * @param paths Payload prim paths to unload.
- */
-/**
  * @brief Creates a command that loads spatially neighboring payloads.
  *
  * The input paths are resolved to their outermost payload ancestors and their
@@ -194,6 +194,17 @@ loadPayloads(const QList<SdfPath>& paths, const QString& variantSet = QString(),
 Command
 loadNeighborPayloads(const QList<SdfPath>& paths);
 
+/**
+ * @brief Creates a command that unloads payloads resolved from the specified paths.
+ *
+ * Each input path is expected to identify a payload prim. After unloading,
+ * selections and masks on the payload root are preserved, while selections or
+ * masks on descendants that disappear are remapped to the payload root.
+ *
+ * Undo restores the previous load state, selection, and mask exactly.
+ *
+ * @param paths Payload prim paths to unload.
+ */
 Command
 unloadPayloads(const QList<SdfPath>& paths);
 
@@ -714,6 +725,8 @@ Command
 setTransforms(const QList<SdfPath>& paths, const QList<GfMatrix4d>& before, const QList<GfMatrix4d>& after,
               const QList<TransformRootState>& rootBefore = {});
 
-///@}
+/**
+ * @}
+ */
 
 }  // namespace stageviz

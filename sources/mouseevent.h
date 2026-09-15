@@ -11,8 +11,8 @@
  * @class MouseEvent
  * @brief Event filter emitting signals for mouse interactions.
  *
- * Installs an event filter on a QObject and emits signals when
- * mouse events are detected. This provides a lightweight way to
+ * Callers install this object with QObject::installEventFilter(). It emits a
+ * signal for left-button presses. This provides a lightweight way to
  * observe mouse activity without subclassing the target widget.
  */
 class MouseEvent : public QObject {
@@ -33,7 +33,7 @@ public:
 Q_SIGNALS:
 
     /**
-     * @brief Emitted when a mouse press event is detected.
+     * @brief Emitted when a left mouse-button press is detected.
      */
     void pressed();
 

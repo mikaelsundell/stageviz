@@ -39,10 +39,19 @@ public:
      */
     virtual ~PythonEditor();
 
+    /**
+     * @brief Returns the gutter width required for the current line count.
+     */
     int lineNumberAreaWidth() const;
 
 protected:
+    /**
+     * @brief Repositions the line-number gutter when the editor is resized.
+     */
     void resizeEvent(QResizeEvent* event) override;
+    /**
+     * @brief Paints line numbers alongside the visible text blocks.
+     */
     void lineNumberAreaPaintEvent(QPaintEvent* event);
 
 private:

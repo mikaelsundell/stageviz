@@ -19,7 +19,13 @@ class ProgressDialogPrivate;
 class ProgressDialog : public QDialog {
     Q_OBJECT
 public:
+    /**
+     * @brief Creates the progress view with the supplied widget parent.
+     */
     explicit ProgressDialog(QWidget* parent = nullptr);
+    /**
+     * @brief Releases the progress dialog and its children.
+     */
     ~ProgressDialog() override;
 
 private:

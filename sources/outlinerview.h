@@ -38,8 +38,12 @@ public:
      */
     virtual ~OutlinerView();
 
-    /** @name Tree Control */
-    ///@{
+    /**
+     * @name Tree Control
+     */
+    /**
+     * @{
+     */
 
     /**
      * @brief Returns whether follow is enabled for outliner.
@@ -53,7 +57,9 @@ public:
      */
     void enableFollow(bool enable);
 
-    ///@}
+    /**
+     * @}
+     */
 
 private:
     QScopedPointer<OutlinerViewPrivate> p;

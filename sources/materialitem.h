@@ -24,27 +24,72 @@ class MaterialItemPrivate;
  */
 class MaterialItem : public TreeItem {
 public:
+    /**
+     * @brief Identifies the name, shader-type, and USD-path columns.
+     */
     enum Column { Name = 0, Type, Path };
 
+    /**
+     * @brief Creates an item owned by the supplied tree.
+     */
     MaterialItem(QTreeWidget* parent);
+    /**
+     * @brief Creates an item owned by the supplied parent item.
+     */
     MaterialItem(QTreeWidgetItem* parent);
+    /**
+     * @brief Releases the item's presentation metadata.
+     */
     virtual ~MaterialItem();
 
+    /**
+     * @brief Returns the item state used by the shared tree delegate.
+     */
     TreeItem::ItemStates itemStates() const;
 
+    /**
+     * @brief Returns this item's index in the browser's source entries.
+     */
     int sourceRow() const;
+    /**
+     * @brief Stores the browser source-entry index.
+     */
     void setSourceRow(int row);
 
+    /**
+     * @brief Returns the represented material's USD path.
+     */
     SdfPath materialPath() const;
+    /**
+     * @brief Updates the represented material path; does not edit USD.
+     */
     void setMaterialPath(const SdfPath& path);
 
+    /**
+     * @brief Returns the surface shader's USD path.
+     */
     SdfPath shaderPath() const;
+    /**
+     * @brief Stores the surface shader path.
+     */
     void setShaderPath(const SdfPath& path);
 
+    /**
+     * @brief Returns the surface shader identifier.
+     */
     QString shaderId() const;
+    /**
+     * @brief Stores the shader identifier used for presentation.
+     */
     void setShaderId(const QString& shaderId);
 
+    /**
+     * @brief Returns the cached preview image.
+     */
     QImage swatch() const;
+    /**
+     * @brief Updates the item's preview image.
+     */
     void setSwatch(const QImage& image);
 
 private:

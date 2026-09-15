@@ -16,24 +16,50 @@ namespace stageviz {
 namespace Github {
 
     /**
- * @brief Downloadable asset attached to a GitHub release.
- */
+     * @struct Asset
+     * @brief Downloadable asset attached to a GitHub release.
+     */
     struct Asset {
-        QString name;  ///< Asset file name.
-        QUrl url;      ///< Browser/download URL for the asset.
+        /**
+         * @brief Asset file name.
+         */
+        QString name;
+        /**
+         * @brief Browser/download URL for the asset.
+         */
+        QUrl url;
     };
 
     /**
- * @brief GitHub release metadata.
- */
+     * @struct Release
+     * @brief GitHub release metadata.
+     */
     struct Release {
     public:
-        QString tag;          ///< Release tag name.
-        QString title;        ///< Release title/name.
-        QString notes;        ///< Release notes/body text.
-        QUrl url;             ///< Browser URL for the release.
-        QDateTime published;  ///< Release publish timestamp.
-        QList<Asset> assets;  ///< Assets attached to the release.
+        /**
+         * @brief Release tag name.
+         */
+        QString tag;
+        /**
+         * @brief Release title/name.
+         */
+        QString title;
+        /**
+         * @brief Release notes/body text.
+         */
+        QString notes;
+        /**
+         * @brief Browser URL for the release.
+         */
+        QUrl url;
+        /**
+         * @brief Release publish timestamp.
+         */
+        QDateTime published;
+        /**
+         * @brief Assets attached to the release.
+         */
+        QList<Asset> assets;
     };
 
 }  // namespace Github
@@ -41,12 +67,16 @@ namespace Github {
 class GithubClientPrivate;
 
 /**
+ * @class GithubClient
  * @brief Small QObject client for fetching GitHub release information.
  */
 class GithubClient : public QObject {
     Q_OBJECT
 
 public:
+    /**
+     * @brief Creates the asynchronous GitHub request client.
+     */
     explicit GithubClient(QObject* parent = nullptr);
     virtual ~GithubClient();
 

@@ -61,19 +61,57 @@ struct MaterialEntry {
  */
 class MaterialUtils {
 public:
+    /**
+     * @brief Finds the material's surface shader; optionally returns its shader identifier.
+     */
     static UsdShadeShader surfaceShader(const UsdShadeMaterial& material, QString* shaderId = nullptr);
+    /**
+     * @brief Reads supported shader inputs, retaining defaults for missing values.
+     */
     static MaterialParameters readParameters(const UsdShadeShader& shader, const QString& shaderId);
+    /**
+     * @brief Collects material descriptions from the composed stage.
+     */
     static QList<MaterialEntry> sceneMaterials(UsdStageRefPtr stage);
 
+    /**
+     * @brief Returns a display label for a shader identifier.
+     */
     static QString shaderTypeLabel(const QString& shaderId);
+    /**
+     * @brief Reports whether the editor can map a parameter for this shader.
+     */
     static bool isSupportedParameter(const MaterialEntry& entry, const QString& parameter);
+    /**
+     * @brief Maps an editor parameter to its shader input name.
+     */
     static TfToken inputName(const MaterialEntry& entry, const QString& parameter);
+    /**
+     * @brief Returns the shader input's property path, or an empty path if unavailable.
+     */
     static SdfPath inputPath(const MaterialEntry& entry, const QString& parameter);
 
+    /**
+     * @brief Finds an unused material path under /Materials.
+     *
+     * Creates the /Materials scope in the active edit target if needed.
+     * @param stage Stage in which to find a free path.
+     * @param baseName Base name, sanitized to a USD identifier before uniquifying.
+     * @return Unused material path, or an empty path for an invalid stage.
+     */
     static SdfPath uniqueMaterialPath(UsdStageRefPtr stage, const QString& baseName = QStringLiteral("Material"));
+    /**
+     * @brief Authors a Preview Surface material in the active edit target; returns its path or empty on failure.
+     */
     static SdfPath createPreviewSurfaceMaterial(UsdStageRefPtr stage);
+    /**
+     * @brief Authors a Standard Surface material in the active edit target; returns its path or empty on failure.
+     */
     static SdfPath createStandardSurfaceMaterial(UsdStageRefPtr stage);
 
+    /**
+     * @brief Imports supported MaterialX surface parameters into USD materials. Clears output arguments first; returns false with error on failure.
+     */
     static bool importMaterialX(UsdStageRefPtr stage, const QString& filename, QList<SdfPath>& createdPaths,
                                 QString& error);
 };

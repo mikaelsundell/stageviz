@@ -22,14 +22,20 @@ typedef struct {
     PyObject_HEAD Style* style;
 } PyStyleObject;
 
-/** CPython type for `stageviz.Style`. */
+/**
+ * @brief CPython type for `stageviz.Style`.
+ */
 extern PyTypeObject PyStyleType;
 
-/** Initialize the Style Python type. */
+/**
+ * @brief Initialize the Style Python type.
+ */
 bool
 initPyStyleType();
 
-/** Add the Style type to a Python module. */
+/**
+ * @brief Add the Style type to a Python module.
+ */
 int
 addPyStyleType(PyObject* module);
 

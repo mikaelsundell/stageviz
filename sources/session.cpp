@@ -26,6 +26,7 @@
 #include <algorithm>
 #include <pxr/base/tf/weakBase.h>
 #include <pxr/usd/sdf/copyUtils.h>
+#include <pxr/usd/sdf/fileFormat.h>
 #include <pxr/usd/sdf/layerUtils.h>
 #include <pxr/usd/usd/editTarget.h>
 #include <pxr/usd/usd/notice.h>
@@ -443,7 +444,10 @@ SessionPrivate::mergeLayer(const SdfLayerHandle& sourceLayer)
             return false;
         }
 
-        for (const SdfPrimSpecHandle& sourcePrim : sourceLayer->GetRootPrims()) {
+        const SdfLayerRefPtr anchoredSource = relocatedCopy(sourceLayer);
+        if (!anchoredSource)
+            return false;
+        for (const SdfPrimSpecHandle& sourcePrim : anchoredSource->GetRootPrims()) {
             if (!sourcePrim)
                 continue;
 
@@ -456,7 +460,7 @@ SessionPrivate::mergeLayer(const SdfLayerHandle& sourceLayer)
             if (destinationPath.IsEmpty())
                 return false;
 
-            if (!SdfCopySpec(sourceLayer, sourcePath, destinationLayer, destinationPath))
+            if (!SdfCopySpec(anchoredSource, sourcePath, destinationLayer, destinationPath))
                 return false;
         }
     }
@@ -676,6 +680,21 @@ SessionPrivate::exportLayer(const SdfLayerHandle& layer, const QString& filename
         return false;
     }
 
+    if (!layer->IsAnonymous()
+        && QFileInfo(QString::fromStdString(layer->GetRealPath())).absoluteFilePath()
+               == destination.absoluteFilePath()) {
+        // Let USD save the backing layer so dirty state and save bookkeeping
+        // are updated. Keep the authored recovery export on any write failure.
+        const bool saved = layer->GetFileFormat()->IsSupportedExtension(destination.suffix().toStdString())
+                               ? layer->Save(true)
+                               : layer->Export(layer->GetRealPath());
+        if (!saved) {
+            temporary.setAutoRemove(false);
+            error = QStringLiteral("Cannot save layer to %1. Recovery file: %2").arg(filename, recoveryPath);
+        }
+        return saved;
+    }
+
     QFile source(recoveryPath);
     QSaveFile output(destination.absoluteFilePath());
     output.setDirectWriteFallback(false);
@@ -786,8 +805,42 @@ SessionPrivate::saveToFile(const QString& filename)
 
             QString error;
             const SdfLayerRefPtr relocated = retarget ? relocatedCopy(rootLayer) : SdfLayerRefPtr();
-            const SdfLayerHandle outputLayer = retarget ? SdfLayerHandle(relocated) : rootLayer;
-            if (!saveSublayers(d.stage, error) || !exportLayer(outputLayer, stageFilename, error)) {
+            if (retarget && !relocated)
+                return false;
+            const std::string oldIdentifier = rootLayer->GetIdentifier();
+            const SdfLayerRefPtr original = retarget ? SdfLayer::CreateAnonymous() : SdfLayerRefPtr();
+            if (retarget && !original)
+                return false;
+            if (original)
+                original->TransferContent(rootLayer);
+
+            bool saved = saveSublayers(d.stage, error);
+            if (saved) {
+                StageBlocker blocker(d.stageWatcher.data());
+                struct RetargetRollback {
+                    SdfLayerHandle layer;
+                    SdfLayerRefPtr original;
+                    std::string identifier;
+                    bool committed = false;
+                    ~RetargetRollback()
+                    {
+                        if (original && !committed) {
+                            layer->SetIdentifier(identifier);
+                            layer->TransferContent(original);
+                        }
+                    }
+                } rollback { rootLayer, original, oldIdentifier };
+                if (retarget) {
+                    rootLayer->TransferContent(relocated);
+                    rootLayer->SetIdentifier(QStringToString(stageFilename));
+                }
+                saved = (!retarget || rootLayer->GetIdentifier() == QStringToString(stageFilename))
+                        && exportLayer(rootLayer, stageFilename, error);
+                rollback.committed = saved;
+                if (!saved && error.isEmpty())
+                    error = QStringLiteral("Cannot retarget layer to %1").arg(stageFilename);
+            }
+            if (!saved) {
                 QMetaObject::invokeMethod(
                     d.session,
                     [session = d.session, error]() {
@@ -796,14 +849,6 @@ SessionPrivate::saveToFile(const QString& filename)
                     },
                     Qt::QueuedConnection);
                 return false;
-            }
-            if (retarget) {
-                StageBlocker blocker(d.stageWatcher.data());
-                // Anchor paths before changing the live layer's directory.
-                rootLayer->TransferContent(outputLayer);
-                rootLayer->SetIdentifier(QStringToString(stageFilename));
-                if (rootLayer->GetIdentifier() != QStringToString(stageFilename))
-                    return false;
             }
             d.filename = stageFilename;
         } catch (const std::exception&) {
@@ -868,10 +913,13 @@ SessionPrivate::flattenPathsToFile(const QList<SdfPath>& paths, const QString& f
     if (mask.GetPaths().empty())
         return false;
 
-    UsdStageRefPtr maskedStage = UsdStage::OpenMasked(d.stage->GetRootLayer(), mask);
+    UsdStageRefPtr maskedStage = UsdStage::OpenMasked(d.stage->GetRootLayer(), d.stage->GetSessionLayer(),
+                                                      d.stage->GetPathResolverContext(), mask, UsdStage::LoadNone);
     if (!maskedStage)
         return false;
 
+    maskedStage->MuteAndUnmuteLayers(d.stage->GetMutedLayers(), {});
+    maskedStage->SetLoadRules(d.stage->GetLoadRules());
     maskedStage->ExpandPopulationMask();
     return maskedStage->Export(QStringToString(QFileInfo(filename).absoluteFilePath()));
 }

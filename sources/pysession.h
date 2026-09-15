@@ -22,14 +22,20 @@ typedef struct {
     PyObject_HEAD Session* session;
 } PySessionObject;
 
-/** CPython type for `stageviz.Session`. */
+/**
+ * @brief CPython type for `stageviz.Session`.
+ */
 extern PyTypeObject PySessionType;
 
-/** Initialize the Session Python type. */
+/**
+ * @brief Initialize the Session Python type.
+ */
 bool
 initPySessionType();
 
-/** Add the Session type to a Python module. */
+/**
+ * @brief Add the Session type to a Python module.
+ */
 int
 addPySessionType(PyObject* module);
 

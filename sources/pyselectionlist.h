@@ -22,14 +22,20 @@ typedef struct {
     PyObject_HEAD SelectionList* selection;
 } PySelectionListObject;
 
-/** CPython type for `stageviz.SelectionList`. */
+/**
+ * @brief CPython type for `stageviz.SelectionList`.
+ */
 extern PyTypeObject PySelectionListType;
 
-/** Initialize the SelectionList Python type. */
+/**
+ * @brief Initialize the SelectionList Python type.
+ */
 bool
 initPySelectionListType();
 
-/** Add the SelectionList type to a Python module. */
+/**
+ * @brief Add the SelectionList type to a Python module.
+ */
 int
 addPySelectionListType(PyObject* module);
 

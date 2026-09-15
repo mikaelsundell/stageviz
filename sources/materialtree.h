@@ -25,17 +25,41 @@ class MaterialTreePrivate;
 class MaterialTree : public TreeWidget {
     Q_OBJECT
 public:
+    /**
+     * @brief Creates the material-parameter editors.
+     */
     explicit MaterialTree(QWidget* parent = nullptr);
+    /**
+     * @brief Releases the editors and private state.
+     */
     virtual ~MaterialTree();
 
+    /**
+     * @brief Displays parameters shared by the selected material descriptions.
+     */
     void setMaterials(const QList<MaterialEntry>& materials);
+    /**
+     * @brief Removes the current material editors.
+     */
     void clearMaterials();
 
 Q_SIGNALS:
+    /**
+     * @brief Emitted for an uncommitted scalar preview; does not itself author USD.
+     */
     void floatPreviewChanged(const QString& parameter, double value);
+    /**
+     * @brief Emitted for an uncommitted color preview; does not itself author USD.
+     */
     void colorPreviewChanged(const QString& parameter, const QColor& value);
 
+    /**
+     * @brief Requests committing a scalar parameter to the selected materials.
+     */
     void floatChanged(const QString& parameter, double value);
+    /**
+     * @brief Requests committing a color parameter to the selected materials.
+     */
     void colorChanged(const QString& parameter, const QColor& value);
 
 private:

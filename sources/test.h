@@ -4,5 +4,8 @@
 
 #pragma once
 
+/**
+ * @brief Reserved application test hook; currently performs no work.
+ */
 void
 test();

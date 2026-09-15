@@ -49,8 +49,12 @@ public:
      */
     ~MaterialOverrideSceneIndex() override;
 
-    /** @name Scene Materials */
-    ///@{
+    /**
+     * @name Scene Materials
+     */
+    /**
+     * @{
+     */
 
     /**
      * @brief Returns whether authored document material bindings are enabled.
@@ -65,10 +69,16 @@ public:
      */
     void setSceneMaterialsEnabled(bool enabled);
 
-    ///@}
+    /**
+     * @}
+     */
 
-    /** @name Override */
-    ///@{
+    /**
+     * @name Override
+     */
+    /**
+     * @{
+     */
 
     /**
      * @brief Returns the current material override mode.
@@ -95,10 +105,16 @@ public:
      */
     void setMaterialPath(const pxr::SdfPath& materialPath);
 
-    ///@}
+    /**
+     * @}
+     */
 
-    /** @name Double-Sided Override */
-    ///@{
+    /**
+     * @name Double-Sided Override
+     */
+    /**
+     * @{
+     */
 
     /**
      * @brief Returns whether mesh doubleSided values are overridden.
@@ -126,15 +142,23 @@ public:
      */
     void setDoubleSidedOverride(bool doubleSided);
 
-    ///@}
+    /**
+     * @}
+     */
 
-    /** @name Scene Index */
-    ///@{
+    /**
+     * @name Scene Index
+     */
+    /**
+     * @{
+     */
 
     pxr::HdSceneIndexPrim GetPrim(const pxr::SdfPath& primPath) const override;
     pxr::SdfPathVector GetChildPrimPaths(const pxr::SdfPath& primPath) const override;
 
-    ///@}
+    /**
+     * @}
+     */
 
 protected:
     void _PrimsAdded(const pxr::HdSceneIndexBase& sender,

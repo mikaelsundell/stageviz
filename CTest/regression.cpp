@@ -59,9 +59,11 @@ namespace {
         const QString path = dir.filePath("scene.usdc");
         session.stage()->DefinePrim(SdfPath("/World/First"));
         require(session.saveToFile(path), "first save");
+        require(!session.stage()->GetRootLayer()->IsDirty(), "first save clears root dirty state");
         session.stage()->RemovePrim(SdfPath("/World/First"));
         session.stage()->DefinePrim(SdfPath("/World/Second"));
         require(session.saveToFile(path), "second save");
+        require(!session.stage()->GetRootLayer()->IsDirty(), "second save clears root dirty state");
         const auto reopened = diskStage(path);
         require(!reopened->GetPrimAtPath(SdfPath("/World/First")), "deleted prim remains deleted on disk");
         require(bool(reopened->GetPrimAtPath(SdfPath("/World/Second"))), "second edit saved");
@@ -113,6 +115,7 @@ namespace {
         require(session.setEditLayer(child->GetRootLayer()), "select sublayer");
         session.stage()->DefinePrim(SdfPath("/Child/Edited"));
         require(session.saveToFile(dir.filePath("scene.usda")), "save root and child");
+        require(!child->GetRootLayer()->IsDirty(), "saved sublayer is clean");
         require(bool(diskStage(childPath)->GetPrimAtPath(SdfPath("/Child/Edited"))), "sublayer persisted");
 
         session.stage()->DefinePrim(SdfPath("/Child/Unsaved"));
@@ -259,6 +262,77 @@ namespace {
     }
 }
 
+namespace {
+    void mergeAssetPaths()
+    {
+        QTemporaryDir dir;
+        require(dir.isValid(), "temporary directory");
+        require(QDir().mkpath(dir.filePath("source")), "source directory");
+        require(QDir().mkpath(dir.filePath("destination")), "destination directory");
+        const QString sourceFile = dir.filePath("source/scene.usda");
+        const auto source = UsdStage::CreateNew(sourceFile.toStdString());
+        const UsdPrim part = source->DefinePrim(SdfPath("/Part"));
+        part.CreateAttribute(TfToken("texture"), SdfValueTypeNames->Asset)
+            .Set(SdfAssetPath("textures/paint.<UDIM>.exr"));
+        require(source->GetRootLayer()->Save(), "save merge source");
+        Session session;
+        session.setPreserveState(false);
+        require(session.newStage(), "new stage");
+        require(session.saveToFile(dir.filePath("destination/scene.usda")), "save destination");
+        require(session.mergeFromFile(sourceFile), "merge source");
+        SdfAssetPath texture;
+        require(session.stage()->GetPrimAtPath(SdfPath("/Part")).GetAttribute(TfToken("texture")).Get(&texture),
+                "merged asset attribute");
+        require(texture.GetAssetPath() == dir.filePath("source/textures/paint.<UDIM>.exr").toStdString(),
+                "merged texture retains source anchor");
+    }
+
+    void namespaceLoadRules()
+    {
+        const auto stage = UsdStage::CreateInMemory();
+        stage->DefinePrim(SdfPath("/A"));
+        stage->DefinePrim(SdfPath("/B"));
+        stage->DefinePrim(SdfPath("/A/Part"));
+        stage->DefinePrim(SdfPath("/A/Part/Detail"));
+        UsdStageLoadRules rules = UsdStageLoadRules::LoadAll();
+        rules.AddRule(SdfPath("/A/Part"), UsdStageLoadRules::NoneRule);
+        rules.AddRule(SdfPath("/A/Part/Detail"), UsdStageLoadRules::OnlyRule);
+        rules.AddRule(SdfPath("/Unrelated"), UsdStageLoadRules::NoneRule);
+        stage->SetLoadRules(rules);
+        stageviz::edit::NamespaceEditor editor(stage, stage->GetEditTarget());
+        QString error;
+        require(editor.reparentPrim(SdfPath("/A/Part"), SdfPath("/B/Part"), error), "move load rules");
+        const auto& moved = stage->GetLoadRules();
+        require(moved.GetEffectiveRuleForPath(SdfPath("/B/Part/Other")) == UsdStageLoadRules::NoneRule,
+                "unloaded descendant policy follows moved root");
+        require(moved.GetEffectiveRuleForPath(SdfPath("/B/Part/Detail")) == UsdStageLoadRules::OnlyRule,
+                "only rule follows moved descendant");
+        require(moved.GetEffectiveRuleForPath(SdfPath("/Unrelated")) == UsdStageLoadRules::NoneRule,
+                "unrelated exclusion preserved");
+        require(editor.renamePrim(SdfPath("/B/Part"), SdfPath("/B/Renamed"), error), "rename load rules");
+        require(stage->GetLoadRules().GetEffectiveRuleForPath(SdfPath("/B/Renamed/Other"))
+                    == UsdStageLoadRules::NoneRule, "rename preserves unloaded policy");
+    }
+
+    void exportSessionOpinions()
+    {
+        QTemporaryDir dir;
+        require(dir.isValid(), "temporary directory");
+        Session session;
+        require(session.newStage(), "new stage");
+        const auto stage = session.stage();
+        stage->DefinePrim(SdfPath("/World/Part"));
+        stage->SetEditTarget(UsdEditTarget(stage->GetSessionLayer()));
+        stage->GetPrimAtPath(SdfPath("/World/Part")).CreateAttribute(TfToken("marker"), SdfValueTypeNames->String)
+            .Set(std::string("session opinion"));
+        const QString file = dir.filePath("selection.usda");
+        require(session.flattenPathsToFile({SdfPath("/World/Part")}, file), "export selection");
+        std::string marker;
+        require(diskStage(file)->GetPrimAtPath(SdfPath("/World/Part")).GetAttribute(TfToken("marker")).Get(&marker)
+                    && marker == "session opinion", "selection export preserves session opinions");
+    }
+}
+
 int main(int argc, char** argv)
 {
     QCoreApplication app(argc, argv);
@@ -266,7 +340,9 @@ int main(int argc, char** argv)
         {"save_twice", saveTwice}, {"save_failure", saveFailure}, {"sublayer_save", sublayerSave},
         {"save_as", saveAs}, {"corrupt_state", corruptState},
         {"payload_state", [] { payloadState(false); }}, {"legacy_payload_state", [] { payloadState(true); }},
-        {"reparent_dependencies", reparentDependencies}, {"reparent_batch", reparentBatch}
+        {"reparent_dependencies", reparentDependencies}, {"reparent_batch", reparentBatch},
+        {"namespace_load_rules", namespaceLoadRules}, {"export_session_opinions", exportSessionOpinions},
+        {"merge_asset_paths", mergeAssetPaths}
     };
     if (argc != 2 || !cases.count(argv[1])) {
         std::cerr << "Pass one registered regression case name\n";

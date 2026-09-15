@@ -25,8 +25,14 @@ public:
      * @brief Column indices used by the progress tree.
      */
     enum Column {
-        Name = 0,  ///< Label describing the progress entry.
-        Value      ///< Value associated with the entry.
+        /**
+         * @brief Label describing the progress entry.
+         */
+        Name = 0,
+        /**
+         * @brief Value associated with the entry.
+         */
+        Value
     };
 
     /**

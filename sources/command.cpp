@@ -26,8 +26,8 @@
 #include <pxr/usd/usd/payloads.h>
 #include <pxr/usd/usd/prim.h>
 #include <pxr/usd/usd/primRange.h>
-#include <pxr/usd/usd/variantSets.h>
 #include <pxr/usd/usd/references.h>
+#include <pxr/usd/usd/variantSets.h>
 #include <pxr/usd/usdGeom/bboxCache.h>
 #include <pxr/usd/usdGeom/imageable.h>
 #include <pxr/usd/usdGeom/tokens.h>
@@ -660,9 +660,8 @@ setVariantSelection(const QList<SdfPath>& paths, const QString& setName, const Q
                                 state->items.reserve(uniquePaths.size());
 
                                 for (const SdfPath& inputPath : uniquePaths) {
-                                    const SdfPath primPath = inputPath.IsPropertyPath()
-                                                                 ? inputPath.GetPrimPath()
-                                                                 : inputPath;
+                                    const SdfPath primPath = inputPath.IsPropertyPath() ? inputPath.GetPrimPath()
+                                                                                        : inputPath;
                                     const UsdPrim prim = stage->GetPrimAtPath(primPath);
 
                                     if (!prim || !prim.IsValid()) {
@@ -685,8 +684,8 @@ setVariantSelection(const QList<SdfPath>& paths, const QString& setName, const Q
                                     variant::SelectionState::Item item;
                                     item.path = primPath;
                                     item.hadPrimSpec = bool(editLayer->GetPrimAtPath(primPath));
-                                    item.hadVariantSelectionField
-                                        = editLayer->HasField(primPath, SdfFieldKeys->VariantSelection);
+                                    item.hadVariantSelectionField = editLayer->HasField(primPath,
+                                                                                        SdfFieldKeys->VariantSelection);
 
                                     if (item.hadVariantSelectionField) {
                                         item.variantSelectionField
@@ -735,11 +734,10 @@ setVariantSelection(const QList<SdfPath>& paths, const QString& setName, const Q
 
                 command::queueToSession(session, [session, changed, success, errorText]() {
                     using Status = Session::Notify::Status;
-                    command::finishDeferred(
-                        session,
-                        success ? "Variant set"
-                                : appendError("Set variant finished with errors", errorText),
-                        changed, success ? Status::Success : Status::Error);
+                    command::finishDeferred(session,
+                                            success ? "Variant set"
+                                                    : appendError("Set variant finished with errors", errorText),
+                                            changed, success ? Status::Success : Status::Error);
                 });
             });
         },
@@ -781,9 +779,8 @@ setVariantSelection(const QList<SdfPath>& paths, const QString& setName, const Q
                                     const SdfPrimSpecHandle primSpec = editLayer->GetPrimAtPath(item.path);
                                     if (primSpec && primSpec->IsInert()
                                         && !stage::removePrimSpec(editLayer, item.path)) {
-                                        errors.append(
-                                            QString("failed to remove empty variant override: %1")
-                                                .arg(pathText(item.path)));
+                                        errors.append(QString("failed to remove empty variant override: %1")
+                                                          .arg(pathText(item.path)));
                                         continue;
                                     }
                                 }
@@ -799,11 +796,10 @@ setVariantSelection(const QList<SdfPath>& paths, const QString& setName, const Q
 
                 command::queueToSession(session, [session, restored, success, errorText]() {
                     using Status = Session::Notify::Status;
-                    command::finishDeferred(
-                        session,
-                        success ? "Variant undone"
-                                : appendError("Undo set variant failed", errorText),
-                        restored, success ? Status::Success : Status::Error);
+                    command::finishDeferred(session,
+                                            success ? "Variant undone"
+                                                    : appendError("Undo set variant failed", errorText),
+                                            restored, success ? Status::Success : Status::Error);
                 });
             });
         });
