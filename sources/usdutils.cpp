@@ -243,9 +243,21 @@ namespace path {
 
     QList<SdfPath> minimalRootPaths(const QList<SdfPath>& paths)
     {
-        QList<SdfPath> sorted = paths;
-        std::sort(sorted.begin(), sorted.end(),
-                  [](const SdfPath& a, const SdfPath& b) { return a.GetPathElementCount() < b.GetPathElementCount(); });
+        QList<SdfPath> sorted;
+        sorted.reserve(paths.size());
+
+        for (const SdfPath& path : paths) {
+            if (!path.IsEmpty())
+                sorted.append(path);
+        }
+
+        std::sort(sorted.begin(), sorted.end(), [](const SdfPath& a, const SdfPath& b) {
+            const size_t aDepth = a.GetPathElementCount();
+            const size_t bDepth = b.GetPathElementCount();
+            if (aDepth != bDepth)
+                return aDepth < bDepth;
+            return a.GetString() < b.GetString();
+        });
 
         QList<SdfPath> result;
         result.reserve(sorted.size());

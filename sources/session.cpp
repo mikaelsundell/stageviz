@@ -345,6 +345,7 @@ SessionPrivate::newStage(Session::LoadPolicy policy)
         d.stage = stage;
         d.stage->SetEditTarget(UsdEditTarget(d.stage->GetRootLayer()));
         UsdGeomSetStageMetersPerUnit(d.stage, UsdGeomLinearUnits::millimeters);
+        UsdGeomSetStageUpAxis(d.stage, UsdGeomTokens->z);
         UsdGeomXform root = UsdGeomXform::Define(d.stage, SdfPath("/World"));
         d.stage->SetDefaultPrim(root.GetPrim());
         d.filename.clear();
@@ -913,8 +914,7 @@ SessionPrivate::saveToFile(const QString& filename)
                 d.stageWatcher->watch(d.stage);
                 stageReplaced = true;
             }
-        }
-        catch (const std::exception&) {
+        } catch (const std::exception&) {
             return false;
         }
     }
@@ -1920,7 +1920,6 @@ UsdStageRefPtr
 Session::stage() const
 {
     READ_LOCKER(locker, stageLock(), "stageLock");
-    Q_ASSERT(p->d.stage && "stage is not loaded");
     return p->d.stage;
 }
 

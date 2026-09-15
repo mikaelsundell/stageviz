@@ -135,7 +135,7 @@ CommandStack::undo()
 {
     if (p->updateEditTarget())
         clear();
-    
+
     if (!canUndo())
         return;
 
@@ -164,7 +164,7 @@ CommandStack::redo()
 {
     if (p->updateEditTarget())
         clear();
-    
+
     if (!canRedo())
         return;
 

@@ -13,10 +13,10 @@
 #include <QFileInfo>
 #include <QHash>
 #include <QMetaObject>
-#include <QThread>
 #include <QPointer>
 #include <QSet>
 #include <QStandardPaths>
+#include <QThread>
 #include <algorithm>
 #include <cmath>
 #include <memory>
@@ -123,176 +123,77 @@ MaterialRendererPrivate::createPreviewStage(QString& error)
     const SdfPath materialPath("/Stageviz/Materials/PreviewMaterial");
 
     UsdShadeMaterial material = UsdShadeMaterial::Define(stage, materialPath);
-    UsdShadeShader shader = UsdShadeShader::Define(
-        stage,
-        materialPath.AppendChild(TfToken("PreviewSurface"))
-    );
+    UsdShadeShader shader = UsdShadeShader::Define(stage, materialPath.AppendChild(TfToken("PreviewSurface")));
 
     shader.CreateIdAttr(VtValue(TfToken("UsdPreviewSurface")));
+    shader.CreateInput(TfToken("diffuseColor"), SdfValueTypeNames->Color3f).Set(GfVec3f(0.5f));
+    shader.CreateInput(TfToken("metallic"), SdfValueTypeNames->Float).Set(0.0f);
+    shader.CreateInput(TfToken("roughness"), SdfValueTypeNames->Float).Set(0.4f);
+    shader.CreateInput(TfToken("opacity"), SdfValueTypeNames->Float).Set(1.0f);
+    shader.CreateInput(TfToken("ior"), SdfValueTypeNames->Float).Set(1.5f);
+    shader.CreateInput(TfToken("clearcoat"), SdfValueTypeNames->Float).Set(0.0f);
+    shader.CreateInput(TfToken("clearcoatRoughness"), SdfValueTypeNames->Float).Set(0.1f);
 
-    shader.CreateInput(
-        TfToken("diffuseColor"),
-        SdfValueTypeNames->Color3f
-    ).Set(GfVec3f(0.5f));
-
-    shader.CreateInput(
-        TfToken("metallic"),
-        SdfValueTypeNames->Float
-    ).Set(0.0f);
-
-    shader.CreateInput(
-        TfToken("roughness"),
-        SdfValueTypeNames->Float
-    ).Set(0.4f);
-
-    shader.CreateInput(
-        TfToken("opacity"),
-        SdfValueTypeNames->Float
-    ).Set(1.0f);
-
-    shader.CreateInput(
-        TfToken("ior"),
-        SdfValueTypeNames->Float
-    ).Set(1.5f);
-
-    shader.CreateInput(
-        TfToken("clearcoat"),
-        SdfValueTypeNames->Float
-    ).Set(0.0f);
-
-    shader.CreateInput(
-        TfToken("clearcoatRoughness"),
-        SdfValueTypeNames->Float
-    ).Set(0.1f);
-
-    const UsdShadeOutput surface = shader.CreateOutput(
-        TfToken("surface"),
-        SdfValueTypeNames->Token
-    );
-
+    const UsdShadeOutput surface = shader.CreateOutput(TfToken("surface"), SdfValueTypeNames->Token);
     material.CreateSurfaceOutput().ConnectToSource(surface);
 
-    const UsdPrim preview = stage->GetPrimAtPath(
-        SdfPath("/root/Preview_Mesh/Preview_Mesh")
-    );
-
+    const UsdPrim preview = stage->GetPrimAtPath(SdfPath("/root/Preview_Mesh/Preview_Mesh"));
     if (!preview) {
-        error = QStringLiteral(
-            "shaderball.usda is missing /root/Preview_Mesh/Preview_Mesh"
-        );
+        error = QStringLiteral("shaderball.usda is missing /root/Preview_Mesh/Preview_Mesh");
         return {};
     }
 
     UsdShadeMaterialBindingAPI::Apply(preview).Bind(material);
-
     const UsdPrim rootPrim = stage->GetPrimAtPath(SdfPath("/root"));
+    const TfTokenVector purposes { UsdGeomTokens->default_, UsdGeomTokens->proxy, UsdGeomTokens->render };
 
-    const TfTokenVector purposes {
-        UsdGeomTokens->default_,
-        UsdGeomTokens->proxy,
-        UsdGeomTokens->render
-    };
-
-    UsdGeomBBoxCache cache(
-        UsdTimeCode::Default(),
-        purposes,
-        true
-    );
-
-    const GfRange3d range = cache
-                                .ComputeWorldBound(rootPrim)
-                                .ComputeAlignedRange();
-
+    UsdGeomBBoxCache cache(UsdTimeCode::Default(), purposes, true);
+    const GfRange3d range = cache.ComputeWorldBound(rootPrim).ComputeAlignedRange();
     const GfVec3d center = range.GetMidpoint();
-    const double radius = std::max(
-        1.0,
-        range.GetSize().GetLength() * 0.5
-    );
+    const double radius = std::max(1.0, range.GetSize().GetLength() * 0.5);
 
     constexpr double pi = 3.14159265358979323846;
-
     const double azimuth = 18.0 * pi / 180.0;
     const double elevation = 18.0 * pi / 180.0;
     const double distance = radius * 3.8;
     const double horizontal = std::cos(elevation) * distance;
 
-    const GfVec3d eye =
-        center
-        + GfVec3d(
-            std::sin(azimuth) * horizontal,
-            -std::cos(azimuth) * horizontal,
-            std::sin(elevation) * distance
-        );
+    const GfVec3d eye = center
+                        + GfVec3d(std::sin(azimuth) * horizontal, -std::cos(azimuth) * horizontal,
+                                  std::sin(elevation) * distance);
 
     GfVec3d target = center;
     target[2] -= radius * 0.06;
 
-    UsdGeomCamera camera = UsdGeomCamera::Define(
-        stage,
-        SdfPath("/Stageviz/Camera")
-    );
-
+    UsdGeomCamera camera = UsdGeomCamera::Define(stage, SdfPath("/Stageviz/Camera"));
     camera.CreateFocalLengthAttr(VtValue(55.0f));
     camera.CreateHorizontalApertureAttr(VtValue(20.955f));
     camera.CreateVerticalApertureAttr(VtValue(20.955f));
 
     GfMatrix4d view(1.0);
-    view.SetLookAt(
-        eye,
-        target,
-        GfVec3d(0.0, 0.0, 1.0)
-    );
-
+    view.SetLookAt(eye, target, GfVec3d(0.0, 0.0, 1.0));
     camera.MakeMatrixXform().Set(view.GetInverse());
-
     return stage;
 }
 
 bool
-MaterialRendererPrivate::updatePreviewMaterial(
-    const UsdStageRefPtr& stage,
-    const MaterialParameters& parameters)
+MaterialRendererPrivate::updatePreviewMaterial(const UsdStageRefPtr& stage, const MaterialParameters& parameters)
 {
     if (!stage)
         return false;
 
-    const UsdPrim shaderPrim = stage->GetPrimAtPath(
-        SdfPath("/Stageviz/Materials/PreviewMaterial/PreviewSurface")
-    );
-
+    const UsdPrim shaderPrim = stage->GetPrimAtPath(SdfPath("/Stageviz/Materials/PreviewMaterial/PreviewSurface"));
     if (!shaderPrim || !shaderPrim.IsA<UsdShadeShader>())
         return false;
 
     UsdShadeShader shader(shaderPrim);
-
-    shader.GetInput(
-        TfToken("diffuseColor")
-    ).Set(parameters.baseColor);
-
-    shader.GetInput(
-        TfToken("metallic")
-    ).Set(parameters.metalness);
-
-    shader.GetInput(
-        TfToken("roughness")
-    ).Set(parameters.roughness);
-
-    shader.GetInput(
-        TfToken("opacity")
-    ).Set(parameters.opacity);
-
-    shader.GetInput(
-        TfToken("ior")
-    ).Set(parameters.ior);
-
-    shader.GetInput(
-        TfToken("clearcoat")
-    ).Set(parameters.coat);
-
-    shader.GetInput(
-        TfToken("clearcoatRoughness")
-    ).Set(parameters.coatRoughness);
-
+    shader.GetInput(TfToken("diffuseColor")).Set(parameters.baseColor);
+    shader.GetInput(TfToken("metallic")).Set(parameters.metalness);
+    shader.GetInput(TfToken("roughness")).Set(parameters.roughness);
+    shader.GetInput(TfToken("opacity")).Set(parameters.opacity);
+    shader.GetInput(TfToken("ior")).Set(parameters.ior);
+    shader.GetInput(TfToken("clearcoat")).Set(parameters.coat);
+    shader.GetInput(TfToken("clearcoatRoughness")).Set(parameters.coatRoughness);
     return true;
 }
 
@@ -314,9 +215,7 @@ MaterialRendererPrivate::ensureRenderer(QString& error)
         return true;
 
     if (!qApp || QThread::currentThread() != qApp->thread()) {
-        error = QStringLiteral(
-            "Material preview renderer must be created on the GUI thread"
-        );
+        error = QStringLiteral("Material preview renderer must be created on the GUI thread");
         return false;
     }
 
@@ -330,17 +229,13 @@ MaterialRendererPrivate::ensureRenderer(QString& error)
     settings.sceneLightsEnabled = true;
     settings.defaultCameraLightEnabled = true;
 
-    d.renderEngine = std::make_unique<RenderEngine>(
-        RenderEngine::ContextMode::Offscreen
-    );
+    d.renderEngine = std::make_unique<RenderEngine>(RenderEngine::ContextMode::Offscreen);
 
     d.renderEngine->setStage(d.stage);
     d.renderEngine->setSettings(settings);
     d.renderEngine->setSize(GfVec2i(512, 512));
 
-    const UsdGeomCamera camera(
-        d.stage->GetPrimAtPath(SdfPath("/Stageviz/Camera"))
-    );
+    const UsdGeomCamera camera(d.stage->GetPrimAtPath(SdfPath("/Stageviz/Camera")));
 
     if (!camera) {
         error = QStringLiteral("Material preview camera is missing");
@@ -348,17 +243,13 @@ MaterialRendererPrivate::ensureRenderer(QString& error)
         return false;
     }
 
-    d.renderEngine->setCamera(
-        camera.GetCamera(UsdTimeCode::Default())
-    );
+    d.renderEngine->setCamera(camera.GetCamera(UsdTimeCode::Default()));
 
     return true;
 }
 
 QImage
-MaterialRendererPrivate::render(
-    const MaterialParameters& parameters,
-    QString& error)
+MaterialRendererPrivate::render(const MaterialParameters& parameters, QString& error)
 {
     error.clear();
 
@@ -366,18 +257,14 @@ MaterialRendererPrivate::render(
         return {};
 
     if (!updatePreviewMaterial(d.stage, parameters)) {
-        error = QStringLiteral(
-            "Could not update material preview shader"
-        );
+        error = QStringLiteral("Could not update material preview shader");
         return {};
     }
 
     QImage image = d.renderEngine->renderImage();
 
     if (image.isNull()) {
-        error = QStringLiteral(
-            "Material preview render failed"
-        );
+        error = QStringLiteral("Material preview render failed");
     }
 
     return image;
@@ -394,19 +281,13 @@ MaterialRendererPrivate::reset()
 }
 
 void
-MaterialRendererPrivate::dispatch(
-    const QString& path,
-    const MaterialParameters& parameters,
-    bool forceRender)
+MaterialRendererPrivate::dispatch(const QString& path, const MaterialParameters& parameters, bool forceRender)
 {
     if (!forceRender) {
         const auto cached = d.cache.constFind(path);
 
         if (cached != d.cache.cend()) {
-            Q_EMIT d.renderer->rendered(
-                path,
-                cached.value()
-            );
+            Q_EMIT d.renderer->rendered(path, cached.value());
             return;
         }
     }
@@ -438,8 +319,7 @@ MaterialRendererPrivate::dispatch(
 
             process(path);
         },
-        Qt::QueuedConnection
-    );
+        Qt::QueuedConnection);
 }
 
 void
@@ -456,46 +336,26 @@ MaterialRendererPrivate::process(const QString& path)
     d.pending.erase(it);
 
     QString error;
-    const QImage image = render(
-        request.parameters,
-        error
-    );
+    const QImage image = render(request.parameters, error);
 
-    receive(
-        path,
-        image,
-        error,
-        request.serial
-    );
+    receive(path, image, error, request.serial);
 }
 
 void
-MaterialRendererPrivate::receive(
-    const QString& path,
-    const QImage& image,
-    const QString& error,
-    quint64 serial)
+MaterialRendererPrivate::receive(const QString& path, const QImage& image, const QString& error, quint64 serial)
 {
     const auto pending = d.pending.constFind(path);
 
-    const bool newerRequestExists =
-        pending != d.pending.cend()
-        && pending->serial > serial;
+    const bool newerRequestExists = pending != d.pending.cend() && pending->serial > serial;
 
     if (!newerRequestExists) {
         if (!image.isNull()) {
             d.cache.insert(path, image);
 
-            Q_EMIT d.renderer->rendered(
-                path,
-                image
-            );
+            Q_EMIT d.renderer->rendered(path, image);
         }
         else {
-            Q_EMIT d.renderer->error(
-                path,
-                error
-            );
+            Q_EMIT d.renderer->error(path, error);
         }
     }
 
@@ -511,8 +371,7 @@ MaterialRendererPrivate::receive(
 
                 process(path);
             },
-            Qt::QueuedConnection
-        );
+            Qt::QueuedConnection);
 
         return;
     }
@@ -528,23 +387,15 @@ MaterialRenderer::MaterialRenderer(QObject* parent)
     p->init();
 }
 
-MaterialRenderer::~MaterialRenderer()
-{
-    p->reset();
-}
+MaterialRenderer::~MaterialRenderer() { p->reset(); }
 
 void
-MaterialRenderer::request(
-    const SdfPath& materialPath,
-    const MaterialParameters& parameters,
-    bool forceRender)
+MaterialRenderer::request(const SdfPath& materialPath, const MaterialParameters& parameters, bool forceRender)
 {
     if (materialPath.IsEmpty())
         return;
 
-    const QString path = QString::fromStdString(
-        materialPath.GetString()
-    );
+    const QString path = QString::fromStdString(materialPath.GetString());
 
     // Normally MaterialRenderer is called directly from MaterialDialog on the
     // GUI thread. Keep this guard so future callers from worker threads cannot
@@ -558,23 +409,14 @@ MaterialRenderer::request(
                 if (!renderer)
                     return;
 
-                renderer->p->dispatch(
-                    path,
-                    parameters,
-                    forceRender
-                );
+                renderer->p->dispatch(path, parameters, forceRender);
             },
-            Qt::QueuedConnection
-        );
+            Qt::QueuedConnection);
 
         return;
     }
 
-    p->dispatch(
-        path,
-        parameters,
-        forceRender
-    );
+    p->dispatch(path, parameters, forceRender);
 }
 
 void
@@ -583,9 +425,7 @@ MaterialRenderer::invalidate(const SdfPath& materialPath)
     if (materialPath.IsEmpty())
         return;
 
-    const QString path = QString::fromStdString(
-        materialPath.GetString()
-    );
+    const QString path = QString::fromStdString(materialPath.GetString());
 
     p->d.cache.remove(path);
     p->d.pending.remove(path);

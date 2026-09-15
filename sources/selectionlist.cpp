@@ -105,7 +105,7 @@ SelectionList::~SelectionList() = default;
 bool
 SelectionList::isEmpty() const
 {
-    return p->d.paths.size();
+    return p->d.paths.isEmpty();
 }
 
 bool

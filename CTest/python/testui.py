@@ -966,12 +966,86 @@ def payload_menu_state():
     return state
 
 
-def trigger_payload_action(label):
+def payload_action_enabled(label):
     menu = find_payload_menu()
-    require(menu is not None, "Payload menu is available before action trigger")
+    if menu is None:
+        return None
+
     action = find_menu_action(menu, label)
-    require(action is not None, f"Payload menu contains {label} before trigger")
-    require(action.isEnabled(), f"Payload menu action {label} is enabled before trigger")
+    if action is None:
+        return None
+
+    return bool(action.isEnabled())
+
+
+def wait_payload_action_state(label, enabled, timeout=5.0):
+    return wait_until(
+        lambda: payload_action_enabled(label) is enabled,
+        timeout=timeout,
+    )
+
+
+def require_payload_action_state(
+    label,
+    enabled,
+    message=None,
+    timeout=5.0,
+):
+    if message is None:
+        state = "enabled" if enabled else "disabled"
+        message = f"Payload menu action {label} becomes {state}"
+
+    require(
+        wait_payload_action_state(
+            label,
+            enabled,
+            timeout=timeout,
+        ),
+        message,
+    )
+
+
+def trigger_payload_action(label, timeout=5.0):
+    require(
+        wait_until(
+            lambda: find_payload_menu() is not None,
+            timeout=timeout,
+        ),
+        "Payload menu is available before action trigger",
+    )
+
+    require(
+        wait_until(
+            lambda: bool(
+                find_payload_menu()
+                and find_menu_action(
+                    find_payload_menu(),
+                    label,
+                )
+            ),
+            timeout=timeout,
+        ),
+        f"Payload menu contains {label} before trigger",
+    )
+
+    require_payload_action_state(
+        label,
+        True,
+        f"Payload menu action {label} is enabled before trigger",
+        timeout=timeout,
+    )
+
+    # Reacquire both objects after waiting. On Windows the persistent menu can
+    # refresh asynchronously after payload notices, invalidating previously
+    # observed QAction state.
+    menu = find_payload_menu()
+    action = find_menu_action(menu, label) if menu is not None else None
+
+    require(
+        action is not None,
+        f"Payload menu still contains {label} before trigger",
+    )
+
     action.trigger()
     process_events()
 
@@ -1100,25 +1174,15 @@ Coverage:
         "Payload Variant > bodyTrim > Sport switches variant and loads payload",
     )
 
-    # Loading a new payload variant also causes USD/Hydra/UI notices. Give the
-    # Qt event loop the same settling barrier used elsewhere in this diagnostic
-    # before querying the persistent Payload menu again.
-    process_events()
-    QTest.qWait(100)
-    process_events()
-
-    require(
-        wait_until(
-            lambda: bool(
-                find_payload_menu()
-                and find_menu_action(find_payload_menu(), "Load")
-                and find_menu_action(find_payload_menu(), "Unload")
-                and not find_menu_action(find_payload_menu(), "Load").isEnabled()
-                and find_menu_action(find_payload_menu(), "Unload").isEnabled()
-            ),
-            timeout=5.0,
-        ),
-        "loaded BodyPayload flips Load/Unload enabled state",
+    require_payload_action_state(
+        "Load",
+        False,
+        "loaded BodyPayload disables Load",
+    )
+    require_payload_action_state(
+        "Unload",
+        True,
+        "loaded BodyPayload enables Unload",
     )
 
     trigger_payload_action("Unload")
@@ -1130,6 +1194,20 @@ Coverage:
         "Payload menu Unload unloads BodyPayload",
     )
 
+    # USD load state changes before the persistent menu necessarily receives
+    # and applies its enable-state refresh on Windows. Synchronize against the
+    # QAction state rather than relying on an arbitrary fixed sleep.
+    require_payload_action_state(
+        "Load",
+        True,
+        "unloaded BodyPayload enables Load",
+    )
+    require_payload_action_state(
+        "Unload",
+        False,
+        "unloaded BodyPayload disables Unload",
+    )
+
     trigger_payload_action("Load")
     require(
         wait_until(
@@ -1137,6 +1215,17 @@ Coverage:
             timeout=5.0,
         ),
         "Payload menu Load reloads BodyPayload",
+    )
+
+    require_payload_action_state(
+        "Load",
+        False,
+        "reloaded BodyPayload disables Load",
+    )
+    require_payload_action_state(
+        "Unload",
+        True,
+        "reloaded BodyPayload enables Unload",
     )
 
     descendant_path = body_payload_path + "/GeomA"
