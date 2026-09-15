@@ -400,11 +400,23 @@ namespace edit {
             }
             result.AddRule(path, rule.second);
         }
-        // Preserve inherited policy too when the destination parent has a
-        // different loading policy. Explicit descendant rules remain intact.
-        for (const auto& move : moves)
-            result.AddRule(move.second, original.GetEffectiveRuleForPath(move.first));
-        result.Minimize();
+        // Preserve inherited policy when the moved root itself has no explicit
+        // rule. Do not minimize here: Stageviz must retain explicit descendant
+        // OnlyRule/NoneRule entries exactly, since those rules are semantically
+        // significant after a namespace move.
+        for (const auto& move : moves) {
+            bool hasExplicitRootRule = false;
+            for (const auto& rule : original.GetRules()) {
+                if (rule.first == move.first) {
+                    hasExplicitRootRule = true;
+                    break;
+                }
+            }
+
+            if (!hasExplicitRootRule)
+                result.AddRule(move.second, original.GetEffectiveRuleForPath(move.first));
+        }
+
         return result;
     }
 

@@ -30,10 +30,11 @@ set_target_properties(stageviz_regressions PROPERTIES
     AUTOUIC_SEARCH_PATHS "${PROJECT_SOURCE_DIR}/sources"
 )
 
-foreach(case IN ITEMS save_twice save_failure sublayer_save save_as
+foreach(case IN ITEMS save_twice_usda save_twice_usdc save_failure sublayer_save save_as
                       corrupt_state payload_state legacy_payload_state
-                      reparent_dependencies reparent_batch namespace_load_rules export_session_opinions
-                      merge_asset_paths)
+                      reparent_dependencies reparent_batch namespace_load_rules
+                      namespace_load_rules_batch namespace_load_rules_rename
+                      export_session_opinions merge_asset_paths)
     add_test(NAME stageviz.${case} COMMAND stageviz_regressions ${case})
     set_tests_properties(stageviz.${case} PROPERTIES LABELS "native;regression" TIMEOUT 60)
 endforeach()

@@ -673,26 +673,36 @@ SessionPrivate::exportLayer(const SdfLayerHandle& layer, const QString& filename
         return false;
     }
 
-    // Keep the real extension so USD selects the requested file format.
+    // Build the recovery file as a real file-backed layer using the requested
+    // destination extension. This is required for .usdc, whose file format
+    // cannot save a USDA-backed anonymous layer as Crate data.
     const QString recoveryPath = temporary.filePath(destination.fileName());
-    if (!layer->Export(recoveryPath.toStdString())) {
-        error = QStringLiteral("Cannot export layer to %1").arg(recoveryPath);
+    const SdfLayerRefPtr recoveryLayer = SdfLayer::CreateNew(QStringToString(recoveryPath));
+    if (!recoveryLayer) {
+        error = QStringLiteral("Cannot create recovery layer %1").arg(recoveryPath);
+        return false;
+    }
+    recoveryLayer->TransferContent(layer);
+    if (!recoveryLayer->Save(true)) {
+        temporary.setAutoRemove(false);
+        error = QStringLiteral("Cannot save recovery layer %1").arg(recoveryPath);
         return false;
     }
 
     if (!layer->IsAnonymous()
         && QFileInfo(QString::fromStdString(layer->GetRealPath())).absoluteFilePath()
                == destination.absoluteFilePath()) {
-        // Let USD save the backing layer so dirty state and save bookkeeping
-        // are updated. Keep the authored recovery export on any write failure.
-        const bool saved = layer->GetFileFormat()->IsSupportedExtension(destination.suffix().toStdString())
-                               ? layer->Save(true)
-                               : layer->Export(layer->GetRealPath());
-        if (!saved) {
-            temporary.setAutoRemove(false);
-            error = QStringLiteral("Cannot save layer to %1. Recovery file: %2").arg(filename, recoveryPath);
+        // Save the actual backing layer when the file format already matches.
+        // This clears USD's dirty state and keeps its normal save bookkeeping.
+        const bool sameFormat = layer->GetFileFormat()->IsSupportedExtension(destination.suffix().toStdString());
+        if (sameFormat) {
+            if (!layer->Save(true)) {
+                temporary.setAutoRemove(false);
+                error = QStringLiteral("Cannot save layer to %1. Recovery file: %2").arg(filename, recoveryPath);
+                return false;
+            }
+            return true;
         }
-        return saved;
     }
 
     QFile source(recoveryPath);
@@ -780,23 +790,29 @@ SessionPrivate::saveToFile(const QString& filename)
 {
     if (filename.isEmpty())
         return false;
+
     QString stageFilename;
     bool preserveState = false;
+    bool stageReplaced = false;
+
     {
         WRITE_LOCKER(locker, &d.stageLock, "stageLock");
         try {
             if (!d.stage)
                 return false;
 
-            const SdfLayerHandle rootLayer = d.stage->GetRootLayer();
+            const UsdStageRefPtr oldStage = d.stage;
+            const SdfLayerHandle rootLayer = oldStage->GetRootLayer();
             if (!rootLayer)
                 return false;
 
             stageFilename = QFileInfo(filename).absoluteFilePath();
             preserveState = d.preserveState;
             const bool retarget = rootLayer->IsAnonymous() || d.filename != stageFilename;
+
             if (!retarget && !rootLayer->PermissionToSave())
                 return false;
+
             if (retarget) {
                 const SdfLayerHandle existing = SdfLayer::Find(QStringToString(stageFilename));
                 if (existing && existing != rootLayer)
@@ -804,43 +820,7 @@ SessionPrivate::saveToFile(const QString& filename)
             }
 
             QString error;
-            const SdfLayerRefPtr relocated = retarget ? relocatedCopy(rootLayer) : SdfLayerRefPtr();
-            if (retarget && !relocated)
-                return false;
-            const std::string oldIdentifier = rootLayer->GetIdentifier();
-            const SdfLayerRefPtr original = retarget ? SdfLayer::CreateAnonymous() : SdfLayerRefPtr();
-            if (retarget && !original)
-                return false;
-            if (original)
-                original->TransferContent(rootLayer);
-
-            bool saved = saveSublayers(d.stage, error);
-            if (saved) {
-                StageBlocker blocker(d.stageWatcher.data());
-                struct RetargetRollback {
-                    SdfLayerHandle layer;
-                    SdfLayerRefPtr original;
-                    std::string identifier;
-                    bool committed = false;
-                    ~RetargetRollback()
-                    {
-                        if (original && !committed) {
-                            layer->SetIdentifier(identifier);
-                            layer->TransferContent(original);
-                        }
-                    }
-                } rollback { rootLayer, original, oldIdentifier };
-                if (retarget) {
-                    rootLayer->TransferContent(relocated);
-                    rootLayer->SetIdentifier(QStringToString(stageFilename));
-                }
-                saved = (!retarget || rootLayer->GetIdentifier() == QStringToString(stageFilename))
-                        && exportLayer(rootLayer, stageFilename, error);
-                rollback.committed = saved;
-                if (!saved && error.isEmpty())
-                    error = QStringLiteral("Cannot retarget layer to %1").arg(stageFilename);
-            }
-            if (!saved) {
+            if (!saveSublayers(oldStage, error)) {
                 QMetaObject::invokeMethod(
                     d.session,
                     [session = d.session, error]() {
@@ -850,11 +830,104 @@ SessionPrivate::saveToFile(const QString& filename)
                     Qt::QueuedConnection);
                 return false;
             }
-            d.filename = stageFilename;
-        } catch (const std::exception&) {
+
+            if (!retarget) {
+                if (!exportLayer(rootLayer, stageFilename, error)) {
+                    QMetaObject::invokeMethod(
+                        d.session,
+                        [session = d.session, error]() {
+                            if (session)
+                                session->notifyStatus(Session::Notify::Status::Error, error);
+                        },
+                        Qt::QueuedConnection);
+                    return false;
+                }
+                d.filename = stageFilename;
+            }
+            else {
+                const SdfLayerRefPtr relocated = relocatedCopy(rootLayer);
+                if (!relocated)
+                    return false;
+
+                if (!exportLayer(relocated, stageFilename, error)) {
+                    QMetaObject::invokeMethod(
+                        d.session,
+                        [session = d.session, error]() {
+                            if (session)
+                                session->notifyStatus(Session::Notify::Status::Error, error);
+                        },
+                        Qt::QueuedConnection);
+                    return false;
+                }
+
+                // A USD stage cannot change its root layer object in place, and a
+                // USDA-backed anonymous layer cannot be converted into a Crate-backed
+                // layer merely by changing its identifier. Reopen the successfully
+                // written file and replace the live stage while preserving session
+                // opinions, load rules, muted layers, and the active local edit layer.
+                const UsdStageLoadRules loadRules = oldStage->GetLoadRules();
+                const std::vector<std::string> mutedLayers = oldStage->GetMutedLayers();
+                const SdfLayerHandle oldEditLayer = oldStage->GetEditTarget().GetLayer();
+                const bool editWasRoot = oldEditLayer == rootLayer;
+                const std::string editIdentifier = oldEditLayer ? oldEditLayer->GetIdentifier() : std::string();
+
+                const SdfLayerRefPtr sessionLayer = SdfLayer::CreateAnonymous("stageviz-session.usda");
+                if (!sessionLayer)
+                    return false;
+                sessionLayer->TransferContent(oldStage->GetSessionLayer());
+
+                const SdfLayerRefPtr newRoot = SdfLayer::FindOrOpen(QStringToString(stageFilename));
+                if (!newRoot)
+                    return false;
+
+                UsdStageRefPtr replacement = UsdStage::Open(newRoot, sessionLayer, UsdStage::LoadNone);
+                if (!replacement)
+                    return false;
+
+                replacement->SetLoadRules(loadRules);
+                if (!mutedLayers.empty())
+                    replacement->MuteAndUnmuteLayers(mutedLayers, {});
+
+                SdfLayerHandle replacementEditLayer;
+                if (editWasRoot) {
+                    replacementEditLayer = replacement->GetRootLayer();
+                }
+                else if (!editIdentifier.empty()) {
+                    for (const SdfLayerHandle& layer : replacement->GetLayerStack(false)) {
+                        if (layer && layer->GetIdentifier() == editIdentifier) {
+                            replacementEditLayer = layer;
+                            break;
+                        }
+                    }
+                }
+
+                if (!replacementEditLayer)
+                    replacementEditLayer = replacement->GetRootLayer();
+
+                replacement->SetEditTarget(replacement->GetEditTargetForLocalLayer(replacementEditLayer));
+
+                d.stageWatcher->init();
+                d.stage = replacement;
+                d.filename = stageFilename;
+                d.pendingNotices.entries.clear();
+                d.stageWatcher->watch(d.stage);
+                stageReplaced = true;
+            }
+        }
+        catch (const std::exception&) {
             return false;
         }
     }
+
+    if (stageReplaced) {
+        const GfBBox3d bbox = boundingBox();
+        {
+            WRITE_LOCKER(locker, &d.stageLock, "stageLock");
+            d.bbox = bbox;
+        }
+        updateStage();
+    }
+
     if (preserveState) {
         const QString stateFilename = QFileInfo(stageFilename + ".session").absoluteFilePath();
         if (!saveState(stateFilename))

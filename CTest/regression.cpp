@@ -49,21 +49,27 @@ namespace {
         return stage;
     }
 
-    void saveTwice()
+    void saveTwice(const QString& extension)
     {
         QTemporaryDir dir;
         require(dir.isValid(), "temporary directory");
         Session session;
         session.setPreserveState(false);
         require(session.newStage(), "new stage");
-        const QString path = dir.filePath("scene.usdc");
+        const QString path = dir.filePath("scene." + extension);
+
         session.stage()->DefinePrim(SdfPath("/World/First"));
         require(session.saveToFile(path), "first save");
+        require(!session.stage()->GetRootLayer()->IsAnonymous(), "first save retargets anonymous root layer");
+        require(session.stage()->GetRootLayer()->GetRealPath() == path.toStdString(),
+                "first save retargets root layer to destination");
         require(!session.stage()->GetRootLayer()->IsDirty(), "first save clears root dirty state");
+
         session.stage()->RemovePrim(SdfPath("/World/First"));
         session.stage()->DefinePrim(SdfPath("/World/Second"));
         require(session.saveToFile(path), "second save");
         require(!session.stage()->GetRootLayer()->IsDirty(), "second save clears root dirty state");
+
         const auto reopened = diskStage(path);
         require(!reopened->GetPrimAtPath(SdfPath("/World/First")), "deleted prim remains deleted on disk");
         require(bool(reopened->GetPrimAtPath(SdfPath("/World/Second"))), "second edit saved");
@@ -314,6 +320,63 @@ namespace {
                     == UsdStageLoadRules::NoneRule, "rename preserves unloaded policy");
     }
 
+    void namespaceLoadRulesBatch()
+    {
+        const auto stage = UsdStage::CreateInMemory();
+        for (const char* path : {"/A", "/B", "/C", "/A/First", "/A/First/Detail",
+                                 "/A/Second", "/A/Second/Detail"})
+            stage->DefinePrim(SdfPath(path));
+
+        UsdStageLoadRules rules = UsdStageLoadRules::LoadAll();
+        rules.AddRule(SdfPath("/A/First"), UsdStageLoadRules::NoneRule);
+        rules.AddRule(SdfPath("/A/First/Detail"), UsdStageLoadRules::OnlyRule);
+        rules.AddRule(SdfPath("/A/Second"), UsdStageLoadRules::OnlyRule);
+        rules.AddRule(SdfPath("/Unrelated"), UsdStageLoadRules::NoneRule);
+        stage->SetLoadRules(rules);
+
+        stageviz::edit::NamespaceEditor editor(stage, stage->GetEditTarget());
+        QString error;
+        require(editor.reparentPrims({{SdfPath("/A/First"), SdfPath("/B/First")},
+                                      {SdfPath("/A/Second"), SdfPath("/C/Second")}}, error),
+                "batch move load rules");
+
+        const UsdStageLoadRules moved = stage->GetLoadRules();
+        require(moved.GetEffectiveRuleForPath(SdfPath("/B/First/Other")) == UsdStageLoadRules::NoneRule,
+                "batch move preserves none rule");
+        require(moved.GetEffectiveRuleForPath(SdfPath("/B/First/Detail")) == UsdStageLoadRules::OnlyRule,
+                "batch move preserves descendant only rule");
+        require(moved.GetEffectiveRuleForPath(SdfPath("/C/Second")) == UsdStageLoadRules::OnlyRule,
+                "batch move preserves second source rule");
+        require(moved.GetEffectiveRuleForPath(SdfPath("/Unrelated")) == UsdStageLoadRules::NoneRule,
+                "batch move preserves unrelated rule");
+    }
+
+    void namespaceLoadRulesRename()
+    {
+        const auto stage = UsdStage::CreateInMemory();
+        stage->DefinePrim(SdfPath("/World"));
+        stage->DefinePrim(SdfPath("/World/Part"));
+        stage->DefinePrim(SdfPath("/World/Part/Detail"));
+
+        UsdStageLoadRules rules = UsdStageLoadRules::LoadAll();
+        rules.AddRule(SdfPath("/World/Part"), UsdStageLoadRules::NoneRule);
+        rules.AddRule(SdfPath("/World/Part/Detail"), UsdStageLoadRules::OnlyRule);
+        stage->SetLoadRules(rules);
+
+        stageviz::edit::NamespaceEditor editor(stage, stage->GetEditTarget());
+        QString error;
+        require(editor.renamePrim(SdfPath("/World/Part"), SdfPath("/World/Renamed"), error),
+                "rename load rules");
+
+        const UsdStageLoadRules renamed = stage->GetLoadRules();
+        require(renamed.GetEffectiveRuleForPath(SdfPath("/World/Renamed/Other")) == UsdStageLoadRules::NoneRule,
+                "rename preserves none rule");
+        require(renamed.GetEffectiveRuleForPath(SdfPath("/World/Renamed/Detail")) == UsdStageLoadRules::OnlyRule,
+                "rename preserves descendant only rule");
+        require(renamed.GetEffectiveRuleForPath(SdfPath("/World/Part")) == UsdStageLoadRules::AllRule,
+                "rename removes old-path rule");
+    }
+
     void exportSessionOpinions()
     {
         QTemporaryDir dir;
@@ -337,11 +400,16 @@ int main(int argc, char** argv)
 {
     QCoreApplication app(argc, argv);
     const std::map<std::string, std::function<void()>> cases {
-        {"save_twice", saveTwice}, {"save_failure", saveFailure}, {"sublayer_save", sublayerSave},
+        {"save_twice_usda", [] { saveTwice("usda"); }},
+        {"save_twice_usdc", [] { saveTwice("usdc"); }},
+        {"save_failure", saveFailure}, {"sublayer_save", sublayerSave},
         {"save_as", saveAs}, {"corrupt_state", corruptState},
         {"payload_state", [] { payloadState(false); }}, {"legacy_payload_state", [] { payloadState(true); }},
         {"reparent_dependencies", reparentDependencies}, {"reparent_batch", reparentBatch},
-        {"namespace_load_rules", namespaceLoadRules}, {"export_session_opinions", exportSessionOpinions},
+        {"namespace_load_rules", namespaceLoadRules},
+        {"namespace_load_rules_batch", namespaceLoadRulesBatch},
+        {"namespace_load_rules_rename", namespaceLoadRulesRename},
+        {"export_session_opinions", exportSessionOpinions},
         {"merge_asset_paths", mergeAssetPaths}
     };
     if (argc != 2 || !cases.count(argv[1])) {
