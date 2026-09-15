@@ -26,6 +26,7 @@
 #include <pxr/usd/usd/payloads.h>
 #include <pxr/usd/usd/prim.h>
 #include <pxr/usd/usd/primRange.h>
+#include <pxr/usd/usd/variantSets.h>
 #include <pxr/usd/usd/references.h>
 #include <pxr/usd/usdGeom/bboxCache.h>
 #include <pxr/usd/usdGeom/imageable.h>
@@ -45,6 +46,20 @@ namespace payload {
         QList<SdfPath> previousMask;
     };
 }  // namespace payload
+
+namespace variant {
+    struct SelectionState {
+        struct Item {
+            SdfPath path;
+            bool hadPrimSpec = false;
+            bool hadVariantSelectionField = false;
+            VtValue variantSelectionField;
+        };
+
+        QList<Item> items;
+        bool captured = false;
+    };
+}  // namespace variant
 
 namespace {
 
@@ -604,6 +619,195 @@ namespace {
 
 }  // namespace
 
+
+
+Command
+setVariantSelection(const QList<SdfPath>& paths, const QString& setName, const QString& value)
+{
+    auto state = std::make_shared<variant::SelectionState>();
+    const std::string variantSetName = qt::QStringToString(setName);
+    const std::string variantValue = qt::QStringToString(value);
+
+    return Command(
+        [paths, variantSetName, variantValue, state](Session* session) {
+            if (!session || paths.isEmpty() || variantSetName.empty() || variantValue.empty())
+                return;
+
+            const QList<SdfPath> uniquePaths = path::uniquePaths(paths);
+            command::beginDeferred(session, "Set variant", static_cast<int>(uniquePaths.size()));
+
+            command::runWorker([session, uniquePaths, variantSetName, variantValue, state]() {
+                QList<SdfPath> changed;
+                QStringList errors;
+
+                {
+                    WRITE_LOCKER(locker, session->stageLock(), "stageLock");
+                    const UsdStageRefPtr stage = session->stageUnsafe();
+
+                    if (!stage) {
+                        errors.append("stage missing");
+                    }
+                    else {
+                        QString editError;
+                        const SdfLayerHandle editLayer = currentEditLayer(stage, editError);
+
+                        if (!editLayer) {
+                            errors.append(editError);
+                        }
+                        else {
+                            if (!state->captured) {
+                                state->items.clear();
+                                state->items.reserve(uniquePaths.size());
+
+                                for (const SdfPath& inputPath : uniquePaths) {
+                                    const SdfPath primPath = inputPath.IsPropertyPath()
+                                                                 ? inputPath.GetPrimPath()
+                                                                 : inputPath;
+                                    const UsdPrim prim = stage->GetPrimAtPath(primPath);
+
+                                    if (!prim || !prim.IsValid()) {
+                                        errors.append(QString("prim missing: %1").arg(pathText(primPath)));
+                                        continue;
+                                    }
+
+                                    UsdVariantSet variantSet = prim.GetVariantSet(variantSetName);
+                                    if (!variantSet.IsValid()) {
+                                        errors.append(QString("variant set missing: %1").arg(pathText(primPath)));
+                                        continue;
+                                    }
+
+                                    const std::vector<std::string> names = variantSet.GetVariantNames();
+                                    if (std::find(names.begin(), names.end(), variantValue) == names.end()) {
+                                        errors.append(QString("variant value missing: %1").arg(pathText(primPath)));
+                                        continue;
+                                    }
+
+                                    variant::SelectionState::Item item;
+                                    item.path = primPath;
+                                    item.hadPrimSpec = bool(editLayer->GetPrimAtPath(primPath));
+                                    item.hadVariantSelectionField
+                                        = editLayer->HasField(primPath, SdfFieldKeys->VariantSelection);
+
+                                    if (item.hadVariantSelectionField) {
+                                        item.variantSelectionField
+                                            = editLayer->GetField(primPath, SdfFieldKeys->VariantSelection);
+                                    }
+
+                                    state->items.append(item);
+                                }
+
+                                state->captured = true;
+                            }
+
+                            UsdEditContext context(stage, UsdEditTarget(editLayer));
+
+                            for (const variant::SelectionState::Item& item : state->items) {
+                                const UsdPrim prim = stage->GetPrimAtPath(item.path);
+                                if (!prim || !prim.IsValid()) {
+                                    errors.append(QString("prim missing: %1").arg(pathText(item.path)));
+                                    continue;
+                                }
+
+                                UsdVariantSet variantSet = prim.GetVariantSet(variantSetName);
+                                if (!variantSet.IsValid()) {
+                                    errors.append(QString("variant set missing: %1").arg(pathText(item.path)));
+                                    continue;
+                                }
+
+                                if (variantSet.GetVariantSelection() == variantValue) {
+                                    path::appendUnique(changed, item.path);
+                                    continue;
+                                }
+
+                                if (!variantSet.SetVariantSelection(variantValue)) {
+                                    errors.append(QString("failed to set variant: %1").arg(pathText(item.path)));
+                                    continue;
+                                }
+
+                                path::appendUnique(changed, item.path);
+                            }
+                        }
+                    }
+                }
+
+                const bool success = errors.isEmpty() && !changed.isEmpty();
+                const QString errorText = summarizeErrors(errors);
+
+                command::queueToSession(session, [session, changed, success, errorText]() {
+                    using Status = Session::Notify::Status;
+                    command::finishDeferred(
+                        session,
+                        success ? "Variant set"
+                                : appendError("Set variant finished with errors", errorText),
+                        changed, success ? Status::Success : Status::Error);
+                });
+            });
+        },
+        [state](Session* session) {
+            if (!session || !state->captured || state->items.isEmpty())
+                return;
+
+            command::beginDeferred(session, "Undo set variant", static_cast<int>(state->items.size()));
+
+            command::runWorker([session, state]() {
+                QList<SdfPath> restored;
+                QStringList errors;
+
+                {
+                    WRITE_LOCKER(locker, session->stageLock(), "stageLock");
+                    const UsdStageRefPtr stage = session->stageUnsafe();
+
+                    if (!stage) {
+                        errors.append("stage missing");
+                    }
+                    else {
+                        QString editError;
+                        const SdfLayerHandle editLayer = currentEditLayer(stage, editError);
+
+                        if (!editLayer) {
+                            errors.append(editError);
+                        }
+                        else {
+                            for (const variant::SelectionState::Item& item : state->items) {
+                                if (item.hadVariantSelectionField) {
+                                    editLayer->SetField(item.path, SdfFieldKeys->VariantSelection,
+                                                        item.variantSelectionField);
+                                }
+                                else {
+                                    editLayer->EraseField(item.path, SdfFieldKeys->VariantSelection);
+                                }
+
+                                if (!item.hadPrimSpec) {
+                                    const SdfPrimSpecHandle primSpec = editLayer->GetPrimAtPath(item.path);
+                                    if (primSpec && primSpec->IsInert()
+                                        && !stage::removePrimSpec(editLayer, item.path)) {
+                                        errors.append(
+                                            QString("failed to remove empty variant override: %1")
+                                                .arg(pathText(item.path)));
+                                        continue;
+                                    }
+                                }
+
+                                path::appendUnique(restored, item.path);
+                            }
+                        }
+                    }
+                }
+
+                const bool success = errors.isEmpty();
+                const QString errorText = summarizeErrors(errors);
+
+                command::queueToSession(session, [session, restored, success, errorText]() {
+                    using Status = Session::Notify::Status;
+                    command::finishDeferred(
+                        session,
+                        success ? "Variant undone"
+                                : appendError("Undo set variant failed", errorText),
+                        restored, success ? Status::Success : Status::Error);
+                });
+            });
+        });
+}
 
 Command
 bindMaterial(const QList<SdfPath>& inPaths, const SdfPath& materialPath)

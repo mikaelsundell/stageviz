@@ -120,6 +120,28 @@ struct TransformRootState {
 Command
 bindMaterial(const QList<SdfPath>& paths, const SdfPath& materialPath);
 
+
+/**
+ * @brief Creates an undoable command that sets a USD variant selection.
+ *
+ * The selection is authored into the stage's current edit target, so composed
+ * prims receive a stronger variant-selection opinion without modifying their
+ * source layer. Only prims that expose @p setName and contain @p value are
+ * modified.
+ *
+ * Undo restores the edit layer's previous variantSelection field exactly. If
+ * the command created an otherwise-inert override prim solely for the variant
+ * opinion, undo removes that empty override again.
+ *
+ * @param paths Prim paths whose variant selection should be changed.
+ * @param setName Variant set name.
+ * @param value Variant value to select.
+ * @return Undoable variant-selection command.
+ */
+Command
+setVariantSelection(const QList<SdfPath>& paths, const QString& setName, const QString& value);
+
+
 /**
  * @brief Creates a command that loads payloads resolved from the specified paths.
  *

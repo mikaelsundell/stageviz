@@ -792,6 +792,30 @@ def _edit_has_prim(path):
     return bool(layer.GetPrimAtPath(Sdf.Path(path)))
 
 
+def _layer_variant_selection(layer, path, set_name):
+    if not layer:
+        return ""
+
+    spec = layer.GetPrimAtPath(Sdf.Path(path))
+    if not spec:
+        return ""
+
+    try:
+        selections = dict(spec.variantSelections)
+    except Exception:
+        return ""
+
+    return str(selections.get(set_name, ""))
+
+
+def _root_variant_selection(path, set_name):
+    return _layer_variant_selection(_root_layer(), path, set_name)
+
+
+def _edit_variant_selection(path, set_name):
+    return _layer_variant_selection(_edit_layer(), path, set_name)
+
+
 def _layer_has_default(layer, path):
     if not layer:
         return False
@@ -960,6 +984,21 @@ def _create_external_file(path):
     stage = Usd.Stage.CreateNew(path)
     root = _define_xform(stage, "/ExternalRoot")
     _define_xform(stage, "/ExternalRoot/Child")
+
+    style = root.GetVariantSets().AddVariantSet("style")
+    style.AddVariant("A")
+    style.AddVariant("B")
+
+    style.SetVariantSelection("A")
+    with style.GetVariantEditContext():
+        _define_xform(stage, "/ExternalRoot/StyleA")
+
+    style.SetVariantSelection("B")
+    with style.GetVariantEditContext():
+        _define_xform(stage, "/ExternalRoot/StyleB")
+
+    style.SetVariantSelection("A")
+
     stage.SetDefaultPrim(root)
     stage.GetRootLayer().Save()
 
@@ -1180,6 +1219,7 @@ def test_command_api():
         "load_payloads",
         "load_neighbor_payloads",
         "unload_payloads",
+        "set_variant_selection",
         "set_stage_up",
         "set_default_prim",
         "clear_default_prim",
@@ -2959,6 +2999,335 @@ def test_stage_up():
     _assert(
         _wait_until(lambda: stageviz.session().stageUp() == stageviz.StageUpY),
         "set_stage_up sets Y",
+    )
+
+
+def test_variant_selection():
+    if not _has_command("set_variant_selection"):
+        print("[skip] set_variant_selection is not bound")
+        return
+
+    path = "/ExternalRoot"
+    set_name = "style"
+
+    prim = _prim(path)
+    _assert(bool(prim), "normal variant prim is composed from sublayer")
+    if not prim:
+        return
+
+    variant_set = prim.GetVariantSet(set_name)
+    _assert(
+        bool(variant_set and variant_set.IsValid()),
+        "normal variant set exists",
+    )
+    if not variant_set or not variant_set.IsValid():
+        return
+
+    _assert_equal(
+        variant_set.GetVariantSelection(),
+        "A",
+        "normal variant fixture starts on A",
+    )
+    _assert(
+        not _root_has_prim(path),
+        "normal variant prim starts without a root-layer override",
+    )
+    _assert_equal(
+        _root_variant_selection(path, set_name),
+        "",
+        "root layer starts without variant selection override",
+    )
+
+    stageviz.command.set_variant_selection([path], set_name, "B")
+
+    _assert(
+        _wait_until(
+            lambda: bool(
+                _prim(path)
+                and _prim(path).GetVariantSet(set_name).GetVariantSelection() == "B"
+                and _exists(f"{path}/StyleB")
+                and not _exists(f"{path}/StyleA")
+            )
+        ),
+        "set_variant_selection switches composed variant",
+    )
+    _assert_equal(
+        _root_variant_selection(path, set_name),
+        "B",
+        "variant selection is authored in active root edit layer",
+    )
+    _assert(
+        _root_has_prim(path),
+        "variant selection creates root-layer override for composed prim",
+    )
+
+    if _undo():
+        _assert(
+            _wait_until(
+                lambda: bool(
+                    _prim(path)
+                    and _prim(path).GetVariantSet(set_name).GetVariantSelection() == "A"
+                    and _exists(f"{path}/StyleA")
+                    and not _exists(f"{path}/StyleB")
+                )
+            ),
+            "undo set_variant_selection restores weaker variant",
+        )
+        _assert_equal(
+            _root_variant_selection(path, set_name),
+            "",
+            "undo removes root-layer variant selection opinion",
+        )
+        _assert(
+            not _root_has_prim(path),
+            "undo removes newly-created inert variant override prim",
+        )
+
+    if _redo():
+        _assert(
+            _wait_until(
+                lambda: bool(
+                    _prim(path)
+                    and _prim(path).GetVariantSet(set_name).GetVariantSelection() == "B"
+                    and _exists(f"{path}/StyleB")
+                )
+            ),
+            "redo set_variant_selection restores variant B",
+        )
+        _assert_equal(
+            _root_variant_selection(path, set_name),
+            "B",
+            "redo restores root-layer variant selection opinion",
+        )
+
+
+def test_variant_selection_uses_selected_edit_layer():
+    if not _has_command("set_variant_selection"):
+        print("[skip] set_variant_selection is not bound")
+        return
+
+    session = stageviz.session()
+    if not all(hasattr(session, name) for name in ("editLayer", "editLayers", "setEditLayer")):
+        print("[skip] session edit-layer API is not bound")
+        return
+
+    root = _root_layer()
+    layers = list(session.editLayers())
+    sublayers = [
+        identifier
+        for identifier in layers
+        if root and identifier != root.identifier
+    ]
+
+    if not root or not sublayers:
+        print("[skip] no local sublayer available")
+        return
+
+    path = "/ExternalRoot"
+    set_name = "style"
+    sublayer = sublayers[0]
+
+    _assert(
+        bool(session.setEditLayer(sublayer)),
+        "select sublayer for variant authoring",
+    )
+    _assert_equal(
+        _edit_variant_selection(path, set_name),
+        "A",
+        "selected sublayer starts with authored variant A",
+    )
+    _assert_equal(
+        _root_variant_selection(path, set_name),
+        "",
+        "root layer has no variant override before sublayer edit",
+    )
+
+    stageviz.command.set_variant_selection([path], set_name, "B")
+
+    _assert(
+        _wait_until(
+            lambda: _prim(path).GetVariantSet(set_name).GetVariantSelection() == "B"
+        ),
+        "set_variant_selection edits variant in selected sublayer",
+    )
+    _assert_equal(
+        _edit_variant_selection(path, set_name),
+        "B",
+        "variant selection is authored in selected sublayer",
+    )
+    _assert_equal(
+        _root_variant_selection(path, set_name),
+        "",
+        "variant selection is not accidentally authored in root layer",
+    )
+
+    if _undo():
+        _assert(
+            _wait_until(
+                lambda: _prim(path).GetVariantSet(set_name).GetVariantSelection() == "A"
+            ),
+            "undo selected-sublayer variant edit restores A",
+        )
+        _assert_equal(
+            _edit_variant_selection(path, set_name),
+            "A",
+            "undo restores previous sublayer variant selection field",
+        )
+
+    _assert(
+        bool(session.setEditLayer(root.identifier)),
+        "restore root edit layer after variant sublayer test",
+    )
+
+
+def test_payload_variant_load_command():
+    path = "/World/VariantPayload"
+    prim = _prim(path)
+
+    _assert(bool(prim and prim.HasPayload()), "variant payload is available for load command")
+    if not prim:
+        return
+
+    variant_set = prim.GetVariantSet("model")
+    _assert(
+        bool(variant_set and variant_set.IsValid()),
+        "payload load command fixture has model variants",
+    )
+    if not variant_set or not variant_set.IsValid():
+        return
+
+    _assert_equal(
+        variant_set.GetVariantSelection(),
+        "A",
+        "payload load command starts on variant A",
+    )
+    _assert(
+        not prim.IsLoaded(),
+        "payload load command starts unloaded under LoadNone",
+    )
+
+    stageviz.command.load_payloads(
+        [path],
+        variant_set="model",
+        variant_value="B",
+    )
+
+    _assert(
+        _wait_until(
+            lambda: bool(
+                _prim(path)
+                and _prim(path).IsLoaded()
+                and _prim(path).GetVariantSet("model").GetVariantSelection() == "B"
+                and _exists(f"{path}/Geom")
+            ),
+            timeout=5.0,
+        ),
+        "load_payloads switches payload variant and loads it",
+    )
+
+    if _undo():
+        _assert(
+            _wait_until(
+                lambda: bool(
+                    _prim(path)
+                    and not _prim(path).IsLoaded()
+                    and _prim(path).GetVariantSet("model").GetVariantSelection() == "A"
+                ),
+                timeout=5.0,
+            ),
+            "undo payload variant load restores variant A and unloaded state",
+        )
+
+    if _redo():
+        _assert(
+            _wait_until(
+                lambda: bool(
+                    _prim(path)
+                    and _prim(path).IsLoaded()
+                    and _prim(path).GetVariantSet("model").GetVariantSelection() == "B"
+                ),
+                timeout=5.0,
+            ),
+            "redo payload variant load restores variant B and loaded state",
+        )
+
+
+def test_payload_load_rules_session_state(root):
+    session = stageviz.session()
+    required = ("saveState", "loadState")
+    if not all(hasattr(session, name) for name in required):
+        print("[skip] session state API is not fully bound")
+        return
+
+    loaded_path = "/World/PayloadA"
+    unloaded_path = "/World/PayloadB"
+
+    stageviz.command.load_payloads([loaded_path])
+    _assert(
+        _wait_until(
+            lambda: bool(
+                _prim(loaded_path)
+                and _prim(loaded_path).IsLoaded()
+                and _prim(unloaded_path)
+                and not _prim(unloaded_path).IsLoaded()
+            ),
+            timeout=5.0,
+        ),
+        "mixed payload load state prepared for session loadRules",
+    )
+
+    state_path = os.path.join(root, "payload_load_rules.session")
+    _assert(bool(session.saveState(state_path)), "session state saves payload load rules")
+
+    try:
+        with open(state_path, "r", encoding="utf-8") as file:
+            state = json.load(file)
+    except Exception as exc:
+        _fail(f"read saved payload load rules state: {exc}")
+        return
+
+    _assert(
+        bool(state.get("loadRules")),
+        "saved session contains serialized loadRules",
+    )
+    _assert(
+        loaded_path in state.get("loadedPayloads", []),
+        "legacy loadedPayloads records loaded payload",
+    )
+    _assert(
+        unloaded_path not in state.get("loadedPayloads", []),
+        "legacy loadedPayloads excludes unloaded payload",
+    )
+
+    stageviz.command.unload_payloads([loaded_path])
+    stageviz.command.load_payloads([unloaded_path])
+
+    _assert(
+        _wait_until(
+            lambda: bool(
+                _prim(loaded_path)
+                and not _prim(loaded_path).IsLoaded()
+                and _prim(unloaded_path)
+                and _prim(unloaded_path).IsLoaded()
+            ),
+            timeout=5.0,
+        ),
+        "payload load state inverted before session restore",
+    )
+
+    _assert(bool(session.loadState(state_path)), "session state restores serialized loadRules")
+
+    _assert(
+        _wait_until(
+            lambda: bool(
+                _prim(loaded_path)
+                and _prim(loaded_path).IsLoaded()
+                and _prim(unloaded_path)
+                and not _prim(unloaded_path).IsLoaded()
+            ),
+            timeout=5.0,
+        ),
+        "loadState restores mixed payload load state from loadRules",
     )
 
 
@@ -5439,6 +5808,55 @@ def test_merge_payload(merge_source):
     )
 
 
+def test_variant_selection_save_reload(saved_path):
+    if not _has_command("set_variant_selection"):
+        print("[skip] set_variant_selection is not bound")
+        return
+
+    path = "/ExternalRoot"
+    set_name = "style"
+    variant_saved_path = os.path.splitext(saved_path)[0] + "_variant.usda"
+
+    stageviz.command.set_variant_selection([path], set_name, "B")
+
+    _assert(
+        _wait_until(
+            lambda: _prim(path).GetVariantSet(set_name).GetVariantSelection() == "B"
+        ),
+        "variant B prepared before USD save",
+    )
+    _assert_equal(
+        _root_variant_selection(path, set_name),
+        "B",
+        "variant B is authored in document edit layer before save",
+    )
+
+    _assert(
+        bool(stageviz.session().save(variant_saved_path)),
+        "session.save writes stage with variant selection",
+    )
+
+    reopened = Usd.Stage.Open(variant_saved_path, load=Usd.Stage.LoadNone)
+    _assert(bool(reopened), "variant test stage reopens with USD")
+    if not reopened:
+        return
+
+    reopened_prim = reopened.GetPrimAtPath(path)
+    _assert(bool(reopened_prim), "reopened stage contains variant prim")
+    if not reopened_prim:
+        return
+
+    _assert_equal(
+        reopened_prim.GetVariantSet(set_name).GetVariantSelection(),
+        "B",
+        "variant selection survives USD save/reopen without session state",
+    )
+    _assert(
+        bool(reopened.GetPrimAtPath(f"{path}/StyleB")),
+        "reopened stage composes selected variant B content",
+    )
+
+
 def test_save_reload(saved_path):
     ok = stageviz.session().save(saved_path)
     _assert(ok, "session.save writes test stage")
@@ -5513,8 +5931,12 @@ def run():
         ("delete default prim and undo", test_delete_default_prim_and_undo, ()),
         ("default prim validation", test_default_prim_validation, ()),
         ("stage up", test_stage_up, ()),
+        ("variant selection", test_variant_selection, ()),
+        ("variant selection uses selected edit layer", test_variant_selection_uses_selected_edit_layer, ()),
         ("payload load/unload", test_payload_load_unload, ()),
+        ("payload variant load command", test_payload_variant_load_command, ()),
         ("payload variant session state", test_payload_variant_session_state, (root,)),
+        ("payload load rules session state", test_payload_load_rules_session_state, (root,)),
         ("load neighbor payloads", test_load_neighbor_payloads, ()),
         ("load neighbor payloads raw source", test_load_neighbor_payloads_raw_source, ()),
         ("select payload", test_select_payload, ()),
@@ -5550,6 +5972,7 @@ def run():
         ("merge sublayer", test_merge_sublayer, (merge_source,)),
         ("merge reference", test_merge_reference, (merge_source,)),
         ("merge payload", test_merge_payload, (merge_source,)),
+        ("variant selection save/reopen", test_variant_selection_save_reload, (saved_path,)),
         ("save/reopen", test_save_reload, (saved_path,)),
     ]
 

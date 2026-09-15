@@ -25,10 +25,7 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 find_package(OpenUSD REQUIRED)
 find_package(MaterialX CONFIG REQUIRED)
 find_package(OpenImageIO CONFIG REQUIRED)
-
-if(WIN32)
-    find_package(TBB CONFIG REQUIRED)
-endif()
+find_package(TBB CONFIG REQUIRED)
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake")
 include(python)
@@ -226,7 +223,7 @@ source_group("Resource Files" FILES ${project_resources})
 
 set(project_copyright "Copyright 2025-present Contributors to the ${project_name} project")
 set(project_identifier "com.github.mikaelsundell.${project_name}")
-set(project_long_version "0.3.1")
+set(project_long_version "0.3.2")
 set(project_short_version "0.2")
 set(project_url "https://github.com/mikaelsundell/stageviz")
 
@@ -278,6 +275,7 @@ if(APPLE)
         Qt6::Widgets
         Boost::python39
         OpenUSD::OpenUSD
+        TBB::tbb
         Python3::Python
         "-framework CoreFoundation"
         "-framework AppKit"
@@ -358,3 +356,10 @@ target_include_directories(${project_name} PRIVATE
     ${CMAKE_SOURCE_DIR}
     ${CMAKE_BINARY_DIR}
 )
+
+# Native regression tests only; the Python editor suites are not registered.
+option(BUILD_TESTING "Build native Stageviz regression tests" OFF)
+include(CTest)
+if(BUILD_TESTING)
+    add_subdirectory(CTest)
+endif()

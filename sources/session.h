@@ -251,7 +251,12 @@ public:
     bool mergePayloadFromFile(const QString& filename, const SdfPath& targetPath);
 
     /**
-     * @brief Saves the current stage to file.
+     * @brief Saves the root layer and modified file-backed local sublayers.
+     *
+     * Each file is replaced atomically. A failed layer save returns false so
+     * callers retain their unsaved-change state; earlier successful layer
+     * writes are not rolled back. Save As anchors root-layer asset paths to
+     * their original location. Anonymous sublayers require a filename first.
      */
     bool saveToFile(const QString& filename);
 

@@ -248,6 +248,75 @@ PyCommand_canRedo(PyObject*, PyObject*)
 }
 
 static PyObject*
+PyCommand_canClear(PyObject*, PyObject*)
+{
+    CommandStack* stack = commandStack();
+    if (!stack)
+        return nullptr;
+    return PyBool_FromLong(stack->canClear());
+}
+
+static PyObject*
+PyCommand_setTransforms(PyObject*, PyObject* args)
+{
+    PyObject* pyPaths = nullptr;
+    PyObject* pyBefore = nullptr;
+    PyObject* pyAfter = nullptr;
+    if (!PyArg_ParseTuple(args, "OOO", &pyPaths, &pyBefore, &pyAfter))
+        return nullptr;
+    QList<SdfPath> paths;
+    if (!parsePathListArg(pyPaths, "paths", &paths))
+        return nullptr;
+
+    auto parseMatrices = [&](PyObject* object, QList<GfMatrix4d>& matrices) {
+        PyObject* sequence = PySequence_Fast(object, "Expected a sequence of 4x4 matrices");
+        if (!sequence)
+            return false;
+        if (PySequence_Fast_GET_SIZE(sequence) != paths.size()) {
+            Py_DECREF(sequence);
+            PyErr_SetString(PyExc_ValueError, "paths, before and after must have equal lengths");
+            return false;
+        }
+        for (Py_ssize_t i = 0; i < PySequence_Fast_GET_SIZE(sequence); ++i) {
+            PyObject* rows = PySequence_Fast(PySequence_Fast_GET_ITEM(sequence, i), "Expected a 4x4 matrix");
+            if (!rows) {
+                Py_DECREF(sequence);
+                return false;
+            }
+            bool valid = PySequence_Fast_GET_SIZE(rows) == 4;
+            GfMatrix4d matrix(1.0);
+            for (int row = 0; valid && row < 4; ++row) {
+                PyObject* columns = PySequence_Fast(PySequence_Fast_GET_ITEM(rows, row), "Expected a matrix row");
+                if (!columns) {
+                    valid = false;
+                    break;
+                }
+                valid = PySequence_Fast_GET_SIZE(columns) == 4;
+                for (int column = 0; valid && column < 4; ++column) {
+                    matrix[row][column] = PyFloat_AsDouble(PySequence_Fast_GET_ITEM(columns, column));
+                    valid = !PyErr_Occurred();
+                }
+                Py_DECREF(columns);
+            }
+            Py_DECREF(rows);
+            if (!valid) {
+                Py_DECREF(sequence);
+                if (!PyErr_Occurred())
+                    PyErr_SetString(PyExc_ValueError, "Each matrix must have four rows of four numbers");
+                return false;
+            }
+            matrices.append(matrix);
+        }
+        Py_DECREF(sequence);
+        return true;
+    };
+    QList<GfMatrix4d> before, after;
+    if (!parseMatrices(pyBefore, before) || !parseMatrices(pyAfter, after))
+        return nullptr;
+    return runCommand(setTransforms(paths, before, after));
+}
+
+static PyObject*
 PyCommand_resetTransforms(PyObject*, PyObject* args)
 {
     PyObject* pyPaths = nullptr;
@@ -374,6 +443,23 @@ PyCommand_hidePaths(PyObject*, PyObject* args, PyObject* kwargs)
         return nullptr;
 
     return runCommand(hidePaths(paths, recursive != 0));
+}
+
+
+static PyObject*
+PyCommand_setVariantSelection(PyObject*, PyObject* args)
+{
+    PyObject* pyPaths = nullptr;
+    const char* setName = nullptr;
+    const char* value = nullptr;
+    if (!PyArg_ParseTuple(args, "Oss", &pyPaths, &setName, &value))
+        return nullptr;
+
+    QList<SdfPath> paths;
+    if (!parsePathListArg(pyPaths, "paths", &paths))
+        return nullptr;
+
+    return runCommand(setVariantSelection(paths, QString::fromUtf8(setName), QString::fromUtf8(value)));
 }
 
 static PyObject*
@@ -821,6 +907,9 @@ static PyMethodDef PyCommand_methods[] = {
     { "clear", reinterpret_cast<PyCFunction>(PyCommand_clear), METH_NOARGS, "Clear command history." },
     { "can_undo", reinterpret_cast<PyCFunction>(PyCommand_canUndo), METH_NOARGS, "Return whether undo is available." },
     { "can_redo", reinterpret_cast<PyCFunction>(PyCommand_canRedo), METH_NOARGS, "Return whether redo is available." },
+    { "can_clear", reinterpret_cast<PyCFunction>(PyCommand_canClear), METH_NOARGS, "Return whether command history can be cleared." },
+    { "set_transforms", reinterpret_cast<PyCFunction>(PyCommand_setTransforms), METH_VARARGS,
+      "Apply undoable world transforms: paths, before and after (sequences of 4x4 matrices)." },
     { "select_paths", reinterpret_cast<PyCFunction>(PyCommand_selectPaths), METH_VARARGS, "Select paths." },
     { "select_all", reinterpret_cast<PyCFunction>(PyCommand_selectAll), METH_VARARGS | METH_KEYWORDS,
       "Select prims. Optional keyword argument: recursive." },
@@ -837,6 +926,8 @@ static PyMethodDef PyCommand_methods[] = {
     { "isolate_paths", reinterpret_cast<PyCFunction>(PyCommand_isolatePaths), METH_VARARGS, "Isolate paths." },
     { "show_paths", reinterpret_cast<PyCFunction>(PyCommand_showPaths), METH_VARARGS | METH_KEYWORDS, "Show paths." },
     { "hide_paths", reinterpret_cast<PyCFunction>(PyCommand_hidePaths), METH_VARARGS | METH_KEYWORDS, "Hide paths." },
+    { "set_variant_selection", reinterpret_cast<PyCFunction>(PyCommand_setVariantSelection), METH_VARARGS,
+      "Set a USD variant selection in the active edit layer." },
     { "load_payloads", reinterpret_cast<PyCFunction>(PyCommand_loadPayloads), METH_VARARGS | METH_KEYWORDS,
       "Load payloads. Optional keyword arguments: variant_set, variant_value." },
     { "load_neighbor_payloads", reinterpret_cast<PyCFunction>(PyCommand_loadNeighborPayloads), METH_VARARGS,

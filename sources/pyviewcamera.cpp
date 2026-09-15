@@ -461,6 +461,21 @@ PyViewCamera_setBoundingBox(PyViewCameraObject* self, PyObject* args)
 }
 
 static PyObject*
+PyViewCamera_frame(PyViewCameraObject* self, PyObject* args)
+{
+    if (!checkViewCamera(self->camera))
+        return nullptr;
+    PyObject* object = nullptr;
+    if (!PyArg_ParseTuple(args, "O", &object))
+        return nullptr;
+    GfBBox3d bbox;
+    if (!pyToBBox(object, &bbox))
+        return nullptr;
+    self->camera->frame(bbox);
+    Py_RETURN_NONE;
+}
+
+static PyObject*
 PyViewCamera_fit(PyViewCameraObject* self)
 {
     if (!checkViewCamera(self->camera))
@@ -691,6 +706,8 @@ static PyMethodDef PyViewCamera_methods[] = {
       "Return whether the camera is in its identity state" },
     { "resetView", reinterpret_cast<PyCFunction>(PyViewCamera_resetView), METH_NOARGS,
       "Reset the camera view orientation" },
+    { "frame", reinterpret_cast<PyCFunction>(PyViewCamera_frame), METH_VARARGS,
+      "Frame a bounding box given as ((min_x, min_y, min_z), (max_x, max_y, max_z))" },
     { "tumble", reinterpret_cast<PyCFunction>(PyViewCamera_tumble), METH_VARARGS,
       "Rotate the camera around the focus point" },
     { "truck", reinterpret_cast<PyCFunction>(PyViewCamera_truck), METH_VARARGS,

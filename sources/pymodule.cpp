@@ -164,6 +164,7 @@ PyInit_stageviz(void)
     PyModule_AddIntConstant(module, "StageUpY", static_cast<int>(Session::StageUp::Y));
     PyModule_AddIntConstant(module, "StageUpZ", static_cast<int>(Session::StageUp::Z));
 
+    PyModule_AddIntConstant(module, "NotifySuccess", static_cast<int>(Session::Notify::Status::Success));
     PyModule_AddIntConstant(module, "NotifyInfo", 0);
     PyModule_AddIntConstant(module, "NotifyProgress", 1);
     PyModule_AddIntConstant(module, "NotifyWarning", 2);
@@ -181,6 +182,20 @@ PyInit_stageviz(void)
 
     PyModule_AddIntConstant(module, "FovVertical", static_cast<int>(ViewCamera::FovDirection::Vertical));
     PyModule_AddIntConstant(module, "FovHorizontal", static_cast<int>(ViewCamera::FovDirection::Horizontal));
+    PyModule_AddIntConstant(module, "ProjectionFieldOfView", static_cast<int>(ViewCamera::FieldOfView));
+    PyModule_AddIntConstant(module, "ProjectionPhysical", static_cast<int>(ViewCamera::Physical));
+    PyModule_AddIntConstant(module, "RenderShaded", static_cast<int>(ViewState::Shaded));
+    PyModule_AddIntConstant(module, "RenderWireframe", static_cast<int>(ViewState::Wireframe));
+    PyModule_AddIntConstant(module, "ComplexityLow", static_cast<int>(ViewState::Low));
+    PyModule_AddIntConstant(module, "ComplexityMedium", static_cast<int>(ViewState::Medium));
+    PyModule_AddIntConstant(module, "ComplexityHigh", static_cast<int>(ViewState::High));
+    PyModule_AddIntConstant(module, "ComplexityVeryHigh", static_cast<int>(ViewState::VeryHigh));
+    PyModule_AddIntConstant(module, "MaterialAll", static_cast<int>(ViewState::All));
+    PyModule_AddIntConstant(module, "MaterialClay", static_cast<int>(ViewState::Clay));
+    PyModule_AddIntConstant(module, "MaterialOverride", static_cast<int>(ViewState::Override));
+    PyModule_AddIntConstant(module, "SidednessPrimitive", static_cast<int>(ViewState::Primitive));
+    PyModule_AddIntConstant(module, "SidednessDoubleSided", static_cast<int>(ViewState::DoubleSided));
+    PyModule_AddIntConstant(module, "SidednessSingleSided", static_cast<int>(ViewState::SingleSided));
 
     PyModule_AddIntConstant(module, "ColorBase", static_cast<int>(Style::ColorRole::Base));
     PyModule_AddIntConstant(module, "ColorBaseAlt", static_cast<int>(Style::ColorRole::BaseAlt));

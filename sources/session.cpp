@@ -20,16 +20,22 @@
 #include <QMutex>
 #include <QMutexLocker>
 #include <QPointer>
+#include <QSaveFile>
+#include <QSet>
+#include <QTemporaryDir>
 #include <algorithm>
 #include <pxr/base/tf/weakBase.h>
 #include <pxr/usd/sdf/copyUtils.h>
+#include <pxr/usd/sdf/layerUtils.h>
 #include <pxr/usd/usd/editTarget.h>
 #include <pxr/usd/usd/notice.h>
 #include <pxr/usd/usd/payloads.h>
+#include <pxr/usd/usd/stageLoadRules.h>
 #include <pxr/usd/usd/variantSets.h>
 #include <pxr/usd/usdGeom/bboxCache.h>
 #include <pxr/usd/usdGeom/metrics.h>
 #include <pxr/usd/usdGeom/xform.h>
+#include <pxr/usd/usdUtils/dependencies.h>
 #include <stack>
 
 namespace stageviz {
@@ -53,6 +59,9 @@ public:
     bool mergePayloadFromFile(const QString& filename, const SdfPath& targetPath);
     bool mergeLayer(const SdfLayerHandle& sourceLayer);
     void mergeReload();
+    bool exportLayer(const SdfLayerHandle& layer, const QString& filename, QString& error);
+    SdfLayerRefPtr relocatedCopy(const SdfLayerHandle& layer);
+    bool saveSublayers(const UsdStageRefPtr& stage, QString& error);
     bool saveToFile(const QString& filename);
     bool copyToFile(const QString& filename);
     bool flattenPathsToFile(const QList<SdfPath>& paths, const QString& filename);
@@ -66,6 +75,8 @@ public:
     void setPreserveState(bool enabled);
     Session::StageUp stageUp();
     void setStageUp(Session::StageUp stageUp);
+    void syncStageUp();
+    void syncStageMetadata(const NoticeBatch& batch);
     GfBBox3d boundingBox();
     bool needsBoundingBoxUpdate(const NoticeBatch& batch) const;
     void updatePrims(const NoticeBatch& batch);
@@ -393,11 +404,17 @@ SessionPrivate::loadFromFile(const QString& filename, Session::LoadPolicy policy
     d.selectionList->clear();
     const bool hasStateFile = preserveState && QFileInfo::exists(stateFilename);
     initStage();
-    if (hasStateFile) {
-        if (!loadState(stateFilename)) {
-            newStage(policy);
-            return false;
-        }
+    if (hasStateFile && !loadState(stateFilename)) {
+        // Optional view state must never prevent opening a valid USD stage.
+        QMetaObject::invokeMethod(
+            d.session,
+            [session = d.session, stateFilename]() {
+                if (session)
+                    session->notifyStatus(
+                        Session::Notify::Status::Warning,
+                        QString("Opened stage, but could not restore session state: %1").arg(stateFilename));
+            },
+            Qt::QueuedConnection);
     }
     setMask(mask);
     updateStage();
@@ -639,8 +656,112 @@ SessionPrivate::mergeReload()
 }
 
 bool
+SessionPrivate::exportLayer(const SdfLayerHandle& layer, const QString& filename, QString& error)
+{
+    if (!layer || filename.isEmpty()) {
+        error = QStringLiteral("Missing layer or destination filename");
+        return false;
+    }
+
+    const QFileInfo destination(filename);
+    QTemporaryDir temporary(destination.absolutePath() + "/.stageviz-save-XXXXXX");
+    if (!temporary.isValid()) {
+        error = QStringLiteral("Cannot create temporary save directory beside %1").arg(filename);
+        return false;
+    }
+
+    // Keep the real extension so USD selects the requested file format.
+    const QString recoveryPath = temporary.filePath(destination.fileName());
+    if (!layer->Export(recoveryPath.toStdString())) {
+        error = QStringLiteral("Cannot export layer to %1").arg(recoveryPath);
+        return false;
+    }
+
+    QFile source(recoveryPath);
+    QSaveFile output(destination.absoluteFilePath());
+    output.setDirectWriteFallback(false);
+    auto failed = [&](const QString& reason) {
+        output.cancelWriting();
+        temporary.setAutoRemove(false);
+        error = QStringLiteral("%1. Recovery file: %2").arg(reason, recoveryPath);
+        return false;
+    };
+    if (!source.open(QIODevice::ReadOnly))
+        return failed(source.errorString());
+    if (!output.open(QIODevice::WriteOnly))
+        return failed(output.errorString());
+
+    while (!source.atEnd()) {
+        const QByteArray bytes = source.read(1024 * 1024);
+        if (source.error() != QFileDevice::NoError)
+            return failed(source.errorString());
+        if (output.write(bytes) != bytes.size())
+            return failed(output.errorString());
+    }
+    if (!output.commit())
+        return failed(output.errorString());
+    return true;
+}
+
+SdfLayerRefPtr
+SessionPrivate::relocatedCopy(const SdfLayerHandle& layer)
+{
+    if (!layer)
+        return {};
+    const auto copy = SdfLayer::CreateAnonymous("stageviz-save.usda");
+    if (!copy)
+        return {};
+    copy->TransferContent(layer);
+    UsdUtilsModifyAssetPaths(
+        copy,
+        [&](const std::string& path) {
+            if (path.empty() || SdfLayer::IsAnonymousLayerIdentifier(path))
+                return path;
+            const std::string anchored = SdfComputeAssetPathRelativeToLayer(layer, path);
+            // Unresolved relative paths (including texture patterns) must keep
+            // their original filesystem anchor as well.
+            const QString value = QString::fromStdString(anchored);
+            if (!value.contains(':') && QDir::isRelativePath(value)) {
+                const QString realPath = QString::fromStdString(layer->GetRealPath());
+                const QDir anchor = realPath.isEmpty() ? QDir::current() : QFileInfo(realPath).absoluteDir();
+                return anchor.absoluteFilePath(value).toStdString();
+            }
+            return anchored;
+        },
+        true);
+    return copy;
+}
+
+bool
+SessionPrivate::saveSublayers(const UsdStageRefPtr& stage, QString& error)
+{
+    if (!stage)
+        return false;
+    const auto layers = stage->GetLayerStack(false);
+    // Preflight every layer before writing any of them. Anonymous layers
+    // need an explicit filename and cannot silently count as saved.
+    for (const auto& layer : layers) {
+        if (layer == stage->GetRootLayer())
+            continue;
+        if (layer->IsAnonymous() || (layer->IsDirty() && !layer->PermissionToSave())) {
+            error = QStringLiteral("Sublayer needs a writable file before saving: %1")
+                        .arg(QString::fromStdString(layer->GetIdentifier()));
+            return false;
+        }
+    }
+    for (const auto& layer : layers) {
+        if (layer != stage->GetRootLayer() && layer->IsDirty()
+            && !exportLayer(layer, QString::fromStdString(layer->GetRealPath()), error))
+            return false;
+    }
+    return true;
+}
+
+bool
 SessionPrivate::saveToFile(const QString& filename)
 {
+    if (filename.isEmpty())
+        return false;
     QString stageFilename;
     bool preserveState = false;
     {
@@ -655,33 +776,35 @@ SessionPrivate::saveToFile(const QString& filename)
 
             stageFilename = QFileInfo(filename).absoluteFilePath();
             preserveState = d.preserveState;
-            // export rewrites the root layer into a fresh file without flattening
-            // composition, avoiding stale USDC/crate storage after destructive edits.
-            const QString absFilename = QFileInfo(d.filename).absoluteFilePath();
-            if (!absFilename.isEmpty() && absFilename == stageFilename && !rootLayer->IsAnonymous()) {
-                const QString tempFilename = stageFilename + ".stageviz.tmp";
-                QFile::remove(tempFilename);
-                if (!rootLayer->Export(QStringToString(tempFilename)))
+            const bool retarget = rootLayer->IsAnonymous() || d.filename != stageFilename;
+            if (!retarget && !rootLayer->PermissionToSave())
+                return false;
+            if (retarget) {
+                const SdfLayerHandle existing = SdfLayer::Find(QStringToString(stageFilename));
+                if (existing && existing != rootLayer)
                     return false;
-
-                if (!QFile::remove(stageFilename)) {
-                    QFile::remove(tempFilename);
-                    return false;
-                }
-
-                if (!QFile::rename(tempFilename, stageFilename)) {
-                    QFile::remove(tempFilename);
-                    return false;
-                }
             }
-            else {
-                if (!rootLayer->Export(QStringToString(stageFilename)))
-                    return false;
 
-                // retarget the live layer to the new file. Block stage notices to
-                // avoid unnecessary updates for this identity-only change.
+            QString error;
+            const SdfLayerRefPtr relocated = retarget ? relocatedCopy(rootLayer) : SdfLayerRefPtr();
+            const SdfLayerHandle outputLayer = retarget ? SdfLayerHandle(relocated) : rootLayer;
+            if (!saveSublayers(d.stage, error) || !exportLayer(outputLayer, stageFilename, error)) {
+                QMetaObject::invokeMethod(
+                    d.session,
+                    [session = d.session, error]() {
+                        if (session)
+                            session->notifyStatus(Session::Notify::Status::Error, error);
+                    },
+                    Qt::QueuedConnection);
+                return false;
+            }
+            if (retarget) {
                 StageBlocker blocker(d.stageWatcher.data());
+                // Anchor paths before changing the live layer's directory.
+                rootLayer->TransferContent(outputLayer);
                 rootLayer->SetIdentifier(QStringToString(stageFilename));
+                if (rootLayer->GetIdentifier() != QStringToString(stageFilename))
+                    return false;
             }
             d.filename = stageFilename;
         } catch (const std::exception&) {
@@ -699,6 +822,8 @@ SessionPrivate::saveToFile(const QString& filename)
 bool
 SessionPrivate::copyToFile(const QString& filename)
 {
+    if (filename.isEmpty())
+        return false;
     QString stageFilename;
     bool preserveState = false;
     {
@@ -712,7 +837,8 @@ SessionPrivate::copyToFile(const QString& filename)
                 return false;
 
             stageFilename = QFileInfo(filename).absoluteFilePath();
-            if (!rootLayer->Export(QStringToString(stageFilename)))
+            QString error;
+            if (!exportLayer(relocatedCopy(rootLayer), stageFilename, error))
                 return false;
 
             preserveState = d.preserveState;
@@ -770,6 +896,50 @@ SessionPrivate::loadState(const QString& filename)
     const QJsonObject viewStateObject = root.value("viewState").toObject();
     const QJsonArray payloads = root.value("loadedPayloads").toArray();
     const QJsonArray payloadVariants = root.value("payloadVariants").toArray();
+    const bool restoreLoadRules = root.contains("loadRules") || root.contains("loadedPayloads");
+    UsdStageLoadRules loadRules = UsdStageLoadRules::LoadNone();
+    if (root.contains("loadRules")) {
+        if (!root.value("loadRules").isArray())
+            return false;
+        // An empty rule set means load all in USD.
+        loadRules = UsdStageLoadRules::LoadAll();
+        QSet<QString> seenPaths;
+        for (const QJsonValue& value : root.value("loadRules").toArray()) {
+            if (!value.isObject())
+                return false;
+            const QJsonObject object = value.toObject();
+            const QString pathString = object.value("path").toString();
+            if (!SdfPath::IsValidPathString(qt::QStringToString(pathString)) || seenPaths.contains(pathString))
+                return false;
+            const SdfPath path(qt::QStringToString(pathString));
+            if (!path.IsAbsolutePath() || !path.IsAbsoluteRootOrPrimPath())
+                return false;
+            seenPaths.insert(pathString);
+            const QString rule = object.value("rule").toString();
+            if (rule == "all")
+                loadRules.AddRule(path, UsdStageLoadRules::AllRule);
+            else if (rule == "only")
+                loadRules.AddRule(path, UsdStageLoadRules::OnlyRule);
+            else if (rule == "none")
+                loadRules.AddRule(path, UsdStageLoadRules::NoneRule);
+            else
+                return false;
+        }
+    }
+    else if (root.contains("loadedPayloads")) {
+        if (!root.value("loadedPayloads").isArray())
+            return false;
+        // Legacy state lists all loaded payloads. Load each without implicitly
+        // loading its descendants; omitted payloads remain unloaded.
+        for (const QJsonValue& value : payloads) {
+            if (!value.isString() || !SdfPath::IsValidPathString(qt::QStringToString(value.toString())))
+                return false;
+            const SdfPath path(qt::QStringToString(value.toString()));
+            if (!path.IsAbsolutePath() || !path.IsPrimPath())
+                return false;
+            loadRules.AddRule(path, UsdStageLoadRules::OnlyRule);
+        }
+    }
     {
         WRITE_LOCKER(locker, &d.stageLock, "stageLock");
         if (!d.stage)
@@ -814,25 +984,8 @@ SessionPrivate::loadState(const QString& filename)
             variantSet.SetVariantSelection(variantValueString);
         }
 
-        for (const QJsonValue& value : payloads) {
-            const QString pathString = value.toString().trimmed();
-            if (pathString.isEmpty())
-                continue;
-
-            const SdfPath path(qt::QStringToString(pathString));
-            if (!path.IsAbsolutePath())
-                continue;
-
-            const UsdPrim prim = d.stage->GetPrimAtPath(path);
-            if (!prim || !prim.IsValid())
-                continue;
-
-            if (!stage::isPayload(d.stage, path))
-                continue;
-
-            if (!prim.IsLoaded())
-                prim.Load();
-        }
+        if (restoreLoadRules)
+            d.stage->SetLoadRules(loadRules);
     }
     const GfBBox3d bbox = boundingBox();
     {
@@ -1010,12 +1163,21 @@ SessionPrivate::saveState(const QString& filename)
     QString stageFilename;
     QJsonArray payloads;
     QJsonArray payloadVariants;
+    QJsonArray loadRules;
     {
         READ_LOCKER(locker, &d.stageLock, "stageLock");
         if (!d.stage)
             return false;
 
         stageFilename = QFileInfo(d.filename).absoluteFilePath();
+        for (const auto& rule : d.stage->GetLoadRules().GetRules()) {
+            QJsonObject object;
+            object["path"] = qt::SdfPathToQString(rule.first);
+            object["rule"] = rule.second == UsdStageLoadRules::AllRule    ? "all"
+                             : rule.second == UsdStageLoadRules::OnlyRule ? "only"
+                                                                          : "none";
+            loadRules.append(object);
+        }
         std::stack<UsdPrim> stack;
         stack.push(d.stage->GetPseudoRoot());
         while (!stack.empty()) {
@@ -1051,10 +1213,11 @@ SessionPrivate::saveState(const QString& filename)
         }
     }
     QJsonObject root;
-    root["version"] = 3;
+    root["version"] = 4;
     root["stageFile"] = stageFilename;
     root["loadedPayloads"] = payloads;
     root["payloadVariants"] = payloadVariants;
+    root["loadRules"] = loadRules;
     if (d.viewState && d.viewState->camera()) {
         ViewCamera* camera = d.viewState->camera();
         auto cameraUp = [](ViewCamera::CameraUp value) {
@@ -1169,12 +1332,14 @@ SessionPrivate::saveState(const QString& filename)
         viewStateObject["cameraAxisEnabled"] = d.viewState->cameraAxisEnabled();
         root["viewState"] = viewStateObject;
     }
-    QFile file(QFileInfo(filename).absoluteFilePath());
-    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate))
+    QSaveFile file(QFileInfo(filename).absoluteFilePath());
+    file.setDirectWriteFallback(false);
+    if (!file.open(QIODevice::WriteOnly))
         return false;
 
     const QJsonDocument doc(root);
-    return file.write(doc.toJson(QJsonDocument::Indented)) != -1;
+    const QByteArray bytes = doc.toJson(QJsonDocument::Indented);
+    return file.write(bytes) == bytes.size() && file.commit();
 }
 
 bool
@@ -1307,7 +1472,6 @@ SessionPrivate::stageUp()
 void
 SessionPrivate::setStageUp(Session::StageUp stageUp)
 {
-    bool changed = false;
     GfBBox3d bbox;
     {
         WRITE_LOCKER(locker, &d.stageLock, "stageLock");
@@ -1315,14 +1479,9 @@ SessionPrivate::setStageUp(Session::StageUp stageUp)
             return;
 
         const TfToken upAxis = (stageUp == Session::StageUp::Y) ? UsdGeomTokens->y : UsdGeomTokens->z;
-        if (UsdGeomGetStageUpAxis(d.stage) == upAxis)
+        if (UsdGeomGetStageUpAxis(d.stage) != upAxis && !UsdGeomSetStageUpAxis(d.stage, upAxis))
             return;
-
-        UsdGeomSetStageUpAxis(d.stage, upAxis);
-        changed = true;
     }
-    if (!changed)
-        return;
     bbox = boundingBox();
     {
         WRITE_LOCKER(locker, &d.stageLock, "stageLock");
@@ -1331,10 +1490,29 @@ SessionPrivate::setStageUp(Session::StageUp stageUp)
     if (d.viewState && d.viewState->camera()) {
         ViewCamera* camera = d.viewState->camera();
         camera->setBoundingBox(bbox);
-        camera->setCameraUp(stageUp == Session::StageUp::Y ? ViewCamera::Y : ViewCamera::Z);
     }
-    Q_EMIT d.session->stageUpChanged(stageUp);
+    syncStageUp();
     Q_EMIT d.session->boundingBoxChanged(bbox);
+}
+
+void
+SessionPrivate::syncStageUp()
+{
+    const Session::StageUp up = stageUp();
+    if (d.viewState && d.viewState->camera())
+        d.viewState->camera()->setCameraUp(up == Session::StageUp::Y ? ViewCamera::Y : ViewCamera::Z);
+    Q_EMIT d.session->stageUpChanged(up);
+}
+
+void
+SessionPrivate::syncStageMetadata(const NoticeBatch& batch)
+{
+    for (const NoticeEntry& entry : batch.entries) {
+        if (entry.path == SdfPath::AbsoluteRootPath()) {
+            syncStageUp();
+            return;
+        }
+    }
 }
 
 GfBBox3d
@@ -1379,6 +1557,7 @@ SessionPrivate::updatePrims(const NoticeBatch& batch)
         return;
     }
     const bool updateBBox = needsBoundingBoxUpdate(batch);
+    syncStageMetadata(batch);
     if (updateBBox) {
         const GfBBox3d bbox = boundingBox();
         {
@@ -1407,6 +1586,7 @@ SessionPrivate::flushPrims()
 
     const NoticeBatch batch = d.pendingNotices;
     d.pendingNotices.entries.clear();
+    syncStageMetadata(batch);
     const bool updateBBox = needsBoundingBoxUpdate(batch);
     if (updateBBox) {
         const GfBBox3d bbox = boundingBox();
@@ -1440,7 +1620,7 @@ SessionPrivate::updateStage()
     }
     Q_EMIT d.session->stageChanged(stage, loadPolicy, stageStatus);
     Q_EMIT d.session->editLayerChanged(editLayer);
-    Q_EMIT d.session->stageUpChanged(stageUp());
+    syncStageUp();
     Q_EMIT d.session->boundingBoxChanged(bbox);
 }
 

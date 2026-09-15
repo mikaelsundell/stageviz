@@ -13,9 +13,11 @@
 #include <QFileInfo>
 #include <QMenu>
 #include <QSet>
+#include <algorithm>
 #include <functional>
 #include <pxr/usd/sdf/primSpec.h>
 #include <pxr/usd/usd/prim.h>
+#include <pxr/usd/usd/primRange.h>
 #include <pxr/usd/usd/variantSets.h>
 #include <pxr/usd/usdGeom/bboxCache.h>
 #include <pxr/usd/usdGeom/imageable.h>
@@ -24,6 +26,22 @@
 namespace stageviz {
 
 namespace {
+    bool hasResettableOverrides(const UsdPrim& prim, const SdfLayerHandle& editLayer)
+    {
+        if (!prim || prim.IsInstanceProxy() || !editLayer || !editLayer->PermissionToEdit())
+            return false;
+
+        const SdfPrimSpecHandle spec = editLayer->GetPrimAtPath(prim.GetPath());
+        if (!spec || spec->GetSpecifier() != SdfSpecifierOver || spec->GetProperties().empty())
+            return false;
+
+        for (const SdfPrimSpecHandle& primSpec : prim.GetPrimStack()) {
+            if (primSpec && primSpec->GetLayer() && primSpec->GetLayer() != editLayer)
+                return true;
+        }
+        return false;
+    }
+
     bool maskContainsSelection(const QList<SdfPath>& maskPaths, const QList<SdfPath>& selectedPaths)
     {
         if (maskPaths.isEmpty() || selectedPaths.isEmpty())
@@ -61,6 +79,7 @@ namespace {
         if (QClipboard* clipboard = QGuiApplication::clipboard())
             clipboard->setText(text);
     }
+
 }  // namespace
 
 void
@@ -79,7 +98,7 @@ ContextMenu::exec(QWidget* parent, ViewContext* context, UsdStageRefPtr usdStage
     const bool isolateChecked = maskContainsSelection(maskPaths, paths);
 
     QList<SdfPath> payloadPaths;
-    payload::PayloadVariantTargets variantTargets;
+    stage::VariantTargets variantTargets;
     bool hasExactPayloadSelection = false;
     bool canShowSelected = false;
     bool canShowRecursive = false;
@@ -106,7 +125,7 @@ ContextMenu::exec(QWidget* parent, ViewContext* context, UsdStageRefPtr usdStage
                                       : stage::payloadPaths(usdStage, topLevelPaths);
 
         if (!paths.isEmpty())
-            variantTargets = payload::payloadVariantTargets(usdStage, paths);
+            variantTargets = stage::variantTargets(usdStage, paths, false);
 
         for (const SdfPath& path : paths) {
             if (stage::isPayload(usdStage, path))
@@ -125,17 +144,16 @@ ContextMenu::exec(QWidget* parent, ViewContext* context, UsdStageRefPtr usdStage
                     canCenterPivot = false;
             }
 
-            if (prim && prim.IsValid() && !prim.IsInstanceProxy()) {
+            if (!canResetOverrides && prim && prim.IsValid() && !prim.IsInstanceProxy()) {
                 const SdfLayerHandle editLayer = usdStage->GetEditTarget().GetLayer();
-                const SdfPrimSpecHandle editSpec = editLayer ? editLayer->GetPrimAtPath(prim.GetPath())
-                                                             : SdfPrimSpecHandle();
-
-                if (editSpec) {
-                    const bool hasDirectOpinions = !editSpec->GetProperties().empty()
-                                                   || !editSpec->GetMetaDataInfoKeys().empty();
-
-                    if (hasDirectOpinions)
-                        canResetOverrides = true;
+                canResetOverrides = hasResettableOverrides(prim, editLayer);
+                if (!canResetOverrides && editLayer && editLayer->PermissionToEdit()) {
+                    for (const UsdPrim& descendant : prim.GetAllDescendants()) {
+                        if (hasResettableOverrides(descendant, editLayer)) {
+                            canResetOverrides = true;
+                            break;
+                        }
+                    }
                 }
             }
 
@@ -260,14 +278,27 @@ ContextMenu::exec(QWidget* parent, ViewContext* context, UsdStageRefPtr usdStage
 
                 QObject::connect(action, &QAction::triggered, parent,
                                  [context, usdStage, setName, value, targetPaths]() {
-                                     QList<SdfPath> resolved;
+                                     QList<SdfPath> payloadTargets;
+                                     QList<SdfPath> variantTargets;
+
                                      {
                                          READ_LOCKER(locker, context->stageLock(), "stageLock");
-                                         if (usdStage)
-                                             resolved = stage::payloadPaths(usdStage, targetPaths);
+                                         if (!usdStage)
+                                             return;
+
+                                         for (const SdfPath& targetPath : targetPaths) {
+                                             if (stage::isPayload(usdStage, targetPath))
+                                                 payloadTargets.append(targetPath);
+                                             else
+                                                 variantTargets.append(targetPath);
+                                         }
                                      }
-                                     if (!resolved.isEmpty())
-                                         context->run(new Command(loadPayloads(resolved, setName, value)));
+
+                                     if (!variantTargets.isEmpty())
+                                         context->run(new Command(setVariantSelection(variantTargets, setName, value)));
+
+                                     if (!payloadTargets.isEmpty())
+                                         context->run(new Command(loadPayloads(payloadTargets, setName, value)));
                                  });
             }
         }

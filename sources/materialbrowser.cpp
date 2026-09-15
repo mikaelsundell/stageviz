@@ -39,30 +39,6 @@
 
 namespace stageviz {
 
-class MaterialBrowserItemDelegate : public QStyledItemDelegate {
-public:
-    explicit MaterialBrowserItemDelegate(QObject* parent = nullptr)
-        : QStyledItemDelegate(parent)
-    {}
-
-protected:
-    bool eventFilter(QObject* editor, QEvent* event) override
-    {
-        if (editor && event && event->type() == QEvent::KeyPress) {
-            auto* keyEvent = static_cast<QKeyEvent*>(event);
-            if (keyEvent->key() == Qt::Key_Tab && keyEvent->modifiers() == Qt::NoModifier) {
-                QWidget* widget = qobject_cast<QWidget*>(editor);
-                Q_EMIT commitData(widget);
-                Q_EMIT closeEditor(widget, QAbstractItemDelegate::NoHint);
-                keyEvent->accept();
-                return true;
-            }
-        }
-
-        return QStyledItemDelegate::eventFilter(editor, event);
-    }
-};
-
 class MaterialBrowserPrivate : public QObject {
 public:
     void init();
@@ -81,6 +57,29 @@ public:
     QImage placeholderImage() const;
 
 public:
+    class MaterialBrowserItemDelegate : public QStyledItemDelegate {
+    public:
+        explicit MaterialBrowserItemDelegate(QObject* parent = nullptr)
+            : QStyledItemDelegate(parent)
+        {}
+
+    protected:
+        bool eventFilter(QObject* editor, QEvent* event) override
+        {
+            if (editor && event && event->type() == QEvent::KeyPress) {
+                auto* keyEvent = static_cast<QKeyEvent*>(event);
+                if (keyEvent->key() == Qt::Key_Tab && keyEvent->modifiers() == Qt::NoModifier) {
+                    QWidget* widget = qobject_cast<QWidget*>(editor);
+                    Q_EMIT commitData(widget);
+                    Q_EMIT closeEditor(widget, QAbstractItemDelegate::NoHint);
+                    keyEvent->accept();
+                    return true;
+                }
+            }
+
+            return QStyledItemDelegate::eventFilter(editor, event);
+        }
+    };
     struct Data {
         QPointer<MaterialBrowser> browser;
         QScopedPointer<Ui_MaterialBrowser> ui;
@@ -886,8 +885,7 @@ MaterialBrowser::selectRows(const QList<int>& rows)
         else if (p->d.mode == List)
             p->d.ui->list->scrollToItem(p->d.ui->list->item(row), QAbstractItemView::PositionAtCenter);
         else
-            p->d.ui->details->scrollToItem(p->d.ui->details->topLevelItem(row),
-                                           QAbstractItemView::PositionAtCenter);
+            p->d.ui->details->scrollToItem(p->d.ui->details->topLevelItem(row), QAbstractItemView::PositionAtCenter);
     }
 
     Q_EMIT selectionChanged();

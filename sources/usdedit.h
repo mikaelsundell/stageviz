@@ -24,10 +24,9 @@ namespace edit {
  * operations used by Stageviz commands. Structural edits are restricted to
  * the supplied edit target and preserve the loaded state of affected payloads.
  *
- * Rename currently uses UsdNamespaceEditor so USD emits semantic
- * RenameSource/RenameDestination notices required by StageTree. Reparent and
- * removal use SdfBatchNamespaceEdit so multiple layer operations can be
- * applied as one batch without repeated UsdNamespaceEditor dependency scans.
+ * Rename and reparent use UsdNamespaceEditor to preserve dependency paths and
+ * semantic notices. Multi-prim moves retain layer snapshots for rollback.
+ * Removal uses SdfBatchNamespaceEdit.
  */
     class NamespaceEditor {
     public:
@@ -112,10 +111,11 @@ namespace edit {
         bool reparentPrim(const SdfPath& from, const SdfPath& to, QString& error);
 
         /**
-     * @brief Reparents multiple prims using one SdfBatchNamespaceEdit.
+     * @brief Reparents multiple prims and repairs USD dependency paths.
      *
      * All source and destination paths are validated against the unchanged
-     * stage before the batch is applied. Stageviz composition-arc and
+     * stage before the moves are applied. Failed moves roll back the batch.
+     * Stageviz composition-arc and
      * strongest-layer restrictions remain in force. Loaded payload paths
      * below moved roots are remapped after the namespace edit without replacing
      * the stage's complete load-rule set.

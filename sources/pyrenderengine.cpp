@@ -9,6 +9,7 @@
 #include <QString>
 #include <pxr/base/gf/camera.h>
 #include <pxr/base/gf/vec2i.h>
+#include <pxr/external/boost/python.hpp>
 #include <pxr/usd/sdf/layer.h>
 #include <pxr/usd/sdf/path.h>
 #include <pxr/usd/usd/stage.h>
@@ -28,38 +29,6 @@ namespace {
         return false;
     }
 
-    QString pyString(PyObject* object)
-    {
-        if (!object || !PyUnicode_Check(object))
-            return {};
-
-        const char* text = PyUnicode_AsUTF8(object);
-        if (!text)
-            return {};
-
-        return QString::fromUtf8(text);
-    }
-
-    bool callNoArgs(PyObject* object, const char* methodName, PyObject** result)
-    {
-        if (!object || !result)
-            return false;
-
-        PyObject* method = PyObject_GetAttrString(object, methodName);
-        if (!method)
-            return false;
-
-        if (!PyCallable_Check(method)) {
-            Py_DECREF(method);
-            PyErr_Format(PyExc_TypeError, "%s is not callable", methodName);
-            return false;
-        }
-
-        *result = PyObject_CallObject(method, nullptr);
-        Py_DECREF(method);
-        return *result != nullptr;
-    }
-
     bool usdStageFromPython(PyObject* object, UsdStageRefPtr* stage)
     {
         if (!stage) {
@@ -74,42 +43,19 @@ namespace {
             return false;
         }
 
-        // Avoid depending on Boost.Python internals here. The pxr.Usd.Stage owns a
-        // root SdfLayer that is registered in the same process. Read its identifier
-        // through Python, find the native SdfLayer, then open a native UsdStage that
-        // shares the same root layer. This also works for anonymous in-memory layers.
-        PyObject* rootLayerObject = nullptr;
-        if (!callNoArgs(object, "GetRootLayer", &rootLayerObject)) {
-            PyErr_SetString(PyExc_TypeError, "stage must provide GetRootLayer()");
+        // Keep the supplied stage's session layer, load rules, mask and muted layers.
+        try {
+            PXR_BOOST_PYTHON_NAMESPACE::extract<UsdStageRefPtr> extract(object);
+            if (!extract.check()) {
+                PyErr_SetString(PyExc_TypeError, "stage must be a pxr.Usd.Stage");
+                return false;
+            }
+            *stage = extract();
+        } catch (const PXR_BOOST_PYTHON_NAMESPACE::error_already_set&) {
             return false;
         }
-
-        PyObject* identifierObject = PyObject_GetAttrString(rootLayerObject, "identifier");
-        Py_DECREF(rootLayerObject);
-        if (!identifierObject) {
-            PyErr_SetString(PyExc_TypeError, "stage root layer has no identifier");
-            return false;
-        }
-
-        const QString identifier = pyString(identifierObject);
-        Py_DECREF(identifierObject);
-        if (identifier.isEmpty()) {
-            PyErr_SetString(PyExc_ValueError, "stage root layer identifier is empty");
-            return false;
-        }
-
-        SdfLayerHandle rootLayer = SdfLayer::Find(identifier.toStdString());
-        if (!rootLayer)
-            rootLayer = SdfLayer::FindOrOpen(identifier.toStdString());
-
-        if (!rootLayer) {
-            PyErr_Format(PyExc_RuntimeError, "Could not resolve USD root layer '%s'", identifier.toUtf8().constData());
-            return false;
-        }
-
-        *stage = UsdStage::Open(rootLayer);
         if (!*stage) {
-            PyErr_Format(PyExc_RuntimeError, "Could not open USD stage '%s'", identifier.toUtf8().constData());
+            PyErr_SetString(PyExc_ValueError, "stage must be valid");
             return false;
         }
 

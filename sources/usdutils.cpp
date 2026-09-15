@@ -1480,6 +1480,64 @@ namespace stage {
         return result;
     }
 
+    VariantTargets variantTargets(UsdStageRefPtr stage, const QList<SdfPath>& paths, bool recursive)
+    {
+        VariantTargets result;
+        if (!stage)
+            return result;
+
+        QSet<QString> visited;
+
+        auto collectPrim = [&](const UsdPrim& prim) {
+            if (!prim || !prim.IsValid() || prim.IsPseudoRoot())
+                return;
+
+            const SdfPath primPath = prim.GetPath();
+            const QString pathKey = qt::SdfPathToQString(primPath);
+            if (visited.contains(pathKey))
+                return;
+
+            visited.insert(pathKey);
+
+            const UsdVariantSets sets = prim.GetVariantSets();
+            for (const std::string& setName : sets.GetNames()) {
+                const UsdVariantSet set = sets.GetVariantSet(setName);
+                if (!set.IsValid())
+                    continue;
+
+                const QString qSetName = qt::StringToQString(setName);
+                for (const std::string& value : set.GetVariantNames()) {
+                    QList<SdfPath>& targets = result[qSetName][qt::StringToQString(value)];
+                    if (!targets.contains(primPath))
+                        targets.append(primPath);
+                }
+            }
+        };
+
+        QList<SdfPath> roots = path::topLevelPaths(path::uniquePaths(paths));
+        if (roots.isEmpty())
+            roots.append(SdfPath::AbsoluteRootPath());
+
+        for (const SdfPath& inputPath : roots) {
+            const SdfPath primPath = inputPath.IsPropertyPath() ? inputPath.GetPrimPath() : inputPath;
+            const UsdPrim root = primPath == SdfPath::AbsoluteRootPath() ? stage->GetPseudoRoot()
+                                                                         : stage->GetPrimAtPath(primPath);
+            if (!root)
+                continue;
+
+            if (!root.IsPseudoRoot())
+                collectPrim(root);
+
+            if (!recursive)
+                continue;
+
+            for (const UsdPrim& prim : UsdPrimRange(root))
+                collectPrim(prim);
+        }
+
+        return result;
+    }
+
     QMap<QString, QList<QString>> findVariantSets(UsdStageRefPtr stage, const QList<SdfPath>& paths, bool recursive)
 
     {

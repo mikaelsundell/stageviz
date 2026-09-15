@@ -259,18 +259,54 @@ namespace edit {
         SdfPathSet newLoadedPaths;
         captureLoadState(effectiveMoves, oldLoadedPaths, newLoadedPaths);
 
-        SdfBatchNamespaceEdit batch;
-        for (const auto& move : effectiveMoves)
-            batch.Add(move.first, move.second, SdfNamespaceEdit::AtEnd);
-
-        if (!editTarget_.GetLayer()->CanApply(batch)) {
-            error = "Sdf namespace move batch cannot be applied";
-            return false;
+        // USD's namespace editor repairs relationship targets, connections and
+        // composition dependencies. It currently applies one move at a time,
+        // so retain every participating layer for rollback of a partial batch.
+        struct Transaction {
+            UsdStageRefPtr stage;
+            UsdStageLoadRules loadRules;
+            QList<QPair<SdfLayerHandle, SdfLayerRefPtr>> layers;
+            bool committed = false;
+            ~Transaction()
+            {
+                if (committed)
+                    return;
+                for (const auto& entry : layers) {
+                    std::string current;
+                    std::string previous;
+                    entry.first->ExportToString(&current);
+                    entry.second->ExportToString(&previous);
+                    if (current != previous)
+                        entry.first->TransferContent(entry.second);
+                }
+                stage->SetLoadRules(loadRules);
+            }
+        } transaction { stage_, stage_->GetLoadRules(), {}, false };
+        for (const auto& layer : stage_->GetUsedLayers()) {
+            const SdfLayerRefPtr snapshot = SdfLayer::CreateAnonymous();
+            if (!snapshot) {
+                error = "cannot snapshot layers before moving prims";
+                return false;
+            }
+            snapshot->TransferContent(layer);
+            transaction.layers.append(qMakePair(SdfLayerHandle(layer), snapshot));
         }
 
-        if (!editTarget_.GetLayer()->Apply(batch)) {
-            error = "Sdf namespace move batch failed";
-            return false;
+        UsdEditContext editContext(stage_, editTarget_);
+        UsdNamespaceEditor::EditOptions options;
+        options.allowRelocatesAuthoring = false;
+        for (const auto& move : effectiveMoves) {
+            UsdNamespaceEditor editor(stage_, options);
+            std::string whyNot;
+            if (!editor.MovePrimAtPath(move.first, move.second) || !editor.CanApplyEdits(&whyNot)) {
+                error = whyNot.empty() ? QStringLiteral("USD namespace move cannot be applied")
+                                       : qt::StringToQString(whyNot);
+                return false;
+            }
+            if (!editor.ApplyEdits()) {
+                error = "USD namespace move failed";
+                return false;
+            }
         }
 
         restoreLoadState(oldLoadedPaths, newLoadedPaths);
@@ -282,6 +318,7 @@ namespace edit {
             changes_.append({ type, move.first, move.second });
         }
 
+        transaction.committed = true;
         return true;
     }
 

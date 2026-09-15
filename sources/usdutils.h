@@ -584,6 +584,24 @@ namespace stage {
     QList<SdfPath> filterStrongestLayerPaths(UsdStageRefPtr stage, const SdfLayerHandle& layer,
                                              const QList<SdfPath>& paths);
 
+    using VariantTargets = QMap<QString, QMap<QString, QList<SdfPath>>>;
+
+    /**
+     * @brief Collects variant sets, values, and owning prim paths.
+     *
+     * Each result entry maps variant set name -> variant value -> prim paths
+     * that expose that value. Property paths are normalized to their owning
+     * prim. When @p paths is empty the whole stage is searched. When
+     * @p recursive is true, descendants below the supplied roots are included.
+     *
+     * @param stage USD stage to query.
+     * @param paths Prim or property paths to inspect.
+     * @param recursive If true, include descendants below each input root.
+     *
+     * @return Variant targets grouped by set name and variant value.
+     */
+    VariantTargets variantTargets(UsdStageRefPtr stage, const QList<SdfPath>& paths = {}, bool recursive = true);
+
     /**
  * @brief Finds variant sets for the specified prim paths.
  *

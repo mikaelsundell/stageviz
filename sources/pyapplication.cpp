@@ -3,6 +3,8 @@
 // https://github.com/mikaelsundell/stageviz
 
 #include "pyapplication.h"
+#include "pysession.h"
+#include "pystyle.h"
 
 #include <QTimer>
 #include <vector>
@@ -283,12 +285,30 @@ PyApplication_window(PyApplicationObject* self, PyObject*)
     return wrapQtObject(window, "QWidget");
 }
 
+static PyObject*
+PyApplication_session(PyApplicationObject* self, PyObject*)
+{
+    if (!checkApplication(self->application))
+        return nullptr;
+    return createPySession(self->application->session());
+}
+
+static PyObject*
+PyApplication_style(PyApplicationObject* self, PyObject*)
+{
+    if (!checkApplication(self->application))
+        return nullptr;
+    return createPyStyle(self->application->style());
+}
+
 static PyMethodDef PyApplication_methods[]
     = { { "invokeLater", reinterpret_cast<PyCFunction>(PyApplication_invokeLater), METH_VARARGS,
           "Invoke a Python callable later on the Qt event loop. Optional delay in milliseconds." },
         { "show", reinterpret_cast<PyCFunction>(PyApplication_show), METH_VARARGS,
           "Show a Python Qt widget later on the Qt event loop." },
         { "window", reinterpret_cast<PyCFunction>(PyApplication_window), METH_NOARGS, "Return the main Qt window." },
+        { "session", reinterpret_cast<PyCFunction>(PyApplication_session), METH_NOARGS, "Return the session wrapper." },
+        { "style", reinterpret_cast<PyCFunction>(PyApplication_style), METH_NOARGS, "Return the style wrapper." },
         { nullptr } };
 
 PyTypeObject PyApplicationType = { PyVarObject_HEAD_INIT(nullptr, 0) };

@@ -1,6 +1,14 @@
 # Stageviz Python API Reference
 
-This reference is generated from the Stageviz CPython binding sources supplied on 2026-09-01. Treat it as canonical for this skill. It documents only behavior exposed by those bindings; it intentionally does not invent missing module globals or enum ordinals.
+This reference describes the Stageviz CPython bindings, with the coverage audit additions below. It documents only exposed behavior. See [binding coverage](python-binding-coverage.md) for remaining differences from the C++ interfaces.
+
+## Binding audit additions
+
+- `Application.session()` and `Application.style()` return the corresponding wrappers.
+- `ViewCamera.frame(bbox)` frames a bounding box represented as `((min_x, min_y, min_z), (max_x, max_y, max_z))`.
+- `stageviz.command.can_clear()` reports whether command history can be cleared.
+- `stageviz.command.set_transforms(paths, before, after)` applies undoable world transforms. All three sequences must have equal lengths; each matrix is a sequence of four rows of four numbers. The native optional `TransformRootState` snapshots are not accepted.
+- New module constants: `NotifySuccess` (same value as `NotifyInfo`), `ProjectionFieldOfView`, `ProjectionPhysical`, `RenderShaded`, `RenderWireframe`, `ComplexityLow`, `ComplexityMedium`, `ComplexityHigh`, `ComplexityVeryHigh`, `MaterialAll`, `MaterialClay`, `MaterialOverride`, `SidednessPrimitive`, `SidednessDoubleSided`, and `SidednessSingleSided`. Material and sidedness constants describe `ViewState`, not `RenderEngine`'s distinct native enums.
 
 ## Contents
 
@@ -712,7 +720,7 @@ The wrapper owns a native offscreen `RenderEngine` and destroys it when the Pyth
 ### Stage
 
 `set_stage(stage) -> None`
-: Accept a Python object that behaves as a `pxr.Usd.Stage` and provides `GetRootLayer()`. The binding resolves the root layer identifier in the native Sdf registry and opens a native stage sharing that root layer. This is designed to work with anonymous in-memory layers as well as file-backed layers.
+: Accept a native `pxr.Usd.Stage` and retain that same stage, including its session layer, load rules, population mask, and muted layers. The binding does not reopen the root layer. Objects that only imitate `GetRootLayer()` are not accepted.
 
 ### Resolution and camera
 
