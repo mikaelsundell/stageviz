@@ -11,24 +11,24 @@
 
 namespace stageviz {
 
-class MaterialOverrideSceneIndexPrivate;
+class RenderSceneIndexPrivate;
 
 /**
- * @class MaterialOverrideSceneIndex
- * @brief Hydra filtering scene index for viewport material presentation.
+ * @class RenderSceneIndex
+ * @brief Hydra filtering scene index for Stageviz render presentation.
  *
- * Filters material bindings on document gprims after scene-index processing
- * and before the render delegate.
+ * Applies non-destructive Stageviz render presentation overrides after scene-index
+ * processing and before the render delegate.
  *
  * The filter does not create or own materials. Stageviz-owned materials live
  * on Session::auxiliary() and are presented to Hydra by ImagingGLWidget.
  * Auxiliary display geometry below /Display is always passed through
  * unchanged.
  *
- * The filter can also override the Hydra mesh doubleSided property for
- * viewport diagnostics without modifying the authored USD stage.
+ * The filter can override document material presentation and Hydra mesh
+ * doubleSided state without modifying the authored USD stage.
  */
-class MaterialOverrideSceneIndex final : public pxr::HdSingleInputFilteringSceneIndexBase {
+class RenderSceneIndex final : public pxr::HdSingleInputFilteringSceneIndexBase {
 public:
     /**
      * @brief Material override modes.
@@ -40,14 +40,14 @@ public:
     };
 
     /**
-     * @brief Creates a material override filter around an input scene index.
+     * @brief Creates a Stageviz render filter around an input scene index.
      */
-    static pxr::TfRefPtr<MaterialOverrideSceneIndex> New(const pxr::HdSceneIndexBaseRefPtr& inputSceneIndex);
+    static pxr::TfRefPtr<RenderSceneIndex> New(const pxr::HdSceneIndexBaseRefPtr& inputSceneIndex);
 
     /**
-     * @brief Destroys the material override scene index.
+     * @brief Destroys the render scene index.
      */
-    ~MaterialOverrideSceneIndex() override;
+    ~RenderSceneIndex() override;
 
     /**
      * @name Scene Materials
@@ -171,7 +171,7 @@ protected:
                        const pxr::HdSceneIndexObserver::RenamedPrimEntries& entries) override;
 
 private:
-    explicit MaterialOverrideSceneIndex(const pxr::HdSceneIndexBaseRefPtr& inputSceneIndex);
+    explicit RenderSceneIndex(const pxr::HdSceneIndexBaseRefPtr& inputSceneIndex);
 
     /**
      * @brief Dirties material binding data on affected gprims.
@@ -184,7 +184,7 @@ private:
     void dirtyDoubleSided();
 
 private:
-    std::unique_ptr<MaterialOverrideSceneIndexPrivate> p;
+    std::unique_ptr<RenderSceneIndexPrivate> p;
 };
 
 }  // namespace stageviz

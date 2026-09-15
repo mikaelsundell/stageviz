@@ -15,6 +15,7 @@ public:
     CommandStackPrivate();
     ~CommandStackPrivate();
     void push(Command* command);
+    bool updateEditTarget();
 
 public:
     struct Data {
@@ -61,23 +62,26 @@ CommandStack::CommandStack(QObject* parent)
 
 CommandStack::~CommandStack() = default;
 
-void
-CommandStack::synchronizeEditTarget()
+bool
+CommandStackPrivate::updateEditTarget()
 {
     Session* current = session();
     UsdStageRefPtr stage;
     UsdEditTarget target;
+
     if (current) {
         QReadLocker locker(current->stageLock());
         stage = current->stageUnsafe();
         if (stage)
             target = stage->GetEditTarget();
     }
-    if (p->d.stage != stage || p->d.editTarget != target) {
-        clear();
-        p->d.stage = stage;
-        p->d.editTarget = target;
-    }
+
+    if (d.stage == stage && d.editTarget == target)
+        return false;
+
+    d.stage = stage;
+    d.editTarget = target;
+    return true;
 }
 
 void
@@ -86,7 +90,8 @@ CommandStack::run(Command* command)
     if (!command)
         return;
 
-    synchronizeEditTarget();
+    if (p->updateEditTarget())
+        clear();
     const bool prevCanUndo = canUndo();
     const bool prevCanRedo = canRedo();
     const bool prevCanClear = canClear();
@@ -128,7 +133,9 @@ CommandStack::canRedo() const
 void
 CommandStack::undo()
 {
-    synchronizeEditTarget();
+    if (p->updateEditTarget())
+        clear();
+    
     if (!canUndo())
         return;
 
@@ -155,7 +162,9 @@ CommandStack::undo()
 void
 CommandStack::redo()
 {
-    synchronizeEditTarget();
+    if (p->updateEditTarget())
+        clear();
+    
     if (!canRedo())
         return;
 

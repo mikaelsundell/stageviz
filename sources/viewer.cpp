@@ -1687,8 +1687,10 @@ ViewerPrivate::payloadLoad()
         payloadPaths = stage::resolvePayloadPaths(stage, selectedPaths);
     }
 
-    if (!payloadPaths.isEmpty())
+    if (!payloadPaths.isEmpty()) {
         session()->commandStack()->run(new Command(loadPayloads(payloadPaths)));
+        updateSelection(session()->selectionList()->paths());
+    }
 }
 
 void
@@ -1707,16 +1709,20 @@ ViewerPrivate::payloadUnload()
         payloadPaths = stage::resolvePayloadPaths(stage, selectedPaths);
     }
 
-    if (!payloadPaths.isEmpty())
+    if (!payloadPaths.isEmpty()) {
         session()->commandStack()->run(new Command(unloadPayloads(payloadPaths)));
+        updateSelection(session()->selectionList()->paths());
+    }
 }
 
 void
 ViewerPrivate::payloadLoadNeighbors()
 {
     const QList<SdfPath> paths = session()->selectionList()->paths();
-    if (!paths.isEmpty())
+    if (!paths.isEmpty()) {
         session()->commandStack()->run(new Command(loadNeighborPayloads(paths)));
+        updateSelection(session()->selectionList()->paths());
+    }
 }
 
 void
@@ -2286,20 +2292,21 @@ ViewerPrivate::updateSelection(const QList<SdfPath>& paths)
         if (editLayer)
             layerPayloadPaths = stage::nearestLayerPayloadPaths(stage, editLayer, paths);
 
-        if (!payloadPaths.isEmpty()) {
-            variantTargets = payload::payloadVariantTargets(stage, paths);
+        // Variant discovery follows the selected hierarchy independently of
+        // load/unload resolution: selected prim + descendants + ancestor chain,
+        // while payloadVariantTargets() filters the collected targets to payload prims.
+        variantTargets = payload::payloadVariantTargets(stage, paths);
 
-            for (const SdfPath& payloadPath : payloadPaths) {
-                const bool loaded = stage::isLoaded(stage, payloadPath);
+        for (const SdfPath& payloadPath : payloadPaths) {
+            const bool loaded = stage::isLoaded(stage, payloadPath);
 
-                if (loaded)
-                    canUnloadSelected = true;
-                else
-                    canLoadSelected = true;
+            if (loaded)
+                canUnloadSelected = true;
+            else
+                canLoadSelected = true;
 
-                if (canLoadSelected && canUnloadSelected)
-                    break;
-            }
+            if (canLoadSelected && canUnloadSelected)
+                break;
         }
     }
 
@@ -2319,7 +2326,7 @@ ViewerPrivate::updateSelection(const QList<SdfPath>& paths)
     d.ui->editPayloadInvert->setEnabled(hasPayloadSelection);
     d.ui->editLayerInvert->setEnabled(hasLayerPayloadSelection);
 
-    if (!hasPayloadSelection || variantTargets.isEmpty())
+    if (variantTargets.isEmpty())
         return;
 
     QAction* separator = d.ui->menuPayloads->addSeparator();
@@ -2352,8 +2359,11 @@ ViewerPrivate::updateSelection(const QList<SdfPath>& paths)
             }
 
             QObject::connect(action, &QAction::triggered, d.viewer, [this, targets, setName, value]() {
-                if (!targets.isEmpty())
-                    session()->commandStack()->run(new Command(loadPayloads(targets, setName, value)));
+                if (targets.isEmpty())
+                    return;
+
+                session()->commandStack()->run(new Command(loadPayloads(targets, setName, value)));
+                updateSelection(session()->selectionList()->paths());
             });
 
             ++index;

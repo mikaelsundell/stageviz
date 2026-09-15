@@ -33,66 +33,6 @@ PXR_NAMESPACE_USING_DIRECTIVE
 
 namespace stageviz {
 
-class StageTreeItemDelegate : public TreeWidget::ItemDelegate {
-public:
-    explicit StageTreeItemDelegate(QObject* parent = nullptr)
-        : TreeWidget::ItemDelegate(parent)
-    {}
-
-protected:
-    bool eventFilter(QObject* editor, QEvent* event) override
-    {
-        if (editor && event && event->type() == QEvent::KeyPress) {
-            auto* keyEvent = static_cast<QKeyEvent*>(event);
-            if (keyEvent->key() == Qt::Key_Tab && keyEvent->modifiers() == Qt::NoModifier) {
-                QWidget* widget = qobject_cast<QWidget*>(editor);
-                Q_EMIT commitData(widget);
-                Q_EMIT closeEditor(widget, QAbstractItemDelegate::NoHint);
-                keyEvent->accept();
-                return true;
-            }
-        }
-        return TreeWidget::ItemDelegate::eventFilter(editor, event);
-    }
-};
-
-class StageTreeTabFilter : public QObject {
-public:
-    explicit StageTreeTabFilter(StageTree* tree)
-        : QObject(tree)
-        , m_tree(tree)
-    {}
-
-protected:
-    bool eventFilter(QObject* watched, QEvent* event) override
-    {
-        if (!m_tree || watched != m_tree || !event || event->type() != QEvent::KeyPress)
-            return QObject::eventFilter(watched, event);
-
-        auto* keyEvent = static_cast<QKeyEvent*>(event);
-        if (keyEvent->key() != Qt::Key_Tab || keyEvent->modifiers() != Qt::NoModifier)
-            return QObject::eventFilter(watched, event);
-
-        QTreeWidgetItem* item = m_tree->currentItem();
-        if (!item) {
-            const QList<QTreeWidgetItem*> selected = m_tree->selectedItems();
-            if (!selected.isEmpty())
-                item = selected.first();
-        }
-
-        if (item && (item->flags() & Qt::ItemIsEditable)) {
-            m_tree->setCurrentItem(item, PrimItem::Name);
-            m_tree->editItem(item, PrimItem::Name);
-            keyEvent->accept();
-            return true;
-        }
-        return QObject::eventFilter(watched, event);
-    }
-
-private:
-    QPointer<StageTree> m_tree;
-};
-
 class StageTreePrivate : public QObject, public SignalGuard {
 public:
     StageTreePrivate();
@@ -147,6 +87,65 @@ public:
 
 public:
     enum DropMode { DropNone = 0, DropAboveItem = 1, DropOnItem = 2, DropBelowItem = 3 };
+    class StageTreeItemDelegate : public TreeWidget::ItemDelegate {
+    public:
+        explicit StageTreeItemDelegate(QObject* parent = nullptr)
+            : TreeWidget::ItemDelegate(parent)
+        {}
+
+    protected:
+        bool eventFilter(QObject* editor, QEvent* event) override
+        {
+            if (editor && event && event->type() == QEvent::KeyPress) {
+                auto* keyEvent = static_cast<QKeyEvent*>(event);
+                if (keyEvent->key() == Qt::Key_Tab && keyEvent->modifiers() == Qt::NoModifier) {
+                    QWidget* widget = qobject_cast<QWidget*>(editor);
+                    Q_EMIT commitData(widget);
+                    Q_EMIT closeEditor(widget, QAbstractItemDelegate::NoHint);
+                    keyEvent->accept();
+                    return true;
+                }
+            }
+            return TreeWidget::ItemDelegate::eventFilter(editor, event);
+        }
+    };
+
+    class StageTreeTabFilter : public QObject {
+    public:
+        explicit StageTreeTabFilter(StageTree* tree)
+            : QObject(tree)
+            , m_tree(tree)
+        {}
+
+    protected:
+        bool eventFilter(QObject* watched, QEvent* event) override
+        {
+            if (!m_tree || watched != m_tree || !event || event->type() != QEvent::KeyPress)
+                return QObject::eventFilter(watched, event);
+
+            auto* keyEvent = static_cast<QKeyEvent*>(event);
+            if (keyEvent->key() != Qt::Key_Tab || keyEvent->modifiers() != Qt::NoModifier)
+                return QObject::eventFilter(watched, event);
+
+            QTreeWidgetItem* item = m_tree->currentItem();
+            if (!item) {
+                const QList<QTreeWidgetItem*> selected = m_tree->selectedItems();
+                if (!selected.isEmpty())
+                    item = selected.first();
+            }
+
+            if (item && (item->flags() & Qt::ItemIsEditable)) {
+                m_tree->setCurrentItem(item, PrimItem::Name);
+                m_tree->editItem(item, PrimItem::Name);
+                keyEvent->accept();
+                return true;
+            }
+            return QObject::eventFilter(watched, event);
+        }
+
+    private:
+        QPointer<StageTree> m_tree;
+    };
     struct Data {
         int pending = 0;
         bool payloadEnabled = false;
@@ -1829,8 +1828,8 @@ StageTree::StageTree(QWidget* parent)
 {
     p->d.tree = this;
     p->init();
-    setItemDelegate(new StageTreeItemDelegate(this));
-    auto* tabFilter = new StageTreeTabFilter(this);
+    setItemDelegate(new StageTreePrivate::StageTreeItemDelegate(this));
+    auto* tabFilter = new StageTreePrivate::StageTreeTabFilter(this);
     installEventFilter(tabFilter);
 }
 

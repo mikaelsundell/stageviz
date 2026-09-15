@@ -1163,6 +1163,28 @@ def _create_main_file(path, payload_a, payload_b, external):
         )
     variant_set.SetVariantSelection("A")
 
+    # A second payload with the same variant-set/value names exercises
+    # multi-target payload-variant commands and guards against accidental
+    # sibling changes when only one target is supplied.
+    variant_payload_sibling = _define_xform(stage, "/World/VariantPayloadSibling")
+    Usd.ModelAPI(variant_payload_sibling).SetKind(Kind.Tokens.component)
+    sibling_set = variant_payload_sibling.GetVariantSets().AddVariantSet("model")
+    sibling_set.AddVariant("A")
+    sibling_set.AddVariant("B")
+    sibling_set.SetVariantSelection("A")
+    with sibling_set.GetVariantEditContext():
+        variant_payload_sibling.GetPayloads().AddPayload(
+            os.path.basename(payload_a),
+            "/PayloadA",
+        )
+    sibling_set.SetVariantSelection("B")
+    with sibling_set.GetVariantEditContext():
+        variant_payload_sibling.GetPayloads().AddPayload(
+            os.path.basename(payload_b),
+            "/PayloadB",
+        )
+    sibling_set.SetVariantSelection("A")
+
     stage.GetRootLayer().Save()
 
 
@@ -3250,6 +3272,100 @@ def test_payload_variant_load_command():
             ),
             "redo payload variant load restores variant B and loaded state",
         )
+
+
+
+def test_payload_variant_multi_target_command():
+    first = "/World/VariantPayload"
+    second = "/World/VariantPayloadSibling"
+
+    first_prim = _prim(first)
+    second_prim = _prim(second)
+
+    _assert(
+        bool(first_prim and first_prim.HasPayload()),
+        "first variant payload exists for multi-target command test",
+    )
+    _assert(
+        bool(second_prim and second_prim.HasPayload()),
+        "second variant payload exists for multi-target command test",
+    )
+    if not first_prim or not second_prim:
+        return
+
+    _assert_equal(
+        first_prim.GetVariantSet("model").GetVariantSelection(),
+        "A",
+        "first variant payload starts on A",
+    )
+    _assert_equal(
+        second_prim.GetVariantSet("model").GetVariantSelection(),
+        "A",
+        "sibling variant payload starts on A",
+    )
+
+    stageviz.command.load_payloads(
+        [first],
+        variant_set="model",
+        variant_value="B",
+    )
+
+    _assert(
+        _wait_until(
+            lambda: bool(
+                _prim(first)
+                and _prim(first).IsLoaded()
+                and _prim(first).GetVariantSet("model").GetVariantSelection() == "B"
+            ),
+            timeout=5.0,
+        ),
+        "single-target payload variant command switches and loads first payload",
+    )
+
+    _assert_equal(
+        _prim(second).GetVariantSet("model").GetVariantSelection(),
+        "A",
+        "single-target payload variant command does not modify sibling variant",
+    )
+    _assert(
+        bool(_prim(second) and not _prim(second).IsLoaded()),
+        "single-target payload variant command does not load sibling payload",
+    )
+
+    stageviz.command.load_payloads(
+        [first, second],
+        variant_set="model",
+        variant_value="B",
+    )
+
+    _assert(
+        _wait_until(
+            lambda: bool(
+                _prim(first)
+                and _prim(second)
+                and _prim(first).IsLoaded()
+                and _prim(second).IsLoaded()
+                and _prim(first).GetVariantSet("model").GetVariantSelection() == "B"
+                and _prim(second).GetVariantSet("model").GetVariantSelection() == "B"
+            ),
+            timeout=5.0,
+        ),
+        "multi-target payload variant command applies the shared variant to both targets",
+    )
+
+    stageviz.command.unload_payloads([first, second])
+    _assert(
+        _wait_until(
+            lambda: bool(
+                _prim(first)
+                and _prim(second)
+                and not _prim(first).IsLoaded()
+                and not _prim(second).IsLoaded()
+            ),
+            timeout=5.0,
+        ),
+        "multi-target unload restores both payloads to unloaded state",
+    )
 
 
 def test_payload_load_rules_session_state(root):
@@ -5991,6 +6107,7 @@ def run():
         ("variant selection uses selected edit layer", test_variant_selection_uses_selected_edit_layer, ()),
         ("payload load/unload", test_payload_load_unload, ()),
         ("payload variant load command", test_payload_variant_load_command, ()),
+        ("payload variant multi-target command", test_payload_variant_multi_target_command, ()),
         ("payload variant session state", test_payload_variant_session_state, (root,)),
         ("payload load rules session state", test_payload_load_rules_session_state, (root,)),
         ("load neighbor payloads", test_load_neighbor_payloads, ()),

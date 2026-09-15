@@ -324,7 +324,7 @@ import stageviz
 
 from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QLineEdit, QTreeWidget
+from PySide6.QtWidgets import QApplication, QLineEdit, QMenu, QTreeWidget
 from PySide6.QtCore import QModelIndex, QItemSelectionModel
 from PySide6.QtWidgets import QAbstractItemView
 
@@ -733,6 +733,479 @@ def create_fixture():
     usd_stage.GetRootLayer().Save()
 
     return root, main
+
+
+
+
+def create_payload_menu_asset(filename, marker):
+    usd_stage = Usd.Stage.CreateNew(filename)
+
+    root = define_xform(usd_stage, "/Asset")
+    Usd.ModelAPI(root).SetKind(Kind.Tokens.component)
+
+    UsdGeom.Cube.Define(usd_stage, "/Asset/GeomA").CreateSizeAttr(1.0)
+    UsdGeom.Sphere.Define(usd_stage, "/Asset/GeomB").CreateRadiusAttr(0.6)
+    define_xform(usd_stage, f"/Asset/{marker}")
+
+    usd_stage.SetDefaultPrim(root)
+    usd_stage.GetRootLayer().Save()
+
+
+def add_payload_variant(prim, set_name, variants):
+    variant_set = prim.GetVariantSets().AddVariantSet(set_name)
+
+    for variant_name, asset_path in variants:
+        variant_set.AddVariant(variant_name)
+        variant_set.SetVariantSelection(variant_name)
+        with variant_set.GetVariantEditContext():
+            prim.GetPayloads().AddPayload(
+                os.path.basename(asset_path),
+                "/Asset",
+            )
+
+    variant_set.SetVariantSelection(variants[0][0])
+
+
+def add_simple_variant(prim, set_name, values):
+    variant_set = prim.GetVariantSets().AddVariantSet(set_name)
+    for value in values:
+        variant_set.AddVariant(value)
+    variant_set.SetVariantSelection(values[0])
+
+
+def set_model_extents_hint(prim, minimum, maximum):
+    Usd.ModelAPI(prim).SetKind(Kind.Tokens.component)
+    UsdGeom.ModelAPI.Apply(prim).SetExtentsHint([
+        Gf.Vec3f(*minimum),
+        Gf.Vec3f(*maximum),
+    ])
+
+
+def create_payload_menu_fixture(root):
+    """Create a focused fixture for Payload-menu and variant-discovery tests."""
+    fixture_root = os.path.join(root, "payload_menu")
+    os.makedirs(fixture_root, exist_ok=True)
+
+    def asset(name, marker):
+        path = os.path.join(fixture_root, name)
+        create_payload_menu_asset(path, marker)
+        return path
+
+    body_standard = asset("body_standard.usda", "BODY_STANDARD")
+    body_sport = asset("body_sport.usda", "BODY_SPORT")
+    color_red = asset("color_red.usda", "COLOR_RED")
+    color_blue = asset("color_blue.usda", "COLOR_BLUE")
+    wheel_18 = asset("wheel_18.usda", "WHEEL_18")
+    wheel_21 = asset("wheel_21.usda", "WHEEL_21")
+    neighbor_asset = asset("neighbor.usda", "NEIGHBOR")
+
+    main = os.path.join(fixture_root, "payload_menu_test.usda")
+    usd_stage = Usd.Stage.CreateNew(main)
+
+    world = define_xform(usd_stage, "/World")
+    usd_stage.SetDefaultPrim(world)
+
+    assembly = define_xform(usd_stage, "/World/MenuAssembly")
+    add_simple_variant(assembly, "assemblyLook", ["Standard", "Sport"])
+
+    body = define_xform(usd_stage, "/World/MenuAssembly/Body")
+    add_simple_variant(body, "bodyStyle", ["Factory", "Custom"])
+
+    define_xform(usd_stage, "/World/MenuAssembly/Color")
+    define_xform(usd_stage, "/World/MenuAssembly/Wheels")
+
+    body_payload = define_xform(
+        usd_stage,
+        "/World/MenuAssembly/Body/BodyPayload",
+    )
+    Usd.ModelAPI(body_payload).SetKind(Kind.Tokens.component)
+    add_payload_variant(
+        body_payload,
+        "bodyTrim",
+        [
+            ("Standard", body_standard),
+            ("Sport", body_sport),
+        ],
+    )
+
+    color_payload = define_xform(
+        usd_stage,
+        "/World/MenuAssembly/Color/ColorPayload",
+    )
+    Usd.ModelAPI(color_payload).SetKind(Kind.Tokens.component)
+    add_payload_variant(
+        color_payload,
+        "paint",
+        [
+            ("Red", color_red),
+            ("Blue", color_blue),
+        ],
+    )
+
+    wheel_payload = define_xform(
+        usd_stage,
+        "/World/MenuAssembly/Wheels/WheelPayload",
+    )
+    Usd.ModelAPI(wheel_payload).SetKind(Kind.Tokens.component)
+    add_payload_variant(
+        wheel_payload,
+        "wheelSize",
+        [
+            ("18", wheel_18),
+            ("21", wheel_21),
+        ],
+    )
+
+    # Separate payloads for exercising Load Neighbors through the menu.
+    define_xform(usd_stage, "/World/MenuNeighbors")
+
+    # neighboringPaths() computes the source search bounds from the selected
+    # prim using UsdGeomBBoxCache, so the selected payload root itself must be
+    # UsdGeomImageable. Use a Cube payload root here instead of an Xform so
+    # the UI can select the visible payload row and still provide deterministic
+    # world-space bounds while the payload is unloaded.
+    source_geom = UsdGeom.Cube.Define(
+        usd_stage,
+        "/World/MenuNeighbors/Source",
+    )
+    source_geom.CreateSizeAttr(10.0)
+    source = source_geom.GetPrim()
+    source.GetPayloads().AddPayload(os.path.basename(neighbor_asset), "/Asset")
+    set_model_extents_hint(source, (-5.0, -5.0, -5.0), (5.0, 5.0, 5.0))
+
+    near = define_xform(usd_stage, "/World/MenuNeighbors/Near")
+    near.GetPayloads().AddPayload(os.path.basename(neighbor_asset), "/Asset")
+    UsdGeom.Xformable(near).AddTranslateOp().Set(Gf.Vec3d(1.0, 0.0, 0.0))
+    set_model_extents_hint(near, (-0.25, -0.25, -0.25), (0.25, 0.25, 0.25))
+
+    far = define_xform(usd_stage, "/World/MenuNeighbors/Far")
+    far.GetPayloads().AddPayload(os.path.basename(neighbor_asset), "/Asset")
+    UsdGeom.Xformable(far).AddTranslateOp().Set(Gf.Vec3d(100.0, 0.0, 0.0))
+    set_model_extents_hint(far, (-1.0, -1.0, -1.0), (1.0, 1.0, 1.0))
+
+    usd_stage.GetRootLayer().Save()
+    return main
+
+
+def _menu_text(value):
+    return str(value or "").replace("&", "").replace("…", "...").strip()
+
+
+def find_payload_menu():
+    app = QApplication.instance()
+    if app is None:
+        return None
+
+    menus = []
+    for widget in app.allWidgets():
+        try:
+            if isinstance(widget, QMenu):
+                menus.append(widget)
+        except RuntimeError:
+            continue
+
+    for menu in menus:
+        try:
+            if menu.objectName() == "menuPayloads":
+                return menu
+        except RuntimeError:
+            continue
+
+    for menu in menus:
+        try:
+            if _menu_text(menu.title()).lower() in ("payload", "payloads"):
+                texts = {_menu_text(action.text()) for action in menu.actions()}
+                if "Load" in texts and "Unload" in texts:
+                    return menu
+        except RuntimeError:
+            continue
+
+    return None
+
+
+def find_menu_action(menu, text):
+    expected = _menu_text(text)
+    for action in menu.actions():
+        if _menu_text(action.text()) == expected:
+            return action
+    return None
+
+
+def payload_menu_state():
+    menu = find_payload_menu()
+    require(menu is not None, "Payload menu is available")
+
+    state = {}
+    for label in (
+        "Load",
+        "Load Neighbors",
+        "Unload",
+        "Select payload",
+        "Select Layer",
+        "Invert in Payload",
+        "Invert in Layer",
+    ):
+        action = find_menu_action(menu, label)
+        require(action is not None, f"Payload menu contains {label}")
+        state[label] = bool(action.isEnabled())
+
+    variants = {}
+    variant_action = find_menu_action(menu, "Variant")
+    if variant_action is not None and variant_action.menu() is not None:
+        for set_action in variant_action.menu().actions():
+            set_menu = set_action.menu()
+            if set_menu is None:
+                continue
+            variants[_menu_text(set_action.text())] = [
+                _menu_text(value_action.text())
+                for value_action in set_menu.actions()
+                if not value_action.isSeparator()
+            ]
+
+    state["variants"] = variants
+    return state
+
+
+def trigger_payload_action(label):
+    menu = find_payload_menu()
+    require(menu is not None, "Payload menu is available before action trigger")
+    action = find_menu_action(menu, label)
+    require(action is not None, f"Payload menu contains {label} before trigger")
+    require(action.isEnabled(), f"Payload menu action {label} is enabled before trigger")
+    action.trigger()
+    process_events()
+
+
+def trigger_payload_variant(set_name, value):
+    menu = find_payload_menu()
+    require(menu is not None, "Payload menu is available before variant trigger")
+
+    variant_action = find_menu_action(menu, "Variant")
+    require(
+        variant_action is not None and variant_action.menu() is not None,
+        "Payload Variant submenu is available before trigger",
+    )
+
+    set_action = find_menu_action(variant_action.menu(), set_name)
+    require(
+        set_action is not None and set_action.menu() is not None,
+        f"Payload Variant contains set {set_name}",
+    )
+
+    value_action = find_menu_action(set_action.menu(), value)
+    require(value_action is not None, f"Payload Variant {set_name} contains value {value}")
+    require(value_action.isEnabled(), f"Payload Variant {set_name}/{value} is enabled")
+    value_action.trigger()
+    process_events()
+
+
+def select_semantic_path(path):
+    stageviz.command.select_paths([path])
+    require(
+        wait_until(
+            lambda: [str(value) for value in stageviz.session().paths()] == [path],
+            timeout=3.0,
+        ),
+        f"semantic selection becomes {path}",
+    )
+
+
+def test_payload_menu_commands(main):
+    tree = reload_fixture(main, stageviz.LoadNone)
+
+    step(
+        15,
+        "Payload menu commands and variant discovery",
+        """
+The Payload menu is exercised end-to-end against a dedicated hierarchy.
+
+Coverage:
+    - menu enabled/disabled state
+    - descendant payload-variant discovery from an assembly selection
+    - no sibling leakage from a branch selection
+    - payload variant switching
+    - Load / Unload
+    - Load Neighbors
+    - Select payload
+    - Select Layer
+    - Invert in Payload
+    - Invert in Layer
+""",
+    )
+
+    require(policy_name(tree) == "Payload", "Payload-menu test runs in Payload policy")
+
+    stageviz.command.select_paths([])
+    process_events()
+    state = payload_menu_state()
+    for label in (
+        "Load",
+        "Load Neighbors",
+        "Unload",
+        "Select payload",
+        "Select Layer",
+        "Invert in Payload",
+        "Invert in Layer",
+    ):
+        require(not state[label], f"{label} is disabled with empty selection")
+    require(not state["variants"], "Payload Variant submenu is absent with empty selection")
+
+    select_path(tree, "/World/MenuAssembly")
+    state = payload_menu_state()
+    require(not state["Load"] and not state["Unload"], "assembly selection does not become a direct load/unload target")
+    require(not state["Select payload"], "assembly above payloads is not treated as an owning payload")
+    require(
+        set(state["variants"]) == {"bodyTrim", "paint", "wheelSize"},
+        "assembly selection discovers payload variants in descendant branches",
+    )
+
+    select_path(tree, "/World/MenuAssembly/Body")
+    state = payload_menu_state()
+    require(
+        state["variants"] == {"bodyTrim": ["Sport", "Standard"]}
+        or state["variants"] == {"bodyTrim": ["Standard", "Sport"]},
+        "Body branch discovers only bodyTrim and does not leak sibling variants",
+    )
+
+    select_path(tree, "/World/MenuAssembly/Color")
+    state = payload_menu_state()
+    require(
+        set(state["variants"]) == {"paint"},
+        "Color branch discovers paint only",
+    )
+
+    body_payload_path = "/World/MenuAssembly/Body/BodyPayload"
+    select_path(tree, body_payload_path)
+    state = payload_menu_state()
+    require(state["Load"], "Load is enabled for unloaded BodyPayload")
+    require(not state["Unload"], "Unload is disabled for unloaded BodyPayload")
+    require(state["Load Neighbors"], "Load Neighbors is enabled for a payload selection")
+    require(state["Select payload"], "Select payload is enabled for a payload selection")
+    require(state["Select Layer"], "Select Layer is enabled for an active-layer payload")
+    require(state["Invert in Payload"], "Invert in Payload is enabled for a payload selection")
+    require(state["Invert in Layer"], "Invert in Layer is enabled for an active-layer payload")
+    require(set(state["variants"]) == {"bodyTrim"}, "BodyPayload exposes only bodyTrim")
+
+    trigger_payload_variant("bodyTrim", "Sport")
+    require(
+        wait_until(
+            lambda: bool(
+                prim(body_payload_path)
+                and prim(body_payload_path).IsLoaded()
+                and prim(body_payload_path).GetVariantSet("bodyTrim").GetVariantSelection() == "Sport"
+                and exists(body_payload_path + "/BODY_SPORT")
+            ),
+            timeout=5.0,
+        ),
+        "Payload Variant > bodyTrim > Sport switches variant and loads payload",
+    )
+
+    # Loading a new payload variant also causes USD/Hydra/UI notices. Give the
+    # Qt event loop the same settling barrier used elsewhere in this diagnostic
+    # before querying the persistent Payload menu again.
+    process_events()
+    QTest.qWait(100)
+    process_events()
+
+    require(
+        wait_until(
+            lambda: bool(
+                find_payload_menu()
+                and find_menu_action(find_payload_menu(), "Load")
+                and find_menu_action(find_payload_menu(), "Unload")
+                and not find_menu_action(find_payload_menu(), "Load").isEnabled()
+                and find_menu_action(find_payload_menu(), "Unload").isEnabled()
+            ),
+            timeout=5.0,
+        ),
+        "loaded BodyPayload flips Load/Unload enabled state",
+    )
+
+    trigger_payload_action("Unload")
+    require(
+        wait_until(
+            lambda: bool(prim(body_payload_path) and not prim(body_payload_path).IsLoaded()),
+            timeout=5.0,
+        ),
+        "Payload menu Unload unloads BodyPayload",
+    )
+
+    trigger_payload_action("Load")
+    require(
+        wait_until(
+            lambda: bool(prim(body_payload_path) and prim(body_payload_path).IsLoaded()),
+            timeout=5.0,
+        ),
+        "Payload menu Load reloads BodyPayload",
+    )
+
+    descendant_path = body_payload_path + "/GeomA"
+    select_semantic_path(descendant_path)
+    state = payload_menu_state()
+    require(set(state["variants"]) == {"bodyTrim"}, "payload descendant resolves bodyTrim through ancestor chain")
+    require("paint" not in state["variants"] and "wheelSize" not in state["variants"], "deep payload selection does not traverse sibling branches")
+
+    trigger_payload_action("Select payload")
+    require(
+        wait_until(
+            lambda: [str(value) for value in stageviz.session().paths()] == [body_payload_path],
+            timeout=3.0,
+        ),
+        "Select payload maps descendant to nearest owning payload",
+    )
+
+    select_semantic_path(descendant_path)
+    trigger_payload_action("Select Layer")
+    require(
+        wait_until(
+            lambda: [str(value) for value in stageviz.session().paths()] == [body_payload_path],
+            timeout=3.0,
+        ),
+        "Select Layer maps descendant to nearest payload authored in active layer",
+    )
+
+    select_semantic_path(descendant_path)
+    trigger_payload_action("Invert in Payload")
+    inverted = [str(value) for value in stageviz.session().paths()]
+    require(bool(inverted), "Invert in Payload produces a non-empty inverse selection")
+    require(descendant_path not in inverted, "Invert in Payload excludes the originally selected leaf")
+    require(
+        all(path.startswith(body_payload_path + "/") for path in inverted),
+        "Invert in Payload remains inside the nearest payload scope",
+    )
+
+    select_semantic_path(body_payload_path)
+    trigger_payload_action("Invert in Layer")
+    inverted_layer = [str(value) for value in stageviz.session().paths()]
+    require(body_payload_path not in inverted_layer, "Invert in Layer excludes selected payload root")
+    require(
+        "/World/MenuAssembly/Color/ColorPayload" in inverted_layer
+        and "/World/MenuAssembly/Wheels/WheelPayload" in inverted_layer,
+        "Invert in Layer includes sibling payload roots authored in active edit layer",
+    )
+    require(
+        bool(inverted_layer)
+        and all(bool(prim(path) and prim(path).HasPayload()) for path in inverted_layer),
+        "Invert in Layer returns only payload prims",
+    )
+
+    source_path = "/World/MenuNeighbors/Source"
+    near_path = "/World/MenuNeighbors/Near"
+    far_path = "/World/MenuNeighbors/Far"
+    select_path(tree, source_path)
+    state = payload_menu_state()
+    require(state["Load Neighbors"], "Load Neighbors is enabled for neighbor-source payload")
+    trigger_payload_action("Load Neighbors")
+    require(
+        wait_until(
+            lambda: bool(prim(near_path) and prim(near_path).IsLoaded()),
+            timeout=5.0,
+        ),
+        "Payload menu Load Neighbors loads near payload",
+    )
+    require(bool(prim(far_path) and not prim(far_path).IsLoaded()), "Load Neighbors leaves far payload unloaded")
+
+    release_qt_wrappers()
 
 
 def create_performance_fixture(
@@ -1536,13 +2009,13 @@ def dump_tree(tree):
 def payload_policy_enabled(tree):
     item = find_item_by_path(
         tree,
-        "/World/PayloadA",
+        "/",
     )
 
-    if not item:
-        return False
-
-    return has_checkbox(item)
+    return bool(
+        item
+        and has_checkbox(item)
+    )
 
 
 def policy_name(tree):
@@ -4464,6 +4937,7 @@ def run():
 
     try:
         root, main = create_fixture()
+        payload_menu_main = create_payload_menu_fixture(root)
 
         print()
         print("Fixture:")
@@ -4529,6 +5003,7 @@ def run():
         test_payload_policy_after_reload(main)
         test_all_policy(main)
         test_payload_selection_synchronization(main)
+        test_payload_menu_commands(payload_menu_main)
         test_invalid_move_keeps_tree_stable(main)
         test_large_tree_namespace_performance(root)
         test_25k_namespace_benchmark(root)

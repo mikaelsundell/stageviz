@@ -3,8 +3,8 @@
 // https://github.com/mikaelsundell/stageviz
 
 #include "renderengine.h"
-#include "materialoverridesceneindex.h"
 #include "qtutils.h"
+#include "rendersceneindex.h"
 #include <QColorSpace>
 #include <QOffscreenSurface>
 #include <QOpenGLContext>
@@ -19,8 +19,8 @@
 #include <pxr/imaging/glf/simpleLight.h>
 #include <pxr/imaging/glf/simpleMaterial.h>
 #include <pxr/imaging/hd/mergingSceneIndex.h>
-#include <pxr/imaging/hdx/taskControllerSceneIndex.h>
 #include <pxr/imaging/hd/sceneIndexPluginRegistry.h>
+#include <pxr/imaging/hdx/taskControllerSceneIndex.h>
 #include <pxr/imaging/hgi/hgi.h>
 #include <pxr/usd/sdf/assetPath.h>
 #include <pxr/usd/usdGeom/metrics.h>
@@ -59,7 +59,7 @@ namespace {
 
     struct SceneIndices {
         HdMergingSceneIndexRefPtr merging;
-        TfRefPtr<MaterialOverrideSceneIndex> materialOverride;
+        TfRefPtr<RenderSceneIndex> renderSceneIndex;
         UsdImagingSceneIndices auxiliary;
         bool auxiliaryInserted = false;
 
@@ -119,15 +119,14 @@ namespace {
                 // Apply document material overrides before merging the
                 // auxiliary scene. This keeps viewport support content such as
                 // the grid outside document-specific material overrides.
-                TfRefPtr<MaterialOverrideSceneIndex> materialOverrideSceneIndex =
-                    MaterialOverrideSceneIndex::New(inputScene);
+                TfRefPtr<RenderSceneIndex> renderSceneIndex = RenderSceneIndex::New(inputScene);
 
                 HdMergingSceneIndexRefPtr mergingSceneIndex = HdMergingSceneIndex::New();
-                mergingSceneIndex->AddInputScene(materialOverrideSceneIndex, SdfPath::AbsoluteRootPath());
+                mergingSceneIndex->AddInputScene(renderSceneIndex, SdfPath::AbsoluteRootPath());
 
                 if (SceneIndices* sceneIndices = constructingSceneIndices()) {
                     sceneIndices->merging = mergingSceneIndex;
-                    sceneIndices->materialOverride = materialOverrideSceneIndex;
+                    sceneIndices->renderSceneIndex = renderSceneIndex;
                 }
 
                 return mergingSceneIndex;
@@ -138,9 +137,8 @@ namespace {
             registered = true;
         }
 
-        static UsdImagingGLEngine::Parameters prepareParameters(
-            UsdImagingGLEngine::Parameters params,
-            const SceneIndicesPtr& sceneIndices)
+        static UsdImagingGLEngine::Parameters prepareParameters(UsdImagingGLEngine::Parameters params,
+                                                                const SceneIndicesPtr& sceneIndices)
         {
             registerSceneIndexFilters();
             constructingSceneIndices() = sceneIndices.get();
@@ -175,7 +173,7 @@ public:
     void reset();
     void ensureAuxiliarySceneIndex();
     void refreshAuxiliarySceneIndex();
-    void updateMaterialOverrideSceneIndex();
+    void updateRenderSceneIndex();
     void updateRenderParams();
     void updateLighting();
     bool render();
@@ -251,7 +249,7 @@ RenderEngine::Private::initialize()
         return false;
     }
 
-    updateMaterialOverrideSceneIndex();
+    updateRenderSceneIndex();
     ensureAuxiliarySceneIndex();
 
     // Use Hydra's public selection overlay. Keeping selection inside the
@@ -343,30 +341,30 @@ RenderEngine::Private::refreshAuxiliarySceneIndex()
 }
 
 void
-RenderEngine::Private::updateMaterialOverrideSceneIndex()
+RenderEngine::Private::updateRenderSceneIndex()
 {
     if (!engine)
         return;
 
     SceneIndices& sceneIndices = engine->sceneIndices();
-    if (!sceneIndices.materialOverride)
+    if (!sceneIndices.renderSceneIndex)
         return;
 
-    sceneIndices.materialOverride->setSceneMaterialsEnabled(settings.sceneMaterialsEnabled);
-    sceneIndices.materialOverride->setMaterialPath(settings.overrideMaterial);
+    sceneIndices.renderSceneIndex->setSceneMaterialsEnabled(settings.sceneMaterialsEnabled);
+    sceneIndices.renderSceneIndex->setMaterialPath(settings.overrideMaterial);
 
-    MaterialOverrideSceneIndex::Mode mode = MaterialOverrideSceneIndex::None;
+    RenderSceneIndex::Mode mode = RenderSceneIndex::None;
     switch (settings.materialMode) {
-    case MaterialMode::Clay: mode = MaterialOverrideSceneIndex::Clay; break;
-    case MaterialMode::Override: mode = MaterialOverrideSceneIndex::Custom; break;
+    case MaterialMode::Clay: mode = RenderSceneIndex::Clay; break;
+    case MaterialMode::Override: mode = RenderSceneIndex::Custom; break;
     case MaterialMode::Scene:
-    default: mode = MaterialOverrideSceneIndex::None; break;
+    default: mode = RenderSceneIndex::None; break;
     }
-    sceneIndices.materialOverride->setMode(mode);
+    sceneIndices.renderSceneIndex->setMode(mode);
 
     const bool overrideDoubleSided = settings.doubleSidedMode == DoubleSidedMode::DoubleSided;
-    sceneIndices.materialOverride->setDoubleSidedOverride(false);
-    sceneIndices.materialOverride->setDoubleSidedOverrideEnabled(overrideDoubleSided);
+    sceneIndices.renderSceneIndex->setDoubleSidedOverride(false);
+    sceneIndices.renderSceneIndex->setDoubleSidedOverrideEnabled(overrideDoubleSided);
 }
 
 void
@@ -447,13 +445,11 @@ RenderEngine::Private::render()
 
     ensureAuxiliarySceneIndex();
     refreshAuxiliarySceneIndex();
-    updateMaterialOverrideSceneIndex();
+    updateRenderSceneIndex();
     updateRenderParams();
     updateLighting();
 
-    engine->SetRendererSetting(
-        TfToken("domeLightCameraVisibility"),
-        VtValue(settings.domeLightCameraVisibility));
+    engine->SetRendererSetting(TfToken("domeLightCameraVisibility"), VtValue(settings.domeLightCameraVisibility));
 
     engine->SetRendererAov(settings.aov);
     engine->SetRenderBufferSize(size);
@@ -605,7 +601,7 @@ void
 RenderEngine::setSettings(const Settings& settings)
 {
     p->settings = settings;
-    p->updateMaterialOverrideSceneIndex();
+    p->updateRenderSceneIndex();
 }
 
 const RenderEngine::Settings&
@@ -730,15 +726,8 @@ RenderEngine::testIntersection(const GfMatrix4d& viewMatrix, const GfMatrix4d& p
 
     p->updateRenderParams();
 
-    return p->engine->TestIntersection(
-        viewMatrix,
-        projectionMatrix,
-        root,
-        p->params,
-        hitPoint,
-        hitNormal,
-        hitPrimPath,
-        hitInstancerPath);
+    return p->engine->TestIntersection(viewMatrix, projectionMatrix, root, p->params, hitPoint, hitNormal, hitPrimPath,
+                                       hitInstancerPath);
 }
 
 bool

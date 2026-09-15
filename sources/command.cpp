@@ -1672,7 +1672,7 @@ isolatePaths(const QList<SdfPath>& paths)
             });
         },
         [state](Session* session) {
-            session->beginProgressBlock("undo isolate paths", 1);
+            session->beginProgressBlock("Undo isolate paths", 1);
 
             command::runWorker([session, state]() {
                 session->setMask(*state);

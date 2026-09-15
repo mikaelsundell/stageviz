@@ -524,76 +524,57 @@ namespace payload {
     PayloadVariantTargets payloadVariantTargets(UsdStageRefPtr stage, const QList<SdfPath>& paths)
     {
         PayloadVariantTargets result;
-
-        if (!stage || paths.isEmpty()) {
+        if (!stage || paths.isEmpty())
             return result;
-        }
 
-        std::unordered_set<SdfPath, SdfPath::Hash> visitedRoots;
-        std::unordered_set<SdfPath, SdfPath::Hash> visitedPayloads;
-        QList<SdfPath> roots;
+        QSet<SdfPath> visited;
 
-        auto appendRoot = [&](const SdfPath& path) {
-            if (path.IsEmpty())
-                return;
-
-            if (visitedRoots.find(path) != visitedRoots.end()) {
-                return;
-            }
-            visitedRoots.insert(path);
-            roots.append(path);
-        };
-
-        for (const SdfPath& inputPath : path::topLevelPaths(paths)) {
-            SdfPath payloadRootPath;
-            SdfPath currentPath = inputPath;
-
-            while (!currentPath.IsEmpty() && currentPath != SdfPath::AbsoluteRootPath()) {
-                if (stage::isPayload(stage, currentPath)) {
-                    payloadRootPath = currentPath;
-                }
-                currentPath = currentPath.GetParentPath();
-            }
-            appendRoot(payloadRootPath.IsEmpty() ? inputPath : payloadRootPath);
-        }
-
-        roots = path::minimalRootPaths(roots);
-        auto addPayloadVariants = [&](const UsdPrim& prim) {
-            if (!prim)
+        auto collectPrim = [&](const UsdPrim& prim) {
+            if (!prim || !prim.IsValid() || prim.IsPseudoRoot())
                 return;
 
             const SdfPath primPath = prim.GetPath();
-            if (!stage::isPayload(stage, primPath))
+            if (visited.contains(primPath))
                 return;
 
-            if (visitedPayloads.find(primPath) != visitedPayloads.end()) {
+            visited.insert(primPath);
+
+            if (!prim.HasPayload() || !prim.HasVariantSets())
                 return;
-            }
 
-            visitedPayloads.insert(primPath);
-            UsdVariantSets variantSets = prim.GetVariantSets();
-            std::vector<std::string> setNames = variantSets.GetNames();
+            const UsdVariantSets sets = prim.GetVariantSets();
+            for (const std::string& setName : sets.GetNames()) {
+                const UsdVariantSet set = sets.GetVariantSet(setName);
+                if (!set.IsValid())
+                    continue;
 
-            for (const std::string& setName : setNames) {
-                UsdVariantSet variantSet = variantSets.GetVariantSet(setName);
-                std::vector<std::string> variantNames = variantSet.GetVariantNames();
-                QString qSetName = QString::fromStdString(setName);
-
-                for (const std::string& variantName : variantNames) {
-                    result[qSetName][QString::fromStdString(variantName)].append(primPath);
+                const QString qSetName = qt::StringToQString(setName);
+                for (const std::string& value : set.GetVariantNames()) {
+                    QList<SdfPath>& targets = result[qSetName][qt::StringToQString(value)];
+                    if (!targets.contains(primPath))
+                        targets.append(primPath);
                 }
             }
         };
 
-        for (const SdfPath& rootPath : roots) {
-            const UsdPrim root = (rootPath == SdfPath::AbsoluteRootPath()) ? stage->GetPseudoRoot()
-                                                                           : stage->GetPrimAtPath(rootPath);
+        const QList<SdfPath> roots = path::topLevelPaths(path::uniquePaths(paths));
+        for (const SdfPath& inputPath : roots) {
+            const SdfPath primPath = inputPath.IsPropertyPath() ? inputPath.GetPrimPath() : inputPath;
+            const UsdPrim root = stage->GetPrimAtPath(primPath);
             if (!root)
                 continue;
 
-            for (const UsdPrim& prim : UsdPrimRange(root))
-                addPayloadVariants(prim);
+            collectPrim(root);
+
+            for (UsdPrim ancestor = root.GetParent(); ancestor && !ancestor.IsPseudoRoot();
+                 ancestor = ancestor.GetParent()) {
+                collectPrim(ancestor);
+            }
+
+            for (const UsdPrim& prim : UsdPrimRange::AllPrims(root))
+                collectPrim(prim);
         }
+
         return result;
     }
 
@@ -1486,18 +1467,20 @@ namespace stage {
         if (!stage)
             return result;
 
-        QSet<QString> visited;
+        QSet<SdfPath> visited;
 
         auto collectPrim = [&](const UsdPrim& prim) {
             if (!prim || !prim.IsValid() || prim.IsPseudoRoot())
                 return;
 
             const SdfPath primPath = prim.GetPath();
-            const QString pathKey = qt::SdfPathToQString(primPath);
-            if (visited.contains(pathKey))
+            if (visited.contains(primPath))
                 return;
 
-            visited.insert(pathKey);
+            visited.insert(primPath);
+
+            if (!prim.HasVariantSets())
+                return;
 
             const UsdVariantSets sets = prim.GetVariantSets();
             for (const std::string& setName : sets.GetNames()) {
@@ -1525,13 +1508,19 @@ namespace stage {
             if (!root)
                 continue;
 
-            if (!root.IsPseudoRoot())
+            if (!root.IsPseudoRoot()) {
                 collectPrim(root);
+
+                for (UsdPrim ancestor = root.GetParent(); ancestor && !ancestor.IsPseudoRoot();
+                     ancestor = ancestor.GetParent()) {
+                    collectPrim(ancestor);
+                }
+            }
 
             if (!recursive)
                 continue;
 
-            for (const UsdPrim& prim : UsdPrimRange(root))
+            for (const UsdPrim& prim : UsdPrimRange::AllPrims(root))
                 collectPrim(prim);
         }
 

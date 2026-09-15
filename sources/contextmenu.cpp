@@ -125,7 +125,7 @@ ContextMenu::exec(QWidget* parent, ViewContext* context, UsdStageRefPtr usdStage
                                       : stage::payloadPaths(usdStage, topLevelPaths);
 
         if (!paths.isEmpty())
-            variantTargets = stage::variantTargets(usdStage, paths, false);
+            variantTargets = stage::variantTargets(usdStage, paths, true);
 
         for (const SdfPath& path : paths) {
             if (stage::isPayload(usdStage, path))

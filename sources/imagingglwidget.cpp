@@ -716,21 +716,14 @@ ImagingGLWidgetPrivate::contextMenuEvent(QContextMenuEvent* event)
         return;
     }
 
-    const SdfPath clickedPath = pickNearestPath(event->pos());
-    QList<SdfPath> paths = d.selection;
-    if (!clickedPath.IsEmpty() && !paths.contains(clickedPath)) {
-        paths = { clickedPath };
-        d.selection = paths;
-        d.context->run(new Command(selectPaths(paths)));
-    }
+    const QList<SdfPath> paths = d.selection;
 
     SdfPath createParentPath = SdfPath::AbsoluteRootPath();
-    if (!clickedPath.IsEmpty()) {
-        if (paths.size() == 1)
-            createParentPath = clickedPath;
-        else if (paths.size() > 1)
-            createParentPath = paths.first().GetParentPath();
-    }
+    if (paths.size() == 1)
+        createParentPath = paths.first();
+    else if (paths.size() > 1)
+        createParentPath = paths.first().GetParentPath();
+
     ContextMenu::exec(d.glwidget, d.context, d.stage, event->globalPos(), paths, d.mask, createParentPath);
     event->accept();
 }
@@ -761,6 +754,13 @@ ImagingGLWidgetPrivate::mousePressEvent(QMouseEvent* event)
             viewCamera()->setCameraMode(ViewCamera::Tumble);
         else if (event->button() == Qt::RightButton)
             viewCamera()->setCameraMode(ViewCamera::Zoom);
+    }
+    else if (event->button() == Qt::RightButton) {
+        // Plain right mouse is reserved for the context menu. It must not
+        // behave like a viewport click, start a sweep, or alter selection.
+        d.drag = false;
+        d.sweep = false;
+        d.transformDragging = false;
     }
     else if (event->button() == Qt::LeftButton && beginTransformDrag(event->position())) {
         d.drag = false;

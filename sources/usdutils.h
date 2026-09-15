@@ -283,14 +283,14 @@ namespace payload {
     using PayloadVariantTargets = QMap<QString, QMap<QString, QList<SdfPath>>>;
 
     /**
-     * @brief Collects payload variant targets below selected paths.
+     * @brief Collects payload variant targets relevant to selected branches.
      *
-     * Traverses the selected roots, finds payload prims, and groups only
-     * variant sets authored on those payload prims. Duplicate payload prims are
-     * ignored, and duplicate menu names are naturally merged by the map.
+     * Inspects each top-level selected prim, its ancestor chain, and its descendants,
+     * while collecting only prims that have payloads and variant sets. Sibling branches
+     * outside the selected subtree are not traversed. Duplicate prims are ignored.
      *
      * @param stage USD stage to query.
-     * @param paths Selected prim paths to scan recursively.
+     * @param paths Prim or property paths that define the selected branches.
      *
      * @return Map of variant set name to variant value to compatible payload paths.
      */
@@ -608,16 +608,17 @@ namespace stage {
     using VariantTargets = QMap<QString, QMap<QString, QList<SdfPath>>>;
 
     /**
-     * @brief Collects variant sets, values, and owning prim paths.
+     * @brief Collects variant sets, values, and owning prim paths relevant to selected branches.
      *
-     * Each result entry maps variant set name -> variant value -> prim paths
-     * that expose that value. Property paths are normalized to their owning
-     * prim. When @p paths is empty the whole stage is searched. When
-     * @p recursive is true, descendants below the supplied roots are included.
+     * Each result entry maps variant set name -> variant value -> prim paths that expose that
+     * value. Property paths are normalized to their owning prim. The selected prims and their
+     * ancestor chains are always inspected. When @p recursive is true, descendants below each
+     * selected root are also included without traversing sibling branches. When @p paths is empty,
+     * the pseudo-root is used so recursive queries can inspect the whole stage.
      *
      * @param stage USD stage to query.
-     * @param paths Prim or property paths to inspect.
-     * @param recursive If true, include descendants below each input root.
+     * @param paths Prim or property paths that define the selected branches.
+     * @param recursive If true, include descendants below each selected root.
      *
      * @return Variant targets grouped by set name and variant value.
      */

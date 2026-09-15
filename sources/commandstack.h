@@ -127,10 +127,6 @@ Q_SIGNALS:
     void canRedoChanged(bool enabled);
 
 private:
-    /**
-     * @brief Clears history if the active stage or edit target changed outside the command stack.
-     */
-    void synchronizeEditTarget();
     QScopedPointer<CommandStackPrivate> p;
 };
 
