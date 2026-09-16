@@ -640,8 +640,22 @@ ViewerPrivate::initRecentFiles()
         action->setToolTip(file);
         action->setData(file);
         connect(action, &QAction::triggered, this, [this, file]() {
+            const QFileInfo fileInfo(file);
+
+            if (!fileInfo.exists() || !fileInfo.isFile()) {
+                session()->notifyStatus(Session::Notify::Status::Warning, QString("File does not exist: %1").arg(file));
+                return;
+            }
+
+            if (!d.extensions.contains(fileInfo.suffix().toLower())) {
+                session()->notifyStatus(Session::Notify::Status::Error,
+                                        QString("Unsupported file format: %1").arg(fileInfo.suffix()));
+                return;
+            }
+
             if (!saveChanges())
                 return;
+
             loadFile(file);
         });
         recentMenu->addAction(action);
@@ -1101,9 +1115,6 @@ ViewerPrivate::newFile()
 void
 ViewerPrivate::open()
 {
-    if (!saveChanges())
-        return;
-
     QString openDir = settings()->value("openDir", QDir::homePath()).toString();
     QStringList filters;
     for (const QString& ext : d.extensions)
@@ -1111,8 +1122,20 @@ ViewerPrivate::open()
 
     QString filter = QString("USD Files (%1)").arg(filters.join(' '));
     QString filename = QFileDialog::getOpenFileName(d.viewer.data(), "Open USD File", openDir, filter);
-    if (!filename.isEmpty())
-        loadFile(filename);
+    if (filename.isEmpty())
+        return;
+
+    const QFileInfo fileInfo(filename);
+    if (!fileInfo.exists() || !fileInfo.isFile())
+        return;
+
+    if (!d.extensions.contains(fileInfo.suffix().toLower()))
+        return;
+
+    if (!saveChanges())
+        return;
+
+    loadFile(filename);
 }
 
 void
@@ -2272,6 +2295,7 @@ ViewerPrivate::updateSelection(const QList<SdfPath>& paths)
         return;
 
     QList<SdfPath> payloadPaths;
+    QList<SdfPath> nearestPayloadPaths;
     QList<SdfPath> layerPayloadPaths;
     payload::PayloadVariantTargets variantTargets;
     bool canLoadSelected = false;
@@ -2284,23 +2308,21 @@ ViewerPrivate::updateSelection(const QList<SdfPath>& paths)
         if (!stage)
             return;
 
-        // Only resolve payloads from the selected payload itself or from
-        // descendants inside a payload. Selecting an assembly above payloads
-        // must not implicitly operate on every payload below that assembly.
-        payloadPaths = stage::nearestPayloadPaths(stage, paths);
+        payloadPaths = stage::resolvePayloadPaths(stage, paths);
+        nearestPayloadPaths = stage::nearestPayloadPaths(stage, paths);
+
         const SdfLayerHandle editLayer = stage->GetEditTarget().GetLayer();
         if (editLayer)
             layerPayloadPaths = stage::nearestLayerPayloadPaths(stage, editLayer, paths);
 
-        // Variant discovery follows the selected hierarchy independently of
-        // load/unload resolution: selected prim + descendants + ancestor chain,
-        // while payloadVariantTargets() filters the collected targets to payload prims.
         variantTargets = payload::payloadVariantTargets(stage, paths);
 
         for (const SdfPath& payloadPath : payloadPaths) {
-            const bool loaded = stage::isLoaded(stage, payloadPath);
+            const UsdPrim prim = stage->GetPrimAtPath(payloadPath);
+            if (!prim || !prim.IsValid() || !prim.HasPayload())
+                continue;
 
-            if (loaded)
+            if (prim.IsLoaded())
                 canUnloadSelected = true;
             else
                 canLoadSelected = true;
@@ -2310,20 +2332,15 @@ ViewerPrivate::updateSelection(const QList<SdfPath>& paths)
         }
     }
 
-    const bool hasPayloadSelection = !payloadPaths.isEmpty();
+    const bool hasNearestPayloadSelection = !nearestPayloadPaths.isEmpty();
     const bool hasLayerPayloadSelection = !layerPayloadPaths.isEmpty();
 
     d.ui->editPayloadLoad->setEnabled(canLoadSelected);
     d.ui->editPayloadUnload->setEnabled(canUnloadSelected);
-
-    // Loading neighbors is valid for both loaded and unloaded payloads.
-    // The command itself validates whether the selected payload has a usable
-    // extentsHint and reports a warning when it cannot perform the search.
-    d.ui->editPayloadLoadNeighbors->setEnabled(hasPayloadSelection);
-
-    d.ui->editPayloadSelect->setEnabled(hasPayloadSelection);
+    d.ui->editPayloadLoadNeighbors->setEnabled(hasNearestPayloadSelection);
+    d.ui->editPayloadSelect->setEnabled(hasNearestPayloadSelection);
     d.ui->editLayerSelect->setEnabled(hasLayerPayloadSelection);
-    d.ui->editPayloadInvert->setEnabled(hasPayloadSelection);
+    d.ui->editPayloadInvert->setEnabled(hasNearestPayloadSelection);
     d.ui->editLayerInvert->setEnabled(hasLayerPayloadSelection);
 
     if (variantTargets.isEmpty())
@@ -2787,6 +2804,19 @@ Viewer::openFile(const QString& filename)
 {
     if (filename.isEmpty())
         return;
+
+    const QFileInfo fileInfo(filename);
+
+    if (!fileInfo.exists() || !fileInfo.isFile()) {
+        session()->notifyStatus(Session::Notify::Status::Warning, QString("File does not exist: %1").arg(filename));
+        return;
+    }
+
+    if (!p->d.extensions.contains(fileInfo.suffix().toLower())) {
+        session()->notifyStatus(Session::Notify::Status::Error,
+                                QString("Unsupported file format: %1").arg(fileInfo.suffix()));
+        return;
+    }
 
     if (!p->saveChanges())
         return;

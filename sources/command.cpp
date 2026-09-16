@@ -619,8 +619,6 @@ namespace {
 
 }  // namespace
 
-
-
 Command
 setVariantSelection(const QList<SdfPath>& paths, const QString& setName, const QString& value)
 {
@@ -694,7 +692,6 @@ setVariantSelection(const QList<SdfPath>& paths, const QString& setName, const Q
                 }
 
                 int completed = 0;
-
                 for (const SdfPath& inputPath : uniquePaths) {
                     if (!session || session->isProgressBlockCancelled())
                         break;
@@ -725,7 +722,6 @@ setVariantSelection(const QList<SdfPath>& paths, const QString& setName, const Q
                                 const SdfPath primPath = inputPath.IsPropertyPath() ? inputPath.GetPrimPath()
                                                                                     : inputPath;
                                 const UsdPrim prim = stage->GetPrimAtPath(primPath);
-
                                 if (!prim || !prim.IsValid()) {
                                     error = QString("prim missing: %1").arg(pathText(primPath));
                                 }
@@ -777,7 +773,6 @@ setVariantSelection(const QList<SdfPath>& paths, const QString& setName, const Q
                         command::queueToSession(session, [session, batch, completed]() {
                             command::flushResults(session, batch, completed);
                         });
-
                         pending.clear();
                     }
                 }

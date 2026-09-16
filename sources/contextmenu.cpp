@@ -121,9 +121,7 @@ ContextMenu::exec(QWidget* parent, ViewContext* context, UsdStageRefPtr usdStage
             isDefaultPrim = defaultPrim && defaultPrim.GetPath() == paths.first();
         }
 
-        payloadPaths = payloadEnabled ? stage::resolvePayloadPaths(usdStage, topLevelPaths)
-                                      : stage::payloadPaths(usdStage, topLevelPaths);
-
+        payloadPaths = stage::resolvePayloadPaths(usdStage, topLevelPaths);
         if (!paths.isEmpty())
             variantTargets = stage::variantTargets(usdStage, paths, true);
 
@@ -184,21 +182,18 @@ ContextMenu::exec(QWidget* parent, ViewContext* context, UsdStageRefPtr usdStage
             }
         }
 
-        if (payloadEnabled) {
-            for (const SdfPath& path : payloadPaths) {
-                const UsdPrim prim = usdStage->GetPrimAtPath(path);
-                if (!prim)
-                    continue;
+        for (const SdfPath& path : payloadPaths) {
+            const UsdPrim prim = usdStage->GetPrimAtPath(path);
+            if (!prim || !prim.IsValid() || !prim.HasPayload())
+                continue;
 
-                if (prim.IsLoaded())
-                    canUnloadSelected = true;
-                else
-                    canLoadSelected = true;
-            }
-        }
-        else if (!payloadPaths.isEmpty()) {
-            canLoadSelected = true;
-            canUnloadSelected = true;
+            if (prim.IsLoaded())
+                canUnloadSelected = true;
+            else
+                canLoadSelected = true;
+
+            if (canLoadSelected && canUnloadSelected)
+                break;
         }
     }
 
