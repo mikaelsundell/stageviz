@@ -2318,11 +2318,10 @@ ViewerPrivate::updateSelection(const QList<SdfPath>& paths)
         variantTargets = payload::payloadVariantTargets(stage, paths);
 
         for (const SdfPath& payloadPath : payloadPaths) {
-            const UsdPrim prim = stage->GetPrimAtPath(payloadPath);
-            if (!prim || !prim.IsValid() || !prim.HasPayload())
+            if (!stage::isPayload(stage, payloadPath))
                 continue;
 
-            if (prim.IsLoaded())
+            if (stage::isLoaded(stage, payloadPath))
                 canUnloadSelected = true;
             else
                 canLoadSelected = true;
