@@ -95,7 +95,7 @@ namespace {
         void renderBatchWithDepthBias(const SdfPathVector& paths, const UsdImagingGLRenderParams& params,
                                       float constantFactor, float slopeFactor, const GfVec4f& wireframeColor)
         {
-            if (!_taskControllerSceneIndex || paths.empty())
+            if (!_taskControllerSceneIndex)
                 return;
 
             // Match UsdImagingGLEngine::RenderBatch, but override the Hydra
@@ -609,27 +609,29 @@ RenderEngine::Private::render()
         selectionPaths.push_back(path);
     }
 
-    if (!selectionPaths.empty()) {
-        Hgi* selectionHgi = selectionEngine->GetHgi();
-        if (!selectionHgi)
-            return false;
+    // Always execute the selection render path, even when the collection is
+    // empty. This warms the separate selection Hydra index/render task during
+    // the normal stage render so the first interactive selection does not pay
+    // the full one-time setup cost.
+    Hgi* selectionHgi = selectionEngine->GetHgi();
+    if (!selectionHgi)
+        return false;
 
-        UsdImagingGLRenderParams selectionParams = documentParams;
-        selectionParams.highlight = false;
-        selectionParams.enableSceneMaterials = true;
+    UsdImagingGLRenderParams selectionParams = documentParams;
+    selectionParams.highlight = false;
+    selectionParams.enableSceneMaterials = true;
 
-        constexpr float selectionDepthBiasConstant = -2.0f;
-        constexpr float selectionDepthBiasSlope = 0.0f;
+    constexpr float selectionDepthBiasConstant = -2.0f;
+    constexpr float selectionDepthBiasSlope = 0.0f;
 
-        const GfVec4f fillColor = qt::QColorToGfVec4f(selectionColor);
-        const GfVec4f wireframeColor(fillColor[0] * 0.8f, fillColor[1] * 0.8f, fillColor[2] * 0.8f, fillColor[3]);
+    const GfVec4f fillColor = qt::QColorToGfVec4f(selectionColor);
+    const GfVec4f wireframeColor(fillColor[0] * 0.8f, fillColor[1] * 0.8f, fillColor[2] * 0.8f, fillColor[3]);
 
-        selectionHgi->StartFrame();
-        selectionEngine->PrepareBatch(root, selectionParams);
-        selectionEngine->renderBatchWithDepthBias(selectionPaths, selectionParams, selectionDepthBiasConstant,
-                                                  selectionDepthBiasSlope, wireframeColor);
-        selectionHgi->EndFrame();
-    }
+    selectionHgi->StartFrame();
+    selectionEngine->PrepareBatch(root, selectionParams);
+    selectionEngine->renderBatchWithDepthBias(selectionPaths, selectionParams, selectionDepthBiasConstant,
+                                              selectionDepthBiasSlope, wireframeColor);
+    selectionHgi->EndFrame();
 
     return true;
 }
