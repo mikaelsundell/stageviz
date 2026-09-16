@@ -931,8 +931,29 @@ def find_menu_action(menu, text):
     return None
 
 
-def payload_menu_state():
+def refresh_payload_menu():
+    """
+    Re-evaluate the persistent Payload menu before inspecting QAction state.
+
+    The menu is persistent and its enabled state may lag behind USD load state
+    until the same refresh path used when the menu is shown runs. Emitting
+    aboutToShow mirrors that UI refresh without requiring a real click.
+    """
     menu = find_payload_menu()
+    if menu is None:
+        return None
+
+    try:
+        menu.aboutToShow.emit()
+    except Exception:
+        pass
+
+    process_events()
+    return menu
+
+
+def payload_menu_state():
+    menu = refresh_payload_menu()
     require(menu is not None, "Payload menu is available")
 
     state = {}
@@ -967,7 +988,7 @@ def payload_menu_state():
 
 
 def payload_action_enabled(label):
-    menu = find_payload_menu()
+    menu = refresh_payload_menu()
     if menu is None:
         return None
 
@@ -1038,7 +1059,7 @@ def trigger_payload_action(label, timeout=5.0):
     # Reacquire both objects after waiting. On Windows the persistent menu can
     # refresh asynchronously after payload notices, invalidating previously
     # observed QAction state.
-    menu = find_payload_menu()
+    menu = refresh_payload_menu()
     action = find_menu_action(menu, label) if menu is not None else None
 
     require(
@@ -1126,7 +1147,14 @@ Coverage:
 
     select_path(tree, "/World/MenuAssembly")
     state = payload_menu_state()
-    require(not state["Load"] and not state["Unload"], "assembly selection does not become a direct load/unload target")
+    require(
+        state["Load"],
+        "assembly selection enables Load for unloaded descendant payloads",
+    )
+    require(
+        not state["Unload"],
+        "assembly selection keeps Unload disabled while descendant payloads are unloaded",
+    )
     require(not state["Select payload"], "assembly above payloads is not treated as an owning payload")
     require(
         set(state["variants"]) == {"bodyTrim", "paint", "wheelSize"},
@@ -4334,6 +4362,140 @@ payload row selected, causing World and / to keep the ancestor highlight.
     release_qt_wrappers()
 
 
+def test_save_as_preserves_expansion(main, root):
+    tree = reload_fixture(
+        main,
+        stageviz.LoadNone,
+    )
+
+    step(
+        16,
+        "Save As preserves StageTree expansion",
+        """
+Load the normal fixture and establish a deliberately mixed StageTree expansion
+state before saving the document to a new filename.
+
+Before Save As:
+    /                         expanded
+    /World                    expanded
+    /World/Assembly           expanded
+    /World/Assembly/Door      expanded
+    /World/Assembly/Wheel     collapsed
+    /World/PayloadA           collapsed
+    /World/PayloadB           collapsed
+    /World/PayloadC           collapsed
+
+Select Door so selection/current state can also be checked while the live
+UsdStage is replaced by Session Save As.
+
+Save the current stage to a different filename.
+
+Expected:
+    - Save As succeeds and creates the new file.
+    - the replacement stage contains the same hierarchy.
+    - all tracked expanded/collapsed states are unchanged.
+    - Door remains selected/current.
+    - payload checkbox state is unchanged.
+
+This specifically guards the regression where Save As emitted stageChanged(),
+StageTree rebuilt all QTreeWidgetItems, and the hierarchy collapsed.
+""",
+    )
+
+    require(
+        policy_name(tree) == "Payload",
+        "Save As expansion regression runs in Payload policy",
+    )
+
+    set_path_expanded(tree, "/", True)
+    set_path_expanded(tree, "/World", True)
+    set_path_expanded(tree, "/World/Assembly", True)
+    set_path_expanded(tree, "/World/Assembly/Door", True)
+    set_path_expanded(tree, "/World/Assembly/Wheel", False)
+    set_path_expanded(tree, "/World/PayloadA", False)
+    set_path_expanded(tree, "/World/PayloadB", False)
+    set_path_expanded(tree, "/World/PayloadC", False)
+
+    select_path(
+        tree,
+        "/World/Assembly/Door",
+    )
+
+    tracked_paths = (
+        "/",
+        "/World",
+        "/World/Assembly",
+        "/World/Assembly/Door",
+        "/World/Assembly/Wheel",
+        "/World/PayloadA",
+        "/World/PayloadB",
+        "/World/PayloadC",
+    )
+
+    preserved_state = snapshot_tree_state(
+        tree,
+        tracked_paths,
+    )
+
+    save_as_path = os.path.join(
+        root,
+        "stagetree_save_as_test.usda",
+    )
+
+    if os.path.exists(save_as_path):
+        os.remove(save_as_path)
+
+    session = stageviz.session()
+
+    print()
+    print("ACTION: Save As to")
+    print(save_as_path)
+    print()
+
+    if hasattr(session, "save"):
+        saved = session.save(save_as_path)
+    elif hasattr(session, "saveToFile"):
+        saved = session.saveToFile(save_as_path)
+    else:
+        stop("Session exposes neither save() nor saveToFile() for Save As regression test")
+
+    require(
+        bool(saved),
+        "Save As succeeds",
+    )
+
+    require(
+        wait_until(
+            lambda: (
+                os.path.isfile(save_as_path)
+                and bool(stage())
+                and exists("/World/Assembly/Door")
+                and path_exists_in_tree(tree, "/World/Assembly/Door")
+            ),
+            timeout=10.0,
+        ),
+        "Save As replacement stage and StageTree become stable",
+    )
+
+    require_tree_state_preserved(
+        tree,
+        preserved_state,
+    )
+
+    require(
+        current_path(tree) == "/World/Assembly/Door",
+        "Save As preserves current StageTree item",
+    )
+
+    require(
+        path_is_selected(tree, "/World/Assembly/Door"),
+        "Save As preserves Door selection",
+    )
+
+    dump_tree(tree)
+    release_qt_wrappers()
+
+
 def test_invalid_move_keeps_tree_stable(main):
     tree = reload_fixture(
         main,
@@ -4341,7 +4503,7 @@ def test_invalid_move_keeps_tree_stable(main):
     )
 
     step(
-        15,
+        17,
         "Rejected namespace move",
         """
 Attempt to move Assembly below its own descendant Door.
@@ -4422,7 +4584,7 @@ def test_large_tree_namespace_performance(root):
     )
 
     step(
-        16,
+        18,
         "Large-tree namespace timing and state preservation",
         """
 A separate hierarchy with roughly 1,200 normal prim rows is loaded.
@@ -4627,7 +4789,7 @@ def test_25k_namespace_benchmark(root):
     target_prim_count = 25000
 
     step(
-        17,
+        19,
         "Fresh 25k StageTree namespace benchmark",
         """
 A completely new USD stage is authored at the end of the UI suite.
@@ -5093,6 +5255,7 @@ def run():
         test_all_policy(main)
         test_payload_selection_synchronization(main)
         test_payload_menu_commands(payload_menu_main)
+        test_save_as_preserves_expansion(main, root)
         test_invalid_move_keeps_tree_stable(main)
         test_large_tree_namespace_performance(root)
         test_25k_namespace_benchmark(root)

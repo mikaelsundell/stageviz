@@ -216,12 +216,6 @@ QListWidget[ShelfList="true"]
     border: 0px;
 }
 
-QListWidget#list::item:selected
-{
-    color: $color.text;
-    background-color: $color.highlight;
-}
-
 QListWidget::item
 {
     color: $color.text;
@@ -235,6 +229,18 @@ QListWidget::item
 QListWidget::item:alternate
 {
     background-color: $color.itemalt;
+}
+
+QListWidget::item:selected
+{
+    color: $color.text;
+    background-color: $color.highlight;
+}
+
+QListWidget#list::item:selected
+{
+    color: $color.text;
+    background-color: $color.highlight;
 }
 
 QListWidget#icons::item:selected
@@ -806,7 +812,8 @@ QTreeView QHeaderView:section
     padding: 4px 6px;
 }
 
-QTreeView::item {
+QTreeView::item
+{
     height: 28px;
     color: $color.text;
     selection-background-color: $color.highlight;

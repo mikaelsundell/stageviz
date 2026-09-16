@@ -270,7 +270,7 @@ RenderSceneIndex::GetPrim(const SdfPath& primPath) const
         using TokenArrayDataSource = HdRetainedTypedSampledDataSource<VtArray<TfToken>>;
         VtArray<TfToken> reprSelector;
         reprSelector.push_back(HdReprTokens->solidWireOnSurf);
-        reprSelector.push_back(HdReprTokens->solidWireOnSurf);
+        reprSelector.push_back(HdReprTokens->disabled);
         reprSelector.push_back(HdReprTokens->disabled);
 
         editor.Set(HdLegacyDisplayStyleSchema::GetDefaultLocator().Append(

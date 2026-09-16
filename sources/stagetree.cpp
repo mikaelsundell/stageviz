@@ -847,8 +847,41 @@ void
 StageTreePrivate::updateStage(UsdStageRefPtr stage)
 {
     SignalGuard::Scope guard(this);
+
+    QList<SdfPath> expandedPaths;
+    SdfPath currentPath;
+
+    // Save As replaces the live UsdStage with a newly opened stage while the
+    // logical document and prim paths remain the same. Preserve expansion and
+    // current-item state across a direct non-null -> non-null stage replacement.
+    if (d.stage && stage) {
+        if (QTreeWidgetItem* currentItem = d.tree->currentItem()) {
+            if (auto* item = dynamic_cast<PrimItem*>(currentItem))
+                currentPath = item->path();
+        }
+
+        std::function<void(QTreeWidgetItem*)> captureExpanded = [&](QTreeWidgetItem* baseItem) {
+            if (!baseItem)
+                return;
+
+            auto* item = static_cast<PrimItem*>(baseItem);
+            if (item->isExpanded()) {
+                const SdfPath path = item->path();
+                if (!path.IsEmpty())
+                    expandedPaths.append(path);
+            }
+
+            for (int i = 0; i < baseItem->childCount(); ++i)
+                captureExpanded(baseItem->child(i));
+        };
+
+        for (int i = 0; i < d.tree->topLevelItemCount(); ++i)
+            captureExpanded(d.tree->topLevelItem(i));
+    }
+
     close();
     d.stage = stage;
+
     if (!stage)
         return;
 
@@ -875,8 +908,28 @@ StageTreePrivate::updateStage(UsdStageRefPtr stage)
     if (d.payloadEnabled)
         treeCheckState(rootItem);
 
-    if (SelectionList* list = selectionList())
-        updateSelection(list->paths());
+    for (const SdfPath& path : expandedPaths) {
+        if (PrimItem* item = itemFromPath(path))
+            item->setExpanded(true);
+    }
+
+    SelectionList* list = selectionList();
+    const QList<SdfPath> selectionPaths = list ? list->paths() : QList<SdfPath>();
+
+    updateSelection(selectionPaths);
+
+    // currentItem is UI navigation state. Restore it only if the same row still
+    // exists after the replacement stage is rebuilt, and never recreate current
+    // state when semantic selection is empty.
+    if (selectionPaths.isEmpty()) {
+        d.tree->setCurrentItem(nullptr);
+    }
+    else if (!currentPath.IsEmpty()) {
+        if (PrimItem* item = itemFromPath(currentPath)) {
+            if (item->isSelected())
+                d.tree->setCurrentItem(item, PrimItem::Name, QItemSelectionModel::NoUpdate);
+        }
+    }
 }
 
 void

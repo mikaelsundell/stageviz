@@ -70,6 +70,7 @@ public:
      * @brief Returns copies of the selected material descriptions.
      */
     QList<MaterialEntry> selectedEntries() const;
+
     /**
      * @brief Selects a source-entry row in the active presentation.
      */
@@ -138,7 +139,11 @@ Q_SIGNALS:
      */
     void swatchRequested(int row);
     /**
-     * @brief Requests assignment of the selected material through the controller.
+     * @brief Legacy assignment request signal.
+     *
+     * Context-menu Assign is handled directly by MaterialBrowser and does not
+     * emit this signal. It is retained for source compatibility with existing
+     * controller connections.
      */
     void assignRequested();
     /**

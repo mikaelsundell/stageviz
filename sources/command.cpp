@@ -16,6 +16,7 @@
 #include <pxr/base/gf/vec3h.h>
 #include <pxr/usd/sdf/copyUtils.h>
 #include <pxr/usd/sdf/layer.h>
+#include <pxr/usd/sdf/listOp.h>
 #include <pxr/usd/sdf/namespaceEdit.h>
 #include <pxr/usd/sdf/payload.h>
 #include <pxr/usd/sdf/reference.h>
@@ -617,6 +618,239 @@ namespace {
         return true;
     }
 
+
+    struct DependencyPropertyState {
+        SdfPath propertyPath;
+        SdfLayerRefPtr snapshotLayer;
+    };
+
+    bool pathFallsWithinRoots(const SdfPath& path, const QList<SdfPath>& roots)
+    {
+        if (path.IsEmpty())
+            return false;
+
+        for (const SdfPath& root : roots) {
+            if (root.IsEmpty())
+                continue;
+
+            if (path == root || path.HasPrefix(root))
+                return true;
+        }
+
+        return false;
+    }
+
+    SdfPathVector filterDependencyPaths(const SdfPathVector& paths, const QList<SdfPath>& removedRoots, bool& changed)
+    {
+        SdfPathVector filtered;
+        filtered.reserve(paths.size());
+
+        for (const SdfPath& path : paths) {
+            if (pathFallsWithinRoots(path, removedRoots)) {
+                changed = true;
+                continue;
+            }
+
+            filtered.push_back(path);
+        }
+
+        return filtered;
+    }
+
+    bool dependencyListOpEmpty(const SdfPathListOp& listOp)
+    {
+        return listOp.GetExplicitItems().empty() && listOp.GetAddedItems().empty() && listOp.GetPrependedItems().empty()
+               && listOp.GetAppendedItems().empty() && listOp.GetDeletedItems().empty()
+               && listOp.GetOrderedItems().empty();
+    }
+
+    bool filterDependencyListOp(const SdfLayerHandle& layer, const SdfPath& propertyPath, const TfToken& field,
+                                const QList<SdfPath>& removedRoots, bool& changed, QString& error)
+    {
+        if (!layer || propertyPath.IsEmpty() || removedRoots.isEmpty())
+            return true;
+
+        if (!layer->HasField(propertyPath, field))
+            return true;
+
+        const VtValue value = layer->GetField(propertyPath, field);
+        if (!value.IsHolding<SdfPathListOp>())
+            return true;
+
+        SdfPathListOp listOp = value.UncheckedGet<SdfPathListOp>();
+        bool localChanged = false;
+
+        if (listOp.IsExplicit()) {
+            listOp.SetExplicitItems(filterDependencyPaths(listOp.GetExplicitItems(), removedRoots, localChanged));
+        }
+        else {
+            listOp.SetAddedItems(filterDependencyPaths(listOp.GetAddedItems(), removedRoots, localChanged));
+            listOp.SetPrependedItems(filterDependencyPaths(listOp.GetPrependedItems(), removedRoots, localChanged));
+            listOp.SetAppendedItems(filterDependencyPaths(listOp.GetAppendedItems(), removedRoots, localChanged));
+            listOp.SetDeletedItems(filterDependencyPaths(listOp.GetDeletedItems(), removedRoots, localChanged));
+            listOp.SetOrderedItems(filterDependencyPaths(listOp.GetOrderedItems(), removedRoots, localChanged));
+        }
+
+        if (!localChanged)
+            return true;
+
+        if (dependencyListOpEmpty(listOp))
+            layer->EraseField(propertyPath, field);
+        else
+            layer->SetField(propertyPath, field, VtValue(listOp));
+
+        changed = true;
+        return true;
+    }
+
+    bool snapshotDependencyProperty(const SdfLayerHandle& editLayer, const SdfPath& propertyPath,
+                                    DependencyPropertyState& state, QString& error)
+    {
+        if (!editLayer || propertyPath.IsEmpty() || !propertyPath.IsPropertyPath()) {
+            error = "invalid dependency property";
+            return false;
+        }
+
+        state.propertyPath = propertyPath;
+        state.snapshotLayer = SdfLayer::CreateAnonymous("stageviz_dependency_snapshot.usda");
+
+        if (!state.snapshotLayer) {
+            error = QString("failed to create dependency snapshot: %1").arg(pathText(propertyPath));
+            return false;
+        }
+
+        SdfCreatePrimInLayer(state.snapshotLayer, propertyPath.GetPrimPath());
+
+        if (!SdfCopySpec(editLayer, propertyPath, state.snapshotLayer, propertyPath)) {
+            error = QString("failed to snapshot dependency property: %1").arg(pathText(propertyPath));
+            return false;
+        }
+
+        return true;
+    }
+
+    bool restoreDependencyProperty(const SdfLayerHandle& editLayer, const DependencyPropertyState& state,
+                                   QString& error)
+    {
+        if (!editLayer || !state.snapshotLayer || state.propertyPath.IsEmpty()) {
+            error = "invalid dependency snapshot";
+            return false;
+        }
+
+        if (!editLayer->GetPrimAtPath(state.propertyPath.GetPrimPath()))
+            SdfCreatePrimInLayer(editLayer, state.propertyPath.GetPrimPath());
+
+        if (!SdfCopySpec(state.snapshotLayer, state.propertyPath, editLayer, state.propertyPath)) {
+            error = QString("failed to restore dependency property: %1").arg(pathText(state.propertyPath));
+            return false;
+        }
+
+        return true;
+    }
+
+    bool clearDependencyFields(const SdfLayerHandle& editLayer, const SdfPath& propertyPath, bool& changed,
+                               QString& error)
+    {
+        changed = false;
+
+        if (!editLayer || propertyPath.IsEmpty() || !propertyPath.IsPropertyPath()) {
+            error = "invalid dependency property";
+            return false;
+        }
+
+        const bool hasTargets = editLayer->HasField(propertyPath, SdfFieldKeys->TargetPaths);
+        const bool hasConnections = editLayer->HasField(propertyPath, SdfFieldKeys->ConnectionPaths);
+
+        if (!hasTargets && !hasConnections)
+            return true;
+
+        if (hasTargets)
+            editLayer->EraseField(propertyPath, SdfFieldKeys->TargetPaths);
+
+        if (hasConnections)
+            editLayer->EraseField(propertyPath, SdfFieldKeys->ConnectionPaths);
+
+        changed = true;
+
+        const SdfPrimSpecHandle remainingPrimSpec = editLayer->GetPrimAtPath(propertyPath.GetPrimPath());
+        if (remainingPrimSpec && remainingPrimSpec->IsInert())
+            stage::removePrimSpec(editLayer, propertyPath.GetPrimPath());
+
+        return true;
+    }
+
+    QList<DependencyPropertyState> removeDependenciesToRoots(UsdStageRefPtr stage, const SdfLayerHandle& editLayer,
+                                                             const QList<SdfPath>& removedRoots,
+                                                             QList<SdfPath>& affected, QStringList& errors)
+    {
+        QList<DependencyPropertyState> states;
+
+        if (!stage || !editLayer || removedRoots.isEmpty())
+            return states;
+
+        for (const UsdPrim& prim : stage->Traverse()) {
+            if (!prim || !prim.IsValid() || prim.IsInstanceProxy())
+                continue;
+
+            if (pathFallsWithinRoots(prim.GetPath(), removedRoots))
+                continue;
+
+            QList<SdfPath> propertyPaths;
+
+            for (const UsdRelationship& relationship : prim.GetRelationships()) {
+                const SdfPath propertyPath = relationship.GetPath();
+                if (editLayer->GetPropertyAtPath(propertyPath))
+                    propertyPaths.append(propertyPath);
+            }
+
+            for (const UsdAttribute& attribute : prim.GetAttributes()) {
+                const SdfPath propertyPath = attribute.GetPath();
+                if (editLayer->GetPropertyAtPath(propertyPath))
+                    propertyPaths.append(propertyPath);
+            }
+
+            for (const SdfPath& propertyPath : propertyPaths) {
+                const bool hasTargets = editLayer->HasField(propertyPath, SdfFieldKeys->TargetPaths);
+                const bool hasConnections = editLayer->HasField(propertyPath, SdfFieldKeys->ConnectionPaths);
+
+                if (!hasTargets && !hasConnections)
+                    continue;
+
+                DependencyPropertyState state;
+                QString error;
+
+                if (!snapshotDependencyProperty(editLayer, propertyPath, state, error)) {
+                    errors.append(error);
+                    continue;
+                }
+
+                bool changed = false;
+
+                if (!filterDependencyListOp(editLayer, propertyPath, SdfFieldKeys->TargetPaths, removedRoots, changed,
+                                            error)
+                    || !filterDependencyListOp(editLayer, propertyPath, SdfFieldKeys->ConnectionPaths, removedRoots,
+                                               changed, error)) {
+                    errors.append(error);
+
+                    QString restoreError;
+                    restoreDependencyProperty(editLayer, state, restoreError);
+                    if (!restoreError.isEmpty())
+                        errors.append(restoreError);
+
+                    continue;
+                }
+
+                if (!changed)
+                    continue;
+
+                states.append(state);
+                path::appendUnique(affected, propertyPath.GetPrimPath());
+            }
+        }
+
+        return states;
+    }
+
 }  // namespace
 
 Command
@@ -989,6 +1223,151 @@ bindMaterial(const QList<SdfPath>& inPaths, const SdfPath& materialPath)
                                             success ? "Material binding undone"
                                                     : appendError("Undo bind material finished with errors", errorText),
                                             changed, success ? Status::Success : Status::Error);
+                });
+            });
+        });
+}
+
+
+Command
+resetDependencies(const QList<SdfPath>& propertyPaths)
+{
+    auto states = std::make_shared<QList<DependencyPropertyState>>();
+
+    return Command(
+        [propertyPaths, states](Session* session) {
+            if (!session || propertyPaths.isEmpty())
+                return;
+
+            const QList<SdfPath> paths = path::uniquePaths(propertyPaths);
+            command::beginDeferred(session, "Reset dependencies", static_cast<int>(paths.size()));
+
+            command::runWorker([session, paths, states]() {
+                QList<SdfPath> affected;
+                QStringList errors;
+
+                {
+                    WRITE_LOCKER(locker, session->stageLock(), "stageLock");
+                    const UsdStageRefPtr stage = session->stageUnsafe();
+
+                    if (!stage) {
+                        errors.append("stage missing");
+                    }
+                    else {
+                        QString editError;
+                        const SdfLayerHandle editLayer = currentEditLayer(stage, editError);
+
+                        if (!editLayer) {
+                            errors.append(editError);
+                        }
+                        else {
+                            states->clear();
+
+                            for (const SdfPath& propertyPath : paths) {
+                                if (propertyPath.IsEmpty() || !propertyPath.IsPropertyPath())
+                                    continue;
+
+                                const SdfPropertySpecHandle propertySpec = editLayer->GetPropertyAtPath(propertyPath);
+                                if (!propertySpec)
+                                    continue;
+
+                                const bool hasTargets = editLayer->HasField(propertyPath, SdfFieldKeys->TargetPaths);
+                                const bool hasConnections = editLayer->HasField(propertyPath,
+                                                                                SdfFieldKeys->ConnectionPaths);
+
+                                if (!hasTargets && !hasConnections)
+                                    continue;
+
+                                DependencyPropertyState state;
+                                QString error;
+
+                                if (!snapshotDependencyProperty(editLayer, propertyPath, state, error)) {
+                                    errors.append(error);
+                                    continue;
+                                }
+
+                                bool changed = false;
+                                if (!clearDependencyFields(editLayer, propertyPath, changed, error)) {
+                                    errors.append(error);
+
+                                    QString restoreError;
+                                    restoreDependencyProperty(editLayer, state, restoreError);
+                                    if (!restoreError.isEmpty())
+                                        errors.append(restoreError);
+
+                                    continue;
+                                }
+
+                                if (!changed)
+                                    continue;
+
+                                states->append(state);
+                                path::appendUnique(affected, propertyPath.GetPrimPath());
+                            }
+                        }
+                    }
+                }
+
+                const bool success = errors.isEmpty() && !affected.isEmpty();
+                const QString errorText = summarizeErrors(errors);
+
+                command::queueToSession(session, [session, affected, success, errorText]() {
+                    using Status = Session::Notify::Status;
+
+                    const QString message = success ? QStringLiteral("Dependencies reset")
+                                                    : (errorText.isEmpty()
+                                                           ? QStringLiteral("No dependencies to reset")
+                                                           : appendError("Reset dependencies failed", errorText));
+
+                    command::finishDeferred(session, message, affected, success ? Status::Success : Status::Error);
+                });
+            });
+        },
+        [states](Session* session) {
+            if (!session || states->isEmpty())
+                return;
+
+            command::beginDeferred(session, "Undo reset dependencies", static_cast<int>(states->size()));
+
+            command::runWorker([session, states]() {
+                QList<SdfPath> restored;
+                QStringList errors;
+
+                {
+                    WRITE_LOCKER(locker, session->stageLock(), "stageLock");
+                    const UsdStageRefPtr stage = session->stageUnsafe();
+
+                    if (!stage) {
+                        errors.append("stage missing");
+                    }
+                    else {
+                        QString editError;
+                        const SdfLayerHandle editLayer = currentEditLayer(stage, editError);
+
+                        if (!editLayer) {
+                            errors.append(editError);
+                        }
+                        else {
+                            for (const DependencyPropertyState& state : *states) {
+                                QString error;
+                                if (restoreDependencyProperty(editLayer, state, error))
+                                    path::appendUnique(restored, state.propertyPath.GetPrimPath());
+                                else
+                                    errors.append(error);
+                            }
+                        }
+                    }
+                }
+
+                const bool success = errors.isEmpty();
+                const QString errorText = summarizeErrors(errors);
+
+                command::queueToSession(session, [session, restored, success, errorText]() {
+                    using Status = Session::Notify::Status;
+                    command::finishDeferred(session,
+                                            success ? "Reset dependencies undone"
+                                                    : appendError("Undo reset dependencies failed", errorText),
+                                            restored, success ? Status::Success : Status::Error);
                 });
             });
         });
@@ -2167,6 +2546,7 @@ namespace snapshot {
     struct DeleteState {
         QVector<PrimState> prims;
         QHash<SdfPath, TfTokenVector> parentOrders;
+        QList<DependencyPropertyState> dependencies;
         SdfPath previousDefaultPrimPath;
         QList<SdfPath> previousSelection;
         QList<SdfPath> previousMask;
@@ -2499,6 +2879,7 @@ deletePaths(const QList<SdfPath>& inPaths)
 
                             state->prims.clear();
                             state->parentOrders.clear();
+                            state->dependencies.clear();
 
                             if (UsdPrim defaultPrim = stage->GetDefaultPrim())
                                 state->previousDefaultPrimPath = defaultPrim.GetPath();
@@ -2552,6 +2933,19 @@ deletePaths(const QList<SdfPath>& inPaths)
                                 state->prims.append(primState);
                                 removedPaths.append(path);
                                 removedAny = true;
+                            }
+
+                            if (removedAny) {
+                                QList<SdfPath> dependencyAffected;
+                                QStringList dependencyErrors;
+                                state->dependencies = removeDependenciesToRoots(stage, editLayer, removedPaths,
+                                                                                dependencyAffected, dependencyErrors);
+
+                                for (const SdfPath& dependencyPath : dependencyAffected)
+                                    changedSet.insert(dependencyPath);
+
+                                for (const QString& dependencyError : dependencyErrors)
+                                    rejected.append(dependencyError);
                             }
 
                             if (removedAny) {
@@ -2620,6 +3014,16 @@ deletePaths(const QList<SdfPath>& inPaths)
                                     changedSet.insert(parentPath);
                             }
 
+                            for (const DependencyPropertyState& dependency : state->dependencies) {
+                                QString dependencyError;
+                                if (!restoreDependencyProperty(editLayer, dependency, dependencyError)) {
+                                    error = dependencyError;
+                                    continue;
+                                }
+
+                                changedSet.insert(dependency.propertyPath.GetPrimPath());
+                            }
+
                             for (auto it = state->parentOrders.cbegin(); it != state->parentOrders.cend(); ++it) {
                                 stage::restoreChildOrder(stage, it.key(), it.value());
                                 changedSet.insert(it.key());
@@ -2632,7 +3036,7 @@ deletePaths(const QList<SdfPath>& inPaths)
                             }
 
                             changed = changedSet.values();
-                            success = true;
+                            success = error.isEmpty();
                         }
                     }
                     else {

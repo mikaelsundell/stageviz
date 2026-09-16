@@ -6,6 +6,7 @@
 #include "style.h"
 #include <QApplication>
 #include <QColor>
+#include <QCoreApplication>
 #include <QDir>
 #include <QSettings>
 #include <QTemporaryDir>
@@ -40,8 +41,14 @@ namespace {
 
         {
             stageviz::Settings settings;
-            const QString key = QStringLiteral("tests/native/value");
+
+            // Use a unique key for this process so the default-value check
+            // cannot collide with settings left behind by earlier test runs.
+            const QString key = QStringLiteral("tests/native/value_%1")
+                                    .arg(QCoreApplication::applicationPid());
+
             require(settings.value(key, 42).toInt() == 42, "settings returns default value");
+
             settings.setValue(key, QStringLiteral("stored"));
             require(settings.value(key).toString() == QStringLiteral("stored"), "settings value roundtrip");
         }

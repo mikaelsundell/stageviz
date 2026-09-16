@@ -4,10 +4,14 @@
 
 #include "materialbrowser.h"
 #include "application.h"
+#include "command.h"
+#include "commandstack.h"
 #include "materialitem.h"
 #include "mime.h"
+#include "selectionlist.h"
 #include "settings.h"
 #include "style.h"
+#include "tracelocks.h"
 #include <QAbstractItemView>
 #include <QAction>
 #include <QActionGroup>
@@ -33,6 +37,8 @@
 #include <QToolButton>
 #include <QTreeWidget>
 #include <algorithm>
+#include <pxr/usd/usd/primRange.h>
+#include <pxr/usd/usdGeom/gprim.h>
 
 // generated files
 #include "ui_materialbrowser.h"
@@ -51,6 +57,7 @@ public:
     void updateViewSizes();
     void showViewMenu();
     void showContextMenu(QAbstractItemView* view, const QPoint& position);
+    void assignSelectedMaterial();
     void beginRename(QAbstractItemView* view, int row = -1);
     void commitRename(int row, const QString& name);
     QAbstractItemView* currentView() const;
@@ -257,14 +264,14 @@ MaterialBrowserPrivate::showContextMenu(QAbstractItemView* view, const QPoint& p
 
     QMenu menu(view);
 
-    QAction* assign = nullptr;
+    QAction* assignMaterial = nullptr;
     QAction* copyName = nullptr;
     QAction* copyPath = nullptr;
     QAction* deleteMaterial = nullptr;
 
     if (index.isValid()) {
-        assign = menu.addAction(tr("Assign"));
-        assign->setEnabled(materials.size() == 1);
+        assignMaterial = menu.addAction(tr("Assign"));
+        assignMaterial->setEnabled(materials.size() == 1);
 
         menu.addSeparator();
 
@@ -284,8 +291,8 @@ MaterialBrowserPrivate::showContextMenu(QAbstractItemView* view, const QPoint& p
     if (!action)
         return;
 
-    if (action == assign) {
-        Q_EMIT d.browser->assignRequested();
+    if (action == assignMaterial) {
+        assignSelectedMaterial();
     }
     else if (action == copyName) {
         QStringList values;
@@ -306,6 +313,72 @@ MaterialBrowserPrivate::showContextMenu(QAbstractItemView* view, const QPoint& p
         Q_EMIT d.browser->deleteRequested();
     }
 }
+
+
+void
+MaterialBrowserPrivate::assignSelectedMaterial()
+{
+    const QList<MaterialEntry> materials = d.browser->selectedEntries();
+    if (materials.size() != 1)
+        return;
+
+    const QList<SdfPath> selectedPaths = session()->selectionList()->paths();
+    if (selectedPaths.isEmpty())
+        return;
+
+    QList<SdfPath> paths;
+    QSet<QString> seen;
+
+    {
+        READ_LOCKER(locker, session()->stageLock(), "stageLock");
+        const UsdStageRefPtr stage = session()->stageUnsafe();
+        if (!stage)
+            return;
+
+        auto appendDrawable = [&](const UsdPrim& prim) {
+            if (!prim || !prim.IsValid() || prim.IsInstanceProxy())
+                return;
+
+            if (!prim.IsA<UsdGeomGprim>())
+                return;
+
+            const SdfPath path = prim.GetPath();
+            const QString key = QString::fromStdString(path.GetString());
+
+            if (seen.contains(key))
+                return;
+
+            seen.insert(key);
+            paths.append(path);
+        };
+
+        for (const SdfPath& selectedPath : selectedPaths) {
+            const SdfPath primPath = selectedPath.IsPropertyPath() ? selectedPath.GetPrimPath() : selectedPath;
+
+            if (primPath.IsEmpty())
+                continue;
+
+            if (primPath == SdfPath::AbsoluteRootPath()) {
+                for (const UsdPrim& prim : stage->Traverse())
+                    appendDrawable(prim);
+                continue;
+            }
+
+            const UsdPrim root = stage->GetPrimAtPath(primPath);
+            if (!root || !root.IsValid())
+                continue;
+
+            for (const UsdPrim& prim : UsdPrimRange(root))
+                appendDrawable(prim);
+        }
+    }
+
+    if (paths.isEmpty())
+        return;
+
+    session()->commandStack()->run(new Command(bindMaterial(paths, materials.first().materialPath)));
+}
+
 
 void
 MaterialBrowserPrivate::beginRename(QAbstractItemView* view, int row)
@@ -643,16 +716,28 @@ MaterialBrowser::setEntries(const QList<MaterialEntry>& entries)
     for (const MaterialEntry& entry : selectedEntries())
         selectedPaths.insert(QString::fromStdString(entry.materialPath.GetString()));
 
+    QHash<QString, MaterialEntry> oldEntries;
     QHash<QString, QImage> oldImages;
     QHash<QString, bool> oldValid;
     for (int row = 0; row < p->d.entries.size(); ++row) {
         const QString path = QString::fromStdString(p->d.entries[row].materialPath.GetString());
+        oldEntries.insert(path, p->d.entries[row]);
         oldImages.insert(path, p->d.swatches.value(row));
         oldValid.insert(path, p->d.swatchValid.value(row, false));
     }
 
-    // The caller supplies materials in stage order. Keep that order
-    // authoritative in every browser view.
+    auto sameParameters = [](const MaterialParameters& a, const MaterialParameters& b) {
+        return a.baseColor == b.baseColor && a.metalness == b.metalness && a.roughness == b.roughness
+               && a.specular == b.specular && a.ior == b.ior && a.coat == b.coat && a.coatRoughness == b.coatRoughness
+               && a.opacity == b.opacity && a.transmission == b.transmission
+               && a.transmissionColor == b.transmissionColor;
+    };
+
+    auto sameMaterial = [&](const MaterialEntry& a, const MaterialEntry& b) {
+        return a.materialPath == b.materialPath && a.shaderPath == b.shaderPath && a.shaderId == b.shaderId
+               && sameParameters(a.parameters, b.parameters);
+    };
+
     QList<MaterialEntry> orderedEntries = entries;
     const int previousCount = static_cast<int>(p->d.entries.size());
     bool appendOnly = orderedEntries.size() >= previousCount;
@@ -672,16 +757,21 @@ MaterialBrowser::setEntries(const QList<MaterialEntry>& entries)
     p->d.requestedRows.clear();
 
     for (int row = 0; row < orderedEntries.size(); ++row) {
-        const QString path = QString::fromStdString(orderedEntries[row].materialPath.GetString());
+        const MaterialEntry& entry = orderedEntries[row];
+        const QString path = QString::fromStdString(entry.materialPath.GetString());
+        const auto oldEntryIt = oldEntries.constFind(path);
         const auto imageIt = oldImages.constFind(path);
 
-        if (imageIt != oldImages.cend() && !imageIt.value().isNull()) {
+        const bool unchanged = oldEntryIt != oldEntries.cend() && sameMaterial(oldEntryIt.value(), entry);
+
+        if (unchanged && imageIt != oldImages.cend() && !imageIt.value().isNull()) {
             p->d.swatches[row] = imageIt.value();
-            p->d.swatchValid[row] = oldValid.value(path, true);
+            p->d.swatchValid[row] = oldValid.value(path, false);
         }
         else {
-            // New material immediately gets a neutral placeholder. The tile
-            // therefore claims its final space before asynchronous rendering.
+            // A new or recreated material must never inherit a swatch solely
+            // because it reused the same USD path. Show the placeholder and
+            // request a fresh render from MaterialRenderer.
             p->d.swatches[row] = p->placeholderImage();
             p->d.swatchValid[row] = false;
         }

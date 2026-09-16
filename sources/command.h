@@ -133,6 +133,24 @@ bindMaterial(const QList<SdfPath>& paths, const SdfPath& materialPath);
 
 
 /**
+ * @brief Creates an undoable command that removes authored path dependencies from properties.
+ *
+ * For each supplied property path, relationship target opinions and attribute
+ * connection opinions authored in the current edit layer are removed. Other
+ * property data is preserved. This covers material bindings, collection
+ * membership relationships, skeleton/custom relationships, shader connections,
+ * and other relationship/connection based dependencies.
+ *
+ * Undo restores the original edit-layer property specs exactly.
+ *
+ * @param propertyPaths Relationship or attribute property paths to reset.
+ * @return Undoable dependency-reset command.
+ */
+Command
+resetDependencies(const QList<SdfPath>& propertyPaths);
+
+
+/**
  * @brief Creates an undoable command that sets a USD variant selection.
  *
  * The selection is authored into the stage's current edit target, so composed
@@ -377,8 +395,14 @@ clearDefaultPrim();
  * Paths are reduced to minimal root paths to avoid redundant edits.
  * Only strongest-editable prims in the current edit target are affected.
  *
+ * Before deletion, edit-layer relationship targets and attribute connections
+ * that point at the deleted prims or anything below them are removed so the
+ * stage does not retain dangling authored dependencies. Material bindings,
+ * collection relationships, shader connections, and custom relationship
+ * targets are covered by the same generic dependency cleanup.
+ *
  * The command captures sufficient snapshot state to fully restore deleted
- * prims, including child order, on undo.
+ * prims, dependency properties, and child order on undo.
  *
  * Selection and mask are updated to remove affected paths.
  *

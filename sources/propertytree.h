@@ -24,8 +24,9 @@ class ViewContext;
  * @brief Tree view displaying properties of selected USD prims.
  *
  * Provides a hierarchical view of prim properties such as attributes,
- * relationships, and metadata. The tree updates when the stage changes
- * or when the selection of prims is modified.
+ * relationships, and metadata. For multi-selection, attributes and relationships
+ * shared by every selected prim are presented as common properties.
+ * The tree updates when the stage changes or when the selection of prims is modified.
  *
  * Typically used alongside the StageTree and RenderView to inspect
  * detailed data for the currently selected prims.
@@ -124,7 +125,8 @@ protected:
      * @brief Shows actions for the property under the cursor.
      *
      * The menu provides semantic Select for SdfPath-valued rows, Copy Name
-     * and Copy Value, and a Reset submenu for authored values and edit-layer
+     * and Copy Value, and a Reset submenu for authored values, relationship/
+     * connection dependencies (including material bindings), and edit-layer
      * overrides when those operations are applicable.
      *
      * @param event Context menu event.

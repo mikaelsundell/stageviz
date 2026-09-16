@@ -154,6 +154,8 @@ public:
     static bool hasUnderlyingPrimOpinion(const UsdPrim& prim, const SdfLayerHandle& rootLayer);
     bool isOverrideItem(const PropertyItem* item) const;
     bool hasResettableValue(const PropertyItem* item) const;
+    bool hasResettableDependency(const PropertyItem* item) const;
+    bool isMaterialBindingItem(const PropertyItem* item) const;
     SdfPath selectableValuePath(const PropertyItem* item) const;
 
     struct TreeState {
@@ -180,6 +182,7 @@ public:
     void addAttributesSection(const UsdPrim& prim);
     void addMultiAttributesSection(const QList<UsdPrim>& prims);
     void addRelationshipsSection(const UsdPrim& prim);
+    void addMultiRelationshipsSection(const QList<UsdPrim>& prims);
     QString payloadAncestorPath(const UsdPrim& prim) const;
     static QString metadataText(const VtValue& value);
 
@@ -1418,6 +1421,50 @@ PropertyTreePrivate::hasResettableValue(const PropertyItem* item) const
     return false;
 }
 
+bool
+PropertyTreePrivate::hasResettableDependency(const PropertyItem* item) const
+{
+    if (!item || !d.stage || item->propertyPaths().isEmpty())
+        return false;
+
+    const SdfLayerHandle editLayer = d.stage->GetEditTarget().GetLayer();
+    if (!editLayer)
+        return false;
+
+    for (const SdfPath& propertyPath : item->propertyPaths()) {
+        if (propertyPath.IsEmpty() || !propertyPath.IsPropertyPath())
+            continue;
+
+        if (!editLayer->GetPropertyAtPath(propertyPath))
+            continue;
+
+        if (editLayer->HasField(propertyPath, SdfFieldKeys->TargetPaths)
+            || editLayer->HasField(propertyPath, SdfFieldKeys->ConnectionPaths)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+bool
+PropertyTreePrivate::isMaterialBindingItem(const PropertyItem* item) const
+{
+    if (!item)
+        return false;
+
+    for (const SdfPath& propertyPath : item->propertyPaths()) {
+        if (!propertyPath.IsPropertyPath())
+            continue;
+
+        const std::string name = propertyPath.GetName();
+        if (name == "material:binding" || name.rfind("material:binding:", 0) == 0)
+            return true;
+    }
+
+    return false;
+}
+
 SdfPath
 PropertyTreePrivate::selectableValuePath(const PropertyItem* item) const
 {
@@ -1904,6 +1951,156 @@ PropertyTreePrivate::addRelationshipsSection(const UsdPrim& prim)
     }
 }
 
+
+void
+PropertyTreePrivate::addMultiRelationshipsSection(const QList<UsdPrim>& prims)
+{
+    if (prims.isEmpty())
+        return;
+
+    struct SharedRelationship {
+        TfToken name;
+        QList<SdfPath> propertyPaths;
+        QList<SdfPathVector> targets;
+    };
+
+    QMap<QString, SharedRelationship> shared;
+
+    // Seed from the first prim.
+    for (const UsdRelationship& relationship : prims.first().GetRelationships()) {
+        SharedRelationship entry;
+        entry.name = relationship.GetName();
+        entry.propertyPaths.append(relationship.GetPath());
+
+        SdfPathVector targets;
+        relationship.GetTargets(&targets);
+        entry.targets.append(targets);
+
+        shared.insert(StringToQString(entry.name.GetString()), entry);
+    }
+
+    // Keep only relationships present on every selected prim.
+    for (int primIndex = 1; primIndex < prims.size() && !shared.isEmpty(); ++primIndex) {
+        const UsdPrim& prim = prims.at(primIndex);
+
+        for (auto it = shared.begin(); it != shared.end();) {
+            const UsdRelationship relationship = prim.GetRelationship(it->name);
+            if (!relationship) {
+                it = shared.erase(it);
+                continue;
+            }
+
+            SdfPathVector targets;
+            relationship.GetTargets(&targets);
+
+            it->propertyPaths.append(relationship.GetPath());
+            it->targets.append(targets);
+            ++it;
+        }
+    }
+
+    PropertyItem* section = addSection("Relationships", QString::number(shared.size()));
+    const SdfLayerHandle editLayer = d.stage ? d.stage->GetEditTarget().GetLayer() : SdfLayerHandle();
+
+    for (auto it = shared.cbegin(); it != shared.cend(); ++it) {
+        const SharedRelationship& entry = it.value();
+        if (entry.propertyPaths.size() != prims.size() || entry.targets.size() != prims.size())
+            continue;
+
+        const SdfPathVector& firstTargets = entry.targets.first();
+
+        bool mixed = false;
+        for (int i = 1; i < entry.targets.size(); ++i) {
+            if (entry.targets.at(i) != firstTargets) {
+                mixed = true;
+                break;
+            }
+        }
+
+        QString value;
+        if (mixed) {
+            value = QStringLiteral("<mixed>");
+        }
+        else if (firstTargets.empty()) {
+            value = QStringLiteral("<no targets>");
+        }
+        else if (firstTargets.size() == 1) {
+            value = qt::SdfPathToQString(firstTargets.front());
+        }
+        else {
+            value = QString("%1 targets").arg(firstTargets.size());
+        }
+
+        PropertyItem* item = addInfo(section, it.key(), value);
+        if (!item)
+            continue;
+
+        item->setPropertyPaths(entry.propertyPaths);
+        item->setMixedValue(mixed);
+
+        // If every selected prim points to the same single target, allow
+        // semantic Select from the shared relationship row.
+        if (!mixed && firstTargets.size() == 1)
+            item->setValuePath(firstTargets.front());
+
+        QStringList toolTips;
+        toolTips.append(QStringLiteral("Type: Relationship"));
+        toolTips.append(QString("%1 selected prims").arg(prims.size()));
+
+        bool anyEditLayerOpinion = false;
+        bool allEditLayerOpinions = true;
+
+        if (editLayer) {
+            for (const SdfPath& propertyPath : entry.propertyPaths) {
+                const bool authored = bool(editLayer->GetPropertyAtPath(propertyPath));
+                anyEditLayerOpinion = anyEditLayerOpinion || authored;
+                allEditLayerOpinions = allEditLayerOpinions && authored;
+            }
+        }
+        else {
+            allEditLayerOpinions = false;
+        }
+
+        if (anyEditLayerOpinion) {
+            toolTips.append(allEditLayerOpinions ? QStringLiteral("Edit-layer opinions on all selected prims")
+                                                 : QStringLiteral("Edit-layer opinion on some selected prims"));
+
+            item->setIcon(PropertyItem::Name, QIcon(style()->icon(Style::Override, Style::UIScale::Small)));
+
+            QFont nameFont = item->font(PropertyItem::Name);
+            nameFont.setBold(true);
+            item->setFont(PropertyItem::Name, nameFont);
+        }
+
+        item->setToolTip(PropertyItem::Name, toolTips.join('\n'));
+
+        QString valueToolTip;
+        if (mixed) {
+            valueToolTip = QStringLiteral("Selected prims have different relationship targets");
+        }
+        else if (firstTargets.empty()) {
+            valueToolTip = QStringLiteral("No relationship targets");
+        }
+        else if (firstTargets.size() == 1) {
+            valueToolTip = qt::SdfPathToQString(firstTargets.front());
+        }
+        else {
+            valueToolTip = QString("%1 relationship targets").arg(firstTargets.size());
+        }
+
+        if (anyEditLayerOpinion)
+            valueToolTip += allEditLayerOpinions ? QStringLiteral("\nEdit-layer opinions on all selected prims")
+                                                 : QStringLiteral("\nEdit-layer opinion on some selected prims");
+
+        item->setToolTip(PropertyItem::Value, valueToolTip);
+
+        if (!mixed && firstTargets.size() > 1) {
+            for (size_t targetIndex = 0; targetIndex < firstTargets.size(); ++targetIndex)
+                addPathInfo(item, QString("[%1]").arg(targetIndex), firstTargets[targetIndex]);
+        }
+    }
+}
+
 void
 PropertyTreePrivate::init()
 {
@@ -2181,6 +2378,7 @@ PropertyTreePrivate::updateSelection(const QList<SdfPath>& paths)
             else if (!prims.isEmpty()) {
                 addMultiPrimSection(prims);
                 addMultiAttributesSection(prims);
+                addMultiRelationshipsSection(prims);
             }
         }
 
@@ -2439,6 +2637,7 @@ PropertyTree::contextMenuEvent(QContextMenuEvent* event)
     QAction* copyValueAction = nullptr;
     QAction* resetValueAction = nullptr;
     QAction* resetOverrideAction = nullptr;
+    QAction* resetDependencyAction = nullptr;
 
     const SdfPath selectPath = p->selectableValuePath(item);
     if (!selectPath.IsEmpty()) {
@@ -2453,14 +2652,18 @@ PropertyTree::contextMenuEvent(QContextMenuEvent* event)
         copyValueAction = menu.addAction("Copy Value");
 
     const bool resetValue = p->hasResettableValue(item);
-    const bool resetOverride = p->isOverrideItem(item);
+    const bool resetDependency = p->hasResettableDependency(item);
+    const bool resetOverride = p->isOverrideItem(item) && !resetDependency;
 
-    if (resetValue || resetOverride) {
+    if (resetValue || resetOverride || resetDependency) {
         menu.addSeparator();
         QMenu* resetMenu = menu.addMenu("Reset");
 
         if (resetValue)
             resetValueAction = resetMenu->addAction("Value");
+
+        if (resetDependency)
+            resetDependencyAction = resetMenu->addAction(p->isMaterialBindingItem(item) ? "Binding" : "Dependency");
 
         if (resetOverride)
             resetOverrideAction = resetMenu->addAction("Override");
@@ -2499,6 +2702,11 @@ PropertyTree::contextMenuEvent(QContextMenuEvent* event)
 
     if (chosen == resetValueAction) {
         runCommand(resetAttributeValues(item->propertyPaths()));
+        return;
+    }
+
+    if (chosen == resetDependencyAction) {
+        runCommand(resetDependencies(item->propertyPaths()));
         return;
     }
 
