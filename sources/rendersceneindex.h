@@ -110,6 +110,32 @@ public:
      */
 
     /**
+     * @name Selection Presentation
+     */
+    /**
+     * @{
+     */
+
+    /**
+     * @brief Sets selected root paths for the render-only presentation override.
+     */
+    void setSelectionPaths(const pxr::SdfPathVector& paths);
+
+    /**
+     * @brief Returns whether selected prims use the custom presentation.
+     */
+    bool selectionPresentationEnabled() const;
+
+    /**
+     * @brief Enables the custom selection material and Hydra repr override.
+     */
+    void setSelectionPresentationEnabled(bool enabled);
+
+    /**
+     * @}
+     */
+
+    /**
      * @name Double-Sided Override
      */
     /**
@@ -177,6 +203,11 @@ private:
      * @brief Dirties material binding data on affected gprims.
      */
     void dirtyMaterialBindings();
+
+    /**
+     * @brief Dirties material and display-style data below selected roots.
+     */
+    void dirtySelectionPresentation(const pxr::SdfPathVector& paths);
 
     /**
      * @brief Dirties mesh doubleSided data on affected meshes.

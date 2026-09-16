@@ -1432,6 +1432,7 @@ ImagingGLWidgetPrivate::ensureAuxiliaryMaterials()
     const SdfPath chromePath("/Materials/Chrome");
     const SdfPath glossyPath("/Materials/Glossy");
     const SdfPath reflectionPath("/Materials/Reflection");
+    const SdfPath selectionPath("/Materials/Selection");
     UsdGeomScope::Define(d.auxiliary, materialsPath);
 
     // Built-in Stageviz inspection materials live on the shared auxiliary
@@ -1440,6 +1441,10 @@ ImagingGLWidgetPrivate::ensureAuxiliaryMaterials()
     authorAuxiliaryStandardSurface(chromePath, GfVec3f(0.62f), 1.0f, 0.06f, 1.0f);
     authorAuxiliaryStandardSurface(glossyPath, GfVec3f(0.18f), 0.0f, 0.12f, 1.0f);
     authorAuxiliaryStandardSurface(reflectionPath, GfVec3f(0.16f), 1.0f, 0.025f, 1.0f);
+
+    const QColor selectionColor = style()->color(Style::ColorRole::Selection);
+    const GfVec3f color(selectionColor.redF(), selectionColor.greenF(), selectionColor.blueF());
+    authorAuxiliaryStandardSurface(selectionPath, color, 0.0f, 0.72f, 0.20f);
 }
 
 void

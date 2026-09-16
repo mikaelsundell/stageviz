@@ -195,7 +195,7 @@ public:
     void setMask(const QList<SdfPath>& paths);
 
     /**
-     * @brief Sets selected prim paths used by Hydra selection highlighting.
+     * @brief Sets selected prim roots used by the scene-index presentation override.
      * @param paths Selected prim paths.
      */
     void setSelected(const QList<SdfPath>& paths);

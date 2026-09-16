@@ -20,6 +20,7 @@
 #include <pxr/imaging/glf/simpleMaterial.h>
 #include <pxr/imaging/hd/mergingSceneIndex.h>
 #include <pxr/imaging/hd/sceneIndexPluginRegistry.h>
+#include <pxr/imaging/hdx/renderSetupTask.h>
 #include <pxr/imaging/hdx/taskControllerSceneIndex.h>
 #include <pxr/imaging/hgi/hgi.h>
 #include <pxr/usd/sdf/assetPath.h>
@@ -31,135 +32,169 @@
 PXR_NAMESPACE_USING_DIRECTIVE
 
 namespace stageviz {
+
 namespace {
-    class OpenGLContextRestore final {
-    public:
-        OpenGLContextRestore()
-            : m_context(QOpenGLContext::currentContext())
-            , m_surface(m_context ? m_context->surface() : nullptr)
-        {}
 
-        ~OpenGLContextRestore()
-        {
-            QOpenGLContext* current = QOpenGLContext::currentContext();
-            if (current && current != m_context)
-                current->doneCurrent();
+class OpenGLContextRestore final {
+public:
+    OpenGLContextRestore()
+        : m_context(QOpenGLContext::currentContext())
+        , m_surface(m_context ? m_context->surface() : nullptr)
+    {}
 
-            if (m_context && m_surface && QOpenGLContext::currentContext() != m_context)
-                m_context->makeCurrent(m_surface);
-        }
-
-        OpenGLContextRestore(const OpenGLContextRestore&) = delete;
-        OpenGLContextRestore& operator=(const OpenGLContextRestore&) = delete;
-
-    private:
-        QOpenGLContext* m_context = nullptr;
-        QSurface* m_surface = nullptr;
-    };
-
-    struct SceneIndices {
-        HdMergingSceneIndexRefPtr merging;
-        TfRefPtr<RenderSceneIndex> renderSceneIndex;
-        UsdImagingSceneIndices auxiliary;
-        bool auxiliaryInserted = false;
-
-        void clearAuxiliary()
-        {
-            auxiliary = {};
-            auxiliaryInserted = false;
-        }
-    };
-
-    class ImagingGLEngine final : public UsdImagingGLEngine {
-    public:
-        explicit ImagingGLEngine(const UsdImagingGLEngine::Parameters& params)
-            : ImagingGLEngine(params, std::make_shared<SceneIndices>())
-        {}
-
-        SceneIndices& sceneIndices() { return *m_sceneIndices; }
-        const SceneIndices& sceneIndices() const { return *m_sceneIndices; }
-
-        void setSelectionOutline(bool enabled, unsigned int radius)
-        {
-            if (!_taskControllerSceneIndex)
-                return;
-
-            _taskControllerSceneIndex->SetSelectionEnableOutline(enabled);
-            _taskControllerSceneIndex->SetSelectionOutlineRadius(radius);
-        }
-
-    private:
-        using SceneIndicesPtr = std::shared_ptr<SceneIndices>;
-
-        ImagingGLEngine(const UsdImagingGLEngine::Parameters& params, const SceneIndicesPtr& sceneIndices)
-            : UsdImagingGLEngine(prepareParameters(params, sceneIndices))
-            , m_sceneIndices(sceneIndices)
-        {
-            constructingSceneIndices() = nullptr;
-        }
-
-        static SceneIndices*& constructingSceneIndices()
-        {
-            static thread_local SceneIndices* sceneIndices = nullptr;
-            return sceneIndices;
-        }
-
-        static void registerSceneIndexFilters()
-        {
-            static bool registered = false;
-            if (registered)
-                return;
-
-            HdSceneIndexPluginRegistry::SceneIndexAppendCallback callback =
-                [](const std::string& renderInstanceId, const HdSceneIndexBaseRefPtr& inputScene,
-                   const HdContainerDataSourceHandle& inputArgs) -> HdSceneIndexBaseRefPtr {
-                Q_UNUSED(renderInstanceId);
-                Q_UNUSED(inputArgs);
-
-                // Apply document material overrides before merging the
-                // auxiliary scene. This keeps viewport support content such as
-                // the grid outside document-specific material overrides.
-                TfRefPtr<RenderSceneIndex> renderSceneIndex = RenderSceneIndex::New(inputScene);
-
-                HdMergingSceneIndexRefPtr mergingSceneIndex = HdMergingSceneIndex::New();
-                mergingSceneIndex->AddInputScene(renderSceneIndex, SdfPath::AbsoluteRootPath());
-
-                if (SceneIndices* sceneIndices = constructingSceneIndices()) {
-                    sceneIndices->merging = mergingSceneIndex;
-                    sceneIndices->renderSceneIndex = renderSceneIndex;
-                }
-
-                return mergingSceneIndex;
-            };
-
-            HdSceneIndexPluginRegistry::GetInstance().RegisterSceneIndexForRenderer(
-                std::string(), callback, nullptr, 0, HdSceneIndexPluginRegistry::InsertionOrderAtStart);
-            registered = true;
-        }
-
-        static UsdImagingGLEngine::Parameters prepareParameters(UsdImagingGLEngine::Parameters params,
-                                                                const SceneIndicesPtr& sceneIndices)
-        {
-            registerSceneIndexFilters();
-            constructingSceneIndices() = sceneIndices.get();
-            return params;
-        }
-
-        SceneIndicesPtr m_sceneIndices;
-    };
-
-    UsdImagingGLCullStyle cullStyle(RenderEngine::DoubleSidedMode mode)
+    ~OpenGLContextRestore()
     {
-        switch (mode) {
-        case RenderEngine::DoubleSidedMode::Primitive:
-            return UsdImagingGLCullStyle::CULL_STYLE_BACK_UNLESS_DOUBLE_SIDED;
-        case RenderEngine::DoubleSidedMode::SingleSided: return UsdImagingGLCullStyle::CULL_STYLE_BACK;
-        case RenderEngine::DoubleSidedMode::DoubleSided:
-        default: return UsdImagingGLCullStyle::CULL_STYLE_NOTHING;
-        }
+        QOpenGLContext* current = QOpenGLContext::currentContext();
+        if (current && current != m_context)
+            current->doneCurrent();
+
+        if (m_context && m_surface && QOpenGLContext::currentContext() != m_context)
+            m_context->makeCurrent(m_surface);
     }
 
-}  // namespace
+    OpenGLContextRestore(const OpenGLContextRestore&) = delete;
+    OpenGLContextRestore& operator=(const OpenGLContextRestore&) = delete;
+
+private:
+    QOpenGLContext* m_context = nullptr;
+    QSurface* m_surface = nullptr;
+};
+
+struct SceneIndices {
+    HdMergingSceneIndexRefPtr merging;
+    TfRefPtr<RenderSceneIndex> renderSceneIndex;
+    UsdImagingSceneIndices auxiliary;
+    bool auxiliaryInserted = false;
+
+    void clearAuxiliary()
+    {
+        auxiliary = {};
+        auxiliaryInserted = false;
+    }
+};
+
+class ImagingGLEngine final : public UsdImagingGLEngine {
+public:
+    explicit ImagingGLEngine(const UsdImagingGLEngine::Parameters& params)
+        : ImagingGLEngine(params, std::make_shared<SceneIndices>())
+    {}
+
+    SceneIndices& sceneIndices() { return *m_sceneIndices; }
+    const SceneIndices& sceneIndices() const { return *m_sceneIndices; }
+
+    void setSelectionOutline(bool enabled, unsigned int radius)
+    {
+        if (!_taskControllerSceneIndex)
+            return;
+
+        _taskControllerSceneIndex->SetSelectionEnableOutline(enabled);
+        _taskControllerSceneIndex->SetSelectionOutlineRadius(radius);
+    }
+
+    void renderBatchWithDepthBias(const SdfPathVector& paths, const UsdImagingGLRenderParams& params,
+                                  float constantFactor, float slopeFactor)
+    {
+        if (!_taskControllerSceneIndex || paths.empty())
+            return;
+
+        // Match UsdImagingGLEngine::RenderBatch, but override the Hydra
+        // render-pass depth state after _PrepareRender() and before task
+        // execution. Storm/Hgi translates this to the active backend.
+        _UpdateHydraCollection(&_renderCollection, paths, params);
+        _taskControllerSceneIndex->SetCollection(_renderCollection);
+        _PrepareRender(params);
+
+        HdxRenderTaskParams renderParams = _MakeHydraUsdImagingGLRenderParams(params);
+        renderParams.depthBiasUseDefault = false;
+        renderParams.depthBiasEnable = true;
+        renderParams.depthBiasConstantFactor = constantFactor;
+        renderParams.depthBiasSlopeFactor = slopeFactor;
+        renderParams.depthFunc = HdCmpFuncLEqual;
+        renderParams.depthMaskEnable = true;
+
+        _taskControllerSceneIndex->SetRenderParams(renderParams);
+        _SetBBoxParams(params.bboxes, params.bboxLineColor, params.bboxLineDashSize);
+        _taskControllerSceneIndex->SetEnableSelection(params.highlight);
+        _Execute(params, _taskControllerSceneIndex->GetRenderingTaskPaths());
+    }
+
+private:
+    using SceneIndicesPtr = std::shared_ptr<SceneIndices>;
+
+    ImagingGLEngine(const UsdImagingGLEngine::Parameters& params, const SceneIndicesPtr& sceneIndices)
+        : UsdImagingGLEngine(prepareParameters(params, sceneIndices))
+        , m_sceneIndices(sceneIndices)
+    {
+        constructingSceneIndices() = nullptr;
+    }
+
+    static SceneIndices*& constructingSceneIndices()
+    {
+        static thread_local SceneIndices* sceneIndices = nullptr;
+        return sceneIndices;
+    }
+
+    static void registerSceneIndexFilters()
+    {
+        static bool registered = false;
+        if (registered)
+            return;
+
+        HdSceneIndexPluginRegistry::SceneIndexAppendCallback callback =
+            [](const std::string& renderInstanceId, const HdSceneIndexBaseRefPtr& inputScene,
+               const HdContainerDataSourceHandle& inputArgs) -> HdSceneIndexBaseRefPtr {
+            Q_UNUSED(renderInstanceId);
+            Q_UNUSED(inputArgs);
+
+            // Apply document material overrides before merging the
+            // auxiliary scene. This keeps viewport support content such as
+            // the grid outside document-specific material overrides.
+            TfRefPtr<RenderSceneIndex> renderSceneIndex = RenderSceneIndex::New(inputScene);
+            HdMergingSceneIndexRefPtr mergingSceneIndex = HdMergingSceneIndex::New();
+
+            mergingSceneIndex->AddInputScene(renderSceneIndex, SdfPath::AbsoluteRootPath());
+
+            if (SceneIndices* sceneIndices = constructingSceneIndices()) {
+                sceneIndices->merging = mergingSceneIndex;
+                sceneIndices->renderSceneIndex = renderSceneIndex;
+            }
+
+            return mergingSceneIndex;
+        };
+
+        HdSceneIndexPluginRegistry::GetInstance().RegisterSceneIndexForRenderer(
+            std::string(), callback, nullptr, 0, HdSceneIndexPluginRegistry::InsertionOrderAtStart);
+
+        registered = true;
+    }
+
+    static UsdImagingGLEngine::Parameters prepareParameters(UsdImagingGLEngine::Parameters params,
+                                                             const SceneIndicesPtr& sceneIndices)
+    {
+        registerSceneIndexFilters();
+        constructingSceneIndices() = sceneIndices.get();
+        return params;
+    }
+
+    SceneIndicesPtr m_sceneIndices;
+};
+
+UsdImagingGLCullStyle cullStyle(RenderEngine::DoubleSidedMode mode)
+{
+    switch (mode) {
+    case RenderEngine::DoubleSidedMode::Primitive:
+        return UsdImagingGLCullStyle::CULL_STYLE_BACK_UNLESS_DOUBLE_SIDED;
+
+    case RenderEngine::DoubleSidedMode::SingleSided:
+        return UsdImagingGLCullStyle::CULL_STYLE_BACK;
+
+    case RenderEngine::DoubleSidedMode::DoubleSided:
+    default:
+        return UsdImagingGLCullStyle::CULL_STYLE_NOTHING;
+    }
+}
+
+} // namespace
 
 class RenderEngine::Private {
 public:
@@ -195,8 +230,7 @@ public:
     std::unique_ptr<QOffscreenSurface> offscreenSurface;
 };
 
-bool
-RenderEngine::Private::ensureCurrentContext()
+bool RenderEngine::Private::ensureCurrentContext()
 {
     if (contextMode == ContextMode::Current)
         return QOpenGLContext::currentContext() != nullptr;
@@ -212,13 +246,16 @@ RenderEngine::Private::ensureCurrentContext()
         offscreenSurface = std::make_unique<QOffscreenSurface>();
         offscreenSurface->setFormat(format);
         offscreenSurface->create();
+
         if (!offscreenSurface->isValid())
             return false;
 
         offscreenContext = std::make_unique<QOpenGLContext>();
         offscreenContext->setFormat(format);
+
         if (QOpenGLContext::globalShareContext())
             offscreenContext->setShareContext(QOpenGLContext::globalShareContext());
+
         if (!offscreenContext->create())
             return false;
     }
@@ -226,8 +263,7 @@ RenderEngine::Private::ensureCurrentContext()
     return offscreenContext->makeCurrent(offscreenSurface.get());
 }
 
-bool
-RenderEngine::Private::initialize()
+bool RenderEngine::Private::initialize()
 {
     if (engine)
         return true;
@@ -244,6 +280,7 @@ RenderEngine::Private::initialize()
     engineParams.allowAsynchronousSceneProcessing = contextMode == ContextMode::Current;
 
     engine = std::make_unique<ImagingGLEngine>(engineParams);
+
     if (!engine->GetHgi()) {
         engine.reset();
         return false;
@@ -251,28 +288,23 @@ RenderEngine::Private::initialize()
 
     updateRenderSceneIndex();
     ensureAuxiliarySceneIndex();
-
-    // Use Hydra's public selection overlay. Keeping selection inside the
-    // normal Render()/RenderBatch() path avoids the task-context and
-    // first-frame issues caused by custom _Execute() passes.
     engine->SetSelected(SdfPathVector());
-    engine->SetSelectionColor(qt::QColorToGfVec4f(selectionColor));
-
     return true;
 }
 
-void
-RenderEngine::Private::resetEngine()
+void RenderEngine::Private::resetEngine()
 {
     if (!engine)
         return;
 
     if (contextMode == ContextMode::Offscreen) {
         OpenGLContextRestore contextRestore;
+
         if (!ensureCurrentContext()) {
             qWarning() << "could not make offscreen context current while resetting render engine";
             return;
         }
+
         engine.reset();
         return;
     }
@@ -280,17 +312,17 @@ RenderEngine::Private::resetEngine()
     engine.reset();
 }
 
-void
-RenderEngine::Private::reset()
+void RenderEngine::Private::reset()
 {
     if (contextMode == ContextMode::Offscreen) {
         {
             OpenGLContextRestore contextRestore;
-            if (engine
-                && (!offscreenContext || !offscreenSurface || !offscreenContext->makeCurrent(offscreenSurface.get()))) {
+
+            if (engine && (!offscreenContext || !offscreenSurface || !offscreenContext->makeCurrent(offscreenSurface.get()))) {
                 qWarning() << "could not make offscreen context current while releasing render engine";
                 return;
             }
+
             engine.reset();
         }
 
@@ -302,15 +334,16 @@ RenderEngine::Private::reset()
     engine.reset();
 }
 
-void
-RenderEngine::Private::ensureAuxiliarySceneIndex()
+void RenderEngine::Private::ensureAuxiliarySceneIndex()
 {
     if (!engine || !auxiliary)
         return;
 
     SceneIndices& sceneIndices = engine->sceneIndices();
+
     if (sceneIndices.auxiliaryInserted)
         return;
+
     if (!sceneIndices.merging)
         return;
 
@@ -318,6 +351,7 @@ RenderEngine::Private::ensureAuxiliarySceneIndex()
     createInfo.stage = auxiliary;
     createInfo.displayUnloadedPrimsWithBounds = false;
     createInfo.addDrawModeSceneIndex = true;
+
     sceneIndices.auxiliary = UsdImagingCreateSceneIndices(createInfo);
 
     if (!sceneIndices.auxiliary.stageSceneIndex || !sceneIndices.auxiliary.finalSceneIndex) {
@@ -329,37 +363,48 @@ RenderEngine::Private::ensureAuxiliarySceneIndex()
     sceneIndices.auxiliaryInserted = true;
 }
 
-void
-RenderEngine::Private::refreshAuxiliarySceneIndex()
+void RenderEngine::Private::refreshAuxiliarySceneIndex()
 {
     if (!engine)
         return;
 
     SceneIndices& sceneIndices = engine->sceneIndices();
+
     if (sceneIndices.auxiliary.stageSceneIndex)
         sceneIndices.auxiliary.stageSceneIndex->ApplyPendingUpdates();
 }
 
-void
-RenderEngine::Private::updateRenderSceneIndex()
+void RenderEngine::Private::updateRenderSceneIndex()
 {
     if (!engine)
         return;
 
     SceneIndices& sceneIndices = engine->sceneIndices();
+
     if (!sceneIndices.renderSceneIndex)
         return;
 
     sceneIndices.renderSceneIndex->setSceneMaterialsEnabled(settings.sceneMaterialsEnabled);
     sceneIndices.renderSceneIndex->setMaterialPath(settings.overrideMaterial);
 
+    SdfPathVector selectionPaths;
+    selectionPaths.reserve(selected.size());
+
+    for (const SdfPath& path : selected)
+        selectionPaths.push_back(path);
+
+    sceneIndices.renderSceneIndex->setSelectionPaths(selectionPaths);
+    sceneIndices.renderSceneIndex->setSelectionPresentationEnabled(true);
+
     RenderSceneIndex::Mode mode = RenderSceneIndex::None;
+
     switch (settings.materialMode) {
     case MaterialMode::Clay: mode = RenderSceneIndex::Clay; break;
     case MaterialMode::Override: mode = RenderSceneIndex::Custom; break;
     case MaterialMode::Scene:
     default: mode = RenderSceneIndex::None; break;
     }
+
     sceneIndices.renderSceneIndex->setMode(mode);
 
     const bool overrideDoubleSided = settings.doubleSidedMode == DoubleSidedMode::DoubleSided;
@@ -367,8 +412,7 @@ RenderEngine::Private::updateRenderSceneIndex()
     sceneIndices.renderSceneIndex->setDoubleSidedOverrideEnabled(overrideDoubleSided);
 }
 
-void
-RenderEngine::Private::updateRenderParams()
+void RenderEngine::Private::updateRenderParams()
 {
     params.clearColor = qt::QColorToGfVec4f(settings.clearColor);
     params.drawMode = settings.drawMode;
@@ -383,25 +427,27 @@ RenderEngine::Private::updateRenderParams()
     params.showGuides = settings.showGuides;
     params.showProxy = settings.showProxy;
     params.showRender = settings.showRender;
-    params.highlight = true;
+    params.highlight = false;
     params.bboxLineColor = qt::QColorToGfVec4f(selectionColor);
     params.bboxLineDashSize = 3.0f;
 }
 
-void
-RenderEngine::Private::updateLighting()
+void RenderEngine::Private::updateLighting()
 {
     if (!engine)
         return;
 
     std::vector<GlfSimpleLight> lights;
+
     if (settings.defaultCameraLightEnabled) {
         const GfMatrix4d cameraTransform = camera.GetTransform();
         const GfVec3d cameraPosition = cameraTransform.ExtractTranslation();
+
         GlfSimpleLight light;
         light.SetAmbient(GfVec4f(0, 0, 0, 0));
         light.SetPosition(GfVec4f(cameraPosition[0], cameraPosition[1], cameraPosition[2], 1.0f));
         light.SetTransform(cameraTransform);
+
         lights.push_back(light);
     }
 
@@ -425,21 +471,25 @@ RenderEngine::Private::updateLighting()
             const std::string filename = settings.domeLightTexture.toStdString();
             light.SetDomeLightTextureFile(SdfAssetPath(filename, filename));
         }
+
         lights.push_back(light);
     }
+
     const GfVec4f ambient(settings.defaultAmbient, settings.defaultAmbient, settings.defaultAmbient, 1.0f);
+
     GlfSimpleMaterial material;
     material.SetAmbient(ambient);
     material.SetSpecular(GfVec4f(settings.defaultSpecular, settings.defaultSpecular, settings.defaultSpecular, 1.0f));
     material.SetShininess(settings.defaultShininess);
+
     engine->SetLightingState(lights, material, ambient);
 }
 
-bool
-RenderEngine::Private::render()
+bool RenderEngine::Private::render()
 {
     if (!stage || size[0] <= 0 || size[1] <= 0)
         return false;
+
     if (!engine && !initialize())
         return false;
 
@@ -450,7 +500,6 @@ RenderEngine::Private::render()
     updateLighting();
 
     engine->SetRendererSetting(TfToken("domeLightCameraVisibility"), VtValue(settings.domeLightCameraVisibility));
-
     engine->SetRendererAov(settings.aov);
     engine->SetRenderBufferSize(size);
     engine->SetFraming(CameraUtilFraming(GfRange2f(GfVec2i(), size), GfRect2i(GfVec2i(), size)));
@@ -459,33 +508,78 @@ RenderEngine::Private::render()
     GfVec4d renderViewport = viewport;
     if (renderViewport[2] <= 0.0 || renderViewport[3] <= 0.0)
         renderViewport = GfVec4d(0, 0, size[0], size[1]);
+
     engine->SetRenderViewport(renderViewport);
 
     const GfFrustum frustum = camera.GetFrustum();
     const GfMatrix4d viewMatrix = frustum.ComputeViewMatrix();
     const GfMatrix4d projectionMatrix = frustum.ComputeProjectionMatrix();
+
     engine->SetCameraState(viewMatrix, projectionMatrix);
 
     Hgi* hgi = engine->GetHgi();
     if (!hgi)
         return false;
 
+    SceneIndices& sceneIndices = engine->sceneIndices();
+    TfRefPtr<RenderSceneIndex> renderSceneIndex = sceneIndices.renderSceneIndex;
     UsdImagingGLRenderParams documentParams = params;
+
     hgi->StartFrame();
 
     const UsdPrim root = stage->GetPseudoRoot();
+
+    // Render the document normally first. Selection presentation is disabled
+    // here so the document keeps its authored/viewport material and repr.
+    if (renderSceneIndex)
+        renderSceneIndex->setSelectionPresentationEnabled(false);
+
     engine->PrepareBatch(root, documentParams);
 
     if (mask.isEmpty()) {
         engine->Render(root, documentParams);
-    }
-    else {
+    } else {
         SdfPathVector renderPaths;
         renderPaths.reserve(mask.size());
+
         for (const SdfPath& path : mask)
             renderPaths.push_back(path);
 
         engine->RenderBatch(renderPaths, documentParams);
+    }
+
+    // Re-render only selected roots using the scene-index selection material
+    // and solidWireOnSurf repr. Apply the same Hydra depth bias we used in the
+    // previous selection overlay implementation so coincident/near-coincident
+    // surfaces resolve in favor of the selected geometry.
+    if (!selected.isEmpty() && renderSceneIndex) {
+        SdfPathVector selectionPaths;
+        selectionPaths.reserve(selected.size());
+
+        for (const SdfPath& path : selected) {
+            if (path.IsEmpty() || path == SdfPath::AbsoluteRootPath())
+                continue;
+
+            selectionPaths.push_back(path);
+        }
+
+        if (!selectionPaths.empty()) {
+            renderSceneIndex->setSelectionPresentationEnabled(true);
+
+            UsdImagingGLRenderParams selectionParams = documentParams;
+            selectionParams.highlight = false;
+            selectionParams.enableSceneMaterials = true;
+
+            engine->PrepareBatch(root, selectionParams);
+
+            constexpr float selectionDepthBiasConstant = -2.0f;
+            constexpr float selectionDepthBiasSlope = 0.0f;
+
+            engine->renderBatchWithDepthBias(selectionPaths, selectionParams, selectionDepthBiasConstant,
+                                             selectionDepthBiasSlope);
+
+            renderSceneIndex->setSelectionPresentationEnabled(false);
+        }
     }
 
     hgi->EndFrame();
@@ -502,8 +596,7 @@ RenderEngine::~RenderEngine()
         p->reset();
 }
 
-bool
-RenderEngine::initialize()
+bool RenderEngine::initialize()
 {
     if (p->contextMode == ContextMode::Offscreen) {
         OpenGLContextRestore contextRestore;
@@ -513,158 +606,137 @@ RenderEngine::initialize()
     return p->initialize();
 }
 
-void
-RenderEngine::reset()
+void RenderEngine::reset()
 {
     p->reset();
 }
 
-bool
-RenderEngine::isInitialized() const
+bool RenderEngine::isInitialized() const
 {
     return p->engine != nullptr;
 }
 
-void
-RenderEngine::setStage(UsdStageRefPtr stage)
+void RenderEngine::setStage(UsdStageRefPtr stage)
 {
     if (p->stage == stage)
         return;
+
     p->stage = stage;
     p->resetEngine();
 }
 
-UsdStageRefPtr
-RenderEngine::stage() const
+UsdStageRefPtr RenderEngine::stage() const
 {
     return p->stage;
 }
 
-void
-RenderEngine::setAuxiliaryStage(UsdStageRefPtr stage)
+void RenderEngine::setAuxiliaryStage(UsdStageRefPtr stage)
 {
     if (p->auxiliary == stage)
         return;
+
     p->auxiliary = stage;
     p->resetEngine();
 }
 
-UsdStageRefPtr
-RenderEngine::auxiliaryStage() const
+UsdStageRefPtr RenderEngine::auxiliaryStage() const
 {
     return p->auxiliary;
 }
 
-void
-RenderEngine::refreshAuxiliaryStage()
+void RenderEngine::refreshAuxiliaryStage()
 {
     p->refreshAuxiliarySceneIndex();
 }
 
-void
-RenderEngine::setCamera(const GfCamera& camera)
+void RenderEngine::setCamera(const GfCamera& camera)
 {
     p->camera = camera;
 }
 
-const GfCamera&
-RenderEngine::camera() const
+const GfCamera& RenderEngine::camera() const
 {
     return p->camera;
 }
 
-void
-RenderEngine::setSize(const GfVec2i& size)
+void RenderEngine::setSize(const GfVec2i& size)
 {
     p->size = size;
 }
 
-const GfVec2i&
-RenderEngine::size() const
+const GfVec2i& RenderEngine::size() const
 {
     return p->size;
 }
 
-void
-RenderEngine::setViewport(const GfVec4d& viewport)
+void RenderEngine::setViewport(const GfVec4d& viewport)
 {
     p->viewport = viewport;
 }
 
-const GfVec4d&
-RenderEngine::viewport() const
+const GfVec4d& RenderEngine::viewport() const
 {
     return p->viewport;
 }
 
-void
-RenderEngine::setSettings(const Settings& settings)
+void RenderEngine::setSettings(const Settings& settings)
 {
     p->settings = settings;
     p->updateRenderSceneIndex();
 }
 
-const RenderEngine::Settings&
-RenderEngine::settings() const
+const RenderEngine::Settings& RenderEngine::settings() const
 {
     return p->settings;
 }
 
-void
-RenderEngine::setMask(const QList<SdfPath>& paths)
+void RenderEngine::setMask(const QList<SdfPath>& paths)
 {
     p->mask = paths;
 }
 
-void
-RenderEngine::setSelected(const QList<SdfPath>& paths)
+void RenderEngine::setSelected(const QList<SdfPath>& paths)
 {
     p->selected.clear();
     p->selected.reserve(paths.size());
 
-    SdfPathVector selectedPaths;
-    selectedPaths.reserve(paths.size());
-
     for (const SdfPath& path : paths) {
         const SdfPath primPath = path.IsPropertyPath() ? path.GetPrimPath() : path;
+
         if (primPath.IsEmpty() || primPath == SdfPath::AbsoluteRootPath())
             continue;
 
         if (p->stage && !p->stage->GetPrimAtPath(primPath))
             continue;
 
-        p->selected.append(primPath);
-        selectedPaths.push_back(primPath);
+        if (!p->selected.contains(primPath))
+            p->selected.append(primPath);
     }
-    if (p->engine)
-        p->engine->SetSelected(selectedPaths);
+
+    p->updateRenderSceneIndex();
 }
 
-void
-RenderEngine::setSelectionBBoxes(const std::vector<GfBBox3d>& bboxes)
+void RenderEngine::setSelectionBBoxes(const std::vector<GfBBox3d>& bboxes)
 {
     p->selectionBBoxes = bboxes;
 }
 
-void
-RenderEngine::setSelectionColor(const QColor& color)
+void RenderEngine::setSelectionColor(const QColor& color)
 {
     p->selectionColor = color;
-
-    if (p->engine)
-        p->engine->SetSelectionColor(qt::QColorToGfVec4f(color));
 }
 
-bool
-RenderEngine::renderToCurrentFramebuffer()
+bool RenderEngine::renderToCurrentFramebuffer()
 {
     if (!QOpenGLContext::currentContext())
         return false;
+
     if (!p->engine && !p->initialize())
         return false;
 
     glClearColor(p->settings.clearColor.redF(), p->settings.clearColor.greenF(), p->settings.clearColor.blueF(),
                  p->settings.clearColor.alphaF());
+
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
     if (!p->engine->IsColorCorrectionCapable())
@@ -677,18 +749,19 @@ RenderEngine::renderToCurrentFramebuffer()
     glEnable(GL_DEPTH_TEST);
     glDepthMask(GL_TRUE);
     glDepthFunc(GL_LESS);
+
     GfVec4d viewport = p->viewport;
     if (viewport[2] <= 0.0 || viewport[3] <= 0.0)
         viewport = GfVec4d(0, 0, p->size[0], p->size[1]);
+
     glViewport(static_cast<GLint>(viewport[0]), static_cast<GLint>(viewport[1]), static_cast<GLsizei>(viewport[2]),
                static_cast<GLsizei>(viewport[3]));
-#endif
+#endif // WIN32
 
     return p->render();
 }
 
-QImage
-RenderEngine::renderImage()
+QImage RenderEngine::renderImage()
 {
     if (p->contextMode != ContextMode::Offscreen)
         return {};
@@ -704,7 +777,9 @@ RenderEngine::renderImage()
     QOpenGLFramebufferObjectFormat format;
     format.setAttachment(QOpenGLFramebufferObject::CombinedDepthStencil);
     format.setSamples(4);
+
     QOpenGLFramebufferObject framebuffer(p->size[0], p->size[1], format);
+
     if (!framebuffer.isValid())
         return {};
 
@@ -713,13 +788,13 @@ RenderEngine::renderImage()
 
     const bool rendered = renderToCurrentFramebuffer();
     const QImage image = rendered ? framebuffer.toImage() : QImage();
+
     framebuffer.release();
     return image;
 }
 
-bool
-RenderEngine::testIntersection(const GfMatrix4d& viewMatrix, const GfMatrix4d& projectionMatrix, const UsdPrim& root,
-                               GfVec3d* hitPoint, GfVec3d* hitNormal, SdfPath* hitPrimPath, SdfPath* hitInstancerPath)
+bool RenderEngine::testIntersection(const GfMatrix4d& viewMatrix, const GfMatrix4d& projectionMatrix, const UsdPrim& root,
+                                    GfVec3d* hitPoint, GfVec3d* hitNormal, SdfPath* hitPrimPath, SdfPath* hitInstancerPath)
 {
     if (!p->engine && !p->initialize())
         return false;
@@ -730,19 +805,20 @@ RenderEngine::testIntersection(const GfMatrix4d& viewMatrix, const GfMatrix4d& p
                                        hitInstancerPath);
 }
 
-bool
-RenderEngine::testIntersection(const UsdImagingGLEngine::PickParams& pickParams, const GfMatrix4d& viewMatrix,
-                               const GfMatrix4d& projectionMatrix, const UsdPrim& root,
-                               UsdImagingGLEngine::IntersectionResultVector* results)
+bool RenderEngine::testIntersection(const UsdImagingGLEngine::PickParams& pickParams, const GfMatrix4d& viewMatrix,
+                                    const GfMatrix4d& projectionMatrix, const UsdPrim& root,
+                                    UsdImagingGLEngine::IntersectionResultVector* results)
 {
     if (!results)
         return false;
+
     if (!p->engine && !p->initialize())
         return false;
 
     p->updateRenderParams();
 
     UsdImagingGLEngine::IntersectionResultVector rawResults;
+
     if (!p->engine->TestIntersection(pickParams, viewMatrix, projectionMatrix, root, p->params, &rawResults)) {
         results->clear();
         return false;
@@ -754,44 +830,46 @@ RenderEngine::testIntersection(const UsdImagingGLEngine::PickParams& pickParams,
     for (const auto& result : rawResults) {
         if (result.hitPrimPath.IsEmpty())
             continue;
+
         if (p->stage && !p->stage->GetPrimAtPath(result.hitPrimPath))
             continue;
 
         results->push_back(result);
     }
+
     return !results->empty();
 }
 
-QList<QString>
-RenderEngine::rendererAovs() const
+QList<QString> RenderEngine::rendererAovs() const
 {
     QList<QString> result;
+
     if (!p->engine)
         return result;
+
     for (const TfToken& token : p->engine->GetRendererAovs())
         result.append(QString::fromStdString(token.GetString()));
+
     return result;
 }
 
-VtDictionary
-RenderEngine::renderStats() const
+VtDictionary RenderEngine::renderStats() const
 {
     return p->engine ? p->engine->GetRenderStats() : VtDictionary();
 }
 
-QString
-RenderEngine::hgiApiName() const
+QString RenderEngine::hgiApiName() const
 {
     if (!p->engine)
         return {};
+
     Hgi* hgi = p->engine->GetHgi();
     return hgi ? QString::fromStdString(hgi->GetAPIName().GetString()) : QString();
 }
 
-bool
-RenderEngine::isColorCorrectionCapable() const
+bool RenderEngine::isColorCorrectionCapable() const
 {
     return p->engine && p->engine->IsColorCorrectionCapable();
 }
 
-}  // namespace stageviz
+} // namespace stageviz
