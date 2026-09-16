@@ -634,27 +634,25 @@ setVariantSelection(const QList<SdfPath>& paths, const QString& setName, const Q
                 return;
 
             const QList<SdfPath> uniquePaths = path::uniquePaths(paths);
-            command::beginDeferred(session, "Set variant", static_cast<int>(uniquePaths.size()));
+
+            session->beginProgressBlock("Set variant", uniquePaths.size());
 
             command::runWorker([session, uniquePaths, variantSetName, variantValue, state]() {
+                QList<command::Result> pending;
+                pending.reserve(16);
+
                 QList<SdfPath> changed;
-                QStringList errors;
+                changed.reserve(uniquePaths.size());
 
                 {
                     WRITE_LOCKER(locker, session->stageLock(), "stageLock");
                     const UsdStageRefPtr stage = session->stageUnsafe();
 
-                    if (!stage) {
-                        errors.append("stage missing");
-                    }
-                    else {
+                    if (stage) {
                         QString editError;
                         const SdfLayerHandle editLayer = currentEditLayer(stage, editError);
 
-                        if (!editLayer) {
-                            errors.append(editError);
-                        }
-                        else {
+                        if (editLayer) {
                             if (!state->captured) {
                                 state->items.clear();
                                 state->items.reserve(uniquePaths.size());
@@ -664,22 +662,16 @@ setVariantSelection(const QList<SdfPath>& paths, const QString& setName, const Q
                                                                                         : inputPath;
                                     const UsdPrim prim = stage->GetPrimAtPath(primPath);
 
-                                    if (!prim || !prim.IsValid()) {
-                                        errors.append(QString("prim missing: %1").arg(pathText(primPath)));
+                                    if (!prim || !prim.IsValid())
                                         continue;
-                                    }
 
                                     UsdVariantSet variantSet = prim.GetVariantSet(variantSetName);
-                                    if (!variantSet.IsValid()) {
-                                        errors.append(QString("variant set missing: %1").arg(pathText(primPath)));
+                                    if (!variantSet.IsValid())
                                         continue;
-                                    }
 
                                     const std::vector<std::string> names = variantSet.GetVariantNames();
-                                    if (std::find(names.begin(), names.end(), variantValue) == names.end()) {
-                                        errors.append(QString("variant value missing: %1").arg(pathText(primPath)));
+                                    if (std::find(names.begin(), names.end(), variantValue) == names.end())
                                         continue;
-                                    }
 
                                     variant::SelectionState::Item item;
                                     item.path = primPath;
@@ -697,47 +689,104 @@ setVariantSelection(const QList<SdfPath>& paths, const QString& setName, const Q
 
                                 state->captured = true;
                             }
-
-                            UsdEditContext context(stage, stage->GetEditTarget());
-
-                            for (const variant::SelectionState::Item& item : state->items) {
-                                const UsdPrim prim = stage->GetPrimAtPath(item.path);
-                                if (!prim || !prim.IsValid()) {
-                                    errors.append(QString("prim missing: %1").arg(pathText(item.path)));
-                                    continue;
-                                }
-
-                                UsdVariantSet variantSet = prim.GetVariantSet(variantSetName);
-                                if (!variantSet.IsValid()) {
-                                    errors.append(QString("variant set missing: %1").arg(pathText(item.path)));
-                                    continue;
-                                }
-
-                                if (variantSet.GetVariantSelection() == variantValue) {
-                                    path::appendUnique(changed, item.path);
-                                    continue;
-                                }
-
-                                if (!variantSet.SetVariantSelection(variantValue)) {
-                                    errors.append(QString("failed to set variant: %1").arg(pathText(item.path)));
-                                    continue;
-                                }
-
-                                path::appendUnique(changed, item.path);
-                            }
                         }
                     }
                 }
 
-                const bool success = errors.isEmpty() && !changed.isEmpty();
-                const QString errorText = summarizeErrors(errors);
+                int completed = 0;
 
-                command::queueToSession(session, [session, changed, success, errorText]() {
-                    using Status = Session::Notify::Status;
-                    command::finishDeferred(session,
-                                            success ? "Variant set"
-                                                    : appendError("Set variant finished with errors", errorText),
-                                            changed, success ? Status::Success : Status::Error);
+                for (const SdfPath& inputPath : uniquePaths) {
+                    if (!session || session->isProgressBlockCancelled())
+                        break;
+
+                    command::Result result;
+                    result.path = inputPath;
+                    result.message = "Variant set";
+                    result.status = Session::Notify::Status::Error;
+
+                    QString error;
+                    bool success = false;
+
+                    try {
+                        WRITE_LOCKER(locker, session->stageLock(), "stageLock");
+                        const UsdStageRefPtr stage = session->stageUnsafe();
+
+                        if (!stage) {
+                            error = "Stage not available";
+                        }
+                        else {
+                            QString editError;
+                            const SdfLayerHandle editLayer = currentEditLayer(stage, editError);
+
+                            if (!editLayer) {
+                                error = editError;
+                            }
+                            else {
+                                const SdfPath primPath = inputPath.IsPropertyPath() ? inputPath.GetPrimPath()
+                                                                                    : inputPath;
+                                const UsdPrim prim = stage->GetPrimAtPath(primPath);
+
+                                if (!prim || !prim.IsValid()) {
+                                    error = QString("prim missing: %1").arg(pathText(primPath));
+                                }
+                                else {
+                                    UsdVariantSet variantSet = prim.GetVariantSet(variantSetName);
+
+                                    if (!variantSet.IsValid()) {
+                                        error = QString("variant set missing: %1").arg(pathText(primPath));
+                                    }
+                                    else {
+                                        const std::vector<std::string> names = variantSet.GetVariantNames();
+
+                                        if (std::find(names.begin(), names.end(), variantValue) == names.end()) {
+                                            error = QString("variant value missing: %1").arg(pathText(primPath));
+                                        }
+                                        else if (variantSet.GetVariantSelection() == variantValue) {
+                                            success = true;
+                                        }
+                                        else {
+                                            UsdEditContext context(stage, stage->GetEditTarget());
+
+                                            success = variantSet.SetVariantSelection(variantValue);
+
+                                            if (!success)
+                                                error = QString("failed to set variant: %1").arg(pathText(primPath));
+                                        }
+
+                                        if (success)
+                                            path::appendUnique(changed, primPath);
+                                    }
+                                }
+                            }
+                        }
+                    } catch (...) {
+                        success = false;
+                        error = "exception";
+                    }
+
+                    result.success = success;
+                    result.message = success ? "Variant set" : (error.isEmpty() ? "Variant set failed" : error);
+                    result.status = success ? Session::Notify::Status::Success : Session::Notify::Status::Error;
+
+                    pending.append(result);
+                    ++completed;
+
+                    if (pending.size() >= 16) {
+                        const QList<command::Result> batch = pending;
+
+                        command::queueToSession(session, [session, batch, completed]() {
+                            command::flushResults(session, batch, completed);
+                        });
+
+                        pending.clear();
+                    }
+                }
+
+                command::queueToSession(session, [session, pending, completed]() {
+                    if (!pending.isEmpty())
+                        command::flushResults(session, pending, completed);
+
+                    session->endProgressBlock();
                 });
             });
         },
@@ -745,28 +794,41 @@ setVariantSelection(const QList<SdfPath>& paths, const QString& setName, const Q
             if (!session || !state->captured || state->items.isEmpty())
                 return;
 
-            command::beginDeferred(session, "Undo set variant", static_cast<int>(state->items.size()));
+            session->beginProgressBlock("Undo set variant", state->items.size());
 
             command::runWorker([session, state]() {
-                QList<SdfPath> restored;
-                QStringList errors;
+                QList<command::Result> pending;
+                pending.reserve(16);
 
-                {
-                    WRITE_LOCKER(locker, session->stageLock(), "stageLock");
-                    const UsdStageRefPtr stage = session->stageUnsafe();
+                int completed = 0;
 
-                    if (!stage) {
-                        errors.append("stage missing");
-                    }
-                    else {
-                        QString editError;
-                        const SdfLayerHandle editLayer = currentEditLayer(stage, editError);
+                for (const variant::SelectionState::Item& item : state->items) {
+                    if (!session || session->isProgressBlockCancelled())
+                        break;
 
-                        if (!editLayer) {
-                            errors.append(editError);
+                    command::Result result;
+                    result.path = item.path;
+                    result.message = "Variant restored";
+                    result.status = Session::Notify::Status::Error;
+
+                    QString error;
+                    bool success = false;
+
+                    try {
+                        WRITE_LOCKER(locker, session->stageLock(), "stageLock");
+                        const UsdStageRefPtr stage = session->stageUnsafe();
+
+                        if (!stage) {
+                            error = "Stage not available";
                         }
                         else {
-                            for (const variant::SelectionState::Item& item : state->items) {
+                            QString editError;
+                            const SdfLayerHandle editLayer = currentEditLayer(stage, editError);
+
+                            if (!editLayer) {
+                                error = editError;
+                            }
+                            else {
                                 if (item.hadVariantSelectionField) {
                                     editLayer->SetField(item.path, SdfFieldKeys->VariantSelection,
                                                         item.variantSelectionField);
@@ -779,27 +841,43 @@ setVariantSelection(const QList<SdfPath>& paths, const QString& setName, const Q
                                     const SdfPrimSpecHandle primSpec = editLayer->GetPrimAtPath(item.path);
                                     if (primSpec && primSpec->IsInert()
                                         && !stage::removePrimSpec(editLayer, item.path)) {
-                                        errors.append(QString("failed to remove empty variant override: %1")
-                                                          .arg(pathText(item.path)));
-                                        continue;
+                                        error = QString("failed to remove empty variant override: %1")
+                                                    .arg(pathText(item.path));
                                     }
                                 }
 
-                                path::appendUnique(restored, item.path);
+                                success = error.isEmpty();
                             }
                         }
+                    } catch (...) {
+                        success = false;
+                        error = "exception";
+                    }
+
+                    result.success = success;
+                    result.message = success ? "Variant restored"
+                                             : (error.isEmpty() ? "Variant restore failed" : error);
+                    result.status = success ? Session::Notify::Status::Success : Session::Notify::Status::Error;
+
+                    pending.append(result);
+                    ++completed;
+
+                    if (pending.size() >= 16) {
+                        const QList<command::Result> batch = pending;
+
+                        command::queueToSession(session, [session, batch, completed]() {
+                            command::flushResults(session, batch, completed);
+                        });
+
+                        pending.clear();
                     }
                 }
 
-                const bool success = errors.isEmpty();
-                const QString errorText = summarizeErrors(errors);
+                command::queueToSession(session, [session, pending, completed]() {
+                    if (!pending.isEmpty())
+                        command::flushResults(session, pending, completed);
 
-                command::queueToSession(session, [session, restored, success, errorText]() {
-                    using Status = Session::Notify::Status;
-                    command::finishDeferred(session,
-                                            success ? "Variant undone"
-                                                    : appendError("Undo set variant failed", errorText),
-                                            restored, success ? Status::Success : Status::Error);
+                    session->endProgressBlock();
                 });
             });
         });
