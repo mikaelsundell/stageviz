@@ -256,6 +256,75 @@ PyCommand_canClear(PyObject*, PyObject*)
     return PyBool_FromLong(stack->canClear());
 }
 
+
+static PyObject*
+PyCommand_mergeStage(PyObject*, PyObject* args)
+{
+    const char* filename = nullptr;
+    if (!PyArg_ParseTuple(args, "s", &filename))
+        return nullptr;
+
+    return runCommand(mergeStage(QString::fromUtf8(filename)));
+}
+
+static PyObject*
+PyCommand_mergeFlattenedStage(PyObject*, PyObject* args)
+{
+    const char* filename = nullptr;
+    if (!PyArg_ParseTuple(args, "s", &filename))
+        return nullptr;
+
+    return runCommand(mergeFlattenedStage(QString::fromUtf8(filename)));
+}
+
+static PyObject*
+PyCommand_addSublayer(PyObject*, PyObject* args)
+{
+    const char* filename = nullptr;
+    if (!PyArg_ParseTuple(args, "s", &filename))
+        return nullptr;
+
+    return runCommand(addSublayer(QString::fromUtf8(filename)));
+}
+
+static PyObject*
+PyCommand_addReference(PyObject*, PyObject* args)
+{
+    const char* filename = nullptr;
+    PyObject* pyTargetPath = nullptr;
+    if (!PyArg_ParseTuple(args, "sO", &filename, &pyTargetPath))
+        return nullptr;
+
+    SdfPath targetPath;
+    if (!parsePathArg(pyTargetPath, "target_path", &targetPath))
+        return nullptr;
+    if (!targetPath.IsAbsolutePath() || !targetPath.IsPrimPath()) {
+        PyErr_SetString(PyExc_ValueError, "target_path must be an absolute USD prim path");
+        return nullptr;
+    }
+
+    return runCommand(addReference(QString::fromUtf8(filename), targetPath));
+}
+
+static PyObject*
+PyCommand_addPayload(PyObject*, PyObject* args)
+{
+    const char* filename = nullptr;
+    PyObject* pyTargetPath = nullptr;
+    if (!PyArg_ParseTuple(args, "sO", &filename, &pyTargetPath))
+        return nullptr;
+
+    SdfPath targetPath;
+    if (!parsePathArg(pyTargetPath, "target_path", &targetPath))
+        return nullptr;
+    if (!targetPath.IsAbsolutePath() || !targetPath.IsPrimPath()) {
+        PyErr_SetString(PyExc_ValueError, "target_path must be an absolute USD prim path");
+        return nullptr;
+    }
+
+    return runCommand(addPayload(QString::fromUtf8(filename), targetPath));
+}
+
 static PyObject*
 PyCommand_setTransforms(PyObject*, PyObject* args)
 {
@@ -603,6 +672,84 @@ PyCommand_newScope(PyObject*, PyObject* args)
 }
 
 static PyObject*
+PyCommand_newMesh(PyObject*, PyObject* args)
+{
+    PyObject* pyParentPath = nullptr;
+    const char* name = nullptr;
+    if (!PyArg_ParseTuple(args, "Os", &pyParentPath, &name))
+        return nullptr;
+    SdfPath parentPath;
+    if (!parsePathArg(pyParentPath, "parent_path", &parentPath))
+        return nullptr;
+    return runCommand(newMeshPath(parentPath, QString::fromUtf8(name)));
+}
+
+static PyObject*
+PyCommand_newPoints(PyObject*, PyObject* args)
+{
+    PyObject* pyParentPath = nullptr;
+    const char* name = nullptr;
+    if (!PyArg_ParseTuple(args, "Os", &pyParentPath, &name))
+        return nullptr;
+    SdfPath parentPath;
+    if (!parsePathArg(pyParentPath, "parent_path", &parentPath))
+        return nullptr;
+    return runCommand(newPointsPath(parentPath, QString::fromUtf8(name)));
+}
+
+static PyObject*
+PyCommand_newBasisCurves(PyObject*, PyObject* args)
+{
+    PyObject* pyParentPath = nullptr;
+    const char* name = nullptr;
+    if (!PyArg_ParseTuple(args, "Os", &pyParentPath, &name))
+        return nullptr;
+    SdfPath parentPath;
+    if (!parsePathArg(pyParentPath, "parent_path", &parentPath))
+        return nullptr;
+    return runCommand(newBasisCurvesPath(parentPath, QString::fromUtf8(name)));
+}
+
+static PyObject*
+PyCommand_newNurbsCurves(PyObject*, PyObject* args)
+{
+    PyObject* pyParentPath = nullptr;
+    const char* name = nullptr;
+    if (!PyArg_ParseTuple(args, "Os", &pyParentPath, &name))
+        return nullptr;
+    SdfPath parentPath;
+    if (!parsePathArg(pyParentPath, "parent_path", &parentPath))
+        return nullptr;
+    return runCommand(newNurbsCurvesPath(parentPath, QString::fromUtf8(name)));
+}
+
+static PyObject*
+PyCommand_newNurbsPatch(PyObject*, PyObject* args)
+{
+    PyObject* pyParentPath = nullptr;
+    const char* name = nullptr;
+    if (!PyArg_ParseTuple(args, "Os", &pyParentPath, &name))
+        return nullptr;
+    SdfPath parentPath;
+    if (!parsePathArg(pyParentPath, "parent_path", &parentPath))
+        return nullptr;
+    return runCommand(newNurbsPatchPath(parentPath, QString::fromUtf8(name)));
+}
+
+static PyObject*
+PyCommand_newPointInstancer(PyObject*, PyObject* args)
+{
+    PyObject* pyParentPath = nullptr;
+    const char* name = nullptr;
+    if (!PyArg_ParseTuple(args, "Os", &pyParentPath, &name))
+        return nullptr;
+    SdfPath parentPath;
+    if (!parsePathArg(pyParentPath, "parent_path", &parentPath))
+        return nullptr;
+    return runCommand(newPointInstancerPath(parentPath, QString::fromUtf8(name)));
+}
+
+static PyObject*
 PyCommand_newMaterial(PyObject*, PyObject* args)
 {
     PyObject* pyParentPath = nullptr;
@@ -909,6 +1056,16 @@ static PyMethodDef PyCommand_methods[] = {
     { "can_redo", reinterpret_cast<PyCFunction>(PyCommand_canRedo), METH_NOARGS, "Return whether redo is available." },
     { "can_clear", reinterpret_cast<PyCFunction>(PyCommand_canClear), METH_NOARGS,
       "Return whether command history can be cleared." },
+    { "merge_stage", reinterpret_cast<PyCFunction>(PyCommand_mergeStage), METH_VARARGS,
+      "Merge authored USD content into the current edit layer with undo support." },
+    { "merge_flattened_stage", reinterpret_cast<PyCFunction>(PyCommand_mergeFlattenedStage), METH_VARARGS,
+      "Flatten an incoming USD stage and merge it into the current edit layer with undo support." },
+    { "add_sublayer", reinterpret_cast<PyCFunction>(PyCommand_addSublayer), METH_VARARGS,
+      "Add a USD file as a sublayer of the current edit layer with undo support." },
+    { "add_reference", reinterpret_cast<PyCFunction>(PyCommand_addReference), METH_VARARGS,
+      "Add a reference to an existing prim with undo support." },
+    { "add_payload", reinterpret_cast<PyCFunction>(PyCommand_addPayload), METH_VARARGS,
+      "Add a payload to an existing prim with undo support." },
     { "set_transforms", reinterpret_cast<PyCFunction>(PyCommand_setTransforms), METH_VARARGS,
       "Apply undoable world transforms: paths, before and after (sequences of 4x4 matrices)." },
     { "select_paths", reinterpret_cast<PyCFunction>(PyCommand_selectPaths), METH_VARARGS, "Select paths." },
@@ -945,6 +1102,17 @@ static PyMethodDef PyCommand_methods[] = {
     { "new_prim", reinterpret_cast<PyCFunction>(PyCommand_newPrim), METH_VARARGS | METH_KEYWORDS,
       "Create a generic prim. Optional keyword argument: type_name." },
     { "new_scope", reinterpret_cast<PyCFunction>(PyCommand_newScope), METH_VARARGS, "Create a new Scope prim." },
+    { "new_mesh", reinterpret_cast<PyCFunction>(PyCommand_newMesh), METH_VARARGS, "Create a visible wavy Mesh prim." },
+    { "new_points", reinterpret_cast<PyCFunction>(PyCommand_newPoints), METH_VARARGS,
+      "Create a visible particle-style Points prim." },
+    { "new_basis_curves", reinterpret_cast<PyCFunction>(PyCommand_newBasisCurves), METH_VARARGS,
+      "Create visible BasisCurves." },
+    { "new_nurbs_curves", reinterpret_cast<PyCFunction>(PyCommand_newNurbsCurves), METH_VARARGS,
+      "Create visible NURBS curves." },
+    { "new_nurbs_patch", reinterpret_cast<PyCFunction>(PyCommand_newNurbsPatch), METH_VARARGS,
+      "Create a visible NURBS patch." },
+    { "new_point_instancer", reinterpret_cast<PyCFunction>(PyCommand_newPointInstancer), METH_VARARGS,
+      "Create a PointInstancer with a Cube prototype." },
     { "new_material", reinterpret_cast<PyCFunction>(PyCommand_newMaterial), METH_VARARGS,
       "Create a new material with a UsdPreviewSurface shader." },
     { "new_reference", reinterpret_cast<PyCFunction>(PyCommand_newReference), METH_VARARGS | METH_KEYWORDS,

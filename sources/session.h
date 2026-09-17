@@ -227,8 +227,11 @@ public:
     /**
      * @brief Creates a new empty USD stage in memory.
      *
-     * Clears any existing stage and initializes a fresh one.
+     * Clears any existing stage and initializes a fresh one. The requested
+     * load policy is also applied to the stage load rules so payloads authored
+     * later follow the same All/None behavior as stages opened from disk.
      *
+     * @param policy Payload loading policy for the new stage.
      * @return True if creation succeeded.
      */
     bool newStage(LoadPolicy policy = LoadPolicy::All);
@@ -244,66 +247,11 @@ public:
     bool loadFromFile(const QString& filename, LoadPolicy policy = LoadPolicy::All);
 
     /**
-     * @brief Destructively merges authored USD content into the current edit target.
+     * @brief Recomputes derived stage state and emits a full prim refresh.
      *
-     * The incoming file itself is not added as a sublayer, reference, or payload.
-     * Existing destination content is preserved where it does not conflict with
-     * incoming authored opinions; incoming authored opinions are stronger on
-     * conflicts.
-     *
-     * Composition arcs authored inside the incoming root layer remain authored.
-     *
-     * @param filename USD file to merge.
-     *
-     * @return True if the merge succeeded.
+     * Used by undoable commands that restore edit-layer content directly.
      */
-    bool mergeFromFile(const QString& filename);
-
-    /**
-     * @brief Flattens an incoming USD stage and merges it into the current edit target.
-     *
-     * The complete composed incoming stage is flattened before merging, baking
-     * incoming references, payloads, sublayers, and variants into authored
-     * content in the current edit target.
-     *
-     * @param filename USD file to flatten and merge.
-     *
-     * @return True if the merge succeeded.
-     */
-    bool mergeFlattenedFromFile(const QString& filename);
-
-    /**
-     * @brief Merge a USD file as a sublayer of the current edit layer.
-     *
-     * @param filename USD file to add.
-     *
-     * @return True if the sublayer was added or was already present.
-     */
-    bool mergeSublayerFromFile(const QString& filename);
-
-    /**
-     * @brief Merge a reference to an existing prim.
-     *
-     * The source file's default prim is referenced.
-     *
-     * @param filename USD file to reference.
-     * @param targetPath Existing target prim path.
-     *
-     * @return True if the reference was authored.
-     */
-    bool mergeReferenceFromFile(const QString& filename, const SdfPath& targetPath);
-
-    /**
-     * @brief Merge a payload to an existing prim.
-     *
-     * The source file's default prim is used as the payload target.
-     *
-     * @param filename USD file to add as a payload.
-     * @param targetPath Existing target prim path.
-     *
-     * @return True if the payload was authored.
-     */
-    bool mergePayloadFromFile(const QString& filename, const SdfPath& targetPath);
+    void refreshStage();
 
     /**
      * @brief Saves the root layer and modified file-backed local sublayers.

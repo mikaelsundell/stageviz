@@ -4,7 +4,7 @@
 # collaborators are tested without replacing them with test doubles. This
 # executable has a QCoreApplication entry point and does not initialize Python.
 get_target_property(stageviz_test_sources ${project_name} SOURCES)
-list(FILTER stageviz_test_sources EXCLUDE REGEX "(^|/)(main|test)\\.cpp$")
+list(FILTER stageviz_test_sources EXCLUDE REGEX "(^|/)(main|test|regression|gui_regression)\\.cpp$")
 list(FILTER stageviz_test_sources EXCLUDE REGEX "\\.rc$")
 set(stageviz_test_absolute_sources)
 foreach(source IN LISTS stageviz_test_sources)
@@ -60,7 +60,8 @@ foreach(case IN ITEMS
     session_file_api
     session_edit_layer_api
     session_state_api
-    session_merge_api
+    session_load_policy_api
+    command_merge_api
     namespace_editor_crud_api
     usd_path_utils_api
     usd_stage_utils_api

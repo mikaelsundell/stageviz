@@ -86,6 +86,7 @@ public:
     void showDialog(QDialog* window);
     bool eventFilter(QObject* object, QEvent* event);
     void enable(bool enable);
+    void newPrim(const TfToken& typeName);
 
 public Q_SLOTS:
     void newFile();
@@ -329,7 +330,20 @@ ViewerPrivate::init()
     connect(d.ui->editLayerSelect, &QAction::triggered, this, &ViewerPrivate::layerSelect);
     connect(d.ui->editPayloadInvert, &QAction::triggered, this, &ViewerPrivate::payloadInvert);
     connect(d.ui->editLayerInvert, &QAction::triggered, this, &ViewerPrivate::layerInvert);
-    connect(d.ui->editNewXform, &QAction::triggered, this, &ViewerPrivate::newXform);
+    connect(d.ui->createXform, &QAction::triggered, this, &ViewerPrivate::newXform);
+    connect(d.ui->createScope, &QAction::triggered, this, [this]() { newPrim(TfToken("Scope")); });
+    connect(d.ui->createMesh, &QAction::triggered, this, [this]() { newPrim(TfToken("Mesh")); });
+    connect(d.ui->createPoints, &QAction::triggered, this, [this]() { newPrim(TfToken("Points")); });
+    connect(d.ui->createBasisCurves, &QAction::triggered, this, [this]() { newPrim(TfToken("BasisCurves")); });
+    connect(d.ui->createNurbsCurves, &QAction::triggered, this, [this]() { newPrim(TfToken("NurbsCurves")); });
+    connect(d.ui->createNurbsPatch, &QAction::triggered, this, [this]() { newPrim(TfToken("NurbsPatch")); });
+    connect(d.ui->createPointInstancer, &QAction::triggered, this, [this]() { newPrim(TfToken("PointInstancer")); });
+    connect(d.ui->createCube, &QAction::triggered, this, [this]() { newPrim(TfToken("Cube")); });
+    connect(d.ui->createSphere, &QAction::triggered, this, [this]() { newPrim(TfToken("Sphere")); });
+    connect(d.ui->createCylinder, &QAction::triggered, this, [this]() { newPrim(TfToken("Cylinder")); });
+    connect(d.ui->createCone, &QAction::triggered, this, [this]() { newPrim(TfToken("Cone")); });
+    connect(d.ui->createCapsule, &QAction::triggered, this, [this]() { newPrim(TfToken("Capsule")); });
+    connect(d.ui->createPlane, &QAction::triggered, this, [this]() { newPrim(TfToken("Plane")); });
     connect(d.ui->editDeleteSelected, &QAction::triggered, this, &ViewerPrivate::deleteSelected);
     connect(d.ui->displayIsolate, &QAction::toggled, this, &ViewerPrivate::isolate);
     connect(d.ui->displayCameraLight, &QAction::toggled, this, &ViewerPrivate::cameraLight);
@@ -771,19 +785,8 @@ ViewerPrivate::mergeFile(const QString& fileName)
         return false;
     }
 
-    QElapsedTimer timer;
-    timer.start();
-
-    if (!session()->mergeFromFile(fileName)) {
-        session()->notifyStatus(Session::Notify::Status::Error, QString("Failed to merge file: %1").arg(fileName));
-        return false;
-    }
-
+    session()->commandStack()->run(new Command(mergeStage(fileName)));
     settings()->setValue("openDir", fileInfo.absolutePath());
-    session()->notifyStatus(Session::Notify::Status::Success,
-                            QString("Merged %1 into stage in %2 seconds")
-                                .arg(fileName)
-                                .arg(QString::number(timer.elapsed() / 1000.0, 'f', 2)));
     return true;
 }
 
@@ -797,20 +800,8 @@ ViewerPrivate::mergeFlattenedFile(const QString& fileName)
         return false;
     }
 
-    QElapsedTimer timer;
-    timer.start();
-
-    if (!session()->mergeFlattenedFromFile(fileName)) {
-        session()->notifyStatus(Session::Notify::Status::Error,
-                                QString("Failed to merge flattened file: %1").arg(fileName));
-        return false;
-    }
-
+    session()->commandStack()->run(new Command(mergeFlattenedStage(fileName)));
     settings()->setValue("openDir", fileInfo.absolutePath());
-    session()->notifyStatus(Session::Notify::Status::Success,
-                            QString("Merged flattened %1 in %2 seconds")
-                                .arg(fileName)
-                                .arg(QString::number(timer.elapsed() / 1000.0, 'f', 2)));
     return true;
 }
 
@@ -824,13 +815,8 @@ ViewerPrivate::mergeSublayerFile(const QString& fileName)
         return false;
     }
 
-    if (!session()->mergeSublayerFromFile(fileName)) {
-        session()->notifyStatus(Session::Notify::Status::Error, QString("Failed to merge sublayer: %1").arg(fileName));
-        return false;
-    }
-
+    session()->commandStack()->run(new Command(addSublayer(fileName)));
     settings()->setValue("openDir", fileInfo.absolutePath());
-    session()->notifyStatus(Session::Notify::Status::Success, QString("Merged sublayer: %1").arg(fileName));
     return true;
 }
 
@@ -844,14 +830,8 @@ ViewerPrivate::mergeReferenceFile(const QString& fileName, const SdfPath& target
         return false;
     }
 
-    if (!session()->mergeReferenceFromFile(fileName, targetPath)) {
-        session()->notifyStatus(Session::Notify::Status::Error, QString("Failed to merge reference: %1").arg(fileName));
-        return false;
-    }
-
+    session()->commandStack()->run(new Command(addReference(fileName, targetPath)));
     settings()->setValue("openDir", fileInfo.absolutePath());
-    session()->notifyStatus(Session::Notify::Status::Success,
-                            QString("Added reference %1 to %2").arg(fileName, qt::SdfPathToQString(targetPath)));
     return true;
 }
 
@@ -865,14 +845,8 @@ ViewerPrivate::mergePayloadFile(const QString& fileName, const SdfPath& targetPa
         return false;
     }
 
-    if (!session()->mergePayloadFromFile(fileName, targetPath)) {
-        session()->notifyStatus(Session::Notify::Status::Error, QString("Failed to add payload: %1").arg(fileName));
-        return false;
-    }
-
+    session()->commandStack()->run(new Command(addPayload(fileName, targetPath)));
     settings()->setValue("openDir", fileInfo.absolutePath());
-    session()->notifyStatus(Session::Notify::Status::Success,
-                            QString("Added payload %1 to %2").arg(fileName, qt::SdfPathToQString(targetPath)));
     return true;
 }
 
@@ -1052,7 +1026,20 @@ ViewerPrivate::enable(bool enable)
                                 d.ui->editLayerSelect,
                                 d.ui->editPayloadInvert,
                                 d.ui->editLayerInvert,
-                                d.ui->editNewXform,
+                                d.ui->createXform,
+                                d.ui->createScope,
+                                d.ui->createMesh,
+                                d.ui->createPoints,
+                                d.ui->createBasisCurves,
+                                d.ui->createNurbsCurves,
+                                d.ui->createNurbsPatch,
+                                d.ui->createPointInstancer,
+                                d.ui->createCube,
+                                d.ui->createSphere,
+                                d.ui->createCylinder,
+                                d.ui->createCone,
+                                d.ui->createCapsule,
+                                d.ui->createPlane,
                                 d.ui->editDeleteSelected,
                                 d.ui->displayIsolate,
                                 d.ui->displayCameraLight,
@@ -1774,6 +1761,36 @@ ViewerPrivate::layerInvert()
 {
     if (!session()->selectionList()->paths().isEmpty())
         session()->commandStack()->run(new Command(selectInvertInLayer()));
+}
+
+void
+ViewerPrivate::newPrim(const TfToken& typeName)
+{
+    if (typeName.IsEmpty())
+        return;
+
+    SdfPath parentPath = SdfPath::AbsoluteRootPath();
+    const QList<SdfPath> paths = session()->selectionList()->paths();
+
+    if (paths.size() == 1)
+        parentPath = paths.first().IsPropertyPath() ? paths.first().GetPrimPath() : paths.first();
+    else if (paths.size() > 1)
+        parentPath = paths.first().GetParentPath();
+
+    if (parentPath.IsEmpty())
+        return;
+
+    const QString name = QString::fromStdString(typeName.GetString());
+
+    Command command = typeName == TfToken("Mesh")             ? newMeshPath(parentPath, name)
+                      : typeName == TfToken("Points")         ? newPointsPath(parentPath, name)
+                      : typeName == TfToken("BasisCurves")    ? newBasisCurvesPath(parentPath, name)
+                      : typeName == TfToken("NurbsCurves")    ? newNurbsCurvesPath(parentPath, name)
+                      : typeName == TfToken("NurbsPatch")     ? newNurbsPatchPath(parentPath, name)
+                      : typeName == TfToken("PointInstancer") ? newPointInstancerPath(parentPath, name)
+                                                              : newPrimPath(parentPath, name, typeName);
+
+    session()->commandStack()->run(new Command(std::move(command)));
 }
 
 void

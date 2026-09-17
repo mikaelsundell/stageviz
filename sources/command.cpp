@@ -9,13 +9,18 @@
 #include "tracelocks.h"
 #include "usdedit.h"
 #include "usdutils.h"
+#include <QDir>
+#include <QFileInfo>
 #include <QPointer>
 #include <algorithm>
 #include <cmath>
+#include <functional>
+#include <pxr/base/gf/vec2d.h>
 #include <pxr/base/gf/vec3f.h>
 #include <pxr/base/gf/vec3h.h>
 #include <pxr/usd/sdf/copyUtils.h>
 #include <pxr/usd/sdf/layer.h>
+#include <pxr/usd/sdf/layerUtils.h>
 #include <pxr/usd/sdf/listOp.h>
 #include <pxr/usd/sdf/namespaceEdit.h>
 #include <pxr/usd/sdf/payload.h>
@@ -29,14 +34,23 @@
 #include <pxr/usd/usd/primRange.h>
 #include <pxr/usd/usd/references.h>
 #include <pxr/usd/usd/variantSets.h>
+#include <pxr/usd/usdGeom/basisCurves.h>
 #include <pxr/usd/usdGeom/bboxCache.h>
+#include <pxr/usd/usdGeom/cube.h>
 #include <pxr/usd/usdGeom/imageable.h>
+#include <pxr/usd/usdGeom/mesh.h>
+#include <pxr/usd/usdGeom/nurbsCurves.h>
+#include <pxr/usd/usdGeom/nurbsPatch.h>
+#include <pxr/usd/usdGeom/pointInstancer.h>
+#include <pxr/usd/usdGeom/points.h>
+#include <pxr/usd/usdGeom/scope.h>
 #include <pxr/usd/usdGeom/tokens.h>
 #include <pxr/usd/usdGeom/xform.h>
 #include <pxr/usd/usdGeom/xformable.h>
 #include <pxr/usd/usdShade/material.h>
 #include <pxr/usd/usdShade/materialBindingAPI.h>
 #include <pxr/usd/usdShade/shader.h>
+#include <pxr/usd/usdUtils/dependencies.h>
 
 namespace stageviz {
 
@@ -851,7 +865,449 @@ namespace {
         return states;
     }
 
+    SdfLayerRefPtr relocatedMergeCopy(const SdfLayerHandle& layer)
+    {
+        if (!layer)
+            return {};
+
+        const SdfLayerRefPtr copy = SdfLayer::CreateAnonymous("stageviz_merge.usda");
+        if (!copy)
+            return {};
+
+        copy->TransferContent(layer);
+        UsdUtilsModifyAssetPaths(
+            copy,
+            [&](const std::string& path) {
+                if (path.empty() || SdfLayer::IsAnonymousLayerIdentifier(path))
+                    return path;
+
+                const std::string anchored = SdfComputeAssetPathRelativeToLayer(layer, path);
+                const QString value = QString::fromStdString(anchored);
+                if (!value.contains(':') && QDir::isRelativePath(value)) {
+                    const QString realPath = QString::fromStdString(layer->GetRealPath());
+                    const QDir anchor = realPath.isEmpty() ? QDir::current() : QFileInfo(realPath).absoluteDir();
+                    return anchor.absoluteFilePath(value).toStdString();
+                }
+                return anchored;
+            },
+            true);
+        return copy;
+    }
+
+    bool mergeLayer(Session* session, const SdfLayerHandle& sourceLayer, QString& error)
+    {
+        if (!session || !sourceLayer) {
+            error = "source layer missing";
+            return false;
+        }
+
+        WRITE_LOCKER(locker, session->stageLock(), "stageLock");
+        const UsdStageRefPtr stage = session->stageUnsafe();
+        if (!stage) {
+            error = "stage missing";
+            return false;
+        }
+
+        const SdfLayerHandle destinationLayer = stage->GetEditTarget().GetLayer();
+        if (!destinationLayer) {
+            error = "edit layer missing";
+            return false;
+        }
+
+        if (!sourceLayer->IsAnonymous() && !destinationLayer->IsAnonymous()
+            && sourceLayer->GetRealPath() == destinationLayer->GetRealPath()) {
+            error = "cannot merge a layer into itself";
+            return false;
+        }
+
+        const SdfLayerRefPtr anchoredSource = relocatedMergeCopy(sourceLayer);
+        if (!anchoredSource) {
+            error = "failed to prepare source layer";
+            return false;
+        }
+
+        for (const SdfPrimSpecHandle& sourcePrim : anchoredSource->GetRootPrims()) {
+            if (!sourcePrim)
+                continue;
+
+            const SdfPath sourcePath = sourcePrim->GetPath();
+            QString pathError;
+            const SdfPath destinationPath = stage::buildChildPath(stage, SdfPath::AbsoluteRootPath(),
+                                                                  qt::StringToQString(sourcePath.GetName()), pathError);
+            if (destinationPath.IsEmpty()) {
+                error = pathError.isEmpty()
+                            ? QString("failed to build destination path for %1").arg(pathText(sourcePath))
+                            : pathError;
+                return false;
+            }
+
+            if (!SdfCopySpec(anchoredSource, sourcePath, destinationLayer, destinationPath)) {
+                error = QString("failed to merge prim: %1").arg(pathText(sourcePath));
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    struct MergeLayerState {
+        SdfLayerRefPtr snapshot;
+        SdfLayerHandle editLayer;
+        bool captured = false;
+    };
+
+    Command mergeLayerCommand(const QString& filename, bool flatten)
+    {
+        auto state = std::make_shared<MergeLayerState>();
+        const QString title = flatten ? QStringLiteral("Merge flattened") : QStringLiteral("Merge stage");
+        const QString successMessage = flatten ? QStringLiteral("Flattened stage merged")
+                                               : QStringLiteral("Stage merged");
+
+        return Command(
+            [filename, flatten, state, title, successMessage](Session* session) {
+                if (!session || filename.isEmpty())
+                    return;
+
+                session->beginProgressBlock(title, 1);
+                bool success = false;
+                QString error;
+
+                if (!state->captured) {
+                    READ_LOCKER(locker, session->stageLock(), "stageLock");
+                    const UsdStageRefPtr stage = session->stageUnsafe();
+                    if (!stage) {
+                        error = "stage missing";
+                    }
+                    else {
+                        state->editLayer = stage->GetEditTarget().GetLayer();
+                        if (!state->editLayer) {
+                            error = "edit layer missing";
+                        }
+                        else {
+                            state->snapshot = SdfLayer::CreateAnonymous("stageviz_merge_snapshot.usda");
+                            if (!state->snapshot)
+                                error = "failed to create merge snapshot";
+                            else {
+                                state->snapshot->TransferContent(state->editLayer);
+                                state->captured = true;
+                            }
+                        }
+                    }
+                }
+
+                if (state->captured) {
+                    const QString absFilename = QFileInfo(filename).absoluteFilePath();
+                    UsdStageRefPtr sourceStage;
+                    try {
+                        sourceStage = UsdStage::Open(qt::QStringToString(absFilename),
+                                                     flatten ? UsdStage::LoadAll : UsdStage::LoadNone);
+                    } catch (const std::exception&) {
+                        error = "failed to open source stage";
+                    }
+
+                    if (sourceStage) {
+                        SdfLayerHandle sourceLayer;
+                        SdfLayerRefPtr flattenedLayer;
+                        if (flatten) {
+                            flattenedLayer = sourceStage->Flatten();
+                            sourceLayer = flattenedLayer;
+                        }
+                        else {
+                            sourceLayer = sourceStage->GetRootLayer();
+                        }
+
+                        if (!sourceLayer)
+                            error = flatten ? "failed to flatten source stage" : "source layer missing";
+                        else
+                            success = mergeLayer(session, sourceLayer, error);
+                    }
+                    else if (error.isEmpty()) {
+                        error = "failed to open source stage";
+                    }
+                }
+
+                if (!success && state->captured && state->snapshot && state->editLayer) {
+                    WRITE_LOCKER(locker, session->stageLock(), "stageLock");
+                    const UsdStageRefPtr stage = session->stageUnsafe();
+                    if (stage && stage->GetEditTarget().GetLayer() == state->editLayer)
+                        state->editLayer->TransferContent(state->snapshot);
+                }
+
+                if (success)
+                    session->refreshStage();
+
+                using Status = Session::Notify::Status;
+                session->updateProgressNotify(Session::Notify(success
+                                                                  ? successMessage
+                                                                  : appendError(QString("%1 failed").arg(title), error),
+                                                              {}, success ? Status::Success : Status::Error),
+                                              1);
+                session->endProgressBlock();
+            },
+            [state, title](Session* session) {
+                if (!session || !state->captured || !state->snapshot || !state->editLayer)
+                    return;
+
+                session->beginProgressBlock(QString("Undo %1").arg(title.toLower()), 1);
+                bool success = false;
+                {
+                    WRITE_LOCKER(locker, session->stageLock(), "stageLock");
+                    const UsdStageRefPtr stage = session->stageUnsafe();
+                    if (stage && stage->GetEditTarget().GetLayer() == state->editLayer) {
+                        state->editLayer->TransferContent(state->snapshot);
+                        success = true;
+                    }
+                }
+                if (success)
+                    session->refreshStage();
+
+                using Status = Session::Notify::Status;
+                session->updateProgressNotify(Session::Notify(success ? QString("%1 undone").arg(title)
+                                                                      : QString("Undo %1 failed").arg(title.toLower()),
+                                                              {}, success ? Status::Success : Status::Error),
+                                              1);
+                session->endProgressBlock();
+            });
+    }
+
+    struct SublayerState {
+        SdfLayerHandle editLayer;
+        std::vector<std::string> previousPaths;
+        bool captured = false;
+    };
+
+    struct CompositionArcState {
+        SdfLayerHandle editLayer;
+        SdfPath targetPath;
+        TfToken field;
+        bool hadPrimSpec = false;
+        bool hadField = false;
+        VtValue previousValue;
+        bool captured = false;
+    };
+
+    Command addCompositionArc(const QString& filename, const SdfPath& targetPath, bool payloadArc)
+    {
+        auto state = std::make_shared<CompositionArcState>();
+        const QString title = payloadArc ? QStringLiteral("Add payload") : QStringLiteral("Add reference");
+        const QString successMessage = payloadArc ? QStringLiteral("Payload added") : QStringLiteral("Reference added");
+        const TfToken field = payloadArc ? SdfFieldKeys->Payload : SdfFieldKeys->References;
+
+        return Command(
+            [filename, targetPath, payloadArc, state, title, successMessage, field](Session* session) {
+                if (!session || filename.isEmpty() || targetPath.IsEmpty())
+                    return;
+
+                session->beginProgressBlock(title, 1);
+                bool success = false;
+                QString error;
+                {
+                    WRITE_LOCKER(locker, session->stageLock(), "stageLock");
+                    const UsdStageRefPtr stage = session->stageUnsafe();
+                    if (!stage || !targetPath.IsAbsolutePath() || !targetPath.IsPrimPath()) {
+                        error = "invalid stage or target path";
+                    }
+                    else {
+                        const SdfLayerHandle editLayer = stage->GetEditTarget().GetLayer();
+                        const UsdPrim targetPrim = stage->GetPrimAtPath(targetPath);
+                        if (!editLayer)
+                            error = "edit layer missing";
+                        else if (!targetPrim || !targetPrim.IsValid())
+                            error = QString("target prim missing: %1").arg(pathText(targetPath));
+                        else {
+                            const QString absFilename = QFileInfo(filename).absoluteFilePath();
+                            UsdStageRefPtr sourceStage;
+                            try {
+                                sourceStage = UsdStage::Open(qt::QStringToString(absFilename), UsdStage::LoadNone);
+                            } catch (const std::exception&) {}
+
+                            if (!sourceStage || !sourceStage->GetDefaultPrim()) {
+                                error = "source stage has no default prim";
+                            }
+                            else {
+                                if (!state->captured) {
+                                    state->editLayer = editLayer;
+                                    state->targetPath = targetPath;
+                                    state->field = field;
+                                    state->hadPrimSpec = bool(editLayer->GetPrimAtPath(targetPath));
+                                    state->hadField = editLayer->HasField(targetPath, field);
+                                    if (state->hadField)
+                                        state->previousValue = editLayer->GetField(targetPath, field);
+                                    state->captured = true;
+                                }
+
+                                const std::string assetPath = stage::compositionAssetPath(editLayer, absFilename);
+                                success = payloadArc ? targetPrim.GetPayloads().AddPayload(assetPath)
+                                                     : targetPrim.GetReferences().AddReference(assetPath);
+                                if (!success)
+                                    error = payloadArc ? "failed to add payload" : "failed to add reference";
+                            }
+                        }
+                    }
+                }
+
+                if (success)
+                    session->refreshStage();
+
+                using Status = Session::Notify::Status;
+                session->updateProgressNotify(
+                    Session::Notify(success ? successMessage : appendError(QString("%1 failed").arg(title), error),
+                                    { targetPath }, success ? Status::Success : Status::Error),
+                    1);
+                session->endProgressBlock();
+            },
+            [state, title](Session* session) {
+                if (!session || !state->captured || !state->editLayer)
+                    return;
+
+                session->beginProgressBlock(QString("Undo %1").arg(title.toLower()), 1);
+                bool success = false;
+                {
+                    WRITE_LOCKER(locker, session->stageLock(), "stageLock");
+                    const UsdStageRefPtr stage = session->stageUnsafe();
+                    if (stage && stage->GetEditTarget().GetLayer() == state->editLayer) {
+                        if (state->hadField)
+                            state->editLayer->SetField(state->targetPath, state->field, state->previousValue);
+                        else
+                            state->editLayer->EraseField(state->targetPath, state->field);
+
+                        if (!state->hadPrimSpec) {
+                            const SdfPrimSpecHandle primSpec = state->editLayer->GetPrimAtPath(state->targetPath);
+                            if (primSpec && primSpec->IsInert())
+                                stage::removePrimSpec(state->editLayer, state->targetPath);
+                        }
+                        success = true;
+                    }
+                }
+
+                if (success)
+                    session->refreshStage();
+
+                using Status = Session::Notify::Status;
+                session->updateProgressNotify(Session::Notify(success ? QString("%1 undone").arg(title)
+                                                                      : QString("Undo %1 failed").arg(title.toLower()),
+                                                              { state->targetPath },
+                                                              success ? Status::Success : Status::Error),
+                                              1);
+                session->endProgressBlock();
+            });
+    }
+
 }  // namespace
+
+Command
+mergeStage(const QString& filename)
+{
+    return mergeLayerCommand(filename, false);
+}
+
+Command
+mergeFlattenedStage(const QString& filename)
+{
+    return mergeLayerCommand(filename, true);
+}
+
+Command
+addSublayer(const QString& filename)
+{
+    auto state = std::make_shared<SublayerState>();
+
+    return Command(
+        [filename, state](Session* session) {
+            if (!session || filename.isEmpty())
+                return;
+
+            session->beginProgressBlock("Add sublayer", 1);
+            bool success = false;
+            QString error;
+            {
+                WRITE_LOCKER(locker, session->stageLock(), "stageLock");
+                const UsdStageRefPtr stage = session->stageUnsafe();
+                const QString absFilename = QFileInfo(filename).absoluteFilePath();
+                if (!stage)
+                    error = "stage missing";
+                else if (!QFileInfo::exists(absFilename))
+                    error = "sublayer file missing";
+                else {
+                    const SdfLayerHandle editLayer = stage->GetEditTarget().GetLayer();
+                    if (!editLayer) {
+                        error = "edit layer missing";
+                    }
+                    else {
+                        const QString destinationFilename = QString::fromStdString(editLayer->GetRealPath());
+                        if (!destinationFilename.isEmpty()
+                            && QFileInfo(destinationFilename).absoluteFilePath() == absFilename) {
+                            error = "cannot add the edit layer as its own sublayer";
+                        }
+                        else {
+                            if (!state->captured) {
+                                state->editLayer = editLayer;
+                                state->previousPaths = editLayer->GetSubLayerPaths();
+                                state->captured = true;
+                            }
+
+                            const std::string assetPath = stage::compositionAssetPath(editLayer, absFilename);
+                            std::vector<std::string> sublayers = editLayer->GetSubLayerPaths();
+                            if (std::find(sublayers.begin(), sublayers.end(), assetPath) == sublayers.end()) {
+                                sublayers.push_back(assetPath);
+                                editLayer->SetSubLayerPaths(sublayers);
+                            }
+                            const std::vector<std::string> resultingSublayers = editLayer->GetSubLayerPaths();
+                            success = std::find(resultingSublayers.begin(), resultingSublayers.end(), assetPath)
+                                      != resultingSublayers.end();
+                            if (!success)
+                                error = "failed to add sublayer";
+                        }
+                    }
+                }
+            }
+
+            if (success)
+                session->refreshStage();
+
+            using Status = Session::Notify::Status;
+            session->updateProgressNotify(Session::Notify(success ? "Sublayer added"
+                                                                  : appendError("Add sublayer failed", error),
+                                                          {}, success ? Status::Success : Status::Error),
+                                          1);
+            session->endProgressBlock();
+        },
+        [state](Session* session) {
+            if (!session || !state->captured || !state->editLayer)
+                return;
+
+            session->beginProgressBlock("Undo add sublayer", 1);
+            bool success = false;
+            {
+                WRITE_LOCKER(locker, session->stageLock(), "stageLock");
+                const UsdStageRefPtr stage = session->stageUnsafe();
+                if (stage && stage->GetEditTarget().GetLayer() == state->editLayer) {
+                    state->editLayer->SetSubLayerPaths(state->previousPaths);
+                    success = true;
+                }
+            }
+            if (success)
+                session->refreshStage();
+
+            using Status = Session::Notify::Status;
+            session->updateProgressNotify(Session::Notify(success ? "Add sublayer undone" : "Undo add sublayer failed",
+                                                          {}, success ? Status::Success : Status::Error),
+                                          1);
+            session->endProgressBlock();
+        });
+}
+
+Command
+addReference(const QString& filename, const SdfPath& targetPath)
+{
+    return addCompositionArc(filename, targetPath, false);
+}
+
+Command
+addPayload(const QString& filename, const SdfPath& targetPath)
+{
+    return addCompositionArc(filename, targetPath, true);
+}
 
 Command
 setVariantSelection(const QList<SdfPath>& paths, const QString& setName, const QString& value)
@@ -3304,6 +3760,172 @@ duplicatePaths(const QList<SdfPath>& inPaths)
         });
 }
 
+namespace {
+    using PrimAuthor = std::function<bool(const UsdStageRefPtr&, const SdfPath&, QString&)>;
+
+    Command newAuthoredPrimPath(const SdfPath& parentPath, const QString& nameInput, const QString& label,
+                                PrimAuthor author)
+    {
+        struct NewAuthoredPrimState {
+            SdfPath parentPath;
+            SdfPath createdPath;
+            TfTokenVector oldParentOrder;
+            QList<SdfPath> createdAncestorSpecs;
+            QList<SdfPath> previousSelection;
+            QList<SdfPath> previousMask;
+        };
+
+        auto state = std::make_shared<NewAuthoredPrimState>();
+
+        return Command(
+            [parentPath, nameInput, label, author, state](Session* session) {
+                if (!session || parentPath.IsEmpty())
+                    return;
+
+                state->previousSelection = session->selectionList()->paths();
+                state->previousMask = session->mask();
+
+                command::beginDeferred(session, QString("New %1").arg(label), 1);
+
+                command::runWorker([session, parentPath, nameInput, label, author, state]() {
+                    bool success = false;
+                    QString error;
+                    SdfPath newPath;
+                    QList<SdfPath> changed;
+
+                    {
+                        WRITE_LOCKER(locker, session->stageLock(), "stageLock");
+                        const UsdStageRefPtr stage = session->stageUnsafe();
+
+                        if (!stage) {
+                            error = "stage missing";
+                        }
+                        else {
+                            QString editError;
+                            const SdfLayerHandle editLayer = currentEditLayer(stage, editError);
+
+                            if (!editLayer) {
+                                error = editError;
+                            }
+                            else if (!layer::validateParent(stage, editLayer, parentPath, error)) {}
+                            else {
+                                newPath = stage::buildChildPath(stage, parentPath, nameInput, error);
+
+                                if (!newPath.IsEmpty()) {
+                                    state->parentPath = parentPath;
+                                    state->createdPath = newPath;
+                                    state->oldParentOrder.clear();
+                                    state->createdAncestorSpecs.clear();
+
+                                    stage::captureChildOrder(stage, parentPath, state->oldParentOrder);
+
+                                    for (SdfPath path = parentPath;
+                                         !path.IsEmpty() && path != SdfPath::AbsoluteRootPath();
+                                         path = path.GetParentPath()) {
+                                        if (!editLayer->GetPrimAtPath(path))
+                                            state->createdAncestorSpecs.prepend(path);
+                                    }
+
+                                    UsdEditContext context(stage, UsdEditTarget(editLayer));
+                                    success = author(stage, newPath, error);
+
+                                    if (success) {
+                                        TfTokenVector order = state->oldParentOrder;
+                                        order.push_back(newPath.GetNameToken());
+                                        stage::restoreChildOrder(stage, parentPath, order);
+
+                                        path::appendUnique(changed, parentPath);
+                                        path::appendUnique(changed, newPath);
+                                    }
+                                    else {
+                                        stage::removePrimSpec(editLayer, newPath);
+                                        stage::restoreChildOrder(stage, parentPath, state->oldParentOrder);
+
+                                        for (auto it = state->createdAncestorSpecs.crbegin();
+                                             it != state->createdAncestorSpecs.crend(); ++it) {
+                                            const SdfPrimSpecHandle spec = editLayer->GetPrimAtPath(*it);
+                                            if (spec && spec->IsInert())
+                                                stage::removePrimSpec(editLayer, *it);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    command::queueToSession(session, [session, newPath, changed, success, error, label]() {
+                        using Status = Session::Notify::Status;
+                        command::finishDeferred(session,
+                                                success ? QString("%1 created").arg(label)
+                                                        : appendError(QString("New %1 failed").arg(label), error),
+                                                changed, success ? Status::Success : Status::Error);
+                        if (success)
+                            session->selectionList()->updatePaths({ newPath });
+                    });
+                });
+            },
+            [state, label](Session* session) {
+                if (!session || state->createdPath.IsEmpty())
+                    return;
+
+                command::beginDeferred(session, QString("Undo new %1").arg(label), 1);
+
+                command::runWorker([session, state, label]() {
+                    bool success = false;
+                    QString error;
+                    QList<SdfPath> changed;
+
+                    {
+                        WRITE_LOCKER(locker, session->stageLock(), "stageLock");
+                        const UsdStageRefPtr stage = session->stageUnsafe();
+
+                        if (!stage) {
+                            error = "stage missing";
+                        }
+                        else {
+                            QString editError;
+                            const SdfLayerHandle editLayer = currentEditLayer(stage, editError);
+
+                            if (!editLayer) {
+                                error = editError;
+                            }
+                            else if (!stage::removePrimSpec(editLayer, state->createdPath)) {
+                                error = QString("failed to remove prim: %1").arg(pathText(state->createdPath));
+                            }
+                            else {
+                                stage::restoreChildOrder(stage, state->parentPath, state->oldParentOrder);
+
+                                for (auto it = state->createdAncestorSpecs.crbegin();
+                                     it != state->createdAncestorSpecs.crend(); ++it) {
+                                    const SdfPrimSpecHandle spec = editLayer->GetPrimAtPath(*it);
+                                    if (spec && spec->IsInert())
+                                        stage::removePrimSpec(editLayer, *it);
+                                }
+
+                                path::appendUnique(changed, state->parentPath);
+                                path::appendUnique(changed, state->createdPath);
+                                success = true;
+                            }
+                        }
+                    }
+
+                    command::queueToSession(session, [session, state, changed, success, error, label]() {
+                        using Status = Session::Notify::Status;
+                        command::finishDeferred(session,
+                                                success ? QString("New %1 undone").arg(label)
+                                                        : appendError(QString("Undo new %1 failed").arg(label), error),
+                                                changed, success ? Status::Success : Status::Error);
+
+                        if (success) {
+                            session->selectionList()->updatePaths(state->previousSelection);
+                            session->setMask(state->previousMask);
+                        }
+                    });
+                });
+            });
+    }
+}  // namespace
+
 Command
 newPrimPath(const SdfPath& parentPath, const QString& nameInput, const TfToken& typeName)
 {
@@ -3463,6 +4085,237 @@ Command
 newScopePath(const SdfPath& parentPath, const QString& nameInput)
 {
     return newPrimPath(parentPath, nameInput, TfToken("Scope"));
+}
+
+Command
+newMeshPath(const SdfPath& parentPath, const QString& nameInput)
+{
+    return newAuthoredPrimPath(parentPath, nameInput, "mesh",
+                               [](const UsdStageRefPtr& stage, const SdfPath& path, QString& error) {
+                                   const UsdGeomMesh mesh = UsdGeomMesh::Define(stage, path);
+                                   if (!mesh) {
+                                       error = "failed to define UsdGeomMesh";
+                                       return false;
+                                   }
+
+                                   constexpr int width = 11;
+                                   constexpr int height = 11;
+                                   constexpr float spacing = 0.5f;
+                                   VtVec3fArray points;
+                                   VtIntArray counts;
+                                   VtIntArray indices;
+                                   points.reserve(width * height);
+                                   counts.reserve((width - 1) * (height - 1));
+                                   indices.reserve((width - 1) * (height - 1) * 4);
+
+                                   for (int y = 0; y < height; ++y) {
+                                       for (int x = 0; x < width; ++x) {
+                                           const float fx = (float(x) - float(width - 1) * 0.5f) * spacing;
+                                           const float fy = (float(y) - float(height - 1) * 0.5f) * spacing;
+                                           const float z = std::sin(fx * 1.35f) * std::cos(fy * 1.15f) * 0.45f;
+                                           points.push_back(GfVec3f(fx, fy, z));
+                                       }
+                                   }
+
+                                   for (int y = 0; y < height - 1; ++y) {
+                                       for (int x = 0; x < width - 1; ++x) {
+                                           const int a = y * width + x;
+                                           const int b = a + 1;
+                                           const int c = a + width + 1;
+                                           const int d = a + width;
+                                           counts.push_back(4);
+                                           indices.push_back(a);
+                                           indices.push_back(b);
+                                           indices.push_back(c);
+                                           indices.push_back(d);
+                                       }
+                                   }
+
+                                   return mesh.CreatePointsAttr().Set(points)
+                                          && mesh.CreateFaceVertexCountsAttr().Set(counts)
+                                          && mesh.CreateFaceVertexIndicesAttr().Set(indices)
+                                          && mesh.CreateSubdivisionSchemeAttr().Set(UsdGeomTokens->none);
+                               });
+}
+
+Command
+newPointsPath(const SdfPath& parentPath, const QString& nameInput)
+{
+    return newAuthoredPrimPath(
+        parentPath, nameInput, "points", [](const UsdStageRefPtr& stage, const SdfPath& path, QString& error) {
+            const UsdGeomPoints pointsPrim = UsdGeomPoints::Define(stage, path);
+            if (!pointsPrim) {
+                error = "failed to define UsdGeomPoints";
+                return false;
+            }
+
+            VtVec3fArray points;
+            VtFloatArray widths;
+            points.reserve(75);
+            widths.reserve(75);
+            for (int z = -2; z <= 2; ++z) {
+                for (int y = -2; y <= 2; ++y) {
+                    for (int x = -1; x <= 1; ++x) {
+                        const float jitter = 0.12f * std::sin(float(x * 13 + y * 7 + z * 3));
+                        points.push_back(GfVec3f(float(x) * 0.7f + jitter, float(y) * 0.7f - jitter,
+                                                 float(z) * 0.7f + jitter * 0.5f));
+                        widths.push_back(0.14f + 0.03f * float((x + y + z + 9) % 3));
+                    }
+                }
+            }
+
+            return pointsPrim.CreatePointsAttr().Set(points) && pointsPrim.CreateWidthsAttr().Set(widths);
+        });
+}
+
+Command
+newBasisCurvesPath(const SdfPath& parentPath, const QString& nameInput)
+{
+    return newAuthoredPrimPath(parentPath, nameInput, "basis curves",
+                               [](const UsdStageRefPtr& stage, const SdfPath& path, QString& error) {
+                                   const UsdGeomBasisCurves curves = UsdGeomBasisCurves::Define(stage, path);
+                                   if (!curves) {
+                                       error = "failed to define UsdGeomBasisCurves";
+                                       return false;
+                                   }
+
+                                   constexpr int curveCount = 3;
+                                   constexpr int pointsPerCurve = 12;
+                                   VtVec3fArray points;
+                                   VtIntArray counts(curveCount, pointsPerCurve);
+                                   VtFloatArray widths(curveCount * pointsPerCurve, 0.08f);
+                                   points.reserve(curveCount * pointsPerCurve);
+
+                                   for (int curve = 0; curve < curveCount; ++curve) {
+                                       for (int i = 0; i < pointsPerCurve; ++i) {
+                                           const float x = (float(i) - 5.5f) * 0.45f;
+                                           const float y = (float(curve) - 1.0f) * 0.55f;
+                                           const float z = std::sin(x * 1.7f + float(curve) * 0.8f) * 0.45f;
+                                           points.push_back(GfVec3f(x, y, z));
+                                       }
+                                   }
+
+                                   return curves.CreateTypeAttr().Set(UsdGeomTokens->cubic)
+                                          && curves.CreateBasisAttr().Set(UsdGeomTokens->bspline)
+                                          && curves.CreateWrapAttr().Set(UsdGeomTokens->nonperiodic)
+                                          && curves.CreateCurveVertexCountsAttr().Set(counts)
+                                          && curves.CreatePointsAttr().Set(points)
+                                          && curves.CreateWidthsAttr().Set(widths);
+                               });
+}
+
+Command
+newNurbsCurvesPath(const SdfPath& parentPath, const QString& nameInput)
+{
+    return newAuthoredPrimPath(
+        parentPath, nameInput, "NURBS curves", [](const UsdStageRefPtr& stage, const SdfPath& path, QString& error) {
+            const UsdGeomNurbsCurves curves = UsdGeomNurbsCurves::Define(stage, path);
+            if (!curves) {
+                error = "failed to define UsdGeomNurbsCurves";
+                return false;
+            }
+
+            constexpr int curveCount = 2;
+            constexpr int pointsPerCurve = 8;
+            VtVec3fArray points;
+            VtIntArray counts(curveCount, pointsPerCurve);
+            VtIntArray orders(curveCount, 4);
+            VtDoubleArray knots;
+            VtVec2dArray ranges(curveCount, GfVec2d(0.0, 5.0));
+            VtFloatArray widths(curveCount * pointsPerCurve, 0.09f);
+            points.reserve(curveCount * pointsPerCurve);
+            knots.reserve(curveCount * (pointsPerCurve + 4));
+
+            for (int curve = 0; curve < curveCount; ++curve) {
+                for (int i = 0; i < pointsPerCurve; ++i) {
+                    const float x = (float(i) - 3.5f) * 0.65f;
+                    const float y = (float(curve) - 0.5f) * 0.9f;
+                    const float z = std::cos(x * 1.35f + float(curve)) * 0.55f;
+                    points.push_back(GfVec3f(x, y, z));
+                }
+                for (double knot : { 0.0, 0.0, 0.0, 0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 5.0, 5.0, 5.0 })
+                    knots.push_back(knot);
+            }
+
+            return curves.CreateCurveVertexCountsAttr().Set(counts) && curves.CreatePointsAttr().Set(points)
+                   && curves.CreateOrderAttr().Set(orders) && curves.CreateKnotsAttr().Set(knots)
+                   && curves.CreateRangesAttr().Set(ranges) && curves.CreateWidthsAttr().Set(widths);
+        });
+}
+
+Command
+newNurbsPatchPath(const SdfPath& parentPath, const QString& nameInput)
+{
+    return newAuthoredPrimPath(parentPath, nameInput, "NURBS patch",
+                               [](const UsdStageRefPtr& stage, const SdfPath& path, QString& error) {
+                                   const UsdGeomNurbsPatch patch = UsdGeomNurbsPatch::Define(stage, path);
+                                   if (!patch) {
+                                       error = "failed to define UsdGeomNurbsPatch";
+                                       return false;
+                                   }
+
+                                   constexpr int uCount = 5;
+                                   constexpr int vCount = 5;
+                                   VtVec3fArray points;
+                                   points.reserve(uCount * vCount);
+                                   for (int v = 0; v < vCount; ++v) {
+                                       for (int u = 0; u < uCount; ++u) {
+                                           const float x = (float(u) - 2.0f) * 0.75f;
+                                           const float y = (float(v) - 2.0f) * 0.75f;
+                                           const float z = std::sin(x * 1.25f) * std::cos(y * 1.25f) * 0.5f;
+                                           points.push_back(GfVec3f(x, y, z));
+                                       }
+                                   }
+
+                                   const VtDoubleArray knots { 0.0, 0.0, 0.0, 0.0, 1.0, 2.0, 2.0, 2.0, 2.0 };
+                                   return patch.CreateUVertexCountAttr().Set(uCount)
+                                          && patch.CreateVVertexCountAttr().Set(vCount)
+                                          && patch.CreateUOrderAttr().Set(4) && patch.CreateVOrderAttr().Set(4)
+                                          && patch.CreateUKnotsAttr().Set(knots) && patch.CreateVKnotsAttr().Set(knots)
+                                          && patch.CreateUFormAttr().Set(UsdGeomTokens->open)
+                                          && patch.CreateVFormAttr().Set(UsdGeomTokens->open)
+                                          && patch.CreateURangeAttr().Set(GfVec2d(0.0, 2.0))
+                                          && patch.CreateVRangeAttr().Set(GfVec2d(0.0, 2.0))
+                                          && patch.CreatePointsAttr().Set(points);
+                               });
+}
+
+Command
+newPointInstancerPath(const SdfPath& parentPath, const QString& nameInput)
+{
+    return newAuthoredPrimPath(parentPath, nameInput, "point instancer",
+                               [](const UsdStageRefPtr& stage, const SdfPath& path, QString& error) {
+                                   const UsdGeomPointInstancer instancer = UsdGeomPointInstancer::Define(stage, path);
+                                   if (!instancer) {
+                                       error = "failed to define UsdGeomPointInstancer";
+                                       return false;
+                                   }
+
+                                   const SdfPath prototypesPath = path.AppendChild(TfToken("Prototypes"));
+                                   const SdfPath cubePath = prototypesPath.AppendChild(TfToken("Cube"));
+                                   if (!UsdGeomScope::Define(stage, prototypesPath)
+                                       || !UsdGeomCube::Define(stage, cubePath)) {
+                                       error = "failed to create point-instancer prototype";
+                                       return false;
+                                   }
+
+                                   VtIntArray protoIndices;
+                                   VtVec3fArray positions;
+                                   constexpr int count = 25;
+                                   protoIndices.reserve(count);
+                                   positions.reserve(count);
+                                   for (int i = 0; i < count; ++i) {
+                                       const int x = i % 5;
+                                       const int y = i / 5;
+                                       protoIndices.push_back(0);
+                                       positions.push_back(GfVec3f((float(x) - 2.0f) * 1.25f, (float(y) - 2.0f) * 1.25f,
+                                                                   0.4f * std::sin(float(i) * 0.8f)));
+                                   }
+
+                                   return instancer.CreatePrototypesRel().SetTargets({ cubePath })
+                                          && instancer.CreateProtoIndicesAttr().Set(protoIndices)
+                                          && instancer.CreatePositionsAttr().Set(positions);
+                               });
 }
 
 Command

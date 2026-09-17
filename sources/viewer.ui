@@ -920,8 +920,27 @@
     <addaction name="separator"/>
     <addaction name="menuPayloads"/>
     <addaction name="separator"/>
-    <addaction name="editNewXform"/>
     <addaction name="editDeleteSelected"/>
+   </widget>
+   <widget class="QMenu" name="menuCreate">
+    <property name="title">
+     <string>Create</string>
+    </property>
+    <addaction name="createXform"/>
+    <addaction name="createScope"/>
+    <addaction name="createCube"/>
+    <addaction name="createSphere"/>
+    <addaction name="createCylinder"/>
+    <addaction name="createCone"/>
+    <addaction name="createCapsule"/>
+    <addaction name="createPlane"/>
+    <addaction name="separator"/>
+    <addaction name="createMesh"/>
+    <addaction name="createPoints"/>
+    <addaction name="createBasisCurves"/>
+    <addaction name="createNurbsCurves"/>
+    <addaction name="createNurbsPatch"/>
+    <addaction name="createPointInstancer"/>
    </widget>
    <widget class="QMenu" name="menuView">
     <property name="title">
@@ -948,6 +967,7 @@
    </widget>
    <addaction name="menuFile"/>
    <addaction name="menuEdit"/>
+   <addaction name="menuCreate"/>
    <addaction name="menuDisplay"/>
    <addaction name="menuLight"/>
    <addaction name="menuMaterial"/>
@@ -1105,12 +1125,77 @@
     <string>Very high</string>
    </property>
   </action>
-  <action name="editNewXform">
+  <action name="createXform">
    <property name="text">
-    <string>New xform</string>
+    <string>Xform</string>
    </property>
    <property name="shortcut">
     <string>Ctrl+Shift+N</string>
+   </property>
+  </action>
+  <action name="createScope">
+   <property name="text">
+    <string>Scope</string>
+   </property>
+  </action>
+  <action name="createMesh">
+   <property name="text">
+    <string>Mesh</string>
+   </property>
+  </action>
+  <action name="createPoints">
+   <property name="text">
+    <string>Points</string>
+   </property>
+  </action>
+  <action name="createBasisCurves">
+   <property name="text">
+    <string>Basis Curves</string>
+   </property>
+  </action>
+  <action name="createNurbsCurves">
+   <property name="text">
+    <string>NURBS Curves</string>
+   </property>
+  </action>
+  <action name="createNurbsPatch">
+   <property name="text">
+    <string>NURBS Patch</string>
+   </property>
+  </action>
+  <action name="createPointInstancer">
+   <property name="text">
+    <string>Point Instancer</string>
+   </property>
+  </action>
+  <action name="createCube">
+   <property name="text">
+    <string>Cube</string>
+   </property>
+  </action>
+  <action name="createSphere">
+   <property name="text">
+    <string>Sphere</string>
+   </property>
+  </action>
+  <action name="createCylinder">
+   <property name="text">
+    <string>Cylinder</string>
+   </property>
+  </action>
+  <action name="createCone">
+   <property name="text">
+    <string>Cone</string>
+   </property>
+  </action>
+  <action name="createCapsule">
+   <property name="text">
+    <string>Capsule</string>
+   </property>
+  </action>
+  <action name="createPlane">
+   <property name="text">
+    <string>Plane</string>
    </property>
   </action>
   <action name="editDeleteSelected">

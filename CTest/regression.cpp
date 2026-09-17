@@ -457,7 +457,8 @@ namespace {
         session.setPreserveState(false);
         require(session.newStage(), "new stage");
         require(session.saveToFile(dir.filePath("destination/scene.usda")), "save destination");
-        require(session.mergeFromFile(sourceFile), "merge source");
+        stageviz::Command merge = stageviz::mergeStage(sourceFile);
+        executeCommand(merge, session);
         SdfAssetPath texture;
         require(session.stage()->GetPrimAtPath(SdfPath("/Part")).GetAttribute(TfToken("texture")).Get(&texture),
                 "merged asset attribute");
@@ -491,7 +492,8 @@ namespace {
         session.setPreserveState(false);
         require(session.newStage(), "new stage");
         require(session.saveToFile(dir.filePath("destination/scene.usda")), "save merge destination");
-        require(session.mergeFromFile(sourceFile), "merge composition source");
+        stageviz::Command merge = stageviz::mergeStage(sourceFile);
+        executeCommand(merge, session);
         require(bool(session.stage()->GetPrimAtPath(SdfPath("/Referenced/Geometry"))),
                 "merged reference retains source anchor");
         require(bool(session.stage()->GetPrimAtPath(SdfPath("/Payloaded/Geometry"))),
@@ -832,6 +834,9 @@ namespace {
         require(session.newStage(Session::None), "session newStage none");
         require(session.isLoaded() && session.stage() && session.stageUnsafe(), "session stage accessors");
         require(session.loadPolicy() == Session::None, "session load policy retained");
+        require(session.stage()->GetLoadRules().GetEffectiveRuleForPath(SdfPath("/AnyPayload"))
+                    == UsdStageLoadRules::NoneRule,
+                "newStage none applies load-none rules");
         require(session.auxiliary() && session.auxiliaryUnsafe(), "session auxiliary stage accessors");
         require(session.stage() != session.auxiliary(), "document and auxiliary stages are separate");
         require(session.filename().isEmpty(), "new anonymous stage has no filename");
@@ -969,7 +974,61 @@ namespace {
                     && closeEnough(state->camera()->fov(), 47.0), "camera state restored");
     }
 
-    void sessionMergeApi()
+    void sessionLoadPolicyApi()
+    {
+        QTemporaryDir dir;
+        require(dir.isValid(), "temporary directory");
+        const QString assetPath = makeAssetFixture(dir.filePath("payload.usda"));
+
+        const QString stagePath = dir.filePath("scene.usda");
+        {
+            const auto source = UsdStage::CreateNew(stagePath.toStdString());
+            require(bool(source), "create load-policy fixture");
+            const UsdPrim payload = source->DefinePrim(SdfPath("/Payload"));
+            require(payload.GetPayloads().AddPayload(assetPath.toStdString()), "author load-policy payload");
+            require(source->GetRootLayer()->Save(), "save load-policy fixture");
+        }
+
+        {
+            Session session;
+            require(session.newStage(Session::None), "new load-none stage");
+            require(session.loadPolicy() == Session::None, "new load-none policy retained");
+            require(session.stage()->GetLoadRules().GetEffectiveRuleForPath(SdfPath("/Future"))
+                        == UsdStageLoadRules::NoneRule,
+                    "new load-none stage applies none rule");
+        }
+
+        {
+            Session session;
+            require(session.newStage(Session::All), "new load-all stage");
+            require(session.loadPolicy() == Session::All, "new load-all policy retained");
+            require(session.stage()->GetLoadRules().GetEffectiveRuleForPath(SdfPath("/Future"))
+                        == UsdStageLoadRules::AllRule,
+                    "new load-all stage applies all rule");
+        }
+
+        {
+            Session session;
+            session.setPreserveState(false);
+            require(session.loadFromFile(stagePath, Session::None), "open fixture load-none");
+            require(!session.stage()->GetPrimAtPath(SdfPath("/Payload")).IsLoaded(),
+                    "file load-none keeps payload unloaded");
+            require(!session.stage()->GetPrimAtPath(SdfPath("/Payload/Geometry")),
+                    "file load-none omits payload descendants");
+        }
+
+        {
+            Session session;
+            session.setPreserveState(false);
+            require(session.loadFromFile(stagePath, Session::All), "open fixture load-all");
+            require(session.stage()->GetPrimAtPath(SdfPath("/Payload")).IsLoaded(),
+                    "file load-all loads payload");
+            require(bool(session.stage()->GetPrimAtPath(SdfPath("/Payload/Geometry"))),
+                    "file load-all composes payload descendants");
+        }
+    }
+
+    void commandMergeApi()
     {
         QTemporaryDir dir;
         require(dir.isValid(), "temporary directory");
@@ -978,38 +1037,113 @@ namespace {
         {
             Session session;
             require(session.newStage(), "new stage for destructive merge");
-            require(session.mergeFromFile(assetPath), "merge authored file");
-            require(bool(session.stage()->GetPrimAtPath(SdfPath("/Asset/Geometry"))), "destructive merge copies content");
+            stageviz::Command command = stageviz::mergeStage(assetPath);
+            executeCommand(command, session);
+            require(bool(session.stage()->GetPrimAtPath(SdfPath("/Asset/Geometry"))),
+                    "mergeStage copies authored content");
+            undoCommand(command, session);
+            require(!session.stage()->GetPrimAtPath(SdfPath("/Asset")), "mergeStage undo restores layer");
+            executeCommand(command, session);
+            require(bool(session.stage()->GetPrimAtPath(SdfPath("/Asset/Geometry"))),
+                    "mergeStage redo restores content");
         }
         {
             Session session;
             require(session.newStage(), "new stage for flattened merge");
-            require(session.mergeFlattenedFromFile(assetPath), "merge flattened file");
-            require(bool(session.stage()->GetPrimAtPath(SdfPath("/Asset/Geometry"))), "flattened merge copies composed content");
+            stageviz::Command command = stageviz::mergeFlattenedStage(assetPath);
+            executeCommand(command, session);
+            require(bool(session.stage()->GetPrimAtPath(SdfPath("/Asset/Geometry"))),
+                    "mergeFlattenedStage copies composed content");
+            undoCommand(command, session);
+            require(!session.stage()->GetPrimAtPath(SdfPath("/Asset")), "mergeFlattenedStage undo restores layer");
+            executeCommand(command, session);
+            require(bool(session.stage()->GetPrimAtPath(SdfPath("/Asset/Geometry"))),
+                    "mergeFlattenedStage redo restores content");
         }
         {
             Session session;
-            require(session.newStage(), "new stage for sublayer merge");
-            require(session.mergeSublayerFromFile(assetPath), "merge sublayer file");
-            require(bool(session.stage()->GetPrimAtPath(SdfPath("/Asset/Geometry"))), "sublayer merge composes content");
-            require(session.mergeSublayerFromFile(assetPath), "duplicate sublayer merge is idempotent");
+            require(session.newStage(), "new stage for sublayer command");
+            const std::vector<std::string> before = session.stage()->GetRootLayer()->GetSubLayerPaths();
+            stageviz::Command command = stageviz::addSublayer(assetPath);
+            executeCommand(command, session);
+            require(bool(session.stage()->GetPrimAtPath(SdfPath("/Asset/Geometry"))),
+                    "addSublayer composes content");
+            require(session.stage()->GetRootLayer()->GetSubLayerPaths().size() == before.size() + 1,
+                    "addSublayer authors one sublayer path");
+            undoCommand(command, session);
+            require(session.stage()->GetRootLayer()->GetSubLayerPaths() == before,
+                    "addSublayer undo restores sublayer paths");
+            require(!session.stage()->GetPrimAtPath(SdfPath("/Asset")), "addSublayer undo removes composition");
+            executeCommand(command, session);
+            require(bool(session.stage()->GetPrimAtPath(SdfPath("/Asset/Geometry"))),
+                    "addSublayer redo restores composition");
         }
         {
             Session session;
-            require(session.newStage(), "new stage for reference merge");
+            require(session.newStage(), "new stage for reference command");
             session.stage()->DefinePrim(SdfPath("/Target"));
-            require(session.mergeReferenceFromFile(assetPath, SdfPath("/Target")), "merge reference file");
-            require(bool(session.stage()->GetPrimAtPath(SdfPath("/Target/Geometry"))), "reference merge composes default prim");
-            require(!session.mergeReferenceFromFile(assetPath, SdfPath("/Missing")), "reference merge rejects missing target");
+            stageviz::Command command = stageviz::addReference(assetPath, SdfPath("/Target"));
+            executeCommand(command, session);
+            require(session.stage()->GetPrimAtPath(SdfPath("/Target")).HasAuthoredReferences(),
+                    "addReference authors reference arc");
+            require(bool(session.stage()->GetPrimAtPath(SdfPath("/Target/Geometry"))),
+                    "addReference composes default prim");
+            undoCommand(command, session);
+            require(bool(session.stage()->GetPrimAtPath(SdfPath("/Target"))), "addReference undo keeps target");
+            require(!session.stage()->GetPrimAtPath(SdfPath("/Target")).HasAuthoredReferences(),
+                    "addReference undo restores reference field");
+            require(!session.stage()->GetPrimAtPath(SdfPath("/Target/Geometry")),
+                    "addReference undo removes composed content");
+            executeCommand(command, session);
+            require(bool(session.stage()->GetPrimAtPath(SdfPath("/Target/Geometry"))),
+                    "addReference redo restores composition");
         }
         {
             Session session;
-            require(session.newStage(), "new stage for payload merge");
+            require(session.newStage(Session::None), "new load-none stage for payload command");
+            require(session.stage()->GetLoadRules().GetEffectiveRuleForPath(SdfPath("/Target"))
+                        == UsdStageLoadRules::NoneRule,
+                    "load-none stage starts with none rule");
             session.stage()->DefinePrim(SdfPath("/Target"));
-            require(session.mergePayloadFromFile(assetPath, SdfPath("/Target")), "merge payload file");
-            require(session.stage()->GetPrimAtPath(SdfPath("/Target")).HasPayload(), "payload merge authors payload");
-            require(bool(session.stage()->GetPrimAtPath(SdfPath("/Target/Geometry"))), "payload merge composes default prim");
-            require(!session.mergePayloadFromFile(assetPath, SdfPath("/Missing")), "payload merge rejects missing target");
+            stageviz::Command command = stageviz::addPayload(assetPath, SdfPath("/Target"));
+            executeCommand(command, session);
+            require(session.stage()->GetPrimAtPath(SdfPath("/Target")).HasPayload(),
+                    "addPayload authors payload arc");
+            require(!session.stage()->GetPrimAtPath(SdfPath("/Target")).IsLoaded(),
+                    "addPayload respects load-none policy");
+            require(!session.stage()->GetPrimAtPath(SdfPath("/Target/Geometry")),
+                    "load-none payload does not compose payload descendants");
+            undoCommand(command, session);
+            require(bool(session.stage()->GetPrimAtPath(SdfPath("/Target"))), "addPayload undo keeps target");
+            require(!session.stage()->GetPrimAtPath(SdfPath("/Target")).HasPayload(),
+                    "addPayload undo restores payload field");
+            executeCommand(command, session);
+            require(session.stage()->GetPrimAtPath(SdfPath("/Target")).HasPayload(),
+                    "addPayload redo restores payload arc");
+            require(!session.stage()->GetPrimAtPath(SdfPath("/Target")).IsLoaded(),
+                    "addPayload redo preserves load-none policy");
+        }
+        {
+            Session session;
+            require(session.newStage(Session::All), "new load-all stage for payload command");
+            require(session.stage()->GetLoadRules().GetEffectiveRuleForPath(SdfPath("/Target"))
+                        == UsdStageLoadRules::AllRule,
+                    "load-all stage starts with all rule");
+            session.stage()->DefinePrim(SdfPath("/Target"));
+            stageviz::Command command = stageviz::addPayload(assetPath, SdfPath("/Target"));
+            executeCommand(command, session);
+            require(session.stage()->GetPrimAtPath(SdfPath("/Target")).HasPayload(),
+                    "addPayload authors payload arc on load-all stage");
+            require(session.stage()->GetPrimAtPath(SdfPath("/Target")).IsLoaded(),
+                    "addPayload respects load-all policy");
+            require(bool(session.stage()->GetPrimAtPath(SdfPath("/Target/Geometry"))),
+                    "load-all payload composes payload descendants");
+            undoCommand(command, session);
+            require(!session.stage()->GetPrimAtPath(SdfPath("/Target")).HasPayload(),
+                    "addPayload load-all undo restores payload field");
+            executeCommand(command, session);
+            require(session.stage()->GetPrimAtPath(SdfPath("/Target")).IsLoaded(),
+                    "addPayload load-all redo preserves load policy");
         }
     }
 
@@ -1547,7 +1681,8 @@ int main(int argc, char** argv)
         {"selection_list_api", selectionListApi}, {"view_camera_api", viewCameraApi},
         {"view_state_api", viewStateApi}, {"session_core_api", sessionCoreApi},
         {"session_file_api", sessionFileApi}, {"session_edit_layer_api", sessionEditLayerApi},
-        {"session_state_api", sessionStateApi}, {"session_merge_api", sessionMergeApi},
+        {"session_state_api", sessionStateApi}, {"session_load_policy_api", sessionLoadPolicyApi},
+        {"command_merge_api", commandMergeApi},
         {"namespace_editor_crud_api", namespaceEditorCrudApi}, {"usd_path_utils_api", usdPathUtilsApi},
         {"usd_stage_utils_api", usdStageUtilsApi}, {"usd_payload_utils_api", usdPayloadUtilsApi},
         {"material_utils_api", materialUtilsApi}, {"command_selection_api", commandSelectionApi},

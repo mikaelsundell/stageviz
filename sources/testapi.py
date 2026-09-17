@@ -1249,6 +1249,12 @@ def test_command_api():
         "duplicate_paths",
         "new_prim",
         "new_scope",
+        "new_mesh",
+        "new_points",
+        "new_basis_curves",
+        "new_nurbs_curves",
+        "new_nurbs_patch",
+        "new_point_instancer",
         "new_material",
         "new_reference",
         "new_payload",
@@ -1692,6 +1698,66 @@ def test_new_scope():
             _wait_until(lambda: not _exists("/World/Looks")),
             "undo new_scope removes scope",
         )
+
+
+def test_new_generated_geometry():
+    cases = [
+        ("new_mesh", "WaveMesh", "Mesh"),
+        ("new_points", "Particles", "Points"),
+        ("new_basis_curves", "BasisCurves", "BasisCurves"),
+        ("new_nurbs_curves", "NurbsCurves", "NurbsCurves"),
+        ("new_nurbs_patch", "NurbsPatch", "NurbsPatch"),
+        ("new_point_instancer", "PointInstancer", "PointInstancer"),
+    ]
+
+    for command_name, prim_name, type_name in cases:
+        _assert(_has_command(command_name), f"{command_name} command is exposed")
+        if not _has_command(command_name):
+            continue
+
+        command = getattr(stageviz.command, command_name)
+        path = f"/World/{prim_name}"
+        command("/World", prim_name)
+
+        _assert(_wait_until(lambda p=path: _exists(p)), f"{command_name} creates prim")
+
+        prim = _prim(path)
+        _assert_equal(
+            str(prim.GetTypeName()) if prim else "",
+            type_name,
+            f"{command_name} creates {type_name}",
+        )
+
+        if command_name == "new_mesh":
+            points = prim.GetAttribute("points").Get() if prim else None
+            _assert(bool(points and len(points) > 0), "new_mesh authors visible mesh points")
+        elif command_name == "new_points":
+            points = prim.GetAttribute("points").Get() if prim else None
+            widths = prim.GetAttribute("widths").Get() if prim else None
+            _assert(bool(points and widths), "new_points authors positions and widths")
+        elif command_name in ("new_basis_curves", "new_nurbs_curves"):
+            points = prim.GetAttribute("points").Get() if prim else None
+            counts = prim.GetAttribute("curveVertexCounts").Get() if prim else None
+            _assert(bool(points and counts), f"{command_name} authors curve topology")
+        elif command_name == "new_nurbs_patch":
+            points = prim.GetAttribute("points").Get() if prim else None
+            _assert(bool(points and len(points) == 25), "new_nurbs_patch authors control grid")
+        elif command_name == "new_point_instancer":
+            _assert(_exists(path + "/Prototypes/Cube"), "new_point_instancer creates Cube prototype")
+            indices = prim.GetAttribute("protoIndices").Get() if prim else None
+            positions = prim.GetAttribute("positions").Get() if prim else None
+            _assert(bool(indices and positions), "new_point_instancer authors instances")
+
+        _assert_equal(_selection(), [path], f"{command_name} selects created prim")
+
+        if _undo():
+            _assert(_wait_until(lambda p=path: not _exists(p)), f"undo {command_name} removes generated hierarchy")
+
+        if _redo():
+            _assert(_wait_until(lambda p=path: _exists(p)), f"redo {command_name} recreates generated hierarchy")
+
+        if _undo():
+            _wait_until(lambda p=path: not _exists(p))
 
 
 def test_new_material():
@@ -5987,6 +6053,7 @@ def run():
         ("new typed prim", test_new_typed_prim, ()),
         ("new prim unique name", test_new_prim_unique_name, ()),
         ("new scope", test_new_scope, ()),
+        ("generated geometry", test_new_generated_geometry, ()),
         ("new material", test_new_material, ()),
         ("bind material", test_bind_material, ()),
         ("new reference", test_new_reference, (external,)),

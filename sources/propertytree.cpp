@@ -56,6 +56,7 @@
 #include <pxr/base/vt/value.h>
 #include <pxr/usd/sdf/assetPath.h>
 #include <pxr/usd/sdf/payload.h>
+#include <pxr/usd/sdf/reference.h>
 #include <pxr/usd/usd/attribute.h>
 #include <pxr/usd/usd/modelAPI.h>
 #include <pxr/usd/usd/prim.h>
@@ -184,6 +185,7 @@ public:
     void addRelationshipsSection(const UsdPrim& prim);
     void addMultiRelationshipsSection(const QList<UsdPrim>& prims);
     QString payloadAncestorPath(const UsdPrim& prim) const;
+    QString referenceAncestorPath(const UsdPrim& prim) const;
     static QString metadataText(const VtValue& value);
 
     void addAttribute(PropertyItem* parent, const UsdAttribute& attr);
@@ -1554,6 +1556,17 @@ PropertyTreePrivate::payloadAncestorPath(const UsdPrim& prim) const
     return {};
 }
 
+QString
+PropertyTreePrivate::referenceAncestorPath(const UsdPrim& prim) const
+{
+    for (UsdPrim ancestor = prim.GetParent(); ancestor && !ancestor.IsPseudoRoot(); ancestor = ancestor.GetParent()) {
+        if (ancestor.HasAuthoredReferences())
+            return qt::SdfPathToQString(ancestor.GetPath());
+    }
+
+    return {};
+}
+
 void
 PropertyTreePrivate::addPrimSection(const UsdPrim& prim)
 {
@@ -1629,24 +1642,29 @@ PropertyTreePrivate::addCompositionSection(const UsdPrim& prim)
     const SdfLayerHandle strongestLayer = (!primStack.empty() && primStack.front()) ? primStack.front()->GetLayer()
                                                                                     : SdfLayerHandle();
 
+    const QString payloadAncestor = payloadAncestorPath(prim);
+    const QString referenceAncestor = referenceAncestorPath(prim);
+
     QString editSource = QStringLiteral("Composed");
     QString sourceToolTip;
 
-    const QString payloadAncestor = payloadAncestorPath(prim);
     if (strongestLayer && rootLayer && strongestLayer == rootLayer) {
         editSource = QStringLiteral("Edit layer");
     }
     else if (!payloadAncestor.isEmpty()) {
         editSource = QStringLiteral("Payload");
     }
-    else if (prim.HasAuthoredReferences()) {
-        editSource = QStringLiteral("Referenced layer");
+    else if (!referenceAncestor.isEmpty() || prim.HasAuthoredReferences()) {
+        editSource = QStringLiteral("Reference");
     }
 
     if (strongestLayer) {
         const QString realPath = qt::StringToQString(strongestLayer->GetRealPath());
         const QString identifier = qt::StringToQString(strongestLayer->GetIdentifier());
         sourceToolTip = !realPath.isEmpty() ? realPath : identifier;
+
+        const QString display = !realPath.isEmpty() ? QFileInfo(realPath).fileName() : identifier;
+        addInfo(section, "Strongest Layer", display.isEmpty() ? QStringLiteral("<anonymous>") : display, sourceToolTip);
     }
 
     addInfo(section, "Edit Source", editSource, sourceToolTip);
@@ -1719,10 +1737,63 @@ PropertyTreePrivate::addCompositionSection(const UsdPrim& prim)
         hasComposition = true;
     }
 
-    VtValue references;
-    if (prim.GetMetadata(SdfFieldKeys->References, &references) && !references.IsEmpty()) {
-        const QString text = metadataText(references);
-        addInfo(section, "References", text.isEmpty() ? QStringLiteral("Yes") : text, text);
+    if (prim.HasAuthoredReferences()) {
+        struct ReferenceEntry {
+            QString operation;
+            SdfReference reference;
+        };
+
+        QList<ReferenceEntry> referenceEntries;
+        SdfReferenceListOp referenceList;
+
+        if (prim.GetMetadata(SdfFieldKeys->References, &referenceList)) {
+            auto appendReferences = [&](const QString& operation, const SdfReferenceVector& references) {
+                for (const SdfReference& value : references)
+                    referenceEntries.append({ operation, value });
+            };
+
+            appendReferences(QStringLiteral("Explicit"), referenceList.GetExplicitItems());
+            appendReferences(QStringLiteral("Prepend"), referenceList.GetPrependedItems());
+            appendReferences(QStringLiteral("Append"), referenceList.GetAppendedItems());
+        }
+
+        PropertyItem* references = addInfo(section, "References",
+                                           referenceEntries.size() > 1 ? QString("%1 arcs").arg(referenceEntries.size())
+                                                                       : QStringLiteral("Yes"));
+        references->setExpanded(true);
+        hasComposition = true;
+
+        auto addReferenceEntry = [&](PropertyItem* parent, const ReferenceEntry& entry) {
+            const QString assetPath = qt::StringToQString(entry.reference.GetAssetPath());
+            const SdfPath primPath = entry.reference.GetPrimPath();
+
+            addInfo(parent, "Asset", assetPath.isEmpty() ? QStringLiteral("<current layer>") : assetPath, assetPath);
+
+            if (primPath.IsEmpty()) {
+                addInfo(parent, "Prim Path", "<defaultPrim>",
+                        QStringLiteral("Uses the referenced layer's defaultPrim."));
+            }
+            else {
+                addInfo(parent, "Prim Path", qt::SdfPathToQString(primPath));
+            }
+
+            addInfo(parent, "List Operation", entry.operation);
+        };
+
+        if (referenceEntries.size() == 1) {
+            addReferenceEntry(references, referenceEntries.first());
+        }
+        else {
+            for (int index = 0; index < referenceEntries.size(); ++index) {
+                PropertyItem* entry = addInfo(references, QString("[%1]").arg(index),
+                                              referenceEntries[index].operation);
+                addReferenceEntry(entry, referenceEntries[index]);
+            }
+        }
+    }
+
+    if (!referenceAncestor.isEmpty()) {
+        addPathInfo(section, "Composed via Reference", SdfPath(qt::QStringToString(referenceAncestor)));
         hasComposition = true;
     }
 
@@ -1737,16 +1808,24 @@ PropertyTreePrivate::addCompositionSection(const UsdPrim& prim)
             const QString selection = StringToQString(variantSet.GetVariantSelection());
             const std::vector<std::string> values = variantSet.GetVariantNames();
 
-            QStringList available;
-            available.reserve(static_cast<int>(values.size()));
-            for (const std::string& value : values)
-                available.append(StringToQString(value));
+            PropertyItem* variant = addInfo(variants, StringToQString(name),
+                                            selection.isEmpty() ? QStringLiteral("<none>") : selection);
+            variant->setExpanded(true);
 
-            const QString toolTip = available.isEmpty() ? QString()
-                                                        : QString("Available: %1").arg(available.join(", "));
+            for (const std::string& value : values) {
+                const QString valueName = StringToQString(value);
+                const bool selected = !selection.isEmpty() && valueName == selection;
+                PropertyItem* valueItem = addInfo(variant, valueName,
+                                                  selected ? QStringLiteral("Selected") : QString());
 
-            addInfo(variants, StringToQString(name), selection.isEmpty() ? QStringLiteral("<none>") : selection,
-                    toolTip);
+                if (selected && valueItem) {
+                    QFont font = valueItem->font(PropertyItem::Name);
+                    font.setBold(true);
+                    valueItem->setFont(PropertyItem::Name, font);
+                    valueItem->setToolTip(PropertyItem::Name, QStringLiteral("Current variant selection"));
+                    valueItem->setToolTip(PropertyItem::Value, QStringLiteral("Current variant selection"));
+                }
+            }
         }
 
         hasComposition = true;

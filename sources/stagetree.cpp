@@ -127,12 +127,13 @@ public:
             if (keyEvent->key() != Qt::Key_Tab || keyEvent->modifiers() != Qt::NoModifier)
                 return QObject::eventFilter(watched, event);
 
-            QTreeWidgetItem* item = m_tree->currentItem();
-            if (!item) {
-                const QList<QTreeWidgetItem*> selected = m_tree->selectedItems();
-                if (!selected.isEmpty())
-                    item = selected.first();
-            }
+            QTreeWidgetItem* item = nullptr;
+
+            const QList<QTreeWidgetItem*> selected = m_tree->selectedItems();
+            if (!selected.isEmpty())
+                item = selected.first();
+            else
+                item = m_tree->currentItem();
 
             if (item && (item->flags() & Qt::ItemIsEditable)) {
                 m_tree->setCurrentItem(item, PrimItem::Name);

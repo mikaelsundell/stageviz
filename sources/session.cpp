@@ -52,13 +52,7 @@ public:
     bool isProgressBlockCancelled() const;
     bool newStage(Session::LoadPolicy policy);
     bool loadFromFile(const QString& filename, Session::LoadPolicy loadPolicy);
-    bool mergeFromFile(const QString& filename);
-    bool mergeFlattenedFromFile(const QString& filename);
-    bool mergeSublayerFromFile(const QString& filename);
-    bool mergeReferenceFromFile(const QString& filename, const SdfPath& targetPath);
-    bool mergePayloadFromFile(const QString& filename, const SdfPath& targetPath);
-    bool mergeLayer(const SdfLayerHandle& sourceLayer);
-    void mergeReload();
+    void refreshStage();
     bool exportLayer(const SdfLayerHandle& layer, const QString& filename, QString& error);
     SdfLayerRefPtr relocatedCopy(const SdfLayerHandle& layer);
     bool saveSublayers(const UsdStageRefPtr& stage, QString& error);
@@ -343,6 +337,8 @@ SessionPrivate::newStage(Session::LoadPolicy policy)
             return false;
         }
         d.stage = stage;
+        d.stage->SetLoadRules(policy == Session::LoadPolicy::All ? UsdStageLoadRules::LoadAll()
+                                                                 : UsdStageLoadRules::LoadNone());
         d.stage->SetEditTarget(UsdEditTarget(d.stage->GetRootLayer()));
         UsdGeomSetStageMetersPerUnit(d.stage, UsdGeomLinearUnits::millimeters);
         UsdGeomSetStageUpAxis(d.stage, UsdGeomTokens->z);
@@ -422,219 +418,8 @@ SessionPrivate::loadFromFile(const QString& filename, Session::LoadPolicy policy
     return true;
 }
 
-bool
-SessionPrivate::mergeLayer(const SdfLayerHandle& sourceLayer)
-{
-    if (!sourceLayer)
-        return false;
-
-    {
-        WRITE_LOCKER(locker, &d.stageLock, "stageLock");
-
-        if (!d.stage)
-            return false;
-
-        StageBlocker blocker(d.stageWatcher.data());
-
-        const SdfLayerHandle destinationLayer = d.stage->GetEditTarget().GetLayer();
-        if (!destinationLayer)
-            return false;
-
-        if (!sourceLayer->IsAnonymous() && !destinationLayer->IsAnonymous()
-            && sourceLayer->GetRealPath() == destinationLayer->GetRealPath()) {
-            return false;
-        }
-
-        const SdfLayerRefPtr anchoredSource = relocatedCopy(sourceLayer);
-        if (!anchoredSource)
-            return false;
-        for (const SdfPrimSpecHandle& sourcePrim : anchoredSource->GetRootPrims()) {
-            if (!sourcePrim)
-                continue;
-
-            const SdfPath sourcePath = sourcePrim->GetPath();
-
-            QString error;
-            const SdfPath destinationPath = stage::buildChildPath(d.stage, SdfPath::AbsoluteRootPath(),
-                                                                  qt::StringToQString(sourcePath.GetName()), error);
-
-            if (destinationPath.IsEmpty())
-                return false;
-
-            if (!SdfCopySpec(anchoredSource, sourcePath, destinationLayer, destinationPath))
-                return false;
-        }
-    }
-    mergeReload();
-    return true;
-}
-
-bool
-SessionPrivate::mergeFromFile(const QString& filename)
-{
-    const QString absFilename = QFileInfo(filename).absoluteFilePath();
-
-    UsdStageRefPtr sourceStage;
-    try {
-        sourceStage = UsdStage::Open(QStringToString(absFilename), UsdStage::LoadNone);
-    } catch (const std::exception&) {
-        return false;
-    }
-
-    if (!sourceStage)
-        return false;
-
-    const SdfLayerHandle sourceLayer = sourceStage->GetRootLayer();
-    if (!sourceLayer)
-        return false;
-
-    return mergeLayer(sourceLayer);
-}
-
-bool
-SessionPrivate::mergeFlattenedFromFile(const QString& filename)
-{
-    const QString absFilename = QFileInfo(filename).absoluteFilePath();
-
-    UsdStageRefPtr sourceStage;
-    try {
-        sourceStage = UsdStage::Open(QStringToString(absFilename), UsdStage::LoadAll);
-    } catch (const std::exception&) {
-        return false;
-    }
-
-    if (!sourceStage)
-        return false;
-
-    const SdfLayerRefPtr flattenedLayer = sourceStage->Flatten();
-    if (!flattenedLayer)
-        return false;
-
-    return mergeLayer(flattenedLayer);
-}
-
-bool
-SessionPrivate::mergeSublayerFromFile(const QString& filename)
-{
-    const QString absFilename = QFileInfo(filename).absoluteFilePath();
-    if (!QFileInfo::exists(absFilename))
-        return false;
-
-    bool changed = false;
-    {
-        WRITE_LOCKER(locker, &d.stageLock, "stageLock");
-        if (!d.stage)
-            return false;
-
-        StageBlocker blocker(d.stageWatcher.data());
-        const SdfLayerHandle destinationLayer = d.stage->GetEditTarget().GetLayer();
-        if (!destinationLayer)
-            return false;
-
-        const QString destinationFilename = QString::fromStdString(destinationLayer->GetRealPath());
-
-        if (!destinationFilename.isEmpty() && QFileInfo(destinationFilename).absoluteFilePath() == absFilename) {
-            return false;
-        }
-
-        const std::string assetPath = stage::compositionAssetPath(destinationLayer, absFilename);
-
-        std::vector<std::string> sublayers = destinationLayer->GetSubLayerPaths();
-        if (std::find(sublayers.begin(), sublayers.end(), assetPath) != sublayers.end())
-            return true;
-
-        sublayers.push_back(assetPath);
-        destinationLayer->SetSubLayerPaths(sublayers);
-
-        const std::vector<std::string> resultingSublayers = destinationLayer->GetSubLayerPaths();
-
-        changed = std::find(resultingSublayers.begin(), resultingSublayers.end(), assetPath)
-                  != resultingSublayers.end();
-    }
-
-    if (!changed)
-        return false;
-
-    mergeReload();
-    return true;
-}
-
-bool
-SessionPrivate::mergeReferenceFromFile(const QString& filename, const SdfPath& targetPath)
-{
-    const QString absFilename = QFileInfo(filename).absoluteFilePath();
-    {
-        WRITE_LOCKER(locker, &d.stageLock, "stageLock");
-        if (!d.stage || !targetPath.IsAbsolutePath() || !targetPath.IsPrimPath())
-            return false;
-
-        StageBlocker blocker(d.stageWatcher.data());
-
-        const SdfLayerHandle destinationLayer = d.stage->GetEditTarget().GetLayer();
-        if (!destinationLayer)
-            return false;
-
-        const UsdPrim targetPrim = d.stage->GetPrimAtPath(targetPath);
-        if (!targetPrim || !targetPrim.IsValid())
-            return false;
-
-        UsdStageRefPtr sourceStage;
-        try {
-            sourceStage = UsdStage::Open(QStringToString(absFilename), UsdStage::LoadNone);
-        } catch (const std::exception&) {
-            return false;
-        }
-
-        if (!sourceStage || !sourceStage->GetDefaultPrim())
-            return false;
-
-        const std::string assetPath = stage::compositionAssetPath(destinationLayer, absFilename);
-        if (!targetPrim.GetReferences().AddReference(assetPath))
-            return false;
-    }
-    mergeReload();
-    return true;
-}
-
-bool
-SessionPrivate::mergePayloadFromFile(const QString& filename, const SdfPath& targetPath)
-{
-    const QString absFilename = QFileInfo(filename).absoluteFilePath();
-    {
-        WRITE_LOCKER(locker, &d.stageLock, "stageLock");
-        if (!d.stage || !targetPath.IsAbsolutePath() || !targetPath.IsPrimPath())
-            return false;
-
-        StageBlocker blocker(d.stageWatcher.data());
-
-        const SdfLayerHandle destinationLayer = d.stage->GetEditTarget().GetLayer();
-        if (!destinationLayer)
-            return false;
-
-        const UsdPrim targetPrim = d.stage->GetPrimAtPath(targetPath);
-        if (!targetPrim || !targetPrim.IsValid())
-            return false;
-
-        UsdStageRefPtr sourceStage;
-        try {
-            sourceStage = UsdStage::Open(QStringToString(absFilename), UsdStage::LoadNone);
-        } catch (const std::exception&) {
-            return false;
-        }
-
-        if (!sourceStage || !sourceStage->GetDefaultPrim())
-            return false;
-
-        const std::string assetPath = stage::compositionAssetPath(destinationLayer, absFilename);
-        if (!targetPrim.GetPayloads().AddPayload(assetPath))
-            return false;
-    }
-    mergeReload();
-    return true;
-}
-
 void
-SessionPrivate::mergeReload()
+SessionPrivate::refreshStage()
 {
     const GfBBox3d bbox = boundingBox();
     {
@@ -1741,34 +1526,10 @@ Session::loadFromFile(const QString& filename, Session::LoadPolicy loadPolicy)
     return p->loadFromFile(filename, loadPolicy);
 }
 
-bool
-Session::mergeFromFile(const QString& filename)
+void
+Session::refreshStage()
 {
-    return p->mergeFromFile(filename);
-}
-
-bool
-Session::mergeFlattenedFromFile(const QString& filename)
-{
-    return p->mergeFlattenedFromFile(filename);
-}
-
-bool
-Session::mergeSublayerFromFile(const QString& filename)
-{
-    return p->mergeSublayerFromFile(filename);
-}
-
-bool
-Session::mergeReferenceFromFile(const QString& filename, const SdfPath& targetPath)
-{
-    return p->mergeReferenceFromFile(filename, targetPath);
-}
-
-bool
-Session::mergePayloadFromFile(const QString& filename, const SdfPath& targetPath)
-{
-    return p->mergePayloadFromFile(filename, targetPath);
+    p->refreshStage();
 }
 
 bool

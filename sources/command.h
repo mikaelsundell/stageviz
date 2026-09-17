@@ -149,6 +149,39 @@ bindMaterial(const QList<SdfPath>& paths, const SdfPath& materialPath);
 Command
 resetDependencies(const QList<SdfPath>& propertyPaths);
 
+/**
+ * @brief Creates an undoable command that merges authored USD content into the current edit layer.
+ *
+ * The active edit layer is snapshotted before the merge. Undo restores the
+ * complete previous edit-layer contents exactly.
+ */
+Command
+mergeStage(const QString& filename);
+
+/**
+ * @brief Creates an undoable command that flattens an incoming stage and merges it into the current edit layer.
+ */
+Command
+mergeFlattenedStage(const QString& filename);
+
+/**
+ * @brief Creates an undoable command that adds a USD file as a sublayer of the current edit layer.
+ */
+Command
+addSublayer(const QString& filename);
+
+/**
+ * @brief Creates an undoable command that authors a reference on an existing prim.
+ */
+Command
+addReference(const QString& filename, const SdfPath& targetPath);
+
+/**
+ * @brief Creates an undoable command that authors a payload on an existing prim.
+ */
+Command
+addPayload(const QString& filename, const SdfPath& targetPath);
+
 
 /**
  * @brief Creates an undoable command that sets a USD variant selection.
@@ -459,6 +492,39 @@ newPrimPath(const SdfPath& parentPath, const QString& nameInput, const TfToken& 
  */
 Command
 newScopePath(const SdfPath& parentPath, const QString& nameInput);
+
+/**
+ * @brief Creates a visible wavy UsdGeomMesh example under a parent.
+ *
+ * The mesh contains a regular quad grid whose Z positions are displaced by a
+ * deterministic sinusoidal function, so Create > Mesh produces immediately
+ * visible geometry instead of an empty Mesh prim.
+ */
+Command
+newMeshPath(const SdfPath& parentPath, const QString& nameInput);
+
+/** @brief Creates a visible UsdGeomPoints particle-style point cloud. */
+Command
+newPointsPath(const SdfPath& parentPath, const QString& nameInput);
+
+/** @brief Creates visible cubic B-spline UsdGeomBasisCurves. */
+Command
+newBasisCurvesPath(const SdfPath& parentPath, const QString& nameInput);
+
+/** @brief Creates visible cubic UsdGeomNurbsCurves. */
+Command
+newNurbsCurvesPath(const SdfPath& parentPath, const QString& nameInput);
+
+/** @brief Creates a visible wavy UsdGeomNurbsPatch. */
+Command
+newNurbsPatchPath(const SdfPath& parentPath, const QString& nameInput);
+
+/**
+ * @brief Creates a UsdGeomPointInstancer with an internal Cube prototype and
+ * a small deterministic grid of instances.
+ */
+Command
+newPointInstancerPath(const SdfPath& parentPath, const QString& nameInput);
 
 /**
  * @brief Creates a UsdShadeMaterial with a default UsdPreviewSurface shader.

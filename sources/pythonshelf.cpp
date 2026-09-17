@@ -139,6 +139,11 @@ PythonShelfPrivate::createShelfTab(const QString& name, const QVariantList& scri
                              QAction* clearAction = menu.addAction(tr("Clear Shelf"));
                              clearAction->setEnabled(shelf->count() > 0);
                              QObject::connect(clearAction, &QAction::triggered, this, [this, shelf]() {
+                                 if (!MessageDialog::question(d.shelf.data(), tr("Clear Shelf"),
+                                                              tr("Remove all scripts from this shelf?"))) {
+                                     return;
+                                 }
+
                                  shelf->clear();
                                  saveShelves();
                              });
