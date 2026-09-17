@@ -4,9 +4,13 @@
 
 **Open a stage. See what is really there. Change it. Undo it. Script the rest.**
 
-Stageviz is a lightweight desktop **OpenUSD viewer and editor** for macOS and Windows. It started as an educational project for learning USD and Hydra from the inside out, and slowly turned into the kind of USD tool I wanted to have around every day.
+Stageviz is a lightweight desktop OpenUSD viewer and editor for macOS and Windows. It started as an educational project for learning USD and Hydra from the inside out, and slowly turned into the kind of USD tool I wanted to have around every day.
 
-It is not trying to be a full DCC. It is a focused place to **look, inspect, edit, experiment and build small tools** around USD without carrying an entire content-creation application with you.
+It is not trying to be a full DCC. It is a focused place to look, inspect, edit, experiment and build small tools around USD without carrying an entire content-creation application with you.
+
+Stageviz is very much an evolving project. Some ideas are experimental, some workflows may still be rough around the edges, while other parts have already been heavily optimized. It is a place to explore different ways of working with USD — not necessarily define the definitive one.
+
+Found a better way? Contributions, issues and experiments are very welcome. Help shape what a small, fast and hackable everyday USD tool can become.
 
 <img src="resources/stageviz.png" style="padding-bottom: 20px;" />
 
