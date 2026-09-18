@@ -2,6 +2,10 @@
 
 [![License](https://img.shields.io/badge/license-BSD%203--Clause-blue.svg?style=flat-square)](https://github.com/mikaelsundell/stageviz/blob/master/README.md)
 
+<img src="resources/stageviz.png" style="padding-bottom: 20px;" />
+
+## Introduction
+
 **Open a stage. See what is really there. Change it. Undo it. Script the rest.**
 
 Stageviz is a lightweight desktop OpenUSD viewer and editor for macOS and Windows. It started as an educational project for learning USD and Hydra from the inside out, and slowly turned into the kind of USD tool I wanted to have around every day.
@@ -12,7 +16,7 @@ Stageviz is very much an evolving project. Some ideas are experimental, some wor
 
 Found a better way? Contributions, issues and experiments are very welcome. Help shape what a small, fast and hackable everyday USD tool can become.
 
-<img src="resources/stageviz.png" style="padding-bottom: 20px;" />
+
 
 ---
 
@@ -58,7 +62,7 @@ The **Property Tree** turns common USD properties and metadata into practical ed
 
 Edits are authored into the editable USD layer rather than flattening away the structure that makes USD useful.
 
-And importantly, normal Stageviz editing is backed by a **full undo/redo command stack**.
+And importantly, normal Stageviz editing is backed by a **full undo/redo command stack**. Edit-layer changes are commands too, so they naturally participate in the same history.
 
 Try something. Inspect the result. Hit Undo. Try something else.
 
@@ -68,7 +72,7 @@ Try something. Inspect the result. Hit Undo. Try something else.
 
 Undo/redo is not an afterthought. Stageviz editing commands are designed around the application's command stack so normal editing operations can be explored and reversed.
 
-Hierarchy edits, namespace operations and other Stageviz commands participate in the same workflow. This also gives the Python bindings an application-level command interface for scripts that should behave like native Stageviz tools.
+Hierarchy edits, namespace operations, edit-layer changes and other Stageviz commands participate in the same workflow.
 
 ---
 
@@ -147,7 +151,13 @@ cube.CreateDisplayColorAttr([
 session.notifyRedraw()
 ```
 
-For native editing operations, the Stageviz command bindings provide access to operations that participate in the application's undo/redo workflow. For everything else, the stage returned by `Session.stage()` is a normal OpenUSD stage — use `pxr` and keep going.
+Python is the expert path. Starting a script clears the existing undo/redo history because direct `pxr` edits cannot be tracked safely. Calls through `stageviz.command` then build a **fresh undo/redo history**, including edit-layer changes; direct `pxr` edits remain intentionally untracked.
+
+For example, switch edit layer through the command API when you want the change to be undoable:
+
+```python
+stageviz.command.set_edit_layer(layer.identifier)
+```
 
 ### 🚀 The shelf: turn scripts into tools
 
