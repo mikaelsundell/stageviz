@@ -6293,12 +6293,18 @@ movePath(const QList<SdfPath>& paths, const SdfPath& newParentPath, int insertIn
                                             moves.append(qMakePair(item.oldPath, item.newPath));
                                     }
 
-                                    QString moveError;
-                                    edit::NamespaceEditor namespaceEditor(stage, stage->GetEditTarget());
-                                    if (!namespaceEditor.reparentPrims(moves, moveError)) {
-                                        error = moveError.isEmpty() ? "failed to move paths" : moveError;
-                                        stage::restoreChildOrders(stage, state->oldParentOrders);
-                                        moved = false;
+                                    // A same-parent drag can be a pure reorder. Avoid invoking
+                                    // UsdNamespaceEditor unless at least one prim actually changes
+                                    // namespace; on large composed stages even a no-op namespace
+                                    // edit can be much more expensive than updating child order.
+                                    if (!moves.isEmpty()) {
+                                        QString moveError;
+                                        edit::NamespaceEditor namespaceEditor(stage, stage->GetEditTarget());
+                                        if (!namespaceEditor.reparentPrims(moves, moveError)) {
+                                            error = moveError.isEmpty() ? "failed to move paths" : moveError;
+                                            stage::restoreChildOrders(stage, state->oldParentOrders);
+                                            moved = false;
+                                        }
                                     }
 
                                     if (error.isEmpty() && preserveTransform) {
@@ -6439,8 +6445,11 @@ movePath(const QList<SdfPath>& paths, const SdfPath& newParentPath, int insertIn
                                     reverseMoves.append(qMakePair(it->newPath, it->oldPath));
                             }
 
-                            edit::NamespaceEditor namespaceEditor(stage, stage->GetEditTarget());
-                            restored = namespaceEditor.reparentPrims(reverseMoves, error);
+                            restored = true;
+                            if (!reverseMoves.isEmpty()) {
+                                edit::NamespaceEditor namespaceEditor(stage, stage->GetEditTarget());
+                                restored = namespaceEditor.reparentPrims(reverseMoves, error);
+                            }
 
                             if (restored && preserveTransform) {
                                 for (const MoveItem& item : state->items) {

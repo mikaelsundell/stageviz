@@ -6,6 +6,7 @@
 #include "qtutils.h"
 #include "usdutils.h"
 #include <QSet>
+#include <QStringList>
 #include <pxr/usd/sdf/namespaceEdit.h>
 #include <pxr/usd/usd/editContext.h>
 #include <pxr/usd/usd/editTarget.h>
@@ -254,60 +255,89 @@ namespace edit {
                 return false;
         }
 
+        // Capture the intended load policy before changing namespace.  The
+        // resulting rules are only applied if they are actually different;
+        // this avoids an unnecessary stage-wide payload recomposition for the
+        // common case where source and destination inherit the same policy.
         const UsdStageLoadRules loadRules = remappedLoadRules(effectiveMoves);
-
-        // USD's namespace editor repairs relationship targets, connections and
-        // composition dependencies. It currently applies one move at a time,
-        // so retain local authoring layers for rollback of a partial batch.
-        // This editor only accepts local edits and registers no dependent
-        // stages. Referenced/payload asset contents are not authoring targets;
-        // copying GetUsedLayers() here needlessly duplicates loaded assemblies.
-        struct Transaction {
-            UsdStageRefPtr stage;
-            UsdStageLoadRules loadRules;
-            QList<QPair<SdfLayerHandle, SdfLayerRefPtr>> layers;
-            bool committed = false;
-            ~Transaction()
-            {
-                if (committed)
-                    return;
-                for (const auto& entry : layers) {
-                    std::string current;
-                    std::string previous;
-                    entry.first->ExportToString(&current);
-                    entry.second->ExportToString(&previous);
-                    if (current != previous)
-                        entry.first->TransferContent(entry.second);
-                }
-                if (stage->GetLoadRules() != loadRules)
-                    stage->SetLoadRules(loadRules);
-            }
-        } transaction { stage_, stage_->GetLoadRules(), {}, false };
-        for (const auto& layer : stage_->GetLayerStack()) {
-            const SdfLayerRefPtr snapshot = SdfLayer::CreateAnonymous();
-            if (!snapshot) {
-                error = "cannot snapshot layers before moving prims";
-                return false;
-            }
-            snapshot->TransferContent(layer);
-            transaction.layers.append(qMakePair(SdfLayerHandle(layer), snapshot));
-        }
 
         UsdEditContext editContext(stage_, editTarget_);
         UsdNamespaceEditor::EditOptions options;
         options.allowRelocatesAuthoring = false;
+
+        // OpenUSD 25.11 effectively supports one queued namespace operation per
+        // editor, so apply the requested moves one at a time.  Do not snapshot
+        // the complete local layer stack: on production stages copying every
+        // layer is far more expensive than the edit itself.  If a later move
+        // fails, roll back the moves that already succeeded through the same
+        // namespace editor API so dependency paths are repaired in reverse too.
+        QList<QPair<SdfPath, SdfPath>> appliedMoves;
+        appliedMoves.reserve(effectiveMoves.size());
+
+        auto rollbackAppliedMoves = [&]() -> QString {
+            QStringList rollbackErrors;
+
+            for (auto it = appliedMoves.crbegin(); it != appliedMoves.crend(); ++it) {
+                UsdNamespaceEditor rollbackEditor(stage_, options);
+                std::string whyNot;
+
+                if (!rollbackEditor.MovePrimAtPath(it->second, it->first)) {
+                    rollbackErrors.append(
+                        QString("could not queue rollback: %1 -> %2")
+                            .arg(qt::SdfPathToQString(it->second), qt::SdfPathToQString(it->first)));
+                    continue;
+                }
+
+                if (!rollbackEditor.CanApplyEdits(&whyNot)) {
+                    rollbackErrors.append(
+                        whyNot.empty()
+                            ? QString("rollback cannot be applied: %1 -> %2")
+                                  .arg(qt::SdfPathToQString(it->second), qt::SdfPathToQString(it->first))
+                            : qt::StringToQString(whyNot));
+                    continue;
+                }
+
+                if (!rollbackEditor.ApplyEdits()) {
+                    rollbackErrors.append(
+                        QString("rollback failed: %1 -> %2")
+                            .arg(qt::SdfPathToQString(it->second), qt::SdfPathToQString(it->first)));
+                }
+            }
+
+            return rollbackErrors.join("; ");
+        };
+
         for (const auto& move : effectiveMoves) {
             UsdNamespaceEditor editor(stage_, options);
             std::string whyNot;
-            if (!editor.MovePrimAtPath(move.first, move.second) || !editor.CanApplyEdits(&whyNot)) {
+
+            if (!editor.MovePrimAtPath(move.first, move.second)) {
+                const QString rollbackError = rollbackAppliedMoves();
+                error = QString("USD namespace move could not be queued: %1 -> %2")
+                            .arg(qt::SdfPathToQString(move.first), qt::SdfPathToQString(move.second));
+                if (!rollbackError.isEmpty())
+                    error += QString("; rollback: %1").arg(rollbackError);
+                return false;
+            }
+
+            if (!editor.CanApplyEdits(&whyNot)) {
+                const QString rollbackError = rollbackAppliedMoves();
                 error = whyNot.empty() ? QStringLiteral("USD namespace move cannot be applied")
                                        : qt::StringToQString(whyNot);
+                if (!rollbackError.isEmpty())
+                    error += QString("; rollback: %1").arg(rollbackError);
                 return false;
             }
+
             if (!editor.ApplyEdits()) {
+                const QString rollbackError = rollbackAppliedMoves();
                 error = "USD namespace move failed";
+                if (!rollbackError.isEmpty())
+                    error += QString("; rollback: %1").arg(rollbackError);
                 return false;
             }
+
+            appliedMoves.append(move);
         }
 
         if (stage_->GetLoadRules() != loadRules)
@@ -320,7 +350,6 @@ namespace edit {
             changes_.append({ type, move.first, move.second });
         }
 
-        transaction.committed = true;
         return true;
     }
 
@@ -379,33 +408,46 @@ namespace edit {
     {
         const UsdStageLoadRules original = stage_->GetLoadRules();
         UsdStageLoadRules result;
+
+        // Move explicit rules that live on or below a moved subtree.  Rules at
+        // a destination that is being replaced are dropped so stale destination
+        // policy cannot override the moved subtree.
         for (const auto& rule : original.GetRules()) {
             SdfPath path = rule.first;
             bool moved = false;
+
             for (const auto& move : moves) {
-                if (path.HasPrefix(move.first)) {
+                if (path == move.first || path.HasPrefix(move.first)) {
                     path = path.ReplacePrefix(move.first, move.second);
                     moved = true;
                     break;
                 }
             }
-            // Rules at a previously empty destination must not override the
-            // policy of the subtree being moved there.
+
             if (!moved) {
                 bool replaced = false;
-                for (const auto& move : moves)
-                    replaced |= path.HasPrefix(move.second);
+                for (const auto& move : moves) {
+                    if (path == move.second || path.HasPrefix(move.second)) {
+                        replaced = true;
+                        break;
+                    }
+                }
+
                 if (replaced)
                     continue;
             }
+
             result.AddRule(path, rule.second);
         }
-        // Preserve inherited policy when the moved root itself has no explicit
-        // rule. Do not minimize here: Stageviz must retain explicit descendant
-        // OnlyRule/NoneRule entries exactly, since those rules are semantically
-        // significant after a namespace move.
+
+        // If the moved root had no explicit rule, preserve its inherited source
+        // policy only when the destination would otherwise inherit a different
+        // policy.  Avoiding redundant destination rules is important: merely
+        // changing the load-rule table can force payload recomposition across a
+        // very large stage even when the effective policy is unchanged.
         for (const auto& move : moves) {
             bool hasExplicitRootRule = false;
+
             for (const auto& rule : original.GetRules()) {
                 if (rule.first == move.first) {
                     hasExplicitRootRule = true;
@@ -413,8 +455,14 @@ namespace edit {
                 }
             }
 
-            if (!hasExplicitRootRule)
-                result.AddRule(move.second, original.GetEffectiveRuleForPath(move.first));
+            if (hasExplicitRootRule)
+                continue;
+
+            const auto sourceRule = original.GetEffectiveRuleForPath(move.first);
+            const auto destinationRule = result.GetEffectiveRuleForPath(move.second);
+
+            if (sourceRule != destinationRule)
+                result.AddRule(move.second, sourceRule);
         }
 
         return result;
