@@ -390,6 +390,32 @@ vec4Value(const MaterialInputInfo& info, const GfVec4f& fallback = GfVec4f(0.0f)
     return fallback;
 }
 
+static QString
+valueText(const VtValue& value)
+{
+    if (value.IsHolding<float>())
+        return QString::number(value.UncheckedGet<float>(), 'g', 6);
+    if (value.IsHolding<double>())
+        return QString::number(value.UncheckedGet<double>(), 'g', 6);
+    if (value.IsHolding<GfVec2f>()) {
+        const GfVec2f v = value.UncheckedGet<GfVec2f>();
+        return QStringLiteral("%1, %2").arg(v[0], 0, 'g', 6).arg(v[1], 0, 'g', 6);
+    }
+    if (value.IsHolding<GfVec3f>()) {
+        const GfVec3f v = value.UncheckedGet<GfVec3f>();
+        return QStringLiteral("%1, %2, %3").arg(v[0], 0, 'g', 6).arg(v[1], 0, 'g', 6).arg(v[2], 0, 'g', 6);
+    }
+    if (value.IsHolding<GfVec4f>()) {
+        const GfVec4f v = value.UncheckedGet<GfVec4f>();
+        return QStringLiteral("%1, %2, %3, %4")
+            .arg(v[0], 0, 'g', 6)
+            .arg(v[1], 0, 'g', 6)
+            .arg(v[2], 0, 'g', 6)
+            .arg(v[3], 0, 'g', 6);
+    }
+    return QString::fromStdString(TfStringify(value));
+}
+
 namespace {
     constexpr double kUnboundedNumericLimit = 1.0e12;
 
@@ -870,14 +896,14 @@ MaterialTreePrivate::addInputRow(QTreeWidgetItem* group, const MaterialInputInfo
         return;
     }
 
-    QString valueText;
+    QString text;
     if (info.hasValue)
-        valueText = QString::fromStdString(TfStringify(info.value));
+        text = valueText(info.value);
     else
-        valueText = QString("<%1>").arg(QString::fromStdString(info.typeName.GetAsToken().GetString()));
+        text = QString("<%1>").arg(QString::fromStdString(info.typeName.GetAsToken().GetString()));
 
-    item->setText(1, valueText);
-    item->setToolTip(1, valueText);
+    item->setText(1, text);
+    item->setToolTip(1, text);
     addNodeButton();
 }
 
@@ -1091,11 +1117,11 @@ MaterialTreePrivate::refreshInputItem(QTreeWidgetItem* item, const MaterialInput
         return;
     }
 
-    const QString valueText = info.hasValue
-                                  ? QString::fromStdString(TfStringify(info.value))
-                                  : QString("<%1>").arg(QString::fromStdString(info.typeName.GetAsToken().GetString()));
-    item->setText(1, valueText);
-    item->setToolTip(1, valueText);
+    const QString text = info.hasValue
+                             ? valueText(info.value)
+                             : QString("<%1>").arg(QString::fromStdString(info.typeName.GetAsToken().GetString()));
+    item->setText(1, text);
+    item->setToolTip(1, text);
 }
 
 bool

@@ -33,6 +33,7 @@
 #include <QGraphicsScene>
 #include <QGraphicsView>
 #include <QHash>
+#include <QLayout>
 #include <QMenu>
 #include <QMimeData>
 #include <QPainter>
@@ -144,7 +145,6 @@ public:
         QPointer<QGraphicsView> graphView;
         QPointer<MaterialRenderer> renderer;
         QPointer<MaterialDialog> dialog;
-        bool initialSplitterSizesApplied = false;
     };
 
     Data d;
@@ -459,25 +459,6 @@ MaterialDialogPrivate::init()
     d.ui->name->setMinimumHeight(38);
     d.ui->name->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
 
-    QTimer::singleShot(0, d.dialog.data(), [this]() {
-        if (!d.dialog || !d.ui)
-            return;
-
-        int size = 200;
-        {
-            const int total = d.ui->splitter->width();
-            const int leftWidth = std::max(1, total - size);
-
-            d.ui->splitter->setSizes({ leftWidth, size });
-        }
-        {
-            const int total = d.ui->materialSplitter->height();
-            const int treeHeight = std::max(1, total - size);
-
-            d.ui->materialSplitter->setSizes({ size, treeHeight });
-        }
-    });
-
     d.refreshTimer = new QTimer(this);
     d.refreshTimer->setSingleShot(true);
     d.refreshTimer->setInterval(160);
@@ -606,17 +587,30 @@ MaterialDialogPrivate::eventFilter(QObject* object, QEvent* event)
     if (object == d.dialog && event && event->type() == QEvent::Show) {
         refresh();
 
-        if (!d.initialSplitterSizesApplied) {
-            d.initialSplitterSizesApplied = true;
-            QTimer::singleShot(0, d.dialog.data(), [this]() {
-                if (!d.dialog || !d.ui || !d.ui->browserSplitter)
-                    return;
+        if (d.dialog && d.ui) {
+            if (d.dialog->layout())
+                d.dialog->layout()->activate();
 
+            constexpr int panelSize = 200;
+
+            {
+                const int total = std::max(2, d.ui->splitter->width());
+                const int leftWidth = std::max(1, total - panelSize);
+                d.ui->splitter->setSizes({ leftWidth, panelSize });
+            }
+
+            {
+                const int total = std::max(2, d.ui->materialSplitter->height());
+                const int treeHeight = std::max(1, total - panelSize);
+                d.ui->materialSplitter->setSizes({ panelSize, treeHeight });
+            }
+
+            {
                 const int total = std::max(2, d.ui->browserSplitter->height());
                 const int browserHeight = std::max(1, qRound(static_cast<qreal>(total) * 0.60));
                 const int graphHeight = std::max(1, total - browserHeight);
                 d.ui->browserSplitter->setSizes({ browserHeight, graphHeight });
-            });
+            }
         }
     }
 

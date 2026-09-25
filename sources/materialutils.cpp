@@ -522,7 +522,7 @@ namespace {
     {
         if (type == QStringLiteral("float"))
             return SdfValueTypeNames->Float;
-        if (type == QStringLiteral("color3"))
+        if (type == QStringLiteral("color") || type == QStringLiteral("color3"))
             return SdfValueTypeNames->Color3f;
         if (type == QStringLiteral("color4"))
             return SdfValueTypeNames->Color4f;
@@ -534,7 +534,7 @@ namespace {
             return SdfValueTypeNames->Float4;
         if (type == QStringLiteral("integer"))
             return SdfValueTypeNames->Int;
-        if (type == QStringLiteral("boolean"))
+        if (type == QStringLiteral("bool") || type == QStringLiteral("boolean"))
             return SdfValueTypeNames->Bool;
         if (type == QStringLiteral("string"))
             return SdfValueTypeNames->String;
@@ -571,7 +571,7 @@ namespace {
             const int value = text.toInt(&ok);
             return ok ? VtValue(value) : VtValue();
         }
-        if (type == QStringLiteral("boolean")) {
+        if (type == QStringLiteral("bool") || type == QStringLiteral("boolean")) {
             const QString value = text.trimmed().toLower();
             if (value == QStringLiteral("true") || value == QStringLiteral("1"))
                 return VtValue(true);
@@ -589,7 +589,7 @@ namespace {
             const float y = values[1].toFloat(&b);
             return a && b ? VtValue(GfVec2f(x, y)) : VtValue();
         }
-        if (type == QStringLiteral("vector3") || type == QStringLiteral("color3")) {
+        if (type == QStringLiteral("vector3") || type == QStringLiteral("color") || type == QStringLiteral("color3")) {
             if (values.size() < 3)
                 return {};
             bool a = false, b = false, c = false;
@@ -1212,6 +1212,7 @@ MaterialUtils::nodeInfo(UsdStageRefPtr stage, const SdfPath& nodePath)
                 info.value = info.defaultValue;
                 info.hasValue = info.hasDefaultValue;
 
+
                 byName.insert(port.name, static_cast<int>(result.inputs.size()));
                 result.inputs.append(info);
             }
@@ -1229,6 +1230,8 @@ MaterialUtils::nodeInfo(UsdStageRefPtr stage, const SdfPath& nodePath)
                 }
 
                 MaterialInputInfo& declared = result.inputs[*it];
+
+
                 declared.inputPath = authored.inputPath;
                 declared.typeName = authored.typeName;
                 declared.hasAuthoredValue = authored.hasAuthoredValue;
@@ -2021,7 +2024,7 @@ namespace {
     {
         if (type == QStringLiteral("float"))
             return SdfValueTypeNames->Float;
-        if (type == QStringLiteral("color3"))
+        if (type == QStringLiteral("color") || type == QStringLiteral("color3"))
             return SdfValueTypeNames->Color3f;
         if (type == QStringLiteral("color4"))
             return SdfValueTypeNames->Color4f;
@@ -2033,7 +2036,7 @@ namespace {
             return SdfValueTypeNames->Float4;
         if (type == QStringLiteral("integer"))
             return SdfValueTypeNames->Int;
-        if (type == QStringLiteral("boolean"))
+        if (type == QStringLiteral("bool") || type == QStringLiteral("boolean"))
             return SdfValueTypeNames->Bool;
         if (type == QStringLiteral("filename"))
             return SdfValueTypeNames->Asset;
@@ -2064,7 +2067,7 @@ namespace {
             const int value = text.toInt(&ok);
             return ok && input.GetAttr().Set(VtValue(value));
         }
-        if (type == QStringLiteral("boolean")) {
+        if (type == QStringLiteral("bool") || type == QStringLiteral("boolean")) {
             const QString value = text.trimmed().toLower();
             if (value != QStringLiteral("true") && value != QStringLiteral("false"))
                 return false;
