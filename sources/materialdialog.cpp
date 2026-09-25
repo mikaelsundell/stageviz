@@ -20,6 +20,8 @@
 #include "tabwidget.h"
 #include "tracelocks.h"
 #include "usdutils.h"
+#include <OpenImageIO/imagebuf.h>
+#include <OpenImageIO/imagebufalgo.h>
 #include <QAction>
 #include <QCursor>
 #include <QDateTime>
@@ -46,8 +48,10 @@
 #include <QTimer>
 #include <QToolButton>
 #include <QVBoxLayout>
-#include <OpenImageIO/imagebuf.h>
-#include <OpenImageIO/imagebufalgo.h>
+#include <algorithm>
+#include <cmath>
+#include <functional>
+#include <limits>
 #include <pxr/base/vt/value.h>
 #include <pxr/usd/ar/resolver.h>
 #include <pxr/usd/ar/resolverContextBinder.h>
@@ -56,10 +60,6 @@
 #include <pxr/usd/sdf/layerUtils.h>
 #include <pxr/usd/usd/primRange.h>
 #include <pxr/usd/usdShade/materialBindingAPI.h>
-#include <algorithm>
-#include <cmath>
-#include <functional>
-#include <limits>
 #include <vector>
 
 // generated files
@@ -687,7 +687,6 @@ MaterialDialogPrivate::showNewMaterialMenu(QWidget* anchor, const QPoint& global
 void
 MaterialDialogPrivate::refresh()
 {
-
     QList<MaterialEntry> entries;
     {
         READ_LOCKER(locker, session()->stageLock(), "stageLock");
@@ -1078,7 +1077,6 @@ MaterialDialogPrivate::selectGraphNode(const SdfPath& path)
     updatePropertySwatch();
 
     d.ui->tree->navigateToNode(path);
-
 }
 
 
@@ -1387,7 +1385,6 @@ MaterialDialogPrivate::updatePropertySwatch()
 bool
 MaterialDialogPrivate::ensureSwatchSnapshot()
 {
-
     if (!d.swatchSnapshot)
         d.swatchSnapshotDirty = true;
 
@@ -1425,7 +1422,6 @@ MaterialDialogPrivate::ensureSwatchSnapshot()
 void
 MaterialDialogPrivate::requestSwatch(int row)
 {
-
     const MaterialEntry* entry = d.ui->browserWidget->entry(row);
     if (!entry)
         return;
@@ -1702,7 +1698,6 @@ MaterialDialogPrivate::connectMaterialXNode(const SdfPath& inputPath, const QStr
 void
 MaterialDialogPrivate::createPreviewSurface()
 {
-
     SdfPath path;
     {
         WRITE_LOCKER(locker, session()->stageLock(), "stageLock");
@@ -1717,7 +1712,6 @@ MaterialDialogPrivate::createPreviewSurface()
 void
 MaterialDialogPrivate::createStandardSurface()
 {
-
     SdfPath path;
     {
         WRITE_LOCKER(locker, session()->stageLock(), "stageLock");
@@ -1732,7 +1726,6 @@ MaterialDialogPrivate::createStandardSurface()
 void
 MaterialDialogPrivate::createOpenPBRSurface()
 {
-
     SdfPath path;
     {
         WRITE_LOCKER(locker, session()->stageLock(), "stageLock");

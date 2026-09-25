@@ -1243,15 +1243,8 @@ ImagingGLWidgetPrivate::pickVisibleRegion(const GfFrustum& frustum, const QRectF
     // regions so the common case remains inexpensive.
     auto sampleTerminalTile = [&](double u0, double v0, double u1, double v1) {
         static constexpr double samples[][2] = {
-            { 0.50, 0.50 },
-            { 0.25, 0.25 },
-            { 0.75, 0.25 },
-            { 0.25, 0.75 },
-            { 0.75, 0.75 },
-            { 0.50, 0.25 },
-            { 0.50, 0.75 },
-            { 0.25, 0.50 },
-            { 0.75, 0.50 },
+            { 0.50, 0.50 }, { 0.25, 0.25 }, { 0.75, 0.25 }, { 0.25, 0.75 }, { 0.75, 0.75 },
+            { 0.50, 0.25 }, { 0.50, 0.75 }, { 0.25, 0.50 }, { 0.75, 0.50 },
         };
 
         for (const auto& sample : samples) {

@@ -426,7 +426,7 @@ namespace {
 
         return spec;
     }
-}
+}  // namespace
 
 void
 MaterialTreePrivate::addInputRow(QTreeWidgetItem* group, const MaterialInputInfo& info,
@@ -1234,7 +1234,6 @@ MaterialTreePrivate::rebuildSingle()
             populateGroup(group);
         }
     }
-
 }
 
 void

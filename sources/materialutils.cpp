@@ -452,10 +452,7 @@ namespace {
             }
             else if (value.IsHolding<GfVec3f>()) {
                 const GfVec3f v = value.UncheckedGet<GfVec3f>();
-                port.value = QStringLiteral("%1, %2, %3")
-                                 .arg(v[0], 0, 'g', 9)
-                                 .arg(v[1], 0, 'g', 9)
-                                 .arg(v[2], 0, 'g', 9);
+                port.value = QStringLiteral("%1, %2, %3").arg(v[0], 0, 'g', 9).arg(v[1], 0, 'g', 9).arg(v[2], 0, 'g', 9);
             }
             else if (value.IsHolding<GfVec4f>()) {
                 const GfVec4f v = value.UncheckedGet<GfVec4f>();
@@ -481,10 +478,9 @@ namespace {
         }
 
         if (!def.outputs.isEmpty()) {
-            const auto outIt = std::find_if(def.outputs.cbegin(), def.outputs.cend(),
-                                            [](const MaterialXPortDefinition& port) {
-                                                return port.name == QStringLiteral("out");
-                                            });
+            const auto outIt
+                = std::find_if(def.outputs.cbegin(), def.outputs.cend(),
+                               [](const MaterialXPortDefinition& port) { return port.name == QStringLiteral("out"); });
             def.outputType = outIt != def.outputs.cend() ? outIt->type : def.outputs.first().type;
         }
 
@@ -1558,10 +1554,8 @@ MaterialUtils::materialXNodeDefinitions()
 
                         port.hasUiMin = parseUiNumber(portAttrs.value("uimin").toString(), &port.uiMin);
                         port.hasUiMax = parseUiNumber(portAttrs.value("uimax").toString(), &port.uiMax);
-                        port.hasUiSoftMin
-                            = parseUiNumber(portAttrs.value("uisoftmin").toString(), &port.uiSoftMin);
-                        port.hasUiSoftMax
-                            = parseUiNumber(portAttrs.value("uisoftmax").toString(), &port.uiSoftMax);
+                        port.hasUiSoftMin = parseUiNumber(portAttrs.value("uisoftmin").toString(), &port.uiSoftMin);
+                        port.hasUiSoftMax = parseUiNumber(portAttrs.value("uisoftmax").toString(), &port.uiSoftMax);
                         port.hasUiStep = parseUiNumber(portAttrs.value("uistep").toString(), &port.uiStep);
 
                         QString enumText = portAttrs.value("enum").toString();
@@ -2352,9 +2346,7 @@ MaterialUtils::exportMaterialX(UsdStageRefPtr stage, const SdfPath& materialPath
 
         const QList<MaterialXNodeDefinition> definitions = MaterialUtils::materialXNodeDefinitions();
         const auto definitionIt = std::find_if(definitions.cbegin(), definitions.cend(),
-                                               [&](const MaterialXNodeDefinition& def) {
-                                                   return def.nodeDef == id;
-                                               });
+                                               [&](const MaterialXNodeDefinition& def) { return def.nodeDef == id; });
         if (definitionIt == definitions.cend() || definitionIt->node.isEmpty() || definitionIt->outputType.isEmpty()) {
             error = QString("MaterialX NodeDef is not available for %1").arg(id);
             return false;

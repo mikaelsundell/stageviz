@@ -36,9 +36,9 @@
 #include <algorithm>
 #include <cmath>
 #include <functional>
-#include <vector>
 #include <pxr/usd/usd/primRange.h>
 #include <pxr/usd/usdShade/connectableAPI.h>
+#include <vector>
 
 // generated files
 #include "ui_materialgraph.h"
@@ -414,7 +414,8 @@ protected:
             deletePaths.append(m_path);
 
         QMenu menu;
-        QAction* remove = menu.addAction(deletePaths.size() > 1 ? QObject::tr("Delete Nodes") : QObject::tr("Delete Node"));
+        QAction* remove = menu.addAction(deletePaths.size() > 1 ? QObject::tr("Delete Nodes")
+                                                                : QObject::tr("Delete Node"));
         remove->setEnabled(!deletePaths.isEmpty());
         if (menu.exec(event->screenPos()) == remove)
             m_owner->deleteNodes(deletePaths);
@@ -1055,7 +1056,7 @@ MaterialGraphPrivate::rebuild(bool preservePositions)
         }
     }
     d.restoringSelection = false;
-    
+
     rebuildEdges();
     applyFilter(d.ui ? d.ui->filter->text() : QString());
     updateSceneRect();
@@ -1288,9 +1289,8 @@ MaterialGraphPrivate::selectedDeletableNodePaths() const
         paths.append(path);
     }
 
-    std::sort(paths.begin(), paths.end(), [](const SdfPath& a, const SdfPath& b) {
-        return a.GetString() < b.GetString();
-    });
+    std::sort(paths.begin(), paths.end(),
+              [](const SdfPath& a, const SdfPath& b) { return a.GetString() < b.GetString(); });
     return paths;
 }
 

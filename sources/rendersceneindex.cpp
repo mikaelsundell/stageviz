@@ -6,11 +6,9 @@
 #include <QtGlobal>
 #include <pxr/imaging/hd/containerDataSourceEditor.h>
 #include <pxr/imaging/hd/dataSource.h>
-#include <pxr/imaging/hd/legacyDisplayStyleSchema.h>
 #include <pxr/imaging/hd/materialBindingSchema.h>
 #include <pxr/imaging/hd/materialBindingsSchema.h>
 #include <pxr/imaging/hd/meshSchema.h>
-#include <pxr/imaging/hd/repr.h>
 #include <pxr/imaging/hd/retainedDataSource.h>
 #include <pxr/imaging/hd/tokens.h>
 #include <vector>
@@ -266,16 +264,6 @@ RenderSceneIndex::GetPrim(const SdfPath& primPath) const
     if (selected) {
         editor.Set(HdMaterialBindingsSchema::GetDefaultLocator(),
                    p->createMaterialBindings(p->d.selectionMaterialPath));
-
-        using TokenArrayDataSource = HdRetainedTypedSampledDataSource<VtArray<TfToken>>;
-        VtArray<TfToken> reprSelector;
-        reprSelector.push_back(HdReprTokens->solidWireOnSurf);
-        reprSelector.push_back(HdReprTokens->disabled);
-        reprSelector.push_back(HdReprTokens->disabled);
-
-        editor.Set(HdLegacyDisplayStyleSchema::GetDefaultLocator().Append(
-                       HdLegacyDisplayStyleSchemaTokens->reprSelector),
-                   TokenArrayDataSource::New(reprSelector));
     }
     else if (p->d.mode == Clay || p->d.mode == Custom) {
         const SdfPath materialPath = p->effectiveMaterialPath();
@@ -348,8 +336,6 @@ RenderSceneIndex::dirtySelectionPresentation(const SdfPathVector& paths)
     HdSceneIndexObserver::DirtiedPrimEntries entries;
     HdDataSourceLocatorSet locators;
     locators.insert(HdMaterialBindingsSchema::GetDefaultLocator());
-    locators.insert(
-        HdLegacyDisplayStyleSchema::GetDefaultLocator().Append(HdLegacyDisplayStyleSchemaTokens->reprSelector));
 
     SdfPathVector visited;
 

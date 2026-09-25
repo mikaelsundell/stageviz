@@ -217,7 +217,8 @@ public:
     void reset();
     void ensureAuxiliarySceneIndex();
     void refreshAuxiliarySceneIndex();
-    void updateRenderSceneIndex();
+    void updateDocumentRenderSceneIndex();
+    void updateSelectionRenderSceneIndex();
     void updateRenderParams();
     void updateLighting();
     bool render();
@@ -277,7 +278,6 @@ RenderEngine::Private::ensureCurrentContext()
 bool
 RenderEngine::Private::initialize()
 {
-
     if (engine && (contextMode == ContextMode::Offscreen || selectionEngine))
         return true;
 
@@ -308,7 +308,8 @@ RenderEngine::Private::initialize()
         }
     }
 
-    updateRenderSceneIndex();
+    updateDocumentRenderSceneIndex();
+    updateSelectionRenderSceneIndex();
     ensureAuxiliarySceneIndex();
 
     engine->SetSelected(SdfPathVector());
@@ -412,60 +413,63 @@ RenderEngine::Private::refreshAuxiliarySceneIndex()
 }
 
 void
-RenderEngine::Private::updateRenderSceneIndex()
+RenderEngine::Private::updateDocumentRenderSceneIndex()
 {
-    if (engine) {
-        SceneIndices& sceneIndices = engine->sceneIndices();
+    if (!engine)
+        return;
 
-        if (sceneIndices.renderSceneIndex) {
-            TfRefPtr<RenderSceneIndex> renderSceneIndex = sceneIndices.renderSceneIndex;
+    SceneIndices& sceneIndices = engine->sceneIndices();
+    if (!sceneIndices.renderSceneIndex)
+        return;
 
-            renderSceneIndex->setSceneMaterialsEnabled(settings.sceneMaterialsEnabled);
-            renderSceneIndex->setMaterialPath(settings.overrideMaterial);
-            renderSceneIndex->setSelectionPaths({});
-            renderSceneIndex->setSelectionPresentationEnabled(false);
+    TfRefPtr<RenderSceneIndex> renderSceneIndex = sceneIndices.renderSceneIndex;
 
-            RenderSceneIndex::Mode mode = RenderSceneIndex::None;
-            switch (settings.materialMode) {
-            case MaterialMode::Clay: mode = RenderSceneIndex::Clay; break;
-            case MaterialMode::Override: mode = RenderSceneIndex::Custom; break;
-            case MaterialMode::Scene:
-            default: mode = RenderSceneIndex::None; break;
-            }
+    renderSceneIndex->setSceneMaterialsEnabled(settings.sceneMaterialsEnabled);
+    renderSceneIndex->setMaterialPath(settings.overrideMaterial);
+    renderSceneIndex->setSelectionPaths({});
+    renderSceneIndex->setSelectionPresentationEnabled(false);
 
-            renderSceneIndex->setMode(mode);
-
-            const bool overrideDoubleSided = settings.doubleSidedMode == DoubleSidedMode::DoubleSided;
-            renderSceneIndex->setDoubleSidedOverride(false);
-            renderSceneIndex->setDoubleSidedOverrideEnabled(overrideDoubleSided);
-        }
+    RenderSceneIndex::Mode mode = RenderSceneIndex::None;
+    switch (settings.materialMode) {
+    case MaterialMode::Clay: mode = RenderSceneIndex::Clay; break;
+    case MaterialMode::Override: mode = RenderSceneIndex::Custom; break;
+    case MaterialMode::Scene:
+    default: mode = RenderSceneIndex::None; break;
     }
 
-    if (selectionEngine) {
-        SceneIndices& sceneIndices = selectionEngine->sceneIndices();
+    renderSceneIndex->setMode(mode);
 
-        if (sceneIndices.renderSceneIndex) {
-            TfRefPtr<RenderSceneIndex> renderSceneIndex = sceneIndices.renderSceneIndex;
+    const bool overrideDoubleSided = settings.doubleSidedMode == DoubleSidedMode::DoubleSided;
+    renderSceneIndex->setDoubleSidedOverride(false);
+    renderSceneIndex->setDoubleSidedOverrideEnabled(overrideDoubleSided);
+}
 
-            SdfPathVector selectionPaths;
-            selectionPaths.reserve(selected.size());
-            for (const SdfPath& path : selected)
-                selectionPaths.push_back(path);
+void
+RenderEngine::Private::updateSelectionRenderSceneIndex()
+{
+    if (!selectionEngine)
+        return;
 
-            // The selection render index never changes presentation mode during
-            // rendering. It permanently uses the selection material/repr and is
-            // only rendered for the selected root collection.
-            renderSceneIndex->setSceneMaterialsEnabled(true);
-            renderSceneIndex->setMaterialPath({});
-            renderSceneIndex->setMode(RenderSceneIndex::None);
-            renderSceneIndex->setSelectionPaths(selectionPaths);
-            renderSceneIndex->setSelectionPresentationEnabled(true);
+    SceneIndices& sceneIndices = selectionEngine->sceneIndices();
+    if (!sceneIndices.renderSceneIndex)
+        return;
 
-            const bool overrideDoubleSided = settings.doubleSidedMode == DoubleSidedMode::DoubleSided;
-            renderSceneIndex->setDoubleSidedOverride(false);
-            renderSceneIndex->setDoubleSidedOverrideEnabled(overrideDoubleSided);
-        }
-    }
+    TfRefPtr<RenderSceneIndex> renderSceneIndex = sceneIndices.renderSceneIndex;
+
+    SdfPathVector selectionPaths;
+    selectionPaths.reserve(selected.size());
+    for (const SdfPath& path : selected)
+        selectionPaths.push_back(path);
+
+    renderSceneIndex->setSceneMaterialsEnabled(true);
+    renderSceneIndex->setMaterialPath({});
+    renderSceneIndex->setMode(RenderSceneIndex::None);
+    renderSceneIndex->setSelectionPaths(selectionPaths);
+    renderSceneIndex->setSelectionPresentationEnabled(true);
+
+    const bool overrideDoubleSided = settings.doubleSidedMode == DoubleSidedMode::DoubleSided;
+    renderSceneIndex->setDoubleSidedOverride(false);
+    renderSceneIndex->setDoubleSidedOverrideEnabled(overrideDoubleSided);
 }
 
 void
@@ -545,7 +549,6 @@ RenderEngine::Private::updateLighting()
 bool
 RenderEngine::Private::render()
 {
-
     if (!stage || size[0] <= 0 || size[1] <= 0)
         return false;
 
@@ -554,7 +557,6 @@ RenderEngine::Private::render()
 
     ensureAuxiliarySceneIndex();
     refreshAuxiliarySceneIndex();
-    updateRenderSceneIndex();
     updateRenderParams();
     updateLighting();
 
@@ -589,6 +591,7 @@ RenderEngine::Private::render()
 
     documentHgi->StartFrame();
     engine->PrepareBatch(root, documentParams);
+    updateDocumentRenderSceneIndex();
 
     if (mask.isEmpty()) {
         engine->Render(root, documentParams);
@@ -625,6 +628,7 @@ RenderEngine::Private::render()
         UsdImagingGLRenderParams selectionParams = documentParams;
         selectionParams.highlight = false;
         selectionParams.enableSceneMaterials = true;
+        selectionParams.complexity = settings.complexity;
 
         constexpr float selectionDepthBiasConstant = -2.0f;
         constexpr float selectionDepthBiasSlope = 0.0f;
@@ -634,6 +638,7 @@ RenderEngine::Private::render()
 
         selectionHgi->StartFrame();
         selectionEngine->PrepareBatch(root, selectionParams);
+        updateSelectionRenderSceneIndex();
         selectionEngine->renderBatchWithDepthBias(selectionPaths, selectionParams, selectionDepthBiasConstant,
                                                   selectionDepthBiasSlope, wireframeColor);
         selectionHgi->EndFrame();
@@ -672,8 +677,7 @@ RenderEngine::reset()
 bool
 RenderEngine::isInitialized() const
 {
-    return p->engine != nullptr
-           && (p->contextMode == ContextMode::Offscreen || p->selectionEngine != nullptr);
+    return p->engine != nullptr && (p->contextMode == ContextMode::Offscreen || p->selectionEngine != nullptr);
 }
 
 void
@@ -754,7 +758,6 @@ void
 RenderEngine::setSettings(const Settings& settings)
 {
     p->settings = settings;
-    p->updateRenderSceneIndex();
 }
 
 const RenderEngine::Settings&
@@ -787,8 +790,6 @@ RenderEngine::setSelected(const QList<SdfPath>& paths)
         if (!p->selected.contains(primPath))
             p->selected.append(primPath);
     }
-
-    p->updateRenderSceneIndex();
 }
 
 void
@@ -842,7 +843,6 @@ RenderEngine::renderToCurrentFramebuffer()
 QImage
 RenderEngine::renderImage()
 {
-
     if (p->contextMode != ContextMode::Offscreen)
         return {};
 

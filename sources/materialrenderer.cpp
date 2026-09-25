@@ -8,8 +8,8 @@
 #include "style.h"
 #include <QApplication>
 #include <QColor>
-#include <QDir>
 #include <QDebug>
+#include <QDir>
 #include <QFile>
 #include <QFileInfo>
 #include <QHash>
@@ -366,7 +366,6 @@ bool
 MaterialRendererPrivate::initializeContext(RenderContext& context, QString& error, const SdfLayerRefPtr& sourceLayer,
                                            const GfVec2i& size)
 {
-
     if (!qApp || QThread::currentThread() != qApp->thread()) {
         error = QStringLiteral("Material preview renderer must be created on the GUI thread");
         return false;
@@ -431,8 +430,7 @@ MaterialRendererPrivate::ensureNetworkRenderer(QString& error, const SdfLayerRef
     // warm Storm context for every material that references the same snapshot.
     // MaterialDialog replaces the snapshot layer object when topology changes,
     // so pointer identity is the safe invalidation boundary.
-    if (d.networkContext.renderEngine && d.networkContext.stage
-        && d.networkContext.sourceLayer == sourceLayer) {
+    if (d.networkContext.renderEngine && d.networkContext.stage && d.networkContext.sourceLayer == sourceLayer) {
         return true;
     }
 
@@ -566,18 +564,14 @@ namespace {
 
 
             for (const UsdShadeInput& input : shader.GetInputs()) {
-
                 UsdShadeConnectableAPI source;
                 TfToken sourceName;
                 UsdShadeAttributeType sourceType = UsdShadeAttributeType::Output;
-                if (input.GetConnectedSource(&source, &sourceName, &sourceType)) {
-                }
+                if (input.GetConnectedSource(&source, &sourceName, &sourceType)) {}
             }
 
-            for (const UsdShadeOutput& output : shader.GetOutputs()) {
-            }
+            for (const UsdShadeOutput& output : shader.GetOutputs()) {}
         }
-
     }
 
 }  // namespace

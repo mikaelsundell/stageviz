@@ -250,9 +250,39 @@ namespace edit {
         if (effectiveMoves.isEmpty())
             return true;
 
-        for (const auto& move : effectiveMoves) {
-            if (!validateMove(move.first, move.second, sourcePaths, error))
+        // Validate the batch against the unchanged stage before applying any
+        // edits.  A destination cannot live below another source that is also
+        // being moved by this batch: once that source is moved, the destination
+        // parent disappears and a later edit would fail after an earlier edit
+        // has already modified the stage.  Rejecting these dependencies up
+        // front keeps failed batches transactional without copying the complete
+        // layer stack on every reparent.
+        for (int i = 0; i < effectiveMoves.size(); ++i) {
+            const SdfPath& from = effectiveMoves[i].first;
+            const SdfPath& to = effectiveMoves[i].second;
+
+            if (!validateMove(from, to, sourcePaths, error))
                 return false;
+
+            for (int j = 0; j < effectiveMoves.size(); ++j) {
+                if (i == j)
+                    continue;
+
+                const SdfPath& otherSource = effectiveMoves[j].first;
+                // Overlapping source roots are order-dependent and cannot be
+                // applied safely one-at-a-time with OpenUSD 25.11.
+                if (from.HasPrefix(otherSource) || otherSource.HasPrefix(from)) {
+                    error = QString("overlapping move sources are not supported: %1 and %2")
+                                .arg(qt::SdfPathToQString(from), qt::SdfPathToQString(otherSource));
+                    return false;
+                }
+                const SdfPath destinationParent = to.GetParentPath();
+                if (destinationParent == otherSource || destinationParent.HasPrefix(otherSource)) {
+                    error = QString("move destination parent is also being moved: %1 below %2")
+                                .arg(qt::SdfPathToQString(destinationParent), qt::SdfPathToQString(otherSource));
+                    return false;
+                }
+            }
         }
 
         // Capture the intended load policy before changing namespace.  The
@@ -282,25 +312,22 @@ namespace edit {
                 std::string whyNot;
 
                 if (!rollbackEditor.MovePrimAtPath(it->second, it->first)) {
-                    rollbackErrors.append(
-                        QString("could not queue rollback: %1 -> %2")
-                            .arg(qt::SdfPathToQString(it->second), qt::SdfPathToQString(it->first)));
+                    rollbackErrors.append(QString("could not queue rollback: %1 -> %2")
+                                              .arg(qt::SdfPathToQString(it->second), qt::SdfPathToQString(it->first)));
                     continue;
                 }
 
                 if (!rollbackEditor.CanApplyEdits(&whyNot)) {
                     rollbackErrors.append(
-                        whyNot.empty()
-                            ? QString("rollback cannot be applied: %1 -> %2")
-                                  .arg(qt::SdfPathToQString(it->second), qt::SdfPathToQString(it->first))
-                            : qt::StringToQString(whyNot));
+                        whyNot.empty() ? QString("rollback cannot be applied: %1 -> %2")
+                                             .arg(qt::SdfPathToQString(it->second), qt::SdfPathToQString(it->first))
+                                       : qt::StringToQString(whyNot));
                     continue;
                 }
 
                 if (!rollbackEditor.ApplyEdits()) {
-                    rollbackErrors.append(
-                        QString("rollback failed: %1 -> %2")
-                            .arg(qt::SdfPathToQString(it->second), qt::SdfPathToQString(it->first)));
+                    rollbackErrors.append(QString("rollback failed: %1 -> %2")
+                                              .arg(qt::SdfPathToQString(it->second), qt::SdfPathToQString(it->first)));
                 }
             }
 
