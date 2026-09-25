@@ -312,6 +312,22 @@ public:
      */
     static bool importMaterialX(UsdStageRefPtr stage, const QString& filename, QList<SdfPath>& createdPaths,
                                 QString& error);
+
+    /**
+     * @brief Exports one MaterialX material network to a .mtlx document.
+     *
+     * The material must resolve to a MaterialX surface shader (ND_*). The
+     * connected upstream MaterialX shader network is serialized without
+     * modifying the USD stage.
+     *
+     * @param stage Source stage.
+     * @param materialPath Path to the UsdShadeMaterial to export.
+     * @param filename Destination .mtlx filename.
+     * @param error Receives a failure reason.
+     * @return True when the document was written successfully.
+     */
+    static bool exportMaterialX(UsdStageRefPtr stage, const SdfPath& materialPath, const QString& filename,
+                                QString& error);
 };
 
 }  // namespace stageviz

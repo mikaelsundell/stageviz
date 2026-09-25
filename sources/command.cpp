@@ -634,6 +634,66 @@ namespace {
     }
 
 
+    bool remapDuplicatedMaterialConnections(UsdStageRefPtr stage, const SdfPath& sourceRoot,
+                                            const SdfPath& destinationRoot, QString& error)
+    {
+        if (!stage || sourceRoot.IsEmpty() || destinationRoot.IsEmpty()) {
+            error = "invalid material duplicate roots";
+            return false;
+        }
+
+        const UsdPrim duplicate = stage->GetPrimAtPath(destinationRoot);
+        if (!duplicate || !duplicate.IsA<UsdShadeMaterial>()) {
+            error = QString("duplicated material missing: %1").arg(pathText(destinationRoot));
+            return false;
+        }
+
+        auto remapPaths = [&](SdfPathVector& paths) {
+            bool changed = false;
+            for (SdfPath& path : paths) {
+                if (path == sourceRoot || path.HasPrefix(sourceRoot)) {
+                    path = path.ReplacePrefix(sourceRoot, destinationRoot);
+                    changed = true;
+                }
+            }
+            return changed;
+        };
+
+        for (const UsdPrim& prim : UsdPrimRange(duplicate)) {
+            if (!prim || !prim.IsValid())
+                continue;
+
+            for (const UsdAttribute& attribute : prim.GetAttributes()) {
+                SdfPathVector connections;
+                if (!attribute.GetConnections(&connections) || connections.empty())
+                    continue;
+                if (!remapPaths(connections))
+                    continue;
+                if (!attribute.SetConnections(connections)) {
+                    error = QString("failed to remap duplicated material connection: %1")
+                                .arg(pathText(attribute.GetPath()));
+                    return false;
+                }
+            }
+
+            for (const UsdRelationship& relationship : prim.GetRelationships()) {
+                SdfPathVector targets;
+                if (!relationship.GetTargets(&targets) || targets.empty())
+                    continue;
+                if (!remapPaths(targets))
+                    continue;
+                if (!relationship.SetTargets(targets)) {
+                    error = QString("failed to remap duplicated material target: %1")
+                                .arg(pathText(relationship.GetPath()));
+                    return false;
+                }
+            }
+        }
+
+        return true;
+    }
+
+
     struct DependencyPropertyState {
         SdfPath propertyPath;
         SdfLayerRefPtr snapshotLayer;
@@ -4384,7 +4444,7 @@ deletePaths(const QList<SdfPath>& inPaths)
 }
 
 Command
-duplicatePaths(const QList<SdfPath>& inPaths)
+duplicatePaths(const QList<SdfPath>& inPaths, bool selectDuplicates)
 {
     struct DuplicateState {
         struct Item {
@@ -4403,7 +4463,7 @@ duplicatePaths(const QList<SdfPath>& inPaths)
     auto state = std::make_shared<DuplicateState>();
 
     return Command(
-        [inPaths, state](Session* session) {
+        [inPaths, selectDuplicates, state](Session* session) {
             if (!session || inPaths.isEmpty())
                 return;
 
@@ -4412,7 +4472,7 @@ duplicatePaths(const QList<SdfPath>& inPaths)
 
             command::beginDeferred(session, "Duplicate paths", 1);
 
-            command::runWorker([session, inPaths, state]() {
+            command::runWorker([session, inPaths, selectDuplicates, state]() {
                 bool success = false;
                 QList<SdfPath> duplicatedPaths;
                 QList<SdfPath> changed;
@@ -4512,6 +4572,19 @@ duplicatePaths(const QList<SdfPath>& inPaths)
                                     continue;
                                 }
 
+                                // Explicitly remap connections/targets that point inside the
+                                // source material so the duplicate is a self-contained network
+                                // rather than referencing the original material hierarchy.
+                                if (prim.IsA<UsdShadeMaterial>()) {
+                                    QString remapError;
+                                    if (!remapDuplicatedMaterialConnections(stage, sourcePath, destinationPath,
+                                                                            remapError)) {
+                                        stage::removePrimSpec(editLayer, destinationPath);
+                                        errors.append(remapError);
+                                        continue;
+                                    }
+                                }
+
                                 DuplicateState::Item item;
                                 item.sourcePath = sourcePath;
                                 item.destinationPath = destinationPath;
@@ -4538,7 +4611,8 @@ duplicatePaths(const QList<SdfPath>& inPaths)
                 }
 
                 const QString errorText = summarizeErrors(errors);
-                command::queueToSession(session, [session, duplicatedPaths, changed, success, errorText]() {
+                command::queueToSession(session, [session, duplicatedPaths, changed, success, errorText,
+                                                  selectDuplicates]() {
                     using Status = Session::Notify::Status;
 
                     command::finishDeferred(session,
@@ -4548,7 +4622,7 @@ duplicatePaths(const QList<SdfPath>& inPaths)
                                                     : appendError("Duplicate paths failed", errorText),
                                             changed, success ? Status::Success : Status::Error);
 
-                    if (success)
+                    if (success && selectDuplicates)
                         session->selectionList()->updatePaths(duplicatedPaths);
                 });
             });

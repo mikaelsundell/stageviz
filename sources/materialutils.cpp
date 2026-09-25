@@ -3,6 +3,8 @@
 // https://github.com/mikaelsundell/stageviz
 
 #include "materialutils.h"
+#include <MaterialXCore/Document.h>
+#include <MaterialXFormat/XmlIo.h>
 #include <QCoreApplication>
 #include <QDebug>
 #include <QDir>
@@ -11,9 +13,11 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QRegularExpression>
+#include <QSaveFile>
 #include <QSet>
 #include <QXmlStreamReader>
 #include <algorithm>
+#include <functional>
 #include <pxr/base/gf/vec2f.h>
 #include <pxr/base/gf/vec4f.h>
 #include <pxr/base/tf/stringUtils.h>
@@ -2039,6 +2043,324 @@ MaterialUtils::importMaterialX(UsdStageRefPtr stage, const QString& filename, QL
         // contain a translatable material.
         stage->RemovePrim(importRoot);
         error = QStringLiteral("MaterialX document did not produce any USD materials.");
+        return false;
+    }
+
+    return true;
+}
+
+bool
+MaterialUtils::exportMaterialX(UsdStageRefPtr stage, const SdfPath& materialPath, const QString& filename,
+                               QString& error)
+{
+    error.clear();
+
+    if (!stage) {
+        error = QStringLiteral("No USD stage");
+        return false;
+    }
+    if (materialPath.IsEmpty() || !materialPath.IsAbsolutePath() || !materialPath.IsPrimPath()) {
+        error = QStringLiteral("Invalid material path");
+        return false;
+    }
+    if (filename.trimmed().isEmpty()) {
+        error = QStringLiteral("No export filename specified");
+        return false;
+    }
+
+    const UsdPrim materialPrim = stage->GetPrimAtPath(materialPath);
+    if (!materialPrim || !materialPrim.IsA<UsdShadeMaterial>()) {
+        error = QString("Material not found: %1").arg(QString::fromStdString(materialPath.GetString()));
+        return false;
+    }
+
+    const UsdShadeMaterial material(materialPrim);
+    QString surfaceShaderId;
+    const UsdShadeShader surface = surfaceShader(material, &surfaceShaderId);
+    if (!surface) {
+        error = QStringLiteral("Material has no connected surface shader");
+        return false;
+    }
+    if (!surfaceShaderId.startsWith(QStringLiteral("ND_"))) {
+        error = QStringLiteral("Only MaterialX materials can be exported as .mtlx files");
+        return false;
+    }
+
+    struct ExportNode {
+        UsdShadeShader shader;
+        QString shaderId;
+        MaterialXNodeDefinition definition;
+        QString name;
+    };
+
+    QList<ExportNode> nodes;
+    QHash<QString, int> nodeIndex;
+    QSet<QString> visiting;
+    QSet<QString> usedNames;
+
+    auto uniqueNodeName = [&](QString base) {
+        base = sanitizeIdentifier(base);
+        if (base.isEmpty())
+            base = QStringLiteral("Node");
+        QString result = base;
+        int suffix = 1;
+        while (usedNames.contains(result))
+            result = QStringLiteral("%1_%2").arg(base).arg(suffix++);
+        usedNames.insert(result);
+        return result;
+    };
+
+    std::function<bool(const UsdShadeShader&)> collectNode;
+    collectNode = [&](const UsdShadeShader& shader) -> bool {
+        if (!shader || !shader.GetPrim())
+            return false;
+
+        const SdfPath path = shader.GetPath();
+        const QString pathKey = QString::fromStdString(path.GetString());
+        if (nodeIndex.contains(pathKey))
+            return true;
+        if (visiting.contains(pathKey)) {
+            error = QString("MaterialX network contains a cycle at %1").arg(pathKey);
+            return false;
+        }
+
+        const QString id = shaderIdForPrim(shader.GetPrim());
+        if (!id.startsWith(QStringLiteral("ND_"))) {
+            error = QString("MaterialX export does not support non-MaterialX node %1 (%2)").arg(pathKey, id);
+            return false;
+        }
+
+        const MaterialXNodeDefinition* definition = materialXNodeDefinition(id);
+        if (!definition || definition->node.isEmpty() || definition->outputType.isEmpty()) {
+            error = QString("MaterialX NodeDef is not available for %1").arg(id);
+            return false;
+        }
+
+        visiting.insert(pathKey);
+
+        ExportNode node;
+        node.shader = shader;
+        node.shaderId = id;
+        node.definition = *definition;
+        node.name = uniqueNodeName(QString::fromStdString(shader.GetPrim().GetName().GetString()));
+
+        nodeIndex.insert(pathKey, static_cast<int>(nodes.size()));
+        nodes.append(node);
+
+        for (const UsdShadeInput& input : shader.GetInputs()) {
+            UsdShadeConnectableAPI source;
+            TfToken sourceName;
+            UsdShadeAttributeType sourceType = UsdShadeAttributeType::Output;
+            if (!resolveSource(input, &source, &sourceName, &sourceType))
+                continue;
+
+            const UsdPrim sourcePrim = source.GetPrim();
+            if (!sourcePrim || !sourcePrim.IsA<UsdShadeShader>()) {
+                error = QString("Unsupported MaterialX connection feeding %1")
+                            .arg(QString::fromStdString(input.GetAttr().GetPath().GetString()));
+                visiting.remove(pathKey);
+                return false;
+            }
+
+            if (!collectNode(UsdShadeShader(sourcePrim))) {
+                visiting.remove(pathKey);
+                return false;
+            }
+        }
+
+        visiting.remove(pathKey);
+        return true;
+    };
+
+    if (!collectNode(surface))
+        return false;
+
+    const QFileInfo outputInfo(filename);
+    const QDir outputDir(outputInfo.absolutePath());
+
+    auto inputType = [](const ExportNode& node, const UsdShadeInput& input) {
+        const QString name = QString::fromStdString(input.GetBaseName().GetString());
+        for (const MaterialXPortDefinition& port : node.definition.inputs) {
+            if (port.name == name && !port.type.isEmpty())
+                return port.type;
+        }
+
+        const SdfValueTypeName type = input.GetTypeName();
+        if (type == SdfValueTypeNames->Float)
+            return QStringLiteral("float");
+        if (type == SdfValueTypeNames->Color3f)
+            return QStringLiteral("color3");
+        if (type == SdfValueTypeNames->Color4f)
+            return QStringLiteral("color4");
+        if (type == SdfValueTypeNames->Float2)
+            return QStringLiteral("vector2");
+        if (type == SdfValueTypeNames->Float3)
+            return QStringLiteral("vector3");
+        if (type == SdfValueTypeNames->Float4)
+            return QStringLiteral("vector4");
+        if (type == SdfValueTypeNames->Int)
+            return QStringLiteral("integer");
+        if (type == SdfValueTypeNames->Bool)
+            return QStringLiteral("boolean");
+        if (type == SdfValueTypeNames->Asset)
+            return QStringLiteral("filename");
+        if (type == SdfValueTypeNames->String || type == SdfValueTypeNames->Token)
+            return QStringLiteral("string");
+        return QString();
+    };
+
+    auto valueString = [&](const UsdShadeInput& input, const QString& type, QString& value) {
+        VtValue authored;
+        if (!input.Get(&authored))
+            return false;
+
+        if (type == QStringLiteral("filename") && authored.IsHolding<SdfAssetPath>()) {
+            const SdfAssetPath asset = authored.UncheckedGet<SdfAssetPath>();
+            QString path = QString::fromStdString(asset.GetAssetPath()).trimmed();
+            if (path.isEmpty()) {
+                value.clear();
+                return true;
+            }
+
+            if (QFileInfo(path).isAbsolute() && QFileInfo::exists(path))
+                path = QDir::cleanPath(outputDir.relativeFilePath(path));
+
+            value = path;
+            return true;
+        }
+
+        value = materialXDefaultString(authored);
+        return !value.isNull();
+    };
+
+    MaterialX::DocumentPtr document;
+    try {
+        document = MaterialX::createDocument();
+    } catch (const std::exception& e) {
+        error = QString("Could not create MaterialX document: %1").arg(QString::fromUtf8(e.what()));
+        return false;
+    }
+
+    if (!document) {
+        error = QStringLiteral("Could not create MaterialX document");
+        return false;
+    }
+
+    // Create all nodes first so every connection can point at a concrete
+    // MaterialX node, independent of traversal order in the USD network.
+    QHash<QString, MaterialX::NodePtr> materialXNodes;
+    try {
+        for (const ExportNode& node : nodes) {
+            const QString pathKey = QString::fromStdString(node.shader.GetPath().GetString());
+            MaterialX::NodePtr mxNode = document->addNode(node.definition.node.toStdString(), node.name.toStdString(),
+                                                          node.definition.outputType.toStdString());
+            if (!mxNode) {
+                error = QString("Could not create MaterialX node %1").arg(node.name);
+                return false;
+            }
+
+            // Preserve the exact NodeDef used by USD. The MaterialX serializer
+            // owns the XML representation; Stageviz only supplies graph data.
+            mxNode->setNodeDefString(node.shaderId.toStdString());
+            materialXNodes.insert(pathKey, mxNode);
+        }
+
+        for (const ExportNode& node : nodes) {
+            const QString pathKey = QString::fromStdString(node.shader.GetPath().GetString());
+            const auto nodeIt = materialXNodes.constFind(pathKey);
+            if (nodeIt == materialXNodes.cend() || !nodeIt.value()) {
+                error = QString("Could not resolve MaterialX node %1").arg(node.name);
+                return false;
+            }
+
+            const MaterialX::NodePtr mxNode = nodeIt.value();
+
+            for (const UsdShadeInput& input : node.shader.GetInputs()) {
+                const QString type = inputType(node, input);
+                if (type.isEmpty())
+                    continue;
+
+                const QString name = QString::fromStdString(input.GetBaseName().GetString());
+                MaterialX::InputPtr mxInput = mxNode->addInput(name.toStdString(), type.toStdString());
+                if (!mxInput)
+                    continue;
+
+                UsdShadeConnectableAPI source;
+                TfToken sourceName;
+                UsdShadeAttributeType sourceType = UsdShadeAttributeType::Output;
+                if (resolveSource(input, &source, &sourceName, &sourceType)) {
+                    const QString sourceKey = QString::fromStdString(source.GetPrim().GetPath().GetString());
+                    const auto sourceIt = materialXNodes.constFind(sourceKey);
+                    if (sourceIt == materialXNodes.cend() || !sourceIt.value()) {
+                        error = QString("Could not resolve exported source for %1")
+                                    .arg(QString::fromStdString(input.GetAttr().GetPath().GetString()));
+                        return false;
+                    }
+
+                    mxInput->setConnectedNode(sourceIt.value());
+                    if (!sourceName.IsEmpty())
+                        mxInput->setOutputString(sourceName.GetString());
+                    continue;
+                }
+
+                QString value;
+                if (valueString(input, type, value))
+                    mxInput->setValueString(value.toStdString());
+            }
+        }
+
+        const QString materialName = sanitizeIdentifier(QString::fromStdString(materialPrim.GetName().GetString()));
+        const QString surfaceKey = QString::fromStdString(surface.GetPath().GetString());
+        const auto surfaceIt = materialXNodes.constFind(surfaceKey);
+        if (surfaceIt == materialXNodes.cend() || !surfaceIt.value()) {
+            error = QStringLiteral("Could not resolve exported surface shader");
+            return false;
+        }
+
+        MaterialX::NodePtr mxMaterial
+            = document->addNode("surfacematerial",
+                                (materialName.isEmpty() ? QStringLiteral("Material") : materialName).toStdString(),
+                                "material");
+        if (!mxMaterial) {
+            error = QStringLiteral("Could not create MaterialX surface material");
+            return false;
+        }
+
+        MaterialX::InputPtr surfaceInput = mxMaterial->addInput("surfaceshader", "surfaceshader");
+        if (!surfaceInput) {
+            error = QStringLiteral("Could not create MaterialX surface shader input");
+            return false;
+        }
+        surfaceInput->setConnectedNode(surfaceIt.value());
+
+        // Use MaterialX's own serializer. This is intentionally not hand-written
+        // XML so element categories, type attributes, escaping, and document
+        // versioning are generated by the MaterialX library itself.
+        const std::string xmlText = MaterialX::writeToXmlString(document);
+        if (xmlText.empty()) {
+            error = QStringLiteral("MaterialX serializer produced an empty document");
+            return false;
+        }
+
+        QSaveFile file(outputInfo.absoluteFilePath());
+        if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
+            error = QString("Could not write %1").arg(outputInfo.absoluteFilePath());
+            return false;
+        }
+
+        const QByteArray bytes = QByteArray::fromStdString(xmlText);
+        if (file.write(bytes) != bytes.size()) {
+            error = QString("Could not write complete MaterialX document to %1").arg(outputInfo.absoluteFilePath());
+            file.cancelWriting();
+            return false;
+        }
+
+        if (!file.commit()) {
+            error = QString("Could not finalize %1").arg(outputInfo.absoluteFilePath());
+            return false;
+        }
+    } catch (const std::exception& e) {
+        error = QString("MaterialX export failed: %1").arg(QString::fromUtf8(e.what()));
         return false;
     }
 

@@ -7,6 +7,7 @@
 #include "command.h"
 #include "commandstack.h"
 #include "materialitem.h"
+#include "messagedialog.h"
 #include "mime.h"
 #include "selectionlist.h"
 #include "settings.h"
@@ -20,6 +21,8 @@
 #include <QContextMenuEvent>
 #include <QCursor>
 #include <QDrag>
+#include <QFileDialog>
+#include <QFileInfo>
 #include <QHeaderView>
 #include <QInputDevice>
 #include <QKeyEvent>
@@ -342,7 +345,7 @@ MaterialBrowserPrivate::showContextMenu(QAbstractItemView* view, const QPoint& p
 
     const QModelIndex index = view->indexAt(position);
 
-    // Empty-space context click opens New Material directly at the cursor.
+    // Empty-space context click keeps the existing controller-owned New menu.
     if (!index.isValid()) {
         Q_EMIT d.browser->newMaterialRequested(view->viewport()->mapToGlobal(position));
         return;
@@ -358,32 +361,38 @@ MaterialBrowserPrivate::showContextMenu(QAbstractItemView* view, const QPoint& p
 
     QMenu menu(view);
 
-    QAction* assignAction = nullptr;
-    QAction* copyName = nullptr;
-    QAction* copyPath = nullptr;
-    QAction* deleteMaterial = nullptr;
+    QAction* assignAction = menu.addAction(tr("Assign"));
+    assignAction->setEnabled(hasSceneSelection);
 
-    if (index.isValid()) {
-        assignAction = menu.addAction(tr("Assign"));
-        assignAction->setEnabled(hasSceneSelection);
+    menu.addSeparator();
 
-        menu.addSeparator();
+    QAction* duplicateMaterial = menu.addAction(tr("Duplicate"));
 
-        QMenu* copy = menu.addMenu(tr("Copy"));
-        copyName = copy->addAction(tr("Name"));
-        copyPath = copy->addAction(tr("Path"));
+    menu.addSeparator();
 
-        menu.addSeparator();
-    }
+    QMenu* copy = menu.addMenu(tr("Copy"));
+    QAction* copyName = copy->addAction(tr("Name"));
+    QAction* copyPath = copy->addAction(tr("Path"));
 
-    QAction* newMaterial = menu.addAction(tr("New Material"));
+    menu.addSeparator();
 
-    if (index.isValid()) {
-        deleteMaterial = menu.addAction(tr("Delete"));
-        // Delete still operates on browser selection, so do not let a context
-        // click on an unselected row delete an unrelated previous selection.
-        deleteMaterial->setEnabled(contextMaterialSelected);
-    }
+    QMenu* exportMenu = menu.addMenu(tr("Export"));
+    QAction* exportMaterialX = exportMenu->addAction(tr("MaterialX File..."));
+    exportMaterialX->setEnabled(contextMaterial.shaderId.startsWith(QStringLiteral("ND_")));
+
+    menu.addSeparator();
+
+    QMenu* newMenu = menu.addMenu(tr("New"));
+    QAction* newPreviewSurface = newMenu->addAction(tr("USD Preview Surface"));
+    QAction* newStandardSurface = newMenu->addAction(tr("MaterialX Standard Surface"));
+    QAction* newOpenPBRSurface = newMenu->addAction(tr("MaterialX OpenPBR Surface"));
+    newMenu->addSeparator();
+    QAction* newMaterialXFile = newMenu->addAction(tr("MaterialX File..."));
+
+    QAction* deleteMaterial = menu.addAction(tr("Delete"));
+    // Delete still operates on browser selection, so an RMB click on another
+    // material must never delete the previously selected material.
+    deleteMaterial->setEnabled(contextMaterialSelected);
 
     QAction* action = menu.exec(view->viewport()->mapToGlobal(position));
     if (!action)
@@ -392,15 +401,54 @@ MaterialBrowserPrivate::showContextMenu(QAbstractItemView* view, const QPoint& p
     if (action == assignAction) {
         assignMaterial(contextMaterial);
     }
+    else if (action == duplicateMaterial) {
+        // Duplicate only the RMB material and preserve the current scene/browser selection.
+        session()->commandStack()->run(new Command(duplicatePaths({ contextMaterial.materialPath }, false)));
+    }
     else if (action == copyName) {
         QApplication::clipboard()->setText(contextMaterial.name);
     }
     else if (action == copyPath) {
         QApplication::clipboard()->setText(QString::fromStdString(contextMaterial.materialPath.GetString()));
     }
-    else if (action == newMaterial) {
-        // Preserve the click position for the follow-up New Material menu.
-        Q_EMIT d.browser->newMaterialRequested(view->viewport()->mapToGlobal(position));
+    else if (action == exportMaterialX) {
+        QString baseName = contextMaterial.name.trimmed();
+        if (baseName.isEmpty())
+            baseName = QStringLiteral("Material");
+
+        QString filename = QFileDialog::getSaveFileName(d.browser.data(), tr("Export MaterialX File"),
+                                                        baseName + QStringLiteral(".mtlx"),
+                                                        tr("MaterialX Files (*.mtlx)"));
+
+        if (!filename.isEmpty()) {
+            if (!filename.endsWith(QStringLiteral(".mtlx"), Qt::CaseInsensitive))
+                filename += QStringLiteral(".mtlx");
+
+            QString error;
+            bool success = false;
+            {
+                READ_LOCKER(locker, session()->stageLock(), "stageLock");
+                const UsdStageRefPtr stage = session()->stageUnsafe();
+                success = MaterialUtils::exportMaterialX(stage, contextMaterial.materialPath, filename, error);
+            }
+
+            if (!success) {
+                MessageDialog::warning(d.browser.data(), tr("Export MaterialX File"),
+                                       error.isEmpty() ? tr("Failed to export the material.") : error);
+            }
+        }
+    }
+    else if (action == newPreviewSurface) {
+        Q_EMIT d.browser->createMaterialRequested(QStringLiteral("UsdPreviewSurface"));
+    }
+    else if (action == newStandardSurface) {
+        Q_EMIT d.browser->createMaterialRequested(QStringLiteral("MaterialXStandardSurface"));
+    }
+    else if (action == newOpenPBRSurface) {
+        Q_EMIT d.browser->createMaterialRequested(QStringLiteral("MaterialXOpenPBRSurface"));
+    }
+    else if (action == newMaterialXFile) {
+        Q_EMIT d.browser->createMaterialRequested(QStringLiteral("MaterialXFile"));
     }
     else if (action == deleteMaterial) {
         Q_EMIT d.browser->deleteRequested();

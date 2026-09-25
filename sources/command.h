@@ -509,9 +509,12 @@ deletePaths(const QList<SdfPath>& paths);
  * selection, and mask.
  *
  * @param paths Prim paths to duplicate.
+ * @param selectDuplicates When true, select the newly-created duplicates on success.
+ *                         Set false for callers such as the material browser that
+ *                         must preserve the current scene selection.
  */
 Command
-duplicatePaths(const QList<SdfPath>& paths);
+duplicatePaths(const QList<SdfPath>& paths, bool selectDuplicates = true);
 
 /**
  * @brief Creates a command that defines a generic prim under a parent.

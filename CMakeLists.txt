@@ -278,6 +278,8 @@ if(APPLE)
         Qt6::OpenGLWidgets
         Qt6::Widgets
         Boost::python39
+        MaterialXCore
+        MaterialXFormat
         OpenImageIO::OpenImageIO
         OpenUSD::OpenUSD
         TBB::tbb
@@ -316,6 +318,8 @@ elseif(WIN32)
         Qt6::OpenGLWidgets
         Qt6::Widgets
         boost_python
+        MaterialXCore
+        MaterialXFormat
         OpenImageIO::OpenImageIO
         OpenGL::GL
         OpenUSD::OpenUSD

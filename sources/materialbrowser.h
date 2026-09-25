@@ -153,7 +153,17 @@ Q_SIGNALS:
      */
     void assignRequested();
     /**
-     * @brief Requests creation of a material through the controller.
+     * @brief Requests creation/import of a concrete material type from a context submenu.
+     *
+     * Supported values are "UsdPreviewSurface", "MaterialXStandardSurface",
+     * "MaterialXOpenPBRSurface", and "MaterialXFile".
+     */
+    void createMaterialRequested(const QString& type);
+
+    /**
+     * @brief Requests the controller-owned New Material menu at a global position.
+     *
+     * Retained for empty-space context clicks and the toolbar integration.
      */
     void newMaterialRequested(const QPoint& globalPosition = QPoint());
     /**

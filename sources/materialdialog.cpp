@@ -517,6 +517,16 @@ MaterialDialogPrivate::init()
     connect(d.ui->browserWidget, &MaterialBrowser::assignRequested, this, [this]() { applyToSelection(); });
     connect(d.ui->browserWidget, &MaterialBrowser::newMaterialRequested, this,
             [this](const QPoint& globalPosition) { showNewMaterialMenu(d.ui->browserWidget, globalPosition); });
+    connect(d.ui->browserWidget, &MaterialBrowser::createMaterialRequested, this, [this](const QString& type) {
+        if (type == QStringLiteral("UsdPreviewSurface"))
+            createPreviewSurface();
+        else if (type == QStringLiteral("MaterialXStandardSurface"))
+            createStandardSurface();
+        else if (type == QStringLiteral("MaterialXOpenPBRSurface"))
+            createOpenPBRSurface();
+        else if (type == QStringLiteral("MaterialXFile"))
+            loadMaterialX();
+    });
     connect(d.ui->browserWidget, &MaterialBrowser::deleteRequested, this, [this]() { deleteMaterials(); });
     connect(d.ui->browserWidget, &MaterialBrowser::renameRequested, this,
             [this](const SdfPath& path, const QString& name) { renameMaterial(path, name); });
@@ -551,7 +561,18 @@ MaterialDialogPrivate::init()
     connect(d.ui->tree, &MaterialTree::currentNodeChanged, this,
             [this](const SdfPath& path, const QString& name, const QString& type, const QString& shaderId) {
                 d.previewNode = path;
-                d.previewNodeInfo = d.ui->tree->currentNodeInfo();
+                d.previewNodeInfo = {};
+
+                // Resolve the preview data from the path that actually changed.
+                // Do not retain currentNodeInfo() from the previously inspected Image
+                // node when switching back to the surface shader.
+                {
+                    READ_LOCKER(locker, session()->stageLock(), "stageLock");
+                    const UsdStageRefPtr stage = session()->stageUnsafe();
+                    if (stage)
+                        d.previewNodeInfo = MaterialUtils::nodeInfo(stage, path);
+                }
+
                 updateNodeHeader(path, name, type, shaderId);
                 updatePropertySwatch();
             });
@@ -999,18 +1020,36 @@ MaterialDialogPrivate::currentGraph() const
 void
 MaterialDialogPrivate::refreshGraphs()
 {
-    for (auto it = d.graphs.begin(); it != d.graphs.end();) {
-        MaterialGraph* graph = it.value();
-        if (!graph) {
-            it = d.graphs.erase(it);
+    if (!d.tabs)
+        return;
+
+    // Walk tabs backwards because closeMaterialGraph() removes the tab and the
+    // corresponding entry from d.graphs. A material deleted from the stage must
+    // never leave an orphaned graph tab behind.
+    for (int index = d.tabs->count() - 1; index >= 0; --index) {
+        auto* graph = qobject_cast<MaterialGraph*>(d.tabs->widget(index));
+        if (!graph)
             continue;
-        }
 
         const int row = d.ui->browserWidget->rowForMaterialPath(graph->materialPath());
         const MaterialEntry* entry = d.ui->browserWidget->entry(row);
-        if (entry)
-            graph->setMaterial(*entry);
-        ++it;
+
+        if (!entry) {
+            closeMaterialGraph(index);
+            continue;
+        }
+
+        graph->setMaterial(*entry);
+        d.tabs->setTabText(index, entry->name);
+    }
+
+    // Keep the lookup clean if a graph QObject was destroyed independently of
+    // its tab for any reason.
+    for (auto it = d.graphs.begin(); it != d.graphs.end();) {
+        if (!it.value())
+            it = d.graphs.erase(it);
+        else
+            ++it;
     }
 }
 
@@ -1030,22 +1069,39 @@ MaterialDialogPrivate::selectGraphNode(const SdfPath& path)
             d.ui->browserWidget->selectRow(row);
     }
 
+    // Graph selection is authoritative for the large preview. Resolve the new
+    // node immediately so an Image-node preview can never leak into the next
+    // selected surface/helper node while MaterialTree is rebuilding.
     d.previewNode = path;
+    d.previewNodeInfo = {};
+
+    {
+        READ_LOCKER(locker, session()->stageLock(), "stageLock");
+        const UsdStageRefPtr stage = session()->stageUnsafe();
+        if (stage)
+            d.previewNodeInfo = MaterialUtils::nodeInfo(stage, path);
+    }
+
+    if (!d.previewNodeInfo.path.IsEmpty()) {
+        updateNodeHeader(d.previewNodeInfo.path, d.previewNodeInfo.name,
+                         d.previewNodeInfo.typeLabel.isEmpty() ? QStringLiteral("UsdShade node")
+                                                               : d.previewNodeInfo.typeLabel,
+                         d.previewNodeInfo.shaderId);
+    }
+
+    updatePropertySwatch();
 
     const qint64 beforeTreeMs = timer.elapsed();
     d.ui->tree->navigateToNode(path);
     const qint64 treeMs = timer.elapsed() - beforeTreeMs;
 
-    // MaterialTree already resolved this node while building the inspector.
-    const MaterialNodeInfo node = d.ui->tree->currentNodeInfo();
-    if (node.path == path)
-        d.previewNodeInfo = node;
-
     qDebug().noquote() << "[MaterialPerf][Dialog] selectGraphNode" << QString::fromStdString(path.GetString())
-                       << (node.shaderId.isEmpty() ? QStringLiteral("<unknown>") : node.shaderId) << "tree" << treeMs
-                       << "ms"
+                       << (d.previewNodeInfo.shaderId.isEmpty() ? QStringLiteral("<unknown>")
+                                                                : d.previewNodeInfo.shaderId)
+                       << "tree" << treeMs << "ms"
                        << "total" << timer.elapsed() << "ms";
 }
+
 
 void
 MaterialDialogPrivate::connectGraphSockets(const SdfPath& inputPath, const SdfPath& sourceOutputPath)
@@ -1863,6 +1919,10 @@ MaterialDialogPrivate::deleteMaterials()
     for (const MaterialEntry& material : materials)
         paths.append(material.materialPath);
 
+    // Deleting a material changes graph topology. Mark it dirty before the
+    // command runs so the next structural refresh also prunes any open tab for
+    // the removed material.
+    d.graphTopologyDirty = true;
     session()->commandStack()->run(new Command(deletePaths(paths)));
 }
 
