@@ -911,6 +911,7 @@
     <addaction name="separator"/>
     <addaction name="editSelectAll"/>
     <addaction name="editSelectInvert"/>
+    <addaction name="editSelectParent"/>
     <addaction name="menu_2"/>
     <addaction name="separator"/>
     <addaction name="editShow"/>
@@ -1729,6 +1730,14 @@
    </property>
    <property name="shortcut">
     <string>Ctrl+A</string>
+   </property>
+  </action>
+  <action name="editSelectParent">
+   <property name="text">
+    <string>Select parent</string>
+   </property>
+   <property name="shortcut">
+    <string>Alt+Up</string>
    </property>
   </action>
   <action name="editPayloadLoad">

@@ -58,6 +58,19 @@ namespace stage {
     GfBBox3d boundingBox(UsdStageRefPtr stage, const QList<SdfPath>& paths);
 
     /**
+     * @brief Returns the immediate parent path of a valid prim.
+     *
+     * Property paths are normalized to their owning prim. The pseudo-root has
+     * no parent and therefore returns an empty path.
+     *
+     * @param stage USD stage containing the prim.
+     * @param path Prim or property path to query.
+     *
+     * @return Immediate parent path, or an empty path if no valid parent exists.
+     */
+    SdfPath parentPath(UsdStageRefPtr stage, const SdfPath& path);
+
+    /**
      * @brief Returns whether a prim can be edited as a transform.
      *
      * The prim must exist, be UsdGeomXformable, not be an instance proxy,

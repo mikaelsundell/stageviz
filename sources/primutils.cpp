@@ -265,6 +265,26 @@ namespace stage {
         return bbox;
     }
 
+    SdfPath parentPath(UsdStageRefPtr stage, const SdfPath& path)
+    {
+        if (!stage || path.IsEmpty())
+            return {};
+
+        const SdfPath primPath = path.IsPropertyPath() ? path.GetPrimPath() : path;
+        if (primPath.IsEmpty() || primPath == SdfPath::AbsoluteRootPath())
+            return {};
+
+        const UsdPrim prim = stage->GetPrimAtPath(primPath);
+        if (!prim || !prim.IsValid())
+            return {};
+
+        const UsdPrim parent = prim.GetParent();
+        if (!parent)
+            return {};
+
+        return parent.GetPath();
+    }
+
     bool isTransformEditable(UsdStageRefPtr stage, const SdfPath& path)
     {
         if (!stage || path.IsEmpty() || path == SdfPath::AbsoluteRootPath())

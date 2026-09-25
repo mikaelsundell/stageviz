@@ -2000,29 +2000,6 @@ StageTree::contextMenuEvent(QContextMenuEvent* event)
 void
 StageTree::keyPressEvent(QKeyEvent* event)
 {
-    const Qt::KeyboardModifiers modifiers = event->modifiers() & ~Qt::KeypadModifier;
-
-    if (event->key() == Qt::Key_Up && modifiers == Qt::AltModifier) {
-        QTreeWidgetItem* item = currentItem();
-        if (!item) {
-            const QList<QTreeWidgetItem*> selected = selectedItems();
-            if (!selected.isEmpty())
-                item = selected.first();
-        }
-
-        if (item) {
-            QTreeWidgetItem* parent = item->parent();
-            if (parent) {
-                clearSelection();
-                parent->setSelected(true);
-                setCurrentItem(parent, PrimItem::Name);
-                scrollToItem(parent, QAbstractItemView::PositionAtCenter);
-                event->accept();
-                return;
-            }
-        }
-    }
-
     if (event->key() == Qt::Key_A && (event->modifiers() & Qt::ControlModifier)) {
         for (int i = 0; i < topLevelItemCount(); ++i)
             topLevelItem(i)->setSelected(true);

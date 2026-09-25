@@ -999,7 +999,6 @@ MaterialGraphPrivate::rebuild(bool preservePositions)
     }
     layoutNodes();
 
-    sectionTimer.restart();
     if (!previousPositions.isEmpty()) {
         const QString rootKey = QString::fromStdString(d.material.shaderPath.GetString());
         QPointF layoutOffset;
@@ -1043,7 +1042,6 @@ MaterialGraphPrivate::rebuild(bool preservePositions)
         d.pendingCreateExistingNodes.clear();
     }
 
-    sectionTimer.restart();
     d.restoringSelection = true;
     for (const QString& key : previousSelection) {
         if (GraphNodeItem* node = d.nodes.value(key))
@@ -1057,13 +1055,10 @@ MaterialGraphPrivate::rebuild(bool preservePositions)
         }
     }
     d.restoringSelection = false;
-
+    
     rebuildEdges();
-
-    sectionTimer.restart();
     applyFilter(d.ui ? d.ui->filter->text() : QString());
     updateSceneRect();
-
 
     if (d.graph && !d.viewInitialized) {
         d.viewInitialized = true;

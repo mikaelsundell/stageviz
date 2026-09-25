@@ -115,6 +115,7 @@ public Q_SLOTS:
     void copyImage();
     void selectAll();
     void selectInvert();
+    void selectParent();
     void showSelected();
     void showRecursive();
     void hideSelected();
@@ -308,6 +309,7 @@ ViewerPrivate::init()
     connect(d.ui->editCopyImage, &QAction::triggered, this, &ViewerPrivate::copyImage);
     connect(d.ui->editSelectAll, &QAction::triggered, this, &ViewerPrivate::selectAll);
     connect(d.ui->editSelectInvert, &QAction::triggered, this, &ViewerPrivate::selectInvert);
+    connect(d.ui->editSelectParent, &QAction::triggered, this, &ViewerPrivate::selectParent);
     connect(d.ui->editSelectVisibleCapture, &QAction::triggered, this, &ViewerPrivate::selectVisibleCapture);
     connect(d.ui->editSelectVisibleClear, &QAction::triggered, this, &ViewerPrivate::selectVisibleClear);
     connect(d.ui->editSelectVisibleSelect, &QAction::triggered, this, &ViewerPrivate::selectVisibleSelect);
@@ -1010,6 +1012,7 @@ ViewerPrivate::enable(bool enable)
                                 d.ui->fileExportImage,
                                 d.ui->editCopyImage,
                                 d.ui->editSelectAll,
+                                d.ui->editSelectParent,
                                 d.ui->editShowSelected,
                                 d.ui->editShowRecursive,
                                 d.ui->editHideSelected,
@@ -1582,6 +1585,40 @@ ViewerPrivate::selectInvert()
 {
     if (session()->selectionList()->paths().size())
         session()->commandStack()->run(new Command(stageviz::selectInvert()));
+}
+
+void
+ViewerPrivate::selectParent()
+{
+    const QList<SdfPath> paths = session()->selectionList()->paths();
+    if (paths.size() != 1)
+        return;
+
+    SdfPath parentPath;
+    {
+        READ_LOCKER(locker, session()->stageLock(), "stageLock");
+
+        const UsdStageRefPtr stage = session()->stageUnsafe();
+        if (!stage)
+            return;
+
+        const SdfPath selectedPath = paths.first().IsPropertyPath() ? paths.first().GetPrimPath() : paths.first();
+        if (selectedPath.IsEmpty() || selectedPath == SdfPath::AbsoluteRootPath())
+            return;
+
+        const UsdPrim prim = stage->GetPrimAtPath(selectedPath);
+        if (!prim)
+            return;
+
+        const UsdPrim parent = prim.GetParent();
+        if (!parent)
+            return;
+
+        parentPath = parent.GetPath();
+    }
+
+    if (!parentPath.IsEmpty())
+        session()->commandStack()->run(new Command(selectPaths(QList<SdfPath> { parentPath })));
 }
 
 void
@@ -2272,6 +2309,21 @@ ViewerPrivate::updateSelection(const QList<SdfPath>& paths)
 {
     const bool hasSelection = !paths.isEmpty();
     d.ui->editSelectInvert->setEnabled(hasSelection);
+
+    bool canSelectParent = false;
+    if (paths.size() == 1) {
+        READ_LOCKER(locker, session()->stageLock(), "stageLock");
+
+        const UsdStageRefPtr stage = session()->stageUnsafe();
+        if (stage) {
+            const SdfPath selectedPath = paths.first().IsPropertyPath() ? paths.first().GetPrimPath() : paths.first();
+            if (!selectedPath.IsEmpty() && selectedPath != SdfPath::AbsoluteRootPath()) {
+                const UsdPrim prim = stage->GetPrimAtPath(selectedPath);
+                canSelectParent = prim && bool(prim.GetParent());
+            }
+        }
+    }
+    d.ui->editSelectParent->setEnabled(canSelectParent);
 
     QList<QAction*> staleActions;
     for (QAction* action : d.ui->menuPayloads->actions()) {

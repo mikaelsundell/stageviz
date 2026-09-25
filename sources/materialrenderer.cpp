@@ -644,11 +644,7 @@ MaterialRendererPrivate::renderInteractiveNetwork(const SdfPath& materialPath, c
         return {};
     }
 
-
     QImage image = context.renderEngine->renderImage();
-    const qint64 renderMs = renderTimer.elapsed();
-
-    // Restore the committed network state immediately after the preview render.
     attribute = context.stage ? context.stage->GetAttributeAtPath(inputPath) : UsdAttribute();
     if (attribute) {
         if (hadValue)
