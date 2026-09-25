@@ -1393,7 +1393,8 @@ MaterialDialogPrivate::updatePropertySwatch()
 {
     const QList<MaterialEntry> entries = d.ui->browserWidget->selectedEntries();
     if (entries.size() != 1) {
-        d.ui->swatch->setMaterial(QImage(), QString());
+        d.ui->swatch->clear();
+        d.ui->swatch->setMaterialPath(QString());
         d.ui->swatch->setToolTip(QString());
         return;
     }
@@ -1401,9 +1402,9 @@ MaterialDialogPrivate::updatePropertySwatch()
     const MaterialEntry& entry = entries.first();
     const QString materialPath = QString::fromStdString(entry.materialPath.GetString());
 
-    // The preview image and drag material path are updated together. This keeps
-    // the large swatch bound to exactly the material it represents, even when
-    // the displayed image is temporarily a texture/node preview.
+    // Texture-producing nodes get a standalone 2D preview. Utility nodes such
+    // as texcoord/place2d/math nodes keep the complete rendered material swatch
+    // visible while the property editor inspects the selected node.
     const QImage texturePreview = imageNodePreview(d.previewNodeInfo);
     if (!texturePreview.isNull()) {
         d.ui->swatch->setToolTip(QString::fromStdString(d.previewNode.GetString()));
@@ -1411,24 +1412,19 @@ MaterialDialogPrivate::updatePropertySwatch()
         return;
     }
 
-    // The material's master surface shader still represents the complete
-    // material, so keep the rendered shaderball for that node.
-    if (!d.previewNode.IsEmpty() && d.previewNode != entry.shaderPath) {
-        QSize canvasSize = d.ui->swatch->size();
-        if (canvasSize.width() < 1 || canvasSize.height() < 1)
-            canvasSize = QSize(512, 320);
-
-        QImage black(canvasSize, QImage::Format_RGBA8888);
-        black.fill(Qt::black);
-        d.ui->swatch->setToolTip(QString::fromStdString(d.previewNode.GetString()));
-        d.ui->swatch->setMaterial(black, materialPath);
-        return;
-    }
-
+    // Surface nodes and all non-image utility nodes fall back to the material's
+    // rendered browser swatch. Keep the material path attached so drag/drop
+    // always represents the currently displayed material.
     const int row = d.ui->browserWidget->rowForMaterialPath(entry.materialPath);
     const QImage image = row >= 0 ? d.ui->browserWidget->swatch(row) : QImage();
 
     d.ui->swatch->setToolTip(materialPath);
+    if (image.isNull()) {
+        d.ui->swatch->clear();
+        d.ui->swatch->setMaterialPath(materialPath);
+        return;
+    }
+
     d.ui->swatch->setMaterial(image, materialPath);
 }
 

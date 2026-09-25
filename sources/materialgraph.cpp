@@ -38,6 +38,7 @@
 #include <algorithm>
 #include <cmath>
 #include <functional>
+#include <vector>
 #include <pxr/usd/usd/primRange.h>
 #include <pxr/usd/usdShade/connectableAPI.h>
 
@@ -82,7 +83,8 @@ public:
     void pan(const QPoint& delta);
     void resetView();
     void selectNode(const SdfPath& path);
-    void deleteNode(const SdfPath& path);
+    QList<SdfPath> selectedDeletableNodePaths() const;
+    void deleteNodes(const QList<SdfPath>& paths);
     bool canDeleteNode(const SdfPath& path) const;
     void createMaterialXNode(const MaterialXNodeDefinition& definition, const QPointF& scenePos);
     void createFreeNode(const QString& shaderId, const QString& nodeName, const TfToken& outputName,
@@ -407,11 +409,17 @@ protected:
             return;
         }
 
+        QList<SdfPath> deletePaths;
+        if (isSelected())
+            deletePaths = m_owner->selectedDeletableNodePaths();
+        if (deletePaths.isEmpty() && m_owner->canDeleteNode(m_path))
+            deletePaths.append(m_path);
+
         QMenu menu;
-        QAction* remove = menu.addAction(QObject::tr("Delete Node"));
-        remove->setEnabled(m_owner->canDeleteNode(m_path));
+        QAction* remove = menu.addAction(deletePaths.size() > 1 ? QObject::tr("Delete Nodes") : QObject::tr("Delete Node"));
+        remove->setEnabled(!deletePaths.isEmpty());
         if (menu.exec(event->screenPos()) == remove)
-            m_owner->deleteNode(m_path);
+            m_owner->deleteNodes(deletePaths);
         event->accept();
     }
 
@@ -958,7 +966,6 @@ MaterialGraphPrivate::rebuild(bool preservePositions)
     totalTimer.start();
     QHash<QString, QPointF> previousPositions;
     QSet<QString> previousSelection;
-    const QSet<QString> previousConnectedNodes = d.connectedNodes;
     const SdfPath previousPrimarySelection = d.selectedNode;
     for (auto it = d.nodes.cbegin(); it != d.nodes.cend(); ++it) {
         if (!it.value())
@@ -1031,17 +1038,13 @@ MaterialGraphPrivate::rebuild(bool preservePositions)
             }
         }
 
+        // Existing nodes always keep the exact user-authored position across
+        // topology changes. Connecting or disconnecting a node must never
+        // silently re-run layout for that node. Only genuinely new nodes use
+        // the automatic/pending-create placement below.
         for (auto it = previousPositions.cbegin(); it != previousPositions.cend(); ++it) {
-            GraphNodeItem* node = d.nodes.value(it.key());
-            if (!node)
-                continue;
-
-            const bool wasConnected = previousConnectedNodes.contains(it.key());
-            const bool isConnected = d.connectedNodes.contains(it.key());
-            if (wasConnected == isConnected)
+            if (GraphNodeItem* node = d.nodes.value(it.key()))
                 node->setPos(it.value());
-            else if (haveLayoutOffset && !d.pendingCreate)
-                node->setPos(node->pos() + layoutOffset);
         }
     }
     const qint64 restorePositionsMs = sectionTimer.elapsed();
@@ -1309,19 +1312,76 @@ MaterialGraphPrivate::compatibleConnection(GraphPortItem* output, GraphPortItem*
            == MaterialMenu::Compatibility::Compatible;
 }
 
+QList<SdfPath>
+MaterialGraphPrivate::selectedDeletableNodePaths() const
+{
+    QList<SdfPath> paths;
+    QSet<QString> seen;
+
+    for (QGraphicsItem* item : d.scene.selectedItems()) {
+        auto* node = dynamic_cast<GraphNodeItem*>(item);
+        if (!node || !canDeleteNode(node->path()))
+            continue;
+
+        const SdfPath path = node->path();
+        const QString key = QString::fromStdString(path.GetString());
+        if (seen.contains(key))
+            continue;
+
+        seen.insert(key);
+        paths.append(path);
+    }
+
+    std::sort(paths.begin(), paths.end(), [](const SdfPath& a, const SdfPath& b) {
+        return a.GetString() < b.GetString();
+    });
+    return paths;
+}
+
+void
+MaterialGraphPrivate::deleteNodes(const QList<SdfPath>& paths)
+{
+    if (!d.graph || paths.isEmpty())
+        return;
+
+    QList<SdfPath> filtered;
+    QSet<QString> seen;
+    for (const SdfPath& path : paths) {
+        if (!canDeleteNode(path))
+            continue;
+
+        const QString key = QString::fromStdString(path.GetString());
+        if (seen.contains(key))
+            continue;
+
+        seen.insert(key);
+        filtered.append(path);
+    }
+
+    if (filtered.isEmpty())
+        return;
+
+    auto commands = std::make_shared<std::vector<Command>>();
+    commands->reserve(static_cast<size_t>(filtered.size()));
+    for (const SdfPath& path : filtered)
+        commands->push_back(deleteShaderNode(path));
+
+    session()->commandStack()->run(new Command(
+        [commands](Session* activeSession) {
+            for (Command& command : *commands)
+                command.execute(activeSession);
+        },
+        [commands](Session* activeSession) {
+            for (auto it = commands->rbegin(); it != commands->rend(); ++it)
+                it->undo(activeSession);
+        }));
+}
+
+
 bool
 MaterialGraphPrivate::canDeleteNode(const SdfPath& path) const
 {
     return !path.IsEmpty() && path != d.material.shaderPath;
-}
-
-void
-MaterialGraphPrivate::deleteNode(const SdfPath& path)
-{
-    if (!d.graph || !canDeleteNode(path))
-        return;
-
-    session()->commandStack()->run(new Command(deleteShaderNode(path)));
 }
 
 void
@@ -1641,7 +1701,8 @@ MaterialGraph::eventFilter(QObject* object, QEvent* event)
     if (event->type() == QEvent::ShortcutOverride) {
         auto* key = static_cast<QKeyEvent*>(event);
         if (key->modifiers() == Qt::NoModifier
-            && (key->key() == Qt::Key_A || key->key() == Qt::Key_F || key->key() == Qt::Key_R)) {
+            && (key->key() == Qt::Key_A || key->key() == Qt::Key_F || key->key() == Qt::Key_R
+                || key->key() == Qt::Key_Delete || key->key() == Qt::Key_Backspace)) {
             event->accept();
             return true;
         }
@@ -1662,6 +1723,11 @@ MaterialGraph::eventFilter(QObject* object, QEvent* event)
             }
             if (key->key() == Qt::Key_R) {
                 rebuild();
+                event->accept();
+                return true;
+            }
+            if (key->key() == Qt::Key_Delete || key->key() == Qt::Key_Backspace) {
+                p->deleteNodes(p->selectedDeletableNodePaths());
                 event->accept();
                 return true;
             }
