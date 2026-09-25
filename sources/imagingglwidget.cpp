@@ -28,6 +28,7 @@
 #include <QElapsedTimer>
 #include <QFontDatabase>
 #include <QInputDevice>
+#include <QKeyEvent>
 #include <QLocale>
 #include <QMimeData>
 #include <QMouseEvent>
@@ -156,6 +157,8 @@ public:
         bool sweep;
         bool transformEnabled;
         bool transformDragging;
+        bool transformSnap;
+        bool transformUniformScale;
         bool suppressContextMenu;
         int transformHoverAxis;
         int transformActiveAxis;
@@ -215,6 +218,8 @@ ImagingGLWidgetPrivate::init()
     d.sweep = false;
     d.transformEnabled = false;
     d.transformDragging = false;
+    d.transformSnap = false;
+    d.transformUniformScale = false;
     d.suppressContextMenu = false;
     d.transformHoverAxis = 0;
     d.transformActiveAxis = 0;
@@ -378,6 +383,8 @@ ImagingGLWidgetPrivate::close()
     d.drag = false;
     d.sweep = false;
     d.transformDragging = false;
+    d.transformSnap = false;
+    d.transformUniformScale = false;
     d.suppressContextMenu = false;
     d.transformHoverAxis = 0;
     d.transformActiveAxis = 0;
@@ -762,16 +769,20 @@ ImagingGLWidgetPrivate::mousePressEvent(QMouseEvent* event)
         d.sweep = false;
         d.transformDragging = false;
     }
-    else if (event->button() == Qt::LeftButton && beginTransformDrag(event->position())) {
-        d.drag = false;
-        d.sweep = false;
-    }
     else if (event->button() == Qt::LeftButton) {
-        d.drag = false;
-        d.sweep = true;
-        d.start = event->pos();
-        d.end = event->pos();
-        d.glwidget->update();
+        d.transformSnap = bool(event->modifiers() & Qt::ControlModifier);
+        d.transformUniformScale = bool(event->modifiers() & Qt::ShiftModifier);
+        if (beginTransformDrag(event->position())) {
+            d.drag = false;
+            d.sweep = false;
+        }
+        else {
+            d.drag = false;
+            d.sweep = true;
+            d.start = event->pos();
+            d.end = event->pos();
+            d.glwidget->update();
+        }
     }
     d.mousepos = event->pos();
 }
@@ -799,6 +810,8 @@ ImagingGLWidgetPrivate::mouseMoveEvent(QMouseEvent* event)
         d.glwidget->update();
     }
     else if (d.transformDragging) {
+        d.transformSnap = bool(event->modifiers() & Qt::ControlModifier);
+        d.transformUniformScale = bool(event->modifiers() & Qt::ShiftModifier);
         updateTransformDrag(event->position());
     }
     else if (d.sweep) {
@@ -824,6 +837,8 @@ ImagingGLWidgetPrivate::mouseReleaseEvent(QMouseEvent* event)
         d.glwidget->update();
     }
     else if (d.transformDragging) {
+        d.transformSnap = bool(event->modifiers() & Qt::ControlModifier);
+        d.transformUniformScale = bool(event->modifiers() & Qt::ShiftModifier);
         updateTransformDrag(event->position());
         endTransformDrag();
     }
@@ -995,6 +1010,18 @@ ImagingGLWidgetPrivate::sweepEvent(const QRect& rect, QMouseEvent* event)
 bool
 ImagingGLWidgetPrivate::eventFilter(QObject* object, QEvent* event)
 {
+    if (object == d.glwidget && event && d.transformDragging
+        && (event->type() == QEvent::KeyPress || event->type() == QEvent::KeyRelease)) {
+        auto* keyEvent = static_cast<QKeyEvent*>(event);
+        if (keyEvent->key() == Qt::Key_Control) {
+            d.transformSnap = event->type() == QEvent::KeyPress;
+            updateTransformDrag(QPointF(d.mousepos));
+        }
+        else if (keyEvent->key() == Qt::Key_Shift) {
+            d.transformUniformScale = event->type() == QEvent::KeyPress;
+            updateTransformDrag(QPointF(d.mousepos));
+        }
+    }
 #ifdef Q_OS_MAC
     if (object == d.glwidget && event && event->type() == QEvent::NativeGesture) {
         auto* gesture = static_cast<QNativeGestureEvent*>(event);
@@ -1877,8 +1904,13 @@ ImagingGLWidgetPrivate::updateTransformDrag(const QPointF& pos)
         const GfVec3d right = cameraTransform.TransformDir(GfVec3d::XAxis()).GetNormalized();
         const GfVec3d up = cameraTransform.TransformDir(GfVec3d::YAxis()).GetNormalized();
         constexpr double degreesPerPixel = 0.35;
-        const double horizontalAngle = mouseDelta.x() * degreesPerPixel;
-        const double verticalAngle = mouseDelta.y() * degreesPerPixel;
+        constexpr double snapDegrees = 15.0;
+        double horizontalAngle = mouseDelta.x() * degreesPerPixel;
+        double verticalAngle = mouseDelta.y() * degreesPerPixel;
+        if (d.transformSnap) {
+            horizontalAngle = std::round(horizontalAngle / snapDegrees) * snapDegrees;
+            verticalAngle = std::round(verticalAngle / snapDegrees) * snapDegrees;
+        }
         GfMatrix4d toOrigin(1.0);
         GfMatrix4d horizontalRotation(1.0);
         GfMatrix4d verticalRotation(1.0);
@@ -1915,7 +1947,13 @@ ImagingGLWidgetPrivate::updateTransformDrag(const QPointF& pos)
         const QPointF screenAxis = projectedAxis / projectedLength;
         const double pixels = QPointF::dotProduct(pos - d.transformStart, screenAxis);
         const double worldPerScreenPixel = probeDistance / projectedLength;
-        const GfVec3d delta = axis * (pixels * worldPerScreenPixel);
+        double distance = pixels * worldPerScreenPixel;
+        if (d.transformSnap) {
+            const int axisIndex = d.transformActiveAxis - 1;
+            const double target = d.transformStartPivot[axisIndex] + distance;
+            distance = std::round(target) - d.transformStartPivot[axisIndex];
+        }
+        const GfVec3d delta = axis * distance;
         for (qsizetype i = 0; i < d.transformAfter.size(); ++i) {
             GfMatrix4d matrix = d.transformBefore.at(i);
             matrix.SetTranslateOnly(d.transformBefore.at(i).ExtractTranslation() + delta);
@@ -1936,12 +1974,18 @@ ImagingGLWidgetPrivate::updateTransformDrag(const QPointF& pos)
         while (deltaAngle < -Pi)
             deltaAngle += 2.0 * Pi;
 
+        double degrees = deltaAngle * 180.0 / Pi;
+        if (d.transformSnap) {
+            constexpr double snapDegrees = 15.0;
+            degrees = std::round(degrees / snapDegrees) * snapDegrees;
+        }
+
         const GfVec3d axis = transformAxisVector(axisIndex);
         GfMatrix4d toOrigin(1.0);
         GfMatrix4d rotation(1.0);
         GfMatrix4d fromOrigin(1.0);
         toOrigin.SetTranslate(-d.transformStartPivot);
-        rotation.SetRotate(GfRotation(axis, deltaAngle * 180.0 / Pi));
+        rotation.SetRotate(GfRotation(axis, degrees));
         fromOrigin.SetTranslate(d.transformStartPivot);
         const GfMatrix4d delta = toOrigin * rotation * fromOrigin;
         for (qsizetype i = 0; i < d.transformAfter.size(); ++i) {
@@ -1956,9 +2000,17 @@ ImagingGLWidgetPrivate::updateTransformDrag(const QPointF& pos)
             return;
 
         const double pixels = QPointF::dotProduct(pos - d.transformStart, screenAxis);
-        const double factor = std::clamp(std::exp(pixels * 0.01), 0.01, 100.0);
+        double factor = std::clamp(std::exp(pixels * 0.01), 0.01, 100.0);
+        if (d.transformSnap) {
+            constexpr double snapScale = 0.1;
+            factor = std::round(factor / snapScale) * snapScale;
+            factor = std::clamp(factor, 0.01, 100.0);
+        }
         GfVec3d scale(1.0);
-        scale[axisIndex - 1] = factor;
+        if (d.transformUniformScale)
+            scale = GfVec3d(factor);
+        else
+            scale[axisIndex - 1] = factor;
         GfMatrix4d toOrigin(1.0);
         GfMatrix4d scaleMatrix(1.0);
         GfMatrix4d fromOrigin(1.0);
@@ -1995,6 +2047,8 @@ ImagingGLWidgetPrivate::endTransformDrag()
     const QList<TransformRootState> rootBefore = d.transformRootBefore;
 
     d.transformDragging = false;
+    d.transformSnap = false;
+    d.transformUniformScale = false;
     d.transformActiveAxis = 0;
     d.transformHoverAxis = 0;
     d.transformPaths.clear();
@@ -2115,7 +2169,9 @@ ImagingGLWidgetPrivate::drawTransformTransform(QPainter& painter)
             continue;
         QColor color = colors[axis];
         const int handle = axis + 6;
-        if (handle == d.transformHoverAxis || handle == d.transformActiveAxis)
+        const bool uniformScaleActive = d.transformDragging && d.transformUniformScale && d.transformActiveAxis >= 7
+                                        && d.transformActiveAxis <= 9;
+        if (uniformScaleActive || handle == d.transformHoverAxis || handle == d.transformActiveAxis)
             color = style()->color(Style::ColorRole::Selection);
         const QPointF p = center + dir * scaleDistance;
         painter.setPen(QPen(QColor(20, 20, 20, 190), 1.0));

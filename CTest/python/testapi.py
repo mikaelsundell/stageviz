@@ -1264,6 +1264,12 @@ def test_command_api():
         "reset_pivots",
         "reset_transforms",
         "identity_transforms",
+        "connect_shader_input",
+        "connect_shader_node",
+        "reset_dependencies",
+        "disconnect_shader_inputs",
+        "reset_shader_inputs",
+        "connect_materialx_node",
         "bind_material",
         "merge_stage",
         "merge_flattened_stage",
@@ -1825,6 +1831,335 @@ def test_bind_material():
                 and bound_material("/World/B") == material_path
             ),
             "redo bind_material restores bindings",
+        )
+
+
+
+def _shader_input(path):
+    attribute = _stage().GetAttributeAtPath(Sdf.Path(path)) if _stage() else None
+    if not attribute:
+        return None
+    return UsdShade.Input(attribute)
+
+
+def _connected_source(input_value):
+    if not input_value:
+        return None
+    try:
+        return input_value.GetConnectedSource()
+    except Exception:
+        return None
+
+
+def _connected_source_path(input_value):
+    source = _connected_source(input_value)
+    if not source:
+        return ""
+    try:
+        return str(source[0].GetPrim().GetPath())
+    except Exception:
+        return ""
+
+
+def _connected_source_name(input_value):
+    source = _connected_source(input_value)
+    if not source:
+        return ""
+    try:
+        return str(source[1])
+    except Exception:
+        return ""
+
+
+def _ensure_preview_material(path="/World/Looks/GraphMaterial"):
+    stage = _stage()
+    if not stage:
+        return None, None
+
+    parent = str(Sdf.Path(path).GetParentPath())
+    if parent and parent != "/" and not _exists(parent):
+        UsdGeom.Scope.Define(stage, parent)
+
+    material = UsdShade.Material.Get(stage, path)
+    if not material:
+        material = UsdShade.Material.Define(stage, path)
+
+    shader_path = f"{path}/PreviewSurface"
+    shader = UsdShade.Shader.Get(stage, shader_path)
+    if not shader:
+        shader = UsdShade.Shader.Define(stage, shader_path)
+        shader.CreateIdAttr("UsdPreviewSurface")
+        shader.CreateInput("diffuseColor", Sdf.ValueTypeNames.Color3f).Set(
+            Gf.Vec3f(0.18, 0.18, 0.18)
+        )
+        shader.CreateInput("roughness", Sdf.ValueTypeNames.Float).Set(0.5)
+        shader.CreateOutput("surface", Sdf.ValueTypeNames.Token)
+        material.CreateSurfaceOutput().ConnectToSource(
+            shader.ConnectableAPI(),
+            "surface",
+        )
+
+    return material, shader
+
+
+def _ensure_standard_surface_material(path="/World/Looks/StandardGraphMaterial"):
+    stage = _stage()
+    if not stage:
+        return None, None
+
+    parent = str(Sdf.Path(path).GetParentPath())
+    if parent and parent != "/" and not _exists(parent):
+        UsdGeom.Scope.Define(stage, parent)
+
+    material = UsdShade.Material.Get(stage, path)
+    if not material:
+        material = UsdShade.Material.Define(stage, path)
+
+    shader_path = f"{path}/StandardSurface"
+    shader = UsdShade.Shader.Get(stage, shader_path)
+    if not shader:
+        shader = UsdShade.Shader.Define(stage, shader_path)
+        shader.CreateIdAttr("ND_standard_surface_surfaceshader")
+        shader.CreateInput("base", Sdf.ValueTypeNames.Float).Set(1.0)
+        shader.CreateInput("base_color", Sdf.ValueTypeNames.Color3f).Set(
+            Gf.Vec3f(0.18, 0.18, 0.18)
+        )
+        shader.CreateOutput("out", Sdf.ValueTypeNames.Token)
+        material.CreateSurfaceOutput("mtlx").ConnectToSource(
+            shader.ConnectableAPI(),
+            "out",
+        )
+
+    return material, shader
+
+
+def test_material_shader_commands():
+    required = (
+        "connect_shader_input",
+        "connect_shader_node",
+        "reset_dependencies",
+        "disconnect_shader_inputs",
+        "reset_shader_inputs",
+        "connect_materialx_node",
+    )
+    missing = [name for name in required if not _has_command(name)]
+    _assert(
+        not missing,
+        "material shader command API is exposed"
+        + (f": missing {missing}" if missing else ""),
+    )
+    if missing:
+        return
+
+    stage = _stage()
+    material, preview = _ensure_preview_material()
+    _assert(bool(material and preview), "preview material fixture is available")
+    if not material or not preview:
+        return
+
+    diffuse = preview.GetInput("diffuseColor")
+    roughness = preview.GetInput("roughness")
+    _assert(bool(diffuse and roughness), "preview shader exposes material test inputs")
+    if not diffuse or not roughness:
+        return
+
+    # Existing compatible output -> input connection.
+    color_source = UsdShade.Shader.Define(stage, "/World/Looks/GraphMaterial/ColorSource")
+    color_source.CreateIdAttr("StagevizTestColorSource")
+    color_output = color_source.CreateOutput("out", Sdf.ValueTypeNames.Color3f)
+    color_output.Set(Gf.Vec3f(0.25, 0.5, 0.75))
+
+    diffuse_path = str(diffuse.GetAttr().GetPath())
+    color_output_path = str(color_output.GetAttr().GetPath())
+
+    stageviz.command.connect_shader_input(diffuse_path, color_output_path)
+    _assert(
+        _wait_until(lambda: _connected_source_path(diffuse) == str(color_source.GetPath())),
+        "connect_shader_input connects an exact Color3f output",
+    )
+    _assert_equal(
+        _connected_source_name(diffuse),
+        "out",
+        "connect_shader_input preserves source output name",
+    )
+
+    if _undo():
+        _assert(
+            _wait_until(lambda: _connected_source_path(diffuse) == ""),
+            "undo connect_shader_input restores disconnected input",
+        )
+    if _redo():
+        _assert(
+            _wait_until(lambda: _connected_source_path(diffuse) == str(color_source.GetPath())),
+            "redo connect_shader_input restores connection",
+        )
+
+    # Disconnect is independently undoable.
+    stageviz.command.disconnect_shader_inputs([diffuse_path])
+    _assert(
+        _wait_until(lambda: _connected_source_path(diffuse) == ""),
+        "disconnect_shader_inputs removes incoming connection",
+    )
+    if _undo():
+        _assert(
+            _wait_until(lambda: _connected_source_path(diffuse) == str(color_source.GetPath())),
+            "undo disconnect_shader_inputs restores source",
+        )
+
+    # reset_dependencies clears authored connections on the property and is undoable.
+    stageviz.command.reset_dependencies([diffuse_path])
+    _assert(
+        _wait_until(lambda: _connected_source_path(diffuse) == ""),
+        "reset_dependencies clears shader input connection",
+    )
+    if _undo():
+        _assert(
+            _wait_until(lambda: _connected_source_path(diffuse) == str(color_source.GetPath())),
+            "undo reset_dependencies restores shader input connection",
+        )
+
+    # Create a Preview Surface texture node through the same command used by the UI.
+    stageviz.command.disconnect_shader_inputs([diffuse_path])
+    _wait_until(lambda: _connected_source_path(diffuse) == "")
+    texture_path = "/World/Looks/GraphMaterial/TestTexture"
+    stageviz.command.connect_shader_node(
+        diffuse_path,
+        "UsdUVTexture",
+        "TestTexture",
+        "rgb",
+    )
+    _assert(
+        _wait_until(lambda: _exists(texture_path) and _connected_source_path(diffuse) == texture_path),
+        "connect_shader_node creates and connects UsdUVTexture RGB to Color3f",
+    )
+    texture = UsdShade.Shader(_prim(texture_path)) if _exists(texture_path) else None
+    texture_id = texture.GetIdAttr().Get() if texture else None
+    _assert_equal(
+        str(texture_id) if texture_id is not None else "",
+        "UsdUVTexture",
+        "connect_shader_node authors requested shader id",
+    )
+    if _undo():
+        _assert(
+            _wait_until(lambda: not _exists(texture_path) and _connected_source_path(diffuse) == ""),
+            "undo connect_shader_node removes helper node and connection",
+        )
+    if _redo():
+        _assert(
+            _wait_until(lambda: _exists(texture_path) and _connected_source_path(diffuse) == texture_path),
+            "redo connect_shader_node recreates helper node and connection",
+        )
+
+    # Regression guard for the Storm crash: generic Float3 must not connect to Color3f.
+    stageviz.command.disconnect_shader_inputs([diffuse_path])
+    _wait_until(lambda: _connected_source_path(diffuse) == "")
+    invalid_path = "/World/Looks/GraphMaterial/InvalidFloat3"
+    stageviz.command.connect_shader_node(
+        diffuse_path,
+        "UsdPrimvarReader_float3",
+        "InvalidFloat3",
+        "result",
+    )
+    _wait(150)
+    _assert(
+        not _exists(invalid_path),
+        "incompatible Float3 helper node is not authored for Color3f input",
+    )
+    _assert_equal(
+        _connected_source_path(diffuse),
+        "",
+        "incompatible Float3 -> Color3f connection is rejected",
+    )
+
+    # Reset authored shader input values and verify undo restores them.
+    roughness.Set(0.37)
+    roughness_path = str(roughness.GetAttr().GetPath())
+    _assert(bool(roughness.GetAttr().HasAuthoredValueOpinion()), "roughness has authored value before reset")
+    stageviz.command.reset_shader_inputs([roughness_path])
+    _assert(
+        _wait_until(lambda: not roughness.GetAttr().HasAuthoredValueOpinion()),
+        "reset_shader_inputs clears authored shader value",
+    )
+    if _undo():
+        _assert(
+            _wait_until(
+                lambda: roughness.GetAttr().HasAuthoredValueOpinion()
+                and abs(float(roughness.Get()) - 0.37) < 1e-6
+            ),
+            "undo reset_shader_inputs restores authored shader value",
+        )
+
+    # MaterialX-specific create/connect path. A scalar image node is valid for Standard Surface base.
+    standard_material, standard = _ensure_standard_surface_material()
+    _assert(bool(standard_material and standard), "MaterialX Standard Surface fixture is available")
+    if standard_material and standard:
+        base_input = standard.GetInput("base")
+        base_path = str(base_input.GetAttr().GetPath())
+        image_path = "/World/Looks/StandardGraphMaterial/BaseImage"
+        stageviz.command.connect_materialx_node(
+            base_path,
+            "ND_image_float",
+            "BaseImage",
+        )
+        _assert(
+            _wait_until(lambda: _exists(image_path) and _connected_source_path(base_input) == image_path),
+            "connect_materialx_node connects ND_image_float to float base input",
+        )
+        image_shader = UsdShade.Shader(_prim(image_path)) if _exists(image_path) else None
+        image_id = image_shader.GetIdAttr().Get() if image_shader else None
+        _assert_equal(
+            str(image_id) if image_id is not None else "",
+            "ND_image_float",
+            "connect_materialx_node authors requested NodeDef id",
+        )
+        if _undo():
+            _assert(
+                _wait_until(lambda: not _exists(image_path) and _connected_source_path(base_input) == ""),
+                "undo connect_materialx_node removes node and connection",
+            )
+
+
+def test_material_binding_hierarchy():
+    if not _has_command("bind_material"):
+        print("[skip] bind_material is not bound")
+        return
+
+    stage = _stage()
+    material, _ = _ensure_preview_material("/World/Looks/HierarchyMaterial")
+    _assert(bool(material), "hierarchy material fixture is available")
+    if not material:
+        return
+
+    root_path = "/World/MaterialBindingRoot"
+    child_path = root_path + "/Child"
+    UsdGeom.Xform.Define(stage, root_path)
+    UsdGeom.Cube.Define(stage, child_path)
+
+    material_path = str(material.GetPath())
+    stageviz.command.bind_material([root_path, child_path], material_path)
+
+    def bound_material(path):
+        prim = _prim(path)
+        if not prim:
+            return ""
+        bound, _ = UsdShade.MaterialBindingAPI(prim).ComputeBoundMaterial()
+        return str(bound.GetPath()) if bound else ""
+
+    _assert(
+        _wait_until(
+            lambda: bound_material(root_path) == material_path
+            and bound_material(child_path) == material_path
+        ),
+        "bind_material applies material to every explicitly requested hierarchy path",
+    )
+
+    if _undo():
+        _assert(
+            _wait_until(
+                lambda: bound_material(root_path) != material_path
+                and bound_material(child_path) != material_path
+            ),
+            "undo hierarchy material binding restores previous bindings",
         )
 
 
@@ -5989,6 +6324,8 @@ def run():
         ("new scope", test_new_scope, ()),
         ("new material", test_new_material, ()),
         ("bind material", test_bind_material, ()),
+        ("material shader commands", test_material_shader_commands, ()),
+        ("material binding hierarchy", test_material_binding_hierarchy, ()),
         ("new reference", test_new_reference, (external,)),
         ("new reference default prim", test_new_reference_default_prim, (external,)),
         ("new payload", test_new_payload, (external,)),

@@ -37,6 +37,7 @@ public:
      * @brief Replaces the preview image and schedules repainting.
      */
     void setImage(const QImage& image);
+    
     /**
      * @brief Returns the current preview image.
      */
@@ -46,6 +47,7 @@ public:
      * @brief Replaces the preview using a Qt pixmap.
      */
     void setPixmap(const QPixmap& pixmap);
+    
     /**
      * @brief Removes the current preview.
      */
@@ -55,6 +57,7 @@ public:
      * @brief Returns the preferred preview size.
      */
     QSize sizeHint() const override;
+    
     /**
      * @brief Returns the minimum preview size for layout negotiation.
      */

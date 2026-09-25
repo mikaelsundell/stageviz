@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <ui version="4.0">
- <class>MaterialBrowser</class>
- <widget class="QWidget" name="MaterialBrowser">
+ <class>MaterialGraph</class>
+ <widget class="QWidget" name="MaterialGraph">
   <property name="geometry">
    <rect>
     <x>0</x>
@@ -9,6 +9,12 @@
     <width>620</width>
     <height>600</height>
    </rect>
+  </property>
+  <property name="sizePolicy">
+   <sizepolicy hsizetype="Expanding" vsizetype="Expanding">
+    <horstretch>0</horstretch>
+    <verstretch>0</verstretch>
+   </sizepolicy>
   </property>
   <layout class="QVBoxLayout" name="verticalLayout">
    <property name="spacing">
@@ -27,7 +33,7 @@
     <number>0</number>
    </property>
    <item>
-    <widget class="QWidget" name="widget" native="true">
+    <widget class="QWidget" name="filterBar" native="true">
      <property name="minimumSize">
       <size>
        <width>0</width>
@@ -39,13 +45,13 @@
        <number>4</number>
       </property>
       <property name="leftMargin">
-       <number>0</number>
+       <number>4</number>
       </property>
       <property name="topMargin">
-       <number>0</number>
+       <number>4</number>
       </property>
       <property name="rightMargin">
-       <number>0</number>
+       <number>4</number>
       </property>
       <property name="bottomMargin">
        <number>0</number>
@@ -53,7 +59,7 @@
       <item>
        <widget class="QLineEdit" name="filter">
         <property name="placeholderText">
-         <string>Filter materials...</string>
+         <string>Filter nodes...</string>
         </property>
        </widget>
       </item>
@@ -64,51 +70,21 @@
         </property>
        </widget>
       </item>
-      <item>
-       <widget class="QToolButton" name="view">
-        <property name="toolTip">
-         <string>View</string>
-        </property>
-       </widget>
-      </item>
      </layout>
     </widget>
    </item>
    <item>
-    <widget class="QStackedWidget" name="stackedWidget">
-     <property name="currentIndex">
-      <number>0</number>
+    <widget class="QGraphicsView" name="graph">
+     <property name="sizePolicy">
+      <sizepolicy hsizetype="Expanding" vsizetype="Expanding">
+       <horstretch>0</horstretch>
+       <verstretch>1</verstretch>
+      </sizepolicy>
      </property>
-     <widget class="QTreeWidget" name="details">
-      <column>
-       <property name="text">
-        <string>Name</string>
-       </property>
-      </column>
-      <column>
-       <property name="text">
-        <string>Type</string>
-       </property>
-      </column>
-      <column>
-       <property name="text">
-        <string>Path</string>
-       </property>
-      </column>
-     </widget>
-     <widget class="stageviz::MaterialList" name="icons"/>
-     <widget class="stageviz::MaterialList" name="list"/>
     </widget>
    </item>
   </layout>
  </widget>
- <customwidgets>
-  <customwidget>
-   <class>stageviz::MaterialList</class>
-   <extends>QListWidget</extends>
-   <header>../../../sources/materiallist.h</header>
-  </customwidget>
- </customwidgets>
  <resources/>
  <connections/>
 </ui>

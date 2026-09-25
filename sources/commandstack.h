@@ -19,7 +19,10 @@ class CommandStackPrivate;
  *
  * Implements a command stack used to execute operations that modify
  * the scene or application state. Commands are stored in a history
- * allowing them to be undone or redone.
+ * allowing them to be undone or redone. History is tied to the active
+ * Session stage and edit target. Edit-layer commands synchronize that context
+ * as part of execution, while edit-target changes made outside the command
+ * model still invalidate history safely.
  *
  * The stack integrates with Session and SelectionModel so commands
  * can interact with the currently loaded USD stage and selection.

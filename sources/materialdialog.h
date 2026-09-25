@@ -32,12 +32,6 @@ public:
      */
     virtual ~MaterialDialog();
 
-protected:
-    /**
-     * @brief Refreshes material presentation when the dialog becomes visible.
-     */
-    void showEvent(QShowEvent* event) override;
-
 private:
     QScopedPointer<MaterialDialogPrivate> p;
 };

@@ -10,10 +10,13 @@
 #include <pxr/base/tf/token.h>
 #include <pxr/base/vt/value.h>
 #include <pxr/usd/sdf/path.h>
+#include <pxr/usd/sdf/types.h>
 
 PXR_NAMESPACE_USING_DIRECTIVE
 
 namespace stageviz {
+
+struct MaterialXNodeDefinition;
 
 /**
  * @class Command
@@ -146,6 +149,40 @@ bindMaterial(const QList<SdfPath>& paths, const SdfPath& materialPath);
  * @param propertyPaths Relationship or attribute property paths to reset.
  * @return Undoable dependency-reset command.
  */
+/** Break incoming shader-input connections while preserving the input property. */
+Command
+disconnectShaderInputs(const QList<SdfPath>& inputPaths);
+
+/** Connect an existing shader output to an existing shader input. */
+Command
+connectShaderInput(const SdfPath& inputPath, const SdfPath& sourceOutputPath);
+
+/** Remove edit-layer shader-input opinions so weaker/default values are exposed. */
+Command
+resetShaderInputs(const QList<SdfPath>& inputPaths);
+
+/** Create a shader node and connect one of its outputs to an input. */
+Command
+connectShaderNode(const SdfPath& inputPath, const QString& shaderId, const QString& nodeName,
+                  const TfToken& outputName);
+
+/** Create a MaterialX shader node and connect its out output to an input. */
+Command
+connectMaterialXNode(const SdfPath& inputPath, const QString& nodeDef, const QString& nodeName);
+
+/** Create a free shader node below a material without connecting it. */
+Command
+newShaderNode(const SdfPath& materialPath, const QString& shaderId, const QString& nodeName, const TfToken& outputName,
+              const SdfValueTypeName& outputType);
+
+/** Create a free MaterialX node below a material without connecting it. */
+Command
+newMaterialXNode(const SdfPath& materialPath, const MaterialXNodeDefinition& definition);
+
+/** Delete a shader node, preserving weaker composed nodes through an inactive override. */
+Command
+deleteShaderNode(const SdfPath& nodePath);
+
 Command
 resetDependencies(const QList<SdfPath>& propertyPaths);
 
@@ -394,6 +431,19 @@ hidePaths(const QList<SdfPath>& paths, bool recursive);
  */
 Command
 stageUp(Session::StageUp stageUp);
+
+/**
+ * @brief Creates a command that changes the active edit layer.
+ *
+ * The target layer must already be a local layer of the current stage. The
+ * layer is addressed by its SdfLayer identifier so the same command can be
+ * exposed cleanly to Python. Undo restores the previously active edit layer.
+ *
+ * @param layerIdentifier Identifier of a local SdfLayer in the current stage.
+ * @return Undoable edit-layer selection command.
+ */
+Command
+setEditLayer(const QString& layerIdentifier);
 
 /**
  * @brief Creates a command that sets the stage default prim.

@@ -1710,11 +1710,10 @@ Session::setEditLayer(const SdfLayerHandle& layer)
         changedLayer = target.GetLayer();
     }
 
-    // Commands author against the stage's current edit target. Do not let
-    // undo/redo history cross an edit-target change.
-    if (p->d.commandStack)
-        p->d.commandStack->clear();
-
+    // CommandStack tracks the active edit target. A change made through an
+    // undoable command is absorbed by the stack after execute/undo/redo, while
+    // an external edit-target change is detected and invalidates history on the
+    // next stack operation. Do not clear history here.
     Q_EMIT editLayerChanged(changedLayer);
     return true;
 }

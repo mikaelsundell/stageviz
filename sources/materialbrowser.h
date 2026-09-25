@@ -135,6 +135,12 @@ Q_SIGNALS:
      */
     void selectionChanged();
     /**
+     * @brief Emitted when a material is activated, for example by double-clicking it.
+     *
+     * MaterialDialog uses this to open or focus a graph tab for the material.
+     */
+    void materialActivated(const SdfPath& path);
+    /**
      * @brief Requests rendering for the supplied source-entry row.
      */
     void swatchRequested(int row);
@@ -149,7 +155,7 @@ Q_SIGNALS:
     /**
      * @brief Requests creation of a material through the controller.
      */
-    void newMaterialRequested();
+    void newMaterialRequested(const QPoint& globalPosition = QPoint());
     /**
      * @brief Requests deletion of the selected materials.
      */

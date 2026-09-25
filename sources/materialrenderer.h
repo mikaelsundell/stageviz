@@ -8,6 +8,8 @@
 #include "stageviz.h"
 #include <QImage>
 #include <QObject>
+#include <pxr/base/vt/value.h>
+#include <pxr/usd/sdf/layer.h>
 
 namespace stageviz {
 
@@ -15,48 +17,86 @@ class MaterialRendererPrivate;
 
 /**
  * @class MaterialRenderer
- * @brief Asynchronously renders material swatches for MaterialBrowser.
+ * @brief Persistent renderer for material swatches and interactive previews.
  *
- * A dedicated render thread owns the preview stage and RenderEngine for their
- * complete lifetime. The UI thread only queues immutable parameter requests and
- * receives QImage results.
+ * MaterialRenderer keeps warm Hydra/Storm render contexts for complete
+ * UsdShade and MaterialX networks. Final swatches use the high-quality render
+ * path, while interactive edits use a smaller preview context. Non-structural
+ * edits are mirrored through lightweight attribute overrides so the contexts
+ * can remain alive between updates.
  */
 class MaterialRenderer : public QObject {
     Q_OBJECT
 public:
     /**
-     * @brief Creates the renderer and starts its dedicated preview worker.
+     * @brief Constructs a material renderer.
      */
     explicit MaterialRenderer(QObject* parent = nullptr);
+
     /**
-     * @brief Stops the worker and waits for its rendering resources to be released.
+     * @brief Releases the renderer and its private render contexts.
      */
     virtual ~MaterialRenderer();
 
     /**
-     * @brief Requests a swatch render.
-     * @param materialPath Material used as the cache/request key.
-     * @param parameters Parameters to render.
-     * @param forceRender Ignore any cached image for this request.
+     * @brief Renders a material from canonical fallback parameters.
+     *
+     * This path is retained for fallback rendering. Prefer the source-layer
+     * overload for complete authored material networks.
      */
     void request(const SdfPath& materialPath, const MaterialParameters& parameters, bool forceRender = false);
 
     /**
-     * @brief Invalidates cached rendering for a material path.
+     * @brief Renders the complete authored material network.
+     *
+     * @param materialPath Material prim to render.
+     * @param sourceLayer Composed source layer containing the material network.
+     * @param forceRender If true, bypass cached render state.
+     */
+    void request(const SdfPath& materialPath, const SdfLayerRefPtr& sourceLayer, bool forceRender = false);
+
+    /**
+     * @brief Renders an interactive preview with one temporary input override.
+     *
+     * Repeated preview requests are coalesced and rendered through the smaller
+     * warm preview context.
+     *
+     * @param materialPath Material prim to render.
+     * @param sourceLayer Composed source layer containing the material network.
+     * @param inputPath Shader input property to override.
+     * @param value Temporary preview value.
+     */
+    void preview(const SdfPath& materialPath, const SdfLayerRefPtr& sourceLayer, const SdfPath& inputPath,
+                 const VtValue& value);
+
+    /**
+     * @brief Mirrors a committed non-structural attribute edit into the warm contexts.
+     */
+    void syncAttribute(const SdfPath& inputPath, const VtValue& value);
+
+    /**
+     * @brief Clears incremental input overrides after a complete source refresh.
+     */
+    void clearOverrides();
+
+    /**
+     * @brief Invalidates the cached render state for a material.
      */
     void invalidate(const SdfPath& materialPath);
+
     /**
-     * @brief Clears cached previews and pending renderer bookkeeping.
+     * @brief Clears renderer state and cached material results.
      */
     void clear();
 
 Q_SIGNALS:
     /**
-     * @brief Delivers a completed preview; materialPath identifies the original request.
+     * @brief Emitted when a material image has been rendered successfully.
      */
     void rendered(const QString& materialPath, const QImage& image);
+
     /**
-     * @brief Reports a failed preview request and its diagnostic message.
+     * @brief Emitted when rendering a material fails.
      */
     void error(const QString& materialPath, const QString& message);
 

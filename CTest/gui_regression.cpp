@@ -1,13 +1,17 @@
 // SPDX-License-Identifier: BSD-3-Clause
 // Copyright (c) 2025 - present Mikael Sundell
 
+#include "application.h"
 #include "renderengine.h"
+#include "materialbrowser.h"
+#include "materialutils.h"
 #include "settings.h"
 #include "style.h"
 #include <QApplication>
 #include <QColor>
 #include <QCoreApplication>
 #include <QDir>
+#include <QImage>
 #include <QSettings>
 #include <QTemporaryDir>
 #include <functional>
@@ -157,15 +161,91 @@ namespace {
         engine.reset();
         require(!engine.isInitialized(), "render engine reset releases renderer");
     }
+
+    void materialBrowserApi()
+    {
+        stageviz::MaterialBrowser browser;
+
+        stageviz::MaterialEntry first;
+        first.materialPath = SdfPath("/Materials/First");
+        first.shaderPath = SdfPath("/Materials/First/PreviewSurface");
+        first.name = QStringLiteral("First");
+        first.shaderId = QStringLiteral("UsdPreviewSurface");
+
+        stageviz::MaterialEntry second;
+        second.materialPath = SdfPath("/Materials/Second");
+        second.shaderPath = SdfPath("/Materials/Second/StandardSurface");
+        second.name = QStringLiteral("Second");
+        second.shaderId = QStringLiteral("ND_standard_surface_surfaceshader");
+
+        browser.setEntries({ first, second });
+        require(browser.entries().size() == 2, "material browser stores entries");
+        require(browser.entry(0) && browser.entry(0)->materialPath == first.materialPath,
+                "material browser exposes entry by row");
+        require(browser.entry(-1) == nullptr && browser.entry(99) == nullptr,
+                "material browser rejects invalid entry rows");
+        require(browser.rowForMaterialPath(second.materialPath) == 1,
+                "material browser finds row from material path");
+
+        int selectionChanges = 0;
+        QObject::connect(&browser, &stageviz::MaterialBrowser::selectionChanged, &browser,
+                         [&]() { ++selectionChanges; });
+        browser.selectRow(1);
+        require(browser.selectedRows() == QList<int>({1}), "material browser selects one source row");
+        require(browser.selectedEntries().size() == 1
+                    && browser.selectedEntries().first().materialPath == second.materialPath,
+                "material browser returns selected entry");
+        browser.selectRows({0, 1});
+        const QList<int> selectedRows = browser.selectedRows();
+        require(selectedRows.contains(0) && selectedRows.contains(1) && selectedRows.size() == 2,
+                "material browser supports multi-selection");
+        require(selectionChanges > 0, "material browser emits selection changes");
+
+        browser.setViewMode(stageviz::MaterialBrowser::List);
+        require(browser.viewMode() == stageviz::MaterialBrowser::List, "material browser switches to list mode");
+        browser.setViewMode(stageviz::MaterialBrowser::Details);
+        require(browser.viewMode() == stageviz::MaterialBrowser::Details, "material browser switches to details mode");
+        browser.setViewMode(stageviz::MaterialBrowser::Icons);
+        require(browser.viewMode() == stageviz::MaterialBrowser::Icons, "material browser switches back to icon mode");
+
+        browser.setFilter(QStringLiteral("Second"));
+        require(browser.filter() == QStringLiteral("Second"), "material browser filter roundtrip");
+        browser.setFilter(QString());
+        require(browser.filter().isEmpty(), "material browser filter clears");
+
+        browser.setSwatchSize(144);
+        require(browser.swatchSize() == 144, "material browser swatch size roundtrip");
+        QImage swatch(32, 32, QImage::Format_RGBA8888);
+        swatch.fill(QColor(20, 40, 60, 255));
+        browser.setSwatch(0, swatch);
+        require(!browser.swatch(0).isNull() && browser.swatch(0).size() == QSize(32, 32),
+                "material browser caches swatch image");
+        browser.invalidateSwatch(0);
+        require(!browser.swatch(0).isNull(), "invalidating swatch keeps previous image visible");
+
+        const SdfPath renamed("/Materials/Renamed");
+        browser.remapEntryPath(first.materialPath, renamed);
+        require(browser.rowForMaterialPath(first.materialPath) == -1 && browser.rowForMaterialPath(renamed) == 0,
+                "material browser remaps renamed material path");
+
+        stageviz::MaterialEntry updated = *browser.entry(0);
+        updated.name = QStringLiteral("Updated");
+        require(browser.updateEntry(0, updated), "material browser updates one row");
+        require(browser.entry(0) && browser.entry(0)->name == QStringLiteral("Updated"),
+                "material browser exposes updated row");
+        require(!browser.updateEntry(10, updated), "material browser rejects invalid row update");
+    }
+
 }
 
 int main(int argc, char** argv)
 {
-    QApplication app(argc, argv);
+    stageviz::Application app(argc, argv);
     const std::map<std::string, std::function<void()>> cases {
         {"settings_api", settingsApi},
         {"style_api", styleApi},
         {"renderengine_api", renderEngineApi},
+        {"material_browser_api", materialBrowserApi},
     };
 
     if (argc != 2 || !cases.count(argv[1])) {

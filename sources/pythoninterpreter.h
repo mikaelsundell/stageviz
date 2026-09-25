@@ -56,7 +56,10 @@ public:
      * @brief Executes a Python script.
      *
      * Runs the provided Python source code within the interpreter
-     * context and returns any output or result as a string.
+     * context and returns any output or result as a string. Executing a
+     * script clears the existing native command history because direct pxr
+     * edits cannot be tracked safely. Stageviz commands issued by the script
+     * start a fresh undo/redo history.
      *
      * @param script Python source code to execute.
      * @return Output or result of the execution.

@@ -318,13 +318,25 @@ if __name__ == "__main__" and _RELEASE_LOG_MODE != "console":
 
 
 
-from pxr import Gf, Kind, Sdf, Usd, UsdGeom
+from pxr import Gf, Kind, Sdf, Usd, UsdGeom, UsdShade
 
 import stageviz
 
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QAction
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QLineEdit, QMenu, QTreeWidget
+from PySide6.QtWidgets import (
+    QApplication,
+    QDialog,
+    QLineEdit,
+    QListView,
+    QMenu,
+    QSplitter,
+    QTabWidget,
+    QTreeView,
+    QTreeWidget,
+    QWidget,
+)
 from PySide6.QtCore import QModelIndex, QItemSelectionModel
 from PySide6.QtWidgets import QAbstractItemView
 
@@ -1323,6 +1335,355 @@ Coverage:
     require(bool(prim(far_path) and not prim(far_path).IsLoaded()), "Load Neighbors leaves far payload unloaded")
 
     release_qt_wrappers()
+
+
+
+def _normalized_action_text(action):
+    try:
+        return str(action.text() or "").replace("&", "").replace("…", "...").strip()
+    except RuntimeError:
+        return ""
+
+
+def find_material_dialog():
+    app = QApplication.instance()
+    if app is None:
+        return None
+    for widget in app.topLevelWidgets():
+        try:
+            if isinstance(widget, QDialog) and widget.windowTitle().strip() == "Material Editor":
+                return widget
+        except RuntimeError:
+            continue
+    return None
+
+
+def open_material_dialog():
+    dialog = find_material_dialog()
+    if dialog is not None:
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
+        process_events()
+        return dialog
+
+    app = QApplication.instance()
+    require(app is not None, "QApplication exists before opening Material Editor")
+
+    candidates = []
+    seen = set()
+    for top in app.topLevelWidgets():
+        try:
+            actions = top.findChildren(QAction)
+        except RuntimeError:
+            continue
+        for action in actions:
+            try:
+                key = id(action)
+                if key in seen:
+                    continue
+                seen.add(key)
+                text = _normalized_action_text(action).lower()
+                tooltip = str(action.toolTip() or "").lower()
+                object_name = str(action.objectName() or "").lower()
+                if (
+                    "material editor" in text
+                    or text == "materials"
+                    or "material editor" in tooltip
+                    or object_name in ("materialeditor", "materialdialog", "materialbrowser")
+                ) and action.isEnabled():
+                    candidates.append(action)
+            except RuntimeError:
+                continue
+
+    require(bool(candidates), "Material Editor action is available")
+    if not candidates:
+        return None
+
+    candidates[0].trigger()
+    process_events()
+    require(
+        wait_until(lambda: find_material_dialog() is not None, timeout=3.0),
+        "Material Editor opens from application action",
+    )
+    dialog = find_material_dialog()
+    if dialog is not None:
+        dialog.raise_()
+        dialog.activateWindow()
+        process_events()
+    return dialog
+
+
+def _ensure_material_ui_fixture():
+    current_stage = stage()
+    require(bool(current_stage), "USD stage exists for Material Editor UI test")
+    if not current_stage:
+        return []
+
+    UsdGeom.Scope.Define(current_stage, "/World/Looks")
+    paths = []
+    for name, color in (
+        ("UiMaterialAlpha", Gf.Vec3f(0.8, 0.2, 0.1)),
+        ("UiMaterialBeta", Gf.Vec3f(0.1, 0.3, 0.8)),
+    ):
+        material_path = f"/World/Looks/{name}"
+        shader_path = f"{material_path}/PreviewSurface"
+        material = UsdShade.Material.Define(current_stage, material_path)
+        shader = UsdShade.Shader.Define(current_stage, shader_path)
+        shader.CreateIdAttr("UsdPreviewSurface")
+        shader.CreateInput("diffuseColor", Sdf.ValueTypeNames.Color3f).Set(color)
+        shader.CreateInput("roughness", Sdf.ValueTypeNames.Float).Set(0.4)
+        shader.CreateOutput("surface", Sdf.ValueTypeNames.Token)
+        material.CreateSurfaceOutput().ConnectToSource(shader.ConnectableAPI(), "surface")
+        paths.append(material_path)
+    process_events()
+    return paths
+
+
+def _find_material_browser_view(browser_widget):
+    candidates = []
+    for view_type in (QListView, QTreeView):
+        for view in browser_widget.findChildren(view_type):
+            try:
+                model = view.model()
+                row_count = model.rowCount() if model is not None else -1
+                candidates.append((bool(view.isVisible()), row_count, view))
+            except RuntimeError:
+                continue
+    candidates.sort(key=lambda item: (item[0], item[1]), reverse=True)
+    return candidates[0][2] if candidates else None
+
+
+def _model_texts(model, parent=QModelIndex()):
+    if model is None:
+        return []
+    values = []
+    for row in range(model.rowCount(parent)):
+        index = model.index(row, 0, parent)
+        if not index.isValid():
+            continue
+        value = index.data(Qt.DisplayRole)
+        if value is not None:
+            values.append(str(value))
+        values.extend(_model_texts(model, index))
+    return values
+
+
+def _find_material_filter(browser_widget):
+    for edit in browser_widget.findChildren(QLineEdit):
+        try:
+            if "filter materials" in str(edit.placeholderText() or "").lower():
+                return edit
+        except RuntimeError:
+            continue
+    return None
+
+
+def _material_view_index_for_text(view, text):
+    if view is None or view.model() is None:
+        return QModelIndex()
+    model = view.model()
+    stack = [QModelIndex()]
+    while stack:
+        parent = stack.pop()
+        for row in range(model.rowCount(parent)):
+            index = model.index(row, 0, parent)
+            if not index.isValid():
+                continue
+            value = index.data(Qt.DisplayRole)
+            if value is not None and text in str(value):
+                return index
+            stack.append(index)
+    return QModelIndex()
+
+
+def _material_row_visible(view, text):
+    """Return True only when a material card is actually visible in the view.
+
+    MaterialBrowser keeps filtered materials in its backing model, so model text
+    alone is not a reliable visibility test. visualRect() reflects the view's
+    current filtering/hiding state and therefore matches what the user sees.
+    """
+    if view is None:
+        return False
+
+    index = _material_view_index_for_text(view, text)
+    if not index.isValid():
+        return False
+
+    try:
+        rect = view.visualRect(index)
+        viewport = view.viewport()
+        return (
+            rect.isValid()
+            and not rect.isEmpty()
+            and viewport is not None
+            and viewport.rect().intersects(rect)
+        )
+    except RuntimeError:
+        return False
+
+
+def test_material_editor_ui(main):
+    reload_fixture(main, stageviz.LoadNone)
+    material_paths = _ensure_material_ui_fixture()
+
+    divider()
+    print("MATERIAL EDITOR UI")
+    print()
+    print("Coverage:")
+    print("  - native Material Editor opens")
+    print("  - MaterialBrowser discovers authored Preview Surface materials")
+    print("  - browser / graph initial splitter is approximately 60 / 40")
+    print("  - material filter narrows and clears correctly")
+    print("  - double-clicking a swatch opens a graph tab")
+    print()
+
+    dialog = open_material_dialog()
+    require(dialog is not None, "Material Editor dialog is available")
+    if dialog is None:
+        return
+
+    browser_widget = dialog.findChild(QWidget, "browserWidget")
+    graph_widget = dialog.findChild(QWidget, "graphWidget")
+    browser_splitter = dialog.findChild(QSplitter, "browserSplitter")
+    require(browser_widget is not None, "Material Editor contains browserWidget")
+    require(graph_widget is not None, "Material Editor contains graphWidget")
+    require(browser_splitter is not None, "Material Editor contains browserSplitter")
+    if browser_widget is None or graph_widget is None or browser_splitter is None:
+        dialog.close(); process_events(); return
+
+    def materials_visible():
+        view = _find_material_browser_view(browser_widget)
+        if view is None:
+            return False
+        texts = _model_texts(view.model())
+        return all(any(Sdf.Path(path).name in text for text in texts) for path in material_paths)
+
+    require(
+        wait_until(materials_visible, timeout=5.0),
+        "MaterialBrowser lists both authored UI test materials",
+    )
+
+    view = _find_material_browser_view(browser_widget)
+    require(view is not None, "MaterialBrowser active item view is available")
+    if view is None:
+        dialog.close(); process_events(); return
+
+    sizes = browser_splitter.sizes()
+    total = sum(sizes)
+    ratio = (float(sizes[0]) / float(total)) if total > 0 and len(sizes) >= 2 else 0.0
+    print(f"Material browser/graph splitter sizes: {sizes} ratio={ratio:.3f}")
+    require(0.52 <= ratio <= 0.68, "Material Editor starts near 60% browser / 40% graph")
+
+    filter_edit = _find_material_filter(browser_widget)
+    require(filter_edit is not None, "MaterialBrowser exposes Filter materials field")
+    if filter_edit is not None:
+        filter_edit.setText("UiMaterialAlpha")
+        process_events()
+        def alpha_only():
+            active = _find_material_browser_view(browser_widget)
+            if active is None:
+                return False
+            return (
+                _material_row_visible(active, "UiMaterialAlpha")
+                and not _material_row_visible(active, "UiMaterialBeta")
+            )
+        require(
+            wait_until(alpha_only, timeout=3.0),
+            "MaterialBrowser filter keeps matching material and hides non-match",
+        )
+
+        filter_edit.clear()
+        process_events()
+        def both_visible():
+            active = _find_material_browser_view(browser_widget)
+            if active is None:
+                return False
+            return (
+                _material_row_visible(active, "UiMaterialAlpha")
+                and _material_row_visible(active, "UiMaterialBeta")
+            )
+        require(
+            wait_until(both_visible, timeout=3.0),
+            "clearing MaterialBrowser filter restores all materials",
+        )
+
+    # Exercise the same path as a user double-clicking the material card.
+    # Do not call MaterialDialog internals or force the graph open directly: the
+    # test should prove that the browser's normal double-click signal reaches the
+    # graph activation path.
+    view = _find_material_browser_view(browser_widget)
+    alpha_index = _material_view_index_for_text(view, "UiMaterialAlpha")
+    require(alpha_index.isValid(), "UiMaterialAlpha row is available for graph activation")
+    if alpha_index.isValid():
+        view.scrollTo(alpha_index, QAbstractItemView.PositionAtCenter)
+        process_events()
+
+        rect = view.visualRect(alpha_index)
+        require(rect.isValid() and not rect.isEmpty(), "UiMaterialAlpha has a visible browser card")
+
+        if rect.isValid() and not rect.isEmpty():
+            # Click in the swatch/card body, not on the material-name editor area.
+            # This mirrors the manual interaction: a plain double-click on the
+            # swatch opens the material node graph.
+            swatch_point = rect.center()
+            swatch_point.setY(rect.top() + max(8, int(rect.height() * 0.40)))
+
+            tabs = graph_widget.findChildren(QTabWidget)
+            before_count = max((tab.count() for tab in tabs), default=0)
+
+            print(
+                "Double-clicking UiMaterialAlpha browser card at",
+                swatch_point.x(),
+                swatch_point.y(),
+                "rect=",
+                rect,
+                "tabs before=",
+                before_count,
+            )
+
+            QTest.mouseDClick(
+                view.viewport(),
+                Qt.LeftButton,
+                Qt.NoModifier,
+                swatch_point,
+            )
+            process_events()
+
+            def graph_opened():
+                for tab in graph_widget.findChildren(QTabWidget):
+                    try:
+                        if not tab.isVisible() or tab.count() <= 0:
+                            continue
+
+                        # Opening UiMaterialAlpha should make its material tab the
+                        # active tab. Accept either exact text or a title that
+                        # contains the material name.
+                        current = tab.currentIndex()
+                        title = (
+                            str(tab.tabText(current))
+                            if current >= 0
+                            else ""
+                        )
+
+                        if (
+                            tab.count() > before_count
+                            and "UiMaterialAlpha" in title
+                        ):
+                            return True
+                    except RuntimeError:
+                        continue
+
+                return False
+
+            require(
+                wait_until(graph_opened, timeout=5.0),
+                "double-clicking UiMaterialAlpha swatch opens its MaterialGraph tab",
+            )
+
+    dialog.close()
+    process_events()
 
 
 def create_performance_fixture(
@@ -5255,6 +5616,7 @@ def run():
         test_all_policy(main)
         test_payload_selection_synchronization(main)
         test_payload_menu_commands(payload_menu_main)
+        test_material_editor_ui(main)
         test_save_as_preserves_expansion(main, root)
         test_invalid_move_keeps_tree_stable(main)
         test_large_tree_namespace_performance(root)

@@ -3,6 +3,7 @@
 
 #include "pythoninterpreter.h"
 #include "application.h"
+#include "commandstack.h"
 #include "config.h"
 #include "os.h"
 #include "session.h"
@@ -240,6 +241,15 @@ PythonInterpreterPrivate::executeScript(const QString& script)
         session()->notifyStatus(Session::Notify::Status::Error,
                                 QStringLiteral("Python script failed. Check the Python log for details."));
         return error;
+    }
+
+    // Arbitrary Python can author directly through pxr, outside Stageviz's
+    // command model. Treat every script execution as an explicit history
+    // boundary. Commands executed by the script can then build a fresh
+    // undo/redo history from this point forward.
+    if (Session* current = session()) {
+        if (CommandStack* stack = current->commandStack())
+            stack->clear();
     }
 
     QString output;

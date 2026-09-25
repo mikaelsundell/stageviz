@@ -67,6 +67,8 @@ foreach(case IN ITEMS
     usd_stage_utils_api
     usd_payload_utils_api
     material_utils_api
+    material_menu_api
+    command_material_api
     command_selection_api
     command_authoring_api
     command_property_api
@@ -97,7 +99,7 @@ set_target_properties(stageviz_gui_regressions PROPERTIES
     AUTOUIC_SEARCH_PATHS "${PROJECT_SOURCE_DIR}/sources"
 )
 
-foreach(case IN ITEMS settings_api style_api renderengine_api)
+foreach(case IN ITEMS settings_api style_api renderengine_api material_browser_api)
     if(APPLE)
         # Qt debug frameworks on macOS use the _debug image suffix. The GUI
         # regression executable links against Qt*_debug, and the Cocoa platform

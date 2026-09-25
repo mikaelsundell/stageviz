@@ -12,6 +12,7 @@
 #include "qtutils.h"
 #include "selectionlist.h"
 #include "signalguard.h"
+#include "spinbox.h"
 #include "style.h"
 #include "tracelocks.h"
 #include "viewcontext.h"
@@ -19,7 +20,6 @@
 #include <QClipboard>
 #include <QComboBox>
 #include <QContextMenuEvent>
-#include <QDoubleSpinBox>
 #include <QFileInfo>
 #include <QHeaderView>
 #include <QIcon>
@@ -71,6 +71,14 @@
 PXR_NAMESPACE_USING_DIRECTIVE
 
 namespace stageviz {
+
+namespace {
+
+    enum ComponentRole { ComponentKindRole = Qt::UserRole + 200, ComponentIndexRole, ComponentColumnRole };
+
+    enum ComponentKind { NoComponent = 0, VectorComponent, ArrayVectorComponent, MatrixComponent };
+
+}  // namespace
 
 class PropertyTreePrivate : public QObject, public SignalGuard {
 public:
@@ -146,6 +154,20 @@ public:
     static bool matrixInfo(const VtValue& value, int& size);
     static bool matrixRowText(const VtValue& value, int row, QString& text);
     static bool replaceMatrixRow(const VtValue& current, int row, const QString& text, VtValue& result, QString& error);
+
+    static bool vectorInfo(const VtValue& value, int& size, bool& integral);
+    static bool vectorComponentText(const VtValue& value, int component, QString& text);
+    static bool replaceVectorComponent(const VtValue& current, int component, const QString& text, VtValue& result,
+                                       QString& error);
+    static bool arrayElementValue(const VtValue& value, int index, VtValue& result);
+    static bool replaceArrayVectorComponent(const VtValue& current, int arrayIndex, int component, const QString& text,
+                                            VtValue& result, QString& error);
+    static bool matrixComponentText(const VtValue& value, int row, int column, QString& text);
+    static bool replaceMatrixComponent(const VtValue& current, int row, int column, const QString& text,
+                                       VtValue& result, QString& error);
+
+    void addVectorComponents(PropertyItem* parent, const SdfPath& propertyPath, const VtValue& value,
+                             int arrayIndex = -1);
     void addMatrixRows(PropertyItem* parent, const SdfPath& propertyPath, const VtValue& value);
 
     static QString attributeBaseName(const UsdAttribute& attr);
@@ -246,11 +268,13 @@ public:
                 return spin;
             }
             case PropertyItem::FloatingEditor: {
-                auto* spin = new QDoubleSpinBox(parent);
+                auto* spin = new SpinBox(parent);
                 spin->setRange(index.data(PropertyItem::EditorMinimumRole).toDouble(),
                                index.data(PropertyItem::EditorMaximumRole).toDouble());
                 spin->setDecimals(index.data(PropertyItem::EditorDecimalsRole).toInt());
                 spin->setSingleStep(0.1);
+                connect(spin, &SpinBox::scrubFinished, spin,
+                        [this, spin](double) { Q_EMIT const_cast<PropertyDelegate*>(this)->commitData(spin); });
                 return spin;
             }
             case PropertyItem::TextEditor: return new QLineEdit(parent);
@@ -952,6 +976,300 @@ PropertyTreePrivate::scalarEditable(const VtValue& value)
 }
 
 
+template<typename T, int N>
+static bool
+vectorInfoTyped(const VtValue& value, int& size, bool& integral)
+{
+    if (!value.IsHolding<T>())
+        return false;
+
+    size = N;
+    integral = std::is_integral_v<typename T::ScalarType>;
+    return true;
+}
+
+bool
+PropertyTreePrivate::vectorInfo(const VtValue& value, int& size, bool& integral)
+{
+    return vectorInfoTyped<GfVec2i, 2>(value, size, integral) || vectorInfoTyped<GfVec3i, 3>(value, size, integral)
+           || vectorInfoTyped<GfVec4i, 4>(value, size, integral) || vectorInfoTyped<GfVec2f, 2>(value, size, integral)
+           || vectorInfoTyped<GfVec3f, 3>(value, size, integral) || vectorInfoTyped<GfVec4f, 4>(value, size, integral)
+           || vectorInfoTyped<GfVec2d, 2>(value, size, integral) || vectorInfoTyped<GfVec3d, 3>(value, size, integral)
+           || vectorInfoTyped<GfVec4d, 4>(value, size, integral);
+}
+
+template<typename T, int N>
+static bool
+vectorComponentTextTyped(const VtValue& value, int component, QString& text)
+{
+    if (!value.IsHolding<T>() || component < 0 || component >= N)
+        return false;
+
+    const T& vector = value.UncheckedGet<T>();
+    if constexpr (std::is_integral_v<typename T::ScalarType>)
+        text = QString::number(vector[component]);
+    else
+        text = QString::number(vector[component], 'g', 12);
+    return true;
+}
+
+bool
+PropertyTreePrivate::vectorComponentText(const VtValue& value, int component, QString& text)
+{
+    return vectorComponentTextTyped<GfVec2i, 2>(value, component, text)
+           || vectorComponentTextTyped<GfVec3i, 3>(value, component, text)
+           || vectorComponentTextTyped<GfVec4i, 4>(value, component, text)
+           || vectorComponentTextTyped<GfVec2f, 2>(value, component, text)
+           || vectorComponentTextTyped<GfVec3f, 3>(value, component, text)
+           || vectorComponentTextTyped<GfVec4f, 4>(value, component, text)
+           || vectorComponentTextTyped<GfVec2d, 2>(value, component, text)
+           || vectorComponentTextTyped<GfVec3d, 3>(value, component, text)
+           || vectorComponentTextTyped<GfVec4d, 4>(value, component, text);
+}
+
+template<typename T, int N>
+static bool
+replaceVectorComponentTyped(const VtValue& current, int component, const QString& text, VtValue& result, QString& error)
+{
+    if (!current.IsHolding<T>())
+        return false;
+
+    if (component < 0 || component >= N) {
+        error = QStringLiteral("Vector component is out of range");
+        return true;
+    }
+
+    using Scalar = typename T::ScalarType;
+    Scalar value {};
+    if constexpr (std::is_integral_v<Scalar>) {
+        if (!PropertyTreePrivate::parseIntegral(text, value, error))
+            return true;
+    }
+    else {
+        if (!PropertyTreePrivate::parseFloating(text, value, error))
+            return true;
+    }
+
+    T vector = current.UncheckedGet<T>();
+    vector[component] = value;
+    result = VtValue(vector);
+    return true;
+}
+
+bool
+PropertyTreePrivate::replaceVectorComponent(const VtValue& current, int component, const QString& text, VtValue& result,
+                                            QString& error)
+{
+    if (replaceVectorComponentTyped<GfVec2i, 2>(current, component, text, result, error))
+        return !result.IsEmpty();
+    if (replaceVectorComponentTyped<GfVec3i, 3>(current, component, text, result, error))
+        return !result.IsEmpty();
+    if (replaceVectorComponentTyped<GfVec4i, 4>(current, component, text, result, error))
+        return !result.IsEmpty();
+    if (replaceVectorComponentTyped<GfVec2f, 2>(current, component, text, result, error))
+        return !result.IsEmpty();
+    if (replaceVectorComponentTyped<GfVec3f, 3>(current, component, text, result, error))
+        return !result.IsEmpty();
+    if (replaceVectorComponentTyped<GfVec4f, 4>(current, component, text, result, error))
+        return !result.IsEmpty();
+    if (replaceVectorComponentTyped<GfVec2d, 2>(current, component, text, result, error))
+        return !result.IsEmpty();
+    if (replaceVectorComponentTyped<GfVec3d, 3>(current, component, text, result, error))
+        return !result.IsEmpty();
+    if (replaceVectorComponentTyped<GfVec4d, 4>(current, component, text, result, error))
+        return !result.IsEmpty();
+
+    error = QStringLiteral("Value is not a supported vector type");
+    return false;
+}
+
+template<typename T>
+static bool
+arrayElementValueTyped(const VtValue& value, int index, VtValue& result)
+{
+    if (!value.IsHolding<VtArray<T>>())
+        return false;
+
+    const VtArray<T>& array = value.UncheckedGet<VtArray<T>>();
+    if (index < 0 || index >= static_cast<int>(array.size()))
+        return true;
+
+    result = VtValue(array[index]);
+    return true;
+}
+
+bool
+PropertyTreePrivate::arrayElementValue(const VtValue& value, int index, VtValue& result)
+{
+    result = VtValue();
+    return arrayElementValueTyped<GfVec2i>(value, index, result)
+           || arrayElementValueTyped<GfVec3i>(value, index, result)
+           || arrayElementValueTyped<GfVec4i>(value, index, result)
+           || arrayElementValueTyped<GfVec2f>(value, index, result)
+           || arrayElementValueTyped<GfVec3f>(value, index, result)
+           || arrayElementValueTyped<GfVec4f>(value, index, result)
+           || arrayElementValueTyped<GfVec2d>(value, index, result)
+           || arrayElementValueTyped<GfVec3d>(value, index, result)
+           || arrayElementValueTyped<GfVec4d>(value, index, result);
+}
+
+template<typename T, int N>
+static bool
+replaceArrayVectorComponentTyped(const VtValue& current, int arrayIndex, int component, const QString& text,
+                                 VtValue& result, QString& error)
+{
+    if (!current.IsHolding<VtArray<T>>())
+        return false;
+
+    VtArray<T> array = current.UncheckedGet<VtArray<T>>();
+    if (arrayIndex < 0 || arrayIndex >= static_cast<int>(array.size())) {
+        error = QStringLiteral("Array index is out of range");
+        return true;
+    }
+    if (component < 0 || component >= N) {
+        error = QStringLiteral("Vector component is out of range");
+        return true;
+    }
+
+    using Scalar = typename T::ScalarType;
+    Scalar value {};
+    if constexpr (std::is_integral_v<Scalar>) {
+        if (!PropertyTreePrivate::parseIntegral(text, value, error))
+            return true;
+    }
+    else {
+        if (!PropertyTreePrivate::parseFloating(text, value, error))
+            return true;
+    }
+
+    array[arrayIndex][component] = value;
+    result = VtValue(array);
+    return true;
+}
+
+bool
+PropertyTreePrivate::replaceArrayVectorComponent(const VtValue& current, int arrayIndex, int component,
+                                                 const QString& text, VtValue& result, QString& error)
+{
+    if (replaceArrayVectorComponentTyped<GfVec2i, 2>(current, arrayIndex, component, text, result, error))
+        return !result.IsEmpty();
+    if (replaceArrayVectorComponentTyped<GfVec3i, 3>(current, arrayIndex, component, text, result, error))
+        return !result.IsEmpty();
+    if (replaceArrayVectorComponentTyped<GfVec4i, 4>(current, arrayIndex, component, text, result, error))
+        return !result.IsEmpty();
+    if (replaceArrayVectorComponentTyped<GfVec2f, 2>(current, arrayIndex, component, text, result, error))
+        return !result.IsEmpty();
+    if (replaceArrayVectorComponentTyped<GfVec3f, 3>(current, arrayIndex, component, text, result, error))
+        return !result.IsEmpty();
+    if (replaceArrayVectorComponentTyped<GfVec4f, 4>(current, arrayIndex, component, text, result, error))
+        return !result.IsEmpty();
+    if (replaceArrayVectorComponentTyped<GfVec2d, 2>(current, arrayIndex, component, text, result, error))
+        return !result.IsEmpty();
+    if (replaceArrayVectorComponentTyped<GfVec3d, 3>(current, arrayIndex, component, text, result, error))
+        return !result.IsEmpty();
+    if (replaceArrayVectorComponentTyped<GfVec4d, 4>(current, arrayIndex, component, text, result, error))
+        return !result.IsEmpty();
+
+    error = QStringLiteral("Array element is not a supported vector type");
+    return false;
+}
+
+template<typename T, int N>
+static bool
+matrixComponentTextTyped(const VtValue& value, int row, int column, QString& text)
+{
+    if (!value.IsHolding<T>() || row < 0 || row >= N || column < 0 || column >= N)
+        return false;
+
+    const T& matrix = value.UncheckedGet<T>();
+    text = QString::number(matrix[row][column], 'g', 12);
+    return true;
+}
+
+bool
+PropertyTreePrivate::matrixComponentText(const VtValue& value, int row, int column, QString& text)
+{
+    return matrixComponentTextTyped<GfMatrix2d, 2>(value, row, column, text)
+           || matrixComponentTextTyped<GfMatrix3d, 3>(value, row, column, text)
+           || matrixComponentTextTyped<GfMatrix4d, 4>(value, row, column, text);
+}
+
+template<typename T, int N>
+static bool
+replaceMatrixComponentTyped(const VtValue& current, int row, int column, const QString& text, VtValue& result,
+                            QString& error)
+{
+    if (!current.IsHolding<T>())
+        return false;
+
+    if (row < 0 || row >= N || column < 0 || column >= N) {
+        error = QStringLiteral("Matrix component is out of range");
+        return true;
+    }
+
+    double value = 0.0;
+    if (!PropertyTreePrivate::parseFloating(text, value, error))
+        return true;
+
+    T matrix = current.UncheckedGet<T>();
+    matrix[row][column] = value;
+    result = VtValue(matrix);
+    return true;
+}
+
+bool
+PropertyTreePrivate::replaceMatrixComponent(const VtValue& current, int row, int column, const QString& text,
+                                            VtValue& result, QString& error)
+{
+    if (replaceMatrixComponentTyped<GfMatrix2d, 2>(current, row, column, text, result, error))
+        return !result.IsEmpty();
+    if (replaceMatrixComponentTyped<GfMatrix3d, 3>(current, row, column, text, result, error))
+        return !result.IsEmpty();
+    if (replaceMatrixComponentTyped<GfMatrix4d, 4>(current, row, column, text, result, error))
+        return !result.IsEmpty();
+
+    error = QStringLiteral("Value is not a supported matrix type");
+    return false;
+}
+
+void
+PropertyTreePrivate::addVectorComponents(PropertyItem* parent, const SdfPath& propertyPath, const VtValue& value,
+                                         int arrayIndex)
+{
+    if (!parent)
+        return;
+
+    int size = 0;
+    bool integral = false;
+    if (!vectorInfo(value, size, integral))
+        return;
+
+    static const char* componentNames[] = { "X", "Y", "Z", "W" };
+
+    for (int component = 0; component < size; ++component) {
+        QString text;
+        if (!vectorComponentText(value, component, text))
+            continue;
+
+        PropertyItem* child = new PropertyItem(parent);
+        child->setKind(arrayIndex >= 0 ? PropertyItem::ArrayElement : PropertyItem::Attribute);
+        child->setPropertyPath(propertyPath);
+        child->setArrayIndex(arrayIndex);
+        child->setText(PropertyItem::Name, QString::fromLatin1(componentNames[component]));
+        child->setText(PropertyItem::Value, text);
+        child->setValueEditable(true);
+        child->setEditor(integral ? PropertyItem::IntegerEditor : PropertyItem::FloatingEditor);
+        child->setNumericRange(integral ? double(INT_MIN) : -1.0e12, integral ? double(INT_MAX) : 1.0e12);
+        if (!integral)
+            child->setEditorDecimals(8);
+        child->setData(PropertyItem::Value, ComponentKindRole,
+                       arrayIndex >= 0 ? ArrayVectorComponent : VectorComponent);
+        child->setData(PropertyItem::Value, ComponentIndexRole, component);
+        setReadOnlyValueStyle(child, false);
+        d.tree->openPersistentEditor(child, PropertyItem::Value);
+    }
+}
+
 bool
 PropertyTreePrivate::matrixInfo(const VtValue& value, int& size)
 {
@@ -1077,6 +1395,28 @@ PropertyTreePrivate::addMatrixRows(PropertyItem* parent, const SdfPath& property
         child->setEditor(PropertyItem::TextEditor);
         child->setToolTip(PropertyItem::Value, QString("Matrix row %1").arg(row));
         setReadOnlyValueStyle(child, false);
+
+        for (int column = 0; column < size; ++column) {
+            QString componentText;
+            if (!matrixComponentText(value, row, column, componentText))
+                continue;
+
+            PropertyItem* componentItem = new PropertyItem(child);
+            componentItem->setKind(PropertyItem::Attribute);
+            componentItem->setPropertyPath(propertyPath);
+            componentItem->setArrayIndex(row);
+            componentItem->setText(PropertyItem::Name, QString("[%1]").arg(column));
+            componentItem->setText(PropertyItem::Value, componentText);
+            componentItem->setValueEditable(true);
+            componentItem->setEditor(PropertyItem::FloatingEditor);
+            componentItem->setNumericRange(-1.0e12, 1.0e12);
+            componentItem->setEditorDecimals(8);
+            componentItem->setData(PropertyItem::Value, ComponentKindRole, MatrixComponent);
+            componentItem->setData(PropertyItem::Value, ComponentIndexRole, row);
+            componentItem->setData(PropertyItem::Value, ComponentColumnRole, column);
+            setReadOnlyValueStyle(componentItem, false);
+            d.tree->openPersistentEditor(componentItem, PropertyItem::Value);
+        }
     }
 }
 
@@ -1085,6 +1425,19 @@ PropertyTreePrivate::itemKey(const PropertyItem* item) const
 {
     if (!item)
         return {};
+
+    const int componentKind = item->data(PropertyItem::Value, ComponentKindRole).toInt();
+    if (componentKind != NoComponent) {
+        const int component = item->data(PropertyItem::Value, ComponentIndexRole).toInt();
+        const int column = item->data(PropertyItem::Value, ComponentColumnRole).toInt();
+        const QString parentKey = item->parent() ? itemKey(dynamic_cast<const PropertyItem*>(item->parent()))
+                                                 : QStringLiteral("component");
+
+        if (componentKind == MatrixComponent)
+            return QString("%1/matrix:%2:%3").arg(parentKey).arg(component).arg(column);
+
+        return QString("%1/vector:%2").arg(parentKey).arg(component);
+    }
 
     switch (item->kind()) {
     case PropertyItem::Attribute:
@@ -2309,6 +2662,10 @@ PropertyTreePrivate::addArrayElements(PropertyItem* parent, const SdfPath& prope
         child->setValueEditable(true);
         child->setEditor(PropertyItem::TextEditor);
         setReadOnlyValueStyle(child, false);
+
+        VtValue elementValue;
+        if (arrayElementValue(value, index, elementValue) && !elementValue.IsEmpty())
+            addVectorComponents(child, propertyPath, elementValue, index);
     }
 }
 
@@ -2412,6 +2769,11 @@ PropertyTreePrivate::addAttribute(PropertyItem* parent, const UsdAttribute& attr
     item->setValueEditable(editable);
     configureEditor(item, attr, value);
     setReadOnlyValueStyle(item, !editable);
+
+    int vectorSize = 0;
+    bool integralVector = false;
+    if (vectorInfo(value, vectorSize, integralVector))
+        addVectorComponents(item, attr.GetPath(), value);
 }
 
 void
@@ -2583,7 +2945,25 @@ PropertyTreePrivate::restoreItemText(PropertyItem* item)
     QString text;
     bool mixed = false;
 
-    if (item->kind() == PropertyItem::ArrayElement) {
+    const int componentKind = item->data(PropertyItem::Value, ComponentKindRole).toInt();
+    const int component = item->data(PropertyItem::Value, ComponentIndexRole).toInt();
+    const int componentColumn = item->data(PropertyItem::Value, ComponentColumnRole).toInt();
+
+    if (componentKind == VectorComponent) {
+        if (!vectorComponentText(values.first(), component, text))
+            return;
+    }
+    else if (componentKind == ArrayVectorComponent) {
+        VtValue elementValue;
+        if (!arrayElementValue(values.first(), item->arrayIndex(), elementValue) || elementValue.IsEmpty()
+            || !vectorComponentText(elementValue, component, text))
+            return;
+    }
+    else if (componentKind == MatrixComponent) {
+        if (!matrixComponentText(values.first(), component, componentColumn, text))
+            return;
+    }
+    else if (item->kind() == PropertyItem::ArrayElement) {
         if (!arrayElementText(values.first(), item->arrayIndex(), text))
             return;
     }
@@ -2632,7 +3012,28 @@ PropertyTreePrivate::itemChanged(QTreeWidgetItem* baseItem, int column)
     QString error;
     bool parsed = false;
 
-    if (item->kind() == PropertyItem::ArrayElement) {
+    const int componentKind = item->data(PropertyItem::Value, ComponentKindRole).toInt();
+    const int component = item->data(PropertyItem::Value, ComponentIndexRole).toInt();
+    const int componentColumn = item->data(PropertyItem::Value, ComponentColumnRole).toInt();
+
+    if (componentKind != NoComponent && propertyPaths.size() != 1) {
+        restoreItemText(item);
+        return;
+    }
+
+    if (componentKind == VectorComponent) {
+        parsed = replaceVectorComponent(currentValues.first(), component, item->text(PropertyItem::Value), updated,
+                                        error);
+    }
+    else if (componentKind == ArrayVectorComponent) {
+        parsed = replaceArrayVectorComponent(currentValues.first(), item->arrayIndex(), component,
+                                             item->text(PropertyItem::Value), updated, error);
+    }
+    else if (componentKind == MatrixComponent) {
+        parsed = replaceMatrixComponent(currentValues.first(), component, componentColumn,
+                                        item->text(PropertyItem::Value), updated, error);
+    }
+    else if (item->kind() == PropertyItem::ArrayElement) {
         if (propertyPaths.size() != 1) {
             restoreItemText(item);
             return;

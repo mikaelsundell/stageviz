@@ -579,6 +579,16 @@ PyCommand_unloadPayloads(PyObject*, PyObject* args)
 }
 
 static PyObject*
+PyCommand_setEditLayer(PyObject*, PyObject* args)
+{
+    const char* layerIdentifier = nullptr;
+    if (!PyArg_ParseTuple(args, "s", &layerIdentifier))
+        return nullptr;
+
+    return runCommand(setEditLayer(QString::fromUtf8(layerIdentifier)));
+}
+
+static PyObject*
 PyCommand_setStageUp(PyObject*, PyObject* args)
 {
     long value = 0;
@@ -1029,6 +1039,138 @@ PyCommand_identityTransforms(PyObject*, PyObject* args)
     return runCommand(identityTransforms(paths));
 }
 
+
+static PyObject*
+PyCommand_connectShaderInput(PyObject*, PyObject* args)
+{
+    PyObject* pyInputPath = nullptr;
+    PyObject* pySourceOutputPath = nullptr;
+    if (!PyArg_ParseTuple(args, "OO", &pyInputPath, &pySourceOutputPath))
+        return nullptr;
+
+    SdfPath inputPath;
+    SdfPath sourceOutputPath;
+    if (!parsePathArg(pyInputPath, "input_path", &inputPath))
+        return nullptr;
+    if (!parsePathArg(pySourceOutputPath, "source_output_path", &sourceOutputPath))
+        return nullptr;
+
+    if (!inputPath.IsPropertyPath() || !sourceOutputPath.IsPropertyPath()) {
+        PyErr_SetString(PyExc_ValueError, "input_path and source_output_path must be USD property paths");
+        return nullptr;
+    }
+
+    return runCommand(connectShaderInput(inputPath, sourceOutputPath));
+}
+
+static PyObject*
+PyCommand_connectShaderNode(PyObject*, PyObject* args)
+{
+    PyObject* pyInputPath = nullptr;
+    const char* shaderId = nullptr;
+    const char* nodeName = nullptr;
+    const char* outputName = nullptr;
+    if (!PyArg_ParseTuple(args, "Osss", &pyInputPath, &shaderId, &nodeName, &outputName))
+        return nullptr;
+
+    SdfPath inputPath;
+    if (!parsePathArg(pyInputPath, "input_path", &inputPath))
+        return nullptr;
+    if (!inputPath.IsPropertyPath()) {
+        PyErr_SetString(PyExc_ValueError, "input_path must be a USD property path");
+        return nullptr;
+    }
+    if (!shaderId || shaderId[0] == '\0') {
+        PyErr_SetString(PyExc_ValueError, "shader_id must not be empty");
+        return nullptr;
+    }
+    if (!outputName || outputName[0] == '\0') {
+        PyErr_SetString(PyExc_ValueError, "output_name must not be empty");
+        return nullptr;
+    }
+
+    return runCommand(
+        connectShaderNode(inputPath, QString::fromUtf8(shaderId), QString::fromUtf8(nodeName), TfToken(outputName)));
+}
+
+static PyObject*
+PyCommand_resetDependencies(PyObject*, PyObject* args)
+{
+    PyObject* pyPropertyPaths = nullptr;
+    if (!PyArg_ParseTuple(args, "O", &pyPropertyPaths))
+        return nullptr;
+
+    QList<SdfPath> propertyPaths;
+    if (!parsePathListArg(pyPropertyPaths, "property_paths", &propertyPaths))
+        return nullptr;
+
+    for (const SdfPath& path : propertyPaths) {
+        if (!path.IsPropertyPath()) {
+            PyErr_SetString(PyExc_ValueError, "property_paths must contain USD property paths");
+            return nullptr;
+        }
+    }
+
+    return runCommand(resetDependencies(propertyPaths));
+}
+
+static PyObject*
+PyCommand_disconnectShaderInputs(PyObject*, PyObject* args)
+{
+    PyObject* pyPaths = nullptr;
+    if (!PyArg_ParseTuple(args, "O", &pyPaths))
+        return nullptr;
+
+    QList<SdfPath> paths;
+    if (!parsePathListArg(pyPaths, "input_paths", &paths))
+        return nullptr;
+    for (const SdfPath& path : paths) {
+        if (!path.IsPropertyPath()) {
+            PyErr_SetString(PyExc_ValueError, "input_paths must contain USD property paths");
+            return nullptr;
+        }
+    }
+    return runCommand(disconnectShaderInputs(paths));
+}
+
+static PyObject*
+PyCommand_resetShaderInputs(PyObject*, PyObject* args)
+{
+    PyObject* pyPaths = nullptr;
+    if (!PyArg_ParseTuple(args, "O", &pyPaths))
+        return nullptr;
+
+    QList<SdfPath> paths;
+    if (!parsePathListArg(pyPaths, "input_paths", &paths))
+        return nullptr;
+    for (const SdfPath& path : paths) {
+        if (!path.IsPropertyPath()) {
+            PyErr_SetString(PyExc_ValueError, "input_paths must contain USD property paths");
+            return nullptr;
+        }
+    }
+    return runCommand(resetShaderInputs(paths));
+}
+
+static PyObject*
+PyCommand_connectMaterialXNode(PyObject*, PyObject* args)
+{
+    PyObject* pyPath = nullptr;
+    const char* nodeDef = nullptr;
+    const char* nodeName = nullptr;
+    if (!PyArg_ParseTuple(args, "Oss", &pyPath, &nodeDef, &nodeName))
+        return nullptr;
+
+    SdfPath path;
+    if (!parsePathArg(pyPath, "input_path", &path))
+        return nullptr;
+    if (!path.IsPropertyPath()) {
+        PyErr_SetString(PyExc_ValueError, "input_path must be a USD property path");
+        return nullptr;
+    }
+    return runCommand(connectMaterialXNode(path, QString::fromUtf8(nodeDef), QString::fromUtf8(nodeName)));
+}
+
 static PyObject*
 PyCommand_bindMaterial(PyObject*, PyObject* args)
 {
@@ -1091,6 +1233,8 @@ static PyMethodDef PyCommand_methods[] = {
     { "load_neighbor_payloads", reinterpret_cast<PyCFunction>(PyCommand_loadNeighborPayloads), METH_VARARGS,
       "Load spatially neighboring payloads using extentsHint." },
     { "unload_payloads", reinterpret_cast<PyCFunction>(PyCommand_unloadPayloads), METH_VARARGS, "Unload payloads." },
+    { "set_edit_layer", reinterpret_cast<PyCFunction>(PyCommand_setEditLayer), METH_VARARGS,
+      "Set the active local edit layer by SdfLayer identifier with undo support." },
     { "set_stage_up", reinterpret_cast<PyCFunction>(PyCommand_setStageUp), METH_VARARGS, "Set the stage up axis." },
     { "set_default_prim", reinterpret_cast<PyCFunction>(PyCommand_setDefaultPrim), METH_VARARGS,
       "Set the default prim." },
@@ -1143,6 +1287,18 @@ static PyMethodDef PyCommand_methods[] = {
       "Set local transforms to identity using edit-layer-aware transform reset behavior." },
     { "reset_overrides", reinterpret_cast<PyCFunction>(PyCommand_resetOverrides), METH_VARARGS,
       "Reset direct overrides in the active edit layer." },
+    { "connect_shader_input", reinterpret_cast<PyCFunction>(PyCommand_connectShaderInput), METH_VARARGS,
+      "Connect an existing shader output to an existing shader input with undo support." },
+    { "connect_shader_node", reinterpret_cast<PyCFunction>(PyCommand_connectShaderNode), METH_VARARGS,
+      "Create a shader node and connect one of its outputs to a shader input with undo support." },
+    { "reset_dependencies", reinterpret_cast<PyCFunction>(PyCommand_resetDependencies), METH_VARARGS,
+      "Reset authored relationship targets and attribute connections with undo support." },
+    { "disconnect_shader_inputs", reinterpret_cast<PyCFunction>(PyCommand_disconnectShaderInputs), METH_VARARGS,
+      "Disconnect incoming shader-input connections with undo support." },
+    { "reset_shader_inputs", reinterpret_cast<PyCFunction>(PyCommand_resetShaderInputs), METH_VARARGS,
+      "Reset edit-layer shader-input opinions with undo support." },
+    { "connect_materialx_node", reinterpret_cast<PyCFunction>(PyCommand_connectMaterialXNode), METH_VARARGS,
+      "Create a MaterialX node and connect it to a shader input with undo support." },
     { "bind_material", reinterpret_cast<PyCFunction>(PyCommand_bindMaterial), METH_VARARGS,
       "Bind an existing USD material to one or more prim paths." },
     { nullptr, nullptr, 0, nullptr }

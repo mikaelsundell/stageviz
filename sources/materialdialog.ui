@@ -6,14 +6,14 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>800</width>
-    <height>520</height>
+    <width>1200</width>
+    <height>600</height>
    </rect>
   </property>
   <property name="minimumSize">
    <size>
     <width>600</width>
-    <height>200</height>
+    <height>400</height>
    </size>
   </property>
   <property name="windowTitle">
@@ -21,19 +21,19 @@
   </property>
   <layout class="QHBoxLayout" name="horizontalLayout">
    <property name="spacing">
-    <number>8</number>
+    <number>4</number>
    </property>
    <property name="leftMargin">
-    <number>8</number>
+    <number>4</number>
    </property>
    <property name="topMargin">
-    <number>8</number>
+    <number>4</number>
    </property>
    <property name="rightMargin">
-    <number>8</number>
+    <number>4</number>
    </property>
    <property name="bottomMargin">
-    <number>8</number>
+    <number>4</number>
    </property>
    <item>
     <widget class="QWidget" name="widget_2" native="true">
@@ -48,7 +48,7 @@
        <number>0</number>
       </property>
       <property name="rightMargin">
-       <number>0</number>
+       <number>2</number>
       </property>
       <property name="bottomMargin">
        <number>0</number>
@@ -165,7 +165,7 @@
         <property name="orientation">
          <enum>Qt::Orientation::Horizontal</enum>
         </property>
-        <widget class="stageviz::MaterialBrowser" name="materialBrowser" native="true">
+        <widget class="QWidget" name="widget_6" native="true">
          <property name="sizePolicy">
           <sizepolicy hsizetype="Expanding" vsizetype="Preferred">
            <horstretch>0</horstretch>
@@ -175,8 +175,65 @@
          <property name="DockWidget" stdset="0">
           <bool>true</bool>
          </property>
+         <layout class="QVBoxLayout" name="verticalLayout_5">
+          <property name="spacing">
+           <number>0</number>
+          </property>
+          <property name="leftMargin">
+           <number>0</number>
+          </property>
+          <property name="topMargin">
+           <number>0</number>
+          </property>
+          <property name="rightMargin">
+           <number>4</number>
+          </property>
+          <property name="bottomMargin">
+           <number>4</number>
+          </property>
+          <item>
+           <widget class="QSplitter" name="browserSplitter">
+            <property name="orientation">
+             <enum>Qt::Orientation::Vertical</enum>
+            </property>
+            <widget class="stageviz::MaterialBrowser" name="browserWidget" native="true">
+             <property name="sizePolicy">
+              <sizepolicy hsizetype="Expanding" vsizetype="Expanding">
+               <horstretch>0</horstretch>
+               <verstretch>0</verstretch>
+              </sizepolicy>
+             </property>
+            </widget>
+            <widget class="QWidget" name="graphWidget" native="true">
+             <property name="sizePolicy">
+              <sizepolicy hsizetype="Expanding" vsizetype="Expanding">
+               <horstretch>0</horstretch>
+               <verstretch>0</verstretch>
+              </sizepolicy>
+             </property>
+             <layout class="QVBoxLayout" name="verticalLayout_7">
+              <property name="spacing">
+               <number>0</number>
+              </property>
+              <property name="leftMargin">
+               <number>0</number>
+              </property>
+              <property name="topMargin">
+               <number>0</number>
+              </property>
+              <property name="rightMargin">
+               <number>0</number>
+              </property>
+              <property name="bottomMargin">
+               <number>0</number>
+              </property>
+             </layout>
+            </widget>
+           </widget>
+          </item>
+         </layout>
         </widget>
-        <widget class="QWidget" name="propertyWidget" native="true">
+        <widget class="QWidget" name="widget_4" native="true">
          <property name="sizePolicy">
           <sizepolicy hsizetype="Minimum" vsizetype="Preferred">
            <horstretch>0</horstretch>
@@ -185,7 +242,7 @@
          </property>
          <property name="minimumSize">
           <size>
-           <width>320</width>
+           <width>0</width>
            <height>0</height>
           </size>
          </property>
@@ -203,7 +260,7 @@
            <number>0</number>
           </property>
           <property name="leftMargin">
-           <number>4</number>
+           <number>0</number>
           </property>
           <property name="topMargin">
            <number>0</number>
@@ -212,10 +269,10 @@
            <number>4</number>
           </property>
           <property name="bottomMargin">
-           <number>0</number>
+           <number>4</number>
           </property>
           <item>
-           <widget class="QSplitter" name="propertySplitter">
+           <widget class="QSplitter" name="materialSplitter">
             <property name="orientation">
              <enum>Qt::Orientation::Vertical</enum>
             </property>
@@ -223,7 +280,7 @@
              <property name="minimumSize">
               <size>
                <width>0</width>
-               <height>128</height>
+               <height>200</height>
               </size>
              </property>
              <property name="styleSheet">
@@ -240,7 +297,7 @@
                <number>0</number>
               </property>
               <property name="bottomMargin">
-               <number>4</number>
+               <number>0</number>
               </property>
               <item>
                <widget class="stageviz::MaterialSwatch" name="swatch" native="true"/>
@@ -249,6 +306,9 @@
             </widget>
             <widget class="QWidget" name="widget_5" native="true">
              <layout class="QVBoxLayout" name="verticalLayout_3">
+              <property name="spacing">
+               <number>4</number>
+              </property>
               <property name="leftMargin">
                <number>0</number>
               </property>
@@ -264,12 +324,12 @@
               <item>
                <widget class="QLabel" name="name">
                 <property name="text">
-                 <string>TextLabel</string>
+                 <string/>
                 </property>
                </widget>
               </item>
               <item>
-               <widget class="stageviz::MaterialTree" name="materialTree">
+               <widget class="stageviz::MaterialTree" name="tree">
                 <column>
                  <property name="text">
                   <string notr="true">1</string>

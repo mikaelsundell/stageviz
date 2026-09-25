@@ -209,6 +209,7 @@ StylePrivate::updateTheme()
     map(Style::ColorRole::Button, QColor::fromHsl(220, 6, 36));
     map(Style::ColorRole::ButtonAlt, QColor::fromHsl(220, 6, 64));
     map(Style::ColorRole::Error, QColor::fromHsl(352, 158, 93));
+    map(Style::ColorRole::Graph, QColor::fromHsl(0, 0, 40));
     map(Style::ColorRole::Grid, QColor::fromHsl(0, 0, 80));
     map(Style::ColorRole::Guide, QColor::fromHsl(0, 0, 120));
     map(Style::ColorRole::Handle, QColor::fromHsl(0, 0, 150));
@@ -217,11 +218,12 @@ StylePrivate::updateTheme()
     map(Style::ColorRole::Item, QColor::fromHsl(220, 6, 50));
     map(Style::ColorRole::ItemAlt, QColor::fromHsl(220, 6, 42));
     map(Style::ColorRole::Progress, QColor::fromHsl(216, 82, 20));
-    map(Style::ColorRole::Render, QColor::fromHsl(220, 6, 42));
+    map(Style::ColorRole::Render, QColor::fromHsl(0, 0, 40));
     map(Style::ColorRole::RenderAlt, QColor::fromHsl(210, 6, 25));
     map(Style::ColorRole::Selection, QColor::fromHsl(35, 240, 160));
     map(Style::ColorRole::SelectionAlt, QColor::fromHsl(55, 140, 120));
     map(Style::ColorRole::Text, QColor::fromHsl(0, 0, 220));
+    map(Style::ColorRole::TextAlt, QColor::fromHsl(0, 0, 150));
     map(Style::ColorRole::Warning, QColor(220, 170, 40));
 
     d.icons[roleName(Style::IconRole::BranchClosed)] = ":/icons/resources/BranchClosed.png";
@@ -243,6 +245,7 @@ StylePrivate::updateTheme()
     d.icons[roleName(Style::IconRole::Left)] = ":/icons/resources/Left.png";
     d.icons[roleName(Style::IconRole::List)] = ":/icons/resources/List.png";
     d.icons[roleName(Style::IconRole::Material)] = ":/icons/resources/Material.png";
+    d.icons[roleName(Style::IconRole::Nested)] = ":/icons/resources/Nested.png";
     d.icons[roleName(Style::IconRole::New)] = ":/icons/resources/New.png";
     d.icons[roleName(Style::IconRole::Open)] = ":/icons/resources/Open.png";
     d.icons[roleName(Style::IconRole::Over)] = ":/icons/resources/Over.png";

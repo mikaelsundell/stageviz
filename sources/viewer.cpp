@@ -47,6 +47,7 @@
 #include <QProcess>
 #include <QPropertyAnimation>
 #include <QSettings>
+#include <QSizePolicy>
 #include <QStatusBar>
 #include <QTimer>
 #include <QToolButton>
@@ -54,7 +55,6 @@
 #include <pxr/usd/usdGeom/modelAPI.h>
 #include <utility>
 
-#include <QSizePolicy>
 // generated files
 #include "ui_viewer.h"
 

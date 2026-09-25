@@ -5,6 +5,7 @@
 #include "command.h"
 #include "commandstack.h"
 #include "commandutils.h"
+#include "materialutils.h"
 #include "qtutils.h"
 #include "tracelocks.h"
 #include "usdedit.h"
@@ -637,6 +638,70 @@ namespace {
         SdfPath propertyPath;
         SdfLayerRefPtr snapshotLayer;
     };
+
+    struct ShaderInputPropertyState {
+        SdfPath propertyPath;
+        bool hadSpec = false;
+        SdfLayerRefPtr snapshotLayer;
+    };
+
+    bool captureShaderInputProperty(const SdfLayerHandle& editLayer, const SdfPath& propertyPath,
+                                    ShaderInputPropertyState& state, QString& error)
+    {
+        if (!editLayer || propertyPath.IsEmpty() || !propertyPath.IsPropertyPath()) {
+            error = "invalid shader input property";
+            return false;
+        }
+
+        state.propertyPath = propertyPath;
+        state.hadSpec = bool(editLayer->GetPropertyAtPath(propertyPath));
+        if (!state.hadSpec)
+            return true;
+
+        state.snapshotLayer = SdfLayer::CreateAnonymous("stageviz_shader_input_snapshot.usda");
+        if (!state.snapshotLayer) {
+            error = QString("failed to create shader input snapshot: %1").arg(pathText(propertyPath));
+            return false;
+        }
+
+        SdfCreatePrimInLayer(state.snapshotLayer, propertyPath.GetPrimPath());
+        if (!SdfCopySpec(editLayer, propertyPath, state.snapshotLayer, propertyPath)) {
+            error = QString("failed to snapshot shader input: %1").arg(pathText(propertyPath));
+            return false;
+        }
+        return true;
+    }
+
+    bool restoreShaderInputProperty(const SdfLayerHandle& editLayer, const ShaderInputPropertyState& state,
+                                    QString& error)
+    {
+        if (!editLayer || state.propertyPath.IsEmpty()) {
+            error = "invalid shader input snapshot";
+            return false;
+        }
+
+        if (!removePropertySpec(editLayer, state.propertyPath)) {
+            error = QString("failed to clear shader input: %1").arg(pathText(state.propertyPath));
+            return false;
+        }
+
+        if (!state.hadSpec)
+            return true;
+
+        if (!state.snapshotLayer) {
+            error = "shader input snapshot missing";
+            return false;
+        }
+
+        if (!editLayer->GetPrimAtPath(state.propertyPath.GetPrimPath()))
+            SdfCreatePrimInLayer(editLayer, state.propertyPath.GetPrimPath());
+
+        if (!SdfCopySpec(state.snapshotLayer, state.propertyPath, editLayer, state.propertyPath)) {
+            error = QString("failed to restore shader input: %1").arg(pathText(state.propertyPath));
+            return false;
+        }
+        return true;
+    }
 
     bool pathFallsWithinRoots(const SdfPath& path, const QList<SdfPath>& roots)
     {
@@ -1684,6 +1749,733 @@ bindMaterial(const QList<SdfPath>& inPaths, const SdfPath& materialPath)
         });
 }
 
+
+Command
+disconnectShaderInputs(const QList<SdfPath>& inputPaths)
+{
+    auto states = std::make_shared<QList<ShaderInputPropertyState>>();
+
+    return Command(
+        [inputPaths, states](Session* session) {
+            if (!session || inputPaths.isEmpty())
+                return;
+
+            const QList<SdfPath> paths = path::uniquePaths(inputPaths);
+            command::beginDeferred(session, "Disconnect shader inputs", static_cast<int>(paths.size()));
+            command::runWorker([session, paths, states]() {
+                QList<SdfPath> changed;
+                QStringList errors;
+                {
+                    WRITE_LOCKER(locker, session->stageLock(), "stageLock");
+                    const UsdStageRefPtr stage = session->stageUnsafe();
+                    if (!stage) {
+                        errors.append("stage missing");
+                    }
+                    else {
+                        QString editError;
+                        const SdfLayerHandle editLayer = currentEditLayer(stage, editError);
+                        if (!editLayer) {
+                            errors.append(editError);
+                        }
+                        else {
+                            states->clear();
+                            UsdEditContext context(stage, UsdEditTarget(editLayer));
+                            for (const SdfPath& propertyPath : paths) {
+                                const UsdAttribute attr = stage->GetAttributeAtPath(propertyPath);
+                                if (!attr) {
+                                    errors.append(QString("shader input missing: %1").arg(pathText(propertyPath)));
+                                    continue;
+                                }
+
+                                ShaderInputPropertyState state;
+                                QString error;
+                                if (!captureShaderInputProperty(editLayer, propertyPath, state, error)) {
+                                    errors.append(error);
+                                    continue;
+                                }
+
+                                SdfPathVector existing;
+                                attr.GetConnections(&existing);
+                                if (existing.empty())
+                                    continue;
+
+                                if (!attr.SetConnections(SdfPathVector())) {
+                                    errors.append(
+                                        QString("failed to disconnect shader input: %1").arg(pathText(propertyPath)));
+                                    continue;
+                                }
+
+                                states->append(state);
+                                path::appendUnique(changed, propertyPath.GetPrimPath());
+                            }
+                        }
+                    }
+                }
+
+                const bool success = errors.isEmpty() && !changed.isEmpty();
+                const QString errorText = summarizeErrors(errors);
+                command::queueToSession(session, [session, changed, success, errorText]() {
+                    using Status = Session::Notify::Status;
+                    command::finishDeferred(session,
+                                            success ? "Shader inputs disconnected"
+                                                    : (errorText.isEmpty()
+                                                           ? "No connected shader inputs"
+                                                           : appendError("Disconnect shader inputs failed", errorText)),
+                                            changed, success ? Status::Success : Status::Error);
+                });
+            });
+        },
+        [states](Session* session) {
+            if (!session || states->isEmpty())
+                return;
+
+            command::beginDeferred(session, "Undo disconnect shader inputs", static_cast<int>(states->size()));
+            command::runWorker([session, states]() {
+                QList<SdfPath> changed;
+                QStringList errors;
+                {
+                    WRITE_LOCKER(locker, session->stageLock(), "stageLock");
+                    const UsdStageRefPtr stage = session->stageUnsafe();
+                    QString editError;
+                    const SdfLayerHandle editLayer = currentEditLayer(stage, editError);
+                    if (!stage || !editLayer) {
+                        errors.append(!editError.isEmpty() ? editError : QStringLiteral("stage missing"));
+                    }
+                    else {
+                        for (const ShaderInputPropertyState& state : *states) {
+                            QString error;
+                            if (restoreShaderInputProperty(editLayer, state, error))
+                                path::appendUnique(changed, state.propertyPath.GetPrimPath());
+                            else
+                                errors.append(error);
+                        }
+                    }
+                }
+                const bool success = errors.isEmpty();
+                const QString errorText = summarizeErrors(errors);
+                command::queueToSession(session, [session, changed, success, errorText]() {
+                    using Status = Session::Notify::Status;
+                    command::finishDeferred(session,
+                                            success ? "Shader input disconnect undone"
+                                                    : appendError("Undo shader input disconnect failed", errorText),
+                                            changed, success ? Status::Success : Status::Error);
+                });
+            });
+        });
+}
+
+
+Command
+connectShaderInput(const SdfPath& inputPath, const SdfPath& sourceOutputPath)
+{
+    auto state = std::make_shared<ShaderInputPropertyState>();
+    auto captured = std::make_shared<bool>(false);
+
+    return Command(
+        [inputPath, sourceOutputPath, state, captured](Session* session) {
+            if (!session || !inputPath.IsPropertyPath() || !sourceOutputPath.IsPropertyPath())
+                return;
+
+            command::beginDeferred(session, "Connect shader input", 1);
+            command::runWorker([session, inputPath, sourceOutputPath, state, captured]() {
+                bool success = false;
+                QString error;
+                QList<SdfPath> changed;
+
+                {
+                    WRITE_LOCKER(locker, session->stageLock(), "stageLock");
+                    const UsdStageRefPtr stage = session->stageUnsafe();
+                    QString editError;
+                    const SdfLayerHandle editLayer = currentEditLayer(stage, editError);
+                    if (!stage || !editLayer) {
+                        error = !editError.isEmpty() ? editError : QStringLiteral("stage missing");
+                    }
+                    else {
+                        const UsdAttribute inputAttr = stage->GetAttributeAtPath(inputPath);
+                        const UsdAttribute outputAttr = stage->GetAttributeAtPath(sourceOutputPath);
+                        const UsdShadeInput input(inputAttr);
+                        const UsdShadeOutput output(outputAttr);
+
+                        if (!input || !output) {
+                            error = QStringLiteral("shader input or output missing");
+                        }
+                        else {
+                            TfToken sourceShaderId;
+                            const UsdShadeShader sourceShader(output.GetPrim());
+                            if (sourceShader)
+                                sourceShader.GetIdAttr().Get(&sourceShaderId);
+
+                            const bool exactType = input.GetTypeName() == output.GetTypeName();
+                            const bool texcoord2Compatible = (input.GetTypeName() == SdfValueTypeNames->TexCoord2f
+                                                              && output.GetTypeName() == SdfValueTypeNames->Float2)
+                                                             || (input.GetTypeName() == SdfValueTypeNames->Float2
+                                                                 && output.GetTypeName()
+                                                                        == SdfValueTypeNames->TexCoord2f);
+                            const bool uvTextureRgbToColor = input.GetTypeName() == SdfValueTypeNames->Color3f
+                                                             && output.GetTypeName() == SdfValueTypeNames->Float3
+                                                             && sourceShaderId == TfToken("UsdUVTexture")
+                                                             && output.GetBaseName() == TfToken("rgb");
+
+                            if (!exactType && !texcoord2Compatible && !uvTextureRgbToColor) {
+                                error = QStringLiteral("shader socket types are incompatible: %1 -> %2")
+                                            .arg(QString::fromStdString(output.GetTypeName().GetAsToken().GetString()),
+                                                 QString::fromStdString(input.GetTypeName().GetAsToken().GetString()));
+                            }
+                            else {
+                                QString captureError;
+                                if (!captureShaderInputProperty(editLayer, inputPath, *state, captureError)) {
+                                    error = captureError;
+                                }
+                                else if (!input.ConnectToSource(output)) {
+                                    error = QStringLiteral("failed to connect shader input");
+                                }
+                                else {
+                                    *captured = true;
+                                    success = true;
+                                    path::appendUnique(changed, inputPath.GetPrimPath());
+                                    path::appendUnique(changed, sourceOutputPath.GetPrimPath());
+                                }
+                            }
+                        }
+                    }
+                }
+
+                command::queueToSession(session, [session, changed, success, error]() {
+                    using Status = Session::Notify::Status;
+                    const QString message = success ? QStringLiteral("Shader input connected")
+                                                    : appendError("Connect shader input failed", error);
+                    command::finishDeferred(session, message, changed, success ? Status::Success : Status::Error);
+                    if (!success)
+                        session->notifyStatus(Status::Error, QStringLiteral("Connect shader input failed"), error);
+                });
+            });
+        },
+        [state, captured](Session* session) {
+            if (!session || !*captured)
+                return;
+
+            command::beginDeferred(session, "Undo connect shader input", 1);
+            command::runWorker([session, state]() {
+                bool success = false;
+                QString error;
+                QList<SdfPath> changed;
+                {
+                    WRITE_LOCKER(locker, session->stageLock(), "stageLock");
+                    const UsdStageRefPtr stage = session->stageUnsafe();
+                    QString editError;
+                    const SdfLayerHandle editLayer = currentEditLayer(stage, editError);
+                    if (!stage || !editLayer) {
+                        error = !editError.isEmpty() ? editError : QStringLiteral("stage missing");
+                    }
+                    else {
+                        success = restoreShaderInputProperty(editLayer, *state, error);
+                        if (success)
+                            path::appendUnique(changed, state->propertyPath.GetPrimPath());
+                    }
+                }
+
+                command::queueToSession(session, [session, changed, success, error]() {
+                    using Status = Session::Notify::Status;
+                    command::finishDeferred(session,
+                                            success ? "Shader input connection undone"
+                                                    : appendError("Undo shader input connection failed", error),
+                                            changed, success ? Status::Success : Status::Error);
+                });
+            });
+        });
+}
+
+Command
+resetShaderInputs(const QList<SdfPath>& inputPaths)
+{
+    auto states = std::make_shared<QList<ShaderInputPropertyState>>();
+
+    return Command(
+        [inputPaths, states](Session* session) {
+            if (!session || inputPaths.isEmpty())
+                return;
+            const QList<SdfPath> paths = path::uniquePaths(inputPaths);
+            command::beginDeferred(session, "Reset shader inputs", static_cast<int>(paths.size()));
+            command::runWorker([session, paths, states]() {
+                QList<SdfPath> changed;
+                QStringList errors;
+                {
+                    WRITE_LOCKER(locker, session->stageLock(), "stageLock");
+                    const UsdStageRefPtr stage = session->stageUnsafe();
+                    QString editError;
+                    const SdfLayerHandle editLayer = currentEditLayer(stage, editError);
+                    if (!stage || !editLayer) {
+                        errors.append(!editError.isEmpty() ? editError : QStringLiteral("stage missing"));
+                    }
+                    else {
+                        states->clear();
+                        for (const SdfPath& propertyPath : paths) {
+                            if (!editLayer->GetPropertyAtPath(propertyPath))
+                                continue;
+                            ShaderInputPropertyState state;
+                            QString error;
+                            if (!captureShaderInputProperty(editLayer, propertyPath, state, error)) {
+                                errors.append(error);
+                                continue;
+                            }
+                            if (!removePropertySpec(editLayer, propertyPath)) {
+                                errors.append(QString("failed to reset shader input: %1").arg(pathText(propertyPath)));
+                                continue;
+                            }
+                            states->append(state);
+                            path::appendUnique(changed, propertyPath.GetPrimPath());
+                        }
+                    }
+                }
+                const bool success = errors.isEmpty() && !changed.isEmpty();
+                const QString errorText = summarizeErrors(errors);
+                command::queueToSession(session, [session, changed, success, errorText]() {
+                    using Status = Session::Notify::Status;
+                    command::finishDeferred(session,
+                                            success ? "Shader inputs reset"
+                                                    : (errorText.isEmpty()
+                                                           ? "No edit-layer shader inputs to reset"
+                                                           : appendError("Reset shader inputs failed", errorText)),
+                                            changed, success ? Status::Success : Status::Error);
+                });
+            });
+        },
+        [states](Session* session) {
+            if (!session || states->isEmpty())
+                return;
+            command::beginDeferred(session, "Undo reset shader inputs", static_cast<int>(states->size()));
+            command::runWorker([session, states]() {
+                QList<SdfPath> changed;
+                QStringList errors;
+                {
+                    WRITE_LOCKER(locker, session->stageLock(), "stageLock");
+                    const UsdStageRefPtr stage = session->stageUnsafe();
+                    QString editError;
+                    const SdfLayerHandle editLayer = currentEditLayer(stage, editError);
+                    if (!stage || !editLayer) {
+                        errors.append(!editError.isEmpty() ? editError : QStringLiteral("stage missing"));
+                    }
+                    else {
+                        for (const ShaderInputPropertyState& state : *states) {
+                            QString error;
+                            if (restoreShaderInputProperty(editLayer, state, error))
+                                path::appendUnique(changed, state.propertyPath.GetPrimPath());
+                            else
+                                errors.append(error);
+                        }
+                    }
+                }
+                const bool success = errors.isEmpty();
+                const QString errorText = summarizeErrors(errors);
+                command::queueToSession(session, [session, changed, success, errorText]() {
+                    using Status = Session::Notify::Status;
+                    command::finishDeferred(session,
+                                            success ? "Shader input reset undone"
+                                                    : appendError("Undo shader input reset failed", errorText),
+                                            changed, success ? Status::Success : Status::Error);
+                });
+            });
+        });
+}
+
+Command
+connectShaderNode(const SdfPath& inputPath, const QString& shaderId, const QString& nodeName, const TfToken& outputName)
+{
+    struct State {
+        ShaderInputPropertyState input;
+        SdfPath nodePath;
+        bool captured = false;
+    };
+    auto state = std::make_shared<State>();
+
+    return Command(
+        [inputPath, shaderId, nodeName, outputName, state](Session* session) {
+            if (!session || inputPath.IsEmpty() || shaderId.isEmpty() || outputName.IsEmpty())
+                return;
+            command::beginDeferred(session, "Connect shader node", 1);
+            command::runWorker([session, inputPath, shaderId, nodeName, outputName, state]() {
+                bool success = false;
+                QString error;
+                QList<SdfPath> changed;
+                {
+                    WRITE_LOCKER(locker, session->stageLock(), "stageLock");
+                    const UsdStageRefPtr stage = session->stageUnsafe();
+                    QString editError;
+                    const SdfLayerHandle editLayer = currentEditLayer(stage, editError);
+                    if (!stage || !editLayer) {
+                        error = !editError.isEmpty() ? editError : QStringLiteral("stage missing");
+                    }
+                    else {
+                        const UsdAttribute attr = stage->GetAttributeAtPath(inputPath);
+                        if (!attr) {
+                            error = QString("shader input missing: %1").arg(pathText(inputPath));
+                        }
+                        else {
+                            if (!state->captured) {
+                                if (!captureShaderInputProperty(editLayer, inputPath, state->input, error)) {
+                                    // error already set
+                                }
+                                else {
+                                    QString cleanName = nodeName.isEmpty() ? QStringLiteral("Node") : nodeName;
+                                    const SdfPath parentPath = inputPath.GetPrimPath().GetParentPath();
+                                    state->nodePath = stage::buildChildPath(stage, parentPath, cleanName, error);
+                                    state->captured = !state->nodePath.IsEmpty();
+                                }
+                            }
+
+                            if (state->captured) {
+                                UsdEditContext context(stage, UsdEditTarget(editLayer));
+                                UsdShadeShader shader = UsdShadeShader::Define(stage, state->nodePath);
+                                if (!shader || !shader.CreateIdAttr(VtValue(TfToken(qt::QStringToString(shaderId))))) {
+                                    error = "failed to create shader node";
+                                }
+                                else {
+                                    SdfValueTypeName outputType = attr.GetTypeName();
+                                    const QString id = shaderId;
+                                    if (id == QStringLiteral("UsdUVTexture")) {
+                                        outputType = outputName == TfToken("rgb") ? SdfValueTypeNames->Float3
+                                                                                  : SdfValueTypeNames->Float;
+                                        shader.CreateInput(TfToken("file"), SdfValueTypeNames->Asset);
+                                        shader.CreateInput(TfToken("st"), SdfValueTypeNames->Float2);
+                                        shader.CreateInput(TfToken("fallback"), SdfValueTypeNames->Float4);
+                                        shader.CreateInput(TfToken("wrapS"), SdfValueTypeNames->Token);
+                                        shader.CreateInput(TfToken("wrapT"), SdfValueTypeNames->Token);
+                                    }
+                                    else if (id.startsWith(QStringLiteral("UsdPrimvarReader_"))) {
+                                        // Author the complete Preview Surface primvar-reader
+                                        // interface. The previous connected-node path only
+                                        // created `varname`; free nodes created by MaterialGraph
+                                        // also had `fallback`. Leaving that input absent produces
+                                        // an incomplete shader node and can take Storm down when
+                                        // the freshly-authored network is synchronized for the
+                                        // material swatch.
+                                        SdfValueTypeName valueType;
+                                        if (id.endsWith(QStringLiteral("_float")))
+                                            valueType = SdfValueTypeNames->Float;
+                                        else if (id.endsWith(QStringLiteral("_float2")))
+                                            valueType = SdfValueTypeNames->Float2;
+                                        else if (id.endsWith(QStringLiteral("_float3")))
+                                            valueType = SdfValueTypeNames->Float3;
+                                        else if (id.endsWith(QStringLiteral("_float4")))
+                                            valueType = SdfValueTypeNames->Float4;
+                                        else if (id.endsWith(QStringLiteral("_int")))
+                                            valueType = SdfValueTypeNames->Int;
+                                        else if (id.endsWith(QStringLiteral("_string")))
+                                            valueType = SdfValueTypeNames->String;
+
+                                        if (!valueType.GetAsToken().IsEmpty()) {
+                                            outputType = valueType;
+                                            UsdShadeInput varname = shader.CreateInput(TfToken("varname"),
+                                                                                       SdfValueTypeNames->Token);
+                                            if (varname)
+                                                varname.Set(TfToken());
+
+                                            UsdShadeInput fallback = shader.CreateInput(TfToken("fallback"), valueType);
+                                            if (fallback) {
+                                                const VtValue defaultValue = valueType.GetDefaultValue();
+                                                if (!defaultValue.IsEmpty())
+                                                    fallback.Set(defaultValue);
+                                            }
+                                        }
+                                    }
+                                    else if (id == QStringLiteral("UsdTransform2d")) {
+                                        outputType = SdfValueTypeNames->Float2;
+                                        shader.CreateInput(TfToken("in"), SdfValueTypeNames->Float2);
+                                        shader.CreateInput(TfToken("rotation"), SdfValueTypeNames->Float);
+                                        shader.CreateInput(TfToken("scale"), SdfValueTypeNames->Float2);
+                                        shader.CreateInput(TfToken("translation"), SdfValueTypeNames->Float2);
+                                    }
+
+                                    const UsdShadeOutput output = shader.CreateOutput(outputName, outputType);
+                                    const UsdShadeInput input(attr);
+
+                                    // Do not author generic Float3 -> Color3f shader connections.
+                                    // Although the value representations are storage-compatible,
+                                    // Storm does not treat every shader semantic as interchangeable
+                                    // and can crash compiling e.g. UsdPrimvarReader_float3.result
+                                    // into UsdPreviewSurface.diffuseColor. UsdUVTexture.rgb is the
+                                    // standard USD Preview exception and is deliberately allowed.
+                                    const bool float3ToColor3 = input && outputType == SdfValueTypeNames->Float3
+                                                                && input.GetTypeName() == SdfValueTypeNames->Color3f;
+                                    const bool safeUvTextureRgb = id == QStringLiteral("UsdUVTexture")
+                                                                  && outputName == TfToken("rgb");
+
+                                    if (float3ToColor3 && !safeUvTextureRgb) {
+                                        error = QStringLiteral(
+                                            "shader socket types are incompatible: float3 -> color3f");
+                                        stage::removePrimSpec(editLayer, state->nodePath);
+                                        QString restoreError;
+                                        restoreShaderInputProperty(editLayer, state->input, restoreError);
+                                        state->captured = false;
+                                        state->nodePath = SdfPath();
+                                    }
+                                    else if (!output || !input || !input.ConnectToSource(output)) {
+                                        error = "failed to connect shader node";
+                                        stage::removePrimSpec(editLayer, state->nodePath);
+                                        QString restoreError;
+                                        restoreShaderInputProperty(editLayer, state->input, restoreError);
+                                        state->captured = false;
+                                        state->nodePath = SdfPath();
+                                    }
+                                    else {
+                                        success = true;
+                                        path::appendUnique(changed, inputPath.GetPrimPath());
+                                        path::appendUnique(changed, state->nodePath);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                command::queueToSession(session, [session, changed, success, error]() {
+                    using Status = Session::Notify::Status;
+                    const QString message = success ? QStringLiteral("Shader node connected")
+                                                    : appendError("Connect shader node failed", error);
+                    command::finishDeferred(session, message, changed, success ? Status::Success : Status::Error);
+                    if (!success)
+                        session->notifyStatus(Status::Error, QStringLiteral("Connect shader node failed"), error);
+                });
+            });
+        },
+        [state](Session* session) {
+            if (!session || !state->captured)
+                return;
+            command::beginDeferred(session, "Undo connect shader node", 1);
+            command::runWorker([session, state]() {
+                bool success = false;
+                QString error;
+                QList<SdfPath> changed;
+                {
+                    WRITE_LOCKER(locker, session->stageLock(), "stageLock");
+                    const UsdStageRefPtr stage = session->stageUnsafe();
+                    QString editError;
+                    const SdfLayerHandle editLayer = currentEditLayer(stage, editError);
+                    if (!stage || !editLayer) {
+                        error = !editError.isEmpty() ? editError : QStringLiteral("stage missing");
+                    }
+                    else {
+                        if (!stage::removePrimSpec(editLayer, state->nodePath))
+                            error = QString("failed to remove shader node: %1").arg(pathText(state->nodePath));
+                        QString restoreError;
+                        if (!restoreShaderInputProperty(editLayer, state->input, restoreError) && error.isEmpty())
+                            error = restoreError;
+                        success = error.isEmpty();
+                        path::appendUnique(changed, state->input.propertyPath.GetPrimPath());
+                        path::appendUnique(changed, state->nodePath);
+                    }
+                }
+                command::queueToSession(session, [session, changed, success, error]() {
+                    using Status = Session::Notify::Status;
+                    command::finishDeferred(session,
+                                            success ? "Shader node connection undone"
+                                                    : appendError("Undo connect shader node failed", error),
+                                            changed, success ? Status::Success : Status::Error);
+                });
+            });
+        });
+}
+
+
+Command
+connectMaterialXNode(const SdfPath& inputPath, const QString& nodeDef, const QString& nodeName)
+{
+    return connectShaderNode(inputPath, nodeDef, nodeName, TfToken("out"));
+}
+
+Command
+newShaderNode(const SdfPath& materialPath, const QString& shaderId, const QString& nodeName, const TfToken& outputName,
+              const SdfValueTypeName& outputType)
+{
+    struct State {
+        SdfPath nodePath;
+        bool captured = false;
+    };
+
+    auto state = std::make_shared<State>();
+
+    return Command(
+        [materialPath, shaderId, nodeName, outputName, outputType, state](Session* session) {
+            if (!session || materialPath.IsEmpty() || shaderId.isEmpty())
+                return;
+
+            WRITE_LOCKER(locker, session->stageLock(), "stageLock");
+            const UsdStageRefPtr stage = session->stageUnsafe();
+            if (!stage)
+                return;
+
+            const SdfLayerHandle editLayer = stage->GetEditTarget().GetLayer();
+            if (!editLayer)
+                return;
+
+            QString error;
+            if (!state->captured) {
+                const QString base = nodeName.isEmpty() ? QStringLiteral("Node") : nodeName;
+                state->nodePath = stage::buildChildPath(stage, materialPath, base, error);
+                state->captured = !state->nodePath.IsEmpty();
+            }
+            if (!state->captured)
+                return;
+
+            UsdEditContext context(stage, UsdEditTarget(editLayer));
+            UsdShadeShader shader = UsdShadeShader::Define(stage, state->nodePath);
+            if (!shader)
+                return;
+
+            shader.CreateIdAttr(VtValue(TfToken(qt::QStringToString(shaderId))));
+            MaterialUtils::authorUsdNodeDefaults(shader, shaderId);
+
+            if (!outputName.IsEmpty() && !shader.GetOutput(outputName))
+                shader.CreateOutput(outputName, outputType);
+        },
+        [state](Session* session) {
+            if (!session || !state->captured || state->nodePath.IsEmpty())
+                return;
+
+            WRITE_LOCKER(locker, session->stageLock(), "stageLock");
+            const UsdStageRefPtr stage = session->stageUnsafe();
+            if (!stage)
+                return;
+
+            const SdfLayerHandle editLayer = stage->GetEditTarget().GetLayer();
+            if (editLayer)
+                stage::removePrimSpec(editLayer, state->nodePath);
+        });
+}
+
+Command
+newMaterialXNode(const SdfPath& materialPath, const MaterialXNodeDefinition& definition)
+{
+    struct State {
+        SdfPath nodePath;
+        bool captured = false;
+    };
+
+    auto state = std::make_shared<State>();
+
+    return Command(
+        [materialPath, definition, state](Session* session) {
+            if (!session || materialPath.IsEmpty() || definition.nodeDef.isEmpty())
+                return;
+
+            WRITE_LOCKER(locker, session->stageLock(), "stageLock");
+            const UsdStageRefPtr stage = session->stageUnsafe();
+            if (!stage)
+                return;
+
+            const SdfLayerHandle editLayer = stage->GetEditTarget().GetLayer();
+            if (!editLayer)
+                return;
+
+            QString error;
+            if (!state->captured) {
+                const QString base = definition.node.isEmpty() ? QStringLiteral("MaterialXNode") : definition.node;
+                state->nodePath = stage::buildChildPath(stage, materialPath, base, error);
+                state->captured = !state->nodePath.IsEmpty();
+            }
+            if (!state->captured)
+                return;
+
+            UsdEditContext context(stage, UsdEditTarget(editLayer));
+            UsdShadeShader shader = UsdShadeShader::Define(stage, state->nodePath);
+            if (!shader)
+                return;
+
+            shader.CreateIdAttr(VtValue(TfToken(qt::QStringToString(definition.nodeDef))));
+
+            for (const MaterialXPortDefinition& port : definition.inputs) {
+                const SdfValueTypeName type = MaterialUtils::sdfTypeForMaterialX(port.type);
+                UsdShadeInput input = shader.CreateInput(TfToken(qt::QStringToString(port.name)), type);
+                const VtValue defaultValue = MaterialUtils::materialXDefaultValue(port.type, port.value);
+                if (input && !defaultValue.IsEmpty())
+                    input.Set(defaultValue);
+            }
+
+            if (!definition.outputs.isEmpty()) {
+                for (const MaterialXPortDefinition& port : definition.outputs) {
+                    shader.CreateOutput(TfToken(qt::QStringToString(port.name)),
+                                        MaterialUtils::sdfTypeForMaterialX(port.type));
+                }
+            }
+            else {
+                shader.CreateOutput(TfToken("out"), MaterialUtils::sdfTypeForMaterialX(definition.outputType));
+            }
+        },
+        [state](Session* session) {
+            if (!session || !state->captured || state->nodePath.IsEmpty())
+                return;
+
+            WRITE_LOCKER(locker, session->stageLock(), "stageLock");
+            const UsdStageRefPtr stage = session->stageUnsafe();
+            if (!stage)
+                return;
+
+            const SdfLayerHandle editLayer = stage->GetEditTarget().GetLayer();
+            if (editLayer)
+                stage::removePrimSpec(editLayer, state->nodePath);
+        });
+}
+
+Command
+deleteShaderNode(const SdfPath& nodePath)
+{
+    struct State {
+        SdfLayerRefPtr backup = SdfLayer::CreateAnonymous("stageviz_material_node_backup.usda");
+        bool hadEditSpec = false;
+        bool captured = false;
+    };
+
+    auto state = std::make_shared<State>();
+
+    return Command(
+        [nodePath, state](Session* session) {
+            if (!session || nodePath.IsEmpty())
+                return;
+
+            WRITE_LOCKER(locker, session->stageLock(), "stageLock");
+            const UsdStageRefPtr stage = session->stageUnsafe();
+            if (!stage)
+                return;
+
+            const SdfLayerHandle editLayer = stage->GetEditTarget().GetLayer();
+            if (!editLayer)
+                return;
+
+            if (!state->captured) {
+                state->hadEditSpec = bool(editLayer->GetPrimAtPath(nodePath));
+                if (state->hadEditSpec)
+                    SdfCopySpec(editLayer, nodePath, state->backup, nodePath);
+                state->captured = true;
+            }
+
+            if (state->hadEditSpec) {
+                stage::removePrimSpec(editLayer, nodePath);
+            }
+            else {
+                UsdEditContext context(stage, UsdEditTarget(editLayer));
+                UsdPrim prim = stage->OverridePrim(nodePath);
+                if (prim)
+                    prim.SetActive(false);
+            }
+        },
+        [nodePath, state](Session* session) {
+            if (!session || !state->captured || nodePath.IsEmpty())
+                return;
+
+            WRITE_LOCKER(locker, session->stageLock(), "stageLock");
+            const UsdStageRefPtr stage = session->stageUnsafe();
+            if (!stage)
+                return;
+
+            const SdfLayerHandle editLayer = stage->GetEditTarget().GetLayer();
+            if (!editLayer)
+                return;
+
+            if (state->hadEditSpec)
+                SdfCopySpec(state->backup, nodePath, editLayer, nodePath);
+            else
+                stage::removePrimSpec(editLayer, nodePath);
+        });
+}
 
 Command
 resetDependencies(const QList<SdfPath>& propertyPaths)
@@ -2954,6 +3746,83 @@ hidePaths(const QList<SdfPath>& paths, bool recursive)
                                             restoredPaths, success ? Status::Success : Status::Error);
                 });
             });
+        });
+}
+
+Command
+setEditLayer(const QString& layerIdentifier)
+{
+    struct EditLayerState {
+        SdfLayerHandle previousLayer;
+        SdfLayerHandle targetLayer;
+        bool captured = false;
+    };
+
+    auto state = std::make_shared<EditLayerState>();
+
+    return Command(
+        [layerIdentifier, state](Session* session) {
+            if (!session || layerIdentifier.isEmpty())
+                return;
+
+            session->beginProgressBlock("Set edit layer", 1);
+
+            bool success = false;
+            QString error;
+
+            if (!state->captured) {
+                {
+                    READ_LOCKER(locker, session->stageLock(), "stageLock");
+                    const UsdStageRefPtr stage = session->stageUnsafe();
+
+                    if (!stage) {
+                        error = "stage missing";
+                    }
+                    else {
+                        state->previousLayer = stage->GetEditTarget().GetLayer();
+                        const std::string identifier = qt::QStringToString(layerIdentifier);
+                        for (const SdfLayerHandle& layer : stage->GetLayerStack(true)) {
+                            if (layer && layer->GetIdentifier() == identifier) {
+                                state->targetLayer = layer;
+                                break;
+                            }
+                        }
+
+                        if (!state->targetLayer)
+                            error = QString("edit layer is not local to the stage: %1").arg(layerIdentifier);
+                    }
+                }
+
+                state->captured = state->targetLayer && state->previousLayer;
+            }
+
+            if (state->captured) {
+                success = session->setEditLayer(state->targetLayer);
+                if (!success)
+                    error = QString("failed to set edit layer: %1").arg(layerIdentifier);
+            }
+
+            using Status = Session::Notify::Status;
+            session->updateProgressNotify(Session::Notify(success ? QString("Edit layer set to %1").arg(layerIdentifier)
+                                                                  : appendError("Set edit layer failed", error),
+                                                          {}, success ? Status::Success : Status::Error),
+                                          1);
+            session->endProgressBlock();
+        },
+        [state](Session* session) {
+            if (!session || !state->captured || !state->previousLayer)
+                return;
+
+            session->beginProgressBlock("Undo set edit layer", 1);
+            const bool success = session->setEditLayer(state->previousLayer);
+
+            using Status = Session::Notify::Status;
+            const QString identifier = qt::StringToQString(state->previousLayer->GetIdentifier());
+            session->updateProgressNotify(Session::Notify(success ? QString("Edit layer restored to %1").arg(identifier)
+                                                                  : QString("Undo set edit layer failed"),
+                                                          {}, success ? Status::Success : Status::Error),
+                                          1);
+            session->endProgressBlock();
         });
 }
 

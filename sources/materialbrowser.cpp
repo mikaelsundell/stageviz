@@ -21,6 +21,7 @@
 #include <QCursor>
 #include <QDrag>
 #include <QHeaderView>
+#include <QInputDevice>
 #include <QKeyEvent>
 #include <QKeySequence>
 #include <QLineEdit>
@@ -28,15 +29,21 @@
 #include <QMenu>
 #include <QMimeData>
 #include <QMouseEvent>
+#include <QNativeGestureEvent>
+#include <QPainter>
 #include <QPointer>
+#include <QScrollBar>
 #include <QSet>
-#include <QSlider>
 #include <QStackedWidget>
+#include <QStyle>
+#include <QStyleOptionViewItem>
 #include <QStyledItemDelegate>
 #include <QTimer>
 #include <QToolButton>
 #include <QTreeWidget>
+#include <QWheelEvent>
 #include <algorithm>
+#include <cmath>
 #include <pxr/usd/usd/primRange.h>
 #include <pxr/usd/usdGeom/gprim.h>
 
@@ -54,6 +61,7 @@ public:
     void updateSourceRows();
     void applyFilter(const QString& text);
     void syncSelection(QAbstractItemView* source);
+    void panView(QAbstractItemView* view, const QPoint& delta);
     void updateViewSizes();
     void showViewMenu();
     void showContextMenu(QAbstractItemView* view, const QPoint& position);
@@ -87,6 +95,83 @@ public:
             return QStyledItemDelegate::eventFilter(editor, event);
         }
     };
+
+    class MaterialBrowserIconDelegate : public MaterialBrowserItemDelegate {
+    public:
+        explicit MaterialBrowserIconDelegate(QObject* parent = nullptr)
+            : MaterialBrowserItemDelegate(parent)
+        {}
+
+        QSize sizeHint(const QStyleOptionViewItem& option, const QModelIndex& index) const override
+        {
+            const auto* view = qobject_cast<const QListView*>(parent());
+            if (view && view->gridSize().isValid())
+                return view->gridSize();
+
+            return MaterialBrowserItemDelegate::sizeHint(option, index);
+        }
+
+        void paint(QPainter* painter, const QStyleOptionViewItem& option, const QModelIndex& index) const override
+        {
+            if (!painter)
+                return;
+
+            QStyleOptionViewItem opt(option);
+            initStyleOption(&opt, index);
+
+            const QWidget* widget = opt.widget;
+            const QStyle* style = widget ? widget->style() : QApplication::style();
+            const auto* view = qobject_cast<const QListView*>(parent());
+
+            const QSize gridSize = (view && view->gridSize().isValid()) ? view->gridSize() : opt.rect.size();
+            const QSize iconSize = (view && view->iconSize().isValid()) ? view->iconSize() : opt.decorationSize;
+
+            // Keep card geometry stable when the viewport clips during splitter resize.
+            const QRect fullRect(opt.rect.topLeft(), gridSize);
+
+            painter->save();
+
+            QStyleOptionViewItem backgroundOpt(opt);
+            backgroundOpt.rect = fullRect;
+            backgroundOpt.text.clear();
+            backgroundOpt.icon = QIcon();
+            style->drawPrimitive(QStyle::PE_PanelItemViewItem, &backgroundOpt, painter, widget);
+
+            const int padding = 8;
+            const int textHeight = opt.fontMetrics.height() + 4;
+
+            const QRect iconRect(fullRect.left() + (fullRect.width() - iconSize.width()) / 2, fullRect.top() + padding,
+                                 iconSize.width(), iconSize.height());
+
+            const QRect textRect(fullRect.left() + padding, fullRect.top() + padding + iconSize.height() + padding,
+                                 fullRect.width() - padding * 2, textHeight);
+
+            if (!opt.icon.isNull()) {
+                QIcon::Mode mode = QIcon::Normal;
+                if (!(opt.state & QStyle::State_Enabled))
+                    mode = QIcon::Disabled;
+                else if (opt.state & QStyle::State_Selected)
+                    mode = QIcon::Selected;
+
+                opt.icon.paint(painter, iconRect, Qt::AlignCenter, mode, QIcon::Off);
+            }
+
+            painter->setFont(opt.font);
+
+            QPalette::ColorGroup group = (opt.state & QStyle::State_Enabled) ? QPalette::Normal : QPalette::Disabled;
+            if (!(opt.state & QStyle::State_Active))
+                group = QPalette::Inactive;
+
+            const QPalette::ColorRole role = (opt.state & QStyle::State_Selected) ? QPalette::HighlightedText
+                                                                                  : QPalette::Text;
+            painter->setPen(opt.palette.color(group, role));
+
+            const QString text = opt.fontMetrics.elidedText(opt.text, Qt::ElideRight, textRect.width());
+            painter->drawText(textRect, Qt::AlignCenter | Qt::TextSingleLine, text);
+
+            painter->restore();
+        }
+    };
     struct Data {
         QPointer<MaterialBrowser> browser;
         QScopedPointer<Ui_MaterialBrowser> ui;
@@ -99,12 +184,14 @@ public:
         QPointer<QAction> detailView;
         QTimer* visibleTimer = nullptr;
         QPoint dragStartPosition;
+        QPoint panLastPosition;
         int swatchSize = 128;
         int swatchMinimum = 64;
-        int swatchMaximum = 256;
+        int swatchMaximum = 512;
         int swatchPadding = 8;
         int dragSourceRow = -1;
         bool materialDragActive = false;
+        bool panning = false;
         bool syncingSelection = false;
         bool updatingRows = false;
         MaterialBrowser::ViewMode mode = MaterialBrowser::Icons;
@@ -123,17 +210,18 @@ MaterialBrowserPrivate::init()
            static_cast<QAbstractItemView*>(d.ui->details) }) {
         browser->setSelectionMode(QAbstractItemView::ExtendedSelection);
         browser->setSelectionBehavior(QAbstractItemView::SelectRows);
-        // MaterialBrowser starts its own drag from eventFilter(). Keep the
-        // QAbstractItemView drag state disabled so it cannot fall back to
-        // rubber-band selection when the cursor returns after a material drag.
+        // Dragging is handled manually in eventFilter(); keep the view drag state disabled.
         browser->setDragEnabled(false);
         browser->setDragDropMode(QAbstractItemView::NoDragDrop);
         browser->setDefaultDropAction(Qt::CopyAction);
         browser->setEditTriggers(QAbstractItemView::NoEditTriggers);
-        browser->setItemDelegate(new MaterialBrowserItemDelegate(browser));
         browser->installEventFilter(d.browser.data());
         browser->viewport()->installEventFilter(d.browser.data());
     }
+
+    d.ui->icons->setItemDelegate(new MaterialBrowserIconDelegate(d.ui->icons));
+    d.ui->list->setItemDelegate(new MaterialBrowserItemDelegate(d.ui->list));
+    d.ui->details->setItemDelegate(new MaterialBrowserItemDelegate(d.ui->details));
 
     d.ui->icons->setViewMode(QListView::IconMode);
     d.ui->icons->setMovement(QListView::Static);
@@ -143,7 +231,6 @@ MaterialBrowserPrivate::init()
     d.ui->icons->setUniformItemSizes(true);
     d.ui->icons->setWordWrap(false);
     d.ui->icons->setTextElideMode(Qt::ElideRight);
-
     d.ui->list->setViewMode(QListView::ListMode);
     d.ui->list->setUniformItemSizes(true);
     d.ui->details->setRootIsDecorated(false);
@@ -185,11 +272,6 @@ MaterialBrowserPrivate::init()
     d.visibleTimer->setSingleShot(true);
     d.visibleTimer->setInterval(80);
 
-    d.ui->swatchSize->setRange(d.swatchMinimum, d.swatchMaximum);
-    d.ui->swatchSize->setSingleStep(8);
-    d.ui->swatchSize->setValue(d.swatchSize);
-
-    // connect
     connect(d.visibleTimer, &QTimer::timeout, d.browser.data(), [this]() { d.browser->refreshVisibleSwatches(); });
     connect(d.ui->filter, &QLineEdit::textChanged, d.browser.data(), [this](const QString& text) {
         applyFilter(text);
@@ -197,10 +279,6 @@ MaterialBrowserPrivate::init()
         d.visibleTimer->start();
     });
     connect(d.ui->clear, &QToolButton::clicked, d.ui->filter, &QLineEdit::clear);
-    connect(d.ui->swatchSize, &QSlider::valueChanged, d.browser.data(), [this](int) {
-        updateViewSizes();
-        d.visibleTimer->start();
-    });
     connect(d.ui->view, &QToolButton::clicked, d.browser.data(), [this]() { showViewMenu(); });
     connect(d.ui->view, &QWidget::customContextMenuRequested, d.browser.data(),
             [this](const QPoint&) { showViewMenu(); });
@@ -210,12 +288,15 @@ MaterialBrowserPrivate::init()
             [this]() { d.browser->setViewMode(MaterialBrowser::List); });
     connect(d.detailView, &QAction::triggered, d.browser.data(),
             [this]() { d.browser->setViewMode(MaterialBrowser::Details); });
-    connect(d.ui->icons, &QAbstractItemView::doubleClicked, d.browser.data(),
-            [this](const QModelIndex& index) { beginRename(d.ui->icons, index.row()); });
-    connect(d.ui->list, &QAbstractItemView::doubleClicked, d.browser.data(),
-            [this](const QModelIndex& index) { beginRename(d.ui->list, index.row()); });
-    connect(d.ui->details, &QAbstractItemView::doubleClicked, d.browser.data(),
-            [this](const QModelIndex& index) { beginRename(d.ui->details, index.row()); });
+    // Icon double-click distinguishes rename-on-name from activate-on-swatch.
+    connect(d.ui->list, &QAbstractItemView::doubleClicked, d.browser.data(), [this](const QModelIndex& index) {
+        if (index.row() >= 0 && index.row() < d.entries.size())
+            Q_EMIT d.browser->materialActivated(d.entries[index.row()].materialPath);
+    });
+    connect(d.ui->details, &QAbstractItemView::doubleClicked, d.browser.data(), [this](const QModelIndex& index) {
+        if (index.row() >= 0 && index.row() < d.entries.size())
+            Q_EMIT d.browser->materialActivated(d.entries[index.row()].materialPath);
+    });
     connect(d.ui->icons, &QListWidget::itemChanged, d.browser.data(), [this](QListWidgetItem* item) {
         if (item)
             commitRename(item->data(Qt::UserRole).toInt(), item->text());
@@ -259,6 +340,12 @@ MaterialBrowserPrivate::showContextMenu(QAbstractItemView* view, const QPoint& p
     const QModelIndex index = view->indexAt(position);
     if (index.isValid() && !d.browser->selectedRows().contains(index.row()))
         d.browser->selectRow(index.row());
+
+    // Empty-space context click opens New Material directly at the cursor.
+    if (!index.isValid()) {
+        Q_EMIT d.browser->newMaterialRequested(view->viewport()->mapToGlobal(position));
+        return;
+    }
 
     const QList<MaterialEntry> materials = d.browser->selectedEntries();
 
@@ -307,7 +394,8 @@ MaterialBrowserPrivate::showContextMenu(QAbstractItemView* view, const QPoint& p
         QApplication::clipboard()->setText(values.join('\n'));
     }
     else if (action == newMaterial) {
-        Q_EMIT d.browser->newMaterialRequested();
+        // Preserve the click position for the follow-up New Material menu.
+        Q_EMIT d.browser->newMaterialRequested(view->viewport()->mapToGlobal(position));
     }
     else if (action == deleteMaterial) {
         Q_EMIT d.browser->deleteRequested();
@@ -424,8 +512,7 @@ MaterialBrowserPrivate::commitRename(int row, const QString& name)
     const MaterialEntry& entry = d.entries[row];
     const QString trimmed = name.trimmed();
 
-    // QAbstractItemDelegate may emit itemChanged more than once while closing
-    // an editor. Never forward an empty transient value to the rename command.
+    // Ignore transient/duplicate itemChanged values while an editor closes.
     if (trimmed.isEmpty() || trimmed == entry.name) {
         d.updatingRows = true;
         if (QListWidgetItem* item = d.ui->icons->item(row))
@@ -440,9 +527,7 @@ MaterialBrowserPrivate::commitRename(int row, const QString& name)
 
     Q_EMIT d.browser->renameRequested(entry.materialPath, trimmed);
 
-    // Keep all views on the authored value until the stage notice refreshes
-    // the material list. This also lets the command perform sanitizing and
-    // uniquing exactly like StageTree.
+    // Keep views unchanged until the stage notice returns the sanitized/unique name.
     d.updatingRows = true;
     if (QListWidgetItem* item = d.ui->icons->item(row))
         item->setText(entry.name);
@@ -521,7 +606,6 @@ MaterialBrowserPrivate::rebuild()
     }
 
     updateSourceRows();
-    d.ui->count->setText(QString("%1 material(s)").arg(d.entries.size()));
 
     d.ui->icons->setUpdatesEnabled(true);
     d.ui->list->setUpdatesEnabled(true);
@@ -546,11 +630,10 @@ MaterialBrowserPrivate::updateRow(int row)
     const QString type = MaterialUtils::shaderTypeLabel(entry.shaderId);
     const QImage image = d.swatches.value(row);
 
+    // Keep the full-resolution render in QIcon so Qt can choose the proper high-DPI representation.
     QIcon icon;
-    if (!image.isNull()) {
-        icon = QIcon(QPixmap::fromImage(image).scaled(d.swatchSize, d.swatchSize, Qt::KeepAspectRatio,
-                                                      Qt::SmoothTransformation));
-    }
+    if (!image.isNull())
+        icon = QIcon(QPixmap::fromImage(image));
 
     if (QListWidgetItem* item = d.ui->icons->item(row)) {
         item->setText(entry.name);
@@ -641,13 +724,27 @@ MaterialBrowserPrivate::syncSelection(QAbstractItemView* source)
 }
 
 void
+MaterialBrowserPrivate::panView(QAbstractItemView* view, const QPoint& delta)
+{
+    if (!view || delta.isNull())
+        return;
+
+    // Content follows the fingers, matching the graph/viewport pan convention.
+    if (QScrollBar* horizontal = view->horizontalScrollBar())
+        horizontal->setValue(horizontal->value() - delta.x());
+    if (QScrollBar* vertical = view->verticalScrollBar())
+        vertical->setValue(vertical->value() - delta.y());
+}
+
+void
 MaterialBrowserPrivate::updateViewSizes()
 {
-    const int size = std::clamp(d.ui->swatchSize->value(), d.swatchMinimum, d.swatchMaximum);
+    const int size = std::clamp(d.swatchSize, d.swatchMinimum, d.swatchMaximum);
     d.swatchSize = size;
 
     const int nameHeight = d.ui->icons->fontMetrics().height() + 4;
-    const QSize gridSize(size + d.swatchPadding * 2, size + nameHeight + d.swatchPadding * 2);
+    const int bottomPadding = 6;
+    const QSize gridSize(size + d.swatchPadding * 2, size + nameHeight + d.swatchPadding * 2 + bottomPadding);
 
     d.ui->icons->setIconSize(QSize(size, size));
     d.ui->icons->setGridSize(gridSize);
@@ -661,8 +758,8 @@ MaterialBrowserPrivate::updateViewSizes()
 
         const QImage image = d.swatches.value(row);
         if (!image.isNull()) {
-            item->setIcon(
-                QIcon(QPixmap::fromImage(image).scaled(size, size, Qt::KeepAspectRatio, Qt::SmoothTransformation)));
+            // Reuse the full-resolution render for high-DPI resizing.
+            item->setIcon(QIcon(QPixmap::fromImage(image)));
         }
     }
 
@@ -769,9 +866,7 @@ MaterialBrowser::setEntries(const QList<MaterialEntry>& entries)
             p->d.swatchValid[row] = oldValid.value(path, false);
         }
         else {
-            // A new or recreated material must never inherit a swatch solely
-            // because it reused the same USD path. Show the placeholder and
-            // request a fresh render from MaterialRenderer.
+            // Recreated materials must not inherit a swatch solely from a reused USD path.
             p->d.swatches[row] = p->placeholderImage();
             p->d.swatchValid[row] = false;
         }
@@ -784,7 +879,6 @@ MaterialBrowser::setEntries(const QList<MaterialEntry>& entries)
             p->insertRow(row);
 
         p->updateSourceRows();
-        p->d.ui->count->setText(QString("%1 material(s)").arg(orderedEntries.size()));
         p->d.syncingSelection = false;
         p->applyFilter(p->d.ui->filter->text());
         p->updateViewSizes();
@@ -989,7 +1083,6 @@ MaterialBrowser::setViewMode(ViewMode mode)
     p->d.listView->setChecked(mode == List);
     p->d.detailView->setChecked(mode == Details);
     p->d.ui->stackedWidget->setCurrentIndex(mode == Icons ? 1 : (mode == List ? 2 : 0));
-    p->d.ui->swatchSize->setEnabled(mode == Icons);
     refreshVisibleSwatches();
 }
 
@@ -1002,13 +1095,19 @@ MaterialBrowser::viewMode() const
 void
 MaterialBrowser::setSwatchSize(int size)
 {
-    p->d.ui->swatchSize->setValue(size);
+    const int clamped = std::clamp(size, p->d.swatchMinimum, p->d.swatchMaximum);
+    if (clamped == p->d.swatchSize)
+        return;
+
+    p->d.swatchSize = clamped;
+    p->updateViewSizes();
+    p->d.visibleTimer->start();
 }
 
 int
 MaterialBrowser::swatchSize() const
 {
-    return p->d.ui->swatchSize->value();
+    return p->d.swatchSize;
 }
 
 void
@@ -1041,7 +1140,7 @@ MaterialBrowser::invalidateSwatch(int row)
     if (row < 0 || row >= p->d.swatches.size())
         return;
 
-    // Keep the current image visible while the new image renders.
+    // Keep the current image visible while its replacement renders.
     p->d.swatchValid[row] = false;
     p->d.requestedRows.remove(row);
 }
@@ -1088,6 +1187,51 @@ MaterialBrowser::eventFilter(QObject* object, QEvent* event)
     const bool browserView = object == p->d.ui->icons || object == p->d.ui->list || object == p->d.ui->details;
     const bool browserViewport = object == p->d.ui->icons->viewport() || object == p->d.ui->list->viewport()
                                  || object == p->d.ui->details->viewport();
+    const bool iconView = object == p->d.ui->icons || object == p->d.ui->icons->viewport();
+
+    // Match graph/viewport controls: pinch or wheel zoom, trackpad pan, Shift+trackpad zoom, middle-drag pan.
+#ifdef Q_OS_MAC
+    if (iconView && event && event->type() == QEvent::NativeGesture) {
+        auto* gesture = static_cast<QNativeGestureEvent*>(event);
+        if (gesture->gestureType() == Qt::ZoomNativeGesture) {
+            const qreal delta = std::clamp<qreal>(gesture->value(), -0.5, 0.5);
+            const int target = qRound(static_cast<qreal>(p->d.swatchSize) * std::exp(delta));
+            setSwatchSize(target);
+            event->accept();
+            return true;
+        }
+    }
+#endif
+
+    if (iconView && event && event->type() == QEvent::Wheel) {
+        auto* wheel = static_cast<QWheelEvent*>(event);
+        const QPoint pixelDelta = wheel->pixelDelta();
+        const QPoint angleDelta = wheel->angleDelta();
+        const QPointingDevice* device = wheel->pointingDevice();
+        const bool isTrackpad = device && device->type() == QInputDevice::DeviceType::TouchPad;
+
+        if (isTrackpad && !pixelDelta.isNull() && !(wheel->modifiers() & Qt::ShiftModifier)) {
+            p->panView(p->d.ui->icons, pixelDelta);
+            p->d.visibleTimer->start();
+            wheel->accept();
+            return true;
+        }
+
+        QPoint zoomDelta = angleDelta;
+        qreal divisor = 1000.0;
+        if ((isTrackpad || zoomDelta.isNull()) && !pixelDelta.isNull()) {
+            zoomDelta = pixelDelta;
+            divisor = 300.0;
+        }
+
+        if (!zoomDelta.isNull()) {
+            const qreal delta = std::clamp<qreal>(static_cast<qreal>(zoomDelta.y()) / divisor, -0.5, 0.5);
+            const int target = qRound(static_cast<qreal>(p->d.swatchSize) * std::exp(delta));
+            setSwatchSize(target);
+            wheel->accept();
+            return true;
+        }
+    }
 
     if (browserView && event->type() == QEvent::ShortcutOverride) {
         auto* keyEvent = static_cast<QKeyEvent*>(event);
@@ -1110,6 +1254,73 @@ MaterialBrowser::eventFilter(QObject* object, QEvent* event)
         if (keyEvent->key() == Qt::Key_Tab && keyEvent->modifiers() == Qt::NoModifier) {
             p->beginRename(static_cast<QAbstractItemView*>(object));
             keyEvent->accept();
+            return true;
+        }
+    }
+
+    if (iconView && browserViewport && event->type() == QEvent::MouseButtonDblClick) {
+        auto* mouse = static_cast<QMouseEvent*>(event);
+        if (mouse->button() == Qt::LeftButton && object == p->d.ui->icons->viewport()) {
+            const QPoint position = mouse->position().toPoint();
+            const QModelIndex index = p->d.ui->icons->indexAt(position);
+            if (index.isValid() && index.row() >= 0 && index.row() < p->d.entries.size()) {
+                const QRect itemRect = p->d.ui->icons->visualRect(index);
+                const int iconHeight = p->d.ui->icons->iconSize().height();
+                const int padding = p->d.swatchPadding;
+                const int nameTop = itemRect.top() + padding + iconHeight;
+
+                if (position.y() >= nameTop) {
+                    p->beginRename(p->d.ui->icons, index.row());
+                }
+                else {
+                    Q_EMIT materialActivated(p->d.entries[index.row()].materialPath);
+                }
+
+                mouse->accept();
+                return true;
+            }
+        }
+    }
+
+    if (iconView && browserViewport && event->type() == QEvent::MouseButtonPress) {
+        auto* mouse = static_cast<QMouseEvent*>(event);
+        if (mouse->button() == Qt::MiddleButton) {
+            p->d.panning = true;
+            p->d.panLastPosition = mouse->position().toPoint();
+            if (QWidget* viewport = qobject_cast<QWidget*>(object))
+                viewport->setCursor(Qt::ClosedHandCursor);
+            mouse->accept();
+            return true;
+        }
+    }
+
+    if (p->d.panning && iconView && browserViewport && event->type() == QEvent::MouseMove) {
+        auto* mouse = static_cast<QMouseEvent*>(event);
+        if (!(mouse->buttons() & Qt::MiddleButton)) {
+            p->d.panning = false;
+            p->d.panLastPosition = QPoint();
+            if (QWidget* viewport = qobject_cast<QWidget*>(object))
+                viewport->unsetCursor();
+        }
+        else {
+            const QPoint position = mouse->position().toPoint();
+            const QPoint delta = position - p->d.panLastPosition;
+            p->d.panLastPosition = position;
+            p->panView(p->d.ui->icons, delta);
+            p->d.visibleTimer->start();
+            mouse->accept();
+            return true;
+        }
+    }
+
+    if (p->d.panning && iconView && browserViewport && event->type() == QEvent::MouseButtonRelease) {
+        auto* mouse = static_cast<QMouseEvent*>(event);
+        if (mouse->button() == Qt::MiddleButton) {
+            p->d.panning = false;
+            p->d.panLastPosition = QPoint();
+            if (QWidget* viewport = qobject_cast<QWidget*>(object))
+                viewport->unsetCursor();
+            mouse->accept();
             return true;
         }
     }
@@ -1156,10 +1367,7 @@ MaterialBrowser::eventFilter(QObject* object, QEvent* event)
         if (p->d.materialDragActive)
             return true;
 
-        // A material drag may only begin when the original mouse press was on
-        // a material item. If the press started in empty space, leave the event
-        // entirely to QListView/QTreeView so rubber-band selection can work even
-        // when the rectangle later crosses over a material swatch.
+        // Start drags only from an item so empty-space presses keep rubber-band selection.
         if ((mouse->buttons() & Qt::LeftButton) && p->d.dragSourceRow >= 0
             && (mouse->position().toPoint() - p->d.dragStartPosition).manhattanLength()
                    >= QApplication::startDragDistance()) {
@@ -1176,9 +1384,7 @@ MaterialBrowser::eventFilter(QObject* object, QEvent* event)
 
                     drag->exec(Qt::CopyAction);
 
-                    // QDrag runs a nested event loop. Reset our drag candidate
-                    // and synthesize the release that the item view may not have
-                    // seen when the mouse was released outside this widget.
+                    // QDrag may consume the release outside the view; reset state and synthesize it.
                     p->d.materialDragActive = false;
                     p->d.dragSourceRow = -1;
                     p->d.dragStartPosition = QPoint();

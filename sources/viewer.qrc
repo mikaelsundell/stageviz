@@ -21,6 +21,7 @@
     <file>../resources/Left.png</file>
     <file>../resources/List.png</file>
     <file>../resources/Material.png</file>
+    <file>../resources/Nested.png</file>
     <file>../resources/New.png</file>
     <file>../resources/Open.png</file>
     <file>../resources/Over.png</file>
@@ -45,9 +46,5 @@
   </qresource>
   <qresource prefix="text">
     <file>../resources/Copyright.txt</file>
-  </qresource>
-  <qresource prefix="materials">
-    <file alias="shaderball.usda">../resources/materialx/shaderball.usda</file>
-    <file alias="textures/shaderball_ao.png">../resources/materialx/textures/shaderball_ao.png</file>
   </qresource>
 </RCC>

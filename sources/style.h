@@ -40,6 +40,7 @@ public:
         Button,
         ButtonAlt,
         Error,
+        Graph,
         Grid,
         Guide,
         Handle,
@@ -53,6 +54,7 @@ public:
         Selection,
         SelectionAlt,
         Text,
+        TextAlt,
         Warning
     };
     Q_ENUM(ColorRole)
@@ -80,6 +82,7 @@ public:
         Left,
         List,
         Material,
+        Nested,
         New,
         Open,
         Over,

@@ -15,7 +15,7 @@ public:
     CommandStackPrivate();
     ~CommandStackPrivate();
     void push(Command* command);
-    bool updateEditTarget();
+    bool updateContext();
 
 public:
     struct Data {
@@ -63,24 +63,24 @@ CommandStack::CommandStack(QObject* parent)
 CommandStack::~CommandStack() = default;
 
 bool
-CommandStackPrivate::updateEditTarget()
+CommandStackPrivate::updateContext()
 {
     Session* current = session();
     UsdStageRefPtr stage;
-    UsdEditTarget target;
+    UsdEditTarget editTarget;
 
     if (current) {
         QReadLocker locker(current->stageLock());
         stage = current->stageUnsafe();
         if (stage)
-            target = stage->GetEditTarget();
+            editTarget = stage->GetEditTarget();
     }
 
-    if (d.stage == stage && d.editTarget == target)
+    if (d.stage == stage && d.editTarget == editTarget)
         return false;
 
     d.stage = stage;
-    d.editTarget = target;
+    d.editTarget = editTarget;
     return true;
 }
 
@@ -90,13 +90,18 @@ CommandStack::run(Command* command)
     if (!command)
         return;
 
-    if (p->updateEditTarget())
+    if (p->updateContext())
         clear();
     const bool prevCanUndo = canUndo();
     const bool prevCanRedo = canRedo();
     const bool prevCanClear = canClear();
 
     command->execute(session());
+
+    // Commands are allowed to change the edit target (for example the
+    // edit-layer command). Absorb that change into the tracked context so the
+    // next command does not mistake it for an external mutation.
+    p->updateContext();
     p->push(command);
 
     Q_EMIT commandExecuted(command);
@@ -133,7 +138,7 @@ CommandStack::canRedo() const
 void
 CommandStack::undo()
 {
-    if (p->updateEditTarget())
+    if (p->updateContext())
         clear();
 
     if (!canUndo())
@@ -145,6 +150,7 @@ CommandStack::undo()
 
     Command* cmd = p->d.stack[p->d.index];
     cmd->undo(session());
+    p->updateContext();
     p->d.index--;
 
     Q_EMIT changed();
@@ -162,7 +168,7 @@ CommandStack::undo()
 void
 CommandStack::redo()
 {
-    if (p->updateEditTarget())
+    if (p->updateContext())
         clear();
 
     if (!canRedo())
@@ -175,6 +181,7 @@ CommandStack::redo()
     p->d.index++;
     Command* cmd = p->d.stack[p->d.index];
     cmd->execute(session());
+    p->updateContext();
 
     Q_EMIT changed();
 

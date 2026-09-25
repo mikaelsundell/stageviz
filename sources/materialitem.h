@@ -51,6 +51,7 @@ public:
      * @brief Returns this item's index in the browser's source entries.
      */
     int sourceRow() const;
+    
     /**
      * @brief Stores the browser source-entry index.
      */
@@ -69,6 +70,7 @@ public:
      * @brief Returns the surface shader's USD path.
      */
     SdfPath shaderPath() const;
+    
     /**
      * @brief Stores the surface shader path.
      */
@@ -78,6 +80,7 @@ public:
      * @brief Returns the surface shader identifier.
      */
     QString shaderId() const;
+    
     /**
      * @brief Stores the shader identifier used for presentation.
      */
@@ -87,6 +90,7 @@ public:
      * @brief Returns the cached preview image.
      */
     QImage swatch() const;
+    
     /**
      * @brief Updates the item's preview image.
      */

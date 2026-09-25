@@ -421,8 +421,9 @@ public:
      *
      * Only layers in the stage's local layer stack are accepted. The stage
      * creates the corresponding local-layer edit target so layer offsets are
-     * preserved correctly. Changing the edit layer clears command history so
-     * undo/redo never crosses edit-target boundaries.
+     * preserved correctly. CommandStack tracks edit-target changes so undoable
+     * edit-layer commands can participate in history while external changes
+     * invalidate stale history safely.
      *
      * @param layer Local layer to use for subsequent Stageviz authoring.
      * @return True if the layer is valid and became the active edit layer.
