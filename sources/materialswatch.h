@@ -7,6 +7,7 @@
 #include "stageviz.h"
 #include <QImage>
 #include <QPixmap>
+#include <QString>
 #include <QWidget>
 
 namespace stageviz {
@@ -19,54 +20,33 @@ class MaterialSwatchPrivate;
  *
  * MaterialSwatch displays a material preview image while preserving its aspect
  * ratio and provides a consistent background and border independent of layout
- * size.
+ * size. When a material path is set, the swatch can also be dragged onto scene
+ * geometry using the same material MIME payload as MaterialBrowser.
  */
 class MaterialSwatch : public QWidget {
     Q_OBJECT
 public:
-    /**
-     * @brief Creates an empty preview widget.
-     */
     explicit MaterialSwatch(QWidget* parent = nullptr);
-    /**
-     * @brief Releases the cached preview.
-     */
     virtual ~MaterialSwatch();
 
-    /**
-     * @brief Replaces the preview image and schedules repainting.
-     */
     void setImage(const QImage& image);
-    
-    /**
-     * @brief Returns the current preview image.
-     */
     QImage image() const;
 
-    /**
-     * @brief Replaces the preview using a Qt pixmap.
-     */
+    void setMaterial(const QImage& image, const QString& materialPath);
+
     void setPixmap(const QPixmap& pixmap);
-    
-    /**
-     * @brief Removes the current preview.
-     */
     void clear();
 
-    /**
-     * @brief Returns the preferred preview size.
-     */
+    void setMaterialPath(const QString& path);
+    QString materialPath() const;
+
     QSize sizeHint() const override;
-    
-    /**
-     * @brief Returns the minimum preview size for layout negotiation.
-     */
     QSize minimumSizeHint() const override;
 
 protected:
-    /**
-     * @brief Draws the preview with its background and border.
-     */
+    void mousePressEvent(QMouseEvent* event) override;
+    void mouseMoveEvent(QMouseEvent* event) override;
+    void mouseReleaseEvent(QMouseEvent* event) override;
     void paintEvent(QPaintEvent* event) override;
 
 private:

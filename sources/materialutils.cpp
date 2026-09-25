@@ -1379,7 +1379,7 @@ MaterialUtils::materialXNodeDefinitions()
 
                     const auto existing = definitionIndex.constFind(def.nodeDef);
                     if (existing == definitionIndex.constEnd()) {
-                        definitionIndex.insert(def.nodeDef, result.size());
+                        definitionIndex.insert(def.nodeDef, static_cast<int>(result.size()));
                         result.append(def);
                     }
                     else {

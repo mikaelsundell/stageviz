@@ -492,6 +492,7 @@ MaterialDialogPrivate::init()
     d.refreshTimer->setSingleShot(true);
     d.refreshTimer->setInterval(160);
 
+    // connect
     connect(d.refreshTimer, &QTimer::timeout, this, [this]() { refresh(); });
     connect(d.ui->browserWidget, &MaterialBrowser::selectionChanged, this, [this]() { updateSelection(); });
 
@@ -937,6 +938,7 @@ MaterialDialogPrivate::openMaterialGraph(const SdfPath& materialPath)
     }
     graph->setMaterial(*entry);
     d.graphs.insert(key, graph);
+    // connect
     connect(graph, &MaterialGraph::nodeSelected, this, [this](const SdfPath& path) { selectGraphNode(path); });
     connect(graph, &MaterialGraph::connectionRequested, this,
             [this](const SdfPath& input, const SdfPath& output) { connectGraphSockets(input, output); });
@@ -1335,21 +1337,21 @@ MaterialDialogPrivate::updatePropertySwatch()
 {
     const QList<MaterialEntry> entries = d.ui->browserWidget->selectedEntries();
     if (entries.size() != 1) {
-        d.ui->swatch->clear();
+        d.ui->swatch->setMaterial(QImage(), QString());
         d.ui->swatch->setToolTip(QString());
         return;
     }
 
     const MaterialEntry& entry = entries.first();
+    const QString materialPath = QString::fromStdString(entry.materialPath.GetString());
 
-    // Texture-producing nodes have a useful standalone 2D preview. Show their
-    // source image directly. Other utility nodes do not have a meaningful
-    // isolated render, so use a deliberately black swatch instead of showing
-    // the complete material and implying that the node itself produced it.
+    // The preview image and drag material path are updated together. This keeps
+    // the large swatch bound to exactly the material it represents, even when
+    // the displayed image is temporarily a texture/node preview.
     const QImage texturePreview = imageNodePreview(d.previewNodeInfo);
     if (!texturePreview.isNull()) {
         d.ui->swatch->setToolTip(QString::fromStdString(d.previewNode.GetString()));
-        d.ui->swatch->setImage(texturePreview);
+        d.ui->swatch->setMaterial(texturePreview, materialPath);
         return;
     }
 
@@ -1363,20 +1365,15 @@ MaterialDialogPrivate::updatePropertySwatch()
         QImage black(canvasSize, QImage::Format_RGBA8888);
         black.fill(Qt::black);
         d.ui->swatch->setToolTip(QString::fromStdString(d.previewNode.GetString()));
-        d.ui->swatch->setImage(black);
+        d.ui->swatch->setMaterial(black, materialPath);
         return;
     }
 
     const int row = d.ui->browserWidget->rowForMaterialPath(entry.materialPath);
     const QImage image = row >= 0 ? d.ui->browserWidget->swatch(row) : QImage();
 
-    d.ui->swatch->setToolTip(QString::fromStdString(entry.materialPath.GetString()));
-    if (image.isNull()) {
-        d.ui->swatch->clear();
-        return;
-    }
-
-    d.ui->swatch->setImage(image);
+    d.ui->swatch->setToolTip(materialPath);
+    d.ui->swatch->setMaterial(image, materialPath);
 }
 
 bool
@@ -1751,6 +1748,8 @@ MaterialDialogPrivate::loadMaterialX()
 {
     const QString directory = settings()->value("materialXDir", QDir::homePath()).toString();
 
+    // Use the platform's normal file picker. QFileDialog::getOpenFileName()
+    // uses the native dialog when Qt/platform integration provides one.
     const QString filename = QFileDialog::getOpenFileName(d.dialog, tr("Load MaterialX"), directory,
                                                           tr("MaterialX (*.mtlx);;All Files (*)"));
 

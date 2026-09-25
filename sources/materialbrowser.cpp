@@ -65,7 +65,7 @@ public:
     void updateViewSizes();
     void showViewMenu();
     void showContextMenu(QAbstractItemView* view, const QPoint& position);
-    void assignSelectedMaterial();
+    void assignMaterial(const MaterialEntry& material);
     void beginRename(QAbstractItemView* view, int row = -1);
     void commitRename(int row, const QString& name);
     QAbstractItemView* currentView() const;
@@ -185,12 +185,15 @@ public:
         QTimer* visibleTimer = nullptr;
         QPoint dragStartPosition;
         QPoint panLastPosition;
+        QList<int> dragSelectionRows;
+        Qt::KeyboardModifiers dragModifiers = Qt::NoModifier;
         int swatchSize = 128;
         int swatchMinimum = 64;
         int swatchMaximum = 512;
         int swatchPadding = 8;
         int dragSourceRow = -1;
         bool materialDragActive = false;
+        bool dragPressPending = false;
         bool panning = false;
         bool syncingSelection = false;
         bool updatingRows = false;
@@ -338,8 +341,6 @@ MaterialBrowserPrivate::showContextMenu(QAbstractItemView* view, const QPoint& p
         return;
 
     const QModelIndex index = view->indexAt(position);
-    if (index.isValid() && !d.browser->selectedRows().contains(index.row()))
-        d.browser->selectRow(index.row());
 
     // Empty-space context click opens New Material directly at the cursor.
     if (!index.isValid()) {
@@ -347,18 +348,24 @@ MaterialBrowserPrivate::showContextMenu(QAbstractItemView* view, const QPoint& p
         return;
     }
 
-    const QList<MaterialEntry> materials = d.browser->selectedEntries();
+    const MaterialEntry* contextEntry = d.browser->entry(index.row());
+    if (!contextEntry)
+        return;
+
+    const MaterialEntry contextMaterial = *contextEntry;
+    const bool hasSceneSelection = !session()->selectionList()->paths().isEmpty();
+    const bool contextMaterialSelected = d.browser->selectedRows().contains(index.row());
 
     QMenu menu(view);
 
-    QAction* assignMaterial = nullptr;
+    QAction* assignAction = nullptr;
     QAction* copyName = nullptr;
     QAction* copyPath = nullptr;
     QAction* deleteMaterial = nullptr;
 
     if (index.isValid()) {
-        assignMaterial = menu.addAction(tr("Assign"));
-        assignMaterial->setEnabled(materials.size() == 1);
+        assignAction = menu.addAction(tr("Assign"));
+        assignAction->setEnabled(hasSceneSelection);
 
         menu.addSeparator();
 
@@ -371,27 +378,25 @@ MaterialBrowserPrivate::showContextMenu(QAbstractItemView* view, const QPoint& p
 
     QAction* newMaterial = menu.addAction(tr("New Material"));
 
-    if (index.isValid())
+    if (index.isValid()) {
         deleteMaterial = menu.addAction(tr("Delete"));
+        // Delete still operates on browser selection, so do not let a context
+        // click on an unselected row delete an unrelated previous selection.
+        deleteMaterial->setEnabled(contextMaterialSelected);
+    }
 
     QAction* action = menu.exec(view->viewport()->mapToGlobal(position));
     if (!action)
         return;
 
-    if (action == assignMaterial) {
-        assignSelectedMaterial();
+    if (action == assignAction) {
+        assignMaterial(contextMaterial);
     }
     else if (action == copyName) {
-        QStringList values;
-        for (const MaterialEntry& material : materials)
-            values.append(material.name);
-        QApplication::clipboard()->setText(values.join('\n'));
+        QApplication::clipboard()->setText(contextMaterial.name);
     }
     else if (action == copyPath) {
-        QStringList values;
-        for (const MaterialEntry& material : materials)
-            values.append(QString::fromStdString(material.materialPath.GetString()));
-        QApplication::clipboard()->setText(values.join('\n'));
+        QApplication::clipboard()->setText(QString::fromStdString(contextMaterial.materialPath.GetString()));
     }
     else if (action == newMaterial) {
         // Preserve the click position for the follow-up New Material menu.
@@ -404,12 +409,8 @@ MaterialBrowserPrivate::showContextMenu(QAbstractItemView* view, const QPoint& p
 
 
 void
-MaterialBrowserPrivate::assignSelectedMaterial()
+MaterialBrowserPrivate::assignMaterial(const MaterialEntry& material)
 {
-    const QList<MaterialEntry> materials = d.browser->selectedEntries();
-    if (materials.size() != 1)
-        return;
-
     const QList<SdfPath> selectedPaths = session()->selectionList()->paths();
     if (selectedPaths.isEmpty())
         return;
@@ -464,7 +465,7 @@ MaterialBrowserPrivate::assignSelectedMaterial()
     if (paths.isEmpty())
         return;
 
-    session()->commandStack()->run(new Command(bindMaterial(paths, materials.first().materialPath)));
+    session()->commandStack()->run(new Command(bindMaterial(paths, material.materialPath)));
 }
 
 
@@ -1325,26 +1326,30 @@ MaterialBrowser::eventFilter(QObject* object, QEvent* event)
         }
     }
 
-    if (browserViewport && event->type() == QEvent::ContextMenu) {
-        auto* contextEvent = static_cast<QContextMenuEvent*>(event);
-
-        QAbstractItemView* view = nullptr;
-        if (object == p->d.ui->icons->viewport())
-            view = p->d.ui->icons;
-        else if (object == p->d.ui->list->viewport())
-            view = p->d.ui->list;
-        else if (object == p->d.ui->details->viewport())
-            view = p->d.ui->details;
-
-        if (view) {
-            p->showContextMenu(view, contextEvent->pos());
-            contextEvent->accept();
-            return true;
-        }
-    }
-
     if (browserViewport && event->type() == QEvent::MouseButtonPress) {
-        const auto* mouse = static_cast<QMouseEvent*>(event);
+        auto* mouse = static_cast<QMouseEvent*>(event);
+
+        // QAbstractItemView normally changes the current/selected row on a
+        // right-button press before the ContextMenu event is delivered. Handle
+        // the mouse context menu here and consume the press so RMB never changes
+        // browser selection. The material under the cursor is passed directly to
+        // showContextMenu(), so Assign still operates on that material.
+        if (mouse->button() == Qt::RightButton) {
+            QAbstractItemView* view = nullptr;
+            if (object == p->d.ui->icons->viewport())
+                view = p->d.ui->icons;
+            else if (object == p->d.ui->list->viewport())
+                view = p->d.ui->list;
+            else if (object == p->d.ui->details->viewport())
+                view = p->d.ui->details;
+
+            if (view) {
+                p->showContextMenu(view, mouse->position().toPoint());
+                mouse->accept();
+                return true;
+            }
+        }
+
         if (mouse->button() == Qt::LeftButton) {
             const QPoint position = mouse->position().toPoint();
             QModelIndex index;
@@ -1358,54 +1363,132 @@ MaterialBrowser::eventFilter(QObject* object, QEvent* event)
 
             p->d.dragStartPosition = position;
             p->d.dragSourceRow = index.isValid() ? index.row() : -1;
+            p->d.dragSelectionRows = selectedRows();
+            p->d.dragModifiers = mouse->modifiers();
             p->d.materialDragActive = false;
+            p->d.dragPressPending = index.isValid();
+
+            // Delay item selection until release. This lets a material that is
+            // not currently selected be dragged without changing the browser
+            // selection first. Once movement passes the drag threshold, the
+            // pressed row becomes only the drag source, not the selected row.
+            if (p->d.dragPressPending) {
+                mouse->accept();
+                return true;
+            }
         }
     }
     else if (browserViewport && event->type() == QEvent::MouseMove) {
-        const auto* mouse = static_cast<QMouseEvent*>(event);
+        auto* mouse = static_cast<QMouseEvent*>(event);
 
         if (p->d.materialDragActive)
             return true;
 
-        // Start drags only from an item so empty-space presses keep rubber-band selection.
-        if ((mouse->buttons() & Qt::LeftButton) && p->d.dragSourceRow >= 0
+        // A pending press becomes a drag only after the normal Qt threshold.
+        // The pressed row is the drag source even when another material remains selected.
+        if ((mouse->buttons() & Qt::LeftButton) && p->d.dragPressPending && p->d.dragSourceRow >= 0
             && (mouse->position().toPoint() - p->d.dragStartPosition).manhattanLength()
                    >= QApplication::startDragDistance()) {
-            const QList<int> rows = selectedRows();
-            if (rows.size() == 1 && rows.first() == p->d.dragSourceRow) {
-                if (const MaterialEntry* value = entry(p->d.dragSourceRow)) {
-                    p->d.materialDragActive = true;
+            if (const MaterialEntry* value = entry(p->d.dragSourceRow)) {
+                p->d.materialDragActive = true;
+                p->d.dragPressPending = false;
 
-                    auto* mime = new QMimeData();
-                    mime->setData(mime::material, QByteArray::fromStdString(value->materialPath.GetString()));
+                auto* mime = new QMimeData();
+                mime->setData(mime::material, QByteArray::fromStdString(value->materialPath.GetString()));
 
-                    auto* drag = new QDrag(this);
-                    drag->setMimeData(mime);
+                auto* drag = new QDrag(this);
+                drag->setMimeData(mime);
 
-                    drag->exec(Qt::CopyAction);
 
-                    // QDrag may consume the release outside the view; reset state and synthesize it.
-                    p->d.materialDragActive = false;
-                    p->d.dragSourceRow = -1;
-                    p->d.dragStartPosition = QPoint();
+                drag->exec(Qt::CopyAction, Qt::CopyAction);
 
-                    if (QWidget* viewport = qobject_cast<QWidget*>(object)) {
-                        QMouseEvent releaseEvent(QEvent::MouseButtonRelease,
-                                                 QPointF(viewport->mapFromGlobal(QCursor::pos())),
-                                                 QPointF(QCursor::pos()), Qt::LeftButton, Qt::NoButton,
-                                                 QApplication::keyboardModifiers());
-                        QApplication::sendEvent(viewport, &releaseEvent);
-                    }
-
-                    return true;
-                }
+                p->d.materialDragActive = false;
+                p->d.dragSourceRow = -1;
+                p->d.dragStartPosition = QPoint();
+                p->d.dragSelectionRows.clear();
+                p->d.dragModifiers = Qt::NoModifier;
+                return true;
             }
+        }
+
+        if (p->d.dragPressPending) {
+            mouse->accept();
+            return true;
         }
     }
     else if (browserViewport && event->type() == QEvent::MouseButtonRelease) {
+        auto* mouse = static_cast<QMouseEvent*>(event);
+
+        if (mouse->button() == Qt::LeftButton && p->d.dragPressPending && p->d.dragSourceRow >= 0) {
+            QList<int> rows = p->d.dragSelectionRows;
+            const int row = p->d.dragSourceRow;
+            const Qt::KeyboardModifiers modifiers = p->d.dragModifiers;
+
+            if (modifiers & (Qt::ControlModifier | Qt::MetaModifier)) {
+                if (rows.contains(row))
+                    rows.removeAll(row);
+                else
+                    rows.append(row);
+                p->d.browser->selectRows(rows);
+            }
+            else if (modifiers & Qt::ShiftModifier) {
+                int anchor = row;
+                if (!rows.isEmpty())
+                    anchor = rows.last();
+
+                QList<int> range;
+                const int first = std::min(anchor, row);
+                const int last = std::max(anchor, row);
+                for (int current = first; current <= last; ++current)
+                    range.append(current);
+                p->d.browser->selectRows(range);
+            }
+            else {
+                p->d.browser->selectRow(row);
+            }
+
+            mouse->accept();
+        }
+
         p->d.materialDragActive = false;
+        p->d.dragPressPending = false;
         p->d.dragSourceRow = -1;
         p->d.dragStartPosition = QPoint();
+        p->d.dragSelectionRows.clear();
+        p->d.dragModifiers = Qt::NoModifier;
+    }
+
+    if (browserViewport && event->type() == QEvent::ContextMenu) {
+        auto* contextEvent = static_cast<QContextMenuEvent*>(event);
+
+        // Mouse-triggered context menus are already handled on RMB press above
+        // so the item view never gets a chance to alter selection. Keep this
+        // path for keyboard-triggered context menus only.
+        if (contextEvent->reason() == QContextMenuEvent::Mouse) {
+            contextEvent->accept();
+            return true;
+        }
+
+        QAbstractItemView* view = nullptr;
+        if (object == p->d.ui->icons->viewport())
+            view = p->d.ui->icons;
+        else if (object == p->d.ui->list->viewport())
+            view = p->d.ui->list;
+        else if (object == p->d.ui->details->viewport())
+            view = p->d.ui->details;
+
+        if (view) {
+            QPoint position;
+            const QModelIndex current = view->currentIndex();
+            if (current.isValid())
+                position = view->visualRect(current).center();
+            else
+                position = view->viewport()->rect().center();
+
+            p->showContextMenu(view, position);
+            contextEvent->accept();
+            return true;
+        }
     }
 
     if (browserViewport

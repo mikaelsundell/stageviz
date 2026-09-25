@@ -4,7 +4,12 @@
 
 #include "materialswatch.h"
 #include "application.h"
+#include "mime.h"
 #include "style.h"
+#include <QApplication>
+#include <QDrag>
+#include <QMimeData>
+#include <QMouseEvent>
 #include <QPaintEvent>
 #include <QPainter>
 #include <QPointer>
@@ -18,9 +23,12 @@ public:
 public:
     struct Data {
         QImage image;
+        QString materialPath;
+        QPoint dragStartPosition;
         QSize sizeHint = QSize(256, 256);
         QSize minimumSizeHint = QSize(96, 96);
         int margin = 8;
+        bool materialDragActive = false;
         QPointer<MaterialSwatch> swatch;
     };
     Data d;
@@ -31,6 +39,7 @@ MaterialSwatchPrivate::init()
 {
     d.swatch->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     d.swatch->setMinimumSize(d.minimumSizeHint);
+    d.swatch->setMouseTracking(true);
 }
 
 MaterialSwatch::MaterialSwatch(QWidget* parent)
@@ -57,6 +66,17 @@ MaterialSwatch::image() const
 }
 
 void
+MaterialSwatch::setMaterial(const QImage& image, const QString& materialPath)
+{
+    p->d.image = image;
+    p->d.materialPath = materialPath.trimmed();
+    p->d.dragStartPosition = QPoint();
+    p->d.materialDragActive = false;
+    setCursor(p->d.materialPath.isEmpty() ? Qt::ArrowCursor : Qt::OpenHandCursor);
+    update();
+}
+
+void
 MaterialSwatch::setPixmap(const QPixmap& pixmap)
 {
     setImage(pixmap.toImage());
@@ -69,6 +89,19 @@ MaterialSwatch::clear()
     update();
 }
 
+void
+MaterialSwatch::setMaterialPath(const QString& path)
+{
+    p->d.materialPath = path.trimmed();
+    setCursor(p->d.materialPath.isEmpty() ? Qt::ArrowCursor : Qt::OpenHandCursor);
+}
+
+QString
+MaterialSwatch::materialPath() const
+{
+    return p->d.materialPath;
+}
+
 QSize
 MaterialSwatch::sizeHint() const
 {
@@ -79,6 +112,67 @@ QSize
 MaterialSwatch::minimumSizeHint() const
 {
     return p->d.minimumSizeHint;
+}
+
+void
+MaterialSwatch::mousePressEvent(QMouseEvent* event)
+{
+    if (event && event->button() == Qt::LeftButton) {
+        if (!p->d.materialPath.isEmpty()) {
+            p->d.dragStartPosition = event->position().toPoint();
+            p->d.materialDragActive = false;
+            setCursor(Qt::ClosedHandCursor);
+            event->accept();
+            return;
+        }
+    }
+
+    QWidget::mousePressEvent(event);
+}
+
+void
+MaterialSwatch::mouseMoveEvent(QMouseEvent* event)
+{
+    if (!event || p->d.materialDragActive || p->d.materialPath.isEmpty() || !(event->buttons() & Qt::LeftButton)) {
+        QWidget::mouseMoveEvent(event);
+        return;
+    }
+
+    if ((event->position().toPoint() - p->d.dragStartPosition).manhattanLength() < QApplication::startDragDistance()) {
+        QWidget::mouseMoveEvent(event);
+        return;
+    }
+
+    p->d.materialDragActive = true;
+
+    auto* mimeData = new QMimeData();
+    mimeData->setData(mime::material, p->d.materialPath.toUtf8());
+
+    auto* drag = new QDrag(this);
+    drag->setMimeData(mimeData);
+
+
+    drag->exec(Qt::CopyAction, Qt::CopyAction);
+
+    p->d.materialDragActive = false;
+    p->d.dragStartPosition = QPoint();
+    setCursor(Qt::OpenHandCursor);
+
+    event->accept();
+}
+
+void
+MaterialSwatch::mouseReleaseEvent(QMouseEvent* event)
+{
+    if (event && event->button() == Qt::LeftButton) {
+        p->d.materialDragActive = false;
+        p->d.dragStartPosition = QPoint();
+        setCursor(p->d.materialPath.isEmpty() ? Qt::ArrowCursor : Qt::OpenHandCursor);
+        event->accept();
+        return;
+    }
+
+    QWidget::mouseReleaseEvent(event);
 }
 
 void
