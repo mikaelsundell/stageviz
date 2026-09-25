@@ -6,10 +6,8 @@
 #include <MaterialXCore/Document.h>
 #include <MaterialXFormat/XmlIo.h>
 #include <QCoreApplication>
-#include <QDebug>
 #include <QDir>
 #include <QDirIterator>
-#include <QElapsedTimer>
 #include <QFile>
 #include <QFileInfo>
 #include <QRegularExpression>
@@ -1385,9 +1383,6 @@ QList<MaterialXNodeDefinition>
 MaterialUtils::materialXNodeDefinitions()
 {
     static const QList<MaterialXNodeDefinition> definitions = []() {
-        QElapsedTimer timer;
-        timer.start();
-
         QList<MaterialXNodeDefinition> result;
         QHash<QString, int> definitionIndex;
         QHash<QString, QString> inheritByNodeDef;
@@ -1599,8 +1594,6 @@ MaterialUtils::materialXNodeDefinitions()
                 return a.node.localeAwareCompare(b.node) < 0;
             return a.nodeDef < b.nodeDef;
         });
-        qDebug().noquote() << "[MaterialPerf][Utils] MaterialX definitions cache" << result.size() << "definitions"
-                           << timer.elapsed() << "ms";
         return result;
     }();
 
@@ -2116,7 +2109,6 @@ MaterialUtils::importMaterialX(UsdStageRefPtr stage, const QString& filename, QL
     //
     // Keep the original relative spelling when the file cannot be resolved;
     // custom resolver setups may still be able to satisfy it later.
-    int anchoredTexturePaths = 0;
     const QDir materialXDir(fileInfo.absolutePath());
     const UsdPrim importedForAssets = stage->GetPrimAtPath(importRoot);
     if (importedForAssets) {
@@ -2141,14 +2133,10 @@ MaterialUtils::importMaterialX(UsdStageRefPtr stage, const QString& filename, QL
                 if (!QFileInfo::exists(anchored))
                     continue;
 
-                if (input.Set(SdfAssetPath(anchored.toStdString())))
-                    ++anchoredTexturePaths;
+                input.Set(SdfAssetPath(anchored.toStdString()));
             }
         }
     }
-
-    qDebug().noquote() << "[MaterialPerf][Utils] importMaterialX anchored texture paths" << anchoredTexturePaths
-                       << "from" << resolvedFilename;
 
     if (hadMetersPerUnit) {
         UsdGeomSetStageMetersPerUnit(stage, metersPerUnit);

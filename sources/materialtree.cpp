@@ -20,8 +20,6 @@
 #include <QColor>
 #include <QComboBox>
 #include <QCursor>
-#include <QDebug>
-#include <QElapsedTimer>
 #include <QEvent>
 #include <QFileDialog>
 #include <QHBoxLayout>
@@ -890,10 +888,6 @@ MaterialTreePrivate::setInputValues(const QList<SdfPath>& inputPaths, const VtVa
     if (inputPaths.isEmpty() || value.IsEmpty())
         return;
 
-    QElapsedTimer timer;
-    timer.start();
-    int materializedInputs = 0;
-
     {
         WRITE_LOCKER(locker, session()->stageLock(), "stageLock");
         const UsdStageRefPtr stage = session()->stageUnsafe();
@@ -903,17 +897,11 @@ MaterialTreePrivate::setInputValues(const QList<SdfPath>& inputPaths, const VtVa
             if (!stage->GetAttributeAtPath(path)) {
                 if (!MaterialUtils::ensureShaderInput(stage, path))
                     return;
-                ++materializedInputs;
             }
         }
     }
 
-    const qint64 prepareMs = timer.elapsed();
-    timer.restart();
     session()->commandStack()->run(new Command(setAttributeValues(inputPaths, value)));
-    qDebug().noquote() << "[MaterialPerf][Tree] setInputValues" << inputPaths.size() << "inputs"
-                       << "materialized" << materializedInputs << "prepare" << prepareMs << "ms"
-                       << "command" << timer.elapsed() << "ms";
 }
 
 QColor
@@ -1113,11 +1101,8 @@ MaterialTreePrivate::refreshInputItem(QTreeWidgetItem* item, const MaterialInput
 bool
 MaterialTreePrivate::refreshSingleValues()
 {
-    QElapsedTimer timer;
-    timer.start();
     if (d.materials.size() != 1 || d.currentNode.IsEmpty() || d.displayedNode.path.IsEmpty())
         return false;
-
     MaterialNodeInfo node;
     {
         READ_LOCKER(locker, session()->stageLock(), "stageLock");
@@ -1136,9 +1121,6 @@ MaterialTreePrivate::refreshSingleValues()
     }
 
     d.displayedNode = node;
-    qDebug().noquote() << "[MaterialPerf][Tree] refreshSingleValues"
-                       << QString::fromStdString(d.currentNode.GetString()) << node.inputs.size() << "inputs"
-                       << timer.elapsed() << "ms";
     return true;
 }
 
@@ -1178,24 +1160,16 @@ MaterialTreePrivate::populateGroup(QTreeWidgetItem* group)
     if (!group->data(0, kGroupPopulatedRole).isValid())
         return;
 
-    QElapsedTimer timer;
-    timer.start();
     const QString groupName = group->data(0, kGroupNameRole).toString();
     group->setData(0, kGroupPopulatedRole, true);
     group->setChildIndicatorPolicy(QTreeWidgetItem::DontShowIndicatorWhenChildless);
     d.groupPropertyRows.remove(group);
 
-    int inputCount = 0;
     for (const MaterialInputInfo& info : d.displayedNode.inputs) {
         if (info.group != groupName)
             continue;
         addInputRow(group, info, { info });
-        ++inputCount;
     }
-
-    qDebug().noquote() << "[MaterialPerf][Tree] populateGroup"
-                       << QString::fromStdString(d.displayedNode.path.GetString()) << groupName << inputCount
-                       << "inputs" << timer.elapsed() << "ms";
 }
 
 void
@@ -1204,11 +1178,7 @@ MaterialTreePrivate::rebuildSingle()
     if (d.materials.size() != 1)
         return;
 
-    QElapsedTimer timer;
-    timer.start();
-
     MaterialNodeInfo node;
-    qint64 nodeInfoMs = 0;
     {
         READ_LOCKER(locker, session()->stageLock(), "stageLock");
         const UsdStageRefPtr stage = session()->stageUnsafe();
@@ -1219,10 +1189,7 @@ MaterialTreePrivate::rebuildSingle()
         if (d.currentNode.IsEmpty())
             d.currentNode = material.shaderPath;
 
-        QElapsedTimer nodeTimer;
-        nodeTimer.start();
         node = MaterialUtils::nodeInfo(stage, d.currentNode);
-        nodeInfoMs = nodeTimer.elapsed();
     }
 
     if (node.path.IsEmpty())
@@ -1234,9 +1201,6 @@ MaterialTreePrivate::rebuildSingle()
                                       node.typeLabel.isEmpty() ? QStringLiteral("UsdShade node") : node.typeLabel,
                                       node.shaderId);
 
-    QElapsedTimer rowsTimer;
-    rowsTimer.start();
-
     const QString nodeKey = QString::fromStdString(node.path.GetString());
     const bool hasExpansionState = d.nodesWithExpansionState.contains(nodeKey);
     const QSet<QString> expandedGroups = d.expandedGroupsByNode.value(nodeKey);
@@ -1244,7 +1208,6 @@ MaterialTreePrivate::rebuildSingle()
     QHash<QString, QTreeWidgetItem*> groups;
     QString firstGroup;
     bool firstGroupSet = false;
-    int populatedGroups = 0;
     for (const MaterialInputInfo& info : node.inputs) {
         if (groups.contains(info.group))
             continue;
@@ -1269,15 +1232,9 @@ MaterialTreePrivate::rebuildSingle()
         group->setExpanded(expanded);
         if (expanded) {
             populateGroup(group);
-            ++populatedGroups;
         }
     }
 
-    qDebug().noquote() << "[MaterialPerf][Tree] rebuildSingle" << QString::fromStdString(node.path.GetString())
-                       << node.inputs.size() << "inputs" << groups.size() << "groups" << populatedGroups << "populated"
-                       << "nodeInfo" << nodeInfoMs << "ms"
-                       << "rows" << rowsTimer.elapsed() << "ms"
-                       << "total" << timer.elapsed() << "ms";
 }
 
 void
@@ -1337,8 +1294,6 @@ MaterialTreePrivate::rebuildMulti()
 void
 MaterialTreePrivate::rebuild(bool preserveScroll)
 {
-    QElapsedTimer timer;
-    timer.start();
     captureExpansionState();
     // Attribute notices can rebuild this inspector many times while a control is
     // being edited. QTreeWidget::clear() resets both scroll bars to zero, which
@@ -1378,9 +1333,6 @@ MaterialTreePrivate::rebuild(bool preserveScroll)
     d.tree->setUpdatesEnabled(true);
     d.tree->viewport()->update();
 
-    qDebug().noquote() << "[MaterialPerf][Tree] rebuild"
-                       << (d.materials.size() == 1 ? QStringLiteral("single") : QStringLiteral("multi")) << "materials"
-                       << d.materials.size() << "preserveScroll" << preserveScroll << timer.elapsed() << "ms";
 
     if (preserveScroll) {
         // Restoring immediately can still be clamped against the old scrollbar

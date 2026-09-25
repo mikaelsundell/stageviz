@@ -11,8 +11,6 @@
 #include "style.h"
 #include "tracelocks.h"
 #include <QContextMenuEvent>
-#include <QDebug>
-#include <QElapsedTimer>
 #include <QGraphicsEllipseItem>
 #include <QGraphicsPathItem>
 #include <QGraphicsRectItem>
@@ -551,15 +549,11 @@ MaterialGraphPrivate::buildRecursive(const UsdStageRefPtr& stage, const SdfPath&
     QSet<QString> declaredOutputs;
     if (type.startsWith(QStringLiteral("ND_"))) {
         static const QHash<QString, MaterialXNodeDefinition> definitionsById = []() {
-            QElapsedTimer timer;
-            timer.start();
             QHash<QString, MaterialXNodeDefinition> definitions;
             const QList<MaterialXNodeDefinition> defs = MaterialUtils::materialXNodeDefinitions();
             definitions.reserve(defs.size());
             for (const MaterialXNodeDefinition& def : defs)
                 definitions.insert(def.nodeDef, def);
-            qDebug().noquote() << "[MaterialPerf][Graph] MaterialX lookup cache" << definitions.size() << "definitions"
-                               << timer.elapsed() << "ms";
             return definitions;
         }();
 
@@ -962,8 +956,6 @@ MaterialGraphPrivate::updateSceneRect()
 void
 MaterialGraphPrivate::rebuild(bool preservePositions)
 {
-    QElapsedTimer totalTimer;
-    totalTimer.start();
     QHash<QString, QPointF> previousPositions;
     QSet<QString> previousSelection;
     const SdfPath previousPrimarySelection = d.selectedNode;
@@ -981,10 +973,7 @@ MaterialGraphPrivate::rebuild(bool preservePositions)
     const int previousHorizontal = restoreViewport ? d.view->horizontalScrollBar()->value() : 0;
     const int previousVertical = restoreViewport ? d.view->verticalScrollBar()->value() : 0;
 
-    QElapsedTimer sectionTimer;
-    sectionTimer.start();
     clear();
-    const qint64 clearMs = sectionTimer.elapsed();
 
     if (d.material.shaderPath.IsEmpty())
         return;
@@ -995,8 +984,6 @@ MaterialGraphPrivate::rebuild(bool preservePositions)
         if (!stage)
             return;
         QSet<QString> visited;
-        QElapsedTimer buildTimer;
-        buildTimer.start();
         buildRecursive(stage, d.material.shaderPath, 0, visited);
 
         const UsdPrim materialPrim = stage->GetPrimAtPath(d.material.materialPath);
@@ -1009,14 +996,8 @@ MaterialGraphPrivate::rebuild(bool preservePositions)
                     buildRecursive(stage, prim.GetPath(), 0, visited);
             }
         }
-        qDebug().noquote() << "[MaterialPerf][Graph] buildRecursive"
-                           << QString::fromStdString(d.material.materialPath.GetString()) << d.nodes.size() << "nodes"
-                           << buildTimer.elapsed() << "ms";
     }
-    QElapsedTimer layoutTimer;
-    layoutTimer.start();
     layoutNodes();
-    const qint64 layoutMs = layoutTimer.elapsed();
 
     sectionTimer.restart();
     if (!previousPositions.isEmpty()) {
@@ -1047,7 +1028,6 @@ MaterialGraphPrivate::rebuild(bool preservePositions)
                 node->setPos(it.value());
         }
     }
-    const qint64 restorePositionsMs = sectionTimer.elapsed();
 
     // New nodes are positioned after the synchronous USD notice rebuild.
     if (d.pendingCreate) {
@@ -1077,27 +1057,13 @@ MaterialGraphPrivate::rebuild(bool preservePositions)
         }
     }
     d.restoringSelection = false;
-    const qint64 restoreSelectionMs = sectionTimer.elapsed();
 
-    QElapsedTimer edgesTimer;
-    edgesTimer.start();
     rebuildEdges();
-    const qint64 edgesMs = edgesTimer.elapsed();
 
     sectionTimer.restart();
     applyFilter(d.ui ? d.ui->filter->text() : QString());
     updateSceneRect();
-    const qint64 filterSceneRectMs = sectionTimer.elapsed();
 
-    qDebug().noquote() << "[MaterialPerf][Graph] rebuild" << QString::fromStdString(d.material.materialPath.GetString())
-                       << d.nodes.size() << "nodes" << d.edges.size() << "edges"
-                       << "clear" << clearMs << "ms"
-                       << "layout" << layoutMs << "ms"
-                       << "restorePositions" << restorePositionsMs << "ms"
-                       << "restoreSelection" << restoreSelectionMs << "ms"
-                       << "edges" << edgesMs << "ms"
-                       << "filter+sceneRect" << filterSceneRectMs << "ms"
-                       << "total" << totalTimer.elapsed() << "ms";
 
     if (d.graph && !d.viewInitialized) {
         d.viewInitialized = true;
@@ -1288,9 +1254,6 @@ MaterialGraphPrivate::compatibleConnection(GraphPortItem* output, GraphPortItem*
     const bool targetMaterialX = isMaterialXShader(targetNode.shaderId);
 
     if ((sourceUsd && targetMaterialX) || (sourceMaterialX && targetUsd)) {
-        qDebug().noquote() << "[MaterialPerf][Graph] reject cross-family connection" << sourceNode.shaderId << "->"
-                           << targetNode.shaderId << QString::fromStdString(output->typeName().GetAsToken().GetString())
-                           << "->" << QString::fromStdString(input->typeName().GetAsToken().GetString());
         return false;
     }
 
@@ -1303,8 +1266,6 @@ MaterialGraphPrivate::compatibleConnection(GraphPortItem* output, GraphPortItem*
         if (uvTextureRgb)
             return true;
 
-        qDebug().noquote() << "[MaterialPerf][Graph] reject unsafe USD Preview Float3->Color3f" << sourceNode.shaderId
-                           << "->" << targetNode.shaderId;
         return false;
     }
 
@@ -1398,12 +1359,8 @@ MaterialGraphPrivate::createFreeNode(const QString& shaderId, const QString& nod
     for (auto it = d.nodes.cbegin(); it != d.nodes.cend(); ++it)
         d.pendingCreateExistingNodes.insert(it.key());
 
-    QElapsedTimer timer;
-    timer.start();
     session()->commandStack()->run(
         new Command(newShaderNode(d.material.materialPath, shaderId, nodeName, outputName, outputType)));
-    qDebug().noquote() << "[MaterialPerf][Graph] createFreeNode" << shaderId << nodeName << "command+notices"
-                       << timer.elapsed() << "ms";
 }
 
 void
@@ -1418,12 +1375,7 @@ MaterialGraphPrivate::createMaterialXNode(const MaterialXNodeDefinition& definit
     for (auto it = d.nodes.cbegin(); it != d.nodes.cend(); ++it)
         d.pendingCreateExistingNodes.insert(it.key());
 
-    QElapsedTimer timer;
-    timer.start();
     session()->commandStack()->run(new Command(newMaterialXNode(d.material.materialPath, definition)));
-    qDebug().noquote() << "[MaterialPerf][Graph] createMaterialXNode" << definition.nodeDef << definition.node
-                       << "inputs" << definition.inputs.size() << "outputs" << definition.outputs.size()
-                       << "command+notices" << timer.elapsed() << "ms";
 }
 
 

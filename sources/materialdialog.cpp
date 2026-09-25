@@ -25,10 +25,8 @@
 #include <QAction>
 #include <QCursor>
 #include <QDateTime>
-#include <QDebug>
 #include <QDragEnterEvent>
 #include <QDropEvent>
-#include <QElapsedTimer>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QFrame>
@@ -260,8 +258,6 @@ MaterialDialogPrivate::loadTextureWithOpenImageIO(const QString& filename, QStri
     if (colorSpaceOut)
         colorSpaceOut->clear();
 
-    QElapsedTimer timer;
-    timer.start();
 
     OIIO::ImageBuf source(filename.toStdString());
     if (!source.read(0, 0, true, OIIO::TypeDesc::FLOAT)) {
@@ -354,12 +350,6 @@ MaterialDialogPrivate::loadTextureWithOpenImageIO(const QString& filename, QStri
         }
     }
 
-    qDebug().noquote() << "[MaterialPerf][Dialog] OIIO texture decode" << filename << width << "x" << height << channels
-                       << "channels"
-                       << "source" << sourceColorSpace
-                       << (colorConverted ? "OIIO->sRGB"
-                                          : (manualLinearToSrgb ? "linear->sRGB fallback" : "display encoded"))
-                       << timer.elapsed() << "ms";
     return image;
 }
 
@@ -697,8 +687,6 @@ MaterialDialogPrivate::showNewMaterialMenu(QWidget* anchor, const QPoint& global
 void
 MaterialDialogPrivate::refresh()
 {
-    QElapsedTimer timer;
-    timer.start();
     QList<MaterialEntry> entries;
     {
         READ_LOCKER(locker, session()->stageLock(), "stageLock");
@@ -758,14 +746,11 @@ MaterialDialogPrivate::refresh()
     }
 
     updateSelection();
-    qDebug().noquote() << "[MaterialPerf][Dialog] refresh" << entries.size() << "materials" << timer.elapsed() << "ms";
 }
 
 void
 MaterialDialogPrivate::updatePrims(const NoticeBatch& batch)
 {
-    QElapsedTimer timer;
-    timer.start();
     if (batch.entries.isEmpty())
         return;
 
@@ -850,9 +835,6 @@ MaterialDialogPrivate::updatePrims(const NoticeBatch& batch)
             d.renderer->invalidate(entries[row].materialPath);
         }
         d.refreshTimer->start();
-        qDebug().noquote() << "[MaterialPerf][Dialog] updatePrims structural" << batch.entries.size()
-                           << "notice entries"
-                           << "invalidate+schedule" << timer.elapsed() << "ms";
         return;
     }
 
@@ -917,9 +899,6 @@ MaterialDialogPrivate::updatePrims(const NoticeBatch& batch)
     // which calls refreshGraphs().
     updateSelection();
     d.ui->browserWidget->refreshVisibleSwatches();
-    qDebug().noquote() << "[MaterialPerf][Dialog] updatePrims values FAST" << batch.entries.size() << "notice entries"
-                       << dirtyMaterials.size() << "materials" << dirtyProperties.size() << "properties"
-                       << timer.elapsed() << "ms";
 }
 
 
@@ -1059,8 +1038,6 @@ MaterialDialogPrivate::selectGraphNode(const SdfPath& path)
     if (path.IsEmpty())
         return;
 
-    QElapsedTimer timer;
-    timer.start();
 
     if (MaterialGraph* graph = currentGraph()) {
         const int row = d.ui->browserWidget->rowForMaterialPath(graph->materialPath());
@@ -1091,23 +1068,14 @@ MaterialDialogPrivate::selectGraphNode(const SdfPath& path)
 
     updatePropertySwatch();
 
-    const qint64 beforeTreeMs = timer.elapsed();
     d.ui->tree->navigateToNode(path);
-    const qint64 treeMs = timer.elapsed() - beforeTreeMs;
 
-    qDebug().noquote() << "[MaterialPerf][Dialog] selectGraphNode" << QString::fromStdString(path.GetString())
-                       << (d.previewNodeInfo.shaderId.isEmpty() ? QStringLiteral("<unknown>")
-                                                                : d.previewNodeInfo.shaderId)
-                       << "tree" << treeMs << "ms"
-                       << "total" << timer.elapsed() << "ms";
 }
 
 
 void
 MaterialDialogPrivate::connectGraphSockets(const SdfPath& inputPath, const SdfPath& sourceOutputPath)
 {
-    QElapsedTimer timer;
-    timer.start();
     if (inputPath.IsEmpty() || sourceOutputPath.IsEmpty() || !ensureInputs({ inputPath }))
         return;
     d.swatchSnapshotDirty = true;
@@ -1117,9 +1085,6 @@ MaterialDialogPrivate::connectGraphSockets(const SdfPath& inputPath, const SdfPa
     // Force a topology refresh so rebuildEdges() sees the authored connection and
     // the new wire becomes visible immediately.
     d.refreshTimer->start();
-    qDebug().noquote() << "[MaterialPerf][Dialog] connectGraphSockets"
-                       << QString::fromStdString(sourceOutputPath.GetString()) << "->"
-                       << QString::fromStdString(inputPath.GetString()) << timer.elapsed() << "ms";
 }
 
 void
@@ -1323,19 +1288,8 @@ MaterialDialogPrivate::imageNodePreview(const MaterialNodeInfo& node)
         }
     }
 
-    if (filename.isEmpty()) {
-        QStringList inputs;
-        for (const MaterialInputInfo& input : node.inputs) {
-            inputs << QStringLiteral("%1:%2:%3")
-                          .arg(QString::fromStdString(input.inputName.GetString()),
-                               QString::fromStdString(input.typeName.GetAsToken().GetString()),
-                               input.hasValue ? QStringLiteral("value") : QStringLiteral("unset"));
-        }
-        qDebug().noquote() << "[MaterialPerf][Dialog] imageNodePreview no file" << node.shaderId
-                           << QString::fromStdString(node.path.GetString()) << "inputs"
-                           << inputs.join(QStringLiteral(", "));
+    if (filename.isEmpty())
         return {};
-    }
 
     QSize canvasSize = d.ui && d.ui->swatch ? d.ui->swatch->size() : QSize(512, 320);
     if (canvasSize.width() < 64 || canvasSize.height() < 64)
@@ -1355,14 +1309,9 @@ MaterialDialogPrivate::imageNodePreview(const MaterialNodeInfo& node)
         return found.value();
     }
 
-    QString decodeError;
-    QString sourceColorSpace;
-    const QImage source = loadTextureWithOpenImageIO(filename, &decodeError, &sourceColorSpace);
-    if (source.isNull()) {
-        qDebug().noquote() << "[MaterialPerf][Dialog] imageNodePreview load FAILED" << node.shaderId << filename
-                           << "unresolved" << unresolvedFilename << "error" << decodeError;
+    const QImage source = loadTextureWithOpenImageIO(filename, nullptr, nullptr);
+    if (source.isNull())
         return {};
-    }
 
     QImage result(canvasSize, QImage::Format_RGBA8888);
     result.fill(style()->color(Style::ColorRole::Render));
@@ -1383,8 +1332,6 @@ MaterialDialogPrivate::imageNodePreview(const MaterialNodeInfo& node)
     while (d.texturePreviewCacheOrder.size() > 32)
         d.texturePreviewCache.remove(d.texturePreviewCacheOrder.takeFirst());
 
-    qDebug().noquote() << "[MaterialPerf][Dialog] imageNodePreview" << node.shaderId << filename << "sourceColorSpace"
-                       << sourceColorSpace << source.size() << "->" << result.size();
     return result;
 }
 
@@ -1431,8 +1378,6 @@ MaterialDialogPrivate::updatePropertySwatch()
 bool
 MaterialDialogPrivate::ensureSwatchSnapshot()
 {
-    QElapsedTimer timer;
-    timer.start();
     if (!d.swatchSnapshot) {
         d.swatchSnapshot = SdfLayer::CreateAnonymous("stageviz_material_snapshot.usda");
         d.swatchSnapshotDirty = true;
@@ -1442,15 +1387,11 @@ MaterialDialogPrivate::ensureSwatchSnapshot()
         return true;
 
     SdfLayerRefPtr flattened;
-    qint64 flattenMs = 0;
     {
         READ_LOCKER(locker, session()->stageLock(), "stageLock");
         const UsdStageRefPtr stage = session()->stageUnsafe();
         if (stage) {
-            QElapsedTimer flattenTimer;
-            flattenTimer.start();
             flattened = stage->Flatten();
-            flattenMs = flattenTimer.elapsed();
         }
     }
 
@@ -1464,9 +1405,6 @@ MaterialDialogPrivate::ensureSwatchSnapshot()
     // the lightweight root-layer overrides accumulated since the previous full
     // structural sync so they cannot shadow newer topology/defaults.
     d.renderer->clearOverrides();
-    qDebug().noquote() << "[MaterialPerf][Dialog] swatchSnapshot rebuild"
-                       << "flatten" << flattenMs << "ms"
-                       << "total" << timer.elapsed() << "ms";
     return true;
 }
 
@@ -1722,38 +1660,24 @@ void
 MaterialDialogPrivate::connectShaderNode(const SdfPath& inputPath, const QString& shaderId, const QString& nodeName,
                                          const TfToken& outputName)
 {
-    QElapsedTimer timer;
-    timer.start();
-    bool executed = false;
     if (!inputPath.IsEmpty() && !shaderId.isEmpty() && !outputName.IsEmpty() && ensureInputs({ inputPath })) {
         d.swatchSnapshotDirty = true;
         d.graphTopologyDirty = true;
         session()->commandStack()->run(
             new Command(stageviz::connectShaderNode(inputPath, shaderId, nodeName, outputName)));
         d.refreshTimer->start();
-        executed = true;
     }
-    qDebug().noquote() << "[MaterialPerf][Dialog] connectShaderNode" << shaderId << nodeName
-                       << QString::fromStdString(inputPath.GetString()) << "executed" << executed << timer.elapsed()
-                       << "ms";
 }
 
 void
 MaterialDialogPrivate::connectMaterialXNode(const SdfPath& inputPath, const QString& nodeDef, const QString& nodeName)
 {
-    QElapsedTimer timer;
-    timer.start();
-    bool executed = false;
     if (!inputPath.IsEmpty() && !nodeDef.isEmpty() && ensureInputs({ inputPath })) {
         d.swatchSnapshotDirty = true;
         d.graphTopologyDirty = true;
         session()->commandStack()->run(new Command(stageviz::connectMaterialXNode(inputPath, nodeDef, nodeName)));
         d.refreshTimer->start();
-        executed = true;
     }
-    qDebug().noquote() << "[MaterialPerf][Dialog] connectMaterialXNode" << nodeDef << nodeName
-                       << QString::fromStdString(inputPath.GetString()) << "executed" << executed << timer.elapsed()
-                       << "ms";
 }
 
 void
