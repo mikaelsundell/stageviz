@@ -277,7 +277,8 @@ RenderEngine::Private::ensureCurrentContext()
 bool
 RenderEngine::Private::initialize()
 {
-    if (engine && selectionEngine)
+
+    if (engine && (contextMode == ContextMode::Offscreen || selectionEngine))
         return true;
 
     if (!ensureCurrentContext())
@@ -293,24 +294,26 @@ RenderEngine::Private::initialize()
         return false;
     }
 
-    // Keep selection in a completely separate Hydra render index. Its scene
-    // presentation is stable while a frame is rendered; only user selection
-    // changes dirty this index between frames.
-    UsdImagingGLEngine::Parameters selectionParams = documentParams;
-    selectionParams.allowAsynchronousSceneProcessing = false;
+    // Selection is a viewport-only overlay. Offscreen rendering (material
+    // swatches and scripted image renders) never needs the second Hydra index.
+    if (contextMode == ContextMode::Current) {
+        UsdImagingGLEngine::Parameters selectionParams = documentParams;
+        selectionParams.allowAsynchronousSceneProcessing = false;
 
-    selectionEngine = std::make_unique<ImagingGLEngine>(selectionParams);
-    if (!selectionEngine->GetHgi()) {
-        selectionEngine.reset();
-        engine.reset();
-        return false;
+        selectionEngine = std::make_unique<ImagingGLEngine>(selectionParams);
+        if (!selectionEngine->GetHgi()) {
+            selectionEngine.reset();
+            engine.reset();
+            return false;
+        }
     }
 
     updateRenderSceneIndex();
     ensureAuxiliarySceneIndex();
 
     engine->SetSelected(SdfPathVector());
-    selectionEngine->SetSelected(SdfPathVector());
+    if (selectionEngine)
+        selectionEngine->SetSelected(SdfPathVector());
     return true;
 }
 
@@ -542,10 +545,11 @@ RenderEngine::Private::updateLighting()
 bool
 RenderEngine::Private::render()
 {
+
     if (!stage || size[0] <= 0 || size[1] <= 0)
         return false;
 
-    if ((!engine || !selectionEngine) && !initialize())
+    if ((!engine || (contextMode == ContextMode::Current && !selectionEngine)) && !initialize())
         return false;
 
     ensureAuxiliarySceneIndex();
@@ -573,7 +577,8 @@ RenderEngine::Private::render()
     };
 
     configureEngine(engine.get());
-    configureEngine(selectionEngine.get());
+    if (selectionEngine)
+        configureEngine(selectionEngine.get());
 
     const UsdPrim root = stage->GetPseudoRoot();
     UsdImagingGLRenderParams documentParams = params;
@@ -600,38 +605,39 @@ RenderEngine::Private::render()
 
     documentHgi->EndFrame();
 
-    SdfPathVector selectionPaths;
-    selectionPaths.reserve(selected.size());
+    if (selectionEngine) {
+        SdfPathVector selectionPaths;
+        selectionPaths.reserve(selected.size());
 
-    for (const SdfPath& path : selected) {
-        if (path.IsEmpty() || path == SdfPath::AbsoluteRootPath())
-            continue;
-        selectionPaths.push_back(path);
+        for (const SdfPath& path : selected) {
+            if (path.IsEmpty() || path == SdfPath::AbsoluteRootPath())
+                continue;
+            selectionPaths.push_back(path);
+        }
+
+        // Keep the viewport selection render index warm even when the collection
+        // is empty. Offscreen renderers never create this engine, so material
+        // swatches do not pay the selection-pass cost.
+        Hgi* selectionHgi = selectionEngine->GetHgi();
+        if (!selectionHgi)
+            return false;
+
+        UsdImagingGLRenderParams selectionParams = documentParams;
+        selectionParams.highlight = false;
+        selectionParams.enableSceneMaterials = true;
+
+        constexpr float selectionDepthBiasConstant = -2.0f;
+        constexpr float selectionDepthBiasSlope = 0.0f;
+
+        const GfVec4f fillColor = qt::QColorToGfVec4f(selectionColor);
+        const GfVec4f wireframeColor(fillColor[0] * 0.8f, fillColor[1] * 0.8f, fillColor[2] * 0.8f, fillColor[3]);
+
+        selectionHgi->StartFrame();
+        selectionEngine->PrepareBatch(root, selectionParams);
+        selectionEngine->renderBatchWithDepthBias(selectionPaths, selectionParams, selectionDepthBiasConstant,
+                                                  selectionDepthBiasSlope, wireframeColor);
+        selectionHgi->EndFrame();
     }
-
-    // Always execute the selection render path, even when the collection is
-    // empty. This warms the separate selection Hydra index/render task during
-    // the normal stage render so the first interactive selection does not pay
-    // the full one-time setup cost.
-    Hgi* selectionHgi = selectionEngine->GetHgi();
-    if (!selectionHgi)
-        return false;
-
-    UsdImagingGLRenderParams selectionParams = documentParams;
-    selectionParams.highlight = false;
-    selectionParams.enableSceneMaterials = true;
-
-    constexpr float selectionDepthBiasConstant = -2.0f;
-    constexpr float selectionDepthBiasSlope = 0.0f;
-
-    const GfVec4f fillColor = qt::QColorToGfVec4f(selectionColor);
-    const GfVec4f wireframeColor(fillColor[0] * 0.8f, fillColor[1] * 0.8f, fillColor[2] * 0.8f, fillColor[3]);
-
-    selectionHgi->StartFrame();
-    selectionEngine->PrepareBatch(root, selectionParams);
-    selectionEngine->renderBatchWithDepthBias(selectionPaths, selectionParams, selectionDepthBiasConstant,
-                                              selectionDepthBiasSlope, wireframeColor);
-    selectionHgi->EndFrame();
 
     return true;
 }
@@ -666,7 +672,8 @@ RenderEngine::reset()
 bool
 RenderEngine::isInitialized() const
 {
-    return p->engine != nullptr && p->selectionEngine != nullptr;
+    return p->engine != nullptr
+           && (p->contextMode == ContextMode::Offscreen || p->selectionEngine != nullptr);
 }
 
 void
@@ -835,6 +842,7 @@ RenderEngine::renderToCurrentFramebuffer()
 QImage
 RenderEngine::renderImage()
 {
+
     if (p->contextMode != ContextMode::Offscreen)
         return {};
 
@@ -859,6 +867,7 @@ RenderEngine::renderImage()
         return {};
 
     const bool rendered = renderToCurrentFramebuffer();
+
     const QImage image = rendered ? framebuffer.toImage() : QImage();
 
     framebuffer.release();

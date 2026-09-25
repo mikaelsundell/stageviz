@@ -20,8 +20,6 @@
 #include "tabwidget.h"
 #include "tracelocks.h"
 #include "usdutils.h"
-#include <OpenImageIO/imagebuf.h>
-#include <OpenImageIO/imagebufalgo.h>
 #include <QAction>
 #include <QCursor>
 #include <QDateTime>
@@ -48,10 +46,8 @@
 #include <QTimer>
 #include <QToolButton>
 #include <QVBoxLayout>
-#include <algorithm>
-#include <cmath>
-#include <functional>
-#include <limits>
+#include <OpenImageIO/imagebuf.h>
+#include <OpenImageIO/imagebufalgo.h>
 #include <pxr/base/vt/value.h>
 #include <pxr/usd/ar/resolver.h>
 #include <pxr/usd/ar/resolverContextBinder.h>
@@ -60,6 +56,10 @@
 #include <pxr/usd/sdf/layerUtils.h>
 #include <pxr/usd/usd/primRange.h>
 #include <pxr/usd/usdShade/materialBindingAPI.h>
+#include <algorithm>
+#include <cmath>
+#include <functional>
+#include <limits>
 #include <vector>
 
 // generated files
@@ -687,6 +687,7 @@ MaterialDialogPrivate::showNewMaterialMenu(QWidget* anchor, const QPoint& global
 void
 MaterialDialogPrivate::refresh()
 {
+
     QList<MaterialEntry> entries;
     {
         READ_LOCKER(locker, session()->stageLock(), "stageLock");
@@ -779,21 +780,20 @@ MaterialDialogPrivate::updatePrims(const NoticeBatch& batch)
                             || entry.primResyncType != UsdNotice::ObjectsChanged::PrimResyncType::Invalid;
 
         if (resync) {
+            const SdfPath changedPrim = entry.path.IsPropertyPath() ? entry.path.GetPrimPath() : entry.path;
+
             if (!known.IsEmpty()) {
+                // Existing material topology changed. Only that material's
+                // cached swatch is stale; unrelated materials remain valid.
+                dirtyMaterials.insert(QString::fromStdString(known.GetString()));
                 structuralChange = true;
                 break;
             }
 
-            const SdfPath changedPrim = entry.path.IsPropertyPath() ? entry.path.GetPrimPath() : entry.path;
-            for (const MaterialEntry& material : d.ui->browserWidget->entries()) {
-                if (material.materialPath.HasPrefix(changedPrim)) {
-                    structuralChange = true;
-                    break;
-                }
-            }
-
-            if (structuralChange)
-                break;
+            // An ancestor resync (for example /Materials when a sibling material
+            // is added or removed) is structural, but it does not mean every
+            // existing descendant material changed. Preserve their swatches and
+            // let setEntries() add/remove rows while retaining unchanged caches.
 
             READ_LOCKER(locker, session()->stageLock(), "stageLock");
             const UsdStageRefPtr stage = session()->stageUnsafe();
@@ -801,6 +801,8 @@ MaterialDialogPrivate::updatePrims(const NoticeBatch& batch)
                 const UsdPrim prim = stage->GetPrimAtPath(changedPrim);
                 if (prim) {
                     if (prim.IsA<UsdShadeMaterial>()) {
+                        // New material: structural refresh is required, but no
+                        // existing swatch needs to be invalidated.
                         structuralChange = true;
                     }
                     else {
@@ -829,11 +831,18 @@ MaterialDialogPrivate::updatePrims(const NoticeBatch& batch)
     if (structuralChange) {
         d.swatchSnapshotDirty = true;
         d.graphTopologyDirty = true;
-        const QList<MaterialEntry>& entries = d.ui->browserWidget->entries();
-        for (int row = 0; row < entries.size(); ++row) {
-            d.ui->browserWidget->invalidateSwatch(row);
-            d.renderer->invalidate(entries[row].materialPath);
+
+        // Preserve valid swatches for unaffected materials. setEntries() will
+        // create an invalid placeholder for newly-added materials automatically.
+        // Existing materials whose own topology changed are invalidated here.
+        for (const QString& pathString : std::as_const(dirtyMaterials)) {
+            const SdfPath materialPath(pathString.toStdString());
+            const int row = d.ui->browserWidget->rowForMaterialPath(materialPath);
+            if (row >= 0)
+                d.ui->browserWidget->invalidateSwatch(row);
+            d.renderer->invalidate(materialPath);
         }
+
         d.refreshTimer->start();
         return;
     }
@@ -1378,13 +1387,13 @@ MaterialDialogPrivate::updatePropertySwatch()
 bool
 MaterialDialogPrivate::ensureSwatchSnapshot()
 {
-    if (!d.swatchSnapshot) {
-        d.swatchSnapshot = SdfLayer::CreateAnonymous("stageviz_material_snapshot.usda");
-        d.swatchSnapshotDirty = true;
-    }
 
-    if (!d.swatchSnapshotDirty)
+    if (!d.swatchSnapshot)
+        d.swatchSnapshotDirty = true;
+
+    if (!d.swatchSnapshotDirty) {
         return true;
+    }
 
     SdfLayerRefPtr flattened;
     {
@@ -1395,10 +1404,15 @@ MaterialDialogPrivate::ensureSwatchSnapshot()
         }
     }
 
+
     if (!flattened)
         return false;
 
-    d.swatchSnapshot->TransferContent(flattened);
+    SdfLayerRefPtr snapshot = SdfLayer::CreateAnonymous("stageviz_material_snapshot.usda");
+    if (!snapshot)
+        return false;
+    snapshot->TransferContent(flattened);
+    d.swatchSnapshot = snapshot;
     d.swatchSnapshotDirty = false;
 
     // The fresh composed snapshot already contains every committed value. Drop
@@ -1411,9 +1425,14 @@ MaterialDialogPrivate::ensureSwatchSnapshot()
 void
 MaterialDialogPrivate::requestSwatch(int row)
 {
+
     const MaterialEntry* entry = d.ui->browserWidget->entry(row);
-    if (!entry || !ensureSwatchSnapshot())
+    if (!entry)
         return;
+
+    if (!ensureSwatchSnapshot()) {
+        return;
+    }
 
     // Swatches always represent the complete material network. The selected graph
     // node is editor state only and never changes what is rendered here.
@@ -1683,11 +1702,13 @@ MaterialDialogPrivate::connectMaterialXNode(const SdfPath& inputPath, const QStr
 void
 MaterialDialogPrivate::createPreviewSurface()
 {
+
     SdfPath path;
     {
         WRITE_LOCKER(locker, session()->stageLock(), "stageLock");
         path = MaterialUtils::createPreviewSurfaceMaterial(session()->stageUnsafe());
     }
+
 
     if (!path.IsEmpty())
         d.refreshTimer->start(0);
@@ -1696,11 +1717,13 @@ MaterialDialogPrivate::createPreviewSurface()
 void
 MaterialDialogPrivate::createStandardSurface()
 {
+
     SdfPath path;
     {
         WRITE_LOCKER(locker, session()->stageLock(), "stageLock");
         path = MaterialUtils::createStandardSurfaceMaterial(session()->stageUnsafe());
     }
+
 
     if (!path.IsEmpty())
         d.refreshTimer->start(0);
@@ -1709,11 +1732,13 @@ MaterialDialogPrivate::createStandardSurface()
 void
 MaterialDialogPrivate::createOpenPBRSurface()
 {
+
     SdfPath path;
     {
         WRITE_LOCKER(locker, session()->stageLock(), "stageLock");
         path = MaterialUtils::createOpenPBRSurfaceMaterial(session()->stageUnsafe());
     }
+
 
     if (!path.IsEmpty())
         d.refreshTimer->start(0);

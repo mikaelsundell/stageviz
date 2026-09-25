@@ -216,6 +216,8 @@ namespace {
         return true;
     }
 
+    const MaterialXNodeDefinition* materialXNodeDefinition(const QString& shaderId);
+
     UsdShadeShader resolveOutputToShader(const UsdShadeOutput& output, int depth = 0)
     {
         if (!output || depth > 16)
@@ -244,22 +246,14 @@ namespace {
         if (!shaderId.startsWith(QStringLiteral("ND_")) || inputName.IsEmpty())
             return {};
 
-        static const QHash<QString, QHash<QString, QStringList>> optionsByNodeDef = []() {
-            QHash<QString, QHash<QString, QStringList>> result;
-            const QList<MaterialXNodeDefinition> defs = MaterialUtils::materialXNodeDefinitions();
-            for (const MaterialXNodeDefinition& def : defs) {
-                QHash<QString, QStringList> inputs;
-                for (const MaterialXPortDefinition& port : def.inputs) {
-                    if (!port.enumValues.isEmpty())
-                        inputs.insert(port.name, port.enumValues);
-                }
-                if (!inputs.isEmpty())
-                    result.insert(def.nodeDef, inputs);
-            }
-            return result;
-        }();
-
-        QStringList values = optionsByNodeDef.value(shaderId).value(QString::fromStdString(inputName.GetString()));
+        QStringList values;
+        if (const MaterialXNodeDefinition* def = materialXNodeDefinition(shaderId)) {
+            const QString name = QString::fromStdString(inputName.GetString());
+            const auto it = std::find_if(def->inputs.cbegin(), def->inputs.cend(),
+                                         [&](const MaterialXPortDefinition& port) { return port.name == name; });
+            if (it != def->inputs.cend())
+                values = it->enumValues;
+        }
 
         // Older MaterialX standard-library files do not consistently expose
         // UI enum metadata on every NodeDef. Keep the common image enums
@@ -391,17 +385,111 @@ namespace {
         if (shaderId.isEmpty())
             return nullptr;
 
-        static const QHash<QString, MaterialXNodeDefinition> definitions = []() {
-            QHash<QString, MaterialXNodeDefinition> result;
-            const QList<MaterialXNodeDefinition> nodeDefs = MaterialUtils::materialXNodeDefinitions();
-            result.reserve(nodeDefs.size());
-            for (const MaterialXNodeDefinition& def : nodeDefs)
-                result.insert(def.nodeDef, def);
-            return result;
-        }();
+        // Property inspection is a hot path. Do not build the complete MaterialX
+        // catalogue just to inspect one shader. Sdr already knows the parsed
+        // interface for a NodeDef and can resolve that identifier on demand.
+        static QHash<QString, MaterialXNodeDefinition> definitions;
+        static QSet<QString> missing;
 
-        const auto it = definitions.constFind(shaderId);
-        return it == definitions.constEnd() ? nullptr : &it.value();
+        const auto cached = definitions.constFind(shaderId);
+        if (cached != definitions.constEnd())
+            return &cached.value();
+        if (missing.contains(shaderId))
+            return nullptr;
+
+        SdrRegistry& registry = SdrRegistry::GetInstance();
+        const TfToken identifier(shaderId.toStdString());
+
+        SdrShaderNodeConstPtr node = nullptr;
+        size_t bestInputCount = 0;
+        const auto candidates = registry.GetShaderNodesByIdentifier(identifier);
+        for (const auto& candidate : candidates) {
+            if (!candidate || !candidate->IsValid())
+                continue;
+            const size_t inputCount = candidate->GetShaderInputNames().size();
+            if (!node || inputCount > bestInputCount) {
+                node = candidate;
+                bestInputCount = inputCount;
+            }
+        }
+
+        if (!node)
+            node = registry.GetShaderNodeByIdentifier(identifier);
+        if (!node || !node->IsValid()) {
+            missing.insert(shaderId);
+            return nullptr;
+        }
+
+        MaterialXNodeDefinition def;
+        def.nodeDef = shaderId;
+
+        for (const TfToken& name : node->GetShaderInputNames()) {
+            const SdrShaderPropertyConstPtr property = node->GetShaderInput(name);
+            if (!property)
+                continue;
+
+            MaterialXPortDefinition port;
+            port.name = QString::fromStdString(name.GetString());
+            port.type = QString::fromStdString(property->GetType().GetString());
+            const VtValue value = property->GetDefaultValue();
+            if (value.IsHolding<float>())
+                port.value = QString::number(value.UncheckedGet<float>(), 'g', 9);
+            else if (value.IsHolding<double>())
+                port.value = QString::number(value.UncheckedGet<double>(), 'g', 17);
+            else if (value.IsHolding<int>())
+                port.value = QString::number(value.UncheckedGet<int>());
+            else if (value.IsHolding<bool>())
+                port.value = value.UncheckedGet<bool>() ? QStringLiteral("true") : QStringLiteral("false");
+            else if (value.IsHolding<std::string>())
+                port.value = QString::fromStdString(value.UncheckedGet<std::string>());
+            else if (value.IsHolding<TfToken>())
+                port.value = QString::fromStdString(value.UncheckedGet<TfToken>().GetString());
+            else if (value.IsHolding<SdfAssetPath>())
+                port.value = QString::fromStdString(value.UncheckedGet<SdfAssetPath>().GetAssetPath());
+            else if (value.IsHolding<GfVec2f>()) {
+                const GfVec2f v = value.UncheckedGet<GfVec2f>();
+                port.value = QStringLiteral("%1, %2").arg(v[0], 0, 'g', 9).arg(v[1], 0, 'g', 9);
+            }
+            else if (value.IsHolding<GfVec3f>()) {
+                const GfVec3f v = value.UncheckedGet<GfVec3f>();
+                port.value = QStringLiteral("%1, %2, %3")
+                                 .arg(v[0], 0, 'g', 9)
+                                 .arg(v[1], 0, 'g', 9)
+                                 .arg(v[2], 0, 'g', 9);
+            }
+            else if (value.IsHolding<GfVec4f>()) {
+                const GfVec4f v = value.UncheckedGet<GfVec4f>();
+                port.value = QStringLiteral("%1, %2, %3, %4")
+                                 .arg(v[0], 0, 'g', 9)
+                                 .arg(v[1], 0, 'g', 9)
+                                 .arg(v[2], 0, 'g', 9)
+                                 .arg(v[3], 0, 'g', 9);
+            }
+            readSdrUiMetadata(property, port);
+            def.inputs.append(port);
+        }
+
+        for (const TfToken& name : node->GetShaderOutputNames()) {
+            const SdrShaderPropertyConstPtr property = node->GetShaderOutput(name);
+            if (!property)
+                continue;
+
+            MaterialXPortDefinition port;
+            port.name = QString::fromStdString(name.GetString());
+            port.type = QString::fromStdString(property->GetType().GetString());
+            def.outputs.append(port);
+        }
+
+        if (!def.outputs.isEmpty()) {
+            const auto outIt = std::find_if(def.outputs.cbegin(), def.outputs.cend(),
+                                            [](const MaterialXPortDefinition& port) {
+                                                return port.name == QStringLiteral("out");
+                                            });
+            def.outputType = outIt != def.outputs.cend() ? outIt->type : def.outputs.first().type;
+        }
+
+        definitions.insert(shaderId, def);
+        return &definitions.constFind(shaderId).value();
     }
 
     MaterialInputInfo inspectInput(const UsdShadeInput& input, const QString& shaderId)
@@ -821,7 +909,7 @@ MaterialUtils::authorUsdNodeDefaults(UsdShadeShader& shader, const QString& shad
         return;
 
     SdrRegistry& registry = SdrRegistry::GetInstance();
-    SdrShaderNodeConstPtr node;
+    SdrShaderNodeConstPtr node = nullptr;
     size_t bestPropertyCount = 0;
 
     const TfToken identifier(shaderId.toStdString());
@@ -1304,11 +1392,11 @@ namespace {
         // Do not accept the registry's arbitrary first match if it happens to be the
         // sparse representation. Prefer the parsed representation with the richest
         // interface so the authored UsdShade node gets the complete MaterialX ports.
-        SdrShaderNodeConstPtr node;
+        SdrShaderNodeConstPtr node = nullptr;
         size_t bestInputCount = 0;
         const auto candidates = registry.GetShaderNodesByIdentifier(TfToken(def.nodeDef.toStdString()));
         for (const auto& candidate : candidates) {
-            if (!candidate)
+            if (!candidate || !candidate->IsValid())
                 continue;
             const size_t inputCount = candidate->GetShaderInputNames().size();
             if (!node || inputCount > bestInputCount) {
@@ -1319,7 +1407,7 @@ namespace {
 
         if (!node)
             node = registry.GetShaderNodeByIdentifier(TfToken(def.nodeDef.toStdString()));
-        if (!node)
+        if (!node || !node->IsValid())
             return;
 
         auto mergePort = [](QList<MaterialXPortDefinition>& ports, const MaterialXPortDefinition& incoming) {
@@ -1423,7 +1511,8 @@ MaterialUtils::materialXNodeDefinitions()
                 mergePort(existing.outputs, port);
         };
 
-        for (const QString& root : materialXLibraryRoots()) {
+        const QStringList libraryRoots = materialXLibraryRoots();
+        for (const QString& root : libraryRoots) {
             QDirIterator it(root, { QStringLiteral("*.mtlx") }, QDir::Files, QDirIterator::Subdirectories);
             while (it.hasNext()) {
                 QFile file(it.next());
@@ -1584,8 +1673,9 @@ MaterialUtils::materialXNodeDefinitions()
         // entries without all inherited/default inputs in the file we happen to
         // scan. Merge the parsed Sdr interface so newly-authored nodes always get
         // the same inputs/outputs OpenUSD knows for the NodeDef.
-        for (MaterialXNodeDefinition& def : result)
+        for (MaterialXNodeDefinition& def : result) {
             mergeMaterialXDefinitionFromSdr(def);
+        }
 
         std::sort(result.begin(), result.end(), [](const MaterialXNodeDefinition& a, const MaterialXNodeDefinition& b) {
             if (a.group != b.group)
@@ -1596,6 +1686,7 @@ MaterialUtils::materialXNodeDefinitions()
         });
         return result;
     }();
+
 
     return definitions;
 }
@@ -1688,7 +1779,7 @@ MaterialUtils::usdShaderNodes()
         if (identifier == QStringLiteral("UsdPreviewSurface"))
             continue;
 
-        SdrShaderNodeConstPtr node;
+        SdrShaderNodeConstPtr node = nullptr;
         size_t bestPropertyCount = 0;
 
         const auto candidates = registry.GetShaderNodesByIdentifier(identifierToken);
@@ -2259,11 +2350,16 @@ MaterialUtils::exportMaterialX(UsdStageRefPtr stage, const SdfPath& materialPath
             return false;
         }
 
-        const MaterialXNodeDefinition* definition = materialXNodeDefinition(id);
-        if (!definition || definition->node.isEmpty() || definition->outputType.isEmpty()) {
+        const QList<MaterialXNodeDefinition> definitions = MaterialUtils::materialXNodeDefinitions();
+        const auto definitionIt = std::find_if(definitions.cbegin(), definitions.cend(),
+                                               [&](const MaterialXNodeDefinition& def) {
+                                                   return def.nodeDef == id;
+                                               });
+        if (definitionIt == definitions.cend() || definitionIt->node.isEmpty() || definitionIt->outputType.isEmpty()) {
             error = QString("MaterialX NodeDef is not available for %1").arg(id);
             return false;
         }
+        const MaterialXNodeDefinition* definition = &(*definitionIt);
 
         visiting.insert(pathKey);
 

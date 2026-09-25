@@ -9,6 +9,7 @@
 #include <QApplication>
 #include <QColor>
 #include <QDir>
+#include <QDebug>
 #include <QFile>
 #include <QFileInfo>
 #include <QHash>
@@ -372,6 +373,7 @@ MaterialRendererPrivate::initializeContext(RenderContext& context, QString& erro
     }
 
     resetContext(context);
+
     context.sourceLayer = sourceLayer;
     context.stage = createPreviewStage(error, sourceLayer);
     if (!context.stage)
@@ -425,16 +427,17 @@ MaterialRendererPrivate::ensureNetworkRenderer(QString& error, const SdfLayerRef
 {
     constexpr int finalSize = 512;
 
-    // TEMPORARY DIAGNOSTIC / SAFETY PATH:
-    // MaterialDialog refreshes the contents of a stable snapshot layer with
-    // SdfLayer::TransferContent(). Reusing the same Storm render index after a
-    // topology edit (new shader prim/output/connection) has produced crashes in
-    // HdSt_CodeGen::_GenerateShaderParameters. Recreate the preview context for
-    // every committed network request while we isolate the exact invalidation
-    // boundary. Once verified, this can be narrowed to topology-only requests.
+    // A swatch snapshot is immutable for one structural generation. Reuse the
+    // warm Storm context for every material that references the same snapshot.
+    // MaterialDialog replaces the snapshot layer object when topology changes,
+    // so pointer identity is the safe invalidation boundary.
+    if (d.networkContext.renderEngine && d.networkContext.stage
+        && d.networkContext.sourceLayer == sourceLayer) {
+        return true;
+    }
 
-    resetContext(d.networkContext);
-    return initializeContext(d.networkContext, error, sourceLayer, GfVec2i(finalSize, finalSize));
+    const bool ok = initializeContext(d.networkContext, error, sourceLayer, GfVec2i(finalSize, finalSize));
+    return ok;
 }
 
 bool
@@ -584,6 +587,7 @@ MaterialRendererPrivate::renderNetwork(const SdfPath& materialPath, const SdfLay
 {
     error.clear();
 
+
     if (!sourceLayer) {
         error = QStringLiteral("Material preview source layer is missing");
         return {};
@@ -661,8 +665,6 @@ MaterialRendererPrivate::renderInteractiveNetwork(const SdfPath& materialPath, c
 void
 MaterialRendererPrivate::resetContext(RenderContext& context)
 {
-    if (context.renderEngine || context.stage) {
-    }
     context.renderEngine.reset();
     context.stage = nullptr;
     context.sourceLayer = nullptr;
@@ -729,6 +731,7 @@ MaterialRendererPrivate::dispatchNetwork(const QString& path, const SdfLayerRefP
     else {
         d.cache.remove(path);
     }
+
 
     Pending pending;
     pending.kind = RequestKind::MaterialNetwork;
