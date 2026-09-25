@@ -17,6 +17,7 @@
 #include <QSet>
 #include <QXmlStreamReader>
 #include <algorithm>
+#include <cmath>
 #include <functional>
 #include <pxr/base/gf/vec2f.h>
 #include <pxr/base/gf/vec4f.h>
@@ -279,6 +280,114 @@ namespace {
         return values;
     }
 
+    bool parseUiNumber(const QString& text, double* value)
+    {
+        if (!value)
+            return false;
+        bool ok = false;
+        const double parsed = text.trimmed().toDouble(&ok);
+        if (!ok || !std::isfinite(parsed))
+            return false;
+        *value = parsed;
+        return true;
+    }
+
+    void copyPortUiMetadata(const MaterialXPortDefinition& port, MaterialInputInfo& info)
+    {
+        info.hasUiMin = port.hasUiMin;
+        info.hasUiMax = port.hasUiMax;
+        info.hasUiSoftMin = port.hasUiSoftMin;
+        info.hasUiSoftMax = port.hasUiSoftMax;
+        info.hasUiStep = port.hasUiStep;
+        info.uiMin = port.uiMin;
+        info.uiMax = port.uiMax;
+        info.uiSoftMin = port.uiSoftMin;
+        info.uiSoftMax = port.uiSoftMax;
+        info.uiStep = port.uiStep;
+    }
+
+    void mergePortUiMetadata(MaterialXPortDefinition& target, const MaterialXPortDefinition& incoming)
+    {
+        if (!target.hasUiMin && incoming.hasUiMin) {
+            target.hasUiMin = true;
+            target.uiMin = incoming.uiMin;
+        }
+        if (!target.hasUiMax && incoming.hasUiMax) {
+            target.hasUiMax = true;
+            target.uiMax = incoming.uiMax;
+        }
+        if (!target.hasUiSoftMin && incoming.hasUiSoftMin) {
+            target.hasUiSoftMin = true;
+            target.uiSoftMin = incoming.uiSoftMin;
+        }
+        if (!target.hasUiSoftMax && incoming.hasUiSoftMax) {
+            target.hasUiSoftMax = true;
+            target.uiSoftMax = incoming.uiSoftMax;
+        }
+        if (!target.hasUiStep && incoming.hasUiStep) {
+            target.hasUiStep = true;
+            target.uiStep = incoming.uiStep;
+        }
+    }
+
+    void readSdrUiMetadata(const SdrShaderPropertyConstPtr& property, MaterialXPortDefinition& port)
+    {
+        if (!property)
+            return;
+
+        auto read = [&](const char* key, double* value) {
+            const TfToken token(key);
+            const SdrTokenMap& metadata = property->GetMetadata();
+            auto it = metadata.find(token);
+            if (it != metadata.end() && parseUiNumber(QString::fromStdString(it->second), value))
+                return true;
+
+            const SdrTokenMap& hints = property->GetHints();
+            it = hints.find(token);
+            return it != hints.end() && parseUiNumber(QString::fromStdString(it->second), value);
+        };
+
+        port.hasUiMin = read("uimin", &port.uiMin);
+        port.hasUiMax = read("uimax", &port.uiMax);
+        port.hasUiSoftMin = read("uisoftmin", &port.uiSoftMin);
+        port.hasUiSoftMax = read("uisoftmax", &port.uiSoftMax);
+        port.hasUiStep = read("uistep", &port.uiStep);
+    }
+
+    void readSdrUiMetadata(const QString& shaderId, const TfToken& inputName, MaterialInputInfo& info)
+    {
+        if (shaderId.isEmpty() || inputName.IsEmpty())
+            return;
+
+        SdrRegistry& registry = SdrRegistry::GetInstance();
+        const TfToken identifier(shaderId.toStdString());
+        const auto candidates = registry.GetShaderNodesByIdentifier(identifier);
+
+        for (const auto& node : candidates) {
+            if (!node || !node->IsValid())
+                continue;
+            const SdrShaderPropertyConstPtr property = node->GetShaderInput(inputName);
+            if (!property)
+                continue;
+
+            MaterialXPortDefinition port;
+            readSdrUiMetadata(property, port);
+            copyPortUiMetadata(port, info);
+            return;
+        }
+
+        const SdrShaderNodeConstPtr node = registry.GetShaderNodeByIdentifier(identifier);
+        if (!node || !node->IsValid())
+            return;
+        const SdrShaderPropertyConstPtr property = node->GetShaderInput(inputName);
+        if (!property)
+            return;
+
+        MaterialXPortDefinition port;
+        readSdrUiMetadata(property, port);
+        copyPortUiMetadata(port, info);
+    }
+
     const MaterialXNodeDefinition* materialXNodeDefinition(const QString& shaderId)
     {
         if (shaderId.isEmpty())
@@ -320,6 +429,7 @@ namespace {
         info.hasAuthoredValue = input.GetAttr().HasAuthoredValueOpinion();
         info.declared = false;
         info.options = materialXInputOptions(shaderId, info.inputName);
+        readSdrUiMetadata(shaderId, info.inputName, info);
         // Resolve through UsdShadeNodeGraph outputs so the inspector navigates
         // to the actual upstream shader instead of stopping at the node graph.
         info.connected = resolveConnectedSource(input, &info.sourcePrimPath, &info.sourceName, &info.sourceShaderId);
@@ -1011,6 +1121,7 @@ MaterialUtils::nodeInfo(UsdStageRefPtr stage, const SdfPath& nodePath)
                 info.inputPath = nodePath.AppendProperty(TfToken(std::string("inputs:") + port.name.toStdString()));
                 info.typeName = materialXSdfType(port.type);
                 info.options = port.enumValues;
+                copyPortUiMetadata(port, info);
                 info.declared = true;
                 info.hasAuthoredValue = false;
 
@@ -1045,6 +1156,26 @@ MaterialUtils::nodeInfo(UsdStageRefPtr stage, const SdfPath& nodePath)
                 declared.sourceShaderId = authored.sourceShaderId;
                 if (!authored.options.isEmpty())
                     declared.options = authored.options;
+                if (!declared.hasUiMin && authored.hasUiMin) {
+                    declared.hasUiMin = true;
+                    declared.uiMin = authored.uiMin;
+                }
+                if (!declared.hasUiMax && authored.hasUiMax) {
+                    declared.hasUiMax = true;
+                    declared.uiMax = authored.uiMax;
+                }
+                if (!declared.hasUiSoftMin && authored.hasUiSoftMin) {
+                    declared.hasUiSoftMin = true;
+                    declared.uiSoftMin = authored.uiSoftMin;
+                }
+                if (!declared.hasUiSoftMax && authored.hasUiSoftMax) {
+                    declared.hasUiSoftMax = true;
+                    declared.uiSoftMax = authored.uiSoftMax;
+                }
+                if (!declared.hasUiStep && authored.hasUiStep) {
+                    declared.hasUiStep = true;
+                    declared.uiStep = authored.uiStep;
+                }
                 if (authored.hasValue) {
                     declared.value = authored.value;
                     declared.hasValue = true;
@@ -1208,6 +1339,7 @@ namespace {
                 it->label = incoming.label;
             if (it->group.isEmpty())
                 it->group = incoming.group;
+            mergePortUiMetadata(*it, incoming);
             for (const QString& option : incoming.enumValues) {
                 if (!it->enumValues.contains(option))
                     it->enumValues.append(option);
@@ -1223,6 +1355,7 @@ namespace {
             port.name = QString::fromStdString(name.GetString());
             port.type = QString::fromStdString(property->GetType().GetString());
             port.value = materialXDefaultString(property->GetDefaultValue());
+            readSdrUiMetadata(property, port);
 
             mergePort(def.inputs, port);
         }
@@ -1338,6 +1471,14 @@ MaterialUtils::materialXNodeDefinitions()
                         port.value = portAttrs.value("value").toString();
                         port.label = portAttrs.value("uiname").toString();
                         port.group = portAttrs.value("uifolder").toString();
+
+                        port.hasUiMin = parseUiNumber(portAttrs.value("uimin").toString(), &port.uiMin);
+                        port.hasUiMax = parseUiNumber(portAttrs.value("uimax").toString(), &port.uiMax);
+                        port.hasUiSoftMin
+                            = parseUiNumber(portAttrs.value("uisoftmin").toString(), &port.uiSoftMin);
+                        port.hasUiSoftMax
+                            = parseUiNumber(portAttrs.value("uisoftmax").toString(), &port.uiSoftMax);
+                        port.hasUiStep = parseUiNumber(portAttrs.value("uistep").toString(), &port.uiStep);
 
                         QString enumText = portAttrs.value("enum").toString();
                         if (enumText.isEmpty())

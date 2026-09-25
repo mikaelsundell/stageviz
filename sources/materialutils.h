@@ -77,6 +77,20 @@ struct MaterialInputInfo {
     QString sourceShaderId;
     QStringList options;
 
+    // Numeric editor metadata from MaterialX NodeDefs / Sdr shader properties.
+    // Hard limits constrain authored values. Soft limits describe the preferred
+    // interactive UI range without changing the valid authored domain.
+    bool hasUiMin = false;
+    bool hasUiMax = false;
+    bool hasUiSoftMin = false;
+    bool hasUiSoftMax = false;
+    bool hasUiStep = false;
+    double uiMin = 0.0;
+    double uiMax = 0.0;
+    double uiSoftMin = 0.0;
+    double uiSoftMax = 0.0;
+    double uiStep = 0.0;
+
     /** @brief Returns true when the input type is float. */
     bool isFloat() const { return typeName == SdfValueTypeNames->Float; }
 
@@ -107,6 +121,17 @@ struct MaterialXPortDefinition {
     QString label;
     QString group;
     QStringList enumValues;
+
+    bool hasUiMin = false;
+    bool hasUiMax = false;
+    bool hasUiSoftMin = false;
+    bool hasUiSoftMax = false;
+    bool hasUiStep = false;
+    double uiMin = 0.0;
+    double uiMax = 0.0;
+    double uiSoftMin = 0.0;
+    double uiSoftMax = 0.0;
+    double uiStep = 0.0;
 };
 
 /**

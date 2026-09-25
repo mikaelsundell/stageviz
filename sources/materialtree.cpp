@@ -44,6 +44,7 @@
 #include <cmath>
 #include <functional>
 #include <limits>
+#include <pxr/base/gf/vec4f.h>
 #include <pxr/base/tf/token.h>
 #include <pxr/usd/sdf/assetPath.h>
 #include <pxr/usd/usdShade/connectableAPI.h>
@@ -381,6 +382,53 @@ vec2Value(const MaterialInputInfo& info, const GfVec2f& fallback = GfVec2f(0.0f)
     return fallback;
 }
 
+static GfVec4f
+vec4Value(const MaterialInputInfo& info, const GfVec4f& fallback = GfVec4f(0.0f))
+{
+    if (!info.hasValue)
+        return fallback;
+    if (info.value.IsHolding<GfVec4f>())
+        return info.value.UncheckedGet<GfVec4f>();
+    return fallback;
+}
+
+namespace {
+    constexpr double kUnboundedNumericLimit = 1.0e12;
+
+    struct NumericEditorSpec {
+        double minimum = -kUnboundedNumericLimit;
+        double maximum = kUnboundedNumericLimit;
+        double step = 0.01;
+    };
+
+    NumericEditorSpec numericEditorSpec(const MaterialInputInfo& info, bool colorComponent = false)
+    {
+        NumericEditorSpec spec;
+
+        // QColor-backed color editing is normalized unless the shader definition
+        // explicitly declares a different legal domain. Scalar/vector inputs are
+        // otherwise treated as unbounded rather than silently clamped to 0..1.
+        if (colorComponent && !info.hasUiMin && !info.hasUiMax) {
+            spec.minimum = 0.0;
+            spec.maximum = 1.0;
+        }
+
+        if (info.hasUiMin)
+            spec.minimum = info.uiMin;
+        if (info.hasUiMax)
+            spec.maximum = info.uiMax;
+
+        if (spec.minimum > spec.maximum)
+            std::swap(spec.minimum, spec.maximum);
+
+        if (info.hasUiStep && std::isfinite(info.uiStep) && info.uiStep > 0.0)
+            spec.step = info.uiStep;
+        else if (info.hasUiSoftMin && info.hasUiSoftMax && info.uiSoftMax > info.uiSoftMin)
+            spec.step = std::max(1.0e-6, (info.uiSoftMax - info.uiSoftMin) / 100.0);
+
+        return spec;
+    }
+}
 
 void
 MaterialTreePrivate::addInputRow(QTreeWidgetItem* group, const MaterialInputInfo& info,
@@ -449,13 +497,8 @@ MaterialTreePrivate::addInputRow(QTreeWidgetItem* group, const MaterialInputInfo
     };
 
     if (info.isFloat()) {
-        double minimum = 0.0, maximum = 1.0, step = 0.01;
-        if (info.parameter == "ior" || info.inputName == TfToken("specular_IOR")) {
-            minimum = 1.0;
-            maximum = 3.0;
-        }
-
-        auto* control = new FloatControl(minimum, maximum, step, d.tree.data());
+        const NumericEditorSpec spec = numericEditorSpec(info);
+        auto* control = new FloatControl(spec.minimum, spec.maximum, spec.step, d.tree.data());
         prepareRowWidget(control);
         double total = 0.0;
         bool mixed = false;
@@ -505,7 +548,8 @@ MaterialTreePrivate::addInputRow(QTreeWidgetItem* group, const MaterialInputInfo
             channelItem->setToolTip(0, QString::fromStdString(info.inputPath.GetString()));
             applyNextRowBackground(channelItem);
 
-            auto* control = new FloatControl(0.0, 1.0, 0.01, d.tree.data());
+            const NumericEditorSpec spec = numericEditorSpec(info, true);
+            auto* control = new FloatControl(spec.minimum, spec.maximum, spec.step, d.tree.data());
             prepareRowWidget(control);
 
             double total = 0.0;
@@ -679,7 +723,21 @@ MaterialTreePrivate::addInputRow(QTreeWidgetItem* group, const MaterialInputInfo
 
     if (info.typeName == SdfValueTypeNames->Int) {
         auto* spin = new QSpinBox(d.tree.data());
-        spin->setRange(std::numeric_limits<int>::min(), std::numeric_limits<int>::max());
+        int minimum = std::numeric_limits<int>::min();
+        int maximum = std::numeric_limits<int>::max();
+        if (info.hasUiMin)
+            minimum = static_cast<int>(std::clamp(std::ceil(info.uiMin),
+                                                  static_cast<double>(std::numeric_limits<int>::min()),
+                                                  static_cast<double>(std::numeric_limits<int>::max())));
+        if (info.hasUiMax)
+            maximum = static_cast<int>(std::clamp(std::floor(info.uiMax),
+                                                  static_cast<double>(std::numeric_limits<int>::min()),
+                                                  static_cast<double>(std::numeric_limits<int>::max())));
+        if (minimum > maximum)
+            std::swap(minimum, maximum);
+        spin->setRange(minimum, maximum);
+        if (info.hasUiStep && std::isfinite(info.uiStep) && info.uiStep > 0.0)
+            spin->setSingleStep(std::max(1, static_cast<int>(std::round(info.uiStep))));
         prepareRowWidget(spin);
         spin->setValue(info.hasValue && info.value.IsHolding<int>() ? info.value.UncheckedGet<int>() : 0);
         connect(spin, &QSpinBox::editingFinished, d.tree.data(), [this, editPaths, spin]() {
@@ -708,9 +766,10 @@ MaterialTreePrivate::addInputRow(QTreeWidgetItem* group, const MaterialInputInfo
             applyNextRowBackground(channelItem);
 
             auto* spin = new SpinBox(d.tree.data());
-            spin->setRange(-1000000.0, 1000000.0);
+            const NumericEditorSpec spec = numericEditorSpec(info);
+            spin->setRange(spec.minimum, spec.maximum);
             spin->setDecimals(4);
-            spin->setSingleStep(0.01);
+            spin->setSingleStep(spec.step);
             prepareRowWidget(spin);
             spin->setValue(initial[channel]);
             (*controls)[channel] = spin;
@@ -721,6 +780,89 @@ MaterialTreePrivate::addInputRow(QTreeWidgetItem* group, const MaterialInputInfo
 
                 const GfVec2f value(static_cast<float>((*controls)[0]->value()),
                                     static_cast<float>((*controls)[1]->value()));
+                setInputValues(editPaths, VtValue(value));
+            });
+            d.tree->setItemWidget(channelItem, 1, spin);
+            spin->show();
+            channelItem->setSizeHint(1, QSize(0, 30));
+        }
+        return;
+    }
+
+    if (info.typeName == SdfValueTypeNames->Float3) {
+        item->setExpanded(true);
+        addNodeButton();
+
+        const GfVec3f initial = colorValue(info);
+        const char* suffixes[] = { "X", "Y", "Z" };
+        auto controls = std::make_shared<std::array<QPointer<SpinBox>, 3>>();
+
+        for (int channel = 0; channel < 3; ++channel) {
+            auto* channelItem = new QTreeWidgetItem(item);
+            channelItem->setText(0, QString::fromLatin1(suffixes[channel]));
+            channelItem->setData(0, Qt::UserRole, QString::fromStdString(info.inputPath.GetString()));
+            channelItem->setToolTip(0, QString::fromStdString(info.inputPath.GetString()));
+            applyNextRowBackground(channelItem);
+
+            auto* spin = new SpinBox(d.tree.data());
+            const NumericEditorSpec spec = numericEditorSpec(info);
+            spin->setRange(spec.minimum, spec.maximum);
+            spin->setDecimals(4);
+            spin->setSingleStep(spec.step);
+            prepareRowWidget(spin);
+            spin->setValue(initial[channel]);
+            (*controls)[channel] = spin;
+
+            connect(spin, &QDoubleSpinBox::editingFinished, d.tree.data(), [this, editPaths, controls]() {
+                if (editPaths.isEmpty() || !(*controls)[0] || !(*controls)[1] || !(*controls)[2])
+                    return;
+
+                const GfVec3f value(static_cast<float>((*controls)[0]->value()),
+                                    static_cast<float>((*controls)[1]->value()),
+                                    static_cast<float>((*controls)[2]->value()));
+                setInputValues(editPaths, VtValue(value));
+            });
+            d.tree->setItemWidget(channelItem, 1, spin);
+            spin->show();
+            channelItem->setSizeHint(1, QSize(0, 30));
+        }
+        return;
+    }
+
+    if (info.typeName == SdfValueTypeNames->Float4 || info.typeName == SdfValueTypeNames->Color4f) {
+        item->setExpanded(true);
+        addNodeButton();
+
+        const GfVec4f initial = vec4Value(info);
+        const bool color = info.typeName == SdfValueTypeNames->Color4f;
+        const char* vectorSuffixes[] = { "X", "Y", "Z", "W" };
+        const char* colorSuffixes[] = { "R", "G", "B", "A" };
+        auto controls = std::make_shared<std::array<QPointer<SpinBox>, 4>>();
+
+        for (int channel = 0; channel < 4; ++channel) {
+            auto* channelItem = new QTreeWidgetItem(item);
+            channelItem->setText(0, QString::fromLatin1(color ? colorSuffixes[channel] : vectorSuffixes[channel]));
+            channelItem->setData(0, Qt::UserRole, QString::fromStdString(info.inputPath.GetString()));
+            channelItem->setToolTip(0, QString::fromStdString(info.inputPath.GetString()));
+            applyNextRowBackground(channelItem);
+
+            auto* spin = new SpinBox(d.tree.data());
+            const NumericEditorSpec spec = numericEditorSpec(info, color);
+            spin->setRange(spec.minimum, spec.maximum);
+            spin->setDecimals(4);
+            spin->setSingleStep(spec.step);
+            prepareRowWidget(spin);
+            spin->setValue(initial[channel]);
+            (*controls)[channel] = spin;
+
+            connect(spin, &QDoubleSpinBox::editingFinished, d.tree.data(), [this, editPaths, controls]() {
+                if (editPaths.isEmpty() || !(*controls)[0] || !(*controls)[1] || !(*controls)[2] || !(*controls)[3])
+                    return;
+
+                const GfVec4f value(static_cast<float>((*controls)[0]->value()),
+                                    static_cast<float>((*controls)[1]->value()),
+                                    static_cast<float>((*controls)[2]->value()),
+                                    static_cast<float>((*controls)[3]->value()));
                 setInputValues(editPaths, VtValue(value));
             });
             d.tree->setItemWidget(channelItem, 1, spin);
@@ -928,6 +1070,30 @@ MaterialTreePrivate::refreshInputItem(QTreeWidgetItem* item, const MaterialInput
     if (info.typeName == SdfValueTypeNames->Float2 || info.typeName == SdfValueTypeNames->TexCoord2f) {
         const GfVec2f value = vec2Value(info);
         for (int channel = 0; channel < std::min(2, item->childCount()); ++channel) {
+            auto* spin = qobject_cast<SpinBox*>(d.tree->itemWidget(item->child(channel), 1));
+            if (!spin)
+                continue;
+            const QSignalBlocker blocker(spin);
+            spin->setValue(value[channel]);
+        }
+        return;
+    }
+
+    if (info.typeName == SdfValueTypeNames->Float3) {
+        const GfVec3f value = colorValue(info);
+        for (int channel = 0; channel < std::min(3, item->childCount()); ++channel) {
+            auto* spin = qobject_cast<SpinBox*>(d.tree->itemWidget(item->child(channel), 1));
+            if (!spin)
+                continue;
+            const QSignalBlocker blocker(spin);
+            spin->setValue(value[channel]);
+        }
+        return;
+    }
+
+    if (info.typeName == SdfValueTypeNames->Float4 || info.typeName == SdfValueTypeNames->Color4f) {
+        const GfVec4f value = vec4Value(info);
+        for (int channel = 0; channel < std::min(4, item->childCount()); ++channel) {
             auto* spin = qobject_cast<SpinBox*>(d.tree->itemWidget(item->child(channel), 1));
             if (!spin)
                 continue;
