@@ -1441,6 +1441,9 @@
    <property name="text">
     <string>Ambient occlusion</string>
    </property>
+   <property name="shortcut">
+    <string>O</string>
+   </property>
   </action>
   <action name="displayDomeBackground">
    <property name="checkable">
