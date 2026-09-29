@@ -262,6 +262,306 @@ PyViewState_setDomeLightCameraVisibility(PyViewStateObject* self, PyObject* args
     Py_RETURN_NONE;
 }
 
+
+
+static PyObject*
+PyViewState_ambientOcclusionEnabled(PyViewStateObject* self)
+{
+    if (!checkViewState(self->viewState))
+        return nullptr;
+    return PyBool_FromLong(self->viewState->ambientOcclusionEnabled());
+}
+
+static PyObject*
+PyViewState_setAmbientOcclusionEnabled(PyViewStateObject* self, PyObject* args)
+{
+    if (!checkViewState(self->viewState))
+        return nullptr;
+    int value = 0;
+    if (!PyArg_ParseTuple(args, "p", &value))
+        return nullptr;
+    self->viewState->setAmbientOcclusionEnabled(value != 0);
+    Py_RETURN_NONE;
+}
+
+static PyObject*
+PyViewState_AmbientOcclusionContactAmount(PyViewStateObject* self)
+{
+    if (!checkViewState(self->viewState))
+        return nullptr;
+
+    return PyFloat_FromDouble(self->viewState->ambientOcclusionContactAmount());
+}
+
+static PyObject*
+PyViewState_setAmbientOcclusionContactAmount(PyViewStateObject* self, PyObject* args)
+{
+    if (!checkViewState(self->viewState))
+        return nullptr;
+
+    double value = 0.0;
+    if (!PyArg_ParseTuple(args, "d", &value))
+        return nullptr;
+
+    self->viewState->setAmbientOcclusionContactAmount(static_cast<float>(value));
+    Py_RETURN_NONE;
+}
+
+static PyObject*
+PyViewState_AmbientOcclusionContactRadius(PyViewStateObject* self)
+{
+    if (!checkViewState(self->viewState))
+        return nullptr;
+
+    return PyFloat_FromDouble(self->viewState->ambientOcclusionContactRadius());
+}
+
+static PyObject*
+PyViewState_setAmbientOcclusionContactRadius(PyViewStateObject* self, PyObject* args)
+{
+    if (!checkViewState(self->viewState))
+        return nullptr;
+
+    double value = 0.0;
+    if (!PyArg_ParseTuple(args, "d", &value))
+        return nullptr;
+
+    self->viewState->setAmbientOcclusionContactRadius(static_cast<float>(value));
+    Py_RETURN_NONE;
+}
+
+static PyObject*
+PyViewState_AmbientOcclusionBroadAmount(PyViewStateObject* self)
+{
+    if (!checkViewState(self->viewState))
+        return nullptr;
+
+    return PyFloat_FromDouble(self->viewState->ambientOcclusionBroadAmount());
+}
+
+static PyObject*
+PyViewState_setAmbientOcclusionBroadAmount(PyViewStateObject* self, PyObject* args)
+{
+    if (!checkViewState(self->viewState))
+        return nullptr;
+
+    double value = 0.0;
+    if (!PyArg_ParseTuple(args, "d", &value))
+        return nullptr;
+
+    self->viewState->setAmbientOcclusionBroadAmount(static_cast<float>(value));
+    Py_RETURN_NONE;
+}
+
+static PyObject*
+PyViewState_AmbientOcclusionBroadRadius(PyViewStateObject* self)
+{
+    if (!checkViewState(self->viewState))
+        return nullptr;
+
+    return PyFloat_FromDouble(self->viewState->ambientOcclusionBroadRadius());
+}
+
+static PyObject*
+PyViewState_setAmbientOcclusionBroadRadius(PyViewStateObject* self, PyObject* args)
+{
+    if (!checkViewState(self->viewState))
+        return nullptr;
+
+    double value = 0.0;
+    if (!PyArg_ParseTuple(args, "d", &value))
+        return nullptr;
+
+    self->viewState->setAmbientOcclusionBroadRadius(static_cast<float>(value));
+    Py_RETURN_NONE;
+}
+
+static PyObject*
+PyViewState_AmbientOcclusionNormalBias(PyViewStateObject* self)
+{
+    if (!checkViewState(self->viewState))
+        return nullptr;
+
+    return PyFloat_FromDouble(self->viewState->ambientOcclusionNormalBias());
+}
+
+static PyObject*
+PyViewState_setAmbientOcclusionNormalBias(PyViewStateObject* self, PyObject* args)
+{
+    if (!checkViewState(self->viewState))
+        return nullptr;
+
+    double value = 0.0;
+    if (!PyArg_ParseTuple(args, "d", &value))
+        return nullptr;
+
+    self->viewState->setAmbientOcclusionNormalBias(static_cast<float>(value));
+    Py_RETURN_NONE;
+}
+
+static PyObject*
+PyViewState_AmbientOcclusionFalloff(PyViewStateObject* self)
+{
+    if (!checkViewState(self->viewState))
+        return nullptr;
+
+    return PyFloat_FromDouble(self->viewState->ambientOcclusionFalloff());
+}
+
+static PyObject*
+PyViewState_setAmbientOcclusionFalloff(PyViewStateObject* self, PyObject* args)
+{
+    if (!checkViewState(self->viewState))
+        return nullptr;
+
+    double value = 0.0;
+    if (!PyArg_ParseTuple(args, "d", &value))
+        return nullptr;
+
+    self->viewState->setAmbientOcclusionFalloff(static_cast<float>(value));
+    Py_RETURN_NONE;
+}
+
+static PyObject*
+PyViewState_AmbientOcclusionContrast(PyViewStateObject* self)
+{
+    if (!checkViewState(self->viewState))
+        return nullptr;
+
+    return PyFloat_FromDouble(self->viewState->ambientOcclusionContrast());
+}
+
+static PyObject*
+PyViewState_setAmbientOcclusionContrast(PyViewStateObject* self, PyObject* args)
+{
+    if (!checkViewState(self->viewState))
+        return nullptr;
+
+    double value = 0.0;
+    if (!PyArg_ParseTuple(args, "d", &value))
+        return nullptr;
+
+    self->viewState->setAmbientOcclusionContrast(static_cast<float>(value));
+    Py_RETURN_NONE;
+}
+
+static PyObject*
+PyViewState_AmbientOcclusionEdgeSharpness(PyViewStateObject* self)
+{
+    if (!checkViewState(self->viewState))
+        return nullptr;
+
+    return PyFloat_FromDouble(self->viewState->ambientOcclusionEdgeSharpness());
+}
+
+static PyObject*
+PyViewState_setAmbientOcclusionEdgeSharpness(PyViewStateObject* self, PyObject* args)
+{
+    if (!checkViewState(self->viewState))
+        return nullptr;
+
+    double value = 0.0;
+    if (!PyArg_ParseTuple(args, "d", &value))
+        return nullptr;
+
+    self->viewState->setAmbientOcclusionEdgeSharpness(static_cast<float>(value));
+    Py_RETURN_NONE;
+}
+
+static PyObject*
+PyViewState_AmbientOcclusionBlurRadius(PyViewStateObject* self)
+{
+    if (!checkViewState(self->viewState))
+        return nullptr;
+
+    return PyFloat_FromDouble(self->viewState->ambientOcclusionBlurRadius());
+}
+
+static PyObject*
+PyViewState_setAmbientOcclusionBlurRadius(PyViewStateObject* self, PyObject* args)
+{
+    if (!checkViewState(self->viewState))
+        return nullptr;
+
+    double value = 0.0;
+    if (!PyArg_ParseTuple(args, "d", &value))
+        return nullptr;
+
+    self->viewState->setAmbientOcclusionBlurRadius(static_cast<float>(value));
+    Py_RETURN_NONE;
+}
+
+
+static PyObject*
+PyViewState_ambientOcclusionBlurEnabled(PyViewStateObject* self)
+{
+    if (!checkViewState(self->viewState))
+        return nullptr;
+    return PyBool_FromLong(self->viewState->ambientOcclusionBlurEnabled());
+}
+
+static PyObject*
+PyViewState_setAmbientOcclusionBlurEnabled(PyViewStateObject* self, PyObject* args)
+{
+    if (!checkViewState(self->viewState))
+        return nullptr;
+    int value = 0;
+    if (!PyArg_ParseTuple(args, "p", &value))
+        return nullptr;
+    self->viewState->setAmbientOcclusionBlurEnabled(value != 0);
+    Py_RETURN_NONE;
+}
+
+static PyObject*
+PyViewState_ambientOcclusionQuality(PyViewStateObject* self)
+{
+    if (!checkViewState(self->viewState))
+        return nullptr;
+    return PyLong_FromLong(static_cast<long>(self->viewState->ambientOcclusionQuality()));
+}
+
+static PyObject*
+PyViewState_setAmbientOcclusionQuality(PyViewStateObject* self, PyObject* args)
+{
+    if (!checkViewState(self->viewState))
+        return nullptr;
+    long value = 0;
+    if (!PyArg_ParseTuple(args, "l", &value))
+        return nullptr;
+    if (value < static_cast<long>(ViewState::AmbientOcclusionLow)
+        || value > static_cast<long>(ViewState::AmbientOcclusionUltra)) {
+        PyErr_SetString(PyExc_ValueError, "Invalid ambient occlusion quality");
+        return nullptr;
+    }
+    self->viewState->setAmbientOcclusionQuality(static_cast<ViewState::AmbientOcclusionQuality>(value));
+    Py_RETURN_NONE;
+}
+
+static PyObject*
+PyViewState_ambientOcclusionDebugMode(PyViewStateObject* self)
+{
+    if (!checkViewState(self->viewState))
+        return nullptr;
+    return PyLong_FromLong(static_cast<long>(self->viewState->ambientOcclusionDebugMode()));
+}
+
+static PyObject*
+PyViewState_setAmbientOcclusionDebugMode(PyViewStateObject* self, PyObject* args)
+{
+    if (!checkViewState(self->viewState))
+        return nullptr;
+    long value = 0;
+    if (!PyArg_ParseTuple(args, "l", &value))
+        return nullptr;
+    if (value < static_cast<long>(ViewState::AmbientOcclusionComposite)
+        || value > static_cast<long>(ViewState::AmbientOcclusionBroad)) {
+        PyErr_SetString(PyExc_ValueError, "Invalid ambient occlusion debug mode");
+        return nullptr;
+    }
+    self->viewState->setAmbientOcclusionDebugMode(static_cast<ViewState::AmbientOcclusionDebugMode>(value));
+    Py_RETURN_NONE;
+}
+
 static PyObject*
 PyViewState_sceneLightsEnabled(PyViewStateObject* self)
 {
@@ -533,6 +833,59 @@ static PyMethodDef PyViewState_methods[]
           METH_NOARGS, "Get whether the dome texture is visible to the camera" },
         { "setDomeLightCameraVisibility", reinterpret_cast<PyCFunction>(PyViewState_setDomeLightCameraVisibility),
           METH_VARARGS, "Set whether the dome texture is visible to the camera" },
+
+        { "ambientOcclusionEnabled", reinterpret_cast<PyCFunction>(PyViewState_ambientOcclusionEnabled), METH_NOARGS,
+          "Get the Stageviz ambient occlusion state" },
+        { "setAmbientOcclusionEnabled", reinterpret_cast<PyCFunction>(PyViewState_setAmbientOcclusionEnabled),
+          METH_VARARGS, "Set the Stageviz ambient occlusion state" },
+        { "ambientOcclusionContactAmount", reinterpret_cast<PyCFunction>(PyViewState_AmbientOcclusionContactAmount),
+          METH_NOARGS, "Get contact ambient occlusion strength" },
+        { "setAmbientOcclusionContactAmount", reinterpret_cast<PyCFunction>(PyViewState_setAmbientOcclusionContactAmount),
+          METH_VARARGS, "Set contact ambient occlusion strength" },
+        { "ambientOcclusionContactRadius", reinterpret_cast<PyCFunction>(PyViewState_AmbientOcclusionContactRadius),
+          METH_NOARGS, "Get contact ambient occlusion radius in device pixels" },
+        { "setAmbientOcclusionContactRadius", reinterpret_cast<PyCFunction>(PyViewState_setAmbientOcclusionContactRadius),
+          METH_VARARGS, "Set contact ambient occlusion radius in device pixels" },
+        { "ambientOcclusionBroadAmount", reinterpret_cast<PyCFunction>(PyViewState_AmbientOcclusionBroadAmount), METH_NOARGS,
+          "Get broad ambient occlusion strength" },
+        { "setAmbientOcclusionBroadAmount", reinterpret_cast<PyCFunction>(PyViewState_setAmbientOcclusionBroadAmount),
+          METH_VARARGS, "Set broad ambient occlusion strength" },
+        { "ambientOcclusionBroadRadius", reinterpret_cast<PyCFunction>(PyViewState_AmbientOcclusionBroadRadius), METH_NOARGS,
+          "Get broad ambient occlusion radius in device pixels" },
+        { "setAmbientOcclusionBroadRadius", reinterpret_cast<PyCFunction>(PyViewState_setAmbientOcclusionBroadRadius),
+          METH_VARARGS, "Set broad ambient occlusion radius in device pixels" },
+        { "ambientOcclusionNormalBias", reinterpret_cast<PyCFunction>(PyViewState_AmbientOcclusionNormalBias), METH_NOARGS,
+          "Get ambient occlusion normal bias" },
+        { "setAmbientOcclusionNormalBias", reinterpret_cast<PyCFunction>(PyViewState_setAmbientOcclusionNormalBias),
+          METH_VARARGS, "Set ambient occlusion normal bias" },
+        { "ambientOcclusionFalloff", reinterpret_cast<PyCFunction>(PyViewState_AmbientOcclusionFalloff), METH_NOARGS,
+          "Get ambient occlusion distance falloff" },
+        { "setAmbientOcclusionFalloff", reinterpret_cast<PyCFunction>(PyViewState_setAmbientOcclusionFalloff), METH_VARARGS,
+          "Set ambient occlusion distance falloff" },
+        { "ambientOcclusionContrast", reinterpret_cast<PyCFunction>(PyViewState_AmbientOcclusionContrast), METH_NOARGS,
+          "Get ambient occlusion visibility contrast" },
+        { "setAmbientOcclusionContrast", reinterpret_cast<PyCFunction>(PyViewState_setAmbientOcclusionContrast), METH_VARARGS,
+          "Set ambient occlusion visibility contrast" },
+        { "ambientOcclusionEdgeSharpness", reinterpret_cast<PyCFunction>(PyViewState_AmbientOcclusionEdgeSharpness),
+          METH_NOARGS, "Get bilateral blur edge sharpness" },
+        { "setAmbientOcclusionEdgeSharpness", reinterpret_cast<PyCFunction>(PyViewState_setAmbientOcclusionEdgeSharpness),
+          METH_VARARGS, "Set bilateral blur edge sharpness" },
+        { "ambientOcclusionBlurEnabled", reinterpret_cast<PyCFunction>(PyViewState_ambientOcclusionBlurEnabled), METH_NOARGS,
+          "Get ambient occlusion blur state" },
+        { "setAmbientOcclusionBlurEnabled", reinterpret_cast<PyCFunction>(PyViewState_setAmbientOcclusionBlurEnabled),
+          METH_VARARGS, "Set ambient occlusion blur state" },
+        { "ambientOcclusionBlurRadius", reinterpret_cast<PyCFunction>(PyViewState_AmbientOcclusionBlurRadius), METH_NOARGS,
+          "Get ambient occlusion blur radius" },
+        { "setAmbientOcclusionBlurRadius", reinterpret_cast<PyCFunction>(PyViewState_setAmbientOcclusionBlurRadius),
+          METH_VARARGS, "Set ambient occlusion blur radius" },
+        { "ambientOcclusionQuality", reinterpret_cast<PyCFunction>(PyViewState_ambientOcclusionQuality), METH_NOARGS,
+          "Get ambient occlusion quality: 0=Low, 1=Medium, 2=High, 3=Ultra" },
+        { "setAmbientOcclusionQuality", reinterpret_cast<PyCFunction>(PyViewState_setAmbientOcclusionQuality), METH_VARARGS,
+          "Set ambient occlusion quality: 0=Low, 1=Medium, 2=High, 3=Ultra" },
+        { "ambientOcclusionDebugMode", reinterpret_cast<PyCFunction>(PyViewState_ambientOcclusionDebugMode), METH_NOARGS,
+          "Get ambient occlusion view: 0=Composite, 1=Combined, 2=Contact, 3=Broad" },
+        { "setAmbientOcclusionDebugMode", reinterpret_cast<PyCFunction>(PyViewState_setAmbientOcclusionDebugMode),
+          METH_VARARGS, "Set ambient occlusion view: 0=Composite, 1=Combined, 2=Contact, 3=Broad" },
 
         { "sceneLightsEnabled", reinterpret_cast<PyCFunction>(PyViewState_sceneLightsEnabled), METH_NOARGS,
           "Get the scene light state" },

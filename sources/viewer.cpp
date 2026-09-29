@@ -7,6 +7,7 @@
 #include "commandstack.h"
 #include "consoledialog.h"
 #include "githubclient.h"
+#include "imagingglwidget.h"
 #include "materialdialog.h"
 #include "messagedialog.h"
 #include "mouseevent.h"
@@ -142,6 +143,7 @@ public Q_SLOTS:
     void cameraLight(bool checked);
     void domeLight(bool checked);
     void domeBackground(bool checked);
+    void ambientOcclusion(bool checked);
     void loadDomeTexture();
     void clearDomeTexture();
     void useDefaultDomeTexture();
@@ -351,6 +353,7 @@ ViewerPrivate::init()
     connect(d.ui->displayCameraLight, &QAction::toggled, this, &ViewerPrivate::cameraLight);
     connect(d.ui->displayDomeLight, &QAction::toggled, this, &ViewerPrivate::domeLight);
     connect(d.ui->displayDomeBackground, &QAction::toggled, this, &ViewerPrivate::domeBackground);
+    connect(d.ui->displayAmbientOcclusion, &QAction::toggled, this, &ViewerPrivate::ambientOcclusion);
     connect(d.ui->lightLoadDomeTexture, &QAction::triggered, this, &ViewerPrivate::loadDomeTexture);
     connect(d.ui->lightClearDomeTexture, &QAction::triggered, this, &ViewerPrivate::clearDomeTexture);
     connect(d.ui->lightUseDefaultDomeTexture, &QAction::triggered, this, &ViewerPrivate::useDefaultDomeTexture);
@@ -487,6 +490,10 @@ ViewerPrivate::init()
     });
     connect(viewState, &ViewState::domeLightCameraVisibilityChanged, this,
             [this](bool visible) { updateDockAction(d.ui->displayDomeBackground, visible); });
+    connect(viewState, &ViewState::ambientOcclusionEnabledChanged, this,
+            [this](bool enabled) {
+                updateDockAction(d.ui->displayAmbientOcclusion, enabled);
+            });
     connect(viewState, &ViewState::domeLightTextureChanged, this, [this](const QString& filename) {
         d.ui->lightClearDomeTexture->setEnabled(!filename.isEmpty());
         const ViewState* state = session()->viewState();
@@ -528,6 +535,8 @@ ViewerPrivate::init()
     viewState->setDomeLightCameraVisibility(d.ui->displayDomeBackground->isChecked());
     viewState->setSceneLightsEnabled(d.ui->displaySceneLights->isChecked());
     viewState->setSceneMaterialsEnabled(d.ui->useSceneShaders->isChecked());
+    viewState->setAmbientOcclusionEnabled(settings()->value("ambientOcclusionEnabled", false).toBool());
+    updateDockAction(d.ui->displayAmbientOcclusion, viewState->ambientOcclusionEnabled());
     d.ui->lightClearDomeTexture->setEnabled(!viewState->domeLightTexture().isEmpty());
     updateDockAction(d.ui->lightUseDefaultDomeTexture,
                      viewState->defaultDomeLightEnabled() && viewState->domeLightTexture().isEmpty());
@@ -1048,6 +1057,7 @@ ViewerPrivate::enable(bool enable)
                                 d.ui->displayCameraLight,
                                 d.ui->displayDomeLight,
                                 d.ui->displayDomeBackground,
+                                d.ui->displayAmbientOcclusion,
                                 d.ui->lightLoadDomeTexture,
                                 d.ui->lightUseDefaultDomeTexture,
                                 d.ui->displaySceneLights,
@@ -1935,6 +1945,13 @@ void
 ViewerPrivate::domeBackground(bool checked)
 {
     session()->viewState()->setDomeLightCameraVisibility(checked);
+}
+
+void
+ViewerPrivate::ambientOcclusion(bool checked)
+{
+    settings()->setValue("ambientOcclusionEnabled", checked);
+    session()->viewState()->setAmbientOcclusionEnabled(checked);
 }
 
 void

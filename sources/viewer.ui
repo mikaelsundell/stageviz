@@ -763,6 +763,7 @@
     <addaction name="displayCameraLight"/>
     <addaction name="displayDomeLight"/>
     <addaction name="displaySceneLights"/>
+    <addaction name="displayAmbientOcclusion"/>
     <addaction name="separator"/>
     <addaction name="displayDomeBackground"/>
     <addaction name="separator"/>
@@ -1431,6 +1432,14 @@
    </property>
    <property name="shortcut">
     <string>D</string>
+   </property>
+  </action>
+  <action name="displayAmbientOcclusion">
+   <property name="checkable">
+    <bool>true</bool>
+   </property>
+   <property name="text">
+    <string>Ambient occlusion</string>
    </property>
   </action>
   <action name="displayDomeBackground">

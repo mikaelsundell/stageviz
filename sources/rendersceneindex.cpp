@@ -3,6 +3,7 @@
 // https://github.com/mikaelsundell/stageviz
 
 #include "rendersceneindex.h"
+#include "paths.h"
 #include <QtGlobal>
 #include <pxr/imaging/hd/containerDataSourceEditor.h>
 #include <pxr/imaging/hd/dataSource.h>
@@ -30,9 +31,8 @@ public:
         bool sceneMaterialsEnabled = true;
         RenderSceneIndex::Mode mode = RenderSceneIndex::None;
         SdfPath materialPath;
-        SdfPath displayPath = SdfPath("/Display");
-        SdfPath clayMaterialPath = SdfPath("/Materials/Clay");
-        SdfPath selectionMaterialPath = SdfPath("/Materials/Selection");
+        SdfPath clayMaterialPath = paths::auxiliary::materials.AppendChild(TfToken("Clay"));
+        SdfPath selectionMaterialPath = paths::auxiliary::materials.AppendChild(TfToken("Selection"));
         SdfPathVector selectionPaths;
         bool selectionPresentationEnabled = true;
         bool doubleSidedOverrideEnabled = false;
@@ -62,7 +62,7 @@ RenderSceneIndexPrivate::active() const
 bool
 RenderSceneIndexPrivate::isDisplayPath(const SdfPath& path) const
 {
-    return path == d.displayPath || path.HasPrefix(d.displayPath);
+    return path == paths::auxiliary::display || path.HasPrefix(paths::auxiliary::display);
 }
 
 bool

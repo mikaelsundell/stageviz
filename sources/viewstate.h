@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
 // Copyright (c) 2025 - present Mikael Sundell
 // https://github.com/mikaelsundell/stageviz
-
 #pragma once
 
 #include "stageviz.h"
@@ -26,8 +25,8 @@ class ViewStatePrivate;
  */
 class ViewState : public QObject {
     Q_OBJECT
-
 public:
+
     /**
      * @brief Viewport rendering modes.
      */
@@ -58,6 +57,58 @@ public:
     Q_ENUM(DoubleSidedMode)
 
     /**
+     * @brief Ambient occlusion quality presets.
+     *
+     * Quality controls the number of spiral samples used by the Stageviz
+     * screen-space ambient occlusion pass.
+     */
+    enum AmbientOcclusionQuality {
+        AmbientOcclusionLow,
+        AmbientOcclusionMedium,
+        AmbientOcclusionHigh,
+        AmbientOcclusionUltra
+    };
+    Q_ENUM(AmbientOcclusionQuality)
+
+    /**
+     * @brief Ambient occlusion debug presentation.
+     */
+    enum AmbientOcclusionDebugMode {
+        AmbientOcclusionComposite,
+        AmbientOcclusionCombined,
+        AmbientOcclusionContact,
+        AmbientOcclusionBroad
+    };
+    Q_ENUM(AmbientOcclusionDebugMode)
+
+    /**
+     * @brief Canonical Stageviz ambient occlusion settings and defaults.
+     *
+     * Contact occlusion emphasizes tight intersections and assembly gaps while
+     * broad occlusion adds softer large-scale depth. Radii are expressed in
+     * device pixels so the apparent effect remains stable while navigating.
+     */
+    struct AmbientOcclusionSettings {
+        bool enabled = false;
+        // Tight local occlusion for contacts, seams, and small recesses.
+        float contactAmount = 1.0f;
+        float contactRadius = 10.0f;
+        // Softer large-scale occlusion for overall form definition.
+        float broadAmount = 0.35f;
+        float broadRadius = 80.0f;
+        // Controls the shape and response of the obscurance.
+        float normalBias = 0.06f;
+        float falloff = 2.0f;
+        float contrast = 1.0f;
+        // Depth-aware filtering.
+        bool blurEnabled = true;
+        float blurRadius = 8.0f;
+        float edgeSharpness = 0.75f;
+        AmbientOcclusionQuality quality = AmbientOcclusionHigh;
+        AmbientOcclusionDebugMode debugMode = AmbientOcclusionComposite;
+    };
+
+    /**
      * @brief Constructs a ViewState.
      *
      * @param parent Optional parent object.
@@ -72,6 +123,7 @@ public:
     /**
      * @name Camera
      */
+
     /**
      * @{
      */
@@ -88,6 +140,7 @@ public:
     /**
      * @name Presentation
      */
+
     /**
      * @{
      */
@@ -154,6 +207,7 @@ public:
     /**
      * @name Lighting and Materials
      */
+
     /**
      * @{
      */
@@ -203,6 +257,46 @@ public:
     void setDomeLightCameraVisibility(bool visible);
 
     /**
+     * @name Ambient Occlusion
+     *
+     * These controls define the Stageviz document-only AO look. Viewport
+     * support geometry and selection are rendered after this effect.
+     */
+
+    /** @{ */
+
+    /** @brief Returns the complete ambient occlusion state. */
+    const AmbientOcclusionSettings& ambientOcclusionSettings() const;
+    bool ambientOcclusionEnabled() const;
+    void setAmbientOcclusionEnabled(bool enabled);
+    float ambientOcclusionContactAmount() const;
+    void setAmbientOcclusionContactAmount(float amount);
+    float ambientOcclusionContactRadius() const;
+    void setAmbientOcclusionContactRadius(float radius);
+    float ambientOcclusionBroadAmount() const;
+    void setAmbientOcclusionBroadAmount(float amount);
+    float ambientOcclusionBroadRadius() const;
+    void setAmbientOcclusionBroadRadius(float radius);
+    float ambientOcclusionNormalBias() const;
+    void setAmbientOcclusionNormalBias(float bias);
+    float ambientOcclusionFalloff() const;
+    void setAmbientOcclusionFalloff(float falloff);
+    float ambientOcclusionContrast() const;
+    void setAmbientOcclusionContrast(float contrast);
+    float ambientOcclusionEdgeSharpness() const;
+    void setAmbientOcclusionEdgeSharpness(float sharpness);
+    bool ambientOcclusionBlurEnabled() const;
+    void setAmbientOcclusionBlurEnabled(bool enabled);
+    float ambientOcclusionBlurRadius() const;
+    void setAmbientOcclusionBlurRadius(float radius);
+    AmbientOcclusionQuality ambientOcclusionQuality() const;
+    void setAmbientOcclusionQuality(AmbientOcclusionQuality quality);
+    AmbientOcclusionDebugMode ambientOcclusionDebugMode() const;
+    void setAmbientOcclusionDebugMode(AmbientOcclusionDebugMode mode);
+
+    /** @} */
+
+    /**
      * @brief Returns whether scene lights are enabled.
      */
     bool sceneLightsEnabled() const;
@@ -239,6 +333,7 @@ public:
     /**
      * @name Rendering
      */
+
     /**
      * @{
      */
@@ -280,6 +375,7 @@ public:
     /**
      * @name HUD
      */
+
     /**
      * @{
      */
@@ -319,6 +415,7 @@ public:
      */
 
 Q_SIGNALS:
+
     /**
      * @brief Emitted when the viewport background color changes.
      */
@@ -363,6 +460,19 @@ Q_SIGNALS:
      * @brief Emitted when dome camera visibility changes.
      */
     void domeLightCameraVisibilityChanged(bool visible);
+    void ambientOcclusionEnabledChanged(bool enabled);
+    void ambientOcclusionContactAmountChanged(float amount);
+    void ambientOcclusionContactRadiusChanged(float radius);
+    void ambientOcclusionBroadAmountChanged(float amount);
+    void ambientOcclusionBroadRadiusChanged(float radius);
+    void ambientOcclusionNormalBiasChanged(float bias);
+    void ambientOcclusionFalloffChanged(float falloff);
+    void ambientOcclusionContrastChanged(float contrast);
+    void ambientOcclusionEdgeSharpnessChanged(float sharpness);
+    void ambientOcclusionBlurEnabledChanged(bool enabled);
+    void ambientOcclusionBlurRadiusChanged(float radius);
+    void ambientOcclusionQualityChanged(AmbientOcclusionQuality quality);
+    void ambientOcclusionDebugModeChanged(AmbientOcclusionDebugMode mode);
 
     /**
      * @brief Emitted when the scene light state changes.

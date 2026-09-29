@@ -9,6 +9,7 @@
 #include "mime.h"
 #include "notice.h"
 #include "os.h"
+#include "paths.h"
 #include "qtutils.h"
 #include "renderengine.h"
 #include "signalguard.h"
@@ -319,6 +320,58 @@ ImagingGLWidgetPrivate::initContext()
         d.glwidget->update();
     });
     connect(viewState(), &ViewState::domeLightCameraVisibilityChanged, this, [this](bool) {
+        updateRenderEngineSettings();
+        d.glwidget->update();
+    });
+    connect(viewState(), &ViewState::ambientOcclusionEnabledChanged, this, [this](bool) {
+        updateRenderEngineSettings();
+        d.glwidget->update();
+    });
+    connect(viewState(), &ViewState::ambientOcclusionContactAmountChanged, this, [this](float) {
+        updateRenderEngineSettings();
+        d.glwidget->update();
+    });
+    connect(viewState(), &ViewState::ambientOcclusionContactRadiusChanged, this, [this](float) {
+        updateRenderEngineSettings();
+        d.glwidget->update();
+    });
+    connect(viewState(), &ViewState::ambientOcclusionBroadAmountChanged, this, [this](float) {
+        updateRenderEngineSettings();
+        d.glwidget->update();
+    });
+    connect(viewState(), &ViewState::ambientOcclusionBroadRadiusChanged, this, [this](float) {
+        updateRenderEngineSettings();
+        d.glwidget->update();
+    });
+    connect(viewState(), &ViewState::ambientOcclusionNormalBiasChanged, this, [this](float) {
+        updateRenderEngineSettings();
+        d.glwidget->update();
+    });
+    connect(viewState(), &ViewState::ambientOcclusionFalloffChanged, this, [this](float) {
+        updateRenderEngineSettings();
+        d.glwidget->update();
+    });
+    connect(viewState(), &ViewState::ambientOcclusionContrastChanged, this, [this](float) {
+        updateRenderEngineSettings();
+        d.glwidget->update();
+    });
+    connect(viewState(), &ViewState::ambientOcclusionEdgeSharpnessChanged, this, [this](float) {
+        updateRenderEngineSettings();
+        d.glwidget->update();
+    });
+    connect(viewState(), &ViewState::ambientOcclusionBlurEnabledChanged, this, [this](bool) {
+        updateRenderEngineSettings();
+        d.glwidget->update();
+    });
+    connect(viewState(), &ViewState::ambientOcclusionBlurRadiusChanged, this, [this](float) {
+        updateRenderEngineSettings();
+        d.glwidget->update();
+    });
+    connect(viewState(), &ViewState::ambientOcclusionQualityChanged, this, [this](ViewState::AmbientOcclusionQuality) {
+        updateRenderEngineSettings();
+        d.glwidget->update();
+    });
+    connect(viewState(), &ViewState::ambientOcclusionDebugModeChanged, this, [this](ViewState::AmbientOcclusionDebugMode) {
         updateRenderEngineSettings();
         d.glwidget->update();
     });
@@ -1444,21 +1497,20 @@ ImagingGLWidgetPrivate::updateAuxiliaryGrid()
 
     ViewState* state = viewState();
     WRITE_LOCKER(locker, session()->auxiliaryLock(), "auxiliaryLock");
-    const SdfPath displayPath("/Display");
-    const SdfPath gridRootPath("/Display/Grid");
-    const SdfPath gridPath("/Display/Grid/Lines");
-    const SdfPath centerPath("/Display/Grid/Center");
-    const SdfPath materialsPath("/Materials");
-    const SdfPath gridMaterialPath("/Materials/Grid");
-    const SdfPath centerMaterialPath("/Materials/GridCenter");
+    // Keep implementation-specific children below the shared auxiliary roots.
+    const SdfPath gridRootPath = paths::auxiliary::display.AppendChild(TfToken("Grid"));
+    const SdfPath gridPath = gridRootPath.AppendChild(TfToken("Lines"));
+    const SdfPath centerPath = gridRootPath.AppendChild(TfToken("Center"));
+    const SdfPath gridMaterialPath = paths::auxiliary::materials.AppendChild(TfToken("Grid"));
+    const SdfPath centerMaterialPath = paths::auxiliary::materials.AppendChild(TfToken("GridCenter"));
     if (!state->gridEnabled()) {
         d.auxiliary->RemovePrim(gridRootPath);
         return;
     }
 
-    UsdGeomScope::Define(d.auxiliary, displayPath);
+    UsdGeomScope::Define(d.auxiliary, paths::auxiliary::display);
     UsdGeomScope::Define(d.auxiliary, gridRootPath);
-    UsdGeomScope::Define(d.auxiliary, materialsPath);
+    UsdGeomScope::Define(d.auxiliary, paths::auxiliary::materials);
     const TfToken& upAxis = d.stageUpAxis;
     constexpr int lines = 12;
     constexpr float spacing = 1.0f;
@@ -1525,13 +1577,13 @@ ImagingGLWidgetPrivate::ensureAuxiliaryMaterials()
         return;
 
     WRITE_LOCKER(locker, session()->auxiliaryLock(), "auxiliaryLock");
-    const SdfPath materialsPath("/Materials");
-    const SdfPath clayPath("/Materials/Clay");
-    const SdfPath chromePath("/Materials/Chrome");
-    const SdfPath glossyPath("/Materials/Glossy");
-    const SdfPath reflectionPath("/Materials/Reflection");
-    const SdfPath selectionPath("/Materials/Selection");
-    UsdGeomScope::Define(d.auxiliary, materialsPath);
+    // Derive implementation-specific materials from the shared auxiliary root.
+    const SdfPath clayPath = paths::auxiliary::materials.AppendChild(TfToken("Clay"));
+    const SdfPath chromePath = paths::auxiliary::materials.AppendChild(TfToken("Chrome"));
+    const SdfPath glossyPath = paths::auxiliary::materials.AppendChild(TfToken("Glossy"));
+    const SdfPath reflectionPath = paths::auxiliary::materials.AppendChild(TfToken("Reflection"));
+    const SdfPath selectionPath = paths::auxiliary::materials.AppendChild(TfToken("Selection"));
+    UsdGeomScope::Define(d.auxiliary, paths::auxiliary::materials);
 
     // Built-in Stageviz inspection materials live on the shared auxiliary
     // stage and never modify the document stage.
@@ -1631,6 +1683,9 @@ ImagingGLWidgetPrivate::updateRenderEngineSettings()
     settings.defaultDomeLightEnabled = state->defaultDomeLightEnabled();
     settings.domeLightTexture = state->domeLightTexture();
     settings.domeLightCameraVisibility = state->domeLightCameraVisibility();
+    // Copy the canonical AO state as one unit so renderer defaults and viewport
+    // controls cannot drift apart as new look controls are added.
+    settings.ambientOcclusion = state->ambientOcclusionSettings();
     settings.defaultAmbient = d.defaultAmbient;
     settings.defaultSpecular = d.defaultSpecular;
     settings.defaultShininess = d.defaultShininess;

@@ -1266,11 +1266,6 @@ MaterialUtils::nodeInfo(UsdStageRefPtr stage, const SdfPath& nodePath)
                     declared.hasValue = true;
                 }
             }
-
-            // Preserve declaration order. MaterialX standard-library NodeDefs
-            // intentionally arrange inputs by UI folder, so this gives the tree
-            // the same Base / Specular / Transmission / ... flow as MaterialX
-            // property editors without another hard-coded sort pass.
             return result;
         }
     }

@@ -1,0 +1,260 @@
+-- glslfx version 0.1
+
+// Stageviz ambient occlusion.
+//
+// Based on "Scalable Ambient Obscurance" by McGuire, Mara and Luebke,
+// High Performance Graphics, 2012.
+
+-- configuration
+{
+    "techniques": {
+        "default": {
+            "Render::AmbientOcclusion::Raw": {
+                "source": [ "Render::AmbientOcclusion::Raw.Fragment" ]
+            },
+            "Render::AmbientOcclusion::Blur": {
+                "source": [ "Render::AmbientOcclusion::Blur.Fragment" ]
+            },
+            "Render::AmbientOcclusion::Composite": {
+                "source": [ "Render::AmbientOcclusion::Composite.Fragment" ]
+            }
+        }
+    }
+}
+
+-- glsl Render::AmbientOcclusion::Raw.Fragment
+
+#define M_PI 3.1415926535897932384626433832795
+
+uint
+hash(ivec2 location)
+{
+    return uint(((3 * location.x) ^ (location.y + location.x * location.y)) * 10);
+}
+
+bool gIsOrthographic = false;
+
+float
+computeZFromDepth(float depth)
+{
+    float distance = gIsOrthographic
+        ? uClipInfo.x / uClipInfo.z - uClipInfo.y * depth
+        : uClipInfo.x / (uClipInfo.y * depth + uClipInfo.z);
+    return -distance;
+}
+
+vec3
+computePositionFromZ(ivec2 location, float vsZ)
+{
+    vec2 xy = vec2(location) * uProjInfo.xy + uProjInfo.zw;
+    return vec3(gIsOrthographic ? -xy : xy * vsZ, vsZ);
+}
+
+vec3
+computePositionFromLocation(ivec2 location)
+{
+    bool valid = all(greaterThanEqual(location, ivec2(0)))
+              && all(lessThan(location, uScreenSize));
+    float depth = valid ? HgiTexelFetch_depthIn(location).r : 1.0;
+    return computePositionFromZ(location, computeZFromDepth(depth));
+}
+
+vec3
+computeNormalFromPosition(vec3 position)
+{
+    return normalize(cross(dFdx(position), dFdy(position)));
+}
+
+vec3
+computeSamplePosition(int index, ivec2 location, float ssRadius, float rotationAngle)
+{
+    float alpha = (float(index) + 0.5) / float(uSampleCount);
+    float angle = alpha * float(uSpiralTurnCount) * 2.0 * M_PI + rotationAngle;
+    vec2 direction = vec2(cos(angle), sin(angle));
+    ivec2 offset = ivec2(direction * sqrt(alpha) * ssRadius);
+    return computePositionFromLocation(location + offset);
+}
+
+float
+normalizeZ(float z)
+{
+    return clamp((-z) / uClipInfo.z, 0.0, 1.0);
+}
+
+vec2
+packZKey(float normalizedZ)
+{
+    float integerPart = floor(normalizedZ * 256.0);
+    return vec2(integerPart / 256.0, normalizedZ * 256.0 - integerPart);
+}
+
+float
+computeObscurance(vec3 position, vec3 samplePosition, vec3 normal, float vsRadius)
+{
+    const float epsilon = 1e-6;
+    vec3 v = samplePosition - position;
+    float distance = length(v);
+    float vn = dot(v, normal) / max(epsilon, distance);
+    float angleFactor = max(0.0, vn - uNormalBias);
+    float distanceFactor = 1.0 - min(distance / max(epsilon, vsRadius), 1.0);
+    distanceFactor = pow(max(distanceFactor, 0.0), max(uFalloff, 0.1));
+    return angleFactor * distanceFactor;
+}
+
+float
+computeVisibility(float obscurance, float amount)
+{
+    float normalizedObscurance = obscurance / float(uSampleCount);
+    float visibility = clamp(1.0 - amount * 10.0 * normalizedObscurance, 0.0, 1.0);
+    return pow(visibility, max(uContrast, 0.1));
+}
+
+void
+main(void)
+{
+    gIsOrthographic = uIsOrthographic > 0;
+
+    ivec2 location = ivec2(uvOut * vec2(uScreenSize));
+    vec3 vsPosition = computePositionFromLocation(location);
+    float normalizedZ = normalizeZ(vsPosition.z);
+    vec2 zKey = packZKey(normalizedZ);
+
+    const float maxNormalizedZ = 0.996;
+    if (normalizedZ > maxNormalizedZ) {
+        hd_FragColor = vec4(1.0, 1.0, zKey);
+        return;
+    }
+
+    vec3 vsNormal = computeNormalFromPosition(vsPosition);
+    float zScale = gIsOrthographic ? 1.0 : max(1e-6, -vsPosition.z);
+    float maxRadius = 0.25 * float(max(uScreenSize.x, uScreenSize.y));
+    float contactRadius = clamp(uContactRadius, 1.0, maxRadius);
+    float broadRadius = clamp(uBroadRadius, 1.0, maxRadius);
+    float contactVsRadius = max(1e-5, contactRadius * zScale / max(1e-6, uClipInfo.w));
+    float broadVsRadius = max(1e-5, broadRadius * zScale / max(1e-6, uClipInfo.w));
+    float rotationAngle = fract(float(hash(location)) / 1000.0) * 2.0 * M_PI;
+
+    float contactObscurance = 0.0;
+    float broadObscurance = 0.0;
+    for (int i = 0; i < uSampleCount; ++i) {
+        vec3 contactSample = computeSamplePosition(i, location, contactRadius, rotationAngle);
+        vec3 broadSample = computeSamplePosition(i, location, broadRadius, rotationAngle);
+        contactObscurance += computeObscurance(vsPosition, contactSample, vsNormal, contactVsRadius);
+        broadObscurance += computeObscurance(vsPosition, broadSample, vsNormal, broadVsRadius);
+    }
+
+    float contactVisibility = computeVisibility(contactObscurance, uContactAmount);
+    float broadVisibility = computeVisibility(broadObscurance, uBroadAmount);
+
+    if (uIsPrefilterEnabled > 0) {
+        const float zThreshold = 0.001;
+        if (abs(dFdx(normalizedZ)) < zThreshold) {
+            float parity = float(location.x & 1) - 0.5;
+            contactVisibility -= dFdx(contactVisibility) * parity;
+            broadVisibility -= dFdx(broadVisibility) * parity;
+        }
+        if (abs(dFdy(normalizedZ)) < zThreshold) {
+            float parity = float(location.y & 1) - 0.5;
+            contactVisibility -= dFdy(contactVisibility) * parity;
+            broadVisibility -= dFdy(broadVisibility) * parity;
+        }
+    }
+
+    hd_FragColor = vec4(clamp(contactVisibility, 0.0, 1.0),
+                        clamp(broadVisibility, 0.0, 1.0),
+                        zKey);
+}
+
+-- glsl Render::AmbientOcclusion::Blur.Fragment
+
+float
+weightForTap(int index)
+{
+    int i = abs(index);
+    if (i == 0) return 0.153170;
+    if (i == 1) return 0.144893;
+    if (i == 2) return 0.122649;
+    if (i == 3) return 0.092902;
+    return 0.062970;
+}
+
+float
+unpackZKey(vec2 zKey)
+{
+    return zKey.x * (256.0 / 257.0) + zKey.y * (1.0 / 257.0);
+}
+
+vec4
+getAOData(ivec2 location)
+{
+    location = clamp(location, ivec2(0), uScreenSize - 1);
+    return HgiTexelFetch_aoIn(location);
+}
+
+vec3
+processTap(ivec2 location, int index, float referenceZ, vec2 sumVisibility, float sumWeight)
+{
+    int offsetScale = max(1, int(round(max(uBlurRadius, 1.0) / 4.0)));
+    vec4 data = getAOData(location + uOffset * offsetScale * index);
+    float normalizedZ = unpackZKey(data.ba);
+    float weight = weightForTap(index);
+    weight *= max(0.0, 1.0 - (uEdgeSharpness * 100.0 * abs(normalizedZ - referenceZ)));
+    return vec3(sumVisibility + data.rg * weight, sumWeight + weight);
+}
+
+void
+main(void)
+{
+    ivec2 location = ivec2(uvOut * vec2(uScreenSize));
+    vec4 center = getAOData(location);
+    vec2 visibility = center.rg;
+    vec2 zKey = center.ba;
+    float normalizedZ = unpackZKey(zKey);
+
+    const float maxNormalizedZ = 0.996;
+    if (normalizedZ > maxNormalizedZ) {
+        hd_FragColor = center;
+        return;
+    }
+
+    float sumWeight = weightForTap(0);
+    vec2 sumVisibility = visibility * sumWeight;
+
+    for (int i = -4; i <= -1; ++i) {
+        vec3 sum = processTap(location, i, normalizedZ, sumVisibility, sumWeight);
+        sumVisibility = sum.xy;
+        sumWeight = sum.z;
+    }
+    for (int i = 1; i <= 4; ++i) {
+        vec3 sum = processTap(location, i, normalizedZ, sumVisibility, sumWeight);
+        sumVisibility = sum.xy;
+        sumWeight = sum.z;
+    }
+
+    hd_FragColor = vec4(sumVisibility / max(sumWeight, 1e-6), zKey);
+}
+
+-- glsl Render::AmbientOcclusion::Composite.Fragment
+
+void
+main(void)
+{
+    ivec2 location = ivec2(uvOut * vec2(uScreenSize));
+    location = clamp(location, ivec2(0), uScreenSize - 1);
+
+    vec4 color = HgiTexelFetch_colorIn(location);
+    vec4 aoData = HgiTexelFetch_aoIn(location);
+    float contact = aoData.r;
+    float broad = aoData.g;
+    float combined = contact * broad;
+
+    vec3 result = color.rgb * combined;
+    if (uDebugMode == 1)
+        result = vec3(combined);
+    else if (uDebugMode == 2)
+        result = vec3(contact);
+    else if (uDebugMode == 3)
+        result = vec3(broad);
+
+    hd_FragColor = vec4(result, color.a);
+}

@@ -14,6 +14,7 @@ set(OpenUSD_COMPONENTS
   GLF
   HD
   HDX
+  HGI
   HGIGL
   PLUG
   SDF

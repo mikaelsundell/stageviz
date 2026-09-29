@@ -5,6 +5,7 @@
 #ifndef STAGEVIZ_RENDERENGINE_H
 #define STAGEVIZ_RENDERENGINE_H
 
+#include "viewstate.h"
 #include <QColor>
 #include <QImage>
 #include <QList>
@@ -69,6 +70,9 @@ public:
         bool defaultDomeLightEnabled = false;
         QString domeLightTexture;
         bool domeLightCameraVisibility = false;
+        // Shared Stageviz AO settings keep defaults identical between the
+        // viewport state, renderer and Hydra post-process task.
+        ViewState::AmbientOcclusionSettings ambientOcclusion;
         bool gammaCorrectColors = true;
         bool sampleAlphaToCoverageEnabled = true;
         bool flipFrontFacing = true;
@@ -125,7 +129,12 @@ public:
     UsdStageRefPtr stage() const;
 
     /**
-     * @brief Sets an optional auxiliary stage merged into the render scene.
+     * @brief Sets the optional Stageviz auxiliary stage.
+     *
+     * Auxiliary materials remain available to document/selection presentation,
+     * while /Display geometry is rendered later as a viewport-only overlay so
+     * it cannot affect document look effects such as ambient occlusion.
+     *
      * @param stage Auxiliary stage, or null to disable it.
      */
     void setAuxiliaryStage(UsdStageRefPtr stage);

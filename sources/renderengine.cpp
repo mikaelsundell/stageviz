@@ -3,9 +3,14 @@
 // https://github.com/mikaelsundell/stageviz
 
 #include "renderengine.h"
+#include "paths.h"
+#include "rendertask.h"
 #include "qtutils.h"
 #include "rendersceneindex.h"
 #include <QColorSpace>
+#include <QCoreApplication>
+#include <QDir>
+#include <QFileInfo>
 #include <QOffscreenSurface>
 #include <QOpenGLContext>
 #include <QOpenGLFramebufferObject>
@@ -18,8 +23,15 @@
 #include <pxr/imaging/cameraUtil/framing.h>
 #include <pxr/imaging/glf/simpleLight.h>
 #include <pxr/imaging/glf/simpleMaterial.h>
+#include <pxr/imaging/hd/changeTracker.h>
+#include <pxr/imaging/hd/filteringSceneIndex.h>
 #include <pxr/imaging/hd/mergingSceneIndex.h>
+#include <pxr/imaging/hd/renderIndex.h>
+#include <pxr/imaging/hd/sceneDelegate.h>
+#include <pxr/imaging/hd/tokens.h>
 #include <pxr/imaging/hd/sceneIndexPluginRegistry.h>
+#include <pxr/imaging/hdx/colorCorrectionTask.h>
+#include <pxr/imaging/hdx/presentTask.h>
 #include <pxr/imaging/hdx/renderSetupTask.h>
 #include <pxr/imaging/hdx/taskControllerSceneIndex.h>
 #include <pxr/imaging/hdx/tokens.h>
@@ -61,15 +73,159 @@ namespace {
         QSurface* m_surface = nullptr;
     };
 
+    QString renderShaderPath()
+    {
+        const QString applicationDir = QCoreApplication::applicationDirPath();
+
+#ifdef Q_OS_MAC
+        QDir contentsDir(applicationDir);
+        if (contentsDir.cdUp()) {
+            const QString candidate = contentsDir.filePath(QStringLiteral("Resources/Render.glslfx"));
+            if (QFileInfo::exists(candidate))
+                return QFileInfo(candidate).absoluteFilePath();
+        }
+#endif
+
+        const QString candidate = QDir(applicationDir).filePath(QStringLiteral("resources/Render.glslfx"));
+        if (QFileInfo::exists(candidate))
+            return QFileInfo(candidate).absoluteFilePath();
+
+        return {};
+    }
+
+    class RenderTaskDelegate final : public HdSceneDelegate {
+    public:
+        RenderTaskDelegate(HdRenderIndex* renderIndex, const SdfPath& delegateId)
+            : HdSceneDelegate(renderIndex, delegateId)
+        {}
+
+        VtValue Get(const SdfPath& id, const TfToken& key) override
+        {
+            if (id == m_taskPath && key == HdTokens->params)
+                return VtValue(m_params);
+
+            return {};
+        }
+
+        void setParams(const SdfPath& taskPath, const RenderTaskParams& params)
+        {
+            const bool pathChanged = taskPath != m_taskPath;
+            const bool paramsChanged = params != m_params;
+            if (!pathChanged && !paramsChanged)
+                return;
+
+            m_taskPath = taskPath;
+            m_params = params;
+
+            if (HdRenderIndex& renderIndex = GetRenderIndex(); renderIndex.HasTask(taskPath))
+                renderIndex.GetChangeTracker().MarkTaskDirty(taskPath, HdChangeTracker::DirtyParams);
+        }
+
+    private:
+        SdfPath m_taskPath;
+        RenderTaskParams m_params;
+    };
+
+    class AuxiliaryMaterialSceneIndex final : public HdSingleInputFilteringSceneIndexBase {
+    public:
+        static TfRefPtr<AuxiliaryMaterialSceneIndex> New(const HdSceneIndexBaseRefPtr& input)
+        {
+            return TfCreateRefPtr(new AuxiliaryMaterialSceneIndex(input));
+        }
+
+        HdSceneIndexPrim GetPrim(const SdfPath& primPath) const override
+        {
+            // Keep the root visible for scene-index traversal, but expose only
+            // the canonical auxiliary material branch below it.
+            if (primPath == SdfPath::AbsoluteRootPath() || isMaterialPath(primPath))
+                return _GetInputSceneIndex()->GetPrim(primPath);
+            return {};
+        }
+
+        SdfPathVector GetChildPrimPaths(const SdfPath& primPath) const override
+        {
+            if (primPath == SdfPath::AbsoluteRootPath()) {
+                const SdfPathVector children = _GetInputSceneIndex()->GetChildPrimPaths(primPath);
+                return std::find(children.begin(), children.end(), paths::auxiliary::materials) != children.end()
+                           ? SdfPathVector { paths::auxiliary::materials }
+                           : SdfPathVector {};
+            }
+
+            if (!isMaterialPath(primPath))
+                return {};
+
+            SdfPathVector result;
+            for (const SdfPath& child : _GetInputSceneIndex()->GetChildPrimPaths(primPath)) {
+                if (isMaterialPath(child))
+                    result.push_back(child);
+            }
+            return result;
+        }
+
+    protected:
+        void _PrimsAdded(const HdSceneIndexBase&, const HdSceneIndexObserver::AddedPrimEntries& entries) override
+        {
+            HdSceneIndexObserver::AddedPrimEntries filtered;
+            for (const auto& entry : entries) {
+                if (isMaterialPath(entry.primPath))
+                    filtered.push_back(entry);
+            }
+            if (!filtered.empty())
+                _SendPrimsAdded(filtered);
+        }
+
+        void _PrimsRemoved(const HdSceneIndexBase&, const HdSceneIndexObserver::RemovedPrimEntries& entries) override
+        {
+            HdSceneIndexObserver::RemovedPrimEntries filtered;
+            for (const auto& entry : entries) {
+                if (isMaterialPath(entry.primPath))
+                    filtered.push_back(entry);
+            }
+            if (!filtered.empty())
+                _SendPrimsRemoved(filtered);
+        }
+
+        void _PrimsDirtied(const HdSceneIndexBase&, const HdSceneIndexObserver::DirtiedPrimEntries& entries) override
+        {
+            HdSceneIndexObserver::DirtiedPrimEntries filtered;
+            for (const auto& entry : entries) {
+                if (isMaterialPath(entry.primPath))
+                    filtered.push_back(entry);
+            }
+            if (!filtered.empty())
+                _SendPrimsDirtied(filtered);
+        }
+
+        void _PrimsRenamed(const HdSceneIndexBase&, const HdSceneIndexObserver::RenamedPrimEntries& entries) override
+        {
+            // Stageviz owns the auxiliary namespace and does not rename its
+            // canonical roots. Forward child renames so material updates remain
+            // compatible across Hydra versions with different rename entry APIs.
+            _SendPrimsRenamed(entries);
+        }
+
+    private:
+        explicit AuxiliaryMaterialSceneIndex(const HdSceneIndexBaseRefPtr& input)
+            : HdSingleInputFilteringSceneIndexBase(input)
+        {}
+
+        static bool isMaterialPath(const SdfPath& path)
+        {
+            return path == paths::auxiliary::materials || path.HasPrefix(paths::auxiliary::materials);
+        }
+    };
+
     struct SceneIndices {
         HdMergingSceneIndexRefPtr merging;
         TfRefPtr<RenderSceneIndex> renderSceneIndex;
         UsdImagingSceneIndices auxiliary;
+        HdSceneIndexBaseRefPtr auxiliaryMaterials;
         bool auxiliaryInserted = false;
 
         void clearAuxiliary()
         {
             auxiliary = {};
+            auxiliaryMaterials = {};
             auxiliaryInserted = false;
         }
     };
@@ -79,6 +235,8 @@ namespace {
         explicit ImagingGLEngine(const UsdImagingGLEngine::Parameters& params)
             : ImagingGLEngine(params, std::make_shared<SceneIndices>())
         {}
+
+        ~ImagingGLEngine() { removeRenderTask(); }
 
         SceneIndices& sceneIndices() { return *m_sceneIndices; }
         const SceneIndices& sceneIndices() const { return *m_sceneIndices; }
@@ -90,6 +248,80 @@ namespace {
 
             _taskControllerSceneIndex->SetSelectionEnableOutline(enabled);
             _taskControllerSceneIndex->SetSelectionOutlineRadius(radius);
+        }
+
+        void renderBatch(const SdfPathVector& paths, const UsdImagingGLRenderParams& params)
+        {
+            if (!_taskControllerSceneIndex || paths.empty())
+                return;
+
+            _UpdateHydraCollection(&_renderCollection, paths, params);
+            _taskControllerSceneIndex->SetCollection(_renderCollection);
+            _PrepareRender(params);
+            _SetBBoxParams(params.bboxes, params.bboxLineColor, params.bboxLineDashSize);
+            _taskControllerSceneIndex->SetEnableSelection(false);
+
+            const VtValue selectionValue(_selTracker);
+            if (HdEngine* hdEngine = _GetHdEngine())
+                hdEngine->SetTaskContextData(HdxTokens->selectionState, selectionValue);
+
+            _Execute(params, _taskControllerSceneIndex->GetRenderingTaskPaths());
+        }
+
+        void renderBatchWithRenderTask(const SdfPathVector& paths, const UsdImagingGLRenderParams& params,
+                                 const RenderTaskParams& renderTaskParams)
+        {
+            if (!_taskControllerSceneIndex || paths.empty())
+                return;
+
+            _UpdateHydraCollection(&_renderCollection, paths, params);
+            _taskControllerSceneIndex->SetCollection(_renderCollection);
+            _PrepareRender(params);
+
+            _SetBBoxParams(params.bboxes, params.bboxLineColor, params.bboxLineDashSize);
+            _taskControllerSceneIndex->SetEnableSelection(params.highlight);
+
+            const VtValue selectionValue(_selTracker);
+            if (HdEngine* hdEngine = _GetHdEngine())
+                hdEngine->SetTaskContextData(HdxTokens->selectionState, selectionValue);
+
+            SdfPathVector taskPaths = _taskControllerSceneIndex->GetRenderingTaskPaths();
+
+            if (renderTaskParams.enabled() && ensureRenderTask()) {
+                m_renderTaskDelegate->setParams(m_renderTaskPath, renderTaskParams);
+
+                // The custom task must run after Storm has populated color/depth,
+                // but before display transforms or presentation. Prefer identifying
+                // the controller tasks by type and fall back to their conventional
+                // path names for Hydra scene-index emulation builds.
+                HdRenderIndex* renderIndex = _GetRenderIndex();
+                auto insertionPoint = taskPaths.end();
+
+                for (auto it = taskPaths.begin(); it != taskPaths.end(); ++it) {
+                    bool insertBefore = false;
+
+                    if (renderIndex && renderIndex->HasTask(*it)) {
+                        const HdTaskSharedPtr& task = renderIndex->GetTask(*it);
+                        insertBefore = dynamic_cast<HdxColorCorrectionTask*>(task.get()) != nullptr
+                                       || dynamic_cast<HdxPresentTask*>(task.get()) != nullptr;
+                    }
+
+                    if (!insertBefore) {
+                        const std::string name = it->GetName();
+                        insertBefore = name.find("colorCorrection") != std::string::npos
+                                       || name.find("present") != std::string::npos;
+                    }
+
+                    if (insertBefore) {
+                        insertionPoint = it;
+                        break;
+                    }
+                }
+
+                taskPaths.insert(insertionPoint, m_renderTaskPath);
+            }
+
+            _Execute(params, taskPaths);
         }
 
         void renderBatchWithDepthBias(const SdfPathVector& paths, const UsdImagingGLRenderParams& params,
@@ -130,6 +362,30 @@ namespace {
         }
 
     private:
+        bool ensureRenderTask()
+        {
+            HdRenderIndex* renderIndex = _GetRenderIndex();
+            if (!renderIndex)
+                return false;
+
+            if (!m_renderTaskDelegate)
+                m_renderTaskDelegate = std::make_unique<RenderTaskDelegate>(renderIndex, SdfPath("/__Stageviz"));
+
+            if (!renderIndex->HasTask(m_renderTaskPath))
+                renderIndex->InsertTask<RenderTask>(m_renderTaskDelegate.get(), m_renderTaskPath);
+
+            return renderIndex->HasTask(m_renderTaskPath);
+        }
+
+        void removeRenderTask()
+        {
+            HdRenderIndex* renderIndex = _GetRenderIndex();
+            if (renderIndex && renderIndex->HasTask(m_renderTaskPath))
+                renderIndex->RemoveTask(m_renderTaskPath);
+
+            m_renderTaskDelegate.reset();
+        }
+
         using SceneIndicesPtr = std::shared_ptr<SceneIndices>;
 
         ImagingGLEngine(const UsdImagingGLEngine::Parameters& params, const SceneIndicesPtr& sceneIndices)
@@ -188,6 +444,8 @@ namespace {
         }
 
         SceneIndicesPtr m_sceneIndices;
+        std::unique_ptr<RenderTaskDelegate> m_renderTaskDelegate;
+        const SdfPath m_renderTaskPath = SdfPath("/__Stageviz/Tasks/Render");
     };
 
     UsdImagingGLCullStyle cullStyle(RenderEngine::DoubleSidedMode mode)
@@ -218,6 +476,7 @@ public:
     void ensureAuxiliarySceneIndex();
     void refreshAuxiliarySceneIndex();
     void updateDocumentRenderSceneIndex();
+    void updateAuxiliaryRenderSceneIndex();
     void updateSelectionRenderSceneIndex();
     void updateRenderParams();
     void updateLighting();
@@ -236,6 +495,7 @@ public:
     QColor selectionColor = QColor(255, 210, 0);
     UsdImagingGLRenderParams params;
     std::unique_ptr<ImagingGLEngine> engine;
+    std::unique_ptr<ImagingGLEngine> auxiliaryEngine;
     std::unique_ptr<ImagingGLEngine> selectionEngine;
     std::unique_ptr<QOpenGLContext> offscreenContext;
     std::unique_ptr<QOffscreenSurface> offscreenSurface;
@@ -278,7 +538,7 @@ RenderEngine::Private::ensureCurrentContext()
 bool
 RenderEngine::Private::initialize()
 {
-    if (engine && (contextMode == ContextMode::Offscreen || selectionEngine))
+    if (engine && (contextMode == ContextMode::Offscreen || (auxiliaryEngine && selectionEngine)))
         return true;
 
     if (!ensureCurrentContext())
@@ -294,25 +554,31 @@ RenderEngine::Private::initialize()
         return false;
     }
 
-    // Selection is a viewport-only overlay. Offscreen rendering (material
-    // swatches and scripted image renders) never needs the second Hydra index.
+    // Auxiliary display content and selection are separate presentation passes.
+    // Offscreen rendering intentionally omits both viewport-only layers.
     if (contextMode == ContextMode::Current) {
-        UsdImagingGLEngine::Parameters selectionParams = documentParams;
-        selectionParams.allowAsynchronousSceneProcessing = false;
+        UsdImagingGLEngine::Parameters overlayParams = documentParams;
+        overlayParams.allowAsynchronousSceneProcessing = false;
 
-        selectionEngine = std::make_unique<ImagingGLEngine>(selectionParams);
-        if (!selectionEngine->GetHgi()) {
+        auxiliaryEngine = std::make_unique<ImagingGLEngine>(overlayParams);
+        selectionEngine = std::make_unique<ImagingGLEngine>(overlayParams);
+        if (!auxiliaryEngine->GetHgi() || !selectionEngine->GetHgi()) {
+            auxiliaryEngine.reset();
             selectionEngine.reset();
+            auxiliaryEngine.reset();
             engine.reset();
             return false;
         }
     }
 
     updateDocumentRenderSceneIndex();
+    updateAuxiliaryRenderSceneIndex();
     updateSelectionRenderSceneIndex();
     ensureAuxiliarySceneIndex();
 
     engine->SetSelected(SdfPathVector());
+    if (auxiliaryEngine)
+        auxiliaryEngine->SetSelected(SdfPathVector());
     if (selectionEngine)
         selectionEngine->SetSelected(SdfPathVector());
     return true;
@@ -321,7 +587,7 @@ RenderEngine::Private::initialize()
 void
 RenderEngine::Private::resetEngine()
 {
-    if (!engine && !selectionEngine)
+    if (!engine && !auxiliaryEngine && !selectionEngine)
         return;
 
     if (contextMode == ContextMode::Offscreen) {
@@ -333,11 +599,13 @@ RenderEngine::Private::resetEngine()
         }
 
         selectionEngine.reset();
+        auxiliaryEngine.reset();
         engine.reset();
         return;
     }
 
     selectionEngine.reset();
+    auxiliaryEngine.reset();
     engine.reset();
 }
 
@@ -348,7 +616,7 @@ RenderEngine::Private::reset()
         {
             OpenGLContextRestore contextRestore;
 
-            if ((engine || selectionEngine)
+            if ((engine || auxiliaryEngine || selectionEngine)
                 && (!offscreenContext || !offscreenSurface || !offscreenContext->makeCurrent(offscreenSurface.get()))) {
                 qWarning() << "could not make offscreen context current while releasing render engine";
                 return;
@@ -364,6 +632,7 @@ RenderEngine::Private::reset()
     }
 
     selectionEngine.reset();
+    auxiliaryEngine.reset();
     engine.reset();
 }
 
@@ -394,7 +663,10 @@ RenderEngine::Private::ensureAuxiliarySceneIndex()
             continue;
         }
 
-        sceneIndices.merging->AddInputScene(sceneIndices.auxiliary.finalSceneIndex, SdfPath::AbsoluteRootPath());
+        // Keep auxiliary materials available for document/selection overrides,
+        // but prune /Display so grid and helpers never enter their color/depth AOVs.
+        sceneIndices.auxiliaryMaterials = AuxiliaryMaterialSceneIndex::New(sceneIndices.auxiliary.finalSceneIndex);
+        sceneIndices.merging->AddInputScene(sceneIndices.auxiliaryMaterials, SdfPath::AbsoluteRootPath());
         sceneIndices.auxiliaryInserted = true;
     }
 }
@@ -442,6 +714,25 @@ RenderEngine::Private::updateDocumentRenderSceneIndex()
     const bool overrideDoubleSided = settings.doubleSidedMode == DoubleSidedMode::DoubleSided;
     renderSceneIndex->setDoubleSidedOverride(false);
     renderSceneIndex->setDoubleSidedOverrideEnabled(overrideDoubleSided);
+}
+
+void
+RenderEngine::Private::updateAuxiliaryRenderSceneIndex()
+{
+    if (!auxiliaryEngine)
+        return;
+
+    SceneIndices& sceneIndices = auxiliaryEngine->sceneIndices();
+    if (!sceneIndices.renderSceneIndex)
+        return;
+
+    TfRefPtr<RenderSceneIndex> renderSceneIndex = sceneIndices.renderSceneIndex;
+    renderSceneIndex->setSceneMaterialsEnabled(true);
+    renderSceneIndex->setMaterialPath({});
+    renderSceneIndex->setMode(RenderSceneIndex::None);
+    renderSceneIndex->setSelectionPaths({});
+    renderSceneIndex->setSelectionPresentationEnabled(false);
+    renderSceneIndex->setDoubleSidedOverrideEnabled(false);
 }
 
 void
@@ -496,7 +787,7 @@ RenderEngine::Private::updateRenderParams()
 void
 RenderEngine::Private::updateLighting()
 {
-    if (!engine && !selectionEngine)
+    if (!engine && !auxiliaryEngine && !selectionEngine)
         return;
 
     std::vector<GlfSimpleLight> lights;
@@ -542,6 +833,8 @@ RenderEngine::Private::updateLighting()
 
     if (engine)
         engine->SetLightingState(lights, material, ambient);
+    if (auxiliaryEngine)
+        auxiliaryEngine->SetLightingState(lights, material, ambient);
     if (selectionEngine)
         selectionEngine->SetLightingState(lights, material, ambient);
 }
@@ -552,7 +845,7 @@ RenderEngine::Private::render()
     if (!stage || size[0] <= 0 || size[1] <= 0)
         return false;
 
-    if ((!engine || (contextMode == ContextMode::Current && !selectionEngine)) && !initialize())
+    if ((!engine || (contextMode == ContextMode::Current && (!auxiliaryEngine || !selectionEngine))) && !initialize())
         return false;
 
     ensureAuxiliarySceneIndex();
@@ -579,6 +872,8 @@ RenderEngine::Private::render()
     };
 
     configureEngine(engine.get());
+    if (auxiliaryEngine)
+        configureEngine(auxiliaryEngine.get());
     if (selectionEngine)
         configureEngine(selectionEngine.get());
 
@@ -593,20 +888,65 @@ RenderEngine::Private::render()
     engine->PrepareBatch(root, documentParams);
     updateDocumentRenderSceneIndex();
 
+    SdfPathVector renderPaths;
     if (mask.isEmpty()) {
-        engine->Render(root, documentParams);
+        renderPaths.push_back(root.GetPath());
     }
     else {
-        SdfPathVector renderPaths;
         renderPaths.reserve(mask.size());
-
         for (const SdfPath& path : mask)
             renderPaths.push_back(path);
-
-        engine->RenderBatch(renderPaths, documentParams);
     }
 
+    RenderTaskParams renderTaskParams;
+    renderTaskParams.ambientOcclusion = settings.ambientOcclusion;
+    renderTaskParams.ambientOcclusion.enabled = settings.ambientOcclusion.enabled && settings.aov == HdAovTokens->color
+                                                  && settings.drawMode != UsdImagingGLDrawMode::DRAW_WIREFRAME_ON_SURFACE;
+    renderTaskParams.projectionMatrix = GfMatrix4f(projectionMatrix);
+
+    const GfRange1d nearFar = frustum.GetNearFar();
+    renderTaskParams.nearClip = static_cast<float>(nearFar.GetMin());
+    renderTaskParams.farClip = static_cast<float>(nearFar.GetMax());
+    renderTaskParams.orthographic = camera.GetProjection() == GfCamera::Orthographic;
+
+    if (renderTaskParams.ambientOcclusion.enabled) {
+        const QString shader = renderShaderPath();
+        if (!shader.isEmpty()) {
+            renderTaskParams.shaderPath = TfToken(shader.toStdString());
+        }
+        else {
+            static bool warnedMissingShader = false;
+            if (!warnedMissingShader) {
+                warnedMissingShader = true;
+                qWarning() << "ambient occlusion disabled: could not locate resources/Render.glslfx";
+            }
+            renderTaskParams.ambientOcclusion.enabled = false;
+        }
+    }
+
+    engine->renderBatchWithRenderTask(renderPaths, documentParams, renderTaskParams);
+
     documentHgi->EndFrame();
+
+    // Render viewport support geometry after Look processing. The dedicated
+    // pass keeps /Display out of document AO/depth while preserving Stageviz
+    // grid and helper presentation in the final viewport.
+    if (auxiliaryEngine && auxiliary && auxiliary->GetPrimAtPath(paths::auxiliary::display)) {
+        Hgi* auxiliaryHgi = auxiliaryEngine->GetHgi();
+        if (!auxiliaryHgi)
+            return false;
+
+        UsdImagingGLRenderParams auxiliaryParams = documentParams;
+        auxiliaryParams.highlight = false;
+        auxiliaryParams.clearColor = GfVec4f(0.0f);
+
+        const UsdPrim auxiliaryRoot = auxiliary->GetPseudoRoot();
+        auxiliaryHgi->StartFrame();
+        auxiliaryEngine->PrepareBatch(auxiliaryRoot, auxiliaryParams);
+        updateAuxiliaryRenderSceneIndex();
+        auxiliaryEngine->renderBatch({ paths::auxiliary::display }, auxiliaryParams);
+        auxiliaryHgi->EndFrame();
+    }
 
     if (selectionEngine) {
         SdfPathVector selectionPaths;
@@ -677,7 +1017,9 @@ RenderEngine::reset()
 bool
 RenderEngine::isInitialized() const
 {
-    return p->engine != nullptr && (p->contextMode == ContextMode::Offscreen || p->selectionEngine != nullptr);
+    return p->engine != nullptr
+           && (p->contextMode == ContextMode::Offscreen
+               || (p->auxiliaryEngine != nullptr && p->selectionEngine != nullptr));
 }
 
 void
