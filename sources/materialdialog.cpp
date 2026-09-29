@@ -591,20 +591,18 @@ MaterialDialogPrivate::eventFilter(QObject* object, QEvent* event)
             if (d.dialog->layout())
                 d.dialog->layout()->activate();
 
-            constexpr int panelSize = 200;
-
             {
+                constexpr int fixed = 400;
                 const int total = std::max(2, d.ui->splitter->width());
-                const int leftWidth = std::max(1, total - panelSize);
-                d.ui->splitter->setSizes({ leftWidth, panelSize });
+                const int leftWidth = std::max(1, total - fixed);
+                d.ui->splitter->setSizes({ leftWidth, fixed });
             }
-
             {
+                constexpr int fixed = 300;
                 const int total = std::max(2, d.ui->materialSplitter->height());
-                const int treeHeight = std::max(1, total - panelSize);
-                d.ui->materialSplitter->setSizes({ panelSize, treeHeight });
+                const int treeHeight = std::max(1, total - fixed);
+                d.ui->materialSplitter->setSizes({ fixed, treeHeight });
             }
-
             {
                 const int total = std::max(2, d.ui->browserSplitter->height());
                 const int browserHeight = std::max(1, qRound(static_cast<qreal>(total) * 0.60));
@@ -820,6 +818,15 @@ MaterialDialogPrivate::updatePrims(const NoticeBatch& batch)
                 dirtyProperties.append(entry.path);
         }
     }
+
+    // Connection edits are often reported by USD as property-value notices rather
+    // than prim resyncs. The view marks graphTopologyDirty before dispatching an
+    // asynchronous connection command; keep that intent until the corresponding
+    // USD notice arrives, then process the notice as a structural material change.
+    // This avoids rebuilding a flattened swatch snapshot before the worker has
+    // actually authored the connection.
+    if (!structuralChange && d.graphTopologyDirty && !dirtyMaterials.isEmpty())
+        structuralChange = true;
 
     if (structuralChange) {
         d.swatchSnapshotDirty = true;
@@ -1081,11 +1088,11 @@ MaterialDialogPrivate::connectGraphSockets(const SdfPath& inputPath, const SdfPa
         return;
     d.swatchSnapshotDirty = true;
     d.graphTopologyDirty = true;
+    // Do not refresh immediately here. connectShaderInput() runs asynchronously;
+    // an immediate refresh can flatten the stage before the connection exists and
+    // leave the material swatch rendering an old network. updatePrims() will receive
+    // the authored USD notice and perform the structural refresh at that point.
     session()->commandStack()->run(new Command(connectShaderInput(inputPath, sourceOutputPath)));
-    // UsdShade connection edits do not necessarily generate a prim-resync notice.
-    // Force a topology refresh so rebuildEdges() sees the authored connection and
-    // the new wire becomes visible immediately.
-    d.refreshTimer->start();
 }
 
 void
@@ -1642,11 +1649,10 @@ MaterialDialogPrivate::disconnectInputs(const QList<SdfPath>& inputPaths)
     if (!inputPaths.isEmpty()) {
         d.swatchSnapshotDirty = true;
         d.graphTopologyDirty = true;
+        // The disconnect command is asynchronous. Wait for its USD notice before
+        // rebuilding the graph/swatch snapshot so the snapshot cannot capture the
+        // pre-disconnect network.
         session()->commandStack()->run(new Command(disconnectShaderInputs(inputPaths)));
-        // A connection edit usually arrives as a property-value notice rather
-        // than a prim resync. Schedule the structural refresh explicitly so the
-        // graph edge disappears immediately instead of taking the value fast path.
-        d.refreshTimer->start();
     }
 }
 
@@ -1672,9 +1678,10 @@ MaterialDialogPrivate::connectShaderNode(const SdfPath& inputPath, const QString
     if (!inputPath.IsEmpty() && !shaderId.isEmpty() && !outputName.IsEmpty() && ensureInputs({ inputPath })) {
         d.swatchSnapshotDirty = true;
         d.graphTopologyDirty = true;
+        // The command authors topology asynchronously; updatePrims() performs the
+        // refresh when the resulting USD notice arrives.
         session()->commandStack()->run(
             new Command(stageviz::connectShaderNode(inputPath, shaderId, nodeName, outputName)));
-        d.refreshTimer->start();
     }
 }
 
@@ -1684,8 +1691,9 @@ MaterialDialogPrivate::connectMaterialXNode(const SdfPath& inputPath, const QStr
     if (!inputPath.IsEmpty() && !nodeDef.isEmpty() && ensureInputs({ inputPath })) {
         d.swatchSnapshotDirty = true;
         d.graphTopologyDirty = true;
+        // The command authors topology asynchronously; updatePrims() performs the
+        // refresh when the resulting USD notice arrives.
         session()->commandStack()->run(new Command(stageviz::connectMaterialXNode(inputPath, nodeDef, nodeName)));
-        d.refreshTimer->start();
     }
 }
 

@@ -491,9 +491,7 @@ ViewerPrivate::init()
     connect(viewState, &ViewState::domeLightCameraVisibilityChanged, this,
             [this](bool visible) { updateDockAction(d.ui->displayDomeBackground, visible); });
     connect(viewState, &ViewState::ambientOcclusionEnabledChanged, this,
-            [this](bool enabled) {
-                updateDockAction(d.ui->displayAmbientOcclusion, enabled);
-            });
+            [this](bool enabled) { updateDockAction(d.ui->displayAmbientOcclusion, enabled); });
     connect(viewState, &ViewState::domeLightTextureChanged, this, [this](const QString& filename) {
         d.ui->lightClearDomeTexture->setEnabled(!filename.isEmpty());
         const ViewState* state = session()->viewState();

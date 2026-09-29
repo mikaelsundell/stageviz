@@ -69,9 +69,14 @@ bool
 RenderSceneIndexPrivate::isGprim(const HdSceneIndexPrim& prim) const
 {
     const TfToken& type = prim.primType;
+
+    // Keep presentation overrides available for every geometry primitive that
+    // Stageviz/Storm can render. Mesh-specific schema edits remain guarded by
+    // isMesh() below.
     return type == HdPrimTypeTokens->mesh || type == HdPrimTypeTokens->basisCurves || type == HdPrimTypeTokens->points
-           || type == HdPrimTypeTokens->cube || type == HdPrimTypeTokens->sphere || type == HdPrimTypeTokens->cylinder
-           || type == HdPrimTypeTokens->cone || type == HdPrimTypeTokens->capsule;
+           || type == HdPrimTypeTokens->nurbsPatch || type == HdPrimTypeTokens->plane || type == HdPrimTypeTokens->cube
+           || type == HdPrimTypeTokens->sphere || type == HdPrimTypeTokens->cylinder || type == HdPrimTypeTokens->cone
+           || type == HdPrimTypeTokens->capsule;
 }
 
 bool

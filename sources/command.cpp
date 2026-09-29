@@ -763,6 +763,34 @@ namespace {
         return true;
     }
 
+    SdfValueTypeName declaredMaterialXInputType(UsdStageRefPtr stage, const SdfPath& inputPath)
+    {
+        if (!stage || !inputPath.IsPropertyPath())
+            return {};
+
+        const UsdAttribute attr = stage->GetAttributeAtPath(inputPath);
+        const UsdShadeInput input(attr);
+        if (!input)
+            return {};
+
+        const UsdShadeShader shader(input.GetPrim());
+        if (!shader)
+            return {};
+
+        TfToken id;
+        shader.GetIdAttr().Get(&id);
+        const QString shaderId = QString::fromStdString(id.GetString());
+        if (!shaderId.startsWith(QStringLiteral("ND_")))
+            return {};
+
+        MaterialXNodeDefinition definition;
+        if (!MaterialUtils::materialXNodeDefinition(shaderId, &definition))
+            return {};
+
+        return MaterialUtils::materialXPortType(definition, QString::fromStdString(input.GetBaseName().GetString()),
+                                                false);
+    }
+
     bool pathFallsWithinRoots(const SdfPath& path, const QList<SdfPath>& roots)
     {
         if (path.IsEmpty())
@@ -1939,6 +1967,7 @@ connectShaderInput(const SdfPath& inputPath, const SdfPath& sourceOutputPath)
             command::beginDeferred(session, "Connect shader input", 1);
             command::runWorker([session, inputPath, sourceOutputPath, state, captured]() {
                 bool success = false;
+                bool repairedInputType = false;
                 QString error;
                 QList<SdfPath> changed;
 
@@ -1951,49 +1980,101 @@ connectShaderInput(const SdfPath& inputPath, const SdfPath& sourceOutputPath)
                         error = !editError.isEmpty() ? editError : QStringLiteral("stage missing");
                     }
                     else {
-                        const UsdAttribute inputAttr = stage->GetAttributeAtPath(inputPath);
+                        UsdAttribute inputAttr = stage->GetAttributeAtPath(inputPath);
                         const UsdAttribute outputAttr = stage->GetAttributeAtPath(sourceOutputPath);
-                        const UsdShadeInput input(inputAttr);
+                        UsdShadeInput input(inputAttr);
                         const UsdShadeOutput output(outputAttr);
 
                         if (!input || !output) {
                             error = QStringLiteral("shader input or output missing");
                         }
                         else {
-                            TfToken sourceShaderId;
-                            const UsdShadeShader sourceShader(output.GetPrim());
-                            if (sourceShader)
-                                sourceShader.GetIdAttr().Get(&sourceShaderId);
-
-                            const bool exactType = input.GetTypeName() == output.GetTypeName();
-                            const bool texcoord2Compatible = (input.GetTypeName() == SdfValueTypeNames->TexCoord2f
-                                                              && output.GetTypeName() == SdfValueTypeNames->Float2)
-                                                             || (input.GetTypeName() == SdfValueTypeNames->Float2
-                                                                 && output.GetTypeName()
-                                                                        == SdfValueTypeNames->TexCoord2f);
-                            const bool uvTextureRgbToColor = input.GetTypeName() == SdfValueTypeNames->Color3f
-                                                             && output.GetTypeName() == SdfValueTypeNames->Float3
-                                                             && sourceShaderId == TfToken("UsdUVTexture")
-                                                             && output.GetBaseName() == TfToken("rgb");
-
-                            if (!exactType && !texcoord2Compatible && !uvTextureRgbToColor) {
-                                error = QStringLiteral("shader socket types are incompatible: %1 -> %2")
-                                            .arg(QString::fromStdString(output.GetTypeName().GetAsToken().GetString()),
-                                                 QString::fromStdString(input.GetTypeName().GetAsToken().GetString()));
+                            QString captureError;
+                            if (!captureShaderInputProperty(editLayer, inputPath, *state, captureError)) {
+                                error = captureError;
                             }
                             else {
-                                QString captureError;
-                                if (!captureShaderInputProperty(editLayer, inputPath, *state, captureError)) {
-                                    error = captureError;
+                                // MaterialGraph presents MaterialX sockets from the NodeDef interface.
+                                // Older Stageviz builds could author a socket using a stale/wrong Sdf
+                                // type (for example ND_image_color3.texcoord as float instead of
+                                // float2). If that bad property belongs to the current edit layer,
+                                // repair it transactionally before making the connection. Undo then
+                                // restores the exact original property spec from the snapshot above.
+                                const SdfValueTypeName declaredType = declaredMaterialXInputType(stage, inputPath);
+                                if (!declaredType.GetAsToken().IsEmpty() && input.GetTypeName() != declaredType) {
+                                    if (!editLayer->GetPropertyAtPath(inputPath)) {
+                                        error = QStringLiteral(
+                                                    "MaterialX input type disagrees with its NodeDef and the authored "
+                                                    "property is not editable here: %1 is %2, expected %3")
+                                                    .arg(pathText(inputPath),
+                                                         QString::fromStdString(
+                                                             input.GetTypeName().GetAsToken().GetString()),
+                                                         QString::fromStdString(declaredType.GetAsToken().GetString()));
+                                    }
+                                    else if (!removePropertySpec(editLayer, inputPath)) {
+                                        error = QStringLiteral(
+                                                    "failed to replace incorrectly typed MaterialX input: %1")
+                                                    .arg(pathText(inputPath));
+                                    }
+                                    else {
+                                        UsdShadeShader targetShader(stage->GetPrimAtPath(inputPath.GetPrimPath()));
+                                        if (!targetShader) {
+                                            error = QStringLiteral("target MaterialX shader missing");
+                                        }
+                                        else {
+                                            input = targetShader.CreateInput(input.GetBaseName(), declaredType);
+                                            inputAttr = input ? input.GetAttr() : UsdAttribute();
+                                            if (!input) {
+                                                error = QStringLiteral(
+                                                    "failed to recreate MaterialX input with NodeDef type");
+                                            }
+                                            else {
+                                                repairedInputType = true;
+                                            }
+                                        }
+                                    }
                                 }
-                                else if (!input.ConnectToSource(output)) {
-                                    error = QStringLiteral("failed to connect shader input");
+
+                                if (error.isEmpty()) {
+                                    TfToken sourceShaderId;
+                                    const UsdShadeShader sourceShader(output.GetPrim());
+                                    if (sourceShader)
+                                        sourceShader.GetIdAttr().Get(&sourceShaderId);
+
+                                    const bool exactType = input.GetTypeName() == output.GetTypeName();
+                                    const bool texcoord2Compatible
+                                        = (input.GetTypeName() == SdfValueTypeNames->TexCoord2f
+                                           && output.GetTypeName() == SdfValueTypeNames->Float2)
+                                          || (input.GetTypeName() == SdfValueTypeNames->Float2
+                                              && output.GetTypeName() == SdfValueTypeNames->TexCoord2f);
+                                    const bool uvTextureRgbToColor = input.GetTypeName() == SdfValueTypeNames->Color3f
+                                                                     && output.GetTypeName()
+                                                                            == SdfValueTypeNames->Float3
+                                                                     && sourceShaderId == TfToken("UsdUVTexture")
+                                                                     && output.GetBaseName() == TfToken("rgb");
+
+                                    if (!exactType && !texcoord2Compatible && !uvTextureRgbToColor) {
+                                        error = QStringLiteral("shader socket types are incompatible: %1 -> %2")
+                                                    .arg(QString::fromStdString(
+                                                             output.GetTypeName().GetAsToken().GetString()),
+                                                         QString::fromStdString(
+                                                             input.GetTypeName().GetAsToken().GetString()));
+                                    }
+                                    else if (!input.ConnectToSource(output)) {
+                                        error = QStringLiteral("failed to connect shader input");
+                                    }
+                                    else {
+                                        *captured = true;
+                                        success = true;
+                                        path::appendUnique(changed, inputPath.GetPrimPath());
+                                        path::appendUnique(changed, sourceOutputPath.GetPrimPath());
+                                    }
                                 }
-                                else {
-                                    *captured = true;
-                                    success = true;
-                                    path::appendUnique(changed, inputPath.GetPrimPath());
-                                    path::appendUnique(changed, sourceOutputPath.GetPrimPath());
+
+                                if (!success && repairedInputType) {
+                                    QString restoreError;
+                                    if (!restoreShaderInputProperty(editLayer, *state, restoreError) && error.isEmpty())
+                                        error = restoreError;
                                 }
                             }
                         }
@@ -2339,7 +2420,162 @@ connectShaderNode(const SdfPath& inputPath, const QString& shaderId, const QStri
 Command
 connectMaterialXNode(const SdfPath& inputPath, const QString& nodeDef, const QString& nodeName)
 {
-    return connectShaderNode(inputPath, nodeDef, nodeName, TfToken("out"));
+    struct State {
+        ShaderInputPropertyState input;
+        SdfPath nodePath;
+        bool captured = false;
+    };
+
+    auto state = std::make_shared<State>();
+
+    return Command(
+        [inputPath, nodeDef, nodeName, state](Session* session) {
+            if (!session || !inputPath.IsPropertyPath() || nodeDef.isEmpty())
+                return;
+
+            command::beginDeferred(session, "Connect MaterialX node", 1);
+            command::runWorker([session, inputPath, nodeDef, nodeName, state]() {
+                bool success = false;
+                QString error;
+                QList<SdfPath> changed;
+
+                {
+                    WRITE_LOCKER(locker, session->stageLock(), "stageLock");
+                    const UsdStageRefPtr stage = session->stageUnsafe();
+                    QString editError;
+                    const SdfLayerHandle editLayer = currentEditLayer(stage, editError);
+                    if (!stage || !editLayer) {
+                        error = !editError.isEmpty() ? editError : QStringLiteral("stage missing");
+                    }
+                    else {
+                        const UsdAttribute inputAttr = stage->GetAttributeAtPath(inputPath);
+                        const UsdShadeInput targetInput(inputAttr);
+                        if (!targetInput) {
+                            error = QStringLiteral("shader input missing: %1").arg(pathText(inputPath));
+                        }
+                        else {
+                            MaterialXNodeDefinition definition;
+                            if (!MaterialUtils::materialXNodeDefinition(nodeDef, &definition)) {
+                                error = QStringLiteral("MaterialX NodeDef not found: %1").arg(nodeDef);
+                            }
+                            else {
+                                const SdfValueTypeName outputType
+                                    = MaterialUtils::materialXPortType(definition, QStringLiteral("out"), true);
+                                if (outputType.GetAsToken().IsEmpty()) {
+                                    error = QStringLiteral("MaterialX NodeDef has no typed out output: %1").arg(nodeDef);
+                                }
+                                else if (targetInput.GetTypeName() != outputType) {
+                                    error = QStringLiteral("shader socket types are incompatible: %1 -> %2")
+                                                .arg(QString::fromStdString(outputType.GetAsToken().GetString()),
+                                                     QString::fromStdString(
+                                                         targetInput.GetTypeName().GetAsToken().GetString()));
+                                }
+                                else {
+                                    if (!state->captured) {
+                                        if (!captureShaderInputProperty(editLayer, inputPath, state->input, error)) {
+                                            // error already set
+                                        }
+                                        else {
+                                            const QString base = nodeName.isEmpty()
+                                                                     ? (definition.node.isEmpty()
+                                                                            ? QStringLiteral("MaterialXNode")
+                                                                            : definition.node)
+                                                                     : nodeName;
+                                            state->nodePath
+                                                = stage::buildChildPath(stage, inputPath.GetPrimPath().GetParentPath(),
+                                                                        base, error);
+                                            state->captured = !state->nodePath.IsEmpty();
+                                        }
+                                    }
+
+                                    if (state->captured && error.isEmpty()) {
+                                        UsdEditContext context(stage, UsdEditTarget(editLayer));
+                                        UsdShadeShader shader = UsdShadeShader::Define(stage, state->nodePath);
+                                        if (!shader) {
+                                            error = QStringLiteral("failed to create MaterialX shader node");
+                                        }
+                                        else if (!MaterialUtils::authorMaterialXNodeInterface(shader, definition,
+                                                                                              error)) {
+                                            // error already set
+                                        }
+                                        else {
+                                            const UsdShadeOutput output = shader.GetOutput(TfToken("out"));
+                                            if (!output || !targetInput.ConnectToSource(output)) {
+                                                error = QStringLiteral("failed to connect MaterialX shader node");
+                                            }
+                                            else {
+                                                success = true;
+                                                path::appendUnique(changed, inputPath.GetPrimPath());
+                                                path::appendUnique(changed, state->nodePath);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        if (!success && state->captured && !state->nodePath.IsEmpty()) {
+                            stage::removePrimSpec(editLayer, state->nodePath);
+                            QString restoreError;
+                            restoreShaderInputProperty(editLayer, state->input, restoreError);
+                            state->captured = false;
+                            state->nodePath = SdfPath();
+                            if (error.isEmpty())
+                                error = restoreError;
+                        }
+                    }
+                }
+
+                command::queueToSession(session, [session, changed, success, error]() {
+                    using Status = Session::Notify::Status;
+                    const QString message = success ? QStringLiteral("MaterialX node connected")
+                                                    : appendError("Connect MaterialX node failed", error);
+                    command::finishDeferred(session, message, changed, success ? Status::Success : Status::Error);
+                    if (!success)
+                        session->notifyStatus(Status::Error, QStringLiteral("Connect MaterialX node failed"), error);
+                });
+            });
+        },
+        [state](Session* session) {
+            if (!session || !state->captured || state->nodePath.IsEmpty())
+                return;
+
+            command::beginDeferred(session, "Undo connect MaterialX node", 1);
+            command::runWorker([session, state]() {
+                bool success = false;
+                QString error;
+                QList<SdfPath> changed;
+                {
+                    WRITE_LOCKER(locker, session->stageLock(), "stageLock");
+                    const UsdStageRefPtr stage = session->stageUnsafe();
+                    QString editError;
+                    const SdfLayerHandle editLayer = currentEditLayer(stage, editError);
+                    if (!stage || !editLayer) {
+                        error = !editError.isEmpty() ? editError : QStringLiteral("stage missing");
+                    }
+                    else {
+                        if (!stage::removePrimSpec(editLayer, state->nodePath))
+                            error = QStringLiteral("failed to remove MaterialX node: %1").arg(pathText(state->nodePath));
+
+                        QString restoreError;
+                        if (!restoreShaderInputProperty(editLayer, state->input, restoreError) && error.isEmpty())
+                            error = restoreError;
+
+                        success = error.isEmpty();
+                        path::appendUnique(changed, state->input.propertyPath.GetPrimPath());
+                        path::appendUnique(changed, state->nodePath);
+                    }
+                }
+
+                command::queueToSession(session, [session, changed, success, error]() {
+                    using Status = Session::Notify::Status;
+                    command::finishDeferred(session,
+                                            success ? "MaterialX node connection undone"
+                                                    : appendError("Undo MaterialX node connection failed", error),
+                                            changed, success ? Status::Success : Status::Error);
+                });
+            });
+        });
 }
 
 Command
@@ -2440,24 +2676,10 @@ newMaterialXNode(const SdfPath& materialPath, const MaterialXNodeDefinition& def
             if (!shader)
                 return;
 
-            shader.CreateIdAttr(VtValue(TfToken(qt::QStringToString(definition.nodeDef))));
-
-            for (const MaterialXPortDefinition& port : definition.inputs) {
-                const SdfValueTypeName type = MaterialUtils::sdfTypeForMaterialX(port.type);
-                UsdShadeInput input = shader.CreateInput(TfToken(qt::QStringToString(port.name)), type);
-                const VtValue defaultValue = MaterialUtils::materialXDefaultValue(port.type, port.value);
-                if (input && !defaultValue.IsEmpty())
-                    input.Set(defaultValue);
-            }
-
-            if (!definition.outputs.isEmpty()) {
-                for (const MaterialXPortDefinition& port : definition.outputs) {
-                    shader.CreateOutput(TfToken(qt::QStringToString(port.name)),
-                                        MaterialUtils::sdfTypeForMaterialX(port.type));
-                }
-            }
-            else {
-                shader.CreateOutput(TfToken("out"), MaterialUtils::sdfTypeForMaterialX(definition.outputType));
+            if (!MaterialUtils::authorMaterialXNodeInterface(shader, definition, error)) {
+                stage::removePrimSpec(editLayer, state->nodePath);
+                state->captured = false;
+                state->nodePath = SdfPath();
             }
         },
         [state](Session* session) {

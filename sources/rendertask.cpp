@@ -22,125 +22,119 @@ namespace stageviz {
 
 namespace {
 
-constexpr HgiFormat kAOFormat = HgiFormatFloat16Vec4;
-constexpr int kSpiralTurnCount = 7;
+    constexpr HgiFormat kAOFormat = HgiFormatFloat16Vec4;
+    constexpr int kSpiralTurnCount = 7;
 
-int
-sampleCount(ViewState::AmbientOcclusionQuality quality)
-{
-    switch (quality) {
-    case ViewState::AmbientOcclusionLow: return 8;
-    case ViewState::AmbientOcclusionMedium: return 16;
-    case ViewState::AmbientOcclusionUltra: return 32;
-    case ViewState::AmbientOcclusionHigh:
-    default: return 24;
+    int sampleCount(ViewState::AmbientOcclusionQuality quality)
+    {
+        switch (quality) {
+        case ViewState::AmbientOcclusionLow: return 8;
+        case ViewState::AmbientOcclusionMedium: return 16;
+        case ViewState::AmbientOcclusionUltra: return 32;
+        case ViewState::AmbientOcclusionHigh:
+        default: return 24;
+        }
     }
-}
 
-struct RawConstants {
-    GfVec4f clipInfo = GfVec4f(0.0f);
-    GfVec4f projInfo = GfVec4f(0.0f);
-    GfVec2i screenSize = GfVec2i(1);
-    float contactAmount = 1.0f;
-    float contactRadius = 8.0f;
-    float broadAmount = 0.4f;
-    float broadRadius = 48.0f;
-    float normalBias = 0.04f;
-    float falloff = 2.0f;
-    float contrast = 0.5f;
-    int sampleCount = 24;
-    int spiralTurnCount = kSpiralTurnCount;
-    int prefilterEnabled = 1;
-    int orthographic = 0;
-};
+    struct RawConstants {
+        GfVec4f clipInfo = GfVec4f(0.0f);
+        GfVec4f projInfo = GfVec4f(0.0f);
+        GfVec2i screenSize = GfVec2i(1);
+        float contactAmount = 1.0f;
+        float contactRadius = 8.0f;
+        float broadAmount = 0.4f;
+        float broadRadius = 48.0f;
+        float normalBias = 0.04f;
+        float falloff = 2.0f;
+        float contrast = 0.5f;
+        int sampleCount = 24;
+        int spiralTurnCount = kSpiralTurnCount;
+        int prefilterEnabled = 1;
+        int orthographic = 0;
+    };
 
-struct BlurConstants {
-    GfVec2i screenSize = GfVec2i(1);
-    GfVec2i offset = GfVec2i(1, 0);
-    float edgeSharpness = 1.0f;
-    float blurRadius = 8.0f;
-    float padding0 = 0.0f;
-    float padding1 = 0.0f;
-};
+    struct BlurConstants {
+        GfVec2i screenSize = GfVec2i(1);
+        GfVec2i offset = GfVec2i(1, 0);
+        float edgeSharpness = 1.0f;
+        float blurRadius = 8.0f;
+        float padding0 = 0.0f;
+        float padding1 = 0.0f;
+    };
 
-struct CompositeConstants {
-    GfVec2i screenSize = GfVec2i(1);
-    int debugMode = 0;
-    int padding0 = 0;
-};
+    struct CompositeConstants {
+        GfVec2i screenSize = GfVec2i(1);
+        int debugMode = 0;
+        int padding0 = 0;
+    };
 
-HgiShaderFunctionTextureDesc
-textureDesc(const char* name, uint32_t bindIndex, HgiFormat format)
-{
-    HgiShaderFunctionTextureDesc desc;
-    desc.nameInShader = name;
-    desc.bindIndex = bindIndex;
-    desc.dimensions = 2;
-    desc.format = format;
-    return desc;
-}
+    HgiShaderFunctionTextureDesc textureDesc(const char* name, uint32_t bindIndex, HgiFormat format)
+    {
+        HgiShaderFunctionTextureDesc desc;
+        desc.nameInShader = name;
+        desc.bindIndex = bindIndex;
+        desc.dimensions = 2;
+        desc.format = format;
+        return desc;
+    }
 
-HgiShaderFunctionDesc
-baseFragmentDesc(const char* debugName)
-{
-    HgiShaderFunctionDesc desc;
-    desc.debugName = debugName;
-    desc.shaderStage = HgiShaderStageFragment;
-    HgiShaderFunctionAddStageInput(&desc, "uvOut", "vec2");
-    HgiShaderFunctionAddStageOutput(&desc, "hd_FragColor", "vec4");
-    return desc;
-}
+    HgiShaderFunctionDesc baseFragmentDesc(const char* debugName)
+    {
+        HgiShaderFunctionDesc desc;
+        desc.debugName = debugName;
+        desc.shaderStage = HgiShaderStageFragment;
+        HgiShaderFunctionAddStageInput(&desc, "uvOut", "vec2");
+        HgiShaderFunctionAddStageOutput(&desc, "hd_FragColor", "vec4");
+        return desc;
+    }
 
-HgiShaderFunctionDesc
-rawDesc(HgiFormat depthFormat)
-{
-    HgiShaderFunctionDesc desc = baseFragmentDesc("Stageviz Ambient Occlusion Raw");
-    desc.textures.push_back(textureDesc("depthIn", 0, depthFormat));
+    HgiShaderFunctionDesc rawDesc(HgiFormat depthFormat)
+    {
+        HgiShaderFunctionDesc desc = baseFragmentDesc("Stageviz Ambient Occlusion Raw");
+        desc.textures.push_back(textureDesc("depthIn", 0, depthFormat));
 
-    HgiShaderFunctionAddConstantParam(&desc, "uClipInfo", "vec4");
-    HgiShaderFunctionAddConstantParam(&desc, "uProjInfo", "vec4");
-    HgiShaderFunctionAddConstantParam(&desc, "uScreenSize", "ivec2");
-    HgiShaderFunctionAddConstantParam(&desc, "uContactAmount", "float");
-    HgiShaderFunctionAddConstantParam(&desc, "uContactRadius", "float");
-    HgiShaderFunctionAddConstantParam(&desc, "uBroadAmount", "float");
-    HgiShaderFunctionAddConstantParam(&desc, "uBroadRadius", "float");
-    HgiShaderFunctionAddConstantParam(&desc, "uNormalBias", "float");
-    HgiShaderFunctionAddConstantParam(&desc, "uFalloff", "float");
-    HgiShaderFunctionAddConstantParam(&desc, "uContrast", "float");
-    HgiShaderFunctionAddConstantParam(&desc, "uSampleCount", "int");
-    HgiShaderFunctionAddConstantParam(&desc, "uSpiralTurnCount", "int");
-    HgiShaderFunctionAddConstantParam(&desc, "uIsPrefilterEnabled", "int");
-    HgiShaderFunctionAddConstantParam(&desc, "uIsOrthographic", "int");
-    return desc;
-}
+        HgiShaderFunctionAddConstantParam(&desc, "uClipInfo", "vec4");
+        HgiShaderFunctionAddConstantParam(&desc, "uProjInfo", "vec4");
+        HgiShaderFunctionAddConstantParam(&desc, "uScreenSize", "ivec2");
+        HgiShaderFunctionAddConstantParam(&desc, "uContactAmount", "float");
+        HgiShaderFunctionAddConstantParam(&desc, "uContactRadius", "float");
+        HgiShaderFunctionAddConstantParam(&desc, "uBroadAmount", "float");
+        HgiShaderFunctionAddConstantParam(&desc, "uBroadRadius", "float");
+        HgiShaderFunctionAddConstantParam(&desc, "uNormalBias", "float");
+        HgiShaderFunctionAddConstantParam(&desc, "uFalloff", "float");
+        HgiShaderFunctionAddConstantParam(&desc, "uContrast", "float");
+        HgiShaderFunctionAddConstantParam(&desc, "uSampleCount", "int");
+        HgiShaderFunctionAddConstantParam(&desc, "uSpiralTurnCount", "int");
+        HgiShaderFunctionAddConstantParam(&desc, "uIsPrefilterEnabled", "int");
+        HgiShaderFunctionAddConstantParam(&desc, "uIsOrthographic", "int");
+        return desc;
+    }
 
-HgiShaderFunctionDesc
-blurDesc()
-{
-    HgiShaderFunctionDesc desc = baseFragmentDesc("Stageviz Ambient Occlusion Blur");
-    desc.textures.push_back(textureDesc("aoIn", 0, kAOFormat));
+    HgiShaderFunctionDesc blurDesc()
+    {
+        HgiShaderFunctionDesc desc = baseFragmentDesc("Stageviz Ambient Occlusion Blur");
+        desc.textures.push_back(textureDesc("aoIn", 0, kAOFormat));
 
-    HgiShaderFunctionAddConstantParam(&desc, "uScreenSize", "ivec2");
-    HgiShaderFunctionAddConstantParam(&desc, "uOffset", "ivec2");
-    HgiShaderFunctionAddConstantParam(&desc, "uEdgeSharpness", "float");
-    HgiShaderFunctionAddConstantParam(&desc, "uBlurRadius", "float");
-    HgiShaderFunctionAddConstantParam(&desc, "uPadding0", "float");
-    HgiShaderFunctionAddConstantParam(&desc, "uPadding1", "float");
-    return desc;
-}
+        HgiShaderFunctionAddConstantParam(&desc, "uScreenSize", "ivec2");
+        HgiShaderFunctionAddConstantParam(&desc, "uOffset", "ivec2");
+        HgiShaderFunctionAddConstantParam(&desc, "uEdgeSharpness", "float");
+        HgiShaderFunctionAddConstantParam(&desc, "uBlurRadius", "float");
+        HgiShaderFunctionAddConstantParam(&desc, "uPadding0", "float");
+        HgiShaderFunctionAddConstantParam(&desc, "uPadding1", "float");
+        return desc;
+    }
 
-HgiShaderFunctionDesc
-compositeDesc(HgiFormat colorFormat)
-{
-    HgiShaderFunctionDesc desc = baseFragmentDesc("Stageviz Ambient Occlusion Composite");
-    desc.textures.push_back(textureDesc("colorIn", 0, colorFormat));
-    desc.textures.push_back(textureDesc("aoIn", 1, kAOFormat));
+    HgiShaderFunctionDesc compositeDesc(HgiFormat colorFormat)
+    {
+        HgiShaderFunctionDesc desc = baseFragmentDesc("Stageviz Ambient Occlusion Composite");
+        desc.textures.push_back(textureDesc("colorIn", 0, colorFormat));
+        desc.textures.push_back(textureDesc("aoIn", 1, kAOFormat));
 
-    HgiShaderFunctionAddConstantParam(&desc, "uScreenSize", "ivec2");
-    HgiShaderFunctionAddConstantParam(&desc, "uDebugMode", "int");
-    HgiShaderFunctionAddConstantParam(&desc, "uPadding0", "int");
-    return desc;
-}
+        HgiShaderFunctionAddConstantParam(&desc, "uScreenSize", "ivec2");
+        HgiShaderFunctionAddConstantParam(&desc, "uDebugMode", "int");
+        HgiShaderFunctionAddConstantParam(&desc, "uPadding0", "int");
+        return desc;
+    }
 
 }  // namespace
 
@@ -160,10 +154,7 @@ public:
         composite.SetDepthState(depthState);
     }
 
-    ~Shader()
-    {
-        destroyTextures();
-    }
+    ~Shader() { destroyTextures(); }
 
     void destroyTextures()
     {
@@ -274,10 +265,10 @@ operator<<(std::ostream& out, const RenderTaskParams& params)
 {
     const auto& ao = params.ambientOcclusion;
     out << "RenderTaskParams(ambientOcclusion=" << ao.enabled << ", contact=" << ao.contactAmount << "@"
-        << ao.contactRadius << "px, broad=" << ao.broadAmount << "@" << ao.broadRadius << "px, quality="
-        << static_cast<int>(ao.quality) << ", debug=" << static_cast<int>(ao.debugMode) << ", nearClip="
-        << params.nearClip << ", farClip=" << params.farClip << ", orthographic=" << params.orthographic
-        << ", shaderPath=" << params.shaderPath.GetString() << ")";
+        << ao.contactRadius << "px, broad=" << ao.broadAmount << "@" << ao.broadRadius
+        << "px, quality=" << static_cast<int>(ao.quality) << ", debug=" << static_cast<int>(ao.debugMode)
+        << ", nearClip=" << params.nearClip << ", farClip=" << params.farClip
+        << ", orthographic=" << params.orthographic << ", shaderPath=" << params.shaderPath.GetString() << ")";
     return out;
 }
 
@@ -360,8 +351,8 @@ RenderTask::Execute(HdTaskContext* ctx)
     rawConstants.clipInfo = GfVec4f(nearClip * farClip, nearClip - farClip, farClip,
                                     0.5f * static_cast<float>(screenSize[0]) * std::abs(p00));
     rawConstants.projInfo = GfVec4f(-2.0f / (static_cast<float>(screenSize[0]) * p00),
-                                    -2.0f / (static_cast<float>(screenSize[1]) * p11),
-                                    (1.0f - p[2][0]) / p00, (1.0f + p[2][1]) / p11);
+                                    -2.0f / (static_cast<float>(screenSize[1]) * p11), (1.0f - p[2][0]) / p00,
+                                    (1.0f + p[2][1]) / p11);
     rawConstants.screenSize = screenSize;
     rawConstants.contactAmount = std::max(0.0f, ao.contactAmount);
     rawConstants.contactRadius = std::max(1.0f, ao.contactRadius);

@@ -357,8 +357,10 @@ ContextMenu::exec(QWidget* parent, ViewContext* context, UsdStageRefPtr usdStage
     menu.addSeparator();
 
     QAction* newXform = menu.addAction("New xform");
+    QAction* duplicateSelected = menu.addAction("Duplicate");
     QAction* deleteSelected = menu.addAction("Delete");
     newXform->setEnabled(!createParentPath.IsEmpty());
+    duplicateSelected->setEnabled(!paths.isEmpty());
     deleteSelected->setEnabled(!paths.isEmpty());
 
     QAction* chosen = menu.exec(globalPos);
@@ -436,6 +438,11 @@ ContextMenu::exec(QWidget* parent, ViewContext* context, UsdStageRefPtr usdStage
 
     if (chosen == newXform) {
         context->run(new Command(newXformPath(createParentPath, "Xform")));
+        return;
+    }
+
+    if (chosen == duplicateSelected) {
+        context->run(new Command(duplicatePaths(paths)));
         return;
     }
 

@@ -371,10 +371,11 @@ ImagingGLWidgetPrivate::initContext()
         updateRenderEngineSettings();
         d.glwidget->update();
     });
-    connect(viewState(), &ViewState::ambientOcclusionDebugModeChanged, this, [this](ViewState::AmbientOcclusionDebugMode) {
-        updateRenderEngineSettings();
-        d.glwidget->update();
-    });
+    connect(viewState(), &ViewState::ambientOcclusionDebugModeChanged, this,
+            [this](ViewState::AmbientOcclusionDebugMode) {
+                updateRenderEngineSettings();
+                d.glwidget->update();
+            });
     connect(viewState(), &ViewState::sceneLightsEnabledChanged, this, [this](bool) {
         updateRenderEngineSettings();
         d.glwidget->update();

@@ -49,6 +49,7 @@
 #include <cmath>
 #include <pxr/usd/usd/primRange.h>
 #include <pxr/usd/usdGeom/gprim.h>
+#include <pxr/usd/usdShade/materialBindingAPI.h>
 
 // generated files
 #include "ui_materialbrowser.h"
@@ -69,6 +70,7 @@ public:
     void showViewMenu();
     void showContextMenu(QAbstractItemView* view, const QPoint& position);
     void assignMaterial(const MaterialEntry& material);
+    void selectMaterial(const MaterialEntry& material);
     void beginRename(QAbstractItemView* view, int row = -1);
     void commitRename(int row, const QString& name);
     QAbstractItemView* currentView() const;
@@ -364,9 +366,7 @@ MaterialBrowserPrivate::showContextMenu(QAbstractItemView* view, const QPoint& p
     QAction* assignAction = menu.addAction(tr("Assign"));
     assignAction->setEnabled(hasSceneSelection);
 
-    menu.addSeparator();
-
-    QAction* duplicateMaterial = menu.addAction(tr("Duplicate"));
+    QAction* selectAction = menu.addAction(tr("Select"));
 
     menu.addSeparator();
 
@@ -389,6 +389,7 @@ MaterialBrowserPrivate::showContextMenu(QAbstractItemView* view, const QPoint& p
     newMenu->addSeparator();
     QAction* newMaterialXFile = newMenu->addAction(tr("MaterialX File..."));
 
+    QAction* duplicateMaterial = menu.addAction(tr("Duplicate"));
     QAction* deleteMaterial = menu.addAction(tr("Delete"));
     // Delete still operates on browser selection, so an RMB click on another
     // material must never delete the previously selected material.
@@ -400,6 +401,9 @@ MaterialBrowserPrivate::showContextMenu(QAbstractItemView* view, const QPoint& p
 
     if (action == assignAction) {
         assignMaterial(contextMaterial);
+    }
+    else if (action == selectAction) {
+        selectMaterial(contextMaterial);
     }
     else if (action == duplicateMaterial) {
         // Duplicate only the RMB material and preserve the current scene/browser selection.
@@ -514,6 +518,34 @@ MaterialBrowserPrivate::assignMaterial(const MaterialEntry& material)
         return;
 
     session()->commandStack()->run(new Command(bindMaterial(paths, material.materialPath)));
+}
+
+
+void
+MaterialBrowserPrivate::selectMaterial(const MaterialEntry& material)
+{
+    if (material.materialPath.IsEmpty())
+        return;
+
+    QList<SdfPath> paths;
+
+    {
+        READ_LOCKER(locker, session()->stageLock(), "stageLock");
+        const UsdStageRefPtr stage = session()->stageUnsafe();
+        if (!stage)
+            return;
+
+        for (const UsdPrim& prim : stage->Traverse()) {
+            if (!prim || !prim.IsValid() || prim.IsInstanceProxy() || !prim.IsA<UsdGeomGprim>())
+                continue;
+
+            const UsdShadeMaterial boundMaterial = UsdShadeMaterialBindingAPI(prim).ComputeBoundMaterial();
+            if (boundMaterial && boundMaterial.GetPath() == material.materialPath)
+                paths.append(prim.GetPath());
+        }
+    }
+
+    session()->commandStack()->run(new Command(selectPaths(paths)));
 }
 
 

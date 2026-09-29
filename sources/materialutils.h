@@ -289,6 +289,26 @@ public:
     static QList<MaterialXNodeDefinition> materialXNodeDefinitions();
 
     /**
+     * @brief Resolves one canonical MaterialX NodeDef from the discovered catalogue.
+     *
+     * The returned definition uses MaterialX XML for discovery/UI metadata and
+     * Sdr for the authoritative UsdShade port interface and USD storage types.
+     */
+    static bool materialXNodeDefinition(const QString& nodeDef, MaterialXNodeDefinition* definition);
+
+    /**
+     * @brief Returns the USD storage type for a MaterialX NodeDef input or output.
+     */
+    static SdfValueTypeName materialXPortType(const MaterialXNodeDefinition& definition, const QString& portName,
+                                              bool output);
+
+    /**
+     * @brief Authors a complete MaterialX shader interface from a canonical NodeDef.
+     */
+    static bool authorMaterialXNodeInterface(UsdShadeShader& shader, const MaterialXNodeDefinition& definition,
+                                             QString& error);
+
+    /**
      * @brief Returns MaterialX NodeDefs whose outputs are compatible with a target type.
      */
     static QList<MaterialXNodeDefinition> compatibleMaterialXNodes(const SdfValueTypeName& targetType);

@@ -166,7 +166,10 @@ Command
 connectShaderNode(const SdfPath& inputPath, const QString& shaderId, const QString& nodeName,
                   const TfToken& outputName);
 
-/** Create a MaterialX shader node and connect its out output to an input. */
+/**
+ * Create a MaterialX shader node from its NodeDef and connect its typed out output to an input.
+ * The complete declared input/output interface is authored so USD socket types match MaterialX.
+ */
 Command
 connectMaterialXNode(const SdfPath& inputPath, const QString& nodeDef, const QString& nodeName);
 
@@ -175,7 +178,10 @@ Command
 newShaderNode(const SdfPath& materialPath, const QString& shaderId, const QString& nodeName, const TfToken& outputName,
               const SdfValueTypeName& outputType);
 
-/** Create a free MaterialX node below a material without connecting it. */
+/**
+ * Create a free MaterialX node below a material without connecting it.
+ * The complete typed NodeDef interface and declared defaults are authored.
+ */
 Command
 newMaterialXNode(const SdfPath& materialPath, const MaterialXNodeDefinition& definition);
 

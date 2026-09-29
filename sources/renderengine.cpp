@@ -4,9 +4,9 @@
 
 #include "renderengine.h"
 #include "paths.h"
-#include "rendertask.h"
 #include "qtutils.h"
 #include "rendersceneindex.h"
+#include "rendertask.h"
 #include <QColorSpace>
 #include <QCoreApplication>
 #include <QDir>
@@ -28,8 +28,8 @@
 #include <pxr/imaging/hd/mergingSceneIndex.h>
 #include <pxr/imaging/hd/renderIndex.h>
 #include <pxr/imaging/hd/sceneDelegate.h>
-#include <pxr/imaging/hd/tokens.h>
 #include <pxr/imaging/hd/sceneIndexPluginRegistry.h>
+#include <pxr/imaging/hd/tokens.h>
 #include <pxr/imaging/hdx/colorCorrectionTask.h>
 #include <pxr/imaging/hdx/presentTask.h>
 #include <pxr/imaging/hdx/renderSetupTask.h>
@@ -269,7 +269,7 @@ namespace {
         }
 
         void renderBatchWithRenderTask(const SdfPathVector& paths, const UsdImagingGLRenderParams& params,
-                                 const RenderTaskParams& renderTaskParams)
+                                       const RenderTaskParams& renderTaskParams)
         {
             if (!_taskControllerSceneIndex || paths.empty())
                 return;
@@ -901,7 +901,7 @@ RenderEngine::Private::render()
     RenderTaskParams renderTaskParams;
     renderTaskParams.ambientOcclusion = settings.ambientOcclusion;
     renderTaskParams.ambientOcclusion.enabled = settings.ambientOcclusion.enabled && settings.aov == HdAovTokens->color
-                                                  && settings.drawMode != UsdImagingGLDrawMode::DRAW_WIREFRAME_ON_SURFACE;
+                                                && settings.drawMode != UsdImagingGLDrawMode::DRAW_WIREFRAME_ON_SURFACE;
     renderTaskParams.projectionMatrix = GfMatrix4f(projectionMatrix);
 
     const GfRange1d nearFar = frustum.GetNearFar();
@@ -939,6 +939,11 @@ RenderEngine::Private::render()
         UsdImagingGLRenderParams auxiliaryParams = documentParams;
         auxiliaryParams.highlight = false;
         auxiliaryParams.clearColor = GfVec4f(0.0f);
+        // Viewport support geometry must remain independent of document
+        // refinement. The grid and helpers use fixed authored geometry and
+        // should not change when scene complexity is adjusted for NURBS or
+        // other refinable document primitives.
+        auxiliaryParams.complexity = 1.0;
 
         const UsdPrim auxiliaryRoot = auxiliary->GetPseudoRoot();
         auxiliaryHgi->StartFrame();

@@ -26,7 +26,6 @@ class ViewStatePrivate;
 class ViewState : public QObject {
     Q_OBJECT
 public:
-
     /**
      * @brief Viewport rendering modes.
      */
@@ -89,22 +88,69 @@ public:
      * device pixels so the apparent effect remains stable while navigating.
      */
     struct AmbientOcclusionSettings {
+        /**
+         * @brief Enables or disables ambient occlusion.
+         */
         bool enabled = false;
-        // Tight local occlusion for contacts, seams, and small recesses.
+
+        /**
+         * @brief Strength of tight contact occlusion.
+         */
         float contactAmount = 1.0f;
+
+        /**
+         * @brief Contact occlusion radius in device pixels.
+         */
         float contactRadius = 10.0f;
-        // Softer large-scale occlusion for overall form definition.
+
+        /**
+         * @brief Strength of broad large-scale occlusion.
+         */
         float broadAmount = 0.35f;
+
+        /**
+         * @brief Broad occlusion radius in device pixels.
+         */
         float broadRadius = 80.0f;
-        // Controls the shape and response of the obscurance.
+
+        /**
+         * @brief Normal-facing bias used to suppress self-occlusion.
+         */
         float normalBias = 0.06f;
+
+        /**
+         * @brief Distance falloff applied to the obscurance response.
+         */
         float falloff = 2.0f;
-        float contrast = 1.0f;
-        // Depth-aware filtering.
+
+        /**
+         * @brief Contrast applied to the final ambient occlusion response.
+         */
+        float contrast = 0.05f;
+
+        /**
+         * @brief Enables or disables depth-aware AO filtering.
+         */
         bool blurEnabled = true;
+
+        /**
+         * @brief Radius of the AO blur in device pixels.
+         */
         float blurRadius = 8.0f;
+
+        /**
+         * @brief Controls depth-edge preservation during AO filtering.
+         */
         float edgeSharpness = 0.75f;
+
+        /**
+         * @brief Sampling quality used by the ambient occlusion pass.
+         */
         AmbientOcclusionQuality quality = AmbientOcclusionHigh;
+
+        /**
+         * @brief Debug presentation mode used for the ambient occlusion result.
+         */
         AmbientOcclusionDebugMode debugMode = AmbientOcclusionComposite;
     };
 

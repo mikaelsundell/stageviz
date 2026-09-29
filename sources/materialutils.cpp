@@ -216,7 +216,37 @@ namespace {
         return true;
     }
 
-    const MaterialXNodeDefinition* materialXNodeDefinition(const QString& shaderId);
+    QString materialXTypeForSdf(const SdfValueTypeName& type);
+
+    SdrShaderNodeConstPtr richestSdrShaderNode(const QString& shaderId)
+    {
+        if (shaderId.isEmpty())
+            return {};
+
+        SdrRegistry& registry = SdrRegistry::GetInstance();
+        const TfToken identifier(shaderId.toStdString());
+
+        SdrShaderNodeConstPtr node = nullptr;
+        size_t bestPropertyCount = 0;
+        const auto candidates = registry.GetShaderNodesByIdentifier(identifier);
+        for (const auto& candidate : candidates) {
+            if (!candidate || !candidate->IsValid())
+                continue;
+            const size_t propertyCount = candidate->GetShaderInputNames().size()
+                                         + candidate->GetShaderOutputNames().size();
+            if (!node || propertyCount > bestPropertyCount) {
+                node = candidate;
+                bestPropertyCount = propertyCount;
+            }
+        }
+
+        if (!node)
+            node = registry.GetShaderNodeByIdentifier(identifier);
+
+        return node && node->IsValid() ? node : SdrShaderNodeConstPtr();
+    }
+
+    const MaterialXNodeDefinition* materialXInterfaceFromSdr(const QString& shaderId);
 
     UsdShadeShader resolveOutputToShader(const UsdShadeOutput& output, int depth = 0)
     {
@@ -247,7 +277,7 @@ namespace {
             return {};
 
         QStringList values;
-        if (const MaterialXNodeDefinition* def = materialXNodeDefinition(shaderId)) {
+        if (const MaterialXNodeDefinition* def = materialXInterfaceFromSdr(shaderId)) {
             const QString name = QString::fromStdString(inputName.GetString());
             const auto it = std::find_if(def->inputs.cbegin(), def->inputs.cend(),
                                          [&](const MaterialXPortDefinition& port) { return port.name == name; });
@@ -351,26 +381,10 @@ namespace {
         if (shaderId.isEmpty() || inputName.IsEmpty())
             return;
 
-        SdrRegistry& registry = SdrRegistry::GetInstance();
-        const TfToken identifier(shaderId.toStdString());
-        const auto candidates = registry.GetShaderNodesByIdentifier(identifier);
-
-        for (const auto& node : candidates) {
-            if (!node || !node->IsValid())
-                continue;
-            const SdrShaderPropertyConstPtr property = node->GetShaderInput(inputName);
-            if (!property)
-                continue;
-
-            MaterialXPortDefinition port;
-            readSdrUiMetadata(property, port);
-            copyPortUiMetadata(port, info);
+        const SdrShaderNodeConstPtr node = richestSdrShaderNode(shaderId);
+        if (!node)
             return;
-        }
 
-        const SdrShaderNodeConstPtr node = registry.GetShaderNodeByIdentifier(identifier);
-        if (!node || !node->IsValid())
-            return;
         const SdrShaderPropertyConstPtr property = node->GetShaderInput(inputName);
         if (!property)
             return;
@@ -380,14 +394,13 @@ namespace {
         copyPortUiMetadata(port, info);
     }
 
-    const MaterialXNodeDefinition* materialXNodeDefinition(const QString& shaderId)
+    const MaterialXNodeDefinition* materialXInterfaceFromSdr(const QString& shaderId)
     {
         if (shaderId.isEmpty())
             return nullptr;
 
-        // Property inspection is a hot path. Do not build the complete MaterialX
-        // catalogue just to inspect one shader. Sdr already knows the parsed
-        // interface for a NodeDef and can resolve that identifier on demand.
+        // Node inspection is a hot path. Resolve only this NodeDef through Sdr.
+        // Sdr's USD type mapping is authoritative for the UsdShade interface.
         static QHash<QString, MaterialXNodeDefinition> definitions;
         static QSet<QString> missing;
 
@@ -397,25 +410,8 @@ namespace {
         if (missing.contains(shaderId))
             return nullptr;
 
-        SdrRegistry& registry = SdrRegistry::GetInstance();
-        const TfToken identifier(shaderId.toStdString());
-
-        SdrShaderNodeConstPtr node = nullptr;
-        size_t bestInputCount = 0;
-        const auto candidates = registry.GetShaderNodesByIdentifier(identifier);
-        for (const auto& candidate : candidates) {
-            if (!candidate || !candidate->IsValid())
-                continue;
-            const size_t inputCount = candidate->GetShaderInputNames().size();
-            if (!node || inputCount > bestInputCount) {
-                node = candidate;
-                bestInputCount = inputCount;
-            }
-        }
-
-        if (!node)
-            node = registry.GetShaderNodeByIdentifier(identifier);
-        if (!node || !node->IsValid()) {
+        const SdrShaderNodeConstPtr node = richestSdrShaderNode(shaderId);
+        if (!node) {
             missing.insert(shaderId);
             return nullptr;
         }
@@ -430,8 +426,12 @@ namespace {
 
             MaterialXPortDefinition port;
             port.name = QString::fromStdString(name.GetString());
-            port.type = QString::fromStdString(property->GetType().GetString());
-            const VtValue value = property->GetDefaultValue();
+            const SdfValueTypeName sdfType = property->GetTypeAsSdfType().GetSdfType();
+            port.type = materialXTypeForSdf(sdfType);
+            if (port.type.isEmpty())
+                port.type = QString::fromStdString(property->GetType().GetString());
+
+            const VtValue value = property->GetDefaultValueAsSdfType();
             if (value.IsHolding<float>())
                 port.value = QString::number(value.UncheckedGet<float>(), 'g', 9);
             else if (value.IsHolding<double>())
@@ -473,7 +473,10 @@ namespace {
 
             MaterialXPortDefinition port;
             port.name = QString::fromStdString(name.GetString());
-            port.type = QString::fromStdString(property->GetType().GetString());
+            const SdfValueTypeName sdfType = property->GetTypeAsSdfType().GetSdfType();
+            port.type = materialXTypeForSdf(sdfType);
+            if (port.type.isEmpty())
+                port.type = QString::fromStdString(property->GetType().GetString());
             def.outputs.append(port);
         }
 
@@ -904,27 +907,9 @@ MaterialUtils::authorUsdNodeDefaults(UsdShadeShader& shader, const QString& shad
     if (!shader || shaderId.isEmpty())
         return;
 
-    SdrRegistry& registry = SdrRegistry::GetInstance();
-    SdrShaderNodeConstPtr node = nullptr;
-    size_t bestPropertyCount = 0;
+    const SdrShaderNodeConstPtr node = richestSdrShaderNode(shaderId);
 
-    const TfToken identifier(shaderId.toStdString());
-    const auto candidates = registry.GetShaderNodesByIdentifier(identifier);
-    for (const auto& candidate : candidates) {
-        if (!candidate || !candidate->IsValid())
-            continue;
-
-        const size_t propertyCount = candidate->GetShaderInputNames().size() + candidate->GetShaderOutputNames().size();
-        if (!node || propertyCount > bestPropertyCount) {
-            node = candidate;
-            bestPropertyCount = propertyCount;
-        }
-    }
-
-    if (!node)
-        node = registry.GetShaderNodeByIdentifier(identifier);
-
-    if (node && node->IsValid()) {
+    if (node) {
         for (const TfToken& inputName : node->GetShaderInputNames()) {
             const SdrShaderPropertyConstPtr property = node->GetShaderInput(inputName);
             if (!property)
@@ -1187,11 +1172,12 @@ MaterialUtils::nodeInfo(UsdStageRefPtr stage, const SdfPath& nodePath)
     // not only attributes already authored on the USD prim. Start with the
     // declared interface and then overlay the composed USD values/connections.
     if (result.shaderId.startsWith(QStringLiteral("ND_"))) {
-        const MaterialXNodeDefinition* definition = materialXNodeDefinition(result.shaderId);
+        MaterialXNodeDefinition definition;
 
-        if (definition) {
+        if (materialXNodeDefinition(result.shaderId, &definition)) {
             QHash<QString, int> byName;
-            for (const MaterialXPortDefinition& port : definition->inputs) {
+
+            for (const MaterialXPortDefinition& port : definition.inputs) {
                 if (port.name.isEmpty() || byName.contains(port.name))
                     continue;
 
@@ -1376,32 +1362,8 @@ namespace {
         if (def.nodeDef.isEmpty())
             return;
 
-        SdrRegistry& registry = SdrRegistry::GetInstance();
-
-        // OpenUSD 25.11 has no public ParseAll() on SdrRegistry.
-        // GetShaderNodesByIdentifier() parses the matching discovered nodes on demand,
-        // which is exactly what we need here and avoids front-loading the whole registry.
-
-        // A NodeDef identifier may be represented by more than one Sdr source type.
-        // Do not accept the registry's arbitrary first match if it happens to be the
-        // sparse representation. Prefer the parsed representation with the richest
-        // interface so the authored UsdShade node gets the complete MaterialX ports.
-        SdrShaderNodeConstPtr node = nullptr;
-        size_t bestInputCount = 0;
-        const auto candidates = registry.GetShaderNodesByIdentifier(TfToken(def.nodeDef.toStdString()));
-        for (const auto& candidate : candidates) {
-            if (!candidate || !candidate->IsValid())
-                continue;
-            const size_t inputCount = candidate->GetShaderInputNames().size();
-            if (!node || inputCount > bestInputCount) {
-                node = candidate;
-                bestInputCount = inputCount;
-            }
-        }
-
+        const SdrShaderNodeConstPtr node = richestSdrShaderNode(def.nodeDef);
         if (!node)
-            node = registry.GetShaderNodeByIdentifier(TfToken(def.nodeDef.toStdString()));
-        if (!node || !node->IsValid())
             return;
 
         auto mergePort = [](QList<MaterialXPortDefinition>& ports, const MaterialXPortDefinition& incoming) {
@@ -1411,7 +1373,9 @@ namespace {
                 ports.append(incoming);
                 return;
             }
-            if (it->type.isEmpty())
+            // Sdr is authoritative for the USD storage type. XML contributes
+            // discovery, grouping, labels, enums and inheritance metadata.
+            if (!incoming.type.isEmpty())
                 it->type = incoming.type;
             if (it->value.isEmpty())
                 it->value = incoming.value;
@@ -1433,10 +1397,12 @@ namespace {
 
             MaterialXPortDefinition port;
             port.name = QString::fromStdString(name.GetString());
-            port.type = QString::fromStdString(property->GetType().GetString());
-            port.value = materialXDefaultString(property->GetDefaultValue());
+            const SdfValueTypeName sdfType = property->GetTypeAsSdfType().GetSdfType();
+            port.type = materialXTypeForSdf(sdfType);
+            if (port.type.isEmpty())
+                port.type = QString::fromStdString(property->GetType().GetString());
+            port.value = materialXDefaultString(property->GetDefaultValueAsSdfType());
             readSdrUiMetadata(property, port);
-
             mergePort(def.inputs, port);
         }
 
@@ -1447,11 +1413,14 @@ namespace {
 
             MaterialXPortDefinition port;
             port.name = QString::fromStdString(name.GetString());
-            port.type = QString::fromStdString(property->GetType().GetString());
+            const SdfValueTypeName sdfType = property->GetTypeAsSdfType().GetSdfType();
+            port.type = materialXTypeForSdf(sdfType);
+            if (port.type.isEmpty())
+                port.type = QString::fromStdString(property->GetType().GetString());
             mergePort(def.outputs, port);
         }
 
-        if (def.outputType.isEmpty() && !def.outputs.isEmpty()) {
+        if (!def.outputs.isEmpty()) {
             const auto outIt
                 = std::find_if(def.outputs.cbegin(), def.outputs.cend(),
                                [](const MaterialXPortDefinition& port) { return port.name == QStringLiteral("out"); });
@@ -1681,6 +1650,104 @@ MaterialUtils::materialXNodeDefinitions()
 
 
     return definitions;
+}
+
+bool
+MaterialUtils::materialXNodeDefinition(const QString& nodeDef, MaterialXNodeDefinition* definition)
+{
+    if (nodeDef.isEmpty() || !definition)
+        return false;
+
+    static const QHash<QString, MaterialXNodeDefinition> definitionsById = []() {
+        QHash<QString, MaterialXNodeDefinition> result;
+        const QList<MaterialXNodeDefinition> definitions = materialXNodeDefinitions();
+        result.reserve(definitions.size());
+        for (const MaterialXNodeDefinition& candidate : definitions)
+            result.insert(candidate.nodeDef, candidate);
+        return result;
+    }();
+
+    const auto it = definitionsById.constFind(nodeDef);
+    if (it == definitionsById.cend())
+        return false;
+
+    *definition = it.value();
+    return true;
+}
+
+SdfValueTypeName
+MaterialUtils::materialXPortType(const MaterialXNodeDefinition& definition, const QString& portName, bool output)
+{
+    const QList<MaterialXPortDefinition>& ports = output ? definition.outputs : definition.inputs;
+    const auto it = std::find_if(ports.cbegin(), ports.cend(),
+                                 [&](const MaterialXPortDefinition& port) { return port.name == portName; });
+    if (it != ports.cend())
+        return sdfTypeForMaterialX(it->type);
+
+    if (output && portName == QStringLiteral("out") && !definition.outputType.isEmpty())
+        return sdfTypeForMaterialX(definition.outputType);
+
+    return {};
+}
+
+bool
+MaterialUtils::authorMaterialXNodeInterface(UsdShadeShader& shader, const MaterialXNodeDefinition& definition,
+                                            QString& error)
+{
+    if (!shader || definition.nodeDef.isEmpty()) {
+        error = QStringLiteral("invalid MaterialX shader definition");
+        return false;
+    }
+
+    if (!shader.CreateIdAttr(VtValue(TfToken(definition.nodeDef.toStdString())))) {
+        error = QStringLiteral("failed to author MaterialX shader id");
+        return false;
+    }
+
+    for (const MaterialXPortDefinition& port : definition.inputs) {
+        if (port.name.isEmpty())
+            continue;
+        const SdfValueTypeName type = sdfTypeForMaterialX(port.type);
+        if (type.GetAsToken().IsEmpty()) {
+            error = QStringLiteral("unsupported MaterialX input type %1 on %2").arg(port.type, port.name);
+            return false;
+        }
+        UsdShadeInput input = shader.CreateInput(TfToken(port.name.toStdString()), type);
+        if (!input) {
+            error = QStringLiteral("failed to create MaterialX input: %1").arg(port.name);
+            return false;
+        }
+        const VtValue defaultValue = materialXDefaultValue(port.type, port.value);
+        if (!defaultValue.IsEmpty() && !input.Set(defaultValue)) {
+            error = QStringLiteral("failed to set MaterialX input default: %1").arg(port.name);
+            return false;
+        }
+    }
+
+    if (!definition.outputs.isEmpty()) {
+        for (const MaterialXPortDefinition& port : definition.outputs) {
+            if (port.name.isEmpty())
+                continue;
+            const SdfValueTypeName type = sdfTypeForMaterialX(port.type);
+            if (type.GetAsToken().IsEmpty()) {
+                error = QStringLiteral("unsupported MaterialX output type %1 on %2").arg(port.type, port.name);
+                return false;
+            }
+            if (!shader.CreateOutput(TfToken(port.name.toStdString()), type)) {
+                error = QStringLiteral("failed to create MaterialX output: %1").arg(port.name);
+                return false;
+            }
+        }
+    }
+    else {
+        const SdfValueTypeName type = sdfTypeForMaterialX(definition.outputType);
+        if (type.GetAsToken().IsEmpty() || !shader.CreateOutput(TfToken("out"), type)) {
+            error = QStringLiteral("failed to create MaterialX output");
+            return false;
+        }
+    }
+
+    return true;
 }
 
 QList<MaterialXNodeDefinition>

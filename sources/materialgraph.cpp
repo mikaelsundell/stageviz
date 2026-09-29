@@ -549,18 +549,8 @@ MaterialGraphPrivate::buildRecursive(const UsdStageRefPtr& stage, const SdfPath&
     QSet<QString> declaredInputs;
     QSet<QString> declaredOutputs;
     if (type.startsWith(QStringLiteral("ND_"))) {
-        static const QHash<QString, MaterialXNodeDefinition> definitionsById = []() {
-            QHash<QString, MaterialXNodeDefinition> definitions;
-            const QList<MaterialXNodeDefinition> defs = MaterialUtils::materialXNodeDefinitions();
-            definitions.reserve(defs.size());
-            for (const MaterialXNodeDefinition& def : defs)
-                definitions.insert(def.nodeDef, def);
-            return definitions;
-        }();
-
-        const auto definitionIt = definitionsById.constFind(type);
-        if (definitionIt != definitionsById.cend()) {
-            const MaterialXNodeDefinition& definition = definitionIt.value();
+        MaterialXNodeDefinition definition;
+        if (MaterialUtils::materialXNodeDefinition(type, &definition)) {
             for (const MaterialXPortDefinition& port : definition.inputs) {
                 if (port.name.isEmpty() || declaredInputs.contains(port.name))
                     continue;

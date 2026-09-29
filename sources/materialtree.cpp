@@ -621,12 +621,14 @@ MaterialTreePrivate::addInputRow(QTreeWidgetItem* group, const MaterialInputInfo
         auto* container = new QWidget(d.tree.data());
         prepareRowWidget(container);
         auto* layout = new QHBoxLayout(container);
-        layout->setContentsMargins(0, 0, 4, 0);
+        layout->setContentsMargins(0, 0, 0, 0);
         layout->setSpacing(4);
 
         auto* edit = new QLineEdit(container);
         edit->setReadOnly(true);
         edit->setFrame(false);
+        edit->setMinimumWidth(0);
+        edit->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
         layout->addWidget(edit, 1);
 
         auto* browse = new QToolButton(container);
@@ -635,7 +637,9 @@ MaterialTreePrivate::addInputRow(QTreeWidgetItem* group, const MaterialInputInfo
         browse->setToolTip(QStringLiteral("Choose file"));
         browse->setAutoRaise(true);
         browse->setFixedSize(28, 28);
-        layout->addWidget(browse);
+        browse->setIconSize(QSize(16, 16));
+        browse->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
+        layout->addWidget(browse, 0);
 
         connect(browse, &QToolButton::clicked, d.tree.data(), [this, editPaths, edit]() {
             if (editPaths.isEmpty())

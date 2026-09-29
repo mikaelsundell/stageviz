@@ -33,9 +33,12 @@ struct RenderTaskParams {
 
     bool enabled() const;
 };
-bool operator==(const RenderTaskParams& lhs, const RenderTaskParams& rhs);
-bool operator!=(const RenderTaskParams& lhs, const RenderTaskParams& rhs);
-std::ostream& operator<<(std::ostream& out, const RenderTaskParams& params);
+bool
+operator==(const RenderTaskParams& lhs, const RenderTaskParams& rhs);
+bool
+operator!=(const RenderTaskParams& lhs, const RenderTaskParams& rhs);
+std::ostream&
+operator<<(std::ostream& out, const RenderTaskParams& params);
 
 /**
  * @brief Hydra/Hgi post-process task used by the Stageviz viewport.
