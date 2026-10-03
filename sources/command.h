@@ -174,6 +174,24 @@ applyPreparedTransforms(const UsdStageRefPtr& stage, const QList<PreparedTransfo
  */
 
 /**
+ * @brief Built-in material network type created by newMaterial().
+ */
+enum class MaterialType { PreviewSurface = 0, StandardSurface, OpenPBRSurface };
+
+/**
+ * @brief Creates one built-in material network in the stage material scope.
+ *
+ * Creation is undoable and preserves the current scene selection and mask.
+ * The material is authored in the active edit layer through MaterialUtils so
+ * the Material Editor and command API use the same network definitions.
+ *
+ * @param type Built-in material network type to create.
+ * @return Undoable material-creation command.
+ */
+Command
+newMaterial(MaterialType type);
+
+/**
  * @brief Creates an undoable command that binds a material to prims.
  *
  * The material must already exist in the current USD stage. A direct material

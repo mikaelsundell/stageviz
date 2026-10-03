@@ -1794,43 +1794,22 @@ MaterialDialogPrivate::connectMaterialXNode(const SdfPath& inputPath, const QStr
 void
 MaterialDialogPrivate::createPreviewSurface()
 {
-    SdfPath path;
-    {
-        WRITE_LOCKER(locker, session()->stageLock(), "stageLock");
-        path = MaterialUtils::createPreviewSurfaceMaterial(session()->stageUnsafe());
-    }
-
-
-    if (!path.IsEmpty())
-        d.refreshTimer->start(0);
+    d.graphTopologyDirty = true;
+    session()->commandStack()->execute(new Command(stageviz::newMaterial(MaterialType::PreviewSurface)));
 }
 
 void
 MaterialDialogPrivate::createStandardSurface()
 {
-    SdfPath path;
-    {
-        WRITE_LOCKER(locker, session()->stageLock(), "stageLock");
-        path = MaterialUtils::createStandardSurfaceMaterial(session()->stageUnsafe());
-    }
-
-
-    if (!path.IsEmpty())
-        d.refreshTimer->start(0);
+    d.graphTopologyDirty = true;
+    session()->commandStack()->execute(new Command(stageviz::newMaterial(MaterialType::StandardSurface)));
 }
 
 void
 MaterialDialogPrivate::createOpenPBRSurface()
 {
-    SdfPath path;
-    {
-        WRITE_LOCKER(locker, session()->stageLock(), "stageLock");
-        path = MaterialUtils::createOpenPBRSurfaceMaterial(session()->stageUnsafe());
-    }
-
-
-    if (!path.IsEmpty())
-        d.refreshTimer->start(0);
+    d.graphTopologyDirty = true;
+    session()->commandStack()->execute(new Command(stageviz::newMaterial(MaterialType::OpenPBRSurface)));
 }
 
 void

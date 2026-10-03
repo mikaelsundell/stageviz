@@ -5510,6 +5510,156 @@ newPointInstancerPath(const SdfPath& parentPath, const QString& nameInput, bool 
 }
 
 Command
+newMaterial(MaterialType type)
+{
+    struct NewMaterialState {
+        SdfPath createdPath;
+        bool hadMaterialsSpec = false;
+        QList<SdfPath> previousSelection;
+        QList<SdfPath> previousMask;
+    };
+
+    auto state = std::make_shared<NewMaterialState>();
+
+    auto titleForType = [](MaterialType value) {
+        switch (value) {
+        case MaterialType::PreviewSurface: return QStringLiteral("New USD Preview Surface material");
+        case MaterialType::StandardSurface: return QStringLiteral("New MaterialX Standard Surface material");
+        case MaterialType::OpenPBRSurface: return QStringLiteral("New MaterialX OpenPBR Surface material");
+        }
+        return QStringLiteral("New material");
+    };
+
+    const QString title = titleForType(type);
+
+    return Command(
+        [type, state, title](Session* session) {
+            if (!session)
+                return;
+
+            state->previousSelection = session->selectionList()->paths();
+            state->previousMask = session->mask();
+
+            command::beginDeferred(session, title, 1);
+
+            command::runWorker([session, type, state, title]() {
+                bool success = false;
+                QString error;
+                QList<SdfPath> changed;
+                SdfPath createdPath;
+
+                {
+                    WRITE_LOCKER(locker, session->stageLock(), "stageLock");
+                    const UsdStageRefPtr stage = session->stageUnsafe();
+
+                    if (!stage) {
+                        error = "stage missing";
+                    }
+                    else {
+                        QString editError;
+                        const SdfLayerHandle editLayer = currentEditLayer(stage, editError);
+
+                        if (!editLayer) {
+                            error = editError;
+                        }
+                        else {
+                            const SdfPath materialsPath("/Materials");
+                            state->hadMaterialsSpec = bool(editLayer->GetPrimAtPath(materialsPath));
+
+                            switch (type) {
+                            case MaterialType::PreviewSurface:
+                                createdPath = MaterialUtils::createPreviewSurfaceMaterial(stage);
+                                break;
+                            case MaterialType::StandardSurface:
+                                createdPath = MaterialUtils::createStandardSurfaceMaterial(stage);
+                                break;
+                            case MaterialType::OpenPBRSurface:
+                                createdPath = MaterialUtils::createOpenPBRSurfaceMaterial(stage);
+                                break;
+                            }
+
+                            if (createdPath.IsEmpty()) {
+                                error = "failed to create material";
+                            }
+                            else {
+                                state->createdPath = createdPath;
+                                path::appendUnique(changed, materialsPath);
+                                path::appendUnique(changed, createdPath);
+                                success = true;
+                            }
+                        }
+                    }
+                }
+
+                command::queueToSession(session, [session, changed, success, error, title]() {
+                    using Status = Session::Notify::Status;
+                    command::finishDeferred(session,
+                                            success ? QStringLiteral("Material created")
+                                                    : appendError(QStringLiteral("%1 failed").arg(title), error),
+                                            changed, success ? Status::Success : Status::Error);
+                });
+            });
+        },
+        [state](Session* session) {
+            if (!session || state->createdPath.IsEmpty())
+                return;
+
+            command::beginDeferred(session, "Undo new material", 1);
+
+            command::runWorker([session, state]() {
+                bool success = false;
+                QString error;
+                QList<SdfPath> changed;
+
+                {
+                    WRITE_LOCKER(locker, session->stageLock(), "stageLock");
+                    const UsdStageRefPtr stage = session->stageUnsafe();
+
+                    if (!stage) {
+                        error = "stage missing";
+                    }
+                    else {
+                        QString editError;
+                        const SdfLayerHandle editLayer = currentEditLayer(stage, editError);
+
+                        if (!editLayer) {
+                            error = editError;
+                        }
+                        else if (!stage::removePrimSpec(editLayer, state->createdPath)) {
+                            error = QString("failed to remove material: %1").arg(pathText(state->createdPath));
+                        }
+                        else {
+                            const SdfPath materialsPath("/Materials");
+                            if (!state->hadMaterialsSpec) {
+                                const SdfPrimSpecHandle materialsSpec = editLayer->GetPrimAtPath(materialsPath);
+                                if (materialsSpec && materialsSpec->IsInert())
+                                    stage::removePrimSpec(editLayer, materialsPath);
+                            }
+
+                            path::appendUnique(changed, materialsPath);
+                            path::appendUnique(changed, state->createdPath);
+                            success = true;
+                        }
+                    }
+                }
+
+                command::queueToSession(session, [session, state, changed, success, error]() {
+                    using Status = Session::Notify::Status;
+                    command::finishDeferred(session,
+                                            success ? QStringLiteral("New material undone")
+                                                    : appendError(QStringLiteral("Undo new material failed"), error),
+                                            changed, success ? Status::Success : Status::Error);
+
+                    if (success) {
+                        session->selectionList()->updatePaths(state->previousSelection);
+                        session->setMask(state->previousMask);
+                    }
+                });
+            });
+        });
+}
+
+Command
 newMaterialPath(const SdfPath& parentPath, const QString& nameInput)
 {
     struct NewMaterialState {

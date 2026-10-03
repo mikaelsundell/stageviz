@@ -389,10 +389,6 @@ MaterialBrowserPrivate::showContextMenu(QAbstractItemView* view, const QPoint& p
 
     menu.addSeparator();
 
-    QAction* duplicateMaterial = menu.addAction(tr("Duplicate"));
-
-    menu.addSeparator();
-
     QMenu* copy = menu.addMenu(tr("Copy"));
     copy->setAttribute(Qt::WA_NoMouseReplay);
     QAction* copyName = copy->addAction(tr("Name"));
@@ -415,6 +411,7 @@ MaterialBrowserPrivate::showContextMenu(QAbstractItemView* view, const QPoint& p
     newMenu->addSeparator();
     QAction* newMaterialXFile = newMenu->addAction(tr("MaterialX File..."));
 
+    QAction* duplicateMaterial = menu.addAction(tr("Duplicate"));
     QAction* deleteMaterial = menu.addAction(tr("Delete"));
     // Delete still operates on browser selection, so an RMB click on another
     // material must never delete the previously selected material.
