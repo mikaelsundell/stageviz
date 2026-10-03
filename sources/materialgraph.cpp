@@ -31,7 +31,6 @@
 #include <QScrollBar>
 #include <QSet>
 #include <QStyleOptionGraphicsItem>
-#include <QTimer>
 #include <QWheelEvent>
 #include <algorithm>
 #include <cmath>
@@ -1051,15 +1050,12 @@ MaterialGraphPrivate::rebuild(bool preservePositions)
     applyFilter(d.ui ? d.ui->filter->text() : QString());
     updateSceneRect();
 
-    if (d.graph && !d.viewInitialized) {
-        d.viewInitialized = true;
-        QPointer<MaterialGraph> graph = d.graph;
-        QTimer::singleShot(0, d.graph.data(), [graph]() {
-            if (graph)
-                graph->frameAll();
-        });
-    }
-    else if (restoreViewport && d.view) {
+    // Do not defer the initial frame with a zero-timeout timer. That lets the
+    // graph paint once at its default transform before frameAll() runs, causing
+    // a visible one-frame flash when a material graph is opened. The first
+    // frame is applied synchronously from MaterialGraph::showEvent(), after the
+    // widget has its final layout/viewport geometry but before its first paint.
+    if (d.viewInitialized && restoreViewport && d.view) {
         // sceneRect is intentionally stable, so restoring the exact scrollbar
         // values keeps the graph pixel-stationary across setAttribute notices.
         d.view->horizontalScrollBar()->setValue(previousHorizontal);
@@ -1312,7 +1308,7 @@ MaterialGraphPrivate::deleteNodes(const QList<SdfPath>& paths)
     for (const SdfPath& path : filtered)
         commands->push_back(deleteShaderNode(path));
 
-    session()->commandStack()->run(new Command(
+    session()->commandStack()->execute(new Command(
         [commands](Session* activeSession) {
             for (Command& command : *commands)
                 command.execute(activeSession);
@@ -1344,7 +1340,7 @@ MaterialGraphPrivate::createFreeNode(const QString& shaderId, const QString& nod
     for (auto it = d.nodes.cbegin(); it != d.nodes.cend(); ++it)
         d.pendingCreateExistingNodes.insert(it.key());
 
-    session()->commandStack()->run(
+    session()->commandStack()->execute(
         new Command(newShaderNode(d.material.materialPath, shaderId, nodeName, outputName, outputType)));
 }
 
@@ -1360,7 +1356,7 @@ MaterialGraphPrivate::createMaterialXNode(const MaterialXNodeDefinition& definit
     for (auto it = d.nodes.cbegin(); it != d.nodes.cend(); ++it)
         d.pendingCreateExistingNodes.insert(it.key());
 
-    session()->commandStack()->run(new Command(newMaterialXNode(d.material.materialPath, definition)));
+    session()->commandStack()->execute(new Command(newMaterialXNode(d.material.materialPath, definition)));
 }
 
 
@@ -1621,6 +1617,24 @@ MaterialGraph::frameSelected()
     const qreal factor = std::clamp(std::min(scaleX, scaleY), 0.10, 2.0);
     view->scale(factor, factor);
     view->centerOn(rect.center());
+}
+
+void
+MaterialGraph::showEvent(QShowEvent* event)
+{
+    QWidget::showEvent(event);
+
+    if (p->d.viewInitialized || !p->d.view)
+        return;
+
+    // ShowEvent happens before the first paint. At this point the tab/page and
+    // graphics viewport have usable geometry, so frame synchronously and make
+    // the first visible frame the correctly fitted network.
+    if (layout())
+        layout()->activate();
+
+    p->d.viewInitialized = true;
+    frameAll();
 }
 
 bool

@@ -416,11 +416,46 @@ namespace stage {
                 break;
         }
 
+        if (!foundPivot) {
+            // Stageviz's interactive transform fast path normalizes the current
+            // edit layer to a single xformOp:transform. If the standard pivot
+            // pair originally lived in that same layer, replacing xformOpOrder
+            // removes the pair from the composed order while intentionally
+            // leaving xformOp:translate:pivot authored on the prim. Preserve
+            // that artist pivot for subsequent gizmo interactions instead of
+            // falling back to the matrix translation/origin.
+            //
+            // Restrict this fallback to the canonical matrix-only order used by
+            // Stageviz so an arbitrary orphaned pivot attribute is not treated
+            // as active for unrelated transform stacks.
+            VtTokenArray composedOrder;
+            const bool matrixOnly
+                = xformable.GetXformOpOrderAttr().Get(&composedOrder, UsdTimeCode::Default())
+                  && composedOrder.size() == 1 && composedOrder.front() == TfToken("xformOp:transform");
+
+            if (matrixOnly) {
+                const UsdAttribute pivotAttr = prim.GetAttribute(pivotToken);
+                VtValue pivotValue;
+                if (pivotAttr && pivotAttr.Get(&pivotValue, UsdTimeCode::Default())) {
+                    if (pivotValue.IsHolding<GfVec3d>()) {
+                        localPivot = pivotValue.UncheckedGet<GfVec3d>();
+                        foundPivot = true;
+                    }
+                    else if (pivotValue.IsHolding<GfVec3f>()) {
+                        const GfVec3f value = pivotValue.UncheckedGet<GfVec3f>();
+                        localPivot = GfVec3d(value[0], value[1], value[2]);
+                        foundPivot = true;
+                    }
+                }
+            }
+        }
+
         if (!foundPivot)
             return true;
 
-        // map the original artist pivot through the current composed transform
-        // so it remains attached after Stageviz authors a matrix override.
+        // Map the original artist pivot through the current composed transform.
+        // This also keeps the pivot stable after the interactive path has baked
+        // the transform stack into a matrix-only override.
         pivot = world.Transform(localPivot);
         return true;
     }

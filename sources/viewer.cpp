@@ -4,6 +4,7 @@
 
 #include "viewer.h"
 #include "application.h"
+#include "command.h"
 #include "commandstack.h"
 #include "consoledialog.h"
 #include "githubclient.h"
@@ -68,6 +69,7 @@ public:
     void init();
     void initDocks();
     void initRecentFiles();
+    void initLayerMenu();
     void initSettings();
     bool loadFile(const QString& fileName);
     bool mergeFile(const QString& fileName);
@@ -176,11 +178,16 @@ public Q_SLOTS:
     void updateMask(const QList<SdfPath>& paths);
     void updatePrims(const NoticeBatch& batch);
     void updateStage(UsdStageRefPtr stage, Session::LoadPolicy policy, Session::StageStatus status);
+    void updateEditLayer(SdfLayerHandle layer);
     void updateAuxiliary(UsdStageRefPtr auxiliary);
     void updateStageUp(Session::StageUp stageUp);
     void updateSelection(const QList<SdfPath>& paths);
     void updatePreserveState(bool enabled);
     void updateMaterialMode(ViewState::MaterialMode mode);
+    void captureReady(qint64 elapsed);
+    void renderReady(qint64 elapsed);
+    void statusMessage(const QString& message);
+    void statusReady();
     void notifyStatusChanged(Session::Notify::Status status, const QString& message, const QString& details);
 
 public:
@@ -204,6 +211,7 @@ public:
         Session::LoadPolicy loadPolicy;
         bool modified;
         int changes;
+        quint64 statusRevision = 0;
         QStringList arguments;
         QStringList extensions;
         QStringList recentFiles;
@@ -292,6 +300,7 @@ ViewerPrivate::init()
     connect(d.ui->fileMergeSublayer, &QAction::triggered, this, &ViewerPrivate::mergeSublayer);
     connect(d.ui->fileMergeReference, &QAction::triggered, this, &ViewerPrivate::mergeReference);
     connect(d.ui->fileMergePayload, &QAction::triggered, this, &ViewerPrivate::mergePayload);
+    connect(d.ui->fileLayer, &QMenu::aboutToShow, this, &ViewerPrivate::initLayerMenu);
     connect(d.ui->fileSave, &QAction::triggered, this, &ViewerPrivate::save);
     connect(d.ui->fileSaveAs, &QAction::triggered, this, &ViewerPrivate::saveAs);
     connect(d.ui->fileSaveCopy, &QAction::triggered, this, &ViewerPrivate::saveCopy);
@@ -431,10 +440,15 @@ ViewerPrivate::init()
     connect(session(), &Session::maskChanged, this, &ViewerPrivate::updateMask);
     connect(session(), &Session::primsChanged, this, &ViewerPrivate::updatePrims);
     connect(session(), &Session::stageChanged, this, &ViewerPrivate::updateStage);
+    connect(session(), &Session::editLayerChanged, this, &ViewerPrivate::updateEditLayer);
     connect(session(), &Session::auxiliaryChanged, this, &ViewerPrivate::updateAuxiliary);
     connect(session(), &Session::stageUpChanged, this, &ViewerPrivate::updateStageUp);
     connect(session(), &Session::preserveStateChanged, this, &ViewerPrivate::updatePreserveState);
     connect(session(), &Session::notifyStatusChanged, this, &ViewerPrivate::notifyStatusChanged);
+    connect(renderView(), &RenderView::captureReady, this, &ViewerPrivate::captureReady);
+    connect(renderView(), &RenderView::renderReady, this, &ViewerPrivate::renderReady);
+    connect(renderView(), &RenderView::statusMessage, this, &ViewerPrivate::statusMessage);
+    connect(renderView(), &RenderView::statusReady, this, &ViewerPrivate::statusReady);
     connect(session()->selectionList(), &SelectionList::selectionChanged, this, &ViewerPrivate::updateSelection);
     connect(session()->commandStack(), &CommandStack::canUndoChanged, d.ui->editUndo, &QAction::setEnabled);
     connect(session()->commandStack(), &CommandStack::canRedoChanged, d.ui->editRedo, &QAction::setEnabled);
@@ -643,6 +657,72 @@ ViewerPrivate::initDocks()
 }
 
 void
+ViewerPrivate::initLayerMenu()
+{
+    QMenu* layerMenu = d.ui->fileLayer;
+    if (!layerMenu)
+        return;
+
+    layerMenu->clear();
+
+    std::vector<SdfLayerHandle> layers;
+    SdfLayerHandle editLayer;
+    SdfLayerHandle rootLayer;
+    {
+        READ_LOCKER(locker, session()->stageLock(), "stageLock");
+        const UsdStageRefPtr stage = session()->stageUnsafe();
+        if (stage) {
+            layers = stage->GetLayerStack(false);
+            editLayer = stage->GetEditTarget().GetLayer();
+            rootLayer = stage->GetRootLayer();
+        }
+    }
+
+    if (layers.empty()) {
+        QAction* emptyAction = layerMenu->addAction("No layers");
+        emptyAction->setEnabled(false);
+        return;
+    }
+
+    for (const SdfLayerHandle& layer : layers) {
+        if (!layer)
+            continue;
+
+        const QString identifier = QString::fromStdString(layer->GetIdentifier());
+        QString label = QString::fromStdString(layer->GetDisplayName());
+        if (label.isEmpty())
+            label = identifier;
+
+        if (layer == rootLayer)
+            label += QStringLiteral("        (Root)");
+
+        QAction* action = layerMenu->addAction(label);
+        action->setCheckable(true);
+        action->setChecked(layer == editLayer);
+        action->setData(identifier);
+        action->setToolTip(identifier);
+        connect(action, &QAction::triggered, this, [this, action]() {
+            if (!action->isChecked())
+                return;
+
+            const QString identifier = action->data().toString();
+            if (identifier.isEmpty())
+                return;
+
+            {
+                READ_LOCKER(locker, session()->stageLock(), "stageLock");
+                const UsdStageRefPtr stage = session()->stageUnsafe();
+                const SdfLayerHandle current = stage ? stage->GetEditTarget().GetLayer() : SdfLayerHandle();
+                if (current && QString::fromStdString(current->GetIdentifier()) == identifier)
+                    return;
+            }
+
+            session()->commandStack()->execute(new Command(stageviz::setEditLayer(identifier)));
+        });
+    }
+}
+
+void
 ViewerPrivate::initRecentFiles()
 {
     QMenu* recentMenu = d.ui->fileRecent;
@@ -794,7 +874,7 @@ ViewerPrivate::mergeFile(const QString& fileName)
         return false;
     }
 
-    session()->commandStack()->run(new Command(mergeStage(fileName)));
+    session()->commandStack()->execute(new Command(mergeStage(fileName)));
     settings()->setValue("openDir", fileInfo.absolutePath());
     return true;
 }
@@ -809,7 +889,7 @@ ViewerPrivate::mergeFlattenedFile(const QString& fileName)
         return false;
     }
 
-    session()->commandStack()->run(new Command(mergeFlattenedStage(fileName)));
+    session()->commandStack()->execute(new Command(mergeFlattenedStage(fileName)));
     settings()->setValue("openDir", fileInfo.absolutePath());
     return true;
 }
@@ -824,7 +904,7 @@ ViewerPrivate::mergeSublayerFile(const QString& fileName)
         return false;
     }
 
-    session()->commandStack()->run(new Command(addSublayer(fileName)));
+    session()->commandStack()->execute(new Command(addSublayer(fileName)));
     settings()->setValue("openDir", fileInfo.absolutePath());
     return true;
 }
@@ -839,7 +919,7 @@ ViewerPrivate::mergeReferenceFile(const QString& fileName, const SdfPath& target
         return false;
     }
 
-    session()->commandStack()->run(new Command(addReference(fileName, targetPath)));
+    session()->commandStack()->execute(new Command(addReference(fileName, targetPath)));
     settings()->setValue("openDir", fileInfo.absolutePath());
     return true;
 }
@@ -854,7 +934,7 @@ ViewerPrivate::mergePayloadFile(const QString& fileName, const SdfPath& targetPa
         return false;
     }
 
-    session()->commandStack()->run(new Command(addPayload(fileName, targetPath)));
+    session()->commandStack()->execute(new Command(addPayload(fileName, targetPath)));
     settings()->setValue("openDir", fileInfo.absolutePath());
     return true;
 }
@@ -1002,6 +1082,8 @@ ViewerPrivate::eventFilter(QObject* object, QEvent* event)
 void
 ViewerPrivate::enable(bool enable)
 {
+    d.ui->fileLayer->setEnabled(enable);
+
     QList<QAction*> actions = { d.ui->fileMergeStage,
                                 d.ui->fileMergeFlattened,
                                 d.ui->fileMergeSublayer,
@@ -1585,14 +1667,14 @@ ViewerPrivate::copyImage()
 void
 ViewerPrivate::selectAll()
 {
-    session()->commandStack()->run(new Command(stageviz::selectAll()));
+    session()->commandStack()->execute(new Command(stageviz::selectAll()));
 }
 
 void
 ViewerPrivate::selectInvert()
 {
     if (session()->selectionList()->paths().size())
-        session()->commandStack()->run(new Command(stageviz::selectInvert()));
+        session()->commandStack()->execute(new Command(stageviz::selectInvert()));
 }
 
 void
@@ -1626,7 +1708,7 @@ ViewerPrivate::selectParent()
     }
 
     if (!parentPath.IsEmpty())
-        session()->commandStack()->run(new Command(selectPaths(QList<SdfPath> { parentPath })));
+        session()->commandStack()->execute(new Command(selectPaths(QList<SdfPath> { parentPath })));
 }
 
 void
@@ -1667,7 +1749,7 @@ ViewerPrivate::showSelected()
 {
     QList<SdfPath> paths = session()->selectionList()->paths();
     if (paths.size())
-        session()->commandStack()->run(new Command(showPaths(paths, false)));
+        session()->commandStack()->execute(new Command(showPaths(paths, false)));
 }
 
 void
@@ -1675,7 +1757,7 @@ ViewerPrivate::showRecursive()
 {
     QList<SdfPath> paths = session()->selectionList()->paths();
     if (paths.size())
-        session()->commandStack()->run(new Command(showPaths(paths, true)));
+        session()->commandStack()->execute(new Command(showPaths(paths, true)));
 }
 
 void
@@ -1683,7 +1765,7 @@ ViewerPrivate::hideSelected()
 {
     QList<SdfPath> paths = session()->selectionList()->paths();
     if (paths.size())
-        session()->commandStack()->run(new Command(hidePaths(paths, false)));
+        session()->commandStack()->execute(new Command(hidePaths(paths, false)));
 }
 
 void
@@ -1691,7 +1773,7 @@ ViewerPrivate::hideRecursive()
 {
     QList<SdfPath> paths = session()->selectionList()->paths();
     if (paths.size())
-        session()->commandStack()->run(new Command(hidePaths(paths, true)));
+        session()->commandStack()->execute(new Command(hidePaths(paths, true)));
 }
 
 void
@@ -1705,7 +1787,7 @@ ViewerPrivate::selectVisibleSelect()
 {
     QList<SdfPath> paths = renderView()->visibleCapturePaths();
     if (paths.size())
-        session()->commandStack()->run(new Command(selectPaths(paths)));
+        session()->commandStack()->execute(new Command(selectPaths(paths)));
 }
 
 void
@@ -1717,13 +1799,13 @@ ViewerPrivate::selectVisibleClear()
 void
 ViewerPrivate::stageUpY()
 {
-    session()->commandStack()->run(new Command(stageUp(Session::StageUp::Y)));
+    session()->commandStack()->execute(new Command(stageUp(Session::StageUp::Y)));
 }
 
 void
 ViewerPrivate::stageUpZ()
 {
-    session()->commandStack()->run(new Command(stageUp(Session::StageUp::Z)));
+    session()->commandStack()->execute(new Command(stageUp(Session::StageUp::Z)));
 }
 
 void
@@ -1743,7 +1825,7 @@ ViewerPrivate::payloadLoad()
     }
 
     if (!payloadPaths.isEmpty()) {
-        session()->commandStack()->run(new Command(loadPayloads(payloadPaths)));
+        session()->commandStack()->execute(new Command(loadPayloads(payloadPaths)));
         updateSelection(session()->selectionList()->paths());
     }
 }
@@ -1765,7 +1847,7 @@ ViewerPrivate::payloadUnload()
     }
 
     if (!payloadPaths.isEmpty()) {
-        session()->commandStack()->run(new Command(unloadPayloads(payloadPaths)));
+        session()->commandStack()->execute(new Command(unloadPayloads(payloadPaths)));
         updateSelection(session()->selectionList()->paths());
     }
 }
@@ -1775,7 +1857,7 @@ ViewerPrivate::payloadLoadNeighbors()
 {
     const QList<SdfPath> paths = session()->selectionList()->paths();
     if (!paths.isEmpty()) {
-        session()->commandStack()->run(new Command(loadNeighborPayloads(paths)));
+        session()->commandStack()->execute(new Command(loadNeighborPayloads(paths)));
         updateSelection(session()->selectionList()->paths());
     }
 }
@@ -1784,28 +1866,28 @@ void
 ViewerPrivate::payloadSelect()
 {
     if (!session()->selectionList()->paths().isEmpty())
-        session()->commandStack()->run(new Command(selectPayload()));
+        session()->commandStack()->execute(new Command(selectPayload()));
 }
 
 void
 ViewerPrivate::layerSelect()
 {
     if (!session()->selectionList()->paths().isEmpty())
-        session()->commandStack()->run(new Command(selectLayer()));
+        session()->commandStack()->execute(new Command(selectLayer()));
 }
 
 void
 ViewerPrivate::payloadInvert()
 {
     if (!session()->selectionList()->paths().isEmpty())
-        session()->commandStack()->run(new Command(selectInvertInPayload()));
+        session()->commandStack()->execute(new Command(selectInvertInPayload()));
 }
 
 void
 ViewerPrivate::layerInvert()
 {
     if (!session()->selectionList()->paths().isEmpty())
-        session()->commandStack()->run(new Command(selectInvertInLayer()));
+        session()->commandStack()->execute(new Command(selectInvertInLayer()));
 }
 
 void
@@ -1827,15 +1909,16 @@ ViewerPrivate::newPrim(const TfToken& typeName)
 
     const QString name = QString::fromStdString(typeName.GetString());
 
-    Command command = typeName == TfToken("Mesh")             ? newMeshPath(parentPath, name)
-                      : typeName == TfToken("Points")         ? newPointsPath(parentPath, name)
-                      : typeName == TfToken("BasisCurves")    ? newBasisCurvesPath(parentPath, name)
-                      : typeName == TfToken("NurbsCurves")    ? newNurbsCurvesPath(parentPath, name)
-                      : typeName == TfToken("NurbsPatch")     ? newNurbsPatchPath(parentPath, name)
-                      : typeName == TfToken("PointInstancer") ? newPointInstancerPath(parentPath, name)
-                                                              : newPrimPath(parentPath, name, typeName);
+    constexpr bool selectCreated = false;
+    Command command = typeName == TfToken("Mesh")             ? newMeshPath(parentPath, name, selectCreated)
+                      : typeName == TfToken("Points")         ? newPointsPath(parentPath, name, selectCreated)
+                      : typeName == TfToken("BasisCurves")    ? newBasisCurvesPath(parentPath, name, selectCreated)
+                      : typeName == TfToken("NurbsCurves")    ? newNurbsCurvesPath(parentPath, name, selectCreated)
+                      : typeName == TfToken("NurbsPatch")     ? newNurbsPatchPath(parentPath, name, selectCreated)
+                      : typeName == TfToken("PointInstancer") ? newPointInstancerPath(parentPath, name, selectCreated)
+                                                              : newPrimPath(parentPath, name, typeName, selectCreated);
 
-    session()->commandStack()->run(new Command(std::move(command)));
+    session()->commandStack()->execute(new Command(std::move(command)));
 }
 
 void
@@ -1852,13 +1935,13 @@ ViewerPrivate::newXform()
     }
 
     if (!parentPath.IsEmpty())
-        session()->commandStack()->run(new Command(newXformPath(parentPath, "Xform")));
+        session()->commandStack()->execute(new Command(newXformPath(parentPath, "Xform", false)));
 }
 
 void
 ViewerPrivate::deleteSelected()
 {
-    session()->commandStack()->run(new Command(deletePaths(session()->selectionList()->paths())));
+    session()->commandStack()->execute(new Command(deletePaths(session()->selectionList()->paths())));
 }
 
 void
@@ -1867,7 +1950,7 @@ ViewerPrivate::isolate(bool checked)
     const QList<SdfPath> paths = (checked && !session()->selectionList()->paths().isEmpty())
                                      ? session()->selectionList()->paths()
                                      : QList<SdfPath>();
-    session()->commandStack()->run(new Command(isolatePaths(paths)));
+    session()->commandStack()->execute(new Command(isolatePaths(paths)));
 }
 
 void
@@ -2462,7 +2545,7 @@ ViewerPrivate::updateSelection(const QList<SdfPath>& paths)
                 if (targets.isEmpty())
                     return;
 
-                session()->commandStack()->run(new Command(loadPayloads(targets, setName, value)));
+                session()->commandStack()->execute(new Command(loadPayloads(targets, setName, value)));
                 updateSelection(session()->selectionList()->paths());
             });
 
@@ -2524,6 +2607,19 @@ ViewerPrivate::updateStage(UsdStageRefPtr stage, Session::LoadPolicy policy, Ses
 }
 
 void
+ViewerPrivate::updateEditLayer(SdfLayerHandle layer)
+{
+    if (!d.ui->fileLayer)
+        return;
+
+    const QString identifier = layer ? QString::fromStdString(layer->GetIdentifier()) : QString();
+    for (QAction* action : d.ui->fileLayer->actions()) {
+        if (action && action->isCheckable())
+            action->setChecked(!identifier.isEmpty() && action->data().toString() == identifier);
+    }
+}
+
+void
 ViewerPrivate::updateAuxiliary(UsdStageRefPtr auxiliary)
 {
     renderView()->updateAuxiliary(auxiliary);
@@ -2534,6 +2630,48 @@ ViewerPrivate::updateStageUp(Session::StageUp stageUp)
 {
     d.ui->editStageUpY->setChecked(stageUp == Session::StageUp::Y);
     d.ui->editStageUpZ->setChecked(stageUp == Session::StageUp::Z);
+}
+
+void
+ViewerPrivate::captureReady(qint64 elapsed)
+{
+    session()->notifyStatus(Session::Notify::Status::Success,
+                            QStringLiteral("Capture finished in %1 ms").arg(elapsed));
+}
+
+void
+ViewerPrivate::renderReady(qint64 elapsed)
+{
+    constexpr qint64 thresholdMs = 500;
+    if (elapsed <= thresholdMs)
+        return;
+
+    session()->notifyStatus(Session::Notify::Status::Success,
+                            QStringLiteral("Render finished in %1 ms").arg(elapsed));
+}
+
+void
+ViewerPrivate::statusMessage(const QString& message)
+{
+    QStatusBar* bar = d.ui->statusbar;
+    if (!bar || message.isEmpty())
+        return;
+
+    ++d.statusRevision;
+    bar->setStyleSheet(QString());
+    bar->showMessage(QStringLiteral(" %1").arg(message));
+}
+
+void
+ViewerPrivate::statusReady()
+{
+    QStatusBar* bar = d.ui->statusbar;
+    if (!bar)
+        return;
+
+    ++d.statusRevision;
+    bar->setStyleSheet(QString());
+    bar->showMessage(QStringLiteral(" Ready"));
 }
 
 void
@@ -2577,11 +2715,13 @@ ViewerPrivate::notifyStatusChanged(Session::Notify::Status status, const QString
         bar->setStyleSheet(QString());
     }
 
+    const quint64 revision = ++d.statusRevision;
     bar->showMessage(text, timeoutMs);
 
-    QTimer::singleShot(timeoutMs, bar, [bar]() {
-        bar->setStyleSheet(QString());
-        bar->showMessage(" Ready");
+    QTimer::singleShot(timeoutMs, this, [this, revision]() {
+        if (revision != d.statusRevision)
+            return;
+        statusReady();
     });
 }
 

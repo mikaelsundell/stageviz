@@ -27,8 +27,6 @@ public Q_SLOTS:
     void updateStage(UsdStageRefPtr stage, Session::LoadPolicy policy, Session::StageStatus status);
     void updateAuxiliary(UsdStageRefPtr auxiliary);
     void updateStageUp(Session::StageUp stageUp);
-    void captureReady(qint64 elapsed);
-    void renderReady(qint64 elapsed);
 
 public:
     struct Data {
@@ -51,8 +49,10 @@ RenderViewPrivate::init()
     d.context->setViewState(session()->viewState());
     imageGLWidget()->setContext(d.context.data());
     // connect
-    connect(imageGLWidget(), &ImagingGLWidget::captureReady, this, &RenderViewPrivate::captureReady);
-    connect(imageGLWidget(), &ImagingGLWidget::renderReady, this, &RenderViewPrivate::renderReady);
+    connect(imageGLWidget(), &ImagingGLWidget::captureReady, d.view, &RenderView::captureReady);
+    connect(imageGLWidget(), &ImagingGLWidget::renderReady, d.view, &RenderView::renderReady);
+    connect(imageGLWidget(), &ImagingGLWidget::statusMessage, d.view, &RenderView::statusMessage);
+    connect(imageGLWidget(), &ImagingGLWidget::statusReady, d.view, &RenderView::statusReady);
     connect(session(), &Session::boundingBoxChanged, this, &RenderViewPrivate::updateBoundingBox);
     connect(session(), &Session::maskChanged, this, &RenderViewPrivate::updateMask);
     connect(session(), &Session::primsChanged, this, &RenderViewPrivate::updatePrims);
@@ -114,24 +114,6 @@ RenderViewPrivate::updateStageUp(Session::StageUp stageUp)
     const TfToken token = stageUp == Session::StageUp::Z ? UsdGeomTokens->z : UsdGeomTokens->y;
 
     imageGLWidget()->updateStageUp(token);
-}
-
-void
-RenderViewPrivate::captureReady(qint64 elapsed)
-{
-    const QString msg = QStringLiteral("Capture finished in %1 ms").arg(elapsed);
-    session()->notifyStatus(Session::Notify::Status::Success, msg);
-}
-
-void
-RenderViewPrivate::renderReady(qint64 elapsed)
-{
-    const qint64 thresholdMs = 500;
-
-    if (elapsed > thresholdMs) {
-        const QString msg = QStringLiteral("Render finished in %1 ms").arg(elapsed);
-        session()->notifyStatus(Session::Notify::Status::Success, msg);
-    }
 }
 
 RenderView::RenderView(QWidget* parent)

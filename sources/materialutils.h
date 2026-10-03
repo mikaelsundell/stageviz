@@ -11,6 +11,7 @@
 #include <QStringList>
 #include <pxr/base/gf/vec3f.h>
 #include <pxr/base/vt/value.h>
+#include <pxr/usd/sdf/layer.h>
 #include <pxr/usd/sdf/path.h>
 #include <pxr/usd/sdf/types.h>
 #include <pxr/usd/usd/stage.h>
@@ -205,6 +206,30 @@ public:
     static QList<MaterialEntry> sceneMaterials(UsdStageRefPtr stage);
 
     /**
+     * @brief Reads one material entry without traversing the complete stage.
+     *
+     * This is the incremental counterpart to sceneMaterials() and is intended
+     * for notice-driven updates of already-known material paths.
+     */
+    static bool materialEntry(UsdStageRefPtr stage, const SdfPath& materialPath, MaterialEntry* entry);
+
+    /**
+     * @brief Builds a compact composed layer containing only one material network.
+     *
+     * The snapshot preserves the material, all descendant shader/node-graph prims,
+     * and recursively connected upstream nodes. It intentionally excludes unrelated
+     * scene geometry so swatch rendering never needs to flatten the complete stage.
+     * Asset inputs are resolved to absolute paths when possible so anonymous preview
+     * layers retain the same texture lookup behavior as the source stage.
+     *
+     * @param stage Source composed USD stage.
+     * @param materialPath Material prim to capture.
+     * @param error Receives a failure reason.
+     * @return Anonymous layer containing the compact material network.
+     */
+    static SdfLayerRefPtr materialNetworkLayer(UsdStageRefPtr stage, const SdfPath& materialPath, QString& error);
+
+    /**
      * @brief Returns a human-readable shader type label.
      */
     static QString shaderTypeLabel(const QString& shaderId);
@@ -351,9 +376,9 @@ public:
      *
      * @param stage Destination stage.
      * @param filename MaterialX document to import.
-     * @param createdPaths Receives paths of created material prims.
-     * @param error Receives a failure reason.
-     * @return True when the import succeeds.
+     * @param createdPaths Receives paths of created materials that resolve to a usable surface shader.
+     * @param error Receives a failure reason, including unusable imported material-shell details when available.
+     * @return True when at least one usable material network is imported.
      */
     static bool importMaterialX(UsdStageRefPtr stage, const QString& filename, QList<SdfPath>& createdPaths,
                                 QString& error);

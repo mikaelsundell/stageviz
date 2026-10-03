@@ -25,8 +25,8 @@ class RenderSceneIndexPrivate;
  * Auxiliary display geometry below /Display is always passed through
  * unchanged.
  *
- * The filter can override document material and selection presentation across
- * supported Hydra geometry prims, and can override Hydra mesh doubleSided state,
+ * The filter can override document material presentation across supported Hydra
+ * geometry prims and can override Hydra mesh doubleSided state,
  * without modifying the authored USD stage.
  */
 class RenderSceneIndex final : public pxr::HdSingleInputFilteringSceneIndexBase {
@@ -111,32 +111,6 @@ public:
      */
 
     /**
-     * @name Selection Presentation
-     */
-    /**
-     * @{
-     */
-
-    /**
-     * @brief Sets selected root paths for the render-only presentation override.
-     */
-    void setSelectionPaths(const pxr::SdfPathVector& paths);
-
-    /**
-     * @brief Returns whether selected prims use the custom presentation.
-     */
-    bool selectionPresentationEnabled() const;
-
-    /**
-     * @brief Enables the custom selection material presentation for supported geometry prims.
-     */
-    void setSelectionPresentationEnabled(bool enabled);
-
-    /**
-     * @}
-     */
-
-    /**
      * @name Double-Sided Override
      */
     /**
@@ -204,11 +178,6 @@ private:
      * @brief Dirties material binding data on affected gprims.
      */
     void dirtyMaterialBindings();
-
-    /**
-     * @brief Dirties material and display-style data below selected roots.
-     */
-    void dirtySelectionPresentation(const pxr::SdfPathVector& paths);
 
     /**
      * @brief Dirties mesh doubleSided data on affected meshes.

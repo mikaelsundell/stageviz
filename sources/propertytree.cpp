@@ -31,11 +31,13 @@
 #include <QSet>
 #include <QSignalBlocker>
 #include <QSpinBox>
+#include <QTimer>
 #include <algorithm>
 #include <climits>
 #include <cstdint>
 #include <functional>
 #include <limits>
+#include <memory>
 #include <pxr/base/gf/matrix2d.h>
 #include <pxr/base/gf/matrix3d.h>
 #include <pxr/base/gf/matrix4d.h>
@@ -74,7 +76,12 @@ namespace stageviz {
 
 namespace {
 
-    enum ComponentRole { ComponentKindRole = Qt::UserRole + 200, ComponentIndexRole, ComponentColumnRole };
+    enum ComponentRole {
+        ComponentKindRole = Qt::UserRole + 200,
+        ComponentIndexRole,
+        ComponentColumnRole,
+        LazyArrayRole
+    };
 
     enum ComponentKind { NoComponent = 0, VectorComponent, ArrayVectorComponent, MatrixComponent };
 
@@ -169,6 +176,9 @@ public:
     void addVectorComponents(PropertyItem* parent, const SdfPath& propertyPath, const VtValue& value,
                              int arrayIndex = -1);
     void addMatrixRows(PropertyItem* parent, const SdfPath& propertyPath, const VtValue& value);
+    void installComponentEditor(PropertyItem* item, double value, bool integral);
+    bool componentValue(PropertyItem* item, double value, VtValue& result, QString& error) const;
+    bool applyComponentPreview(PropertyItem* item, double value);
 
     static QString attributeBaseName(const UsdAttribute& attr);
     static QStringList tokenOptions(const UsdAttribute& attr);
@@ -184,6 +194,7 @@ public:
     struct TreeState {
         QString current;
         int scrollValue = 0;
+        QMap<QString, bool> expanded;
     };
 
     QString itemKey(const PropertyItem* item) const;
@@ -213,6 +224,7 @@ public:
     void addAttribute(PropertyItem* parent, const UsdAttribute& attr);
     void addArrayElements(PropertyItem* parent, const SdfPath& propertyPath, const VtValue& value, int start,
                           int count);
+    void populateArrayAttribute(PropertyItem* item);
     void populateChunk(PropertyItem* item);
     void itemChanged(QTreeWidgetItem* item, int column);
     void itemExpanded(QTreeWidgetItem* item);
@@ -369,6 +381,7 @@ public:
         UsdStageRefPtr stage;
         QPointer<ViewContext> context;
         QPointer<PropertyTree> tree;
+        bool componentScrubbing = false;
     };
     Data d;
 };
@@ -1232,6 +1245,219 @@ PropertyTreePrivate::replaceMatrixComponent(const VtValue& current, int row, int
     return false;
 }
 
+bool
+PropertyTreePrivate::componentValue(PropertyItem* item, double value, VtValue& result, QString& error) const
+{
+    result = VtValue();
+
+    if (!item || item->propertyPath().IsEmpty()) {
+        error = QStringLiteral("Property component is invalid");
+        return false;
+    }
+
+    const QList<SdfPath> propertyPaths = item->propertyPaths();
+    if (propertyPaths.size() != 1) {
+        error = QStringLiteral("Interactive component editing requires a single property");
+        return false;
+    }
+
+    QList<VtValue> currentValues;
+    if (!currentAttributeValues(propertyPaths, currentValues) || currentValues.isEmpty()) {
+        error = QStringLiteral("Could not read the current property value");
+        return false;
+    }
+
+    const QString text = QString::number(value, 'g', 17);
+    const int componentKind = item->data(PropertyItem::Value, ComponentKindRole).toInt();
+    const int component = item->data(PropertyItem::Value, ComponentIndexRole).toInt();
+    const int componentColumn = item->data(PropertyItem::Value, ComponentColumnRole).toInt();
+
+    if (componentKind == VectorComponent)
+        return replaceVectorComponent(currentValues.first(), component, text, result, error);
+
+    if (componentKind == ArrayVectorComponent)
+        return replaceArrayVectorComponent(currentValues.first(), item->arrayIndex(), component, text, result, error);
+
+    if (componentKind == MatrixComponent)
+        return replaceMatrixComponent(currentValues.first(), component, componentColumn, text, result, error);
+
+    error = QStringLiteral("Property is not a numeric component");
+    return false;
+}
+
+bool
+PropertyTreePrivate::applyComponentPreview(PropertyItem* item, double value)
+{
+    if (!item || !d.stage || d.update)
+        return false;
+
+    if (item->propertyPath().GetNameToken() == TfToken("xformOp:translate:pivot"))
+        return false;
+
+    VtValue updated;
+    QString error;
+    if (!componentValue(item, value, updated, error) || updated.IsEmpty())
+        return false;
+
+    WRITE_LOCKER(locker, d.context ? d.context->stageLock() : session()->stageLock(), "stageLock");
+
+    const UsdAttribute attr = d.stage->GetAttributeAtPath(item->propertyPath());
+    if (!attr)
+        return false;
+
+    return attr.Set(updated);
+}
+
+void
+PropertyTreePrivate::installComponentEditor(PropertyItem* item, double value, bool integral)
+{
+    if (!item || !d.tree)
+        return;
+
+    auto commitItemText = [this, item](const QString& text) {
+        if (d.update || !d.tree)
+            return;
+        
+        {
+            const QSignalBlocker blocker(d.tree.data());
+            item->setText(PropertyItem::Value, text);
+        }
+        
+        itemChanged(item, PropertyItem::Value);
+    };
+
+    if (integral) {
+        auto* spin = new QSpinBox(d.tree.data());
+        spin->setRange(int(qMax(double(INT_MIN), item->data(PropertyItem::Value, PropertyItem::EditorMinimumRole).toDouble())),
+                       int(qMin(double(INT_MAX), item->data(PropertyItem::Value, PropertyItem::EditorMaximumRole).toDouble())));
+        spin->setValue(static_cast<int>(std::llround(value)));
+        spin->setAutoFillBackground(false);
+        spin->setAttribute(Qt::WA_TranslucentBackground, true);
+
+        connect(spin, &QSpinBox::editingFinished, d.tree.data(), [this, commitItemText, spin]() {
+            if (d.update)
+                return;
+            commitItemText(QString::number(spin->value()));
+        });
+
+        d.tree->setItemWidget(item, PropertyItem::Value, spin);
+        spin->show();
+        item->setSizeHint(PropertyItem::Value, QSize(0, 30));
+        return;
+    }
+
+    auto* spin = new SpinBox(d.tree.data());
+    spin->setRange(item->data(PropertyItem::Value, PropertyItem::EditorMinimumRole).toDouble(),
+                   item->data(PropertyItem::Value, PropertyItem::EditorMaximumRole).toDouble());
+    spin->setDecimals(item->data(PropertyItem::Value, PropertyItem::EditorDecimalsRole).toInt());
+    spin->setSingleStep(0.1);
+    spin->setValue(value);
+    spin->setAutoFillBackground(false);
+    spin->setAttribute(Qt::WA_TranslucentBackground, true);
+
+    struct ScrubState {
+        bool active = false;
+        bool live = false;
+        bool hadEditDefault = false;
+        bool ignoreNextEditingFinished = false;
+        VtValue previousEditDefault;
+    };
+    const auto scrub = std::make_shared<ScrubState>();
+
+    connect(spin, &SpinBox::scrubStarted, d.tree.data(), [this, item, scrub]() {
+        if (d.update || !d.stage || !item)
+            return;
+
+        scrub->active = true;
+        scrub->live = item->propertyPath().GetNameToken() != TfToken("xformOp:translate:pivot");
+        scrub->hadEditDefault = false;
+        scrub->previousEditDefault = VtValue();
+
+        if (!scrub->live)
+            return;
+
+        {
+            READ_LOCKER(locker, d.context ? d.context->stageLock() : session()->stageLock(), "stageLock");
+
+            const SdfLayerHandle editLayer = d.stage->GetEditTarget().GetLayer();
+            if (!editLayer) {
+                scrub->live = false;
+                return;
+            }
+
+            scrub->hadEditDefault = editLayer->HasField(item->propertyPath(), SdfFieldKeys->Default);
+            if (scrub->hadEditDefault)
+                scrub->previousEditDefault = editLayer->GetField(item->propertyPath(), SdfFieldKeys->Default);
+        }
+        
+        d.componentScrubbing = true;
+    });
+
+    connect(spin, &SpinBox::scrubbed, d.tree.data(), [this, item, scrub](double next) {
+        if (!scrub->active || !scrub->live || d.update)
+            return;
+
+        applyComponentPreview(item, next);
+    });
+
+    connect(spin, &SpinBox::scrubFinished, d.tree.data(),
+            [this, item, spin, scrub, commitItemText](double finalValue) {
+        if (!scrub->active)
+            return;
+
+        scrub->active = false;
+        scrub->ignoreNextEditingFinished = true;
+
+        QTimer::singleShot(0, spin, [scrub]() {
+            if (scrub)
+                scrub->ignoreNextEditingFinished = false;
+        });
+
+        if (!scrub->live) {
+            commitItemText(QString::number(finalValue, 'g', 12));
+            return;
+        }
+
+        VtValue final;
+        QString error;
+        if (!componentValue(item, finalValue, final, error) || final.IsEmpty()) {
+            d.componentScrubbing = false;
+            restoreItemText(item);
+            return;
+        }
+        
+        {
+            WRITE_LOCKER(locker, d.context ? d.context->stageLock() : session()->stageLock(), "stageLock");
+
+            const SdfLayerHandle editLayer = d.stage ? d.stage->GetEditTarget().GetLayer() : SdfLayerHandle();
+            if (!editLayer) {
+                d.componentScrubbing = false;
+                restoreItemText(item);
+                return;
+            }
+
+            if (scrub->hadEditDefault)
+                editLayer->SetField(item->propertyPath(), SdfFieldKeys->Default, scrub->previousEditDefault);
+            else
+                editLayer->EraseField(item->propertyPath(), SdfFieldKeys->Default);
+        }
+
+        d.componentScrubbing = false;
+        session()->commandStack()->execute(new Command(setAttributeValues(item->propertyPaths(), final)));
+    });
+
+    connect(spin, &QDoubleSpinBox::editingFinished, d.tree.data(), [this, commitItemText, spin, scrub]() {
+        if (d.update || scrub->active || scrub->ignoreNextEditingFinished)
+            return;
+
+        commitItemText(QString::number(spin->value(), 'g', 12));
+    });
+
+    d.tree->setItemWidget(item, PropertyItem::Value, spin);
+    spin->show();
+    item->setSizeHint(PropertyItem::Value, QSize(0, 30));
+}
+
 void
 PropertyTreePrivate::addVectorComponents(PropertyItem* parent, const SdfPath& propertyPath, const VtValue& value,
                                          int arrayIndex)
@@ -1266,7 +1492,11 @@ PropertyTreePrivate::addVectorComponents(PropertyItem* parent, const SdfPath& pr
                        arrayIndex >= 0 ? ArrayVectorComponent : VectorComponent);
         child->setData(PropertyItem::Value, ComponentIndexRole, component);
         setReadOnlyValueStyle(child, false);
-        d.tree->openPersistentEditor(child, PropertyItem::Value);
+
+        bool ok = false;
+        const double componentValue = text.toDouble(&ok);
+        if (ok)
+            installComponentEditor(child, componentValue, integral);
     }
 }
 
@@ -1415,7 +1645,11 @@ PropertyTreePrivate::addMatrixRows(PropertyItem* parent, const SdfPath& property
             componentItem->setData(PropertyItem::Value, ComponentIndexRole, row);
             componentItem->setData(PropertyItem::Value, ComponentColumnRole, column);
             setReadOnlyValueStyle(componentItem, false);
-            d.tree->openPersistentEditor(componentItem, PropertyItem::Value);
+
+            bool ok = false;
+            const double componentValue = componentText.toDouble(&ok);
+            if (ok)
+                installComponentEditor(componentItem, componentValue, false);
         }
     }
 }
@@ -1490,6 +1724,29 @@ PropertyTreePrivate::captureTreeState() const
     if (auto* current = dynamic_cast<PropertyItem*>(d.tree->currentItem()))
         state.current = itemKey(current);
 
+    // Capture the live expansion state for the current tree. This is used only
+    // when rebuilding the same semantic selection after a USD notice, so an
+    // attribute edit cannot collapse rows the user currently has open.
+    std::function<void(QTreeWidgetItem*)> capture = [&](QTreeWidgetItem* parent) {
+        if (!parent)
+            return;
+
+        for (int i = 0; i < parent->childCount(); ++i) {
+            QTreeWidgetItem* child = parent->child(i);
+            auto* item = dynamic_cast<PropertyItem*>(child);
+
+            if (!item) {
+                capture(child);
+                continue;
+            }
+
+            state.expanded.insert(itemKey(item), item->isExpanded());
+            capture(item);
+        }
+    };
+
+    capture(d.tree->invisibleRootItem());
+
     return state;
 }
 
@@ -1515,6 +1772,20 @@ PropertyTreePrivate::restoreTreeState(const TreeState& state)
             }
 
             const QString key = itemKey(item);
+
+            const auto expanded = state.expanded.constFind(key);
+            if (expanded != state.expanded.constEnd()) {
+                const bool isExpanded = expanded.value();
+
+                // Lazy arrays/chunks need their children reconstructed before
+                // descending into them, but only when they were already open.
+                if (isExpanded) {
+                    populateArrayAttribute(item);
+                    populateChunk(item);
+                }
+
+                item->setExpanded(isExpanded);
+            }
 
             if (!state.current.isEmpty() && key == state.current)
                 currentItem = item;
@@ -2618,6 +2889,12 @@ PropertyTreePrivate::updateStage(UsdStageRefPtr stage)
 void
 PropertyTreePrivate::updatePrims(const NoticeBatch& batch)
 {
+    // Live component scrubbing authors directly to USD so the viewport and other
+    // consumers update continuously. Rebuilding this tree from those notices
+    // would destroy the editor underneath the active mouse drag.
+    if (d.componentScrubbing)
+        return;
+
     if (d.paths.isEmpty() || batch.entries.isEmpty())
         return;
 
@@ -2703,6 +2980,44 @@ PropertyTreePrivate::addAttribute(PropertyItem* parent, const UsdAttribute& attr
 
     item->setToolTip(PropertyItem::Name, toolTips.join('\n'));
 
+    // Keep array contents lazy, but resolve the array value once so the row can
+    // show its element count immediately. The old performance problem came
+    // primarily from eagerly constructing hundreds/thousands of element/chunk
+    // rows for large mesh arrays. VtArray values are cheap to retain/copy, so
+    // reading the composed value here gives us the count without populating any
+    // children. Actual element/chunk rows are still created only on expansion.
+    if (attr.GetTypeName().IsArray()) {
+        VtValue arrayValue;
+        int arraySize = 0;
+
+        if (attr.Get(&arrayValue) && arrayInfo(arrayValue, arraySize)) {
+            item->setText(PropertyItem::Value, QString("%1 values").arg(arraySize));
+            item->setData(PropertyItem::Value, LazyArrayRole, true);
+
+            QString valueToolTip = QString::fromStdString(arrayValue.GetTypeName());
+            valueToolTip += QStringLiteral("\nExpand to load values");
+            if (rootOverride)
+                valueToolTip += QStringLiteral("\nEdit-layer override");
+            item->setToolTip(PropertyItem::Value, valueToolTip);
+            setReadOnlyValueStyle(item);
+
+            // A single dummy child provides the expansion arrow. It is replaced
+            // by chunks/elements only when the user expands this attribute.
+            PropertyItem* dummy = new PropertyItem(item);
+            dummy->setKind(PropertyItem::Group);
+            dummy->setText(PropertyItem::Name, "...");
+            return;
+        }
+
+        item->setText(PropertyItem::Value, QStringLiteral("<no default>"));
+        QString valueToolTip = QStringLiteral("No composed default value");
+        if (rootOverride)
+            valueToolTip += QStringLiteral("\nEdit-layer override");
+        item->setToolTip(PropertyItem::Value, valueToolTip);
+        setReadOnlyValueStyle(item);
+        return;
+    }
+
     VtValue value;
     if (!attr.Get(&value)) {
         item->setText(PropertyItem::Value, "<no default>");
@@ -2779,8 +3094,46 @@ PropertyTreePrivate::addAttribute(PropertyItem* parent, const UsdAttribute& attr
 void
 PropertyTreePrivate::updateSelection(const QList<SdfPath>& paths)
 {
-    const bool preserveState = !d.paths.isEmpty() && !paths.isEmpty();
-    const TreeState treeState = preserveState ? captureTreeState() : TreeState();
+    auto normalizedPrimPaths = [](const QList<SdfPath>& input) {
+        QList<SdfPath> result;
+        result.reserve(input.size());
+
+        for (const SdfPath& path : input)
+            result.append(path.IsPropertyPath() ? path.GetPrimPath() : path);
+
+        std::sort(result.begin(), result.end());
+        return result;
+    };
+
+    const bool sameSelection = !d.paths.isEmpty() && !paths.isEmpty()
+                               && normalizedPrimPaths(d.paths) == normalizedPrimPaths(paths);
+    const bool selectionChanged = !sameSelection;
+    const TreeState treeState = sameSelection ? captureTreeState() : TreeState();
+
+    // Expansion state is shared across prims so category/group rows such as
+    // Attributes, Metadata and Relationships can stay open while browsing.
+    // Value-bearing rows are different: carrying an expanded attribute, array
+    // chunk, matrix/vector row, etc. to a newly selected prim both looks odd
+    // and may immediately trigger lazy value population. Collapse those rows
+    // whenever the semantic selection changes, while preserving Group state.
+    if (selectionChanged && d.tree) {
+        std::function<void(QTreeWidgetItem*)> collapseValueRows = [&](QTreeWidgetItem* parent) {
+            if (!parent)
+                return;
+
+            for (int i = 0; i < parent->childCount(); ++i) {
+                QTreeWidgetItem* child = parent->child(i);
+                auto* item = dynamic_cast<PropertyItem*>(child);
+
+                if (item && item->kind() != PropertyItem::Group)
+                    d.expansionState[itemKey(item)] = false;
+
+                collapseValueRows(child);
+            }
+        };
+
+        collapseValueRows(d.tree->invisibleRootItem());
+    }
 
     QSignalBlocker blocker(d.tree.data());
     d.update = true;
@@ -2825,7 +3178,7 @@ PropertyTreePrivate::updateSelection(const QList<SdfPath>& paths)
 
         restoreExpansionState();
 
-        if (preserveState)
+        if (sameSelection)
             restoreTreeState(treeState);
 
         d.update = false;
@@ -2881,6 +3234,59 @@ PropertyTreePrivate::currentAttributeValues(const QList<SdfPath>& propertyPaths,
 
 
 void
+PropertyTreePrivate::populateArrayAttribute(PropertyItem* item)
+{
+    if (!item || item->kind() != PropertyItem::Attribute || item->propertyPath().IsEmpty())
+        return;
+
+    // Only array rows marked lazy during addAttribute() should populate here.
+    // The value column already contains the element count, so do not use its
+    // display text as the lazy-state marker.
+    if (!item->data(PropertyItem::Value, LazyArrayRole).toBool())
+        return;
+
+    VtValue value;
+    if (!currentAttributeValue(item->propertyPath(), value))
+        return;
+
+    int arraySize = 0;
+    if (!arrayInfo(value, arraySize))
+        return;
+
+    QSignalBlocker blocker(d.tree.data());
+    const bool previousUpdate = d.update;
+    d.update = true;
+
+    while (item->childCount() > 0)
+        delete item->takeChild(0);
+
+    item->setText(PropertyItem::Value, QString("%1 values").arg(arraySize));
+    item->setData(PropertyItem::Value, LazyArrayRole, false);
+
+    if (arraySize <= d.chunkSize) {
+        addArrayElements(item, item->propertyPath(), value, 0, arraySize);
+    }
+    else {
+        for (int start = 0; start < arraySize; start += d.chunkSize) {
+            const int count = std::min(d.chunkSize, arraySize - start);
+            PropertyItem* chunk = new PropertyItem(item);
+            chunk->setKind(PropertyItem::ArrayChunk);
+            chunk->setPropertyPath(item->propertyPath());
+            chunk->setChunkRange(start, count);
+            chunk->setText(PropertyItem::Name, QString("[%1..%2]").arg(start).arg(start + count - 1));
+            chunk->setText(PropertyItem::Value, QString("%1 values").arg(count));
+            setReadOnlyValueStyle(chunk);
+
+            PropertyItem* dummy = new PropertyItem(chunk);
+            dummy->setKind(PropertyItem::Group);
+            dummy->setText(PropertyItem::Name, "...");
+        }
+    }
+
+    d.update = previousUpdate;
+}
+
+void
 PropertyTreePrivate::populateChunk(PropertyItem* item)
 {
     if (!item || item->kind() != PropertyItem::ArrayChunk || item->chunkPopulated())
@@ -2914,6 +3320,7 @@ PropertyTreePrivate::itemExpanded(QTreeWidgetItem* baseItem)
         return;
 
     d.expansionState[itemKey(item)] = true;
+    populateArrayAttribute(item);
     populateChunk(item);
 }
 
@@ -3064,7 +3471,7 @@ PropertyTreePrivate::itemChanged(QTreeWidgetItem* baseItem, int column)
     }
 
     item->setMixedValue(false);
-    session()->commandStack()->run(new Command(setAttributeValues(propertyPaths, updated)));
+    session()->commandStack()->execute(new Command(setAttributeValues(propertyPaths, updated)));
 }
 
 PropertyTree::PropertyTree(QWidget* parent)
@@ -3160,9 +3567,9 @@ PropertyTree::contextMenuEvent(QContextMenuEvent* event)
 
     auto runCommand = [this](Command command) {
         if (ViewContext* viewContext = context())
-            viewContext->run(new Command(command));
+            viewContext->execute(new Command(command));
         else
-            session()->commandStack()->run(new Command(command));
+            session()->commandStack()->execute(new Command(command));
     };
 
     if (chosen == selectAction) {

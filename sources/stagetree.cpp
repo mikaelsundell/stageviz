@@ -20,11 +20,14 @@
 #include <QDrag>
 #include <QHeaderView>
 #include <QKeyEvent>
+#include <QMap>
 #include <QMimeData>
 #include <QPainter>
 #include <QPointer>
+#include <QStringList>
 #include <QStyledItemDelegate>
 #include <QTimer>
+#include <algorithm>
 #include <functional>
 #include <pxr/usd/sdf/primSpec.h>
 #include <pxr/usd/usd/prim.h>
@@ -54,7 +57,9 @@ public:
     void updatePrims(const NoticeBatch& batch);
     void updateSelection(const QList<SdfPath>& paths);
     void rebuildOverrideCache();
+    void updateOverrideCache(const QSet<SdfPath>& primPaths);
     void applyOverrideState(PrimItem* item);
+    bool isTransformPropertyPath(const SdfPath& path) const;
     SelectionList* selectionList() const;
 
 public Q_SLOTS:
@@ -344,6 +349,89 @@ StageTreePrivate::applyOverrideState(PrimItem* item)
 
     const SdfPath path = item->path();
     item->setOverrideState(d.directOverridePaths.contains(path), d.descendantOverridePaths.contains(path));
+}
+
+bool
+StageTreePrivate::isTransformPropertyPath(const SdfPath& path) const
+{
+    if (!path.IsPropertyPath())
+        return false;
+
+    const std::string name = path.GetNameToken().GetString();
+    return name == "xformOpOrder" || name.rfind("xformOp:", 0) == 0;
+}
+
+void
+StageTreePrivate::updateOverrideCache(const QSet<SdfPath>& primPaths)
+{
+    if (primPaths.isEmpty() || !d.stage)
+        return;
+
+    QSet<SdfPath> affectedPaths;
+
+    for (const SdfPath& inputPath : primPaths) {
+        const SdfPath primPath = inputPath.IsPropertyPath() ? inputPath.GetPrimPath() : inputPath;
+        if (primPath.IsEmpty())
+            continue;
+
+        SdfPath path = primPath;
+        while (!path.IsEmpty()) {
+            affectedPaths.insert(path);
+            if (path == SdfPath::AbsoluteRootPath())
+                break;
+            path = path.GetParentPath();
+        }
+    }
+
+    {
+        READ_LOCKER(locker, d.context->stageLock(), "stageLock");
+
+        if (!d.stage)
+            return;
+
+        const SdfLayerHandle editLayer = d.stage->GetEditTarget().GetLayer();
+        if (!editLayer)
+            return;
+
+        for (const SdfPath& inputPath : primPaths) {
+            const SdfPath primPath = inputPath.IsPropertyPath() ? inputPath.GetPrimPath() : inputPath;
+            if (primPath.IsEmpty() || primPath == SdfPath::AbsoluteRootPath())
+                continue;
+
+            const SdfPrimSpecHandle primSpec = editLayer->GetPrimAtPath(primPath);
+            const bool direct = primSpec && primSpec->GetSpecifier() == SdfSpecifierOver
+                                && !primSpec->GetProperties().empty();
+
+            if (direct)
+                d.directOverridePaths.insert(primPath);
+            else
+                d.directOverridePaths.remove(primPath);
+        }
+    }
+
+    // Only ancestor state of the changed prims can have changed. Recompute
+    // those paths from the direct-override cache instead of rescanning the
+    // edit layer and every tree item.
+    for (const SdfPath& path : affectedPaths)
+        d.descendantOverridePaths.remove(path);
+
+    for (const SdfPath& directPath : d.directOverridePaths) {
+        SdfPath ancestorPath = directPath.GetParentPath();
+        while (!ancestorPath.IsEmpty()) {
+            if (affectedPaths.contains(ancestorPath))
+                d.descendantOverridePaths.insert(ancestorPath);
+
+            if (ancestorPath == SdfPath::AbsoluteRootPath())
+                break;
+
+            ancestorPath = ancestorPath.GetParentPath();
+        }
+    }
+
+    for (const SdfPath& path : affectedPaths) {
+        if (PrimItem* item = itemFromPath(path))
+            applyOverrideState(item);
+    }
 }
 
 void
@@ -666,9 +754,9 @@ StageTreePrivate::toggleVisible(PrimItem* item)
     }
 
     if (visible)
-        d.context->run(new Command(hidePaths(QList<SdfPath> { path }, false)));
+        d.context->execute(new Command(hidePaths(QList<SdfPath> { path }, false)));
     else
-        d.context->run(new Command(showPaths(QList<SdfPath> { path }, false)));
+        d.context->execute(new Command(showPaths(QList<SdfPath> { path }, false)));
 }
 
 void
@@ -715,7 +803,7 @@ StageTreePrivate::itemSelectionChanged()
     if (paths == list->paths())
         return;
 
-    d.context->run(new Command(selectPaths(paths)));
+    d.context->execute(new Command(selectPaths(paths)));
 }
 
 void
@@ -762,11 +850,11 @@ StageTreePrivate::checkStateChanged(PrimItem* item)
     QTimer::singleShot(0, d.tree, [this]() {
         if (--d.pending <= 0) {
             if (!d.loadPaths.isEmpty()) {
-                d.context->run(new Command(loadPayloads(d.loadPaths)));
+                d.context->execute(new Command(loadPayloads(d.loadPaths)));
                 d.loadPaths.clear();
             }
             if (!d.unloadPaths.isEmpty()) {
-                d.context->run(new Command(unloadPayloads(d.unloadPaths)));
+                d.context->execute(new Command(unloadPayloads(d.unloadPaths)));
                 d.unloadPaths.clear();
             }
             d.pending = 0;
@@ -794,7 +882,7 @@ StageTreePrivate::nameChanged(PrimItem* item)
         return;
     }
 
-    d.context->run(new Command(renamePath(oldPath, newName)));
+    d.context->execute(new Command(renamePath(oldPath, newName)));
 
     if (itemFromPath(oldPath))
         item->setData(PrimItem::Name, PrimItem::EditName, QString());
@@ -828,7 +916,7 @@ StageTreePrivate::contextMenuEvent(QContextMenuEvent* event)
                 d.tree->setCurrentItem(clickedItem);
             }
 
-            d.context->run(new Command(selectPaths(paths)));
+            d.context->execute(new Command(selectPaths(paths)));
         }
     }
 
@@ -1121,6 +1209,35 @@ StageTreePrivate::updatePrims(const NoticeBatch& batch)
     if (!d.stage || !d.tree || batch.entries.isEmpty())
         return;
 
+    bool propertyFastPathBatch = true;
+    QSet<SdfPath> changedPropertyPrimPaths;
+
+    for (const NoticeEntry& entry : batch.entries) {
+        const bool ordinaryPropertyInfo = entry.changedInfoOnly && entry.path.IsPropertyPath()
+                                          && !entry.resolvedAssetPathsResynced
+                                          && entry.primResyncType == UsdNotice::ObjectsChanged::PrimResyncType::Invalid;
+
+        // First-time xform authoring can arrive from USD as property resyncs
+        // rather than info-only changes (for example when xformOpOrder and an
+        // xformOp are first authored). These notices still cannot change the
+        // StageTree namespace because the notice path itself is a property.
+        // Treat them like ordinary transform-property edits, but keep asset and
+        // namespace/delete resyncs on the conservative path.
+        const bool transformPropertyResync = entry.path.IsPropertyPath() && isTransformPropertyPath(entry.path)
+                                             && !entry.resolvedAssetPathsResynced
+                                             && entry.primResyncType
+                                                    != UsdNotice::ObjectsChanged::PrimResyncType::Delete
+                                             && !isRenameOrReparentSource(entry.primResyncType)
+                                             && !isRenameOrReparentDestination(entry.primResyncType);
+
+        if (!(ordinaryPropertyInfo || transformPropertyResync)) {
+            propertyFastPathBatch = false;
+            break;
+        }
+
+        changedPropertyPrimPaths.insert(entry.path.GetPrimPath());
+    }
+
     struct PathRemap {
         SdfPath from;
         SdfPath to;
@@ -1328,6 +1445,13 @@ StageTreePrivate::updatePrims(const NoticeBatch& batch)
         if (coveredByHandledParent)
             continue;
 
+        // Transform-property edits do not change anything displayed by the
+        // StageTree row itself. This also covers first-time xform property
+        // authoring, which USD may report as a property resync rather than an
+        // info-only notice.
+        if (propertyFastPathBatch && isTransformPropertyPath(entry.path))
+            continue;
+
         if (entry.changedInfoOnly) {
             updatePrim(entry.path);
             continue;
@@ -1371,36 +1495,48 @@ StageTreePrivate::updatePrims(const NoticeBatch& batch)
             item->setExpanded(state.expanded);
     }
 
-    // Refresh edit-layer override state after all structural/property updates.
-    // The scan touches only authored prim specs in the active edit layer, not
-    // the complete composed stage.
-    rebuildOverrideCache();
+    // Property-only changes cannot alter tree structure. Update the override
+    // cache only for changed prims and their ancestors. Structural/resync
+    // batches keep the conservative full rebuild.
+    if (propertyFastPathBatch)
+        updateOverrideCache(changedPropertyPrimPaths);
+    else
+        rebuildOverrideCache();
 
-    // SelectionList is the sole source of truth for selection. Never restore
-    // selection from cached Qt item state: payload/namespace notices can arrive
-    // after the semantic selection has already been cleared.
-    SelectionList* list = selectionList();
-    const QList<SdfPath> selectionPaths = list ? list->paths() : QList<SdfPath>();
 
-    updateSelection(selectionPaths);
+    // Property-only batches cannot add/remove/remap StageTree rows and cannot
+    // change SelectionList. Keep the existing Qt selection untouched. This is
+    // especially important for multi-prim gizmo edits where clearSelection()
+    // plus reselecting hundreds of rows is pure release-time overhead.
+    if (!propertyFastPathBatch) {
+        // SelectionList is the sole source of truth for selection. Never restore
+        // selection from cached Qt item state: payload/namespace notices can arrive
+        // after the semantic selection has already been cleared.
+        SelectionList* list = selectionList();
+        const QList<SdfPath> selectionPaths = list ? list->paths() : QList<SdfPath>();
 
-    // currentItem is UI navigation state only. Preserve it through namespace
-    // edits when it still corresponds to the semantic selection, but never let
-    // restoring currentItem create a Qt selection after SelectionList cleared.
-    if (selectionPaths.isEmpty()) {
-        d.tree->setCurrentItem(nullptr);
-    }
-    else if (!currentPath.IsEmpty()) {
-        const SdfPath finalCurrentPath = remapPath(currentPath);
+        updateSelection(selectionPaths);
 
-        if (PrimItem* currentItem = itemFromPath(finalCurrentPath)) {
-            if (currentItem->isSelected())
-                d.tree->setCurrentItem(currentItem, PrimItem::Name, QItemSelectionModel::NoUpdate);
+        // currentItem is UI navigation state only. Preserve it through namespace
+        // edits when it still corresponds to the semantic selection, but never let
+        // restoring currentItem create a Qt selection after SelectionList cleared.
+        if (selectionPaths.isEmpty()) {
+            d.tree->setCurrentItem(nullptr);
+        }
+        else if (!currentPath.IsEmpty()) {
+            const SdfPath finalCurrentPath = remapPath(currentPath);
+
+            if (PrimItem* currentItem = itemFromPath(finalCurrentPath)) {
+                if (currentItem->isSelected())
+                    d.tree->setCurrentItem(currentItem, PrimItem::Name, QItemSelectionModel::NoUpdate);
+            }
         }
     }
 
     d.tree->setUpdatesEnabled(true);
     d.tree->viewport()->update();
+
+
 }
 
 void
@@ -2205,7 +2341,7 @@ StageTree::dropEvent(QDropEvent* event)
     }
 
     if (context())
-        context()->run(new Command(movePath(fromPaths, newParentPath, insertIndex)));
+        context()->execute(new Command(movePath(fromPaths, newParentPath, insertIndex)));
 
     event->acceptProposedAction();
 }

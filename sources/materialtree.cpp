@@ -931,7 +931,7 @@ MaterialTreePrivate::setInputValues(const QList<SdfPath>& inputPaths, const VtVa
         }
     }
 
-    session()->commandStack()->run(new Command(setAttributeValues(inputPaths, value)));
+    session()->commandStack()->execute(new Command(setAttributeValues(inputPaths, value)));
 }
 
 QColor

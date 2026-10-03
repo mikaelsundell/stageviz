@@ -3,6 +3,8 @@
 // https://github.com/mikaelsundell/stageviz
 
 #include "pysession.h"
+#include "command.h"
+#include "commandstack.h"
 #include "pyselectionlist.h"
 #include "pyutils.h"
 #include "pyviewstate.h"
@@ -420,7 +422,22 @@ PySession_setEditLayer(PySessionObject* self, PyObject* args)
         return nullptr;
     }
 
-    return PyBool_FromLong(self->session->setEditLayer(match));
+    {
+        QReadLocker locker(self->session->stageLock());
+        const UsdStageRefPtr stage = self->session->stageUnsafe();
+        if (stage && stage->GetEditTarget().GetLayer() == match)
+            Py_RETURN_TRUE;
+    }
+
+    CommandStack* stack = self->session->commandStack();
+    if (!stack) {
+        PyErr_SetString(PyExc_RuntimeError, "Invalid stageviz.CommandStack");
+        return nullptr;
+    }
+
+    const QString layerIdentifier = QString::fromStdString(match->GetIdentifier());
+    stack->execute(new Command(stageviz::setEditLayer(layerIdentifier)));
+    Py_RETURN_TRUE;
 }
 
 static PyObject*
@@ -505,16 +522,6 @@ PySession_setPrimsUpdate(PySessionObject* self, PyObject* args)
         return nullptr;
 
     self->session->setPrimsUpdate(toPrimsUpdate(value));
-    Py_RETURN_NONE;
-}
-
-static PyObject*
-PySession_flushPrimsUpdates(PySessionObject* self)
-{
-    if (!checkSession(self->session))
-        return nullptr;
-
-    self->session->flushPrimsUpdates();
     Py_RETURN_NONE;
 }
 
@@ -661,7 +668,7 @@ static PyMethodDef PySession_methods[] = {
     { "editLayers", reinterpret_cast<PyCFunction>(PySession_editLayers), METH_NOARGS,
       "Get identifiers for layers in the local layer stack" },
     { "setEditLayer", reinterpret_cast<PyCFunction>(PySession_setEditLayer), METH_VARARGS,
-      "Set the active edit layer by local-layer identifier or real path" },
+      "Set the active edit layer through the undoable command stack" },
 
     { "auxiliary", reinterpret_cast<PyCFunction>(PySession_auxiliary), METH_NOARGS,
       "Get the Stageviz-owned auxiliary USD stage" },
@@ -678,9 +685,7 @@ static PyMethodDef PySession_methods[] = {
 
     { "primsUpdate", reinterpret_cast<PyCFunction>(PySession_primsUpdate), METH_NOARGS, "Get the prim update policy" },
     { "setPrimsUpdate", reinterpret_cast<PyCFunction>(PySession_setPrimsUpdate), METH_VARARGS,
-      "Set the prim update policy" },
-    { "flushPrimsUpdates", reinterpret_cast<PyCFunction>(PySession_flushPrimsUpdates), METH_NOARGS,
-      "Flush buffered prim updates" },
+      "Set the prim update policy; switching to Immediate flushes buffered prim updates" },
 
     { "commandStack", reinterpret_cast<PyCFunction>(PySession_commandStack), METH_NOARGS,
       "Get the native command stack address" },

@@ -20,18 +20,22 @@
 #include <pxr/base/gf/vec2f.h>
 #include <pxr/base/gf/vec4f.h>
 #include <pxr/base/tf/stringUtils.h>
+#include <pxr/base/vt/array.h>
 #include <pxr/base/vt/value.h>
 #include <pxr/usd/sdf/assetPath.h>
 #include <pxr/usd/sdr/registry.h>
 #include <pxr/usd/sdr/shaderNode.h>
 #include <pxr/usd/sdr/shaderProperty.h>
+#include <pxr/usd/usd/attribute.h>
 #include <pxr/usd/usd/primRange.h>
+#include <pxr/usd/usd/relationship.h>
 #include <pxr/usd/usdGeom/metrics.h>
 #include <pxr/usd/usdMtlx/reader.h>
 #include <pxr/usd/usdMtlx/utils.h>
 #include <pxr/usd/usdShade/connectableAPI.h>
 #include <pxr/usd/usdShade/nodeGraph.h>
 #include <pxr/usd/usdShade/output.h>
+#include <set>
 #include <utility>
 
 PXR_NAMESPACE_USING_DIRECTIVE
@@ -52,7 +56,7 @@ namespace {
     const CanonicalParameter kParameters[] = {
         { "baseColor", "Base Color", "Base", "diffuseColor", "base_color", "base_color" },
         { "metalness", "Metalness", "Base", "metallic", "metalness", "base_metalness" },
-        { "roughness", "Roughness", "Base", "roughness", "roughness", "specular_roughness" },
+        { "roughness", "Roughness", "Base", "roughness", "specular_roughness", "specular_roughness" },
         { "opacity", "Opacity", "Base", "opacity", "opacity", "opacity" },
         { "specular", "Specular", "Specular", nullptr, "specular", "specular_weight" },
         { "ior", "IOR", "Specular", "ior", "specular_IOR", "specular_ior" },
@@ -70,6 +74,47 @@ namespace {
             return fallback;
 
         T value;
+
+        // Connections are stronger than a composed/default value on the shader
+        // input. MaterialX import commonly promotes parameter values to inputs
+        // on the UsdShadeMaterial and connects the shader back to those interface
+        // inputs, while the referenced shader still exposes its NodeDef defaults.
+        //
+        // Resolve the authored connection path first. GetConnectedSource() does
+        // not reliably resolve MaterialX material-interface input connections in
+        // every OpenUSD representation, while the underlying USD attribute
+        // connection is explicit and unambiguous.
+        SdfPathVector connections;
+        if (input.GetAttr().GetConnections(&connections)) {
+            const UsdStageRefPtr stage = shader.GetPrim().GetStage();
+            for (const SdfPath& path : connections) {
+                if (!stage || !path.IsPropertyPath())
+                    continue;
+
+                const UsdAttribute sourceAttr = stage->GetAttributeAtPath(path);
+                if (sourceAttr && sourceAttr.Get(&value))
+                    return value;
+            }
+        }
+
+        // Keep the UsdShade source-resolution path for node-graph/output
+        // connections whose source attribute may not carry a direct value.
+        UsdShadeConnectableAPI source;
+        TfToken sourceName;
+        UsdShadeAttributeType sourceType = UsdShadeAttributeType::Output;
+        if (UsdShadeConnectableAPI::GetConnectedSource(input, &source, &sourceName, &sourceType)) {
+            if (sourceType == UsdShadeAttributeType::Input) {
+                const UsdShadeInput sourceInput = source.GetInput(sourceName);
+                if (sourceInput && sourceInput.Get(&value))
+                    return value;
+            }
+            else {
+                const UsdShadeOutput sourceOutput = source.GetOutput(sourceName);
+                if (sourceOutput && sourceOutput.GetAttr().Get(&value))
+                    return value;
+            }
+        }
+
         return input.Get(&value) ? value : fallback;
     }
 
@@ -684,7 +729,7 @@ namespace {
         shader.CreateInput(TfToken("base"), SdfValueTypeNames->Float).Set(1.0f);
         shader.CreateInput(TfToken("base_color"), SdfValueTypeNames->Color3f).Set(p.baseColor);
         shader.CreateInput(TfToken("metalness"), SdfValueTypeNames->Float).Set(p.metalness);
-        shader.CreateInput(TfToken("roughness"), SdfValueTypeNames->Float).Set(p.roughness);
+        shader.CreateInput(TfToken("specular_roughness"), SdfValueTypeNames->Float).Set(p.roughness);
         shader.CreateInput(TfToken("specular"), SdfValueTypeNames->Float).Set(p.specular);
         shader.CreateInput(TfToken("specular_IOR"), SdfValueTypeNames->Float).Set(p.ior);
         shader.CreateInput(TfToken("coat"), SdfValueTypeNames->Float).Set(p.coat);
@@ -998,7 +1043,8 @@ MaterialUtils::surfaceShader(const UsdShadeMaterial& material, QString* shaderId
         if (shader) {
             const QString id = shaderIdForPrim(shader.GetPrim());
             if (shaderId)
-                *shaderId = id;
+                if (shaderId)
+                    *shaderId = id;
             return shader;
         }
     }
@@ -1029,7 +1075,7 @@ MaterialUtils::readParameters(const UsdShadeShader& shader, const QString& shade
     if (shaderId == "ND_standard_surface_surfaceshader") {
         p.baseColor = shaderInput(shader, TfToken("base_color"), p.baseColor);
         p.metalness = shaderInput(shader, TfToken("metalness"), p.metalness);
-        p.roughness = shaderInput(shader, TfToken("roughness"), p.roughness);
+        p.roughness = shaderInput(shader, TfToken("specular_roughness"), p.roughness);
         p.specular = shaderInput(shader, TfToken("specular"), p.specular);
         p.ior = shaderInput(shader, TfToken("specular_IOR"), p.ior);
         p.coat = shaderInput(shader, TfToken("coat"), p.coat);
@@ -1109,6 +1155,187 @@ MaterialUtils::sceneMaterials(UsdStageRefPtr stage)
     return entries;
 }
 
+bool
+MaterialUtils::materialEntry(UsdStageRefPtr stage, const SdfPath& materialPath, MaterialEntry* entry)
+{
+    if (!stage || materialPath.IsEmpty() || !entry)
+        return false;
+
+    const UsdPrim prim = stage->GetPrimAtPath(materialPath);
+    if (!prim || !prim.IsA<UsdShadeMaterial>())
+        return false;
+
+    const UsdShadeMaterial material(prim);
+    QString shaderId;
+    const UsdShadeShader shader = surfaceShader(material, &shaderId);
+    if (!shader)
+        return false;
+
+    MaterialEntry result;
+    result.materialPath = prim.GetPath();
+    result.shaderPath = shader.GetPath();
+    result.name = QString::fromStdString(prim.GetName().GetString());
+    result.shaderId = shaderId;
+    result.parameters = readParameters(shader, shaderId);
+
+    for (const CanonicalParameter& mapping : kParameters) {
+        const TfToken name = mappedInputName(shaderId, QString::fromUtf8(mapping.key));
+        if (name.IsEmpty())
+            continue;
+        const UsdShadeInput input = shader.GetInput(name);
+        if (!input)
+            continue;
+        MaterialInputInfo info = inspectInput(input, shaderId);
+        info.parameter = QString::fromUtf8(mapping.key);
+        info.label = QString::fromUtf8(mapping.label);
+        info.group = QString::fromUtf8(mapping.group);
+        result.inputs.insert(info.parameter, info);
+    }
+
+    *entry = result;
+    return true;
+}
+
+
+SdfLayerRefPtr
+MaterialUtils::materialNetworkLayer(UsdStageRefPtr stage, const SdfPath& materialPath, QString& error)
+{
+    error.clear();
+    if (!stage) {
+        error = QStringLiteral("No USD stage");
+        return {};
+    }
+    if (materialPath.IsEmpty() || !materialPath.IsAbsolutePath() || !materialPath.IsPrimPath()) {
+        error = QStringLiteral("Invalid material path");
+        return {};
+    }
+
+    const UsdPrim materialPrim = stage->GetPrimAtPath(materialPath);
+    if (!materialPrim || !materialPrim.IsA<UsdShadeMaterial>()) {
+        error = QStringLiteral("Material not found: %1").arg(QString::fromStdString(materialPath.GetString()));
+        return {};
+    }
+
+    // Gather the material subtree first. Most USD/MaterialX networks live below
+    // their UsdShadeMaterial, so this is both complete and very cheap. Then follow
+    // authored attribute/relationship targets recursively to support valid graphs
+    // whose utility nodes live outside the material namespace.
+    std::set<SdfPath> paths;
+    std::vector<SdfPath> queue;
+    auto addPrim = [&](const UsdPrim& prim) {
+        if (!prim)
+            return;
+        for (const UsdPrim& descendant : UsdPrimRange(prim)) {
+            if (paths.insert(descendant.GetPath()).second)
+                queue.push_back(descendant.GetPath());
+        }
+    };
+    addPrim(materialPrim);
+
+    for (size_t i = 0; i < queue.size(); ++i) {
+        const UsdPrim prim = stage->GetPrimAtPath(queue[i]);
+        if (!prim)
+            continue;
+
+        for (const UsdAttribute& attribute : prim.GetAttributes()) {
+            SdfPathVector connections;
+            if (!attribute.GetConnections(&connections))
+                continue;
+            for (const SdfPath& connection : connections) {
+                const UsdPrim sourcePrim = stage->GetPrimAtPath(connection.GetPrimPath());
+                if (sourcePrim && paths.find(sourcePrim.GetPath()) == paths.end())
+                    addPrim(sourcePrim);
+            }
+        }
+
+        for (const UsdRelationship& relationship : prim.GetRelationships()) {
+            SdfPathVector targets;
+            if (!relationship.GetTargets(&targets))
+                continue;
+            for (const SdfPath& target : targets) {
+                const UsdPrim sourcePrim = stage->GetPrimAtPath(target.GetPrimPath());
+                if (sourcePrim && paths.find(sourcePrim.GetPath()) == paths.end())
+                    addPrim(sourcePrim);
+            }
+        }
+    }
+
+    const SdfLayerRefPtr layer = SdfLayer::CreateAnonymous("stageviz_material_network.usda");
+    const UsdStageRefPtr snapshot = layer ? UsdStage::Open(layer) : UsdStageRefPtr();
+    if (!snapshot) {
+        error = QStringLiteral("Could not create material-network snapshot");
+        return {};
+    }
+
+    // Parent prims must exist before descendants. SdfPath's lexical order is
+    // normally sufficient, but explicit path-depth ordering keeps this deterministic.
+    std::vector<SdfPath> ordered(paths.begin(), paths.end());
+    std::stable_sort(ordered.begin(), ordered.end(), [](const SdfPath& a, const SdfPath& b) {
+        const size_t da = a.GetPathElementCount();
+        const size_t db = b.GetPathElementCount();
+        return da == db ? a.GetString() < b.GetString() : da < db;
+    });
+
+    auto resolvedValue = [](const VtValue& value) -> VtValue {
+        if (value.IsHolding<SdfAssetPath>()) {
+            const SdfAssetPath asset = value.UncheckedGet<SdfAssetPath>();
+            const std::string resolved = asset.GetResolvedPath();
+            return VtValue(SdfAssetPath(resolved.empty() ? asset.GetAssetPath() : resolved));
+        }
+        if (value.IsHolding<VtArray<SdfAssetPath>>()) {
+            VtArray<SdfAssetPath> assets = value.UncheckedGet<VtArray<SdfAssetPath>>();
+            for (SdfAssetPath& asset : assets) {
+                const std::string resolved = asset.GetResolvedPath();
+                if (!resolved.empty())
+                    asset = SdfAssetPath(resolved);
+            }
+            return VtValue(assets);
+        }
+        return value;
+    };
+
+    for (const SdfPath& path : ordered) {
+        const UsdPrim sourcePrim = stage->GetPrimAtPath(path);
+        if (!sourcePrim)
+            continue;
+
+        const UsdPrim targetPrim = snapshot->DefinePrim(path, sourcePrim.GetTypeName());
+        if (!targetPrim) {
+            error = QStringLiteral("Could not copy material-network prim: %1")
+                        .arg(QString::fromStdString(path.GetString()));
+            return {};
+        }
+
+        for (const UsdAttribute& sourceAttr : sourcePrim.GetAttributes()) {
+            const UsdAttribute targetAttr = targetPrim.CreateAttribute(sourceAttr.GetName(), sourceAttr.GetTypeName(),
+                                                                       sourceAttr.IsCustom(),
+                                                                       sourceAttr.GetVariability());
+            if (!targetAttr)
+                continue;
+
+            VtValue value;
+            if (sourceAttr.Get(&value, UsdTimeCode::Default()) && !value.IsEmpty())
+                targetAttr.Set(resolvedValue(value), UsdTimeCode::Default());
+
+            SdfPathVector connections;
+            if (sourceAttr.GetConnections(&connections) && !connections.empty())
+                targetAttr.SetConnections(connections);
+
+        }
+
+        for (const UsdRelationship& sourceRel : sourcePrim.GetRelationships()) {
+            const UsdRelationship targetRel = targetPrim.CreateRelationship(sourceRel.GetName(), sourceRel.IsCustom());
+            if (!targetRel)
+                continue;
+            SdfPathVector targets;
+            if (sourceRel.GetTargets(&targets) && !targets.empty())
+                targetRel.SetTargets(targets);
+        }
+    }
+
+    return layer;
+}
+
 QString
 MaterialUtils::shaderTypeLabel(const QString& shaderId)
 {
@@ -1176,7 +1403,6 @@ MaterialUtils::nodeInfo(UsdStageRefPtr stage, const SdfPath& nodePath)
 
         if (materialXNodeDefinition(result.shaderId, &definition)) {
             QHash<QString, int> byName;
-
             for (const MaterialXPortDefinition& port : definition.inputs) {
                 if (port.name.isEmpty() || byName.contains(port.name))
                     continue;
@@ -1373,9 +1599,12 @@ namespace {
                 ports.append(incoming);
                 return;
             }
-            // Sdr is authoritative for the USD storage type. XML contributes
-            // discovery, grouping, labels, enums and inheritance metadata.
-            if (!incoming.type.isEmpty())
+            // Sdr is authoritative for normal USD storage types, but shader
+            // terminals are represented by Sdr as "terminal". That is an Sdr
+            // semantic type, not a valid MaterialX socket type. Preserve the
+            // MaterialX XML type (for example "surfaceshader") in that case so
+            // exported documents can be read back by UsdMtlxRead.
+            if (!incoming.type.isEmpty() && !(incoming.type == QStringLiteral("terminal") && !it->type.isEmpty()))
                 it->type = incoming.type;
             if (it->value.isEmpty())
                 it->value = incoming.value;
@@ -1704,35 +1933,27 @@ MaterialUtils::authorMaterialXNodeInterface(UsdShadeShader& shader, const Materi
         return false;
     }
 
-    for (const MaterialXPortDefinition& port : definition.inputs) {
-        if (port.name.isEmpty())
-            continue;
-        const SdfValueTypeName type = sdfTypeForMaterialX(port.type);
-        if (type.GetAsToken().IsEmpty()) {
-            error = QStringLiteral("unsupported MaterialX input type %1 on %2").arg(port.type, port.name);
-            return false;
-        }
-        UsdShadeInput input = shader.CreateInput(TfToken(port.name.toStdString()), type);
-        if (!input) {
-            error = QStringLiteral("failed to create MaterialX input: %1").arg(port.name);
-            return false;
-        }
-        const VtValue defaultValue = materialXDefaultValue(port.type, port.value);
-        if (!defaultValue.IsEmpty() && !input.Set(defaultValue)) {
-            error = QStringLiteral("failed to set MaterialX input default: %1").arg(port.name);
-            return false;
-        }
-    }
-
+    // Keep newly-created MaterialX nodes minimal. The NodeDef is the authoritative
+    // declaration of the input interface and nodeInfo() already exposes those
+    // declared inputs to the graph/property UI. Authoring every NodeDef input and
+    // default into USD duplicates that interface and can make HdMtlx validation
+    // reject the generated network when the installed MaterialX/Sdr declaration
+    // differs even slightly from our merged metadata.
+    //
+    // Inputs are therefore authored lazily by ensureShaderInput() when the user
+    // edits or connects a particular socket. Outputs must exist immediately so
+    // the new node can be connected to its target input.
     if (!definition.outputs.isEmpty()) {
         for (const MaterialXPortDefinition& port : definition.outputs) {
             if (port.name.isEmpty())
                 continue;
+
             const SdfValueTypeName type = sdfTypeForMaterialX(port.type);
             if (type.GetAsToken().IsEmpty()) {
                 error = QStringLiteral("unsupported MaterialX output type %1 on %2").arg(port.type, port.name);
                 return false;
             }
+
             if (!shader.CreateOutput(TfToken(port.name.toStdString()), type)) {
                 error = QStringLiteral("failed to create MaterialX output: %1").arg(port.name);
                 return false;
@@ -1998,6 +2219,7 @@ MaterialUtils::createStandardSurfaceMaterial(UsdStageRefPtr stage)
     const SdfPath path = uniqueMaterialPath(stage);
     if (!path.IsEmpty())
         authorStandardSurface(stage, path, MaterialParameters());
+    authorStandardSurface(stage, path, MaterialParameters());
     return path;
 }
 
@@ -2306,22 +2528,28 @@ MaterialUtils::importMaterialX(UsdStageRefPtr stage, const QString& filename, QL
         stage->ClearDefaultPrim();
     }
 
-    // Discover exactly the materials created below this import root. Do not
-    // rely on MaterialX element names here; the official reader is authoritative
-    // about the USD namespace it generated.
+    // Discover exactly the usable materials created below this import root.
+    // A UsdShadeMaterial shell alone is not enough: UsdMtlxRead can create the
+    // material/config metadata even when no surface shading network was
+    // translated. Only report materials that resolve to a real surface shader.
     const UsdPrim importedRoot = stage->GetPrimAtPath(importRoot);
     if (importedRoot) {
         for (const UsdPrim& prim : UsdPrimRange(importedRoot)) {
-            if (prim && prim.IsA<UsdShadeMaterial>())
+            if (!prim || !prim.IsA<UsdShadeMaterial>())
+                continue;
+
+            QString shaderId;
+            const UsdShadeShader shader = surfaceShader(UsdShadeMaterial(prim), &shaderId);
+            if (shader)
                 createdPaths.append(prim.GetPath());
         }
     }
 
     if (createdPaths.isEmpty()) {
-        // Avoid leaving an empty import scope behind when the document does not
-        // contain a translatable material.
+        // Avoid leaving an empty/config-only import scope behind when the
+        // document did not translate into a usable USD shading network.
         stage->RemovePrim(importRoot);
-        error = QStringLiteral("MaterialX document did not produce any USD materials.");
+        error = QStringLiteral("MaterialX document did not produce any usable USD materials.");
         return false;
     }
 

@@ -273,7 +273,7 @@ ContextMenu::exec(QWidget* parent, ViewContext* context, UsdStageRefPtr usdStage
 
                 QObject::connect(action, &QAction::triggered, parent, [context, setName, value, targetPaths]() {
                     if (!targetPaths.isEmpty())
-                        context->run(new Command(setVariantSelection(targetPaths, setName, value)));
+                        context->execute(new Command(setVariantSelection(targetPaths, setName, value)));
                 });
             }
         }
@@ -368,7 +368,8 @@ ContextMenu::exec(QWidget* parent, ViewContext* context, UsdStageRefPtr usdStage
         return;
 
     if (chosen == setDefaultPrim) {
-        context->run(new Command(setDefaultPrim->isChecked() ? defaultPrimPath(paths.first()) : clearDefaultPrim()));
+        context->execute(
+            new Command(setDefaultPrim->isChecked() ? defaultPrimPath(paths.first()) : clearDefaultPrim()));
         return;
     }
 
@@ -406,58 +407,58 @@ ContextMenu::exec(QWidget* parent, ViewContext* context, UsdStageRefPtr usdStage
 
     if (chosen == loadSelected) {
         if (!payloadPaths.isEmpty())
-            context->run(new Command(loadPayloads(payloadPaths)));
+            context->execute(new Command(loadPayloads(payloadPaths)));
         return;
     }
 
     if (chosen == unloadSelected) {
         if (!payloadPaths.isEmpty())
-            context->run(new Command(unloadPayloads(payloadPaths)));
+            context->execute(new Command(unloadPayloads(payloadPaths)));
         return;
     }
 
     if (chosen == centerPivot) {
-        context->run(new Command(centerPivots(paths)));
+        context->execute(new Command(centerPivots(paths)));
         return;
     }
 
     if (chosen == resetPivot) {
-        context->run(new Command(resetPivots(paths)));
+        context->execute(new Command(resetPivots(paths)));
         return;
     }
 
     if (chosen == identityTransform) {
-        context->run(new Command(identityTransforms(paths)));
+        context->execute(new Command(identityTransforms(paths)));
         return;
     }
 
     if (chosen == resetOverridesAction) {
-        context->run(new Command(resetOverrides(paths)));
+        context->execute(new Command(resetOverrides(paths)));
         return;
     }
 
     if (chosen == newXform) {
-        context->run(new Command(newXformPath(createParentPath, "Xform")));
+        context->execute(new Command(newXformPath(createParentPath, "Xform")));
         return;
     }
 
     if (chosen == duplicateSelected) {
-        context->run(new Command(duplicatePaths(paths)));
+        context->execute(new Command(duplicatePaths(paths)));
         return;
     }
 
     if (chosen == showSelected)
-        context->run(new Command(showPaths(paths, false)));
+        context->execute(new Command(showPaths(paths, false)));
     else if (chosen == showRecursive)
-        context->run(new Command(showPaths(paths, true)));
+        context->execute(new Command(showPaths(paths, true)));
     else if (chosen == hideSelected)
-        context->run(new Command(hidePaths(paths, false)));
+        context->execute(new Command(hidePaths(paths, false)));
     else if (chosen == hideRecursive)
-        context->run(new Command(hidePaths(paths, true)));
+        context->execute(new Command(hidePaths(paths, true)));
     else if (chosen == isolateAction)
-        context->run(new Command(isolatePaths(isolateAction->isChecked() ? paths : QList<SdfPath>())));
+        context->execute(new Command(isolatePaths(isolateAction->isChecked() ? paths : QList<SdfPath>())));
     else if (chosen == deleteSelected)
-        context->run(new Command(deletePaths(paths)));
+        context->execute(new Command(deletePaths(paths)));
 }
 
 }  // namespace stageviz

@@ -10,6 +10,7 @@
 #include <QWidget>
 
 class QGraphicsView;
+class QShowEvent;
 
 namespace stageviz {
 
@@ -124,6 +125,11 @@ Q_SIGNALS:
     void connectMaterialXNodeRequested(const SdfPath& inputPath, const QString& nodeDef, const QString& nodeName);
 
 protected:
+    /**
+     * @brief Frames a newly opened graph before its first visible paint.
+     */
+    void showEvent(QShowEvent* event) override;
+
     /**
      * @brief Handles graph-view interaction and shortcut routing.
      */

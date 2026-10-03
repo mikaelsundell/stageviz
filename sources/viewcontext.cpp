@@ -107,7 +107,7 @@ ViewContext::isValid() const
 }
 
 void
-ViewContext::run(Command* command) const
+ViewContext::execute(Command* command) const
 {
     if (!command)
         return;
@@ -115,7 +115,7 @@ ViewContext::run(Command* command) const
     if (!p->d.commandStack)
         return;
 
-    p->d.commandStack->run(command);
+    p->d.commandStack->execute(command);
 }
 
 }  // namespace stageviz

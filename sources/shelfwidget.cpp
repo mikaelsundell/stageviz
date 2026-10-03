@@ -12,7 +12,6 @@
 #include <QAbstractItemModel>
 #include <QApplication>
 #include <QBuffer>
-#include <QDebug>
 #include <QDragEnterEvent>
 #include <QDropEvent>
 #include <QFileDialog>

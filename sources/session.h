@@ -227,11 +227,8 @@ public:
     /**
      * @brief Creates a new empty USD stage in memory.
      *
-     * Clears any existing stage and initializes a fresh one. The requested
-     * load policy is also applied to the stage load rules so payloads authored
-     * later follow the same All/None behavior as stages opened from disk.
+     * Clears any existing stage and initializes a fresh one.
      *
-     * @param policy Payload loading policy for the new stage.
      * @return True if creation succeeded.
      */
     bool newStage(LoadPolicy policy = LoadPolicy::All);
@@ -245,13 +242,6 @@ public:
      * @return True if loading succeeded.
      */
     bool loadFromFile(const QString& filename, LoadPolicy policy = LoadPolicy::All);
-
-    /**
-     * @brief Recomputes derived stage state and emits a full prim refresh.
-     *
-     * Used by undoable commands that restore edit-layer content directly.
-     */
-    void refreshStage();
 
     /**
      * @brief Saves the root layer and modified file-backed local sublayers.
@@ -417,17 +407,11 @@ public:
     UsdStageRefPtr stageUnsafe() const;
 
     /**
-     * @brief Sets the Stageviz edit layer.
-     *
-     * Only layers in the stage's local layer stack are accepted. The stage
-     * creates the corresponding local-layer edit target so layer offsets are
-     * preserved correctly. CommandStack tracks edit-target changes so undoable
-     * edit-layer commands can participate in history while external changes
-     * invalidate stale history safely.
-     *
-     * @param layer Local layer to use for subsequent Stageviz authoring.
-     * @return True if the layer is valid and became the active edit layer.
-     */
+ * @brief Sets the active edit layer.
+ *
+ * @param layer Local layer to use for authoring.
+ * @return True if the edit layer was set successfully.
+ */
     bool setEditLayer(const SdfLayerHandle& layer);
 
     /**
@@ -447,15 +431,10 @@ public:
     /**
      * @brief Sets how prim changes are propagated.
      *
-     * Deferred buffers changes until flushed. Switching to Immediate
-     * flushes pending changes.
+     * Deferred buffers changes. Switching to Immediate flushes pending
+     * changes.
      */
     void setPrimsUpdate(PrimsUpdate policy);
-
-    /**
-     * @brief Emits any buffered prim changes.
-     */
-    void flushPrimsUpdates();
 
     /**
      * @name Command State

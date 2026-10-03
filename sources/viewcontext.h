@@ -117,9 +117,9 @@ public:
     bool isValid() const;
 
     /**
-     * @brief Runs a command through the configured command stack.
+     * @brief Executes  a command through the configured command stack.
      */
-    void run(Command* command) const;
+    void execute(Command* command) const;
 
 private:
     Q_DISABLE_COPY_MOVE(ViewContext)

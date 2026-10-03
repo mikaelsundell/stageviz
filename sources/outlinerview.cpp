@@ -76,9 +76,9 @@ OutlinerViewPrivate::init()
     stageTree()->installEventFilter(this);
 
     d.ui->clear->setIcon(style()->icon(Style::IconRole::Clear));
-    d.ui->collapse->setIcon(style()->icon(Style::IconRole::Collapse));
-    d.ui->expand->setIcon(style()->icon(Style::IconRole::Expand));
     d.ui->follow->setIcon(style()->icon(Style::IconRole::Follow));
+    d.ui->collapse->setIcon(style()->icon(Style::IconRole::List));
+    d.ui->expand->setIcon(style()->icon(Style::IconRole::Nested));
     // connect
     connect(d.ui->filter, &QLineEdit::textChanged, this, &OutlinerViewPrivate::filterChanged);
     connect(d.ui->clear, &QToolButton::clicked, this, &OutlinerViewPrivate::clearFilter);
@@ -131,19 +131,20 @@ OutlinerViewPrivate::clearDepth()
     d.ui->depth->setMaximum(10);
     d.ui->depth->setValue(0);
     d.ui->depth->setEnabled(false);
+    d.ui->collapse->setEnabled(false);
+    d.ui->expand->setEnabled(false);
 }
 
 void
 OutlinerViewPrivate::collapse()
 {
-    if (d.context->selectionList() && !d.context->selectionList()->paths().isEmpty())
-        d.ui->stageTree->collapse();
+    d.ui->depth->setValue(d.ui->depth->minimum());
 }
 
 void
 OutlinerViewPrivate::expand()
 {
-    d.ui->stageTree->expand();
+    d.ui->depth->setValue(d.ui->depth->maximum());
 }
 
 void
@@ -200,9 +201,6 @@ OutlinerViewPrivate::selectionChanged(const QList<SdfPath>& paths)
         updateDepth(paths.first());
     else
         updateDepth();
-
-    d.ui->collapse->setEnabled(true);
-    d.ui->expand->setEnabled(true);
 }
 
 void
@@ -237,6 +235,9 @@ OutlinerViewPrivate::depthChanged(int value)
         stageTree()->expandDepth(value, paths.first());
     else
         stageTree()->expandDepth(value);
+
+    d.ui->collapse->setEnabled(value > d.ui->depth->minimum());
+    d.ui->expand->setEnabled(value < d.ui->depth->maximum());
 }
 
 void
@@ -248,6 +249,10 @@ OutlinerViewPrivate::updateDepth(const SdfPath& path)
     d.ui->depth->setMinimum(0);
     d.ui->depth->setMaximum(stageTree()->maxDepth(path));
     d.ui->depth->setValue(stageTree()->depth(path));
+
+    const int value = d.ui->depth->value();
+    d.ui->collapse->setEnabled(value > d.ui->depth->minimum());
+    d.ui->expand->setEnabled(value < d.ui->depth->maximum());
 }
 
 OutlinerView::OutlinerView(QWidget* parent)

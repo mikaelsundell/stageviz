@@ -815,11 +815,18 @@
      </property>
      <addaction name="actionClear"/>
     </widget>
+    <widget class="QMenu" name="fileLayer">
+     <property name="title">
+      <string>Layer</string>
+     </property>
+    </widget>
     <addaction name="fileNew"/>
     <addaction name="fileOpen"/>
     <addaction name="fileMerge"/>
     <addaction name="filePolicy"/>
     <addaction name="fileRecent"/>
+    <addaction name="separator"/>
+    <addaction name="fileLayer"/>
     <addaction name="separator"/>
     <addaction name="fileSave"/>
     <addaction name="fileSaveAs"/>

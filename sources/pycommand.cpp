@@ -87,7 +87,7 @@ namespace {
             PyErr_SetString(PyExc_RuntimeError, "Invalid stageviz.CommandStack");
             return nullptr;
         }
-        stack->run(new Command(command));
+        stack->execute(new Command(command));
         Py_RETURN_NONE;
     }
 
@@ -382,7 +382,11 @@ PyCommand_setTransforms(PyObject*, PyObject* args)
     QList<GfMatrix4d> before, after;
     if (!parseMatrices(pyBefore, before) || !parseMatrices(pyAfter, after))
         return nullptr;
-    return runCommand(setTransforms(paths, before, after));
+
+    XformEdit edit;
+    edit.before = before;
+    edit.after = after;
+    return runCommand(setTransforms(paths, edit));
 }
 
 static PyObject*

@@ -8,15 +8,14 @@
 #include "style.h"
 #include <QApplication>
 #include <QColor>
-#include <QDebug>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
 #include <QHash>
 #include <QMetaObject>
 #include <QPointer>
-#include <QSet>
 #include <QStandardPaths>
+#include <QStringList>
 #include <QThread>
 #include <QTimer>
 #include <algorithm>
@@ -25,6 +24,7 @@
 #include <pxr/base/gf/matrix4d.h>
 #include <pxr/base/vt/value.h>
 #include <pxr/usd/sdf/layer.h>
+#include <pxr/usd/usd/editContext.h>
 #include <pxr/usd/usd/primRange.h>
 #include <pxr/usd/usdGeom/bboxCache.h>
 #include <pxr/usd/usdGeom/camera.h>
@@ -44,6 +44,7 @@ namespace stageviz {
 class MaterialRendererPrivate {
 public:
     enum class RequestKind { Parameters, MaterialNetwork, InteractiveNetwork };
+    struct Pending;
     struct RenderContext;
 
     void init();
@@ -51,27 +52,29 @@ public:
     void dispatchNetwork(const QString& path, const SdfLayerRefPtr& sourceLayer, bool forceRender);
     void dispatchInteractive(const QString& path, const SdfLayerRefPtr& sourceLayer, const SdfPath& inputPath,
                              const VtValue& value);
-    void process(const QString& path);
+    void enqueue(const QString& path, const Pending& request, bool highPriority = false);
+    void scheduleNext();
+    void processNext();
     void receive(const QString& path, const QImage& image, const QString& error, quint64 serial, RequestKind kind);
     void reset();
     void resetContext(RenderContext& context);
 
     bool ensureParameterRenderer(QString& error);
-    bool ensureNetworkRenderer(QString& error, const SdfLayerRefPtr& sourceLayer);
-    bool ensureInteractiveNetworkRenderer(QString& error, const SdfLayerRefPtr& sourceLayer);
-    bool initializeContext(RenderContext& context, QString& error, const SdfLayerRefPtr& sourceLayer,
-                           const GfVec2i& size);
+    bool ensureNetworkRenderer(QString& error);
+    bool initializeContext(RenderContext& context, QString& error, bool networkContext, const GfVec2i& size);
+    bool syncNetworkLayer(RenderContext& context, const SdfPath& materialPath, const SdfLayerRefPtr& sourceLayer,
+                          QString& error);
     QImage renderParameters(const MaterialParameters& parameters, QString& error);
     QImage renderNetwork(const SdfPath& materialPath, const SdfLayerRefPtr& sourceLayer, QString& error);
     QImage renderInteractiveNetwork(const SdfPath& materialPath, const SdfLayerRefPtr& sourceLayer,
                                     const SdfPath& inputPath, const VtValue& value, QString& error);
     bool applyOverride(RenderContext& context, const SdfPath& inputPath, const VtValue& value);
-    void applyOverrides(RenderContext& context);
+    void applyOverrides(RenderContext& context, const SdfPath& materialPath = SdfPath());
     void clearContextOverrides(RenderContext& context);
 
     static QString materialCacheDirectory();
     static QString extractResource(const QString& resourcePath, const QString& relativePath);
-    static UsdStageRefPtr createPreviewStage(QString& error, const SdfLayerRefPtr& sourceLayer = {});
+    static UsdStageRefPtr createPreviewStage(QString& error, const SdfLayerRefPtr& networkLayer = {});
     static bool createFallbackMaterial(const UsdStageRefPtr& stage);
     static bool updatePreviewMaterial(const UsdStageRefPtr& stage, const MaterialParameters& parameters);
     static bool bindPreviewMaterial(const UsdStageRefPtr& stage, const SdfPath& materialPath);
@@ -89,7 +92,9 @@ public:
 
     struct RenderContext {
         UsdStageRefPtr stage;
-        SdfLayerRefPtr sourceLayer;
+        SdfLayerRefPtr networkLayer;
+        SdfLayerRefPtr loadedSourceLayer;
+        SdfPath loadedMaterialPath;
         std::unique_ptr<RenderEngine> renderEngine;
         GfVec2i size { 0, 0 };
     };
@@ -97,18 +102,20 @@ public:
     struct Data {
         QPointer<MaterialRenderer> renderer;
 
-        // Keep two Hydra/Storm contexts warm. Interactive parameter previews
-        // must never evict the real MaterialX network renderer and vice versa.
+        // Keep the lightweight canonical-parameter preview and one persistent
+        // authored-network Hydra/Storm context warm. Interactive edits reuse the
+        // authored-network context so they never pay a second Storm warm-up.
         RenderContext parameterContext;
-        RenderContext interactiveNetworkContext;
         RenderContext networkContext;
 
         QHash<QString, QImage> cache;
         QHash<QString, Pending> pending;
-        QSet<QString> active;
+        QStringList queue;
+        QString activePath;
         QHash<QString, VtValue> attributeOverrides;
 
         quint64 serial = 0;
+        bool processScheduled = false;
     };
 
     Data d;
@@ -174,7 +181,7 @@ MaterialRendererPrivate::createFallbackMaterial(const UsdStageRefPtr& stage)
 }
 
 UsdStageRefPtr
-MaterialRendererPrivate::createPreviewStage(QString& error, const SdfLayerRefPtr& sourceLayer)
+MaterialRendererPrivate::createPreviewStage(QString& error, const SdfLayerRefPtr& networkLayer)
 {
     const UsdStageRefPtr stage = UsdStage::CreateInMemory("stageviz_material_preview.usda");
     if (!stage) {
@@ -182,11 +189,12 @@ MaterialRendererPrivate::createPreviewStage(QString& error, const SdfLayerRefPtr
         return {};
     }
 
-    // Compose only the material-network snapshot. Preview geometry, UVs,
-    // lighting and camera are generated directly below, so there is no external
-    // shaderball .usda to extract, parse or open.
-    if (sourceLayer)
-        stage->GetRootLayer()->GetSubLayerPaths().push_back(sourceLayer->GetIdentifier());
+    // Compose a small mutable material-network layer. The layer is kept in the
+    // stage stack for the lifetime of the renderer and its contents are replaced
+    // per requested material. This keeps Hydra/Storm alive while avoiding a
+    // complete application-stage flatten or preview-stage rebuild.
+    if (networkLayer)
+        stage->GetRootLayer()->GetSubLayerPaths().push_back(networkLayer->GetIdentifier());
 
     UsdGeomSetStageUpAxis(stage, UsdGeomTokens->z);
     UsdGeomSetStageMetersPerUnit(stage, 0.001);
@@ -289,7 +297,7 @@ MaterialRendererPrivate::createPreviewStage(QString& error, const SdfLayerRefPtr
                                                       UsdGeomTokens->faceVarying);
     stPrimvar.Set(st);
 
-    if (!sourceLayer && !createFallbackMaterial(stage)) {
+    if (!networkLayer && !createFallbackMaterial(stage)) {
         error = QStringLiteral("Could not create fallback material preview shader");
         return {};
     }
@@ -363,7 +371,7 @@ MaterialRendererPrivate::init()
 }
 
 bool
-MaterialRendererPrivate::initializeContext(RenderContext& context, QString& error, const SdfLayerRefPtr& sourceLayer,
+MaterialRendererPrivate::initializeContext(RenderContext& context, QString& error, bool networkContext,
                                            const GfVec2i& size)
 {
     if (!qApp || QThread::currentThread() != qApp->thread()) {
@@ -373,8 +381,15 @@ MaterialRendererPrivate::initializeContext(RenderContext& context, QString& erro
 
     resetContext(context);
 
-    context.sourceLayer = sourceLayer;
-    context.stage = createPreviewStage(error, sourceLayer);
+    if (networkContext) {
+        context.networkLayer = SdfLayer::CreateAnonymous("stageviz_material_network_live.usda");
+        if (!context.networkLayer) {
+            error = QStringLiteral("Could not create live material-network layer");
+            return false;
+        }
+    }
+
+    context.stage = createPreviewStage(error, context.networkLayer);
     if (!context.stage)
         return false;
 
@@ -393,9 +408,9 @@ MaterialRendererPrivate::initializeContext(RenderContext& context, QString& erro
     context.renderEngine->setSize(size);
     context.size = size;
 
-    // Render only the generated preview hierarchy. The flattened source layer is
-    // composed only so its materials/shaders can be resolved; none of its scene
-    // geometry should ever appear in a swatch.
+    // Render only the generated preview hierarchy. The compact network layer is
+    // composed solely so its UsdShade/MaterialX nodes resolve; it contains no
+    // application scene geometry.
     context.renderEngine->setMask({ SdfPath("/Stageviz/Preview") });
 
     const UsdGeomCamera camera(context.stage->GetPrimAtPath(SdfPath("/Stageviz/Camera")));
@@ -418,40 +433,35 @@ MaterialRendererPrivate::ensureParameterRenderer(QString& error)
     }
 
 
-    return initializeContext(d.parameterContext, error, {}, GfVec2i(previewSize, previewSize));
+    return initializeContext(d.parameterContext, error, false, GfVec2i(previewSize, previewSize));
 }
 
 bool
-MaterialRendererPrivate::ensureNetworkRenderer(QString& error, const SdfLayerRefPtr& sourceLayer)
+MaterialRendererPrivate::ensureNetworkRenderer(QString& error)
 {
-    constexpr int finalSize = 512;
-
-    // A swatch snapshot is immutable for one structural generation. Reuse the
-    // warm Storm context for every material that references the same snapshot.
-    // MaterialDialog replaces the snapshot layer object when topology changes,
-    // so pointer identity is the safe invalidation boundary.
-    if (d.networkContext.renderEngine && d.networkContext.stage && d.networkContext.sourceLayer == sourceLayer) {
+    constexpr int finalSize = 256;
+    if (d.networkContext.renderEngine && d.networkContext.stage && d.networkContext.networkLayer)
         return true;
-    }
 
-    const bool ok = initializeContext(d.networkContext, error, sourceLayer, GfVec2i(finalSize, finalSize));
-    return ok;
+    return initializeContext(d.networkContext, error, true, GfVec2i(finalSize, finalSize));
 }
 
 bool
-MaterialRendererPrivate::ensureInteractiveNetworkRenderer(QString& error, const SdfLayerRefPtr& sourceLayer)
+MaterialRendererPrivate::syncNetworkLayer(RenderContext& context, const SdfPath& materialPath,
+                                          const SdfLayerRefPtr& sourceLayer, QString& error)
 {
-    constexpr int previewSize = 384;
-    if (d.interactiveNetworkContext.renderEngine && d.interactiveNetworkContext.stage
-        && d.interactiveNetworkContext.sourceLayer == sourceLayer) {
-        return true;
-    }
-
-
-    if (!initializeContext(d.interactiveNetworkContext, error, sourceLayer, GfVec2i(previewSize, previewSize))) {
+    if (!context.stage || !context.networkLayer || !sourceLayer) {
+        error = QStringLiteral("Material preview network context is incomplete");
         return false;
     }
-    applyOverrides(d.interactiveNetworkContext);
+
+    if (context.loadedSourceLayer == sourceLayer && context.loadedMaterialPath == materialPath)
+        return true;
+
+    context.networkLayer->TransferContent(sourceLayer);
+    context.loadedSourceLayer = sourceLayer;
+    context.loadedMaterialPath = materialPath;
+
     return true;
 }
 
@@ -460,6 +470,10 @@ MaterialRendererPrivate::applyOverride(RenderContext& context, const SdfPath& in
 {
     if (!context.stage || inputPath.IsEmpty() || !inputPath.IsPropertyPath() || value.IsEmpty())
         return false;
+
+    std::unique_ptr<UsdEditContext> editContext;
+    if (context.networkLayer)
+        editContext = std::make_unique<UsdEditContext>(context.stage, UsdEditTarget(context.networkLayer));
 
     UsdAttribute attribute = context.stage->GetAttributeAtPath(inputPath);
 
@@ -497,13 +511,17 @@ MaterialRendererPrivate::applyOverride(RenderContext& context, const SdfPath& in
 }
 
 void
-MaterialRendererPrivate::applyOverrides(RenderContext& context)
+MaterialRendererPrivate::applyOverrides(RenderContext& context, const SdfPath& materialPath)
 {
     if (!context.stage)
         return;
 
-    for (auto it = d.attributeOverrides.cbegin(); it != d.attributeOverrides.cend(); ++it)
-        applyOverride(context, SdfPath(it.key().toStdString()), it.value());
+    for (auto it = d.attributeOverrides.cbegin(); it != d.attributeOverrides.cend(); ++it) {
+        const SdfPath inputPath(it.key().toStdString());
+        if (!materialPath.IsEmpty() && !inputPath.GetPrimPath().HasPrefix(materialPath))
+            continue;
+        applyOverride(context, inputPath, it.value());
+    }
 }
 
 void
@@ -511,6 +529,10 @@ MaterialRendererPrivate::clearContextOverrides(RenderContext& context)
 {
     if (!context.stage)
         return;
+
+    std::unique_ptr<UsdEditContext> editContext;
+    if (context.networkLayer)
+        editContext = std::make_unique<UsdEditContext>(context.stage, UsdEditTarget(context.networkLayer));
 
     for (auto it = d.attributeOverrides.cbegin(); it != d.attributeOverrides.cend(); ++it) {
         const UsdAttribute attribute = context.stage->GetAttributeAtPath(SdfPath(it.key().toStdString()));
@@ -541,63 +563,28 @@ MaterialRendererPrivate::renderParameters(const MaterialParameters& parameters, 
     return image;
 }
 
-namespace {
-
-    void dumpMaterialNetwork(const UsdStageRefPtr& stage, const SdfPath& materialPath)
-    {
-        if (!stage || materialPath.IsEmpty())
-            return;
-
-
-        const UsdPrim materialPrim = stage->GetPrimAtPath(materialPath);
-        if (!materialPrim) {
-            return;
-        }
-
-        for (const UsdPrim& prim : UsdPrimRange(materialPrim)) {
-            if (!prim.IsA<UsdShadeShader>())
-                continue;
-
-            const UsdShadeShader shader(prim);
-            TfToken shaderId;
-            shader.GetIdAttr().Get(&shaderId);
-
-
-            for (const UsdShadeInput& input : shader.GetInputs()) {
-                UsdShadeConnectableAPI source;
-                TfToken sourceName;
-                UsdShadeAttributeType sourceType = UsdShadeAttributeType::Output;
-                if (input.GetConnectedSource(&source, &sourceName, &sourceType)) {}
-            }
-
-            for (const UsdShadeOutput& output : shader.GetOutputs()) {}
-        }
-    }
-
-}  // namespace
-
 QImage
 MaterialRendererPrivate::renderNetwork(const SdfPath& materialPath, const SdfLayerRefPtr& sourceLayer, QString& error)
 {
     error.clear();
-
 
     if (!sourceLayer) {
         error = QStringLiteral("Material preview source layer is missing");
         return {};
     }
 
-    if (!ensureNetworkRenderer(error, sourceLayer))
+    if (!ensureNetworkRenderer(error))
         return {};
 
     RenderContext& context = d.networkContext;
-    applyOverrides(context);
+    if (!syncNetworkLayer(context, materialPath, sourceLayer, error))
+        return {};
+
+    applyOverrides(context, materialPath);
     if (!bindPreviewMaterial(context.stage, materialPath)) {
         error = QStringLiteral("Could not bind the material network to the preview shaderball");
         return {};
     }
-
-    dumpMaterialNetwork(context.stage, materialPath);
 
     QImage image = context.renderEngine->renderImage();
     if (image.isNull())
@@ -621,11 +608,13 @@ MaterialRendererPrivate::renderInteractiveNetwork(const SdfPath& materialPath, c
     // network had just been rendered. Apply the preview value transiently, render,
     // then restore the committed value so interactive edits cannot contaminate the
     // final swatch context.
-    if (!ensureNetworkRenderer(error, sourceLayer))
+    if (!ensureNetworkRenderer(error))
         return {};
 
     RenderContext& context = d.networkContext;
-    applyOverrides(context);
+    if (!syncNetworkLayer(context, materialPath, sourceLayer, error))
+        return {};
+    applyOverrides(context, materialPath);
     if (!bindPreviewMaterial(context.stage, materialPath)) {
         error = QStringLiteral("Could not bind the material network to the interactive preview shaderball");
         return {};
@@ -645,6 +634,7 @@ MaterialRendererPrivate::renderInteractiveNetwork(const SdfPath& materialPath, c
     QImage image = context.renderEngine->renderImage();
     attribute = context.stage ? context.stage->GetAttributeAtPath(inputPath) : UsdAttribute();
     if (attribute) {
+        UsdEditContext editContext(context.stage, UsdEditTarget(context.networkLayer));
         if (hadValue)
             attribute.Set(previousValue);
         else
@@ -661,7 +651,9 @@ MaterialRendererPrivate::resetContext(RenderContext& context)
 {
     context.renderEngine.reset();
     context.stage = nullptr;
-    context.sourceLayer = nullptr;
+    context.networkLayer = nullptr;
+    context.loadedSourceLayer = nullptr;
+    context.loadedMaterialPath = {};
     context.size = GfVec2i(0, 0);
 }
 
@@ -669,9 +661,65 @@ void
 MaterialRendererPrivate::reset()
 {
     resetContext(d.parameterContext);
-    resetContext(d.interactiveNetworkContext);
     resetContext(d.networkContext);
     d.attributeOverrides.clear();
+}
+
+void
+MaterialRendererPrivate::enqueue(const QString& path, const Pending& request, bool highPriority)
+{
+    d.pending.insert(path, request);
+    d.queue.removeAll(path);
+    if (highPriority)
+        d.queue.prepend(path);
+    else
+        d.queue.append(path);
+    scheduleNext();
+}
+
+void
+MaterialRendererPrivate::scheduleNext()
+{
+    if (!d.activePath.isEmpty() || d.processScheduled || d.queue.isEmpty())
+        return;
+
+    d.processScheduled = true;
+    QPointer<MaterialRenderer> renderer = d.renderer;
+    QTimer::singleShot(0, d.renderer.data(), [this, renderer]() {
+        d.processScheduled = false;
+        if (renderer)
+            processNext();
+    });
+}
+
+void
+MaterialRendererPrivate::processNext()
+{
+    if (!d.activePath.isEmpty())
+        return;
+
+    while (!d.queue.isEmpty()) {
+        const QString path = d.queue.takeFirst();
+        const auto it = d.pending.find(path);
+        if (it == d.pending.end())
+            continue;
+
+        const Pending request = it.value();
+        d.pending.erase(it);
+        d.activePath = path;
+        QString error;
+        QImage image;
+        if (request.kind == RequestKind::MaterialNetwork)
+            image = renderNetwork(SdfPath(path.toStdString()), request.sourceLayer, error);
+        else if (request.kind == RequestKind::InteractiveNetwork)
+            image = renderInteractiveNetwork(SdfPath(path.toStdString()), request.sourceLayer, request.inputPath,
+                                             request.value, error);
+        else
+            image = renderParameters(request.parameters, error);
+
+        receive(path, image, error, request.serial, request.kind);
+        return;
+    }
 }
 
 void
@@ -693,20 +741,7 @@ MaterialRendererPrivate::dispatchParameters(const QString& path, const MaterialP
     pending.parameters = parameters;
     pending.serial = ++d.serial;
     pending.forceRender = forceRender;
-    d.pending.insert(path, pending);
-
-    if (d.active.contains(path))
-        return;
-
-    d.active.insert(path);
-    QPointer<MaterialRenderer> renderer = d.renderer;
-    QMetaObject::invokeMethod(
-        d.renderer,
-        [this, renderer, path]() {
-            if (renderer)
-                process(path);
-        },
-        Qt::QueuedConnection);
+    enqueue(path, pending);
 }
 
 void
@@ -726,26 +761,12 @@ MaterialRendererPrivate::dispatchNetwork(const QString& path, const SdfLayerRefP
         d.cache.remove(path);
     }
 
-
     Pending pending;
     pending.kind = RequestKind::MaterialNetwork;
     pending.sourceLayer = sourceLayer;
     pending.serial = ++d.serial;
     pending.forceRender = forceRender;
-    d.pending.insert(path, pending);
-
-    if (d.active.contains(path))
-        return;
-
-    d.active.insert(path);
-    QPointer<MaterialRenderer> renderer = d.renderer;
-    QMetaObject::invokeMethod(
-        d.renderer,
-        [this, renderer, path]() {
-            if (renderer)
-                process(path);
-        },
-        Qt::QueuedConnection);
+    enqueue(path, pending);
 }
 
 void
@@ -762,45 +783,23 @@ MaterialRendererPrivate::dispatchInteractive(const QString& path, const SdfLayer
     pending.value = value;
     pending.serial = ++d.serial;
     pending.forceRender = true;
-    d.pending.insert(path, pending);
 
+    // Interactive edits replace older requests for this material and jump ahead
+    // of background browser swatches. The short debounce collapses slider noise.
+    d.pending.insert(path, pending);
+    d.queue.removeAll(path);
     const quint64 scheduledSerial = pending.serial;
     QPointer<MaterialRenderer> renderer = d.renderer;
     QTimer::singleShot(35, d.renderer.data(), [this, renderer, path, scheduledSerial]() {
-        if (!renderer || d.active.contains(path))
+        if (!renderer)
             return;
         const auto it = d.pending.constFind(path);
-        if (it == d.pending.cend() || it->serial != scheduledSerial || it->kind != RequestKind::InteractiveNetwork) {
+        if (it == d.pending.cend() || it->serial != scheduledSerial || it->kind != RequestKind::InteractiveNetwork)
             return;
-        }
-        d.active.insert(path);
-        process(path);
+        d.queue.removeAll(path);
+        d.queue.prepend(path);
+        scheduleNext();
     });
-}
-
-void
-MaterialRendererPrivate::process(const QString& path)
-{
-    const auto it = d.pending.find(path);
-    if (it == d.pending.end()) {
-        d.active.remove(path);
-        return;
-    }
-
-    const Pending request = it.value();
-    d.pending.erase(it);
-
-    QString error;
-    QImage image;
-    if (request.kind == RequestKind::MaterialNetwork)
-        image = renderNetwork(SdfPath(path.toStdString()), request.sourceLayer, error);
-    else if (request.kind == RequestKind::InteractiveNetwork)
-        image = renderInteractiveNetwork(SdfPath(path.toStdString()), request.sourceLayer, request.inputPath,
-                                         request.value, error);
-    else
-        image = renderParameters(request.parameters, error);
-
-    receive(path, image, error, request.serial, request.kind);
 }
 
 void
@@ -812,9 +811,7 @@ MaterialRendererPrivate::receive(const QString& path, const QImage& image, const
 
     if (!newerRequestExists) {
         if (!image.isNull()) {
-            // Only full-quality real-network renders become reusable material
-            // cache entries. The 384px parameter path is a transient interaction
-            // preview and must never satisfy a later 512px network request.
+            // Only authored network renders become reusable browser cache entries.
             if (kind == RequestKind::MaterialNetwork)
                 d.cache.insert(path, image);
             Q_EMIT d.renderer->rendered(path, image);
@@ -824,19 +821,12 @@ MaterialRendererPrivate::receive(const QString& path, const QImage& image, const
         }
     }
 
-    if (d.pending.contains(path)) {
-        QPointer<MaterialRenderer> renderer = d.renderer;
-        QMetaObject::invokeMethod(
-            d.renderer,
-            [this, renderer, path]() {
-                if (renderer)
-                    process(path);
-            },
-            Qt::QueuedConnection);
-        return;
-    }
+    d.activePath.clear();
 
-    d.active.remove(path);
+    // Yield to Qt between expensive Storm renders. This keeps scrolling,
+    // selection and painting responsive while visible swatches progressively
+    // replace their CPU stand-ins.
+    scheduleNext();
 }
 
 MaterialRenderer::MaterialRenderer(QObject* parent)
@@ -936,7 +926,6 @@ MaterialRenderer::syncAttribute(const SdfPath& inputPath, const VtValue& value)
 
     const QString key = QString::fromStdString(inputPath.GetString());
     p->d.attributeOverrides.insert(key, value);
-    p->applyOverride(p->d.interactiveNetworkContext, inputPath, value);
     p->applyOverride(p->d.networkContext, inputPath, value);
 }
 
@@ -955,7 +944,6 @@ MaterialRenderer::clearOverrides()
         return;
     }
 
-    p->clearContextOverrides(p->d.interactiveNetworkContext);
     p->clearContextOverrides(p->d.networkContext);
     p->d.attributeOverrides.clear();
 }
@@ -969,6 +957,29 @@ MaterialRenderer::invalidate(const SdfPath& materialPath)
     const QString path = QString::fromStdString(materialPath.GetString());
     p->d.cache.remove(path);
     p->d.pending.remove(path);
+    p->d.queue.removeAll(path);
+}
+
+void
+MaterialRenderer::invalidateNetwork(const SdfPath& materialPath)
+{
+    if (materialPath.IsEmpty())
+        return;
+
+    invalidate(materialPath);
+
+    for (auto it = p->d.attributeOverrides.begin(); it != p->d.attributeOverrides.end();) {
+        const SdfPath inputPath(it.key().toStdString());
+        if (inputPath.GetPrimPath().HasPrefix(materialPath))
+            it = p->d.attributeOverrides.erase(it);
+        else
+            ++it;
+    }
+
+    if (p->d.networkContext.loadedMaterialPath == materialPath) {
+        p->d.networkContext.loadedSourceLayer = nullptr;
+        p->d.networkContext.loadedMaterialPath = {};
+    }
 }
 
 void
@@ -976,6 +987,9 @@ MaterialRenderer::clear()
 {
     p->d.cache.clear();
     p->d.pending.clear();
+    p->d.queue.clear();
+    p->d.activePath.clear();
+    p->d.processScheduled = false;
     p->reset();
 }
 

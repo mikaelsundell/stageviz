@@ -40,6 +40,7 @@
 #include <pxr/usd/usdGeom/cube.h>
 #include <pxr/usd/usdGeom/imageable.h>
 #include <pxr/usd/usdGeom/mesh.h>
+#include <pxr/usd/usdGeom/metrics.h>
 #include <pxr/usd/usdGeom/nurbsCurves.h>
 #include <pxr/usd/usdGeom/nurbsPatch.h>
 #include <pxr/usd/usdGeom/pointInstancer.h>
@@ -47,6 +48,7 @@
 #include <pxr/usd/usdGeom/scope.h>
 #include <pxr/usd/usdGeom/tokens.h>
 #include <pxr/usd/usdGeom/xform.h>
+#include <pxr/usd/usdGeom/xformCache.h>
 #include <pxr/usd/usdGeom/xformable.h>
 #include <pxr/usd/usdShade/material.h>
 #include <pxr/usd/usdShade/materialBindingAPI.h>
@@ -258,8 +260,8 @@ namespace {
         return result;
     }
 
-    bool restoreTransformRootState(UsdStageRefPtr stage, const SdfLayerHandle& editLayer, const SdfPath& primPath,
-                                   const TransformRootState& state, QString& error)
+    bool restoreXformState(UsdStageRefPtr stage, const SdfLayerHandle& editLayer, const SdfPath& primPath,
+                           const XformState& state, QString& error)
     {
         if (!stage) {
             error = "stage missing";
@@ -293,6 +295,12 @@ namespace {
         else if (!removePropertySpec(editLayer, matrixPath)) {
             error = QString("failed to remove matrix transform override: %1").arg(pathText(primPath));
             return false;
+        }
+
+        if (!state.hadPrimSpec) {
+            const SdfPrimSpecHandle primSpec = editLayer->GetPrimAtPath(primPath);
+            if (primSpec && primSpec->IsInert())
+                stage::removePrimSpec(editLayer, primPath);
         }
 
         return true;
@@ -1186,9 +1194,6 @@ namespace {
                         state->editLayer->TransferContent(state->snapshot);
                 }
 
-                if (success)
-                    session->refreshStage();
-
                 using Status = Session::Notify::Status;
                 session->updateProgressNotify(Session::Notify(success
                                                                   ? successMessage
@@ -1211,9 +1216,6 @@ namespace {
                         success = true;
                     }
                 }
-                if (success)
-                    session->refreshStage();
-
                 using Status = Session::Notify::Status;
                 session->updateProgressNotify(Session::Notify(success ? QString("%1 undone").arg(title)
                                                                       : QString("Undo %1 failed").arg(title.toLower()),
@@ -1299,9 +1301,6 @@ namespace {
                     }
                 }
 
-                if (success)
-                    session->refreshStage();
-
                 using Status = Session::Notify::Status;
                 session->updateProgressNotify(
                     Session::Notify(success ? successMessage : appendError(QString("%1 failed").arg(title), error),
@@ -1332,9 +1331,6 @@ namespace {
                         success = true;
                     }
                 }
-
-                if (success)
-                    session->refreshStage();
 
                 using Status = Session::Notify::Status;
                 session->updateProgressNotify(Session::Notify(success ? QString("%1 undone").arg(title)
@@ -1415,9 +1411,6 @@ addSublayer(const QString& filename)
                 }
             }
 
-            if (success)
-                session->refreshStage();
-
             using Status = Session::Notify::Status;
             session->updateProgressNotify(Session::Notify(success ? "Sublayer added"
                                                                   : appendError("Add sublayer failed", error),
@@ -1439,9 +1432,6 @@ addSublayer(const QString& filename)
                     success = true;
                 }
             }
-            if (success)
-                session->refreshStage();
-
             using Status = Session::Notify::Status;
             session->updateProgressNotify(Session::Notify(success ? "Add sublayer undone" : "Undo add sublayer failed",
                                                           {}, success ? Status::Success : Status::Error),
@@ -3673,33 +3663,20 @@ selectPaths(const QList<SdfPath>& paths)
 {
     auto previous = std::make_shared<QList<SdfPath>>();
 
+    // Selection is high-frequency UI state. Keep it synchronous and avoid the
+    // worker/progress machinery used by authoring commands so tree and viewport
+    // selection update in the same event-loop turn.
     return Command(
         [paths, previous](Session* session) {
-            session->beginProgressBlock("Select paths", 1);
+            if (!session)
+                return;
 
-            command::runWorker([session, paths, previous]() {
-                *previous = session->selectionList()->paths();
-                session->selectionList()->updatePaths(paths);
-
-                command::queueToSession(session, [session, paths]() {
-                    using Status = Session::Notify::Status;
-                    session->updateProgressNotify(Session::Notify("Paths selected", paths, Status::Success), 1);
-                    session->endProgressBlock();
-                });
-            });
+            *previous = session->selectionList()->paths();
+            session->selectionList()->updatePaths(paths);
         },
         [previous](Session* session) {
-            session->beginProgressBlock("Undo select paths", 1);
-
-            command::runWorker([session, previous]() {
+            if (session)
                 session->selectionList()->updatePaths(*previous);
-
-                command::queueToSession(session, [session, previous]() {
-                    using Status = Session::Notify::Status;
-                    session->updateProgressNotify(Session::Notify("Select undone", *previous, Status::Success), 1);
-                    session->endProgressBlock();
-                });
-            });
         });
 }
 
@@ -4926,10 +4903,46 @@ duplicatePaths(const QList<SdfPath>& inPaths, bool selectDuplicates)
 }
 
 namespace {
+    GfVec3f stageAlignedPoint(const UsdStageRefPtr& stage, const GfVec3f& point)
+    {
+        if (!stage || UsdGeomGetStageUpAxis(stage) != UsdGeomTokens->y)
+            return point;
+
+        // Sample geometry below is authored in a Z-up convention. Rotate it
+        // into Y-up space when the stage uses Y as its up axis.
+        return GfVec3f(point[0], point[2], -point[1]);
+    }
+
+    bool authorStageAxis(const UsdStageRefPtr& stage, const UsdPrim& prim, const TfToken& typeName, QString& error)
+    {
+        if (!stage || !prim) {
+            error = "stage or prim missing";
+            return false;
+        }
+
+        if (typeName != TfToken("Plane") && typeName != TfToken("Cylinder") && typeName != TfToken("Cone")
+            && typeName != TfToken("Capsule")) {
+            return true;
+        }
+
+        const TfToken axis = UsdGeomGetStageUpAxis(stage);
+        UsdAttribute axisAttr = prim.GetAttribute(UsdGeomTokens->axis);
+        if (!axisAttr)
+            axisAttr = prim.CreateAttribute(UsdGeomTokens->axis, SdfValueTypeNames->Token, false,
+                                            SdfVariabilityUniform);
+
+        if (!axisAttr || !axisAttr.Set(axis)) {
+            error = QString("failed to set stage axis on %1").arg(pathText(prim.GetPath()));
+            return false;
+        }
+
+        return true;
+    }
+
     using PrimAuthor = std::function<bool(const UsdStageRefPtr&, const SdfPath&, QString&)>;
 
     Command newAuthoredPrimPath(const SdfPath& parentPath, const QString& nameInput, const QString& label,
-                                PrimAuthor author)
+                                PrimAuthor author, bool selectCreated)
     {
         struct NewAuthoredPrimState {
             SdfPath parentPath;
@@ -4943,7 +4956,7 @@ namespace {
         auto state = std::make_shared<NewAuthoredPrimState>();
 
         return Command(
-            [parentPath, nameInput, label, author, state](Session* session) {
+            [parentPath, nameInput, label, author, selectCreated, state](Session* session) {
                 if (!session || parentPath.IsEmpty())
                     return;
 
@@ -4952,7 +4965,7 @@ namespace {
 
                 command::beginDeferred(session, QString("New %1").arg(label), 1);
 
-                command::runWorker([session, parentPath, nameInput, label, author, state]() {
+                command::runWorker([session, parentPath, nameInput, label, author, selectCreated, state]() {
                     bool success = false;
                     QString error;
                     SdfPath newPath;
@@ -5018,13 +5031,14 @@ namespace {
                         }
                     }
 
-                    command::queueToSession(session, [session, newPath, changed, success, error, label]() {
+                    command::queueToSession(session, [session, newPath, changed, success, error, label,
+                                                      selectCreated]() {
                         using Status = Session::Notify::Status;
                         command::finishDeferred(session,
                                                 success ? QString("%1 created").arg(label)
                                                         : appendError(QString("New %1 failed").arg(label), error),
                                                 changed, success ? Status::Success : Status::Error);
-                        if (success)
+                        if (success && selectCreated)
                             session->selectionList()->updatePaths({ newPath });
                     });
                 });
@@ -5092,7 +5106,7 @@ namespace {
 }  // namespace
 
 Command
-newPrimPath(const SdfPath& parentPath, const QString& nameInput, const TfToken& typeName)
+newPrimPath(const SdfPath& parentPath, const QString& nameInput, const TfToken& typeName, bool selectCreated)
 {
     struct NewPrimState {
         SdfPath parentPath;
@@ -5106,7 +5120,7 @@ newPrimPath(const SdfPath& parentPath, const QString& nameInput, const TfToken& 
     auto state = std::make_shared<NewPrimState>();
 
     return Command(
-        [parentPath, nameInput, typeName, state](Session* session) {
+        [parentPath, nameInput, typeName, selectCreated, state](Session* session) {
             if (!session || parentPath.IsEmpty())
                 return;
 
@@ -5115,7 +5129,7 @@ newPrimPath(const SdfPath& parentPath, const QString& nameInput, const TfToken& 
 
             command::beginDeferred(session, "New prim", 1);
 
-            command::runWorker([session, parentPath, nameInput, typeName, state]() {
+            command::runWorker([session, parentPath, nameInput, typeName, selectCreated, state]() {
                 bool success = false;
                 QString error;
                 SdfPath newPath;
@@ -5160,6 +5174,9 @@ newPrimPath(const SdfPath& parentPath, const QString& nameInput, const TfToken& 
                                 if (!prim || !prim.IsValid()) {
                                     error = "define failed";
                                 }
+                                else if (!authorStageAxis(stage, prim, typeName, error)) {
+                                    stage::removePrimSpec(editLayer, newPath);
+                                }
                                 else {
                                     TfTokenVector order = state->oldParentOrder;
                                     order.push_back(newPath.GetNameToken());
@@ -5174,13 +5191,13 @@ newPrimPath(const SdfPath& parentPath, const QString& nameInput, const TfToken& 
                     }
                 }
 
-                command::queueToSession(session, [session, newPath, changed, success, error]() {
+                command::queueToSession(session, [session, newPath, changed, success, error, selectCreated]() {
                     using Status = Session::Notify::Status;
 
                     command::finishDeferred(session, success ? "Prim created" : appendError("New prim failed", error),
                                             changed, success ? Status::Success : Status::Error);
 
-                    if (success)
+                    if (success && selectCreated)
                         session->selectionList()->updatePaths({ newPath });
                 });
             });
@@ -5247,67 +5264,69 @@ newPrimPath(const SdfPath& parentPath, const QString& nameInput, const TfToken& 
 }
 
 Command
-newScopePath(const SdfPath& parentPath, const QString& nameInput)
+newScopePath(const SdfPath& parentPath, const QString& nameInput, bool selectCreated)
 {
-    return newPrimPath(parentPath, nameInput, TfToken("Scope"));
+    return newPrimPath(parentPath, nameInput, TfToken("Scope"), selectCreated);
 }
 
 Command
-newMeshPath(const SdfPath& parentPath, const QString& nameInput)
-{
-    return newAuthoredPrimPath(parentPath, nameInput, "mesh",
-                               [](const UsdStageRefPtr& stage, const SdfPath& path, QString& error) {
-                                   const UsdGeomMesh mesh = UsdGeomMesh::Define(stage, path);
-                                   if (!mesh) {
-                                       error = "failed to define UsdGeomMesh";
-                                       return false;
-                                   }
-
-                                   constexpr int width = 11;
-                                   constexpr int height = 11;
-                                   constexpr float spacing = 0.5f;
-                                   VtVec3fArray points;
-                                   VtIntArray counts;
-                                   VtIntArray indices;
-                                   points.reserve(width * height);
-                                   counts.reserve((width - 1) * (height - 1));
-                                   indices.reserve((width - 1) * (height - 1) * 4);
-
-                                   for (int y = 0; y < height; ++y) {
-                                       for (int x = 0; x < width; ++x) {
-                                           const float fx = (float(x) - float(width - 1) * 0.5f) * spacing;
-                                           const float fy = (float(y) - float(height - 1) * 0.5f) * spacing;
-                                           const float z = std::sin(fx * 1.35f) * std::cos(fy * 1.15f) * 0.45f;
-                                           points.push_back(GfVec3f(fx, fy, z));
-                                       }
-                                   }
-
-                                   for (int y = 0; y < height - 1; ++y) {
-                                       for (int x = 0; x < width - 1; ++x) {
-                                           const int a = y * width + x;
-                                           const int b = a + 1;
-                                           const int c = a + width + 1;
-                                           const int d = a + width;
-                                           counts.push_back(4);
-                                           indices.push_back(a);
-                                           indices.push_back(b);
-                                           indices.push_back(c);
-                                           indices.push_back(d);
-                                       }
-                                   }
-
-                                   return mesh.CreatePointsAttr().Set(points)
-                                          && mesh.CreateFaceVertexCountsAttr().Set(counts)
-                                          && mesh.CreateFaceVertexIndicesAttr().Set(indices)
-                                          && mesh.CreateSubdivisionSchemeAttr().Set(UsdGeomTokens->none);
-                               });
-}
-
-Command
-newPointsPath(const SdfPath& parentPath, const QString& nameInput)
+newMeshPath(const SdfPath& parentPath, const QString& nameInput, bool selectCreated)
 {
     return newAuthoredPrimPath(
-        parentPath, nameInput, "points", [](const UsdStageRefPtr& stage, const SdfPath& path, QString& error) {
+        parentPath, nameInput, "mesh",
+        [](const UsdStageRefPtr& stage, const SdfPath& path, QString& error) {
+            const UsdGeomMesh mesh = UsdGeomMesh::Define(stage, path);
+            if (!mesh) {
+                error = "failed to define UsdGeomMesh";
+                return false;
+            }
+
+            constexpr int width = 11;
+            constexpr int height = 11;
+            constexpr float spacing = 0.5f;
+            VtVec3fArray points;
+            VtIntArray counts;
+            VtIntArray indices;
+            points.reserve(width * height);
+            counts.reserve((width - 1) * (height - 1));
+            indices.reserve((width - 1) * (height - 1) * 4);
+
+            for (int y = 0; y < height; ++y) {
+                for (int x = 0; x < width; ++x) {
+                    const float fx = (float(x) - float(width - 1) * 0.5f) * spacing;
+                    const float fy = (float(y) - float(height - 1) * 0.5f) * spacing;
+                    const float z = std::sin(fx * 1.35f) * std::cos(fy * 1.15f) * 0.45f;
+                    points.push_back(stageAlignedPoint(stage, GfVec3f(fx, fy, z)));
+                }
+            }
+
+            for (int y = 0; y < height - 1; ++y) {
+                for (int x = 0; x < width - 1; ++x) {
+                    const int a = y * width + x;
+                    const int b = a + 1;
+                    const int c = a + width + 1;
+                    const int d = a + width;
+                    counts.push_back(4);
+                    indices.push_back(a);
+                    indices.push_back(b);
+                    indices.push_back(c);
+                    indices.push_back(d);
+                }
+            }
+
+            return mesh.CreatePointsAttr().Set(points) && mesh.CreateFaceVertexCountsAttr().Set(counts)
+                   && mesh.CreateFaceVertexIndicesAttr().Set(indices)
+                   && mesh.CreateSubdivisionSchemeAttr().Set(UsdGeomTokens->none);
+        },
+        selectCreated);
+}
+
+Command
+newPointsPath(const SdfPath& parentPath, const QString& nameInput, bool selectCreated)
+{
+    return newAuthoredPrimPath(
+        parentPath, nameInput, "points",
+        [](const UsdStageRefPtr& stage, const SdfPath& path, QString& error) {
             const UsdGeomPoints pointsPrim = UsdGeomPoints::Define(stage, path);
             if (!pointsPrim) {
                 error = "failed to define UsdGeomPoints";
@@ -5322,58 +5341,62 @@ newPointsPath(const SdfPath& parentPath, const QString& nameInput)
                 for (int y = -2; y <= 2; ++y) {
                     for (int x = -1; x <= 1; ++x) {
                         const float jitter = 0.12f * std::sin(float(x * 13 + y * 7 + z * 3));
-                        points.push_back(GfVec3f(float(x) * 0.7f + jitter, float(y) * 0.7f - jitter,
-                                                 float(z) * 0.7f + jitter * 0.5f));
+                        points.push_back(
+                            stageAlignedPoint(stage, GfVec3f(float(x) * 0.7f + jitter, float(y) * 0.7f - jitter,
+                                                             float(z) * 0.7f + jitter * 0.5f)));
                         widths.push_back(0.14f + 0.03f * float((x + y + z + 9) % 3));
                     }
                 }
             }
 
             return pointsPrim.CreatePointsAttr().Set(points) && pointsPrim.CreateWidthsAttr().Set(widths);
-        });
+        },
+        selectCreated);
 }
 
 Command
-newBasisCurvesPath(const SdfPath& parentPath, const QString& nameInput)
-{
-    return newAuthoredPrimPath(parentPath, nameInput, "basis curves",
-                               [](const UsdStageRefPtr& stage, const SdfPath& path, QString& error) {
-                                   const UsdGeomBasisCurves curves = UsdGeomBasisCurves::Define(stage, path);
-                                   if (!curves) {
-                                       error = "failed to define UsdGeomBasisCurves";
-                                       return false;
-                                   }
-
-                                   constexpr int curveCount = 3;
-                                   constexpr int pointsPerCurve = 12;
-                                   VtVec3fArray points;
-                                   VtIntArray counts(curveCount, pointsPerCurve);
-                                   VtFloatArray widths(curveCount * pointsPerCurve, 0.08f);
-                                   points.reserve(curveCount * pointsPerCurve);
-
-                                   for (int curve = 0; curve < curveCount; ++curve) {
-                                       for (int i = 0; i < pointsPerCurve; ++i) {
-                                           const float x = (float(i) - 5.5f) * 0.45f;
-                                           const float y = (float(curve) - 1.0f) * 0.55f;
-                                           const float z = std::sin(x * 1.7f + float(curve) * 0.8f) * 0.45f;
-                                           points.push_back(GfVec3f(x, y, z));
-                                       }
-                                   }
-
-                                   return curves.CreateTypeAttr().Set(UsdGeomTokens->cubic)
-                                          && curves.CreateBasisAttr().Set(UsdGeomTokens->bspline)
-                                          && curves.CreateWrapAttr().Set(UsdGeomTokens->nonperiodic)
-                                          && curves.CreateCurveVertexCountsAttr().Set(counts)
-                                          && curves.CreatePointsAttr().Set(points)
-                                          && curves.CreateWidthsAttr().Set(widths);
-                               });
-}
-
-Command
-newNurbsCurvesPath(const SdfPath& parentPath, const QString& nameInput)
+newBasisCurvesPath(const SdfPath& parentPath, const QString& nameInput, bool selectCreated)
 {
     return newAuthoredPrimPath(
-        parentPath, nameInput, "NURBS curves", [](const UsdStageRefPtr& stage, const SdfPath& path, QString& error) {
+        parentPath, nameInput, "basis curves",
+        [](const UsdStageRefPtr& stage, const SdfPath& path, QString& error) {
+            const UsdGeomBasisCurves curves = UsdGeomBasisCurves::Define(stage, path);
+            if (!curves) {
+                error = "failed to define UsdGeomBasisCurves";
+                return false;
+            }
+
+            constexpr int curveCount = 3;
+            constexpr int pointsPerCurve = 12;
+            VtVec3fArray points;
+            VtIntArray counts(curveCount, pointsPerCurve);
+            VtFloatArray widths(curveCount * pointsPerCurve, 0.08f);
+            points.reserve(curveCount * pointsPerCurve);
+
+            for (int curve = 0; curve < curveCount; ++curve) {
+                for (int i = 0; i < pointsPerCurve; ++i) {
+                    const float x = (float(i) - 5.5f) * 0.45f;
+                    const float y = (float(curve) - 1.0f) * 0.55f;
+                    const float z = std::sin(x * 1.7f + float(curve) * 0.8f) * 0.45f;
+                    points.push_back(stageAlignedPoint(stage, GfVec3f(x, y, z)));
+                }
+            }
+
+            return curves.CreateTypeAttr().Set(UsdGeomTokens->cubic)
+                   && curves.CreateBasisAttr().Set(UsdGeomTokens->bspline)
+                   && curves.CreateWrapAttr().Set(UsdGeomTokens->nonperiodic)
+                   && curves.CreateCurveVertexCountsAttr().Set(counts) && curves.CreatePointsAttr().Set(points)
+                   && curves.CreateWidthsAttr().Set(widths);
+        },
+        selectCreated);
+}
+
+Command
+newNurbsCurvesPath(const SdfPath& parentPath, const QString& nameInput, bool selectCreated)
+{
+    return newAuthoredPrimPath(
+        parentPath, nameInput, "NURBS curves",
+        [](const UsdStageRefPtr& stage, const SdfPath& path, QString& error) {
             const UsdGeomNurbsCurves curves = UsdGeomNurbsCurves::Define(stage, path);
             if (!curves) {
                 error = "failed to define UsdGeomNurbsCurves";
@@ -5396,7 +5419,7 @@ newNurbsCurvesPath(const SdfPath& parentPath, const QString& nameInput)
                     const float x = (float(i) - 3.5f) * 0.65f;
                     const float y = (float(curve) - 0.5f) * 0.9f;
                     const float z = std::cos(x * 1.35f + float(curve)) * 0.55f;
-                    points.push_back(GfVec3f(x, y, z));
+                    points.push_back(stageAlignedPoint(stage, GfVec3f(x, y, z)));
                 }
                 for (double knot : { 0.0, 0.0, 0.0, 0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 5.0, 5.0, 5.0 })
                     knots.push_back(knot);
@@ -5405,82 +5428,85 @@ newNurbsCurvesPath(const SdfPath& parentPath, const QString& nameInput)
             return curves.CreateCurveVertexCountsAttr().Set(counts) && curves.CreatePointsAttr().Set(points)
                    && curves.CreateOrderAttr().Set(orders) && curves.CreateKnotsAttr().Set(knots)
                    && curves.CreateRangesAttr().Set(ranges) && curves.CreateWidthsAttr().Set(widths);
-        });
+        },
+        selectCreated);
 }
 
 Command
-newNurbsPatchPath(const SdfPath& parentPath, const QString& nameInput)
+newNurbsPatchPath(const SdfPath& parentPath, const QString& nameInput, bool selectCreated)
 {
-    return newAuthoredPrimPath(parentPath, nameInput, "NURBS patch",
-                               [](const UsdStageRefPtr& stage, const SdfPath& path, QString& error) {
-                                   const UsdGeomNurbsPatch patch = UsdGeomNurbsPatch::Define(stage, path);
-                                   if (!patch) {
-                                       error = "failed to define UsdGeomNurbsPatch";
-                                       return false;
-                                   }
+    return newAuthoredPrimPath(
+        parentPath, nameInput, "NURBS patch",
+        [](const UsdStageRefPtr& stage, const SdfPath& path, QString& error) {
+            const UsdGeomNurbsPatch patch = UsdGeomNurbsPatch::Define(stage, path);
+            if (!patch) {
+                error = "failed to define UsdGeomNurbsPatch";
+                return false;
+            }
 
-                                   constexpr int uCount = 5;
-                                   constexpr int vCount = 5;
-                                   VtVec3fArray points;
-                                   points.reserve(uCount * vCount);
-                                   for (int v = 0; v < vCount; ++v) {
-                                       for (int u = 0; u < uCount; ++u) {
-                                           const float x = (float(u) - 2.0f) * 0.75f;
-                                           const float y = (float(v) - 2.0f) * 0.75f;
-                                           const float z = std::sin(x * 1.25f) * std::cos(y * 1.25f) * 0.5f;
-                                           points.push_back(GfVec3f(x, y, z));
-                                       }
-                                   }
+            constexpr int uCount = 5;
+            constexpr int vCount = 5;
+            VtVec3fArray points;
+            points.reserve(uCount * vCount);
+            for (int v = 0; v < vCount; ++v) {
+                for (int u = 0; u < uCount; ++u) {
+                    const float x = (float(u) - 2.0f) * 0.75f;
+                    const float y = (float(v) - 2.0f) * 0.75f;
+                    const float z = std::sin(x * 1.25f) * std::cos(y * 1.25f) * 0.5f;
+                    points.push_back(stageAlignedPoint(stage, GfVec3f(x, y, z)));
+                }
+            }
 
-                                   const VtDoubleArray knots { 0.0, 0.0, 0.0, 0.0, 1.0, 2.0, 2.0, 2.0, 2.0 };
-                                   return patch.CreateUVertexCountAttr().Set(uCount)
-                                          && patch.CreateVVertexCountAttr().Set(vCount)
-                                          && patch.CreateUOrderAttr().Set(4) && patch.CreateVOrderAttr().Set(4)
-                                          && patch.CreateUKnotsAttr().Set(knots) && patch.CreateVKnotsAttr().Set(knots)
-                                          && patch.CreateUFormAttr().Set(UsdGeomTokens->open)
-                                          && patch.CreateVFormAttr().Set(UsdGeomTokens->open)
-                                          && patch.CreateURangeAttr().Set(GfVec2d(0.0, 2.0))
-                                          && patch.CreateVRangeAttr().Set(GfVec2d(0.0, 2.0))
-                                          && patch.CreatePointsAttr().Set(points);
-                               });
+            const VtDoubleArray knots { 0.0, 0.0, 0.0, 0.0, 1.0, 2.0, 2.0, 2.0, 2.0 };
+            return patch.CreateUVertexCountAttr().Set(uCount) && patch.CreateVVertexCountAttr().Set(vCount)
+                   && patch.CreateUOrderAttr().Set(4) && patch.CreateVOrderAttr().Set(4)
+                   && patch.CreateUKnotsAttr().Set(knots) && patch.CreateVKnotsAttr().Set(knots)
+                   && patch.CreateUFormAttr().Set(UsdGeomTokens->open)
+                   && patch.CreateVFormAttr().Set(UsdGeomTokens->open)
+                   && patch.CreateURangeAttr().Set(GfVec2d(0.0, 2.0)) && patch.CreateVRangeAttr().Set(GfVec2d(0.0, 2.0))
+                   && patch.CreatePointsAttr().Set(points);
+        },
+        selectCreated);
 }
 
 Command
-newPointInstancerPath(const SdfPath& parentPath, const QString& nameInput)
+newPointInstancerPath(const SdfPath& parentPath, const QString& nameInput, bool selectCreated)
 {
-    return newAuthoredPrimPath(parentPath, nameInput, "point instancer",
-                               [](const UsdStageRefPtr& stage, const SdfPath& path, QString& error) {
-                                   const UsdGeomPointInstancer instancer = UsdGeomPointInstancer::Define(stage, path);
-                                   if (!instancer) {
-                                       error = "failed to define UsdGeomPointInstancer";
-                                       return false;
-                                   }
+    return newAuthoredPrimPath(
+        parentPath, nameInput, "point instancer",
+        [](const UsdStageRefPtr& stage, const SdfPath& path, QString& error) {
+            const UsdGeomPointInstancer instancer = UsdGeomPointInstancer::Define(stage, path);
+            if (!instancer) {
+                error = "failed to define UsdGeomPointInstancer";
+                return false;
+            }
 
-                                   const SdfPath prototypesPath = path.AppendChild(TfToken("Prototypes"));
-                                   const SdfPath cubePath = prototypesPath.AppendChild(TfToken("Cube"));
-                                   if (!UsdGeomScope::Define(stage, prototypesPath)
-                                       || !UsdGeomCube::Define(stage, cubePath)) {
-                                       error = "failed to create point-instancer prototype";
-                                       return false;
-                                   }
+            const SdfPath prototypesPath = path.AppendChild(TfToken("Prototypes"));
+            const SdfPath cubePath = prototypesPath.AppendChild(TfToken("Cube"));
+            if (!UsdGeomScope::Define(stage, prototypesPath) || !UsdGeomCube::Define(stage, cubePath)) {
+                error = "failed to create point-instancer prototype";
+                return false;
+            }
 
-                                   VtIntArray protoIndices;
-                                   VtVec3fArray positions;
-                                   constexpr int count = 25;
-                                   protoIndices.reserve(count);
-                                   positions.reserve(count);
-                                   for (int i = 0; i < count; ++i) {
-                                       const int x = i % 5;
-                                       const int y = i / 5;
-                                       protoIndices.push_back(0);
-                                       positions.push_back(GfVec3f((float(x) - 2.0f) * 1.25f, (float(y) - 2.0f) * 1.25f,
-                                                                   0.4f * std::sin(float(i) * 0.8f)));
-                                   }
+            VtIntArray protoIndices;
+            VtVec3fArray positions;
+            constexpr int count = 25;
+            protoIndices.reserve(count);
+            positions.reserve(count);
+            for (int i = 0; i < count; ++i) {
+                const int x = i % 5;
+                const int y = i / 5;
+                protoIndices.push_back(0);
+                positions.push_back(
+                    stageAlignedPoint(stage, GfVec3f((float(x) - 2.0f) * 1.25f, (float(y) - 2.0f) * 1.25f,
+                                                     0.4f * std::sin(float(i) * 0.8f))));
+            }
 
-                                   return instancer.CreatePrototypesRel().SetTargets({ cubePath })
-                                          && instancer.CreateProtoIndicesAttr().Set(protoIndices)
-                                          && instancer.CreatePositionsAttr().Set(positions);
-                               });
+            return instancer.CreatePrototypesRel().SetTargets({ cubePath })
+                   && instancer.CreateProtoIndicesAttr().Set(protoIndices)
+                   && instancer.CreatePositionsAttr().Set(positions);
+        },
+        selectCreated);
 }
 
 Command
@@ -6050,7 +6076,7 @@ renamePath(const SdfPath& path, const QString& newNameInput)
 }
 
 Command
-newXformPath(const SdfPath& parentPath, const QString& nameInput)
+newXformPath(const SdfPath& parentPath, const QString& nameInput, bool selectCreated)
 {
     struct MoveItem {
         SdfPath oldPath;
@@ -6072,7 +6098,7 @@ newXformPath(const SdfPath& parentPath, const QString& nameInput)
     auto state = std::make_shared<NewXformState>();
 
     return Command(
-        [parentPath, nameInput, state](Session* session) {
+        [parentPath, nameInput, selectCreated, state](Session* session) {
             if (!session || parentPath.IsEmpty())
                 return;
 
@@ -6244,7 +6270,21 @@ newXformPath(const SdfPath& parentPath, const QString& nameInput)
                                                                         : "Xform created and paths moved",
                                             changed, Status::Success);
 
-                    session->selectionList()->updatePaths({ newPath });
+                    if (selectCreated) {
+                        session->selectionList()->updatePaths({ newPath });
+                    }
+                    else if (!state->movedItems.isEmpty()) {
+                        QList<SdfPath> remappedSelection = state->previousSelection;
+                        for (SdfPath& selectedPath : remappedSelection) {
+                            for (const MoveItem& item : state->movedItems) {
+                                if (selectedPath == item.oldPath || selectedPath.HasPrefix(item.oldPath)) {
+                                    selectedPath = selectedPath.ReplacePrefix(item.oldPath, item.newPath);
+                                    break;
+                                }
+                            }
+                        }
+                        session->selectionList()->updatePaths(remappedSelection);
+                    }
                 });
             });
         },
@@ -7969,21 +8009,175 @@ resetOverrides(const QList<SdfPath>& paths)
         });
 }
 
-Command
-setTransforms(const QList<SdfPath>& paths, const QList<GfMatrix4d>& before, const QList<GfMatrix4d>& after,
-              const QList<TransformRootState>& rootBefore)
+QList<PreparedTransform>
+prepareTransforms(const UsdStageRefPtr& stage, const QList<SdfPath>& paths, const QList<GfMatrix4d>& baseMatrices,
+                  QStringList* errors)
 {
-    auto applyMatrices = [](Session* session, const QList<SdfPath>& paths, const QList<GfMatrix4d>& matrices,
-                            const QString& title, const QString& successMessage, const QString& failureMessage) {
-        if (!session || paths.isEmpty() || paths.size() != matrices.size())
+    QList<PreparedTransform> result;
+    if (!stage || paths.isEmpty() || paths.size() != baseMatrices.size())
+        return result;
+
+    result.reserve(paths.size());
+
+    // Match the interactive gizmo setup exactly: establish the supplied base
+    // world transforms first, then cache the resulting matrix ops and parent
+    // transforms for repeated updates.
+    //
+    // Do not use stage::setWorldTransform() for this normalization. That path
+    // canonicalizes the composed xform stack with MakeMatrixXform(), which can
+    // fail when xformOpOrder is authored only in a weaker layer. The gizmo must
+    // instead author a stronger matrix/order override in the active edit layer
+    // without modifying the weaker transform opinions.
+    {
+        SdfChangeBlock changeBlock;
+
+        for (qsizetype i = 0; i < paths.size(); ++i) {
+            const SdfPath& path = paths.at(i);
+            const UsdPrim prim = stage->GetPrimAtPath(path);
+            QString error;
+
+            if (!prim || !prim.IsValid()) {
+                error = QString("prim missing: %1").arg(qt::SdfPathToQString(path));
+            }
+            else {
+                UsdGeomXformable xformable(prim);
+                if (!xformable) {
+                    error = QString("prim is not xformable: %1").arg(qt::SdfPathToQString(path));
+                }
+                else {
+                    GfMatrix4d parentWorld(1.0);
+                    const UsdPrim parent = prim.GetParent();
+                    if (parent && !parent.IsPseudoRoot()) {
+                        UsdGeomXformCache parentCache(UsdTimeCode::Default());
+                        parentWorld = parentCache.GetLocalToWorldTransform(parent);
+                    }
+
+                    const GfMatrix4d local = baseMatrices.at(i) * parentWorld.GetInverse();
+
+                    UsdEditContext context(stage, stage->GetEditTarget());
+
+                    UsdAttribute matrixAttr = prim.CreateAttribute(TfToken("xformOp:transform"),
+                                                                   SdfValueTypeNames->Matrix4d, false,
+                                                                   SdfVariabilityVarying);
+                    if (!matrixAttr || matrixAttr.GetTypeName() != SdfValueTypeNames->Matrix4d) {
+                        error
+                            = QString("failed to create matrix transform override: %1").arg(qt::SdfPathToQString(path));
+                    }
+                    else if (!matrixAttr.Set(local, UsdTimeCode::Default())) {
+                        error = QString("failed to set matrix transform override: %1").arg(qt::SdfPathToQString(path));
+                    }
+                    else {
+                        VtTokenArray order;
+                        order.push_back(TfToken("xformOp:transform"));
+
+                        const UsdAttribute orderAttr = xformable.CreateXformOpOrderAttr();
+                        if (!orderAttr || !orderAttr.Set(order, UsdTimeCode::Default())) {
+                            error
+                                = QString("failed to set transform order override: %1").arg(qt::SdfPathToQString(path));
+                        }
+                    }
+                }
+            }
+
+            if (!error.isEmpty() && errors)
+                errors->append(error);
+        }
+    }
+
+    UsdGeomXformCache xformCache(UsdTimeCode::Default());
+    for (const SdfPath& path : paths) {
+        PreparedTransform prepared;
+        prepared.path = path;
+
+        const UsdPrim prim = stage->GetPrimAtPath(path);
+        if (!prim || !prim.IsValid()) {
+            result.append(prepared);
+            continue;
+        }
+
+        const UsdPrim parent = prim.GetParent();
+        if (parent && !parent.IsPseudoRoot())
+            prepared.parentWorld = xformCache.GetLocalToWorldTransform(parent);
+
+        for (UsdPrim ancestor = parent; ancestor && !ancestor.IsPseudoRoot(); ancestor = ancestor.GetParent()) {
+            if (paths.contains(ancestor.GetPath())) {
+                prepared.parentFollowsSelection = true;
+                break;
+            }
+        }
+
+        const UsdGeomXformable xformable(prim);
+        bool resetsXformStack = false;
+        const std::vector<UsdGeomXformOp> ops = xformable.GetOrderedXformOps(&resetsXformStack);
+        if (ops.size() == 1 && ops.front().GetOpType() == UsdGeomXformOp::TypeTransform) {
+            prepared.matrixOp = ops.front();
+            prepared.fast = bool(prepared.matrixOp);
+        }
+
+        result.append(prepared);
+    }
+
+    return result;
+}
+
+bool
+applyPreparedTransforms(const UsdStageRefPtr& stage, const QList<PreparedTransform>& prepared,
+                        const QList<GfMatrix4d>& matrices, const GfMatrix4d& selectionDelta, bool hasSelectionDelta,
+                        QStringList* errors, QList<SdfPath>* changed)
+{
+    if (!stage || prepared.size() != matrices.size())
+        return false;
+
+    bool success = true;
+    SdfChangeBlock changeBlock;
+
+    for (qsizetype i = 0; i < prepared.size(); ++i) {
+        const PreparedTransform& item = prepared.at(i);
+        bool applied = false;
+
+        if (item.fast && (!item.parentFollowsSelection || hasSelectionDelta)) {
+            GfMatrix4d parentWorld = item.parentWorld;
+            if (item.parentFollowsSelection)
+                parentWorld = item.parentWorld * selectionDelta;
+
+            const GfMatrix4d local = matrices.at(i) * parentWorld.GetInverse();
+            applied = item.matrixOp.Set(local, UsdTimeCode::Default());
+        }
+
+        if (!applied) {
+            QString error;
+            applied = stage::setWorldTransform(stage, item.path, matrices.at(i), error);
+            if (!applied && errors) {
+                errors->append(error.isEmpty() ? QString("failed: %1").arg(qt::SdfPathToQString(item.path)) : error);
+            }
+        }
+
+        if (applied && changed)
+            path::appendUnique(*changed, item.path);
+        success = applied && success;
+    }
+
+    return success;
+}
+
+Command
+setTransforms(const QList<SdfPath>& paths, const XformEdit& edit)
+{
+    auto applyEdit = [](Session* session, const QList<SdfPath>& paths, const XformEdit& edit, bool forward,
+                        const QString& title, const QString& successMessage, const QString& failureMessage) {
+        const QList<GfMatrix4d>& base = forward ? edit.before : edit.after;
+        const QList<GfMatrix4d>& target = forward ? edit.after : edit.before;
+
+        if (!session || paths.isEmpty() || paths.size() != base.size() || base.size() != target.size())
             return;
 
         command::beginDeferred(session, title, static_cast<int>(paths.size()));
 
-        command::runWorker([session, paths, matrices, successMessage, failureMessage]() {
+        command::runWorker([session, paths, edit, forward, base, target, successMessage, failureMessage]() {
             bool success = true;
             QStringList errors;
             QList<SdfPath> changed;
+
             {
                 WRITE_LOCKER(locker, session->stageLock(), "stageLock");
                 const UsdStageRefPtr stage = session->stageUnsafe();
@@ -7999,21 +8193,24 @@ setTransforms(const QList<SdfPath>& paths, const QList<GfMatrix4d>& before, cons
                         success = false;
                         errors.append(editError);
                     }
-                    else
-                        for (qsizetype i = 0; i < paths.size(); ++i) {
-                            const SdfPath& path = paths.at(i);
-                            const GfMatrix4d& matrix = matrices.at(i);
-
-                            QString error;
-                            if (!stage::setWorldTransform(stage, path, matrix, error)) {
-                                success = false;
-                                errors.append(error.isEmpty() ? QString("failed: %1").arg(qt::SdfPathToQString(path))
-                                                              : error);
-                                continue;
-                            }
-
-                            path::appendUnique(changed, path);
+                    else {
+                        const QList<PreparedTransform> prepared = prepareTransforms(stage, paths, base, &errors);
+                        if (prepared.size() != paths.size()) {
+                            success = false;
                         }
+                        else {
+                            const bool preparedWithoutErrors = errors.isEmpty();
+                            GfMatrix4d delta(1.0);
+                            bool hasDelta = false;
+                            if (edit.hasDelta) {
+                                delta = forward ? edit.delta : edit.delta.GetInverse();
+                                hasDelta = true;
+                            }
+                            const bool applied = applyPreparedTransforms(stage, prepared, target, delta, hasDelta,
+                                                                         &errors, &changed);
+                            success = preparedWithoutErrors && applied && success;
+                        }
+                    }
                 }
             }
 
@@ -8027,18 +8224,18 @@ setTransforms(const QList<SdfPath>& paths, const QList<GfMatrix4d>& before, cons
     };
 
     return Command(
-        [paths, after, applyMatrices](Session* session) {
-            applyMatrices(session, paths, after, "Transform paths", "Paths transformed", "Transform paths failed");
+        [paths, edit, applyEdit](Session* session) {
+            applyEdit(session, paths, edit, true, "Transform paths", "Paths transformed", "Transform paths failed");
         },
-        [paths, before, rootBefore, applyMatrices](Session* session) {
-            if (rootBefore.size() != paths.size()) {
-                applyMatrices(session, paths, before, "Undo transform paths", "Transform undone",
-                              "Undo transform failed");
+        [paths, edit, applyEdit](Session* session) {
+            if (edit.beforeState.size() != paths.size()) {
+                applyEdit(session, paths, edit, false, "Undo transform paths", "Transform undone",
+                          "Undo transform failed");
                 return;
             }
 
             command::beginDeferred(session, "Undo transform paths", static_cast<int>(paths.size()));
-            command::runWorker([session, paths, rootBefore]() {
+            command::runWorker([session, paths, edit]() {
                 bool success = true;
                 QStringList errors;
                 QList<SdfPath> changed;
@@ -8057,10 +8254,10 @@ setTransforms(const QList<SdfPath>& paths, const QList<GfMatrix4d>& before, cons
                             success = false;
                             errors.append(editError);
                         }
-                        else
+                        else {
                             for (qsizetype i = 0; i < paths.size(); ++i) {
                                 QString error;
-                                if (!restoreTransformRootState(stage, editLayer, paths.at(i), rootBefore.at(i), error)) {
+                                if (!restoreXformState(stage, editLayer, paths.at(i), edit.beforeState.at(i), error)) {
                                     success = false;
                                     errors.append(error.isEmpty() ? QString("failed: %1").arg(pathText(paths.at(i)))
                                                                   : error);
@@ -8068,6 +8265,7 @@ setTransforms(const QList<SdfPath>& paths, const QList<GfMatrix4d>& before, cons
                                 }
                                 path::appendUnique(changed, paths.at(i));
                             }
+                        }
                     }
                 }
 

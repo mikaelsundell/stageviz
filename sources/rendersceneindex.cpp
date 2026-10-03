@@ -32,9 +32,6 @@ public:
         RenderSceneIndex::Mode mode = RenderSceneIndex::None;
         SdfPath materialPath;
         SdfPath clayMaterialPath = paths::auxiliary::materials.AppendChild(TfToken("Clay"));
-        SdfPath selectionMaterialPath = paths::auxiliary::materials.AppendChild(TfToken("Selection"));
-        SdfPathVector selectionPaths;
-        bool selectionPresentationEnabled = true;
         bool doubleSidedOverrideEnabled = false;
         bool doubleSidedOverride = false;
     };
@@ -44,9 +41,6 @@ public:
 bool
 RenderSceneIndexPrivate::active() const
 {
-    if (d.selectionPresentationEnabled && !d.selectionPaths.empty())
-        return true;
-
     if (d.doubleSidedOverrideEnabled)
         return true;
 
@@ -176,35 +170,6 @@ RenderSceneIndex::setMaterialPath(const SdfPath& materialPath)
         dirtyMaterialBindings();
 }
 
-void
-RenderSceneIndex::setSelectionPaths(const SdfPathVector& paths)
-{
-    if (paths == p->d.selectionPaths)
-        return;
-
-    SdfPathVector dirtyPaths = p->d.selectionPaths;
-    dirtyPaths.insert(dirtyPaths.end(), paths.begin(), paths.end());
-
-    p->d.selectionPaths = paths;
-    dirtySelectionPresentation(dirtyPaths);
-}
-
-bool
-RenderSceneIndex::selectionPresentationEnabled() const
-{
-    return p->d.selectionPresentationEnabled;
-}
-
-void
-RenderSceneIndex::setSelectionPresentationEnabled(bool enabled)
-{
-    if (enabled == p->d.selectionPresentationEnabled)
-        return;
-
-    p->d.selectionPresentationEnabled = enabled;
-    dirtySelectionPresentation(p->d.selectionPaths);
-}
-
 bool
 RenderSceneIndex::doubleSidedOverrideEnabled() const
 {
@@ -256,21 +221,7 @@ RenderSceneIndex::GetPrim(const SdfPath& primPath) const
 
     HdContainerDataSourceEditor editor(prim.dataSource);
 
-    bool selected = false;
-    if (p->d.selectionPresentationEnabled) {
-        for (const SdfPath& selectedPath : p->d.selectionPaths) {
-            if (primPath == selectedPath || primPath.HasPrefix(selectedPath)) {
-                selected = true;
-                break;
-            }
-        }
-    }
-
-    if (selected) {
-        editor.Set(HdMaterialBindingsSchema::GetDefaultLocator(),
-                   p->createMaterialBindings(p->d.selectionMaterialPath));
-    }
-    else if (p->d.mode == Clay || p->d.mode == Custom) {
+    if (p->d.mode == Clay || p->d.mode == Custom) {
         const SdfPath materialPath = p->effectiveMaterialPath();
 
         if (!materialPath.IsEmpty()) {
@@ -328,47 +279,6 @@ RenderSceneIndex::dirtyMaterialBindings()
                 entries.push_back({ child, locators });
         }
     }
-    if (!entries.empty())
-        _SendPrimsDirtied(entries);
-}
-
-void
-RenderSceneIndex::dirtySelectionPresentation(const SdfPathVector& paths)
-{
-    if (!_IsObserved() || paths.empty())
-        return;
-
-    HdSceneIndexObserver::DirtiedPrimEntries entries;
-    HdDataSourceLocatorSet locators;
-    locators.insert(HdMaterialBindingsSchema::GetDefaultLocator());
-
-    SdfPathVector visited;
-
-    for (const SdfPath& rootPath : paths) {
-        if (rootPath.IsEmpty() || rootPath == SdfPath::AbsoluteRootPath())
-            continue;
-
-        std::vector<SdfPath> pending { rootPath };
-        while (!pending.empty()) {
-            const SdfPath path = pending.back();
-            pending.pop_back();
-
-            if (std::find(visited.begin(), visited.end(), path) != visited.end())
-                continue;
-            visited.push_back(path);
-
-            if (p->isDisplayPath(path))
-                continue;
-
-            const HdSceneIndexPrim prim = _GetInputSceneIndex()->GetPrim(path);
-            if (p->isGprim(prim))
-                entries.push_back({ path, locators });
-
-            const SdfPathVector children = _GetInputSceneIndex()->GetChildPrimPaths(path);
-            pending.insert(pending.end(), children.begin(), children.end());
-        }
-    }
-
     if (!entries.empty())
         _SendPrimsDirtied(entries);
 }

@@ -51,6 +51,22 @@ SpinBox::eventFilter(QObject* watched, QEvent* event)
                 lineEdit()->unsetCursor();
             break;
 
+        case QEvent::FocusIn:
+            if (!m_editing) {
+                // QAbstractSpinBox may select the complete line-edit contents
+                // when a persistent editor receives focus. Queue the deselect so
+                // it runs after the built-in focus handling. Direct edit mode
+                // still selects all explicitly in beginEditing().
+                QMetaObject::invokeMethod(
+                    lineEdit(),
+                    [this]() {
+                        if (!m_editing && lineEdit())
+                            lineEdit()->deselect();
+                    },
+                    Qt::QueuedConnection);
+            }
+            break;
+
         case QEvent::MouseButtonPress: {
             auto* mouse = static_cast<QMouseEvent*>(event);
             if (!m_editing && mouse->button() == Qt::LeftButton) {

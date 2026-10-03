@@ -13,13 +13,16 @@ set(OpenUSD_COMPONENTS
   GF
   GLF
   HD
+  HDST
   HDX
   HGI
   HGIGL
+  HIO
   PLUG
   SDF
   SDR
   TF
+  TS
   USD
   USDGEOM
   USDLUX

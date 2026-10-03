@@ -11,7 +11,6 @@
 #include "shelfwidget.h"
 #include "tabwidget.h"
 #include <QAction>
-#include <QDebug>
 #include <QFileDialog>
 #include <QJsonDocument>
 #include <QLineEdit>
@@ -98,10 +97,7 @@ PythonShelfPrivate::executeCode(const QString& code)
     if (trimmed.isEmpty())
         return;
 
-    const QString result = pythonInterpreter()->executeScript(trimmed);
-
-    if (!result.isEmpty())
-        qInfo().noquote() << result;
+    pythonInterpreter()->executeScript(trimmed);
 }
 
 void

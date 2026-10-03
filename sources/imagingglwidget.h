@@ -268,6 +268,23 @@ Q_SIGNALS:
      */
     void captureReady(qint64 elapsed);
 
+    /**
+     * @brief Emitted when the viewport has a transient status message.
+     *
+     * This is intended for high-frequency interactive feedback such as transform
+     * gizmo values and is not routed through the application notification log.
+     *
+     * @param message Status text to display.
+     */
+    void statusMessage(const QString& message);
+
+    /**
+     * @brief Emitted when transient viewport status has finished.
+     *
+     * Receivers should restore their normal ready/idle status text.
+     */
+    void statusReady();
+
 protected:
     /**
      * @name OpenGL Events

@@ -130,6 +130,19 @@ public:
      * @}
      */
 
+Q_SIGNALS:
+    /** @brief Forwarded when a viewport frame has finished rendering. */
+    void renderReady(qint64 elapsed);
+
+    /** @brief Forwarded when a visible-prim capture has finished. */
+    void captureReady(qint64 elapsed);
+
+    /** @brief Forwarded transient viewport status text. */
+    void statusMessage(const QString& message);
+
+    /** @brief Forwarded when transient viewport status has finished. */
+    void statusReady();
+
 private:
     QScopedPointer<RenderViewPrivate> p;
 };

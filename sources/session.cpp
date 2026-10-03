@@ -13,6 +13,7 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QHash>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -39,6 +40,7 @@
 #include <pxr/usd/usdUtils/dependencies.h>
 
 namespace stageviz {
+
 class SessionPrivate : public QSharedData {
 public:
     SessionPrivate();
@@ -52,7 +54,6 @@ public:
     bool isProgressBlockCancelled() const;
     bool newStage(Session::LoadPolicy policy);
     bool loadFromFile(const QString& filename, Session::LoadPolicy loadPolicy);
-    void refreshStage();
     bool exportLayer(const SdfLayerHandle& layer, const QString& filename, QString& error);
     SdfLayerRefPtr relocatedCopy(const SdfLayerHandle& layer);
     bool saveSublayers(const UsdStageRefPtr& stage, QString& error);
@@ -212,6 +213,8 @@ public:
         size_t completedChanges = 0;
         std::atomic<bool> changeCancelled { false };
         GfBBox3d bbox;
+        QScopedPointer<UsdGeomBBoxCache> bboxCache;
+        std::atomic<bool> bboxDirty { true };
         QList<SdfPath> mask;
         mutable QReadWriteLock stageLock;
         mutable QReadWriteLock auxiliaryLock;
@@ -236,6 +239,7 @@ SessionPrivate::init()
     d.selectionList.reset(new SelectionList());
     d.viewState.reset(new ViewState());
     d.auxiliary = UsdStage::CreateInMemory("stageviz_auxiliary.usda");
+    d.bboxCache.reset(new UsdGeomBBoxCache(UsdTimeCode::Default(), UsdGeomImageable::GetOrderedPurposeTokens(), true));
 }
 
 void
@@ -348,6 +352,7 @@ SessionPrivate::newStage(Session::LoadPolicy policy)
         d.loadPolicy = policy;
         d.mask.clear();
         d.pendingNotices.entries.clear();
+        d.bboxDirty.store(true);
         mask = d.mask;
         created = true;
     }
@@ -384,6 +389,7 @@ SessionPrivate::loadFromFile(const QString& filename, Session::LoadPolicy policy
         d.loadPolicy = policy;
         d.mask.clear();
         d.pendingNotices.entries.clear();
+        d.bboxDirty.store(true);
         if (d.stage) {
             d.stage->SetEditTarget(UsdEditTarget(d.stage->GetRootLayer()));
             d.filename = absFilename;
@@ -416,32 +422,6 @@ SessionPrivate::loadFromFile(const QString& filename, Session::LoadPolicy policy
     setMask(mask);
     updateStage();
     return true;
-}
-
-void
-SessionPrivate::refreshStage()
-{
-    const GfBBox3d bbox = boundingBox();
-    {
-        WRITE_LOCKER(locker, &d.stageLock, "stageLock");
-        d.bbox = bbox;
-        d.pendingNotices.entries.clear();
-    }
-
-    if (d.stageWatcher)
-        d.stageWatcher->takePending();
-
-    if (d.viewState && d.viewState->camera())
-        d.viewState->camera()->setBoundingBox(bbox);
-
-    NoticeBatch batch;
-    NoticeEntry entry;
-    entry.path = SdfPath::AbsoluteRootPath();
-    entry.primResyncType = UsdNotice::ObjectsChanged::PrimResyncType::Other;
-    batch.entries.append(entry);
-
-    Q_EMIT d.session->primsChanged(batch);
-    Q_EMIT d.session->boundingBoxChanged(bbox);
 }
 
 bool
@@ -705,11 +685,8 @@ SessionPrivate::saveToFile(const QString& filename)
     }
 
     if (stageReplaced) {
-        const GfBBox3d bbox = boundingBox();
-        {
-            WRITE_LOCKER(locker, &d.stageLock, "stageLock");
-            d.bbox = bbox;
-        }
+        d.bboxDirty.store(true);
+        boundingBox();
         updateStage();
     }
 
@@ -853,11 +830,8 @@ SessionPrivate::loadState(const QString& filename)
         if (restoreLoadRules)
             d.stage->SetLoadRules(loadRules);
     }
+    d.bboxDirty.store(true);
     const GfBBox3d bbox = boundingBox();
-    {
-        WRITE_LOCKER(locker, &d.stageLock, "stageLock");
-        d.bbox = bbox;
-    }
     if (d.viewState && d.viewState->camera()) {
         ViewCamera* camera = d.viewState->camera();
         camera->setBoundingBox(bbox);
@@ -1190,6 +1164,10 @@ SessionPrivate::close()
         d.stage = nullptr;
         d.stageStatus = Session::StageStatus::Closed;
         d.pendingNotices.entries.clear();
+        d.bbox = GfBBox3d();
+        d.bboxDirty.store(true);
+        if (d.bboxCache)
+            d.bboxCache->Clear();
         d.changeDepth = 0;
         d.expectedChanges = 0;
         d.completedChanges = 0;
@@ -1235,7 +1213,10 @@ SessionPrivate::setMask(const QList<SdfPath>& paths)
 {
     {
         WRITE_LOCKER(locker, &d.stageLock, "stageLock");
-        d.mask = paths;
+        if (d.mask != paths) {
+            d.mask = paths;
+            d.bboxDirty.store(true);
+        }
     }
     Q_EMIT d.session->maskChanged(paths);
 }
@@ -1275,11 +1256,8 @@ SessionPrivate::setPayloads(const QList<SdfPath>& paths, bool loaded)
     }
     if (!changed)
         return;
+    d.bboxDirty.store(true);
     const GfBBox3d bbox = boundingBox();
-    {
-        WRITE_LOCKER(locker, &d.stageLock, "stageLock");
-        d.bbox = bbox;
-    }
     if (d.viewState && d.viewState->camera())
         d.viewState->camera()->setBoundingBox(bbox);
 
@@ -1356,16 +1334,23 @@ SessionPrivate::syncStageMetadata(const NoticeBatch& batch)
 GfBBox3d
 SessionPrivate::boundingBox()
 {
-    READ_LOCKER(locker, &d.stageLock, "stageLock");
+    WRITE_LOCKER(locker, &d.stageLock, "stageLock");
 
     if (!d.stage)
         return GfBBox3d();
 
-    if (d.mask.isEmpty()) {
-        UsdGeomBBoxCache bboxCache(UsdTimeCode::Default(), UsdGeomImageable::GetOrderedPurposeTokens(), true);
-        return bboxCache.ComputeWorldBound(d.stage->GetPseudoRoot());
-    }
-    return stage::boundingBox(d.stage, d.mask);
+    if (!d.bboxDirty.load())
+        return d.bbox;
+
+    if (!d.bboxCache)
+        d.bboxCache.reset(
+            new UsdGeomBBoxCache(UsdTimeCode::Default(), UsdGeomImageable::GetOrderedPurposeTokens(), true));
+
+    d.bboxCache->Clear();
+    d.bbox = d.mask.isEmpty() ? d.bboxCache->ComputeWorldBound(d.stage->GetPseudoRoot())
+                              : stage::boundingBox(d.stage, d.mask);
+    d.bboxDirty.store(false);
+    return d.bbox;
 }
 
 bool
@@ -1390,6 +1375,8 @@ SessionPrivate::updatePrims(const NoticeBatch& batch)
     if (batch.entries.isEmpty())
         return;
 
+    d.bboxDirty.store(true);
+
     if (d.changeDepth > 0 || d.primsUpdate == Session::PrimsUpdate::Deferred) {
         d.pendingNotices.entries.append(batch.entries);
         return;
@@ -1398,10 +1385,6 @@ SessionPrivate::updatePrims(const NoticeBatch& batch)
     syncStageMetadata(batch);
     if (updateBBox) {
         const GfBBox3d bbox = boundingBox();
-        {
-            WRITE_LOCKER(locker, &d.stageLock, "stageLock");
-            d.bbox = bbox;
-        }
         Q_EMIT d.session->primsChanged(batch);
         Q_EMIT d.session->boundingBoxChanged(bbox);
     }
@@ -1422,16 +1405,48 @@ SessionPrivate::flushPrims()
     if (d.pendingNotices.entries.isEmpty())
         return;
 
-    const NoticeBatch batch = d.pendingNotices;
+    NoticeBatch batch;
+    if (d.pendingNotices.entries.size() < 2) {
+        batch = d.pendingNotices;
+    }
+    else {
+        batch.entries.reserve(d.pendingNotices.entries.size());
+        QHash<QString, qsizetype> infoOnlyIndexByPath;
+
+        for (const NoticeEntry& entry : d.pendingNotices.entries) {
+            const bool mergeOnly = entry.changedInfoOnly && !entry.path.IsEmpty() && entry.associatedPath.IsEmpty()
+                                   && !entry.resolvedAssetPathsResynced
+                                   && entry.primResyncType == UsdNotice::ObjectsChanged::PrimResyncType::Invalid;
+
+            if (!mergeOnly) {
+                infoOnlyIndexByPath.clear();
+                batch.entries.append(entry);
+                continue;
+            }
+
+            const QString key = qt::SdfPathToQString(entry.path);
+            const auto existing = infoOnlyIndexByPath.constFind(key);
+            if (existing == infoOnlyIndexByPath.cend()) {
+                infoOnlyIndexByPath.insert(key, batch.entries.size());
+                batch.entries.append(entry);
+                continue;
+            }
+
+            NoticeEntry& merged = batch.entries[*existing];
+            for (const TfToken& field : entry.changedFields) {
+                if (std::find(merged.changedFields.begin(), merged.changedFields.end(), field)
+                    == merged.changedFields.end())
+                    merged.changedFields.push_back(field);
+            }
+        }
+    }
+
     d.pendingNotices.entries.clear();
+    d.bboxDirty.store(true);
     syncStageMetadata(batch);
     const bool updateBBox = needsBoundingBoxUpdate(batch);
     if (updateBBox) {
         const GfBBox3d bbox = boundingBox();
-        {
-            WRITE_LOCKER(locker, &d.stageLock, "stageLock");
-            d.bbox = bbox;
-        }
         Q_EMIT d.session->primsChanged(batch);
         Q_EMIT d.session->boundingBoxChanged(bbox);
     }
@@ -1524,12 +1539,6 @@ bool
 Session::loadFromFile(const QString& filename, Session::LoadPolicy loadPolicy)
 {
     return p->loadFromFile(filename, loadPolicy);
-}
-
-void
-Session::refreshStage()
-{
-    p->refreshStage();
 }
 
 bool
@@ -1710,10 +1719,6 @@ Session::setEditLayer(const SdfLayerHandle& layer)
         changedLayer = target.GetLayer();
     }
 
-    // CommandStack tracks the active edit target. A change made through an
-    // undoable command is absorbed by the stack after execute/undo/redo, while
-    // an external edit-target change is detected and invalidates history on the
-    // next stack operation. Do not clear history here.
     Q_EMIT editLayerChanged(changedLayer);
     return true;
 }
@@ -1758,16 +1763,10 @@ Session::setPrimsUpdate(PrimsUpdate update)
         if (p->d.primsUpdate == update)
             return;
         p->d.primsUpdate = update;
-        flush = (update == Session::PrimsUpdate::Immediate);
+        flush = update == Session::PrimsUpdate::Immediate;
     }
     if (flush)
         p->flushPrims();
-}
-
-void
-Session::flushPrimsUpdates()
-{
-    p->flushPrims();
 }
 
 }  // namespace stageviz

@@ -90,7 +90,7 @@ public:
     MaterialGraph* currentGraph() const;
     void selectGraphNode(const SdfPath& path);
     void connectGraphSockets(const SdfPath& inputPath, const SdfPath& sourceOutputPath);
-    bool ensureSwatchSnapshot();
+    SdfLayerRefPtr swatchNetwork(const SdfPath& materialPath, bool force = false);
     void requestSwatch(int row);
     void updateSwatch(const QString& materialPath, const QImage& image);
     void previewFloat(const QString& parameter, double value);
@@ -128,8 +128,7 @@ public:
 
     struct Data {
         QHash<QString, QPointer<MaterialGraph>> graphs;
-        SdfLayerRefPtr swatchSnapshot;
-        bool swatchSnapshotDirty = true;
+        QHash<QString, SdfLayerRefPtr> swatchNetworks;
         bool graphTopologyDirty = true;
         SdfPath previewNode;
         MaterialNodeInfo previewNodeInfo;
@@ -559,8 +558,7 @@ MaterialDialogPrivate::init()
     connect(d.ui->load, &QToolButton::clicked, this, [this]() { loadMaterialX(); });
     connect(d.ui->select, &QToolButton::clicked, this, [this]() { selectFromStage(); });
     connect(session(), &Session::stageChanged, this, [this](UsdStageRefPtr, Session::LoadPolicy, Session::StageStatus) {
-        d.swatchSnapshot = nullptr;
-        d.swatchSnapshotDirty = true;
+        d.swatchNetworks.clear();
         d.graphTopologyDirty = true;
         d.previewNode = {};
         d.previewNodeInfo = {};
@@ -591,18 +589,20 @@ MaterialDialogPrivate::eventFilter(QObject* object, QEvent* event)
             if (d.dialog->layout())
                 d.dialog->layout()->activate();
 
+            constexpr int panelSize = 200;
+
             {
-                constexpr int fixed = 400;
                 const int total = std::max(2, d.ui->splitter->width());
-                const int leftWidth = std::max(1, total - fixed);
-                d.ui->splitter->setSizes({ leftWidth, fixed });
+                const int leftWidth = std::max(1, total - panelSize);
+                d.ui->splitter->setSizes({ leftWidth, panelSize });
             }
+
             {
-                constexpr int fixed = 300;
                 const int total = std::max(2, d.ui->materialSplitter->height());
-                const int treeHeight = std::max(1, total - fixed);
-                d.ui->materialSplitter->setSizes({ fixed, treeHeight });
+                const int treeHeight = std::max(1, total - panelSize);
+                d.ui->materialSplitter->setSizes({ panelSize, treeHeight });
             }
+
             {
                 const int total = std::max(2, d.ui->browserSplitter->height());
                 const int browserHeight = std::max(1, qRound(static_cast<qreal>(total) * 0.60));
@@ -823,24 +823,109 @@ MaterialDialogPrivate::updatePrims(const NoticeBatch& batch)
     // than prim resyncs. The view marks graphTopologyDirty before dispatching an
     // asynchronous connection command; keep that intent until the corresponding
     // USD notice arrives, then process the notice as a structural material change.
-    // This avoids rebuilding a flattened swatch snapshot before the worker has
+    // This avoids rebuilding a material-network snapshot before the worker has
     // actually authored the connection.
     if (!structuralChange && d.graphTopologyDirty && !dirtyMaterials.isEmpty())
         structuralChange = true;
 
     if (structuralChange) {
-        d.swatchSnapshotDirty = true;
+        // Existing materials whose own topology changed can stay entirely on a
+        // per-material fast path. Rebuilding the complete material list here was
+        // needlessly traversing the whole stage and calling setEntries() for all
+        // browser rows after every node/connection edit.
+        //
+        // Keep the full refresh only for material-list changes such as create,
+        // delete or rename, where the affected material can no longer be resolved
+        // from the browser's current rows.
+        if (!dirtyMaterials.isEmpty()) {
+            QList<QPair<QString, MaterialEntry>> updatedEntries;
+            bool requiresFullRefresh = false;
+            {
+                READ_LOCKER(locker, session()->stageLock(), "stageLock");
+                const UsdStageRefPtr stage = session()->stageUnsafe();
+
+                if (!stage) {
+                    requiresFullRefresh = true;
+                }
+                else {
+                    for (const QString& pathString : std::as_const(dirtyMaterials)) {
+                        const SdfPath materialPath(pathString.toStdString());
+                        const int row = d.ui->browserWidget->rowForMaterialPath(materialPath);
+                        if (row < 0) {
+                            requiresFullRefresh = true;
+                            break;
+                        }
+
+                        MaterialEntry updated;
+                        if (!MaterialUtils::materialEntry(stage, materialPath, &updated)) {
+                            requiresFullRefresh = true;
+                            break;
+                        }
+
+                        updatedEntries.append(qMakePair(pathString, updated));
+                    }
+                }
+            }
+
+            if (!requiresFullRefresh) {
+                for (const auto& pair : std::as_const(updatedEntries)) {
+                    const QString& pathString = pair.first;
+                    const MaterialEntry& updated = pair.second;
+                    const SdfPath materialPath(pathString.toStdString());
+                    const int row = d.ui->browserWidget->rowForMaterialPath(materialPath);
+                    if (row < 0) {
+                        requiresFullRefresh = true;
+                        break;
+                    }
+
+                    d.ui->browserWidget->updateEntry(row, updated);
+                    d.ui->browserWidget->invalidateSwatch(row);
+                    d.swatchNetworks.remove(pathString);
+                    d.renderer->invalidateNetwork(materialPath);
+                }
+
+
+                if (!requiresFullRefresh) {
+                    // Rebuild only open graphs whose material topology changed.
+                    // Unrelated graph tabs stay untouched.
+                    for (const auto& pair : std::as_const(updatedEntries)) {
+                        const QString& pathString = pair.first;
+                        const MaterialEntry& updated = pair.second;
+
+                        MaterialGraph* graph = d.graphs.value(pathString);
+                        if (!graph)
+                            continue;
+
+                        graph->setMaterial(updated);
+
+                        const int tabIndex = d.tabs ? d.tabs->indexOf(graph) : -1;
+                        if (tabIndex >= 0)
+                            d.tabs->setTabText(tabIndex, updated.name);
+                    }
+
+
+                    d.graphTopologyDirty = false;
+                    updateSelection();
+                    d.ui->browserWidget->refreshVisibleSwatches();
+
+                    return;
+                }
+            }
+        }
+
+
+
         d.graphTopologyDirty = true;
 
-        // Preserve valid swatches for unaffected materials. setEntries() will
-        // create an invalid placeholder for newly-added materials automatically.
-        // Existing materials whose own topology changed are invalidated here.
+        // Material-list changes still require sceneMaterials()+setEntries() so
+        // rows can be inserted, removed or remapped correctly.
         for (const QString& pathString : std::as_const(dirtyMaterials)) {
             const SdfPath materialPath(pathString.toStdString());
             const int row = d.ui->browserWidget->rowForMaterialPath(materialPath);
             if (row >= 0)
                 d.ui->browserWidget->invalidateSwatch(row);
-            d.renderer->invalidate(materialPath);
+            d.swatchNetworks.remove(pathString);
+            d.renderer->invalidateNetwork(materialPath);
         }
 
         d.refreshTimer->start();
@@ -853,8 +938,9 @@ MaterialDialogPrivate::updatePrims(const NoticeBatch& batch)
     // Ordinary authored value edits stay on the fast path. Mirror their composed
     // values into the persistent preview stages instead of flattening the entire
     // application stage again. Connections/node topology are marked dirty by the
-    // explicit structural edit paths below and use a complete snapshot refresh.
+    // explicit structural edit paths below and rebuild only the affected material.
     QList<QPair<SdfPath, VtValue>> valueUpdates;
+    QSet<QString> refreshNetworks;
     {
         READ_LOCKER(locker, session()->stageLock(), "stageLock");
         const UsdStageRefPtr stage = session()->stageUnsafe();
@@ -863,37 +949,50 @@ MaterialDialogPrivate::updatePrims(const NoticeBatch& batch)
 
         for (const SdfPath& propertyPath : std::as_const(dirtyProperties)) {
             const UsdAttribute attribute = stage->GetAttributeAtPath(propertyPath);
-            if (!attribute)
-                continue;
             VtValue value;
-            if (attribute.Get(&value) && !value.IsEmpty())
+            if (attribute && attribute.Get(&value) && !value.IsEmpty()) {
                 valueUpdates.append(qMakePair(propertyPath, value));
+                continue;
+            }
+
+            // A cleared value may expose a weaker opinion or remove the value
+            // completely. Incremental overrides cannot represent "clear", so
+            // rebuild only this material's compact network on the next request.
+            const SdfPath materialPath = knownMaterialForPath(propertyPath);
+            if (!materialPath.IsEmpty())
+                refreshNetworks.insert(QString::fromStdString(materialPath.GetString()));
         }
 
-        const QList<MaterialEntry> refreshed = MaterialUtils::sceneMaterials(stage);
         for (const QString& pathString : std::as_const(dirtyMaterials)) {
             const SdfPath materialPath(pathString.toStdString());
             const int row = d.ui->browserWidget->rowForMaterialPath(materialPath);
             if (row < 0)
                 continue;
 
-            auto found = std::find_if(refreshed.cbegin(), refreshed.cend(), [&](const MaterialEntry& candidate) {
-                return candidate.materialPath == materialPath;
-            });
-            if (found == refreshed.cend()) {
+            // The notice already identifies the dirty material. Avoid a complete
+            // stage traversal for an ordinary value edit; rebuild only this row.
+            MaterialEntry updated;
+            if (!MaterialUtils::materialEntry(stage, materialPath, &updated)) {
                 structuralChange = true;
                 break;
             }
-
-            d.ui->browserWidget->updateEntry(row, *found);
+            d.ui->browserWidget->updateEntry(row, updated);
             d.ui->browserWidget->invalidateSwatch(row);
             d.renderer->invalidate(materialPath);
         }
     }
 
+    for (const QString& pathString : std::as_const(refreshNetworks)) {
+        d.swatchNetworks.remove(pathString);
+        d.renderer->invalidateNetwork(SdfPath(pathString.toStdString()));
+    }
+
     if (structuralChange) {
-        d.swatchSnapshotDirty = true;
         d.graphTopologyDirty = true;
+        for (const QString& pathString : std::as_const(dirtyMaterials)) {
+            d.swatchNetworks.remove(pathString);
+            d.renderer->invalidateNetwork(SdfPath(pathString.toStdString()));
+        }
         d.refreshTimer->start();
         return;
     }
@@ -908,6 +1007,8 @@ MaterialDialogPrivate::updatePrims(const NoticeBatch& batch)
     // which calls refreshGraphs().
     updateSelection();
     d.ui->browserWidget->refreshVisibleSwatches();
+
+
 }
 
 
@@ -996,6 +1097,7 @@ MaterialDialogPrivate::closeMaterialGraph(int index)
         d.tabs->hide();
         if (d.graphView)
             d.graphView->show();
+        d.graphView->show();
     }
 }
 
@@ -1086,13 +1188,12 @@ MaterialDialogPrivate::connectGraphSockets(const SdfPath& inputPath, const SdfPa
 {
     if (inputPath.IsEmpty() || sourceOutputPath.IsEmpty() || !ensureInputs({ inputPath }))
         return;
-    d.swatchSnapshotDirty = true;
     d.graphTopologyDirty = true;
     // Do not refresh immediately here. connectShaderInput() runs asynchronously;
-    // an immediate refresh can flatten the stage before the connection exists and
-    // leave the material swatch rendering an old network. updatePrims() will receive
+    // an immediate refresh can capture the material before the connection exists
+    // and leave the swatch rendering an old network. updatePrims() will receive
     // the authored USD notice and perform the structural refresh at that point.
-    session()->commandStack()->run(new Command(connectShaderInput(inputPath, sourceOutputPath)));
+    session()->commandStack()->execute(new Command(connectShaderInput(inputPath, sourceOutputPath)));
 }
 
 void
@@ -1383,41 +1484,36 @@ MaterialDialogPrivate::updatePropertySwatch()
     d.ui->swatch->setMaterial(image, materialPath);
 }
 
-bool
-MaterialDialogPrivate::ensureSwatchSnapshot()
+SdfLayerRefPtr
+MaterialDialogPrivate::swatchNetwork(const SdfPath& materialPath, bool force)
 {
-    if (!d.swatchSnapshot)
-        d.swatchSnapshotDirty = true;
+    if (materialPath.IsEmpty())
+        return {};
 
-    if (!d.swatchSnapshotDirty) {
-        return true;
+    const QString key = QString::fromStdString(materialPath.GetString());
+    if (!force) {
+        const auto cached = d.swatchNetworks.constFind(key);
+        if (cached != d.swatchNetworks.cend() && cached.value())
+            return cached.value();
     }
 
-    SdfLayerRefPtr flattened;
+    SdfLayerRefPtr network;
+    QString error;
     {
         READ_LOCKER(locker, session()->stageLock(), "stageLock");
         const UsdStageRefPtr stage = session()->stageUnsafe();
-        if (stage) {
-            flattened = stage->Flatten();
-        }
+        if (stage)
+            network = MaterialUtils::materialNetworkLayer(stage, materialPath, error);
     }
 
+    if (!network) {
+        if (!error.isEmpty())
+            setStatus(error);
+        return {};
+    }
 
-    if (!flattened)
-        return false;
-
-    SdfLayerRefPtr snapshot = SdfLayer::CreateAnonymous("stageviz_material_snapshot.usda");
-    if (!snapshot)
-        return false;
-    snapshot->TransferContent(flattened);
-    d.swatchSnapshot = snapshot;
-    d.swatchSnapshotDirty = false;
-
-    // The fresh composed snapshot already contains every committed value. Drop
-    // the lightweight root-layer overrides accumulated since the previous full
-    // structural sync so they cannot shadow newer topology/defaults.
-    d.renderer->clearOverrides();
-    return true;
+    d.swatchNetworks.insert(key, network);
+    return network;
 }
 
 void
@@ -1427,13 +1523,13 @@ MaterialDialogPrivate::requestSwatch(int row)
     if (!entry)
         return;
 
-    if (!ensureSwatchSnapshot()) {
+    const SdfLayerRefPtr network = swatchNetwork(entry->materialPath);
+    if (!network)
         return;
-    }
 
-    // Swatches always represent the complete material network. The selected graph
-    // node is editor state only and never changes what is rendered here.
-    d.renderer->request(entry->materialPath, d.swatchSnapshot);
+    // Swatches always represent the complete authored network, but the layer passed
+    // to MaterialRenderer now contains only this material and its connected nodes.
+    d.renderer->request(entry->materialPath, network);
 }
 
 
@@ -1450,9 +1546,6 @@ MaterialDialogPrivate::updateSwatch(const QString& materialPath, const QImage& i
 void
 MaterialDialogPrivate::previewFloat(const QString& parameter, double value)
 {
-    if (!ensureSwatchSnapshot())
-        return;
-
     const QList<int> rows = d.ui->browserWidget->selectedRows();
     for (int row : rows) {
         const MaterialEntry* entry = d.ui->browserWidget->entry(row);
@@ -1475,16 +1568,15 @@ MaterialDialogPrivate::previewFloat(const QString& parameter, double value)
         // Interactive rendering uses the same complete UsdShade/MaterialX graph
         // as the final swatch, only at a smaller render target. No fallback shader
         // or currently-selected-node preview is involved.
-        d.renderer->preview(entry->materialPath, d.swatchSnapshot, inputPath, authored);
+        const SdfLayerRefPtr network = swatchNetwork(entry->materialPath);
+        if (network)
+            d.renderer->preview(entry->materialPath, network, inputPath, authored);
     }
 }
 
 void
 MaterialDialogPrivate::previewColor(const QString& parameter, const QColor& value)
 {
-    if (!ensureSwatchSnapshot())
-        return;
-
     const QList<int> rows = d.ui->browserWidget->selectedRows();
     const VtValue authored(GfVec3f(value.redF(), value.greenF(), value.blueF()));
 
@@ -1494,8 +1586,11 @@ MaterialDialogPrivate::previewColor(const QString& parameter, const QColor& valu
             continue;
 
         const SdfPath inputPath = MaterialUtils::inputPath(*entry, parameter);
-        if (!inputPath.IsEmpty())
-            d.renderer->preview(entry->materialPath, d.swatchSnapshot, inputPath, authored);
+        if (!inputPath.IsEmpty()) {
+            const SdfLayerRefPtr network = swatchNetwork(entry->materialPath);
+            if (network)
+                d.renderer->preview(entry->materialPath, network, inputPath, authored);
+        }
     }
 }
 
@@ -1503,7 +1598,7 @@ MaterialDialogPrivate::previewColor(const QString& parameter, const QColor& valu
 void
 MaterialDialogPrivate::previewFloatInputs(const QList<SdfPath>& inputPaths, double value)
 {
-    if (inputPaths.isEmpty() || !ensureSwatchSnapshot())
+    if (inputPaths.isEmpty())
         return;
 
     const QList<MaterialEntry>& entries = d.ui->browserWidget->entries();
@@ -1522,14 +1617,16 @@ MaterialDialogPrivate::previewFloatInputs(const QList<SdfPath>& inputPaths, doub
         if (!material)
             continue;
 
-        d.renderer->preview(material->materialPath, d.swatchSnapshot, inputPath, VtValue(static_cast<float>(value)));
+        const SdfLayerRefPtr network = swatchNetwork(material->materialPath);
+        if (network)
+            d.renderer->preview(material->materialPath, network, inputPath, VtValue(static_cast<float>(value)));
     }
 }
 
 void
 MaterialDialogPrivate::previewColorInputs(const QList<SdfPath>& inputPaths, const QColor& value)
 {
-    if (inputPaths.isEmpty() || !ensureSwatchSnapshot())
+    if (inputPaths.isEmpty())
         return;
 
     const VtValue authored(GfVec3f(value.redF(), value.greenF(), value.blueF()));
@@ -1549,7 +1646,9 @@ MaterialDialogPrivate::previewColorInputs(const QList<SdfPath>& inputPaths, cons
         if (!material)
             continue;
 
-        d.renderer->preview(material->materialPath, d.swatchSnapshot, inputPath, authored);
+        const SdfLayerRefPtr network = swatchNetwork(material->materialPath);
+        if (network)
+            d.renderer->preview(material->materialPath, network, inputPath, authored);
     }
 }
 
@@ -1583,7 +1682,7 @@ MaterialDialogPrivate::editFloat(const QString& parameter, double value)
         authored = VtValue(static_cast<float>(value));
     }
 
-    session()->commandStack()->run(new Command(setAttributeValues(paths, authored)));
+    session()->commandStack()->execute(new Command(setAttributeValues(paths, authored)));
 }
 
 void
@@ -1605,7 +1704,7 @@ MaterialDialogPrivate::editColor(const QString& parameter, const QColor& value)
         return;
 
     const GfVec3f color(value.redF(), value.greenF(), value.blueF());
-    session()->commandStack()->run(new Command(setAttributeValues(paths, VtValue(color))));
+    session()->commandStack()->execute(new Command(setAttributeValues(paths, VtValue(color))));
 }
 
 bool
@@ -1631,7 +1730,7 @@ MaterialDialogPrivate::editFloatInputs(const QList<SdfPath>& inputPaths, double 
 {
     if (!ensureInputs(inputPaths))
         return;
-    session()->commandStack()->run(new Command(setAttributeValues(inputPaths, VtValue(static_cast<float>(value)))));
+    session()->commandStack()->execute(new Command(setAttributeValues(inputPaths, VtValue(static_cast<float>(value)))));
 }
 
 void
@@ -1640,19 +1739,18 @@ MaterialDialogPrivate::editColorInputs(const QList<SdfPath>& inputPaths, const Q
     if (!ensureInputs(inputPaths))
         return;
     const GfVec3f color(value.redF(), value.greenF(), value.blueF());
-    session()->commandStack()->run(new Command(setAttributeValues(inputPaths, VtValue(color))));
+    session()->commandStack()->execute(new Command(setAttributeValues(inputPaths, VtValue(color))));
 }
 
 void
 MaterialDialogPrivate::disconnectInputs(const QList<SdfPath>& inputPaths)
 {
     if (!inputPaths.isEmpty()) {
-        d.swatchSnapshotDirty = true;
         d.graphTopologyDirty = true;
         // The disconnect command is asynchronous. Wait for its USD notice before
-        // rebuilding the graph/swatch snapshot so the snapshot cannot capture the
+        // rebuilding the graph/material-network snapshot so it cannot capture the
         // pre-disconnect network.
-        session()->commandStack()->run(new Command(disconnectShaderInputs(inputPaths)));
+        session()->commandStack()->execute(new Command(disconnectShaderInputs(inputPaths)));
     }
 }
 
@@ -1660,14 +1758,14 @@ void
 MaterialDialogPrivate::resetInputs(const QList<SdfPath>& inputPaths)
 {
     if (!inputPaths.isEmpty()) {
-        // A reset may reveal a weaker opinion/default that is not represented by
-        // the incremental override cache, so refresh the composed network snapshot.
-        d.swatchSnapshotDirty = true;
+        // A reset may reveal a weaker opinion/default. updatePrims() detects that
+        // the property no longer has a value and refreshes only this material's
+        // compact network snapshot.
         // Reset the authored value only. Do not remove the UsdShade input
         // property: NodeDef/schema-defined slots must remain part of the node
         // interface after a reset. This matches PropertyTree's Reset Value
         // semantics.
-        session()->commandStack()->run(new Command(resetAttributeValues(inputPaths)));
+        session()->commandStack()->execute(new Command(resetAttributeValues(inputPaths)));
     }
 }
 
@@ -1676,11 +1774,10 @@ MaterialDialogPrivate::connectShaderNode(const SdfPath& inputPath, const QString
                                          const TfToken& outputName)
 {
     if (!inputPath.IsEmpty() && !shaderId.isEmpty() && !outputName.IsEmpty() && ensureInputs({ inputPath })) {
-        d.swatchSnapshotDirty = true;
         d.graphTopologyDirty = true;
         // The command authors topology asynchronously; updatePrims() performs the
         // refresh when the resulting USD notice arrives.
-        session()->commandStack()->run(
+        session()->commandStack()->execute(
             new Command(stageviz::connectShaderNode(inputPath, shaderId, nodeName, outputName)));
     }
 }
@@ -1689,11 +1786,10 @@ void
 MaterialDialogPrivate::connectMaterialXNode(const SdfPath& inputPath, const QString& nodeDef, const QString& nodeName)
 {
     if (!inputPath.IsEmpty() && !nodeDef.isEmpty() && ensureInputs({ inputPath })) {
-        d.swatchSnapshotDirty = true;
         d.graphTopologyDirty = true;
         // The command authors topology asynchronously; updatePrims() performs the
         // refresh when the resulting USD notice arrives.
-        session()->commandStack()->run(new Command(stageviz::connectMaterialXNode(inputPath, nodeDef, nodeName)));
+        session()->commandStack()->execute(new Command(stageviz::connectMaterialXNode(inputPath, nodeDef, nodeName)));
     }
 }
 
@@ -1803,7 +1899,7 @@ MaterialDialogPrivate::applyToSelection()
     }
 
     if (!paths.isEmpty())
-        session()->commandStack()->run(new Command(bindMaterial(paths, materials.first().materialPath)));
+        session()->commandStack()->execute(new Command(bindMaterial(paths, materials.first().materialPath)));
 }
 
 void
@@ -1863,7 +1959,7 @@ MaterialDialogPrivate::deleteMaterials()
     // command runs so the next structural refresh also prunes any open tab for
     // the removed material.
     d.graphTopologyDirty = true;
-    session()->commandStack()->run(new Command(deletePaths(paths)));
+    session()->commandStack()->execute(new Command(deletePaths(paths)));
 }
 
 void
@@ -1891,7 +1987,7 @@ MaterialDialogPrivate::renameMaterial(const SdfPath& path, const QString& name)
     d.pendingRenameDestination = destination;
     d.pendingMaterialSelection = destination;
 
-    session()->commandStack()->run(new Command(renamePath(path, trimmed)));
+    session()->commandStack()->execute(new Command(renamePath(path, trimmed)));
 }
 
 MaterialDialog::MaterialDialog(QWidget* parent)

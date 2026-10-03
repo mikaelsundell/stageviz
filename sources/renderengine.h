@@ -11,7 +11,6 @@
 #include <QList>
 #include <QString>
 #include <memory>
-#include <pxr/base/gf/bbox3d.h>
 #include <pxr/base/gf/camera.h>
 #include <pxr/base/gf/frustum.h>
 #include <pxr/base/gf/vec2i.h>
@@ -22,7 +21,6 @@
 #include <pxr/usd/sdf/path.h>
 #include <pxr/usd/usd/stage.h>
 #include <pxr/usdImaging/usdImagingGL/engine.h>
-#include <vector>
 
 PXR_NAMESPACE_USING_DIRECTIVE
 
@@ -131,8 +129,8 @@ public:
     /**
      * @brief Sets the optional Stageviz auxiliary stage.
      *
-     * Auxiliary materials remain available to document/selection presentation,
-     * while /Display geometry is rendered later as a viewport-only overlay so
+     * Auxiliary materials remain available to document presentation, while
+     * /Display geometry is rendered later as a viewport-only overlay so
      * it cannot affect document look effects such as ambient occlusion.
      *
      * @param stage Auxiliary stage, or null to disable it.
@@ -204,19 +202,17 @@ public:
     void setMask(const QList<SdfPath>& paths);
 
     /**
-     * @brief Sets selected prim roots used by the scene-index presentation override.
+     * @brief Sets selected prim roots used by the screen-space outline.
+     *
+     * Paths may refer to leaf rprims or parent xforms. Parent paths are
+     * resolved to their Hydra rprim subtree by the shared scene-ID task.
+     *
      * @param paths Selected prim paths.
      */
     void setSelected(const QList<SdfPath>& paths);
 
     /**
-     * @brief Sets selection bounding boxes rendered by Hydra.
-     * @param bboxes World-space selection bounds.
-     */
-    void setSelectionBBoxes(const std::vector<GfBBox3d>& bboxes);
-
-    /**
-     * @brief Sets the selection highlight color.
+     * @brief Sets the screen-space selection outline color.
      * @param color Selection color.
      */
     void setSelectionColor(const QColor& color);
@@ -229,6 +225,24 @@ public:
      * making its OpenGL context and target framebuffer current before calling.
      */
     bool renderToCurrentFramebuffer();
+
+    /**
+     * @brief Captures prims that are visible in the current viewport.
+     *
+     * The normal scene-ID image is included first. When @p gridSize is greater
+     * than one, the camera frustum is then split into gridSize x gridSize
+     * tiles. Every tile is rendered into the same full-size single-sample
+     * primId/depth buffers, giving an effective linear visibility resolution
+     * of roughly gridSize times the viewport without allocating giant AOVs.
+     *
+     * This is intended for explicit visibility capture, not every viewport
+     * frame. Selection outlines still use only the normal one-pass ID image.
+     *
+     * @param gridSize Thorough-scan grid dimension. 1 performs a quick capture;
+     *                 4 is the default and is robust for small/distant prims.
+     * @return Visible front-most prim paths from the current masked scene.
+     */
+    QList<SdfPath> captureVisiblePaths(int gridSize = 4);
 
     /**
      * @brief Renders the current stage into an offscreen image.

@@ -19,10 +19,7 @@ class CommandStackPrivate;
  *
  * Implements a command stack used to execute operations that modify
  * the scene or application state. Commands are stored in a history
- * allowing them to be undone or redone. History is tied to the active
- * Session stage and edit target. Edit-layer commands synchronize that context
- * as part of execution, while edit-target changes made outside the command
- * model still invalidate history safely.
+ * allowing them to be undone or redone.
  *
  * The stack integrates with Session and SelectionModel so commands
  * can interact with the currently loaded USD stage and selection.
@@ -50,11 +47,24 @@ public:
      */
 
     /**
-     * @brief Run a command and adds it to the stack.
-     *
-     * @param command Command to execute.
+     * @brief Controls how a command is executed by the stack.
      */
-    void run(Command* command);
+    enum class ExecutionMode {
+        Execute,  ///< Execute the command before adding it to the history.
+        Applied   ///< The command result is already applied; add only the history entry.
+    };
+
+    /**
+     * @brief Executes a command through the stack.
+     *
+     * Execute mode runs the command before storing it. Applied mode is used by
+     * interactive tools whose final result is already authored, avoiding a
+     * duplicate edit while preserving normal undo and redo behavior.
+     *
+     * @param command Command to add to the history.
+     * @param mode Whether the command should execute before being stored.
+     */
+    void execute(Command* command, ExecutionMode mode = ExecutionMode::Execute);
 
     /**
      * @brief Returns whether undo is available.
@@ -105,7 +115,7 @@ public Q_SLOTS:
 
 Q_SIGNALS:
     /**
-     * @brief Emitted after a command is executed.
+     * @brief Emitted after a command is added to the history.
      */
     void commandExecuted(Command* command);
 

@@ -49,7 +49,6 @@
 #include <cmath>
 #include <pxr/usd/usd/primRange.h>
 #include <pxr/usd/usdGeom/gprim.h>
-#include <pxr/usd/usdShade/materialBindingAPI.h>
 
 // generated files
 #include "ui_materialbrowser.h"
@@ -58,6 +57,8 @@ namespace stageviz {
 
 class MaterialBrowserPrivate : public QObject {
 public:
+    static constexpr int SwatchImageRole = Qt::UserRole + 1;
+
     void init();
     void rebuild();
     void insertRow(int row);
@@ -70,7 +71,6 @@ public:
     void showViewMenu();
     void showContextMenu(QAbstractItemView* view, const QPoint& position);
     void assignMaterial(const MaterialEntry& material);
-    void selectMaterial(const MaterialEntry& material);
     void beginRename(QAbstractItemView* view, int row = -1);
     void commitRename(int row, const QString& name);
     QAbstractItemView* currentView() const;
@@ -151,7 +151,23 @@ public:
             const QRect textRect(fullRect.left() + padding, fullRect.top() + padding + iconSize.height() + padding,
                                  fullRect.width() - padding * 2, textHeight);
 
-            if (!opt.icon.isNull()) {
+            const QImage swatch = index.data(MaterialBrowserPrivate::SwatchImageRole).value<QImage>();
+            if (!swatch.isNull()) {
+                // Draw the source image ourselves instead of relying on QIcon. A raster QIcon may
+                // keep its native pixmap size when the requested icon size becomes larger than the
+                // rendered swatch. drawImage() deliberately scales both up and down, so zooming the
+                // material browser can always fill the requested swatch area.
+                QSize drawSize = swatch.size();
+                drawSize.scale(iconRect.size(), Qt::KeepAspectRatio);
+                const QRect drawRect(iconRect.center().x() - drawSize.width() / 2,
+                                     iconRect.center().y() - drawSize.height() / 2, drawSize.width(),
+                                     drawSize.height());
+
+                painter->setRenderHint(QPainter::SmoothPixmapTransform, true);
+                painter->drawImage(drawRect, swatch);
+                painter->setRenderHint(QPainter::SmoothPixmapTransform, false);
+            }
+            else if (!opt.icon.isNull()) {
                 QIcon::Mode mode = QIcon::Normal;
                 if (!(opt.state & QStyle::State_Enabled))
                     mode = QIcon::Disabled;
@@ -190,6 +206,8 @@ public:
         QTimer* visibleTimer = nullptr;
         QPoint dragStartPosition;
         QPoint panLastPosition;
+        QPointer<QAbstractItemView> contextMenuView;
+        QPoint contextMenuPosition;
         QList<int> dragSelectionRows;
         Qt::KeyboardModifiers dragModifiers = Qt::NoModifier;
         int swatchSize = 128;
@@ -199,6 +217,7 @@ public:
         int dragSourceRow = -1;
         bool materialDragActive = false;
         bool dragPressPending = false;
+        bool contextMenuPending = false;
         bool panning = false;
         bool syncingSelection = false;
         bool updatingRows = false;
@@ -333,6 +352,7 @@ void
 MaterialBrowserPrivate::showViewMenu()
 {
     QMenu menu(d.ui->view);
+    menu.setAttribute(Qt::WA_NoMouseReplay);
     menu.addAction(d.iconView);
     menu.addAction(d.listView);
     menu.addAction(d.detailView);
@@ -362,34 +382,39 @@ MaterialBrowserPrivate::showContextMenu(QAbstractItemView* view, const QPoint& p
     const bool contextMaterialSelected = d.browser->selectedRows().contains(index.row());
 
     QMenu menu(view);
+    menu.setAttribute(Qt::WA_NoMouseReplay);
 
     QAction* assignAction = menu.addAction(tr("Assign"));
     assignAction->setEnabled(hasSceneSelection);
 
-    QAction* selectAction = menu.addAction(tr("Select"));
+    menu.addSeparator();
+
+    QAction* duplicateMaterial = menu.addAction(tr("Duplicate"));
 
     menu.addSeparator();
 
     QMenu* copy = menu.addMenu(tr("Copy"));
+    copy->setAttribute(Qt::WA_NoMouseReplay);
     QAction* copyName = copy->addAction(tr("Name"));
     QAction* copyPath = copy->addAction(tr("Path"));
 
     menu.addSeparator();
 
     QMenu* exportMenu = menu.addMenu(tr("Export"));
+    exportMenu->setAttribute(Qt::WA_NoMouseReplay);
     QAction* exportMaterialX = exportMenu->addAction(tr("MaterialX File..."));
     exportMaterialX->setEnabled(contextMaterial.shaderId.startsWith(QStringLiteral("ND_")));
 
     menu.addSeparator();
 
     QMenu* newMenu = menu.addMenu(tr("New"));
+    newMenu->setAttribute(Qt::WA_NoMouseReplay);
     QAction* newPreviewSurface = newMenu->addAction(tr("USD Preview Surface"));
     QAction* newStandardSurface = newMenu->addAction(tr("MaterialX Standard Surface"));
     QAction* newOpenPBRSurface = newMenu->addAction(tr("MaterialX OpenPBR Surface"));
     newMenu->addSeparator();
     QAction* newMaterialXFile = newMenu->addAction(tr("MaterialX File..."));
 
-    QAction* duplicateMaterial = menu.addAction(tr("Duplicate"));
     QAction* deleteMaterial = menu.addAction(tr("Delete"));
     // Delete still operates on browser selection, so an RMB click on another
     // material must never delete the previously selected material.
@@ -398,16 +423,12 @@ MaterialBrowserPrivate::showContextMenu(QAbstractItemView* view, const QPoint& p
     QAction* action = menu.exec(view->viewport()->mapToGlobal(position));
     if (!action)
         return;
-
     if (action == assignAction) {
         assignMaterial(contextMaterial);
     }
-    else if (action == selectAction) {
-        selectMaterial(contextMaterial);
-    }
     else if (action == duplicateMaterial) {
         // Duplicate only the RMB material and preserve the current scene/browser selection.
-        session()->commandStack()->run(new Command(duplicatePaths({ contextMaterial.materialPath }, false)));
+        session()->commandStack()->execute(new Command(duplicatePaths({ contextMaterial.materialPath }, false)));
     }
     else if (action == copyName) {
         QApplication::clipboard()->setText(contextMaterial.name);
@@ -517,35 +538,7 @@ MaterialBrowserPrivate::assignMaterial(const MaterialEntry& material)
     if (paths.isEmpty())
         return;
 
-    session()->commandStack()->run(new Command(bindMaterial(paths, material.materialPath)));
-}
-
-
-void
-MaterialBrowserPrivate::selectMaterial(const MaterialEntry& material)
-{
-    if (material.materialPath.IsEmpty())
-        return;
-
-    QList<SdfPath> paths;
-
-    {
-        READ_LOCKER(locker, session()->stageLock(), "stageLock");
-        const UsdStageRefPtr stage = session()->stageUnsafe();
-        if (!stage)
-            return;
-
-        for (const UsdPrim& prim : stage->Traverse()) {
-            if (!prim || !prim.IsValid() || prim.IsInstanceProxy() || !prim.IsA<UsdGeomGprim>())
-                continue;
-
-            const UsdShadeMaterial boundMaterial = UsdShadeMaterialBindingAPI(prim).ComputeBoundMaterial();
-            if (boundMaterial && boundMaterial.GetPath() == material.materialPath)
-                paths.append(prim.GetPath());
-        }
-    }
-
-    session()->commandStack()->run(new Command(selectPaths(paths)));
+    session()->commandStack()->execute(new Command(bindMaterial(paths, material.materialPath)));
 }
 
 
@@ -719,6 +712,7 @@ MaterialBrowserPrivate::updateRow(int row)
     if (QListWidgetItem* item = d.ui->icons->item(row)) {
         item->setText(entry.name);
         item->setToolTip(QString("%1\n%2").arg(path, type));
+        item->setData(SwatchImageRole, image);
         item->setIcon(icon);
     }
 
@@ -829,7 +823,6 @@ MaterialBrowserPrivate::updateViewSizes()
 
     d.ui->icons->setIconSize(QSize(size, size));
     d.ui->icons->setGridSize(gridSize);
-
     for (int row = 0; row < d.ui->icons->count(); ++row) {
         QListWidgetItem* item = d.ui->icons->item(row);
         if (!item)
@@ -838,10 +831,9 @@ MaterialBrowserPrivate::updateViewSizes()
         item->setSizeHint(gridSize);
 
         const QImage image = d.swatches.value(row);
-        if (!image.isNull()) {
-            // Reuse the full-resolution render for high-DPI resizing.
+        item->setData(SwatchImageRole, image);
+        if (!image.isNull())
             item->setIcon(QIcon(QPixmap::fromImage(image)));
-        }
     }
 
     d.ui->list->setIconSize(QSize(std::min(size, 56), std::min(size, 56)));
@@ -1409,11 +1401,16 @@ MaterialBrowser::eventFilter(QObject* object, QEvent* event)
     if (browserViewport && event->type() == QEvent::MouseButtonPress) {
         auto* mouse = static_cast<QMouseEvent*>(event);
 
-        // QAbstractItemView normally changes the current/selected row on a
-        // right-button press before the ContextMenu event is delivered. Handle
-        // the mouse context menu here and consume the press so RMB never changes
-        // browser selection. The material under the cursor is passed directly to
-        // showContextMenu(), so Assign still operates on that material.
+        // Consume the complete RMB gesture in the browser. Opening QMenu::exec()
+        // directly from MouseButtonPress leaves the matching release pending in
+        // the native event queue. On macOS that release can be replayed to the
+        // widget below the floating MaterialDialog when the menu closes, which
+        // makes ImagingGLWidget open its own context menu after choosing Assign.
+        //
+        // Remember the context target on press, but do not enter the nested menu
+        // event loop until the matching release has also been consumed. This also
+        // preserves the browser selection because QAbstractItemView never sees
+        // either half of the RMB gesture.
         if (mouse->button() == Qt::RightButton) {
             QAbstractItemView* view = nullptr;
             if (object == p->d.ui->icons->viewport())
@@ -1424,7 +1421,9 @@ MaterialBrowser::eventFilter(QObject* object, QEvent* event)
                 view = p->d.ui->details;
 
             if (view) {
-                p->showContextMenu(view, mouse->position().toPoint());
+                p->d.contextMenuView = view;
+                p->d.contextMenuPosition = mouse->position().toPoint();
+                p->d.contextMenuPending = true;
                 mouse->accept();
                 return true;
             }
@@ -1499,6 +1498,23 @@ MaterialBrowser::eventFilter(QObject* object, QEvent* event)
     else if (browserViewport && event->type() == QEvent::MouseButtonRelease) {
         auto* mouse = static_cast<QMouseEvent*>(event);
 
+        if (mouse->button() == Qt::RightButton && p->d.contextMenuPending) {
+            QPointer<QAbstractItemView> view = p->d.contextMenuView;
+            const QPoint position = p->d.contextMenuPosition;
+
+            // Clear the pending gesture before opening the nested QMenu loop.
+            // Assign can trigger USD notices and arbitrary UI work while exec()
+            // is active, so no stale RMB state should survive that work.
+            p->d.contextMenuPending = false;
+            p->d.contextMenuView.clear();
+            p->d.contextMenuPosition = QPoint();
+
+            mouse->accept();
+            if (view)
+                p->showContextMenu(view.data(), position);
+            return true;
+        }
+
         if (mouse->button() == Qt::LeftButton && p->d.dragPressPending && p->d.dragSourceRow >= 0) {
             QList<int> rows = p->d.dragSelectionRows;
             const int row = p->d.dragSourceRow;
@@ -1541,9 +1557,9 @@ MaterialBrowser::eventFilter(QObject* object, QEvent* event)
     if (browserViewport && event->type() == QEvent::ContextMenu) {
         auto* contextEvent = static_cast<QContextMenuEvent*>(event);
 
-        // Mouse-triggered context menus are already handled on RMB press above
-        // so the item view never gets a chance to alter selection. Keep this
-        // path for keyboard-triggered context menus only.
+        // Mouse-triggered context menus are handled by the consumed RMB
+        // press/release pair above. Keep this path for keyboard-triggered context
+        // menus only and suppress the platform-generated mouse context event.
         if (contextEvent->reason() == QContextMenuEvent::Mouse) {
             contextEvent->accept();
             return true;

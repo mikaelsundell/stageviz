@@ -11,6 +11,7 @@
 #include <pxr/base/vt/value.h>
 #include <pxr/usd/sdf/path.h>
 #include <pxr/usd/sdf/types.h>
+#include <pxr/usd/usdGeom/xformOp.h>
 
 PXR_NAMESPACE_USING_DIRECTIVE
 
@@ -25,8 +26,8 @@ struct MaterialXNodeDefinition;
  * A Command represents a unit of work that modifies session or stage state.
  * It provides a redo function (execute) and an optional undo function.
  *
- * Commands are intended to be executed via CommandStack, which manages
- * undo/redo history.
+ * Commands are intended to be executed through CommandStack, which manages
+ * execution and undo/redo history.
  *
  * All commands operate on a Session, which provides access to the USD stage,
  * selection model, masking, and notification system.
@@ -94,7 +95,7 @@ private:
 
 
 /**
- * @struct TransformRootState
+ * @struct XformState
  * @brief Captures the edit-layer transform opinions that existed before an
  * interactive transform preview authored a stronger matrix override.
  *
@@ -102,7 +103,7 @@ private:
  * xformOpOrder/matrix opinions exactly, or remove the temporary override when
  * no edit-layer transform opinion existed before the drag.
  */
-struct TransformRootState {
+struct XformState {
     bool hadPrimSpec = false;
     bool hadXformOpOrderSpec = false;
     bool hadXformOpOrderDefault = false;
@@ -111,6 +112,59 @@ struct TransformRootState {
     bool hadMatrixOpDefault = false;
     VtValue matrixOpDefault;
 };
+
+/**
+ * @struct XformEdit
+ * @brief Durable before/after state for an undoable transform edit.
+ *
+ * Stores only persistent command data. Live UsdGeomXformOp handles are kept in
+ * PreparedTransform while an interactive edit is active and are not retained by
+ * the undo stack.
+ */
+struct XformEdit {
+    QList<GfMatrix4d> before;
+    QList<GfMatrix4d> after;
+    QList<XformState> beforeState;
+    GfMatrix4d delta = GfMatrix4d(1.0);
+    bool hasDelta = false;
+};
+
+/**
+ * @struct PreparedTransform
+ * @brief Temporary cached USD transform state used for fast repeated authoring.
+ */
+struct PreparedTransform {
+    SdfPath path;
+    UsdGeomXformOp matrixOp;
+    GfMatrix4d parentWorld = GfMatrix4d(1.0);
+    bool parentFollowsSelection = false;
+    bool fast = false;
+};
+
+/**
+ * @brief Normalizes the supplied prims to their base world transforms and caches
+ * the resulting matrix xformOps where possible.
+ *
+ * Normalization authors a matrix xformOp and xformOpOrder in the active edit
+ * layer. Weaker composed transform opinions are left untouched, allowing the
+ * same prepared path to work for root-layer and sublayer editing.
+ *
+ * The caller must hold the stage write lock.
+ */
+QList<PreparedTransform>
+prepareTransforms(const UsdStageRefPtr& stage, const QList<SdfPath>& paths, const QList<GfMatrix4d>& baseMatrices,
+                  QStringList* errors = nullptr);
+
+/**
+ * @brief Applies world transforms using prepared matrix ops when safe and the
+ * canonical stage transform path otherwise.
+ *
+ * The caller must hold the stage write lock.
+ */
+bool
+applyPreparedTransforms(const UsdStageRefPtr& stage, const QList<PreparedTransform>& prepared,
+                        const QList<GfMatrix4d>& matrices, const GfMatrix4d& selectionDelta, bool hasSelectionDelta,
+                        QStringList* errors = nullptr, QList<SdfPath>* changed = nullptr);
 
 /**
  * @name Command Factory Helpers
@@ -189,6 +243,15 @@ newMaterialXNode(const SdfPath& materialPath, const MaterialXNodeDefinition& def
 Command
 deleteShaderNode(const SdfPath& nodePath);
 
+/**
+ * @brief Creates an undoable command that removes authored relationship targets and attribute connections.
+ *
+ * Only dependency fields authored in the current edit layer are removed. Undo
+ * restores the original property specs exactly.
+ *
+ * @param propertyPaths Relationship or attribute property paths to reset.
+ * @return Undoable dependency-reset command.
+ */
 Command
 resetDependencies(const QList<SdfPath>& propertyPaths);
 
@@ -442,8 +505,10 @@ stageUp(Session::StageUp stageUp);
  * @brief Creates a command that changes the active edit layer.
  *
  * The target layer must already be a local layer of the current stage. The
- * layer is addressed by its SdfLayer identifier so the same command can be
- * exposed cleanly to Python. Undo restores the previously active edit layer.
+ * layer is addressed by its SdfLayer identifier so UI and Python callers use
+ * the same command-stack path. Session::editLayerChanged is emitted whenever
+ * the command changes or restores the edit target. Undo restores the previously
+ * active edit layer.
  *
  * @param layerIdentifier Identifier of a local SdfLayer in the current stage.
  * @return Undoable edit-layer selection command.
@@ -529,28 +594,33 @@ duplicatePaths(const QList<SdfPath>& paths, bool selectDuplicates = true);
  * non-empty, the prim is defined with that USD type; otherwise an untyped prim
  * is defined.
  *
- * On success, the new prim becomes the current selection. Undo removes the
+ * By default the new prim becomes the current selection. Callers may preserve
+ * the current selection by passing selectCreated = false. Undo removes the
  * created prim and restores child ordering, selection, and mask.
  *
  * @param parentPath Parent prim path.
  * @param nameInput Desired name for the new prim.
  * @param typeName Optional USD schema type name, for example "Xform", "Mesh",
- *                 "Camera", or "Scope".
+ *                 "Camera", or "Scope". Axis-based built-in primitives follow
+ *                 the stage up axis.
+ * @param selectCreated If true, select the new prim on success.
  */
 Command
-newPrimPath(const SdfPath& parentPath, const QString& nameInput, const TfToken& typeName = TfToken());
+newPrimPath(const SdfPath& parentPath, const QString& nameInput, const TfToken& typeName = TfToken(),
+            bool selectCreated = true);
 
 /**
  * @brief Creates a Scope prim under a parent.
  *
  * This is a convenience wrapper around newPrimPath() using the USD "Scope"
- * type. The new scope is selected on success and is fully undoable.
+ * type. The command is fully undoable.
  *
  * @param parentPath Parent prim path.
  * @param nameInput Desired scope name.
+ * @param selectCreated If true, select the new scope on success.
  */
 Command
-newScopePath(const SdfPath& parentPath, const QString& nameInput);
+newScopePath(const SdfPath& parentPath, const QString& nameInput, bool selectCreated = true);
 
 /**
  * @brief Creates a visible wavy UsdGeomMesh example under a parent.
@@ -560,30 +630,30 @@ newScopePath(const SdfPath& parentPath, const QString& nameInput);
  * visible geometry instead of an empty Mesh prim.
  */
 Command
-newMeshPath(const SdfPath& parentPath, const QString& nameInput);
+newMeshPath(const SdfPath& parentPath, const QString& nameInput, bool selectCreated = true);
 
 /** @brief Creates a visible UsdGeomPoints particle-style point cloud. */
 Command
-newPointsPath(const SdfPath& parentPath, const QString& nameInput);
+newPointsPath(const SdfPath& parentPath, const QString& nameInput, bool selectCreated = true);
 
 /** @brief Creates visible cubic B-spline UsdGeomBasisCurves. */
 Command
-newBasisCurvesPath(const SdfPath& parentPath, const QString& nameInput);
+newBasisCurvesPath(const SdfPath& parentPath, const QString& nameInput, bool selectCreated = true);
 
 /** @brief Creates visible cubic UsdGeomNurbsCurves. */
 Command
-newNurbsCurvesPath(const SdfPath& parentPath, const QString& nameInput);
+newNurbsCurvesPath(const SdfPath& parentPath, const QString& nameInput, bool selectCreated = true);
 
 /** @brief Creates a visible wavy UsdGeomNurbsPatch. */
 Command
-newNurbsPatchPath(const SdfPath& parentPath, const QString& nameInput);
+newNurbsPatchPath(const SdfPath& parentPath, const QString& nameInput, bool selectCreated = true);
 
 /**
  * @brief Creates a UsdGeomPointInstancer with an internal Cube prototype and
  * a small deterministic grid of instances.
  */
 Command
-newPointInstancerPath(const SdfPath& parentPath, const QString& nameInput);
+newPointInstancerPath(const SdfPath& parentPath, const QString& nameInput, bool selectCreated = true);
 
 /**
  * @brief Creates a UsdShadeMaterial with a default UsdPreviewSurface shader.
@@ -654,15 +724,19 @@ renamePath(const SdfPath& path, const QString& newNameInput);
  * The name is sanitized and made unique under the parent. The new prim
  * is appended to the child order.
  *
- * On success, the new prim becomes the current selection.
+ * By default the new prim becomes the current selection. Callers may preserve
+ * the current selection by passing selectCreated = false.
  *
  * Undo removes the created prim and restores child ordering and mask.
  *
  * @param parentPath Parent prim path.
  * @param nameInput  Desired name for the new prim.
+ * @param selectCreated If true, select the new Xform on success. When false and
+ *                      selected paths are grouped below it, their selection is
+ *                      remapped to the new child paths instead.
  */
 Command
-newXformPath(const SdfPath& parentPath, const QString& nameInput);
+newXformPath(const SdfPath& parentPath, const QString& nameInput, bool selectCreated = true);
 
 /**
  * @brief Creates a command that reparents or reorders one or more prims.
@@ -855,24 +929,15 @@ resetOverrides(const QList<SdfPath>& paths);
 /**
  * @brief Creates a command that applies world-space transforms to prims.
  *
- * The paths, before matrices, and after matrices are supplied explicitly so
- * interactive tools can preview transforms while dragging and still create a
- * single deterministic undo step when the drag finishes.
- *
- * The three lists must contain the same number of entries. Each matrix at an
- * index corresponds to the prim path at the same index.
+ * The edit stores the before/after transform state required for deterministic
+ * undo and redo. Interactive tools may apply the final state live and add the
+ * command to CommandStack using ExecutionMode::Applied.
  *
  * @param paths Prim paths to transform.
- * @param before World transforms captured at drag start.
- * @param after World transforms to apply for redo.
- * @param rootBefore Optional edit-layer transform state captured before an
- *                   interactive preview. When supplied, undo restores those
- *                   authored opinions exactly instead of leaving a matrix
- *                   override behind.
+ * @param edit Transform state used for execute, undo, and redo.
  */
 Command
-setTransforms(const QList<SdfPath>& paths, const QList<GfMatrix4d>& before, const QList<GfMatrix4d>& after,
-              const QList<TransformRootState>& rootBefore = {});
+setTransforms(const QList<SdfPath>& paths, const XformEdit& edit);
 
 /**
  * @}

@@ -31,6 +31,7 @@ class MaterialMenuPrivate {
 public:
     static QString shaderId(const UsdPrim& prim);
     static bool isMaterialXShader(const UsdPrim& prim);
+    static bool isStormSupportedMaterialXNode(const MaterialXNodeDefinition& definition);
     static QList<MaterialMenu::Choice> materialXChoices(const SdfValueTypeName& targetType);
     static QList<MaterialMenu::Choice> usdChoices(const SdfValueTypeName& targetType);
     static void addMaterialXMenu(QMenu* root, const QList<MaterialMenu::Choice>& choices, QObject* receiver,
@@ -63,6 +64,21 @@ MaterialMenuPrivate::isMaterialXShader(const UsdPrim& prim)
     return shaderId(prim).startsWith(QStringLiteral("ND_"));
 }
 
+bool
+MaterialMenuPrivate::isStormSupportedMaterialXNode(const MaterialXNodeDefinition& definition)
+{
+    // MaterialX's USD compatibility PrimvarReader NodeDefs currently fail
+    // hardware shader generation in Storm because they are lowered to a
+    // geompropvalue node without the geomprop binding required by HdMtlx.
+    //
+    // Keep the definitions discoverable in MaterialUtils so imported networks
+    // can still be inspected, but do not offer nodes that Stageviz can create
+    // only to make Storm fail compilation. Native MaterialX geometric/texcoord
+    // nodes remain available in the MaterialX menu, while USD Preview graphs
+    // continue to expose the native UsdPrimvarReader_* helpers.
+    return !definition.nodeDef.startsWith(QStringLiteral("ND_UsdPrimvarReader_"));
+}
+
 QList<MaterialMenu::Choice>
 MaterialMenuPrivate::materialXChoices(const SdfValueTypeName& targetType)
 {
@@ -74,7 +90,7 @@ MaterialMenuPrivate::materialXChoices(const SdfValueTypeName& targetType)
     QSet<QString> seen;
 
     for (const MaterialXNodeDefinition& def : defs) {
-        if (def.nodeDef.isEmpty() || seen.contains(def.nodeDef))
+        if (def.nodeDef.isEmpty() || seen.contains(def.nodeDef) || !isStormSupportedMaterialXNode(def))
             continue;
 
         seen.insert(def.nodeDef);

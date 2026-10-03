@@ -20,10 +20,10 @@ class MaterialRendererPrivate;
  * @brief Persistent renderer for material swatches and interactive previews.
  *
  * MaterialRenderer keeps warm Hydra/Storm render contexts for complete
- * UsdShade and MaterialX networks. Final swatches use the high-quality render
- * path, while interactive edits use a smaller preview context. Non-structural
- * edits are mirrored through lightweight attribute overrides so the contexts
- * can remain alive between updates.
+ * UsdShade and MaterialX networks. Browser swatches are scheduled progressively
+ * so only one expensive Storm render runs per event-loop turn. Interactive edits
+ * are prioritized ahead of background swatches. Non-structural edits are mirrored
+ * through lightweight attribute overrides so the contexts can remain alive.
  */
 class MaterialRenderer : public QObject {
     Q_OBJECT
@@ -50,7 +50,7 @@ public:
      * @brief Renders the complete authored material network.
      *
      * @param materialPath Material prim to render.
-     * @param sourceLayer Composed source layer containing the material network.
+     * @param sourceLayer Compact composed layer containing only this material network.
      * @param forceRender If true, bypass cached render state.
      */
     void request(const SdfPath& materialPath, const SdfLayerRefPtr& sourceLayer, bool forceRender = false);
@@ -58,11 +58,11 @@ public:
     /**
      * @brief Renders an interactive preview with one temporary input override.
      *
-     * Repeated preview requests are coalesced and rendered through the smaller
-     * warm preview context.
+     * Repeated preview requests are coalesced and rendered through the same warm
+     * authored-network context used by final browser swatches.
      *
      * @param materialPath Material prim to render.
-     * @param sourceLayer Composed source layer containing the material network.
+     * @param sourceLayer Compact composed layer containing only this material network.
      * @param inputPath Shader input property to override.
      * @param value Temporary preview value.
      */
@@ -83,6 +83,15 @@ public:
      * @brief Invalidates the cached render state for a material.
      */
     void invalidate(const SdfPath& materialPath);
+
+    /**
+     * @brief Invalidates a material after its shader-network topology changed.
+     *
+     * In addition to the rendered image, this drops incremental value overrides
+     * associated with the material so the next compact network snapshot becomes
+     * the new authoritative state.
+     */
+    void invalidateNetwork(const SdfPath& materialPath);
 
     /**
      * @brief Clears renderer state and cached material results.

@@ -1,6 +1,6 @@
 -- glslfx version 0.1
 
-// Stageviz ambient occlusion.
+// Ambient occlusion.
 //
 // Based on "Scalable Ambient Obscurance" by McGuire, Mara and Luebke,
 // High Performance Graphics, 2012.
@@ -17,6 +17,9 @@
             },
             "Render::AmbientOcclusion::Composite": {
                 "source": [ "Render::AmbientOcclusion::Composite.Fragment" ]
+            },
+            "Render::Selection::Outline": {
+                "source": [ "Render::Selection::Outline.Fragment" ]
             }
         }
     }
@@ -257,4 +260,86 @@ main(void)
         result = vec3(broad);
 
     hd_FragColor = vec4(result, color.a);
+}
+
+
+-- glsl Render::Selection::Outline.Fragment
+
+// Selection outline rendering is derived from the ID-buffer architecture in
+// Autodesk Hydra Viewport Toolbox (Apache-2.0), simplified for Stageviz.
+//
+// Stageviz renders the scene primId/depth layer once with HdCullStyleNothing.
+// Selected USD paths are resolved to HdRprim::GetPrimId() values on the CPU and
+// uploaded as a compact integer lookup texture. The fragment shader therefore
+// tests selection membership without rendering selected geometry a second time.
+
+bool
+isSelectedPrimId(int primId)
+{
+    if (primId < 0 || primId >= uSelectedMaskCapacity)
+        return false;
+    if (uSelectedMaskSize.x <= 0 || uSelectedMaskSize.y <= 0)
+        return false;
+
+    int x = primId % uSelectedMaskSize.x;
+    int y = primId / uSelectedMaskSize.x;
+    if (y >= uSelectedMaskSize.y)
+        return false;
+
+    return HgiTexelFetch_selectedIdMaskIn(ivec2(x, y)).x != 0;
+}
+
+bool
+visibleSelectedPixel(ivec2 location)
+{
+    if (any(lessThan(location, ivec2(0))) || any(greaterThanEqual(location, uScreenSize)))
+        return false;
+
+    return isSelectedPrimId(HgiTexelFetch_scenePrimIdIn(location).x);
+}
+
+float
+outlineCoverage(ivec2 location)
+{
+    bool centerSelected = visibleSelectedPixel(location);
+    int differentNeighbors = 0;
+    int sampleCount = 0;
+
+    for (int y = -4; y <= 4; ++y) {
+        for (int x = -4; x <= 4; ++x) {
+            if (x == 0 && y == 0)
+                continue;
+            if (abs(x) > uRadius || abs(y) > uRadius)
+                continue;
+
+            ++sampleCount;
+            if (visibleSelectedPixel(location + ivec2(x, y)) != centerSelected)
+                ++differentNeighbors;
+        }
+    }
+
+    if (differentNeighbors == 0 || sampleCount == 0)
+        return 0.0;
+
+    float coverage = float(differentNeighbors) / float(sampleCount);
+    float softened = pow(clamp(coverage, 0.0, 1.0), max(uSoftnessFalloff, 0.01));
+    return mix(1.0, softened, clamp(uSoftnessStrength, 0.0, 1.0));
+}
+
+void
+main(void)
+{
+    ivec2 location = ivec2(uvOut * vec2(uScreenSize));
+    location = clamp(location, ivec2(0), uScreenSize - 1);
+
+    vec4 color = HgiTexelFetch_colorIn(location);
+    float coverage = outlineCoverage(location);
+    if (coverage <= 0.0) {
+        hd_FragColor = color;
+        return;
+    }
+
+    float alpha = clamp(uSelectionColor.a * coverage, 0.0, 1.0);
+    vec3 rgb = mix(color.rgb, uSelectionColor.rgb, alpha);
+    hd_FragColor = vec4(rgb, color.a);
 }
