@@ -47,7 +47,6 @@
 #include <QTimer>
 #include <algorithm>
 #include <cmath>
-#include <functional>
 #include <limits>
 #include <memory>
 #include <pxr/base/gf/matrix4d.h>
@@ -186,7 +185,6 @@ public:
     bool isPathMaskedIn(const SdfPath& path) const;
     bool isSelectionVisible(const SdfPath& path) const;
     SdfPath pickNearestPath(const QPoint& pos);
-    QList<SdfPath> pickVisibleRegion(const GfFrustum& frustum, const QRectF& gate);
     bool pickMaskedIntersection(const UsdImagingGLEngine::PickParams& pickParams, const GfFrustum& pickFrustum,
                                 UsdImagingGLEngine::IntersectionResultVector* results);
     struct Data {
@@ -1400,114 +1398,6 @@ ImagingGLWidgetPrivate::updateTransformMode(TransformMode mode, bool enabled)
     d.glwidget->update();
 }
 
-QList<SdfPath>
-ImagingGLWidgetPrivate::pickVisibleRegion(const GfFrustum& frustum, const QRectF& gate)
-{
-    if (!d.stage || !d.renderEngine || gate.isEmpty())
-        return {};
-
-    UsdImagingGLEngine::PickParams pickParams;
-    pickParams.resolveMode = TfToken("resolveUnique");
-
-    constexpr int tilesX = 6;
-    constexpr int tilesY = 6;
-    constexpr double overlap = 0.20;
-    constexpr int maxDepth = 6;
-    constexpr double minTilePixels = 8.0;
-
-    auto clamp01 = [](double value) { return std::max(0.0, std::min(1.0, value)); };
-
-    QList<SdfPath> paths;
-    auto appendUnique = [&paths](const SdfPath& path) {
-        if (!path.IsEmpty() && !paths.contains(path))
-            paths.append(path);
-    };
-
-    // Large-area resolveUnique queries can report occluded geometry on HgiGL.
-    // Refine only ambiguous regions and use nearest point picks at the smallest
-    // regions so the common case remains inexpensive.
-    auto sampleTerminalTile = [&](double u0, double v0, double u1, double v1) {
-        static constexpr double samples[][2] = {
-            { 0.50, 0.50 }, { 0.25, 0.25 }, { 0.75, 0.25 }, { 0.25, 0.75 }, { 0.75, 0.75 },
-            { 0.50, 0.25 }, { 0.50, 0.75 }, { 0.25, 0.50 }, { 0.75, 0.50 },
-        };
-
-        for (const auto& sample : samples) {
-            const double u = u0 + (u1 - u0) * sample[0];
-            const double v = v0 + (v1 - v0) * sample[1];
-            const QPoint pos(qRound(gate.left() + u * gate.width()), qRound(gate.top() + v * gate.height()));
-            appendUnique(pickNearestPath(pos));
-        }
-    };
-
-    std::function<void(double, double, double, double, int)> pickTile;
-    pickTile = [&](double u0, double v0, double u1, double v1, int depth) {
-        if (u1 <= u0 || v1 <= v0)
-            return;
-
-        const double centerU = (u0 + u1) * 0.5;
-        const double centerV = (v0 + v1) * 0.5;
-        const double sizeU = u1 - u0;
-        const double sizeV = v1 - v0;
-
-        const GfVec2d center(centerU * 2.0 - 1.0, -1.0 * (centerV * 2.0 - 1.0));
-        const GfVec2d pickSize(sizeU, sizeV);
-        const GfFrustum tileFrustum = frustum.ComputeNarrowedFrustum(center, pickSize);
-
-        UsdImagingGLEngine::IntersectionResultVector results;
-        if (!pickMaskedIntersection(pickParams, tileFrustum, &results))
-            return;
-
-        QList<SdfPath> tilePaths;
-        for (const auto& result : results) {
-            if (!result.hitPrimPath.IsEmpty() && !tilePaths.contains(result.hitPrimPath))
-                tilePaths.append(result.hitPrimPath);
-        }
-
-        if (tilePaths.isEmpty())
-            return;
-
-        if (tilePaths.size() == 1) {
-            appendUnique(tilePaths.first());
-            return;
-        }
-
-        const double tilePixelWidth = sizeU * gate.width();
-        const double tilePixelHeight = sizeV * gate.height();
-        const bool terminal = depth >= maxDepth || tilePixelWidth <= minTilePixels || tilePixelHeight <= minTilePixels;
-
-        if (terminal) {
-            sampleTerminalTile(u0, v0, u1, v1);
-            return;
-        }
-
-        const double um = (u0 + u1) * 0.5;
-        const double vm = (v0 + v1) * 0.5;
-
-        pickTile(u0, v0, um, vm, depth + 1);
-        pickTile(um, v0, u1, vm, depth + 1);
-        pickTile(u0, vm, um, v1, depth + 1);
-        pickTile(um, vm, u1, v1, depth + 1);
-    };
-
-    const double tileW = 1.0 / static_cast<double>(tilesX);
-    const double tileH = 1.0 / static_cast<double>(tilesY);
-    const double padX = tileW * overlap * 0.5;
-    const double padY = tileH * overlap * 0.5;
-
-    for (int ty = 0; ty < tilesY; ++ty) {
-        for (int tx = 0; tx < tilesX; ++tx) {
-            const double u0 = clamp01(tx * tileW - padX);
-            const double v0 = clamp01(ty * tileH - padY);
-            const double u1 = clamp01((tx + 1) * tileW + padX);
-            const double v1 = clamp01((ty + 1) * tileH + padY);
-            pickTile(u0, v0, u1, v1, 0);
-        }
-    }
-
-    return path::uniquePaths(paths);
-}
-
 void
 ImagingGLWidgetPrivate::captureVisible()
 {
@@ -1522,8 +1412,10 @@ ImagingGLWidgetPrivate::captureVisible()
     glDepthMask(GL_TRUE);
 #endif
 
-    const GfFrustum frustum = viewCamera()->camera().GetFrustum();
-    const QList<SdfPath> captured = pickVisibleRegion(frustum, cameraGateRect());
+    // Visible capture shares the Stageviz scene-ID pass used by selection
+    // outlines. RenderEngine performs a tiled high-coverage primId scan and
+    // returns the unique front-most document prim paths from the current view.
+    const QList<SdfPath> captured = d.renderEngine->captureVisiblePaths(4);
 
     bool changed = false;
     for (const SdfPath& path : captured) {
