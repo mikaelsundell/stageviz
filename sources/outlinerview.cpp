@@ -76,7 +76,7 @@ OutlinerViewPrivate::init()
     stageTree()->installEventFilter(this);
 
     d.ui->clear->setIcon(style()->icon(Style::IconRole::Clear));
-    d.ui->follow->setIcon(style()->icon(Style::IconRole::Follow));
+    d.ui->follow->setIcon(style()->icon(Style::IconRole::Select));
     d.ui->collapse->setIcon(style()->icon(Style::IconRole::List));
     d.ui->expand->setIcon(style()->icon(Style::IconRole::Nested));
     // connect
@@ -150,9 +150,16 @@ OutlinerViewPrivate::expand()
 void
 OutlinerViewPrivate::follow(bool enabled)
 {
-    if (enabled)
-        expand();
     d.followEnabled = enabled;
+
+    if (!enabled)
+        return;
+
+    const SelectionList* list = d.context->selectionList();
+    const QList<SdfPath> paths = list ? list->paths() : QList<SdfPath>();
+
+    if (!paths.isEmpty())
+        stageTree()->reveal(paths.first());
 }
 
 void
@@ -194,13 +201,13 @@ OutlinerViewPrivate::selectionChanged(const QList<SdfPath>& paths)
 {
     SignalGuard::Scope guard(this);
 
-    if (!paths.isEmpty() && d.followEnabled)
-        expand();
-
     if (paths.size() == 1)
         updateDepth(paths.first());
     else
         updateDepth();
+
+    if (!paths.isEmpty() && d.followEnabled)
+        stageTree()->reveal(paths.first());
 }
 
 void

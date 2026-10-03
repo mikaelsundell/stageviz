@@ -429,9 +429,9 @@ namespace stage {
             // Stageviz so an arbitrary orphaned pivot attribute is not treated
             // as active for unrelated transform stacks.
             VtTokenArray composedOrder;
-            const bool matrixOnly
-                = xformable.GetXformOpOrderAttr().Get(&composedOrder, UsdTimeCode::Default())
-                  && composedOrder.size() == 1 && composedOrder.front() == TfToken("xformOp:transform");
+            const bool matrixOnly = xformable.GetXformOpOrderAttr().Get(&composedOrder, UsdTimeCode::Default())
+                                    && composedOrder.size() == 1
+                                    && composedOrder.front() == TfToken("xformOp:transform");
 
             if (matrixOnly) {
                 const UsdAttribute pivotAttr = prim.GetAttribute(pivotToken);

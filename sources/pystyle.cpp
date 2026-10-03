@@ -183,7 +183,6 @@ addStyleEnums()
                                            { "Run", static_cast<long>(Style::IconRole::Run) },
                                            { "Select", static_cast<long>(Style::IconRole::Select) },
                                            { "Shaded", static_cast<long>(Style::IconRole::Shaded) },
-                                           { "Star", static_cast<long>(Style::IconRole::Star) },
                                            { "Transform", static_cast<long>(Style::IconRole::Transform) },
                                            { "Undo", static_cast<long>(Style::IconRole::Undo) },
                                            { "Up", static_cast<long>(Style::IconRole::Up) },

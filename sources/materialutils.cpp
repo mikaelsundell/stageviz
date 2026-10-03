@@ -1320,7 +1320,6 @@ MaterialUtils::materialNetworkLayer(UsdStageRefPtr stage, const SdfPath& materia
             SdfPathVector connections;
             if (sourceAttr.GetConnections(&connections) && !connections.empty())
                 targetAttr.SetConnections(connections);
-
         }
 
         for (const UsdRelationship& sourceRel : sourcePrim.GetRelationships()) {

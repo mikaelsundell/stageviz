@@ -1007,8 +1007,6 @@ MaterialDialogPrivate::updatePrims(const NoticeBatch& batch)
     // which calls refreshGraphs().
     updateSelection();
     d.ui->browserWidget->refreshVisibleSwatches();
-
-
 }
 
 

@@ -45,6 +45,7 @@ public:
     void close();
     void collapse();
     void expand();
+    void reveal(const SdfPath& path);
     void expandDepth(int targetDepth, const SdfPath& path);
     int maxDepth(const SdfPath& path) const;
     int depth(const SdfPath& path) const;
@@ -530,6 +531,47 @@ StageTreePrivate::expand()
         if (!viewRect.intersects(itemRect))
             d.tree->scrollToItem(item, QAbstractItemView::PositionAtCenter);
     }
+}
+
+void
+StageTreePrivate::reveal(const SdfPath& path)
+{
+    if (path.IsEmpty() || !d.tree)
+        return;
+
+    PrimItem* item = itemFromPath(path);
+
+    // Payload mode deliberately omits payload descendants from the tree. In
+    // that case reveal the nearest visible ancestor, matching updateSelection().
+    if (!item && d.payloadEnabled) {
+        SdfPath ancestorPath = path.GetParentPath();
+        while (!ancestorPath.IsEmpty()) {
+            item = itemFromPath(ancestorPath);
+            if (item)
+                break;
+            if (ancestorPath == SdfPath::AbsoluteRootPath())
+                break;
+            ancestorPath = ancestorPath.GetParentPath();
+        }
+    }
+
+    if (!item)
+        return;
+
+    QTreeWidgetItem* parent = item->parent();
+    while (parent) {
+        parent->setExpanded(true);
+        parent = parent->parent();
+    }
+
+    // currentItem is navigation state only; do not disturb the semantic or Qt
+    // multi-selection while following the first selected path.
+    d.tree->setCurrentItem(item, PrimItem::Name, QItemSelectionModel::NoUpdate);
+
+    const QRect itemRect = d.tree->visualItemRect(item);
+    const QRect viewRect = d.tree->viewport()->rect();
+    if (!viewRect.intersects(itemRect))
+        d.tree->scrollToItem(item, QAbstractItemView::PositionAtCenter);
 }
 
 void
@@ -1535,8 +1577,6 @@ StageTreePrivate::updatePrims(const NoticeBatch& batch)
 
     d.tree->setUpdatesEnabled(true);
     d.tree->viewport()->update();
-
-
 }
 
 void
@@ -2060,6 +2100,12 @@ void
 StageTree::expand()
 {
     p->expand();
+}
+
+void
+StageTree::reveal(const SdfPath& path)
+{
+    p->reveal(path);
 }
 
 void

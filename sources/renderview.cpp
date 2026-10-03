@@ -162,6 +162,42 @@ RenderView::setTransformEnabled(bool enabled)
     p->imageGLWidget()->setTransformEnabled(enabled);
 }
 
+bool
+RenderView::moveEnabled() const
+{
+    return p->imageGLWidget()->moveEnabled();
+}
+
+void
+RenderView::setMoveEnabled(bool enabled)
+{
+    p->imageGLWidget()->setMoveEnabled(enabled);
+}
+
+bool
+RenderView::rotateEnabled() const
+{
+    return p->imageGLWidget()->rotateEnabled();
+}
+
+void
+RenderView::setRotateEnabled(bool enabled)
+{
+    p->imageGLWidget()->setRotateEnabled(enabled);
+}
+
+bool
+RenderView::scaleEnabled() const
+{
+    return p->imageGLWidget()->scaleEnabled();
+}
+
+void
+RenderView::setScaleEnabled(bool enabled)
+{
+    p->imageGLWidget()->setScaleEnabled(enabled);
+}
+
 void
 RenderView::updateAuxiliary(UsdStageRefPtr auxiliary)
 {

@@ -34,6 +34,7 @@
 #include <QApplication>
 #include <QClipboard>
 #include <QColorDialog>
+#include <QDebug>
 #include <QDesktopServices>
 #include <QDragEnterEvent>
 #include <QEasingCurve>
@@ -136,12 +137,16 @@ public Q_SLOTS:
     void payloadInvert();
     void layerInvert();
     void newXform();
+    void duplicateSelected();
     void deleteSelected();
     void isolate(bool checked);
     void frameAll();
     void frameSelected();
     void resetView();
-    void transform(bool checked);
+    void select(bool checked);
+    void move(bool checked);
+    void rotate(bool checked);
+    void scale(bool checked);
     void cameraLight(bool checked);
     void domeLight(bool checked);
     void domeBackground(bool checked);
@@ -275,9 +280,26 @@ ViewerPrivate::init()
     d.ui->displayFrameAll->setIcon(style()->icon(Style::IconRole::FrameAll));
     d.ui->displayRenderWireframe->setIcon(style()->icon(Style::IconRole::Wireframe));
     d.ui->displayRenderShaded->setIcon(style()->icon(Style::IconRole::Shaded));
-    d.ui->displayTransform->setIcon(style()->icon(Style::IconRole::Transform));
-    d.ui->displayTransform->setCheckable(true);
-    d.ui->displayTransform->setChecked(false);
+    d.ui->displaySelect->setIcon(style()->icon(Style::IconRole::Select));
+    d.ui->displaySelect->setCheckable(true);
+    d.ui->displaySelect->setChecked(false);
+    d.ui->displayMove->setIcon(style()->icon(Style::IconRole::Move));
+    d.ui->displayMove->setCheckable(true);
+    d.ui->displayMove->setChecked(false);
+    d.ui->displayRotate->setIcon(style()->icon(Style::IconRole::Rotate));
+    d.ui->displayRotate->setCheckable(true);
+    d.ui->displayRotate->setChecked(false);
+    d.ui->displayScale->setIcon(style()->icon(Style::IconRole::Scale));
+    d.ui->displayScale->setCheckable(true);
+    d.ui->displayScale->setChecked(false);
+    {
+        QActionGroup* actions = new QActionGroup(this);
+        actions->setExclusive(true);
+        actions->addAction(d.ui->displaySelect);
+        actions->addAction(d.ui->displayMove);
+        actions->addAction(d.ui->displayRotate);
+        actions->addAction(d.ui->displayScale);
+    }
     // connect
     connect(d.ui->policyAll, &QAction::triggered, this, [this]() {
         d.loadPolicy = Session::LoadPolicy::All;
@@ -357,6 +379,7 @@ ViewerPrivate::init()
     connect(d.ui->createCone, &QAction::triggered, this, [this]() { newPrim(TfToken("Cone")); });
     connect(d.ui->createCapsule, &QAction::triggered, this, [this]() { newPrim(TfToken("Capsule")); });
     connect(d.ui->createPlane, &QAction::triggered, this, [this]() { newPrim(TfToken("Plane")); });
+    connect(d.ui->editDuplicateSelected, &QAction::triggered, this, &ViewerPrivate::duplicateSelected);
     connect(d.ui->editDeleteSelected, &QAction::triggered, this, &ViewerPrivate::deleteSelected);
     connect(d.ui->displayIsolate, &QAction::toggled, this, &ViewerPrivate::isolate);
     connect(d.ui->displayCameraLight, &QAction::toggled, this, &ViewerPrivate::cameraLight);
@@ -416,7 +439,10 @@ ViewerPrivate::init()
     connect(d.ui->displayFrameAll, &QAction::triggered, this, &ViewerPrivate::frameAll);
     connect(d.ui->displayFrameSelected, &QAction::triggered, this, &ViewerPrivate::frameSelected);
     connect(d.ui->displayResetView, &QAction::triggered, this, &ViewerPrivate::resetView);
-    connect(d.ui->displayTransform, &QAction::toggled, this, &ViewerPrivate::transform);
+    connect(d.ui->displaySelect, &QAction::toggled, this, &ViewerPrivate::select);
+    connect(d.ui->displayMove, &QAction::toggled, this, &ViewerPrivate::move);
+    connect(d.ui->displayRotate, &QAction::toggled, this, &ViewerPrivate::rotate);
+    connect(d.ui->displayScale, &QAction::toggled, this, &ViewerPrivate::scale);
     connect(d.ui->helpAbout, &QAction::triggered, this, &ViewerPrivate::openAbout);
     connect(d.ui->helpCheckUpdates, &QAction::triggered, this, &ViewerPrivate::checkUpdates);
     connect(d.ui->helpDocumentation, &QAction::triggered, this, &ViewerPrivate::openDocumentation);
@@ -434,7 +460,10 @@ ViewerPrivate::init()
         d.ui->undo->setDefaultAction(d.ui->editUndo);
         d.ui->wireframe->setDefaultAction(d.ui->displayRenderWireframe);
         d.ui->shaded->setDefaultAction(d.ui->displayRenderShaded);
-        d.ui->transform->setDefaultAction(d.ui->displayTransform);
+        d.ui->select->setDefaultAction(d.ui->displaySelect);
+        d.ui->move->setDefaultAction(d.ui->displayMove);
+        d.ui->rotate->setDefaultAction(d.ui->displayRotate);
+        d.ui->scale->setDefaultAction(d.ui->displayScale);
     }
     connect(d.backgroundColorFilter.data(), &MouseEvent::pressed, this, &ViewerPrivate::backgroundColor);
     connect(session(), &Session::maskChanged, this, &ViewerPrivate::updateMask);
@@ -1132,6 +1161,7 @@ ViewerPrivate::enable(bool enable)
                                 d.ui->createCone,
                                 d.ui->createCapsule,
                                 d.ui->createPlane,
+                                d.ui->editDuplicateSelected,
                                 d.ui->editDeleteSelected,
                                 d.ui->displayIsolate,
                                 d.ui->displayCameraLight,
@@ -1151,7 +1181,10 @@ ViewerPrivate::enable(bool enable)
                                 d.ui->displayFrameAll,
                                 d.ui->displayFrameSelected,
                                 d.ui->displayResetView,
-                                d.ui->displayTransform,
+                                d.ui->displaySelect,
+                                d.ui->displayMove,
+                                d.ui->displayRotate,
+                                d.ui->displayScale,
                                 d.ui->displayRenderShaded,
                                 d.ui->displayRenderWireframe,
                                 d.ui->displayRenderClay,
@@ -1939,6 +1972,16 @@ ViewerPrivate::newXform()
 }
 
 void
+ViewerPrivate::duplicateSelected()
+{
+    const QList<SdfPath> paths = session()->selectionList()->paths();
+    if (paths.isEmpty())
+        return;
+
+    session()->commandStack()->execute(new Command(duplicatePaths(paths)));
+}
+
+void
 ViewerPrivate::deleteSelected()
 {
     session()->commandStack()->execute(new Command(deletePaths(session()->selectionList()->paths())));
@@ -2005,9 +2048,31 @@ ViewerPrivate::resetView()
 }
 
 void
-ViewerPrivate::transform(bool checked)
+ViewerPrivate::select(bool checked)
 {
-    renderView()->setTransformEnabled(checked);
+    Q_UNUSED(checked);
+
+    renderView()->setMoveEnabled(false);
+    renderView()->setRotateEnabled(false);
+    renderView()->setScaleEnabled(false);
+}
+
+void
+ViewerPrivate::move(bool checked)
+{
+    renderView()->setMoveEnabled(checked);
+}
+
+void
+ViewerPrivate::rotate(bool checked)
+{
+    renderView()->setRotateEnabled(checked);
+}
+
+void
+ViewerPrivate::scale(bool checked)
+{
+    renderView()->setScaleEnabled(checked);
 }
 
 void
@@ -2407,6 +2472,7 @@ ViewerPrivate::updateSelection(const QList<SdfPath>& paths)
 {
     const bool hasSelection = !paths.isEmpty();
     d.ui->editSelectInvert->setEnabled(hasSelection);
+    d.ui->editDuplicateSelected->setEnabled(hasSelection);
 
     bool canSelectParent = false;
     if (paths.size() == 1) {
@@ -2635,8 +2701,7 @@ ViewerPrivate::updateStageUp(Session::StageUp stageUp)
 void
 ViewerPrivate::captureReady(qint64 elapsed)
 {
-    session()->notifyStatus(Session::Notify::Status::Success,
-                            QStringLiteral("Capture finished in %1 ms").arg(elapsed));
+    session()->notifyStatus(Session::Notify::Status::Success, QStringLiteral("Capture finished in %1 ms").arg(elapsed));
 }
 
 void
@@ -2646,8 +2711,7 @@ ViewerPrivate::renderReady(qint64 elapsed)
     if (elapsed <= thresholdMs)
         return;
 
-    session()->notifyStatus(Session::Notify::Status::Success,
-                            QStringLiteral("Render finished in %1 ms").arg(elapsed));
+    session()->notifyStatus(Session::Notify::Status::Success, QStringLiteral("Render finished in %1 ms").arg(elapsed));
 }
 
 void

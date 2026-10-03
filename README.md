@@ -48,7 +48,7 @@ And when you do not feel like writing that tool yourself, there is an **Agent sk
 
 ## The everyday USD stuff
 
-### 🌳 Explore the stage, not just the file
+### Explore the stage, not just the file
 
 The Stage hierarchy shows the **composed OpenUSD stage**. You are looking at the result of layers, references, payloads, variants and authored opinions working together — not merely a dump of one USD layer.
 
@@ -56,7 +56,7 @@ Navigate large hierarchies, select prims, inspect payloads, switch variants, ren
 
 Stageviz is useful both when you already know exactly what you need to change and when the first task is simply figuring out what somebody else put in the file.
 
-### ✏️ Edit without making it scary
+### Edit without making it scary
 
 The **Property Tree** turns common USD properties and metadata into practical editors: numbers behave like numbers, colors like colors, booleans like switches, asset paths like paths, and known tokens can be presented as choices.
 
@@ -68,7 +68,7 @@ Try something. Inspect the result. Hit Undo. Try something else.
 
 > USD can be sophisticated without every edit feeling dangerous.
 
-### ↩️ Undo and redo all the way
+### ↩Undo and redo all the way
 
 Undo/redo is not an afterthought. Stageviz editing commands are designed around the application's command stack so normal editing operations can be explored and reversed.
 
@@ -78,13 +78,13 @@ Hierarchy edits, namespace operations, edit-layer changes and other Stageviz com
 
 ## A viewport for looking *and* understanding
 
-### 🎥 Hydra underneath
+### Hydra underneath
 
 The viewport is built on OpenUSD's **Hydra imaging architecture**. Stageviz uses Hydra for interactive rendering while keeping inspection and viewport-only behavior separate from authored scene data where possible.
 
 Orbit, pan, zoom, frame selections and work directly against the composed stage. Scene materials and scene lights can be enabled when you want the authored look, while simpler display and lighting modes are useful when you just want to understand the geometry.
 
-### 🔦 Light it quickly
+### Light it quickly
 
 A USD asset is much easier to judge when it is not sitting in the dark.
 
@@ -92,7 +92,7 @@ Stageviz supports scene lighting, **dome lights and HDRI environments**, making 
 
 **OpenImageIO** is part of the image pipeline, giving Stageviz access to the image formats and workflows commonly used in graphics and VFX.
 
-### 🧪 Viewport tricks without damaging the stage
+### Viewport tricks without damaging the stage
 
 Hydra Scene Indices are used for viewport-side functionality and overrides. That opens the door to useful diagnostic views and material overrides without having to bake every temporary visualization back into the USD stage.
 
@@ -102,13 +102,13 @@ Selection visualization, normal-direction inspection and other debugging looks b
 
 ## Materials should be visual
 
-### 🎨 Material Browser
+### Material Browser
 
 Materials are much nicer to work with when they look like materials instead of paths in a tree.
 
 The **Material Browser** provides visual material browsing and swatches so you can quickly understand what is available in the stage and select the material you actually meant to work with.
 
-### 🛠 Material Editor
+### Material Editor
 
 The **Material Editor** exposes useful material parameters in an approachable property interface. Materials can be inspected, edited, renamed and assigned without requiring you to manually navigate every shader prim in the stage hierarchy.
 
@@ -116,7 +116,7 @@ Stageviz works with standard **UsdShade** workflows and supports **MaterialX** t
 
 This makes Stageviz useful for everyday material work, but also for experiments: car paint, plastics, wood-like materials, diagnostic shaders, display-color conversion, material cleanup or whatever strange look-development utility happens to be useful that day.
 
-### 🌈 MaterialX
+### MaterialX
 
 MaterialX is particularly interesting in Stageviz because it sits nicely between authored USD material networks and renderer-independent material descriptions.
 
@@ -126,7 +126,7 @@ The goal is not to turn Stageviz into a giant node editor. The interesting part 
 
 ## Python is part of the application
 
-### 🐍 OpenUSD + Stageviz bindings
+### OpenUSD + Stageviz bindings
 
 Stageviz embeds Python and exposes application functionality through its own Python bindings while keeping the normal OpenUSD `pxr` modules available.
 
@@ -159,7 +159,7 @@ For example, switch edit layer through the command API when you want the change 
 stageviz.command.set_edit_layer(layer.identifier)
 ```
 
-### 🚀 The shelf: turn scripts into tools
+### The shelf: turn scripts into tools
 
 This is where Stageviz becomes especially useful.
 
@@ -171,7 +171,7 @@ The shelf is deliberately simple: **if a script solves the problem, that can be 
 
 ---
 
-## 🤖 Stageviz + AI agents
+## Stageviz + AI agents
 
 This has become one of the more fun parts of the project.
 

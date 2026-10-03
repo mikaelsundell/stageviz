@@ -1317,19 +1317,20 @@ PropertyTreePrivate::installComponentEditor(PropertyItem* item, double value, bo
     auto commitItemText = [this, item](const QString& text) {
         if (d.update || !d.tree)
             return;
-        
+
         {
             const QSignalBlocker blocker(d.tree.data());
             item->setText(PropertyItem::Value, text);
         }
-        
+
         itemChanged(item, PropertyItem::Value);
     };
 
     if (integral) {
         auto* spin = new QSpinBox(d.tree.data());
-        spin->setRange(int(qMax(double(INT_MIN), item->data(PropertyItem::Value, PropertyItem::EditorMinimumRole).toDouble())),
-                       int(qMin(double(INT_MAX), item->data(PropertyItem::Value, PropertyItem::EditorMaximumRole).toDouble())));
+        spin->setRange(
+            int(qMax(double(INT_MIN), item->data(PropertyItem::Value, PropertyItem::EditorMinimumRole).toDouble())),
+            int(qMin(double(INT_MAX), item->data(PropertyItem::Value, PropertyItem::EditorMaximumRole).toDouble())));
         spin->setValue(static_cast<int>(std::llround(value)));
         spin->setAutoFillBackground(false);
         spin->setAttribute(Qt::WA_TranslucentBackground, true);
@@ -1389,7 +1390,7 @@ PropertyTreePrivate::installComponentEditor(PropertyItem* item, double value, bo
             if (scrub->hadEditDefault)
                 scrub->previousEditDefault = editLayer->GetField(item->propertyPath(), SdfFieldKeys->Default);
         }
-        
+
         d.componentScrubbing = true;
     });
 
@@ -1400,8 +1401,7 @@ PropertyTreePrivate::installComponentEditor(PropertyItem* item, double value, bo
         applyComponentPreview(item, next);
     });
 
-    connect(spin, &SpinBox::scrubFinished, d.tree.data(),
-            [this, item, spin, scrub, commitItemText](double finalValue) {
+    connect(spin, &SpinBox::scrubFinished, d.tree.data(), [this, item, spin, scrub, commitItemText](double finalValue) {
         if (!scrub->active)
             return;
 
@@ -1425,7 +1425,7 @@ PropertyTreePrivate::installComponentEditor(PropertyItem* item, double value, bo
             restoreItemText(item);
             return;
         }
-        
+
         {
             WRITE_LOCKER(locker, d.context ? d.context->stageLock() : session()->stageLock(), "stageLock");
 

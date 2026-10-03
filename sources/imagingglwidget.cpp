@@ -43,6 +43,7 @@
 #include <QPoint>
 #include <QPointer>
 #include <QPolygonF>
+#include <QStringList>
 #include <QTimer>
 #include <algorithm>
 #include <cmath>
@@ -77,6 +78,37 @@ PXR_NAMESPACE_USING_DIRECTIVE
 namespace stageviz {
 
 constexpr double Pi = 3.14159265358979323846;
+constexpr double TransformGizmoSize = 61.5;
+constexpr double TransformMoveSnap = 1.0;
+constexpr double TransformRotateSnapDegrees = 1.0;
+constexpr double TransformScaleSnap = 1.0;
+
+enum class TransformMode { None, Move, Rotate, Scale };
+
+
+static GfRotation
+transformRotationWithoutScale(const GfMatrix4d& matrix)
+{
+    GfMatrix4d rotationMatrix(matrix);
+    for (int row = 0; row < 3; ++row) {
+        const double length = std::sqrt(rotationMatrix[row][0] * rotationMatrix[row][0]
+                                        + rotationMatrix[row][1] * rotationMatrix[row][1]
+                                        + rotationMatrix[row][2] * rotationMatrix[row][2]);
+        if (length > 1e-12) {
+            rotationMatrix[row][0] /= length;
+            rotationMatrix[row][1] /= length;
+            rotationMatrix[row][2] /= length;
+        }
+    }
+    return rotationMatrix.ExtractRotation();
+}
+
+static GfVec3d
+transformEulerWithoutScale(const GfMatrix4d& matrix)
+{
+    return transformRotationWithoutScale(matrix).Decompose(GfVec3d::XAxis(), GfVec3d::YAxis(), GfVec3d::ZAxis());
+}
+
 
 class ImagingGLWidgetPrivate : public QObject, public SignalGuard {
 public:
@@ -108,6 +140,7 @@ public:
     void updateMask(const QList<SdfPath>& paths);
     void updatePrims(const NoticeBatch& batch);
     void updateTransform(bool enabled);
+    void updateTransformMode(TransformMode mode, bool enabled);
     void captureVisible();
     void clearVisibleCapture();
 
@@ -129,6 +162,7 @@ public:
     GfVec3d transformAxisVector(int axis);
     double transformWorldPerPixel();
     double transformWorldPerPixel(const GfVec3d& pivot);
+    bool transformRotationScreenBasis(int axis, QPointF& center, QPointF& basisA, QPointF& basisB);
     bool transformRotationPoint(int axis, double angle, QPointF& screen);
     bool transformRotationAngle(int axis, const QPointF& pos, double& angle, double* distance = nullptr);
     int hitTestTransform(const QPointF& pos);
@@ -150,6 +184,7 @@ public:
     void updateSceneStats();
     void updatePerformanceStats();
     bool isPathMaskedIn(const SdfPath& path) const;
+    bool isSelectionVisible(const SdfPath& path) const;
     SdfPath pickNearestPath(const QPoint& pos);
     QList<SdfPath> pickVisibleRegion(const GfFrustum& frustum, const QRectF& gate);
     bool pickMaskedIntersection(const UsdImagingGLEngine::PickParams& pickParams, const GfFrustum& pickFrustum,
@@ -164,9 +199,10 @@ public:
         bool drag;
         bool sweep;
         bool transformEnabled;
+        TransformMode transformMode;
         bool transformDragging;
         bool transformSnap;
-        bool transformUniformScale;
+        bool transformPivotValid;
         bool suppressContextMenu;
         int transformHoverAxis;
         int transformActiveAxis;
@@ -180,12 +216,6 @@ public:
         QList<PreparedTransform> transformPrepared;
         bool transformDefersPrimsUpdate;
         Session::PrimsUpdate transformPreviousPrimsUpdate;
-        QElapsedTimer transformPerfTimer;
-        QElapsedTimer transformPerfLogTimer;
-        qint64 transformPerfComputeNs;
-        qint64 transformPerfAuthorNs;
-        qint64 transformPerfAuthorMaxNs;
-        int transformPerfFrames;
         QPoint start;
         QPoint end;
         QPoint mousepos;
@@ -222,7 +252,9 @@ ImagingGLWidgetPrivate::init()
     format.setColorSpace(QColorSpace::SRgb);
     d.glwidget->setFormat(format);
     d.glwidget->setAcceptDrops(true);
-    d.glwidget->installEventFilter(this);
+    d.glwidget->setFocusPolicy(Qt::StrongFocus);
+    if (QApplication* application = qApp)
+        application->installEventFilter(this);
     d.count = 0;
     d.frame = 0;
     d.defaultAmbient = 0.4f;
@@ -232,19 +264,16 @@ ImagingGLWidgetPrivate::init()
     d.drag = false;
     d.sweep = false;
     d.transformEnabled = false;
+    d.transformMode = TransformMode::None;
     d.transformDragging = false;
     d.transformSnap = false;
-    d.transformUniformScale = false;
+    d.transformPivotValid = false;
     d.suppressContextMenu = false;
     d.transformHoverAxis = 0;
     d.transformActiveAxis = 0;
     d.transformRotationStartAngle = 0.0;
     d.transformDefersPrimsUpdate = false;
     d.transformPreviousPrimsUpdate = Session::PrimsUpdate::Immediate;
-    d.transformPerfComputeNs = 0;
-    d.transformPerfAuthorNs = 0;
-    d.transformPerfAuthorMaxNs = 0;
-    d.transformPerfFrames = 0;
     d.lastPickIndex = -1;
     d.transformPivot = GfVec3d(0.0);
     d.transformStartPivot = GfVec3d(0.0);
@@ -273,7 +302,7 @@ ImagingGLWidgetPrivate::initGL()
     QList<SdfPath> visibleSelection;
     visibleSelection.reserve(d.selection.size());
     for (const SdfPath& path : d.selection) {
-        if (isPathMaskedIn(path))
+        if (isSelectionVisible(path))
             visibleSelection.append(path);
     }
 
@@ -467,7 +496,9 @@ ImagingGLWidgetPrivate::close()
     d.sweep = false;
     d.transformDragging = false;
     d.transformSnap = false;
-    d.transformUniformScale = false;
+    d.transformPivotValid = false;
+    d.transformMode = TransformMode::None;
+    d.transformEnabled = false;
     d.suppressContextMenu = false;
     d.transformHoverAxis = 0;
     d.transformActiveAxis = 0;
@@ -515,7 +546,7 @@ ImagingGLWidgetPrivate::paintGL()
     QList<SdfPath> visibleSelection;
     visibleSelection.reserve(d.selection.size());
     for (const SdfPath& path : d.selection) {
-        if (isPathMaskedIn(path))
+        if (isSelectionVisible(path))
             visibleSelection.append(path);
     }
 
@@ -833,28 +864,20 @@ ImagingGLWidgetPrivate::mousePressEvent(QMouseEvent* event)
         d.transformDragging = false;
         viewCamera()->setCameraMode(ViewCamera::Truck);
     }
-    else if (event->modifiers() & (Qt::AltModifier | Qt::MetaModifier)) {
-        d.drag = true;
-        d.sweep = false;
-        d.transformDragging = false;
-        if (event->button() == Qt::LeftButton)
-            viewCamera()->setCameraMode(ViewCamera::Tumble);
-        else if (event->button() == Qt::RightButton)
-            viewCamera()->setCameraMode(ViewCamera::Zoom);
-    }
-    else if (event->button() == Qt::RightButton) {
-        // Plain right mouse is reserved for the context menu. It must not
-        // behave like a viewport click, start a sweep, or alter selection.
-        d.drag = false;
-        d.sweep = false;
-        d.transformDragging = false;
-    }
     else if (event->button() == Qt::LeftButton) {
-        d.transformSnap = bool(event->modifiers() & Qt::ControlModifier);
-        d.transformUniformScale = bool(event->modifiers() & Qt::ShiftModifier);
+        // Give transform handles priority over viewport navigation so Shift can
+        // be held before the initial click to enable snapping.
+        d.transformSnap = bool(event->modifiers() & Qt::ShiftModifier);
         if (beginTransformDrag(event->position())) {
             d.drag = false;
             d.sweep = false;
+            d.glwidget->setFocus(Qt::MouseFocusReason);
+        }
+        else if (event->modifiers() & (Qt::AltModifier | Qt::MetaModifier)) {
+            d.drag = true;
+            d.sweep = false;
+            d.transformDragging = false;
+            viewCamera()->setCameraMode(ViewCamera::Tumble);
         }
         else {
             d.drag = false;
@@ -863,6 +886,20 @@ ImagingGLWidgetPrivate::mousePressEvent(QMouseEvent* event)
             d.end = event->pos();
             d.glwidget->update();
         }
+    }
+    else if (event->modifiers() & (Qt::AltModifier | Qt::MetaModifier)) {
+        d.drag = true;
+        d.sweep = false;
+        d.transformDragging = false;
+        if (event->button() == Qt::RightButton)
+            viewCamera()->setCameraMode(ViewCamera::Zoom);
+    }
+    else if (event->button() == Qt::RightButton) {
+        // Plain right mouse is reserved for the context menu. It must not
+        // behave like a viewport click, start a sweep, or alter selection.
+        d.drag = false;
+        d.sweep = false;
+        d.transformDragging = false;
     }
     d.mousepos = event->pos();
 }
@@ -890,8 +927,8 @@ ImagingGLWidgetPrivate::mouseMoveEvent(QMouseEvent* event)
         d.glwidget->update();
     }
     else if (d.transformDragging) {
-        d.transformSnap = bool(event->modifiers() & Qt::ControlModifier);
-        d.transformUniformScale = bool(event->modifiers() & Qt::ShiftModifier);
+        const Qt::KeyboardModifiers mouseMods = event->modifiers();
+        d.transformSnap = bool(mouseMods & Qt::ShiftModifier);
         updateTransformDrag(event->position());
     }
     else if (d.sweep) {
@@ -917,8 +954,7 @@ ImagingGLWidgetPrivate::mouseReleaseEvent(QMouseEvent* event)
         d.glwidget->update();
     }
     else if (d.transformDragging) {
-        d.transformSnap = bool(event->modifiers() & Qt::ControlModifier);
-        d.transformUniformScale = bool(event->modifiers() & Qt::ShiftModifier);
+        d.transformSnap = bool(event->modifiers() & Qt::ShiftModifier);
         updateTransformDrag(event->position());
         endTransformDrag();
     }
@@ -1066,11 +1102,6 @@ ImagingGLWidgetPrivate::sweepEvent(const QRect& rect, QMouseEvent* event)
         // renderable prim's world-space bound against the actual 3D sweep
         // frustum makes tiny/distant prims selectable regardless of pixel
         // coverage, and occluded prims are naturally included as well.
-        QElapsedTimer sweepTimer;
-        sweepTimer.start();
-        qsizetype tested = 0;
-        qsizetype bounded = 0;
-
         {
             READ_LOCKER(locker, d.context->stageLock(), "stageLock");
             if (!d.stage)
@@ -1094,8 +1125,6 @@ ImagingGLWidgetPrivate::sweepEvent(const QRect& rect, QMouseEvent* event)
                 if (!boundable)
                     continue;
 
-                ++tested;
-
                 const UsdGeomImageable imageable(prim);
                 if (imageable && imageable.ComputeVisibility() == UsdGeomTokens->invisible)
                     continue;
@@ -1104,7 +1133,6 @@ ImagingGLWidgetPrivate::sweepEvent(const QRect& rect, QMouseEvent* event)
                 if (worldBounds.ComputeAlignedRange().IsEmpty())
                     continue;
 
-                ++bounded;
                 if (pickFrustum.Intersects(worldBounds))
                     selectedPaths.append(path);
             }
@@ -1114,12 +1142,6 @@ ImagingGLWidgetPrivate::sweepEvent(const QRect& rect, QMouseEvent* event)
         d.lastPickPosition = QPoint();
         d.lastPickPaths.clear();
         d.lastPickIndex = -1;
-
-        qInfo().noquote() << QStringLiteral("[SweepPerf] geometric tested=%1 bounded=%2 selected=%3 total=%4ms")
-                                 .arg(tested)
-                                 .arg(bounded)
-                                 .arg(selectedPaths.size())
-                                 .arg(sweepTimer.nsecsElapsed() / 1e6, 0, 'f', 3);
     }
 
     bool update = false;
@@ -1153,15 +1175,13 @@ ImagingGLWidgetPrivate::sweepEvent(const QRect& rect, QMouseEvent* event)
 bool
 ImagingGLWidgetPrivate::eventFilter(QObject* object, QEvent* event)
 {
-    if (object == d.glwidget && event && d.transformDragging
-        && (event->type() == QEvent::KeyPress || event->type() == QEvent::KeyRelease)) {
+    if (event && d.transformDragging
+        && (event->type() == QEvent::KeyPress || event->type() == QEvent::KeyRelease
+            || event->type() == QEvent::ShortcutOverride)) {
         auto* keyEvent = static_cast<QKeyEvent*>(event);
-        if (keyEvent->key() == Qt::Key_Control) {
+        if ((event->type() == QEvent::KeyPress || event->type() == QEvent::KeyRelease)
+            && keyEvent->key() == Qt::Key_Shift && !keyEvent->isAutoRepeat()) {
             d.transformSnap = event->type() == QEvent::KeyPress;
-            updateTransformDrag(QPointF(d.mousepos));
-        }
-        else if (keyEvent->key() == Qt::Key_Shift) {
-            d.transformUniformScale = event->type() == QEvent::KeyPress;
             updateTransformDrag(QPointF(d.mousepos));
         }
     }
@@ -1249,6 +1269,7 @@ ImagingGLWidgetPrivate::updateStage(UsdStageRefPtr stage)
 {
     SignalGuard::Scope guard(this);
     d.stage = stage;
+    d.transformPivotValid = false;
     d.visibleCapture.clear();
     if (d.renderEngine)
         d.renderEngine->setStage(stage);
@@ -1313,7 +1334,7 @@ ImagingGLWidgetPrivate::updateMask(const QList<SdfPath>& paths)
         QList<SdfPath> visibleSelection;
         visibleSelection.reserve(d.selection.size());
         for (const SdfPath& path : d.selection) {
-            if (isPathMaskedIn(path))
+            if (isSelectionVisible(path))
                 visibleSelection.append(path);
         }
 
@@ -1329,6 +1350,15 @@ ImagingGLWidgetPrivate::updatePrims(const NoticeBatch& batch)
 {
     Q_UNUSED(batch);
     SignalGuard::Scope guard(this);
+
+    // A transform changed outside the active gizmo operation (for example Undo
+    // or Redo), so the cached manipulation pivot may no longer match the stage.
+    // Keep it stable while flushing this gizmo's own deferred notices; otherwise
+    // rotate/scale would recompute the pivot from a new world-space bound and jump.
+    const bool invalidatePivot = !d.transformDragging && !d.transformDefersPrimsUpdate;
+    if (invalidatePivot)
+        d.transformPivotValid = false;
+
     if (viewState() && viewState()->sceneStatsEnabled()) {
         updateSceneStats();
     }
@@ -1338,16 +1368,35 @@ ImagingGLWidgetPrivate::updatePrims(const NoticeBatch& batch)
 void
 ImagingGLWidgetPrivate::updateTransform(bool enabled)
 {
-    if (d.transformEnabled == enabled)
-        return;
-
-    d.transformEnabled = enabled;
     if (!enabled) {
-        if (d.transformDragging)
-            endTransformDrag();
-        d.transformHoverAxis = 0;
-        d.transformActiveAxis = 0;
+        updateTransformMode(TransformMode::None, false);
+        return;
     }
+
+    if (d.transformMode == TransformMode::None)
+        updateTransformMode(TransformMode::Move, true);
+}
+
+void
+ImagingGLWidgetPrivate::updateTransformMode(TransformMode mode, bool enabled)
+{
+    const TransformMode nextMode = enabled ? mode : (d.transformMode == mode ? TransformMode::None : d.transformMode);
+
+
+    if (d.transformMode == nextMode) {
+        d.glwidget->update();
+        return;
+    }
+
+    if (d.transformDragging)
+        endTransformDrag();
+
+    d.transformMode = nextMode;
+    d.transformEnabled = d.transformMode != TransformMode::None;
+    d.transformSnap = false;
+    d.transformHoverAxis = 0;
+    d.transformActiveAxis = 0;
+
     d.glwidget->update();
 }
 
@@ -1521,24 +1570,21 @@ ImagingGLWidgetPrivate::updateSelection(const QList<SdfPath>& paths)
     SignalGuard::Scope guard(this);
     d.selection = paths;
 
-    // Push the semantic selection into the renderer first. Selection bounds
-    // were only needed by the old geometry-overlay selection path and are no
-    // longer consumed by the ID/outline renderer.
+    if (!d.transformDragging) {
+        d.transformPivotValid = false;
+    }
+
     if (d.renderEngine) {
         QList<SdfPath> visibleSelection;
         visibleSelection.reserve(d.selection.size());
         for (const SdfPath& path : d.selection) {
-            if (isPathMaskedIn(path))
+            if (isSelectionVisible(path))
                 visibleSelection.append(path);
         }
 
         d.renderEngine->setSelected(visibleSelection);
     }
 
-    // Request the viewport frame before rebuilding the optional HUD. Scene
-    // statistics can read large mesh arrays; doing that synchronously here
-    // makes a direct mesh selection appear to stall even though rendering is
-    // ready. A short defer lets the outline paint first.
     d.glwidget->update();
 
     if (viewState() && viewState()->sceneStatsEnabled()) {
@@ -1904,111 +1950,167 @@ ImagingGLWidgetPrivate::transformWorldPerPixel(const GfVec3d& pivot)
     return worldPerPixel;
 }
 bool
-ImagingGLWidgetPrivate::transformRotationPoint(int axis, double angle, QPointF& screen)
+ImagingGLWidgetPrivate::transformRotationScreenBasis(int axis, QPointF& center, QPointF& basisA, QPointF& basisB)
 {
     const GfVec3d normal = transformAxisVector(axis);
     if (normal.GetLengthSq() < 1e-12)
         return false;
 
-    GfVec3d basisA;
-    GfVec3d basisB;
+    GfVec3d worldA;
+    GfVec3d worldB;
     if (normal == GfVec3d::XAxis()) {
-        basisA = GfVec3d::YAxis();
-        basisB = GfVec3d::ZAxis();
+        worldA = GfVec3d::YAxis();
+        worldB = GfVec3d::ZAxis();
     }
     else if (normal == GfVec3d::YAxis()) {
-        basisA = GfVec3d::ZAxis();
-        basisB = GfVec3d::XAxis();
+        worldA = GfVec3d::ZAxis();
+        worldB = GfVec3d::XAxis();
     }
     else {
-        basisA = GfVec3d::XAxis();
-        basisB = GfVec3d::YAxis();
+        worldA = GfVec3d::XAxis();
+        worldB = GfVec3d::YAxis();
     }
-    constexpr double radiusPixels = 62.0;
-    const double radius = transformWorldPerPixel() * radiusPixels;
-    if (radius <= 0.0)
+
+    if (!projectWorldToScreen(d.transformPivot, center))
         return false;
 
-    const GfVec3d world = d.transformPivot + basisA * (std::cos(angle) * radius) + basisB * (std::sin(angle) * radius);
-    return const_cast<ImagingGLWidgetPrivate*>(this)->projectWorldToScreen(world, screen);
+    // Build the rotation overlay in screen space from the projected world axes.
+    // The largest projected semi-axis is normalized to the exact same screen-space
+    // size used by the Move and Scale gizmos. The other semi-axis is allowed to
+    // foreshorten naturally with the camera angle.
+    const double probeRadius = transformWorldPerPixel(d.transformPivot) * TransformGizmoSize;
+    if (!std::isfinite(probeRadius) || probeRadius <= 0.0)
+        return false;
+
+    QPointF projectedA;
+    QPointF projectedB;
+    if (!projectWorldToScreen(d.transformPivot + worldA * probeRadius, projectedA)
+        || !projectWorldToScreen(d.transformPivot + worldB * probeRadius, projectedB))
+        return false;
+
+    basisA = projectedA - center;
+    basisB = projectedB - center;
+
+    const double lengthA = std::hypot(basisA.x(), basisA.y());
+    const double lengthB = std::hypot(basisB.x(), basisB.y());
+    const double maxLength = std::max(lengthA, lengthB);
+    if (!std::isfinite(maxLength) || maxLength < 1e-6)
+        return false;
+
+    const double scale = TransformGizmoSize / maxLength;
+    basisA *= scale;
+    basisB *= scale;
+    return true;
 }
+
+bool
+ImagingGLWidgetPrivate::transformRotationPoint(int axis, double angle, QPointF& screen)
+{
+    QPointF center;
+    QPointF basisA;
+    QPointF basisB;
+    if (!transformRotationScreenBasis(axis, center, basisA, basisB))
+        return false;
+
+    screen = center + basisA * std::cos(angle) + basisB * std::sin(angle);
+    return std::isfinite(screen.x()) && std::isfinite(screen.y());
+}
+
 bool
 ImagingGLWidgetPrivate::transformRotationAngle(int axis, const QPointF& pos, double& angle, double* distance)
 {
-    constexpr int segments = 96;
-    double bestDistance = std::numeric_limits<double>::max();
-    double bestAngle = 0.0;
-    bool found = false;
-    for (int i = 0; i < segments; ++i) {
-        const double a = (2.0 * Pi * static_cast<double>(i)) / static_cast<double>(segments);
-        QPointF p;
-        if (!transformRotationPoint(axis, a, p))
-            continue;
-
-        const double d = std::hypot(pos.x() - p.x(), pos.y() - p.y());
-        if (d < bestDistance) {
-            bestDistance = d;
-            bestAngle = a;
-            found = true;
-        }
-    }
-    if (!found)
+    QPointF center;
+    QPointF basisA;
+    QPointF basisB;
+    if (!transformRotationScreenBasis(axis, center, basisA, basisB))
         return false;
 
-    angle = bestAngle;
-    if (distance)
-        *distance = bestDistance;
+    // Solve mouse = center + basisA*cos(a) + basisB*sin(a) in screen space.
+    // The old sampled-ring implementation only resolved 96 positions (3.75 deg
+    // steps), which masked the intended 1-degree Shift snapping. This continuous
+    // solution gives the rotation drag full precision before snapping is applied.
+    const QPointF delta = pos - center;
+    const double determinant = basisA.x() * basisB.y() - basisA.y() * basisB.x();
+    if (std::abs(determinant) < 1e-8)
+        return false;
+
+    const double cosComponent = (delta.x() * basisB.y() - delta.y() * basisB.x()) / determinant;
+    const double sinComponent = (basisA.x() * delta.y() - basisA.y() * delta.x()) / determinant;
+    if (!std::isfinite(cosComponent) || !std::isfinite(sinComponent))
+        return false;
+
+    angle = std::atan2(sinComponent, cosComponent);
+
+    if (distance) {
+        const QPointF nearest = center + basisA * std::cos(angle) + basisB * std::sin(angle);
+        *distance = std::hypot(pos.x() - nearest.x(), pos.y() - nearest.y());
+    }
 
     return true;
 }
 int
 ImagingGLWidgetPrivate::hitTestTransform(const QPointF& pos)
 {
-    if (!d.transformEnabled || d.selection.isEmpty() || !d.stage)
+    if (!d.transformEnabled || d.transformMode == TransformMode::None || d.selection.isEmpty() || !d.stage)
         return 0;
+
     QPointF center;
     if (!projectWorldToScreen(d.transformPivot, center))
         return 0;
+
+    // Handles are encoded as:
+    // 1..3  = translate X/Y/Z
+    // 4..6  = rotate X/Y/Z
+    // 7..9  = scale X/Y/Z
+    // 10    = free rotation
+    // 11    = free translation in the camera plane
+    // 12    = uniform scale
     constexpr double centerHitRadius = 8.0;
-    if (std::hypot(pos.x() - center.x(), pos.y() - center.y()) <= centerHitRadius)
-        return 10;
-    // handles are encoded as:
-    // 1..3 = translate X/Y/Z
-    // 4..6 = rotate X/Y/Z
-    // 7..9 = scale X/Y/Z
-    // 10   = free rotation
-    constexpr double scaleDistance = 52.0;
-    constexpr double scaleHitRadius = 8.0;
-    for (int axis = 1; axis <= 3; ++axis) {
-        const QPointF dir = transformAxisDirection(axis);
-        if (dir.isNull())
-            continue;
-        const QPointF handle = center + dir * scaleDistance;
-        if (std::hypot(pos.x() - handle.x(), pos.y() - handle.y()) <= scaleHitRadius)
-            return axis + 6;
+    if (std::hypot(pos.x() - center.x(), pos.y() - center.y()) <= centerHitRadius) {
+        if (d.transformMode == TransformMode::Move)
+            return 11;
+        if (d.transformMode == TransformMode::Rotate)
+            return 10;
+        if (d.transformMode == TransformMode::Scale)
+            return 12;
     }
-    constexpr double rotateHitWidth = 7.0;
-    int rotateHandle = 0;
-    double rotateDistance = rotateHitWidth;
-    for (int axis = 1; axis <= 3; ++axis) {
-        double angle = 0.0;
-        double distance = 0.0;
-        if (transformRotationAngle(axis, pos, angle, &distance) && distance < rotateDistance) {
-            rotateDistance = distance;
-            rotateHandle = axis + 3;
+
+    if (d.transformMode == TransformMode::Rotate) {
+        constexpr double rotateHitWidth = 7.0;
+        int rotateHandle = 0;
+        double rotateDistance = rotateHitWidth;
+        for (int axis = 1; axis <= 3; ++axis) {
+            double angle = 0.0;
+            double distance = 0.0;
+            if (transformRotationAngle(axis, pos, angle, &distance) && distance < rotateDistance) {
+                rotateDistance = distance;
+                rotateHandle = axis + 3;
+            }
         }
-    }
-    if (rotateHandle != 0)
         return rotateHandle;
-    constexpr double axisLength = 82.0;
+    }
+
     constexpr double hitWidth = 8.0;
+
+    if (d.transformMode == TransformMode::Scale) {
+        for (int axis = 1; axis <= 3; ++axis) {
+            const QPointF dir = transformAxisDirection(axis);
+            if (dir.isNull())
+                continue;
+            const QPointF handle = center + dir * TransformGizmoSize;
+            if (std::hypot(pos.x() - handle.x(), pos.y() - handle.y()) <= hitWidth)
+                return axis + 6;
+        }
+        return 0;
+    }
+
     int bestAxis = 0;
     double bestDistance = hitWidth;
     for (int axis = 1; axis <= 3; ++axis) {
         const QPointF dir = transformAxisDirection(axis);
         if (dir.isNull())
             continue;
-        const QPointF end = center + dir * axisLength;
+        const QPointF end = center + dir * TransformGizmoSize;
         const QPointF segment = end - center;
         const double length2 = QPointF::dotProduct(segment, segment);
         if (length2 <= 0.0)
@@ -2033,13 +2135,13 @@ ImagingGLWidgetPrivate::beginTransformDrag(const QPointF& pos)
         return false;
     XformEdit edit;
     d.transformPaths.clear();
-    GfVec3d pivot(0.0);
+    GfVec3d pivot = d.transformPivot;
     {
         READ_LOCKER(locker, d.context->stageLock(), "stageLock");
         if (!d.stage)
             return false;
 
-        if (!transformSelectionPivot(pivot))
+        if (!d.transformPivotValid && !transformSelectionPivot(pivot))
             return false;
 
         const SdfLayerHandle editLayer = d.stage->GetEditTarget().GetLayer();
@@ -2080,11 +2182,12 @@ ImagingGLWidgetPrivate::beginTransformDrag(const QPointF& pos)
         return false;
     edit.after = edit.before;
     d.transformPivot = pivot;
+    d.transformPivotValid = true;
     d.transformStartPivot = d.transformPivot;
     d.transformEdit = edit;
     d.transformStart = pos;
     d.transformActiveAxis = handle;
-    d.transformHoverAxis = handle;
+    d.transformHoverAxis = d.transformActiveAxis;
     d.transformRotationStartAngle = 0.0;
     if (handle >= 4 && handle <= 6) {
         double angle = 0.0;
@@ -2123,24 +2226,6 @@ ImagingGLWidgetPrivate::beginTransformDrag(const QPointF& pos)
             qWarning().noquote() << QStringLiteral("Could not prepare transform preview: %1").arg(error);
     }
 
-    d.transformPerfComputeNs = 0;
-    d.transformPerfAuthorNs = 0;
-    d.transformPerfAuthorMaxNs = 0;
-    d.transformPerfFrames = 0;
-    d.transformPerfTimer.start();
-    d.transformPerfLogTimer.start();
-
-    int fastPrepared = 0;
-    for (const PreparedTransform& prepared : d.transformPrepared) {
-        if (prepared.fast)
-            ++fastPrepared;
-    }
-
-    qInfo().noquote() << QStringLiteral("[GizmoPerf] BEGIN paths=%1 fast=%2 fallback=%3")
-                             .arg(d.transformPaths.size())
-                             .arg(fastPrepared)
-                             .arg(d.transformPaths.size() - fastPrepared);
-
     d.transformDragging = true;
     d.glwidget->update();
     return true;
@@ -2151,9 +2236,6 @@ ImagingGLWidgetPrivate::updateTransformDrag(const QPointF& pos)
 {
     if (!d.transformDragging || d.transformActiveAxis == 0 || d.transformEdit.before.isEmpty())
         return;
-
-    QElapsedTimer computeTimer;
-    computeTimer.start();
 
     d.transformEdit.after = d.transformEdit.before;
     GfMatrix4d dragDelta(1.0);
@@ -2169,46 +2251,203 @@ ImagingGLWidgetPrivate::updateTransformDrag(const QPointF& pos)
     };
 
     auto signedNumber = [](double value, int precision) {
-        return QStringLiteral("%1%2")
-            .arg(value >= 0.0 ? QStringLiteral("+") : QString())
-            .arg(value, 0, 'f', precision);
+        return QStringLiteral("%1%2").arg(value >= 0.0 ? QStringLiteral("+") : QString()).arg(value, 0, 'f', precision);
     };
 
-    if (d.transformActiveAxis == 10) {
+    auto snapValue = [](double value, double unit) { return std::round(value / unit) * unit; };
+
+
+    auto matrixScale = [](const GfMatrix4d& matrix) {
+        return GfVec3d(
+            std::sqrt(matrix[0][0] * matrix[0][0] + matrix[0][1] * matrix[0][1] + matrix[0][2] * matrix[0][2]),
+            std::sqrt(matrix[1][0] * matrix[1][0] + matrix[1][1] * matrix[1][1] + matrix[1][2] * matrix[1][2]),
+            std::sqrt(matrix[2][0] * matrix[2][0] + matrix[2][1] * matrix[2][1] + matrix[2][2] * matrix[2][2]));
+    };
+
+
+    auto snappedRotationDelta = [&](const GfMatrix4d& inputDelta, int snapAxis) {
+        if (!d.transformSnap || d.transformEdit.before.isEmpty())
+            return inputDelta;
+
+        // First calculate the unsnapped absolute world orientation produced by
+        // the drag.  Snapping is defined in that absolute orientation, not in
+        // the incremental mouse-delta matrix.
+        const GfMatrix4d& before = d.transformEdit.before.first();
+        const GfMatrix4d candidate = before * inputDelta;
+        const GfRotation candidateRotation = transformRotationWithoutScale(candidate);
+        GfVec3d angles = candidateRotation.Decompose(GfVec3d::XAxis(), GfVec3d::YAxis(), GfVec3d::ZAxis());
+
+        if (snapAxis >= 1 && snapAxis <= 3) {
+            angles[snapAxis - 1] = snapValue(angles[snapAxis - 1], TransformRotateSnapDegrees);
+        }
+        else {
+            for (int axis = 0; axis < 3; ++axis)
+                angles[axis] = snapValue(angles[axis], TransformRotateSnapDegrees);
+        }
+
+        // Rebuild the exact desired snapped absolute orientation.
+        GfMatrix4d rotateX(1.0);
+        GfMatrix4d rotateY(1.0);
+        GfMatrix4d rotateZ(1.0);
+        rotateX.SetRotate(GfRotation(GfVec3d::XAxis(), angles[0]));
+        rotateY.SetRotate(GfRotation(GfVec3d::YAxis(), angles[1]));
+        rotateZ.SetRotate(GfRotation(GfVec3d::ZAxis(), angles[2]));
+        // GfRotation::Decompose(X, Y, Z) decomposes the matrix using the
+        // opposite matrix-composition order from UsdGeom rotateXYZ.  To rebuild
+        // the exact orientation represented by those decomposed angles we must
+        // compose Z * Y * X here.  Using X * Y * Z only appears correct when
+        // one/two components are near zero; with free rotation or an already
+        // compound orientation it produces a completely different rotation.
+        const GfMatrix4d snappedRotation = rotateZ * rotateY * rotateX;
+
+        // Build ONE rotation delta from the drag-start orientation directly to
+        // the desired snapped orientation.  The previous implementation first
+        // applied inputDelta and then appended a candidate-space correction;
+        // with an already-rotated prim that correction was composed in the wrong
+        // space and changed the other Euler components as well.
+        GfMatrix4d beforeRotation(1.0);
+        beforeRotation.SetRotate(transformRotationWithoutScale(before));
+        const GfMatrix4d deltaRotation = beforeRotation.GetInverse() * snappedRotation;
+
+        GfMatrix4d toOrigin(1.0);
+        GfMatrix4d fromOrigin(1.0);
+        toOrigin.SetTranslate(-d.transformStartPivot);
+        fromOrigin.SetTranslate(d.transformStartPivot);
+        const GfMatrix4d snappedDelta = toOrigin * deltaRotation * fromOrigin;
+
+
+        return snappedDelta;
+    };
+
+    if (d.transformActiveAxis == 11) {
+        // Free move is solved directly in screen space on a camera-facing plane
+        // through the starting pivot. Using the projected camera right/up basis
+        // keeps the gizmo center exactly under the mouse instead of relying on
+        // an approximate world-units-per-pixel conversion.
+        const GfCamera camera = viewCamera()->camera();
+        const GfMatrix4d cameraTransform = camera.GetTransform();
+        const GfVec3d right = cameraTransform.TransformDir(GfVec3d::XAxis()).GetNormalized();
+        const GfVec3d up = cameraTransform.TransformDir(GfVec3d::YAxis()).GetNormalized();
+
+        QPointF pivotScreen;
+        if (!projectWorldToScreen(d.transformStartPivot, pivotScreen))
+            return;
+
+        const double probeDistance = std::max(1e-6, transformWorldPerPixel(d.transformStartPivot) * 100.0);
+        QPointF rightScreen;
+        QPointF upScreen;
+        if (!projectWorldToScreen(d.transformStartPivot + right * probeDistance, rightScreen)
+            || !projectWorldToScreen(d.transformStartPivot + up * probeDistance, upScreen))
+            return;
+
+        const QPointF screenRight = rightScreen - pivotScreen;
+        const QPointF screenUp = upScreen - pivotScreen;
+        const double determinant = screenRight.x() * screenUp.y() - screenRight.y() * screenUp.x();
+        if (std::abs(determinant) < 1e-8)
+            return;
+
+        // The entire center circle is one logical free-move handle.  Do not
+        // make the world-space pivot jump to the exact pixel that was clicked
+        // inside that circle.  Measure only the mouse movement since drag start
+        // so grabbing the left/right/top/bottom side of the center handle gives
+        // exactly the same translation behavior and zero delta at mouse-down.
+        const QPointF screenDelta = pos - d.transformStart;
+        const double rightAmount = (screenDelta.x() * screenUp.y() - screenDelta.y() * screenUp.x()) / determinant;
+        const double upAmount = (screenRight.x() * screenDelta.y() - screenRight.y() * screenDelta.x()) / determinant;
+        GfVec3d translation = right * (rightAmount * probeDistance) + up * (upAmount * probeDistance);
+
+        if (d.transformSnap) {
+            GfVec3d target = d.transformStartPivot + translation;
+            for (int axis = 0; axis < 3; ++axis)
+                target[axis] = snapValue(target[axis], TransformMoveSnap);
+            translation = target - d.transformStartPivot;
+        }
+
+        dragDelta.SetTranslate(translation);
+        const GfVec3d translationMm = translation * (d.transformMetersPerUnit * 1000.0);
+        transformMessage = QStringLiteral("Translate  X %1 mm  Y %2 mm  Z %3 mm")
+                               .arg(signedNumber(translationMm[0], 3), signedNumber(translationMm[1], 3),
+                                    signedNumber(translationMm[2], 3));
+
+        for (qsizetype i = 0; i < d.transformEdit.after.size(); ++i) {
+            GfMatrix4d matrix = d.transformEdit.before.at(i);
+            matrix.SetTranslateOnly(d.transformEdit.before.at(i).ExtractTranslation() + translation);
+            d.transformEdit.after[i] = matrix;
+        }
+        d.transformPivot = d.transformStartPivot + translation;
+    }
+    else if (d.transformActiveAxis == 10) {
         const QPointF mouseDelta = pos - d.transformStart;
         const GfCamera camera = viewCamera()->camera();
         const GfMatrix4d cameraTransform = camera.GetTransform();
         const GfVec3d right = cameraTransform.TransformDir(GfVec3d::XAxis()).GetNormalized();
         const GfVec3d up = cameraTransform.TransformDir(GfVec3d::YAxis()).GetNormalized();
         constexpr double degreesPerPixel = 0.35;
-        constexpr double snapDegrees = 15.0;
         double horizontalAngle = mouseDelta.x() * degreesPerPixel;
         double verticalAngle = mouseDelta.y() * degreesPerPixel;
-        if (d.transformSnap) {
-            horizontalAngle = std::round(horizontalAngle / snapDegrees) * snapDegrees;
-            verticalAngle = std::round(verticalAngle / snapDegrees) * snapDegrees;
-        }
-        GfMatrix4d toOrigin(1.0);
+
+        // Keep the free gesture continuous here. Shift snapping is applied to
+        // the resulting absolute XYZ orientation below, so an object that starts
+        // on fractional angles is pulled onto whole-degree values as well.
         GfMatrix4d horizontalRotation(1.0);
         GfMatrix4d verticalRotation(1.0);
-        GfMatrix4d fromOrigin(1.0);
-        toOrigin.SetTranslate(-d.transformStartPivot);
         horizontalRotation.SetRotate(GfRotation(up, horizontalAngle));
         verticalRotation.SetRotate(GfRotation(right, verticalAngle));
-        fromOrigin.SetTranslate(d.transformStartPivot);
-        const GfMatrix4d delta = toOrigin * verticalRotation * horizontalRotation * fromOrigin;
-        dragDelta = delta;
+        const GfMatrix4d rotationMatrix = verticalRotation * horizontalRotation;
 
-        // Free rotation is driven in camera-relative horizontal/vertical axes,
-        // but report the resulting world-space rotation consistently as XYZ.
-        // GfRotation::Decompose() returns Euler angles in degrees for the
-        // supplied orthogonal axes.
-        const GfVec3d xyz = delta.ExtractRotation().Decompose(
-            GfVec3d::XAxis(), GfVec3d::YAxis(), GfVec3d::ZAxis());
+        GfMatrix4d toOrigin(1.0);
+        GfMatrix4d fromOrigin(1.0);
+        toOrigin.SetTranslate(-d.transformStartPivot);
+        fromOrigin.SetTranslate(d.transformStartPivot);
+        const GfMatrix4d delta = toOrigin * rotationMatrix * fromOrigin;
+
+
+        dragDelta = snappedRotationDelta(delta, 0);
+
+        const GfMatrix4d snappedCandidate = d.transformEdit.before.first() * dragDelta;
+        const GfVec3d xyz = transformEulerWithoutScale(snappedCandidate);
+
         transformMessage = QStringLiteral("Rotate  X %1°  Y %2°  Z %3°")
-                               .arg(signedNumber(xyz[0], 2),
-                                    signedNumber(xyz[1], 2),
-                                    signedNumber(xyz[2], 2));
+                               .arg(signedNumber(xyz[0], 2), signedNumber(xyz[1], 2), signedNumber(xyz[2], 2));
+
+        for (qsizetype i = 0; i < d.transformEdit.after.size(); ++i)
+            d.transformEdit.after[i] = d.transformEdit.before.at(i) * dragDelta;
+        d.transformPivot = d.transformStartPivot;
+    }
+    else if (d.transformActiveAxis == 12) {
+        const QPointF mouseDelta = pos - d.transformStart;
+        const double rawFactor = std::clamp(std::exp((mouseDelta.x() - mouseDelta.y()) * 0.01), 0.01, 100.0);
+        double factor = rawFactor;
+        if (d.transformSnap) {
+            const GfVec3d startScale = matrixScale(d.transformEdit.before.first());
+            const double minScale = std::min({ startScale[0], startScale[1], startScale[2] });
+            const double maxScale = std::max({ startScale[0], startScale[1], startScale[2] });
+
+            // If the starting scale is uniform, snap the resulting absolute scale
+            // to whole units. For an intentionally non-uniform object there is no
+            // single uniform factor that can make all three axes integral, so snap
+            // the uniform factor itself to whole units instead.
+            if (maxScale > 1e-8 && (maxScale - minScale) <= maxScale * 1e-6) {
+                const double baseScale = (startScale[0] + startScale[1] + startScale[2]) / 3.0;
+                const double targetScale = std::max(TransformScaleSnap,
+                                                    snapValue(baseScale * factor, TransformScaleSnap));
+                factor = targetScale / baseScale;
+            }
+            else {
+                factor = std::max(TransformScaleSnap, snapValue(factor, TransformScaleSnap));
+            }
+            factor = std::clamp(factor, 0.01, 100.0);
+        }
+
+        GfMatrix4d toOrigin(1.0);
+        GfMatrix4d scaleMatrix(1.0);
+        GfMatrix4d fromOrigin(1.0);
+        toOrigin.SetTranslate(-d.transformStartPivot);
+        scaleMatrix.SetScale(GfVec3d(factor));
+        fromOrigin.SetTranslate(d.transformStartPivot);
+        const GfMatrix4d delta = toOrigin * scaleMatrix * fromOrigin;
+        dragDelta = delta;
+        transformMessage = QStringLiteral("Scale XYZ  %1x").arg(factor, 0, 'f', 3);
 
         for (qsizetype i = 0; i < d.transformEdit.after.size(); ++i)
             d.transformEdit.after[i] = d.transformEdit.before.at(i) * delta;
@@ -2241,13 +2480,13 @@ ImagingGLWidgetPrivate::updateTransformDrag(const QPointF& pos)
         if (d.transformSnap) {
             const int axisIndex = d.transformActiveAxis - 1;
             const double target = d.transformStartPivot[axisIndex] + distance;
-            distance = std::round(target) - d.transformStartPivot[axisIndex];
+            distance = snapValue(target, TransformMoveSnap) - d.transformStartPivot[axisIndex];
         }
         const GfVec3d delta = axis * distance;
         dragDelta.SetTranslate(delta);
         const double distanceMm = distance * d.transformMetersPerUnit * 1000.0;
-        transformMessage = QStringLiteral("Translate %1  %2 mm")
-                               .arg(axisName(d.transformActiveAxis), signedNumber(distanceMm, 3));
+        transformMessage
+            = QStringLiteral("Translate %1  %2 mm").arg(axisName(d.transformActiveAxis), signedNumber(distanceMm, 3));
         for (qsizetype i = 0; i < d.transformEdit.after.size(); ++i) {
             GfMatrix4d matrix = d.transformEdit.before.at(i);
             matrix.SetTranslateOnly(d.transformEdit.before.at(i).ExtractTranslation() + delta);
@@ -2268,11 +2507,7 @@ ImagingGLWidgetPrivate::updateTransformDrag(const QPointF& pos)
         while (deltaAngle < -Pi)
             deltaAngle += 2.0 * Pi;
 
-        double degrees = deltaAngle * 180.0 / Pi;
-        if (d.transformSnap) {
-            constexpr double snapDegrees = 15.0;
-            degrees = std::round(degrees / snapDegrees) * snapDegrees;
-        }
+        const double degrees = deltaAngle * 180.0 / Pi;
 
         const GfVec3d axis = transformAxisVector(axisIndex);
         GfMatrix4d toOrigin(1.0);
@@ -2282,10 +2517,18 @@ ImagingGLWidgetPrivate::updateTransformDrag(const QPointF& pos)
         rotation.SetRotate(GfRotation(axis, degrees));
         fromOrigin.SetTranslate(d.transformStartPivot);
         const GfMatrix4d delta = toOrigin * rotation * fromOrigin;
-        dragDelta = delta;
-        transformMessage = QStringLiteral("Rotate %1  %2°").arg(axisName(axisIndex), signedNumber(degrees, 2));
+        dragDelta = snappedRotationDelta(delta, axisIndex);
+        const GfMatrix4d snappedCandidate = d.transformEdit.before.first() * dragDelta;
+        const GfVec3d snappedAngles = transformEulerWithoutScale(snappedCandidate);
+        const GfVec3d beforeAngles = transformEulerWithoutScale(d.transformEdit.before.first());
+        double displayedDelta = snappedAngles[axisIndex - 1] - beforeAngles[axisIndex - 1];
+        while (displayedDelta > 180.0)
+            displayedDelta -= 360.0;
+        while (displayedDelta < -180.0)
+            displayedDelta += 360.0;
+        transformMessage = QStringLiteral("Rotate %1  %2°").arg(axisName(axisIndex), signedNumber(displayedDelta, 2));
         for (qsizetype i = 0; i < d.transformEdit.after.size(); ++i) {
-            d.transformEdit.after[i] = d.transformEdit.before.at(i) * delta;
+            d.transformEdit.after[i] = d.transformEdit.before.at(i) * dragDelta;
         }
         d.transformPivot = d.transformStartPivot;
     }
@@ -2296,17 +2539,23 @@ ImagingGLWidgetPrivate::updateTransformDrag(const QPointF& pos)
             return;
 
         const double pixels = QPointF::dotProduct(pos - d.transformStart, screenAxis);
-        double factor = std::clamp(std::exp(pixels * 0.01), 0.01, 100.0);
+        const double rawFactor = std::clamp(std::exp(pixels * 0.01), 0.01, 100.0);
+        double factor = rawFactor;
         if (d.transformSnap) {
-            constexpr double snapScale = 0.1;
-            factor = std::round(factor / snapScale) * snapScale;
+            const GfVec3d startScale = matrixScale(d.transformEdit.before.first());
+            const double baseScale = startScale[axisIndex - 1];
+            if (baseScale > 1e-8) {
+                const double targetScale = std::max(TransformScaleSnap,
+                                                    snapValue(baseScale * factor, TransformScaleSnap));
+                factor = targetScale / baseScale;
+            }
+            else {
+                factor = std::max(TransformScaleSnap, snapValue(factor, TransformScaleSnap));
+            }
             factor = std::clamp(factor, 0.01, 100.0);
         }
         GfVec3d scale(1.0);
-        if (d.transformUniformScale)
-            scale = GfVec3d(factor);
-        else
-            scale[axisIndex - 1] = factor;
+        scale[axisIndex - 1] = factor;
         GfMatrix4d toOrigin(1.0);
         GfMatrix4d scaleMatrix(1.0);
         GfMatrix4d fromOrigin(1.0);
@@ -2315,18 +2564,12 @@ ImagingGLWidgetPrivate::updateTransformDrag(const QPointF& pos)
         fromOrigin.SetTranslate(d.transformStartPivot);
         const GfMatrix4d delta = toOrigin * scaleMatrix * fromOrigin;
         dragDelta = delta;
-        transformMessage = QStringLiteral("Scale %1  %2x")
-                               .arg(d.transformUniformScale ? QStringLiteral("XYZ") : axisName(axisIndex))
-                               .arg(factor, 0, 'f', 3);
+        transformMessage = QStringLiteral("Scale %1  %2x").arg(axisName(axisIndex)).arg(factor, 0, 'f', 3);
         for (qsizetype i = 0; i < d.transformEdit.after.size(); ++i) {
             d.transformEdit.after[i] = d.transformEdit.before.at(i) * delta;
         }
         d.transformPivot = d.transformStartPivot;
     }
-    const qint64 computeNs = computeTimer.nsecsElapsed();
-
-    QElapsedTimer authorTimer;
-    authorTimer.start();
     {
         WRITE_LOCKER(locker, d.context->stageLock(), "stageLock");
         if (!d.stage)
@@ -2338,28 +2581,23 @@ ImagingGLWidgetPrivate::updateTransformDrag(const QPointF& pos)
         applyPreparedTransforms(d.stage, d.transformPrepared, d.transformEdit.after, dragDelta, true, &errors);
         for (const QString& error : errors)
             qWarning().noquote() << QStringLiteral("Could not apply transform preview: %1").arg(error);
-    }
-    const qint64 authorNs = authorTimer.nsecsElapsed();
 
+
+        // Keep the displayed gizmo center identical to the pivot produced by
+        // the authored USD transform. A translated pivot derived only from the
+        // mouse delta can differ slightly from stage::worldPivot() for prims
+        // with existing pivot/xform-op structure, which otherwise makes the
+        // gizmo jump when the drag is released and the pivot is recomputed.
+        const bool translating = d.transformActiveAxis == 11
+                                 || (d.transformActiveAxis >= 1 && d.transformActiveAxis <= 3);
+        if (translating && d.transformPaths.size() == 1) {
+            GfVec3d authoredPivot(0.0);
+            if (transformSelectionPivot(authoredPivot))
+                d.transformPivot = authoredPivot;
+        }
+    }
     if (!transformMessage.isEmpty())
         Q_EMIT d.glwidget->statusMessage(transformMessage);
-
-    d.transformPerfComputeNs += computeNs;
-    d.transformPerfAuthorNs += authorNs;
-    d.transformPerfAuthorMaxNs = std::max(d.transformPerfAuthorMaxNs, authorNs);
-    ++d.transformPerfFrames;
-
-    if (d.transformPerfLogTimer.isValid() && d.transformPerfLogTimer.elapsed() >= 500) {
-        const double frames = std::max(1, d.transformPerfFrames);
-        qInfo().noquote() << QStringLiteral(
-                                 "[GizmoPerf] LIVE paths=%1 frames=%2 computeAvg=%3ms authorAvg=%4ms authorMax=%5ms")
-                                 .arg(d.transformPaths.size())
-                                 .arg(d.transformPerfFrames)
-                                 .arg((static_cast<double>(d.transformPerfComputeNs) / frames) / 1.0e6, 0, 'f', 3)
-                                 .arg((static_cast<double>(d.transformPerfAuthorNs) / frames) / 1.0e6, 0, 'f', 3)
-                                 .arg(static_cast<double>(d.transformPerfAuthorMaxNs) / 1.0e6, 0, 'f', 3);
-        d.transformPerfLogTimer.restart();
-    }
 
     d.glwidget->update();
 }
@@ -2371,10 +2609,8 @@ ImagingGLWidgetPrivate::endTransformDrag()
 
     const QList<SdfPath> paths = d.transformPaths;
     const XformEdit edit = d.transformEdit;
-
     d.transformDragging = false;
     d.transformSnap = false;
-    d.transformUniformScale = false;
     d.transformActiveAxis = 0;
     d.transformHoverAxis = 0;
     d.transformPaths.clear();
@@ -2392,46 +2628,22 @@ ImagingGLWidgetPrivate::endTransformDrag()
         }
     }
 
-    QElapsedTimer historyTimer;
-    historyTimer.start();
     if (changed) {
-        // The live gizmo has already authored the final values. Add the
-        // durable edit without executing it again; undo and redo use the same
-        // shared transform implementation as the live preview.
         if (CommandStack* stack = d.context ? d.context->commandStack() : nullptr)
             stack->execute(new Command(setTransforms(paths, edit)), CommandStack::ExecutionMode::Applied);
     }
-    const qint64 historyNs = historyTimer.nsecsElapsed();
-
-    // Restore the previous Session policy only after the history entry has been
-    // added. The accumulated live-preview notices are delivered once.
-    QElapsedTimer flushTimer;
-    flushTimer.start();
     if (d.transformDefersPrimsUpdate) {
-        // Deliver the accumulated transform notices now, but do not rebuild
-        // the complete scene bbox synchronously. On large CAD stages that
-        // pseudo-root bbox calculation dominated release time by several
-        // seconds. Session::boundingBox() still evaluates an exact bound on
-        // demand (Frame All), while normal editing stays responsive.
         session()->setPrimsUpdate(d.transformPreviousPrimsUpdate);
         d.transformDefersPrimsUpdate = false;
     }
-    const qint64 flushNs = flushTimer.nsecsElapsed();
 
-    const double frames = std::max(1, d.transformPerfFrames);
+    if (d.stage && paths.size() == 1) {
+        READ_LOCKER(locker, d.context->stageLock(), "stageLock");
+        GfVec3d releasedPivot(0.0);
+        if (d.stage && transformSelectionPivot(releasedPivot)) {}
+    }
+
     Q_EMIT d.glwidget->statusReady();
-
-    qInfo().noquote()
-        << QStringLiteral(
-               "[GizmoPerf] END paths=%1 frames=%2 duration=%3ms computeAvg=%4ms authorAvg=%5ms authorMax=%6ms history=%7ms flush=%8ms")
-               .arg(paths.size())
-               .arg(d.transformPerfFrames)
-               .arg(d.transformPerfTimer.isValid() ? d.transformPerfTimer.elapsed() : 0)
-               .arg((static_cast<double>(d.transformPerfComputeNs) / frames) / 1.0e6, 0, 'f', 3)
-               .arg((static_cast<double>(d.transformPerfAuthorNs) / frames) / 1.0e6, 0, 'f', 3)
-               .arg(static_cast<double>(d.transformPerfAuthorMaxNs) / 1.0e6, 0, 'f', 3)
-               .arg(static_cast<double>(historyNs) / 1.0e6, 0, 'f', 3)
-               .arg(static_cast<double>(flushNs) / 1.0e6, 0, 'f', 3);
 
     d.glwidget->update();
 }
@@ -2457,26 +2669,24 @@ ImagingGLWidgetPrivate::updateTransformHover(const QPointF& pos)
 void
 ImagingGLWidgetPrivate::drawTransformTransform(QPainter& painter)
 {
-    if (!d.transformEnabled || !d.stage || d.selection.isEmpty())
+    if (!d.transformEnabled || d.transformMode == TransformMode::None || !d.stage || d.selection.isEmpty())
         return;
 
-    if (!d.transformDragging) {
+    if (!d.transformDragging && !d.transformPivotValid) {
         GfVec3d pivot(0.0);
-
         {
             READ_LOCKER(locker, d.context->stageLock(), "stageLock");
             if (!d.stage || !transformSelectionPivot(pivot))
                 return;
         }
-
         d.transformPivot = pivot;
+        d.transformPivotValid = true;
     }
+
     QPointF center;
     if (!projectWorldToScreen(d.transformPivot, center))
         return;
 
-    constexpr double axisLength = 82.0;
-    constexpr double scaleDistance = 52.0;
     constexpr double arrowLength = 13.0;
     constexpr double arrowWidth = 7.0;
     constexpr int ringSegments = 96;
@@ -2486,76 +2696,77 @@ ImagingGLWidgetPrivate::drawTransformTransform(QPainter& painter)
     painter.save();
     painter.setRenderHint(QPainter::Antialiasing, true);
 
-    // rotation rings are drawn first so translation/scale handles stay crisp
-    // and easy to identify in front of them.
-    for (int axis = 1; axis <= 3; ++axis) {
-        QColor color = colors[axis];
-        const int handle = axis + 3;
-        if (handle == d.transformHoverAxis || handle == d.transformActiveAxis)
-            color = style()->color(Style::ColorRole::Selection);
+    if (d.transformMode == TransformMode::Rotate) {
+        for (int axis = 1; axis <= 3; ++axis) {
+            QColor color = colors[axis];
+            const int handle = axis + 3;
+            if (handle == d.transformHoverAxis || handle == d.transformActiveAxis)
+                color = style()->color(Style::ColorRole::Selection);
 
-        painter.setBrush(Qt::NoBrush);
-        painter.setPen(QPen(color, handle == d.transformActiveAxis ? 3.0 : 1.8, Qt::SolidLine, Qt::RoundCap));
+            painter.setBrush(Qt::NoBrush);
+            painter.setPen(QPen(color, handle == d.transformActiveAxis ? 3.0 : 1.8, Qt::SolidLine, Qt::RoundCap));
 
-        // Project and draw the ring segment-by-segment. If part of the ring
-        // crosses the camera/near plane, projectWorldToScreen() rejects those
-        // samples. Keeping the segments separate prevents QPainter from joining
-        // the surviving points across the projection discontinuity.
-        QPointF previous;
-        bool previousValid = false;
-        constexpr double maxRingSegmentPixels = 24.0;
-        for (int i = 0; i <= ringSegments; ++i) {
-            const double angle = (2.0 * Pi * static_cast<double>(i % ringSegments)) / static_cast<double>(ringSegments);
-            QPointF current;
-            const bool currentValid = transformRotationPoint(axis, angle, current);
-
-            if (previousValid && currentValid) {
-                const double segmentLength = std::hypot(current.x() - previous.x(), current.y() - previous.y());
-                if (std::isfinite(segmentLength) && segmentLength <= maxRingSegmentPixels)
-                    painter.drawLine(previous, current);
+            QPointF previous;
+            bool previousValid = false;
+            constexpr double maxRingSegmentPixels = 24.0;
+            for (int i = 0; i <= ringSegments; ++i) {
+                const double angle = (2.0 * Pi * static_cast<double>(i % ringSegments))
+                                     / static_cast<double>(ringSegments);
+                QPointF current;
+                const bool currentValid = transformRotationPoint(axis, angle, current);
+                if (previousValid && currentValid) {
+                    const double segmentLength = std::hypot(current.x() - previous.x(), current.y() - previous.y());
+                    if (std::isfinite(segmentLength) && segmentLength <= maxRingSegmentPixels)
+                        painter.drawLine(previous, current);
+                }
+                previous = current;
+                previousValid = currentValid;
             }
-
-            previous = current;
-            previousValid = currentValid;
         }
     }
-    // translation arrows.
-    for (int axis = 1; axis <= 3; ++axis) {
-        const QPointF dir = transformAxisDirection(axis);
-        if (dir.isNull())
-            continue;
-        QColor color = colors[axis];
-        if (axis == d.transformHoverAxis || axis == d.transformActiveAxis)
-            color = style()->color(Style::ColorRole::Selection);
-        const QPointF end = center + dir * axisLength;
-        const QPointF normal(-dir.y(), dir.x());
-        painter.setPen(QPen(color, axis == d.transformActiveAxis ? 4.0 : 3.0, Qt::SolidLine, Qt::RoundCap));
-        painter.drawLine(center, end - dir * 3.0);
-        QPolygonF arrow;
-        arrow << end << end - dir * arrowLength + normal * arrowWidth << end - dir * arrowLength - normal * arrowWidth;
-        painter.setPen(Qt::NoPen);
-        painter.setBrush(color);
-        painter.drawPolygon(arrow);
+    else if (d.transformMode == TransformMode::Move) {
+        for (int axis = 1; axis <= 3; ++axis) {
+            const QPointF dir = transformAxisDirection(axis);
+            if (dir.isNull())
+                continue;
+            QColor color = colors[axis];
+            if (axis == d.transformHoverAxis || axis == d.transformActiveAxis)
+                color = style()->color(Style::ColorRole::Selection);
+            const QPointF end = center + dir * TransformGizmoSize;
+            const QPointF normal(-dir.y(), dir.x());
+            painter.setPen(QPen(color, axis == d.transformActiveAxis ? 4.0 : 3.0, Qt::SolidLine, Qt::RoundCap));
+            painter.drawLine(center, end - dir * 3.0);
+            QPolygonF arrow;
+            arrow << end << end - dir * arrowLength + normal * arrowWidth
+                  << end - dir * arrowLength - normal * arrowWidth;
+            painter.setPen(Qt::NoPen);
+            painter.setBrush(color);
+            painter.drawPolygon(arrow);
+        }
     }
-    // axis scale handles. The cube sits on the same projected axis but closer
-    // to the pivot than the translation arrow head.
-    for (int axis = 1; axis <= 3; ++axis) {
-        const QPointF dir = transformAxisDirection(axis);
-        if (dir.isNull())
-            continue;
-        QColor color = colors[axis];
-        const int handle = axis + 6;
-        const bool uniformScaleActive = d.transformDragging && d.transformUniformScale && d.transformActiveAxis >= 7
-                                        && d.transformActiveAxis <= 9;
-        if (uniformScaleActive || handle == d.transformHoverAxis || handle == d.transformActiveAxis)
-            color = style()->color(Style::ColorRole::Selection);
-        const QPointF p = center + dir * scaleDistance;
-        painter.setPen(QPen(QColor(20, 20, 20, 190), 1.0));
-        painter.setBrush(color);
-        painter.drawRect(QRectF(p.x() - 5.0, p.y() - 5.0, 10.0, 10.0));
+    else if (d.transformMode == TransformMode::Scale) {
+        for (int axis = 1; axis <= 3; ++axis) {
+            const QPointF dir = transformAxisDirection(axis);
+            if (dir.isNull())
+                continue;
+            QColor color = colors[axis];
+            const int handle = axis + 6;
+            if (handle == d.transformHoverAxis || handle == d.transformActiveAxis)
+                color = style()->color(Style::ColorRole::Selection);
+            const QPointF p = center + dir * TransformGizmoSize;
+            painter.setPen(QPen(color, handle == d.transformActiveAxis ? 4.0 : 3.0, Qt::SolidLine, Qt::RoundCap));
+            painter.drawLine(center, p);
+            painter.setPen(QPen(QColor(20, 20, 20, 190), 1.0));
+            painter.setBrush(color);
+            painter.drawRect(QRectF(p.x() - 5.0, p.y() - 5.0, 10.0, 10.0));
+        }
     }
+
+    const int centerHandle = d.transformMode == TransformMode::Move
+                                 ? 11
+                                 : (d.transformMode == TransformMode::Rotate ? 10 : 12);
     QColor centerColor(35, 35, 35, 220);
-    if (d.transformHoverAxis == 10 || d.transformActiveAxis == 10)
+    if (d.transformHoverAxis == centerHandle || d.transformActiveAxis == centerHandle)
         centerColor = style()->color(Style::ColorRole::Selection);
     painter.setPen(QPen(QColor(245, 245, 245, 220), 1.5));
     painter.setBrush(centerColor);
@@ -3070,6 +3281,24 @@ ImagingGLWidgetPrivate::isPathMaskedIn(const SdfPath& path) const
 }
 
 bool
+ImagingGLWidgetPrivate::isSelectionVisible(const SdfPath& path) const
+{
+    if (path.IsEmpty())
+        return false;
+
+    if (d.mask.isEmpty())
+        return true;
+
+    const SdfPath primPath = path.IsPropertyPath() ? path.GetPrimPath() : path;
+    for (const SdfPath& maskedPath : d.mask) {
+        const SdfPath maskedPrimPath = maskedPath.IsPropertyPath() ? maskedPath.GetPrimPath() : maskedPath;
+        if (primPath == maskedPrimPath || primPath.HasPrefix(maskedPrimPath) || maskedPrimPath.HasPrefix(primPath))
+            return true;
+    }
+    return false;
+}
+
+bool
 ImagingGLWidgetPrivate::pickMaskedIntersection(const UsdImagingGLEngine::PickParams& pickParams,
                                                const GfFrustum& pickFrustum,
                                                UsdImagingGLEngine::IntersectionResultVector* results)
@@ -3154,6 +3383,42 @@ void
 ImagingGLWidget::setTransformEnabled(bool enabled)
 {
     p->updateTransform(enabled);
+}
+
+bool
+ImagingGLWidget::moveEnabled() const
+{
+    return p->d.transformMode == TransformMode::Move;
+}
+
+void
+ImagingGLWidget::setMoveEnabled(bool enabled)
+{
+    p->updateTransformMode(TransformMode::Move, enabled);
+}
+
+bool
+ImagingGLWidget::rotateEnabled() const
+{
+    return p->d.transformMode == TransformMode::Rotate;
+}
+
+void
+ImagingGLWidget::setRotateEnabled(bool enabled)
+{
+    p->updateTransformMode(TransformMode::Rotate, enabled);
+}
+
+bool
+ImagingGLWidget::scaleEnabled() const
+{
+    return p->d.transformMode == TransformMode::Scale;
+}
+
+void
+ImagingGLWidget::setScaleEnabled(bool enabled)
+{
+    p->updateTransformMode(TransformMode::Scale, enabled);
 }
 
 void

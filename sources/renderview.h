@@ -108,6 +108,24 @@ public:
      */
     void setTransformEnabled(bool enabled);
 
+    /** @brief Returns whether the move gizmo is active. */
+    bool moveEnabled() const;
+
+    /** @brief Activates or deactivates the move gizmo. */
+    void setMoveEnabled(bool enabled);
+
+    /** @brief Returns whether the rotate gizmo is active. */
+    bool rotateEnabled() const;
+
+    /** @brief Activates or deactivates the rotate gizmo. */
+    void setRotateEnabled(bool enabled);
+
+    /** @brief Returns whether the scale gizmo is active. */
+    bool scaleEnabled() const;
+
+    /** @brief Activates or deactivates the scale gizmo. */
+    void setScaleEnabled(bool enabled);
+
     /**
      * @}
      */

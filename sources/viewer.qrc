@@ -21,6 +21,7 @@
     <file>../resources/Left.png</file>
     <file>../resources/List.png</file>
     <file>../resources/Material.png</file>
+    <file>../resources/Move.png</file>
     <file>../resources/Nested.png</file>
     <file>../resources/New.png</file>
     <file>../resources/Open.png</file>
@@ -32,10 +33,11 @@
     <file>../resources/Prim.png</file>
     <file>../resources/Redo.png</file>
     <file>../resources/Right.png</file>
+    <file>../resources/Rotate.png</file>
     <file>../resources/Run.png</file>
+    <file>../resources/Scale.png</file>
     <file>../resources/Select.png</file>
     <file>../resources/Shaded.png</file>
-    <file>../resources/Transform.png</file>
     <file>../resources/Undo.png</file>
     <file>../resources/Up.png</file>
     <file>../resources/Visible.png</file>

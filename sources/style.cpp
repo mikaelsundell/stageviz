@@ -245,6 +245,7 @@ StylePrivate::updateTheme()
     d.icons[roleName(Style::IconRole::Left)] = ":/icons/resources/Left.png";
     d.icons[roleName(Style::IconRole::List)] = ":/icons/resources/List.png";
     d.icons[roleName(Style::IconRole::Material)] = ":/icons/resources/Material.png";
+    d.icons[roleName(Style::IconRole::Move)] = ":/icons/resources/Move.png";
     d.icons[roleName(Style::IconRole::Nested)] = ":/icons/resources/Nested.png";
     d.icons[roleName(Style::IconRole::New)] = ":/icons/resources/New.png";
     d.icons[roleName(Style::IconRole::Open)] = ":/icons/resources/Open.png";
@@ -256,10 +257,11 @@ StylePrivate::updateTheme()
     d.icons[roleName(Style::IconRole::Prim)] = ":/icons/resources/Prim.png";
     d.icons[roleName(Style::IconRole::Redo)] = ":/icons/resources/Redo.png";
     d.icons[roleName(Style::IconRole::Right)] = ":/icons/resources/Right.png";
+    d.icons[roleName(Style::IconRole::Rotate)] = ":/icons/resources/Rotate.png";
     d.icons[roleName(Style::IconRole::Run)] = ":/icons/resources/Run.png";
+    d.icons[roleName(Style::IconRole::Scale)] = ":/icons/resources/Scale.png";
     d.icons[roleName(Style::IconRole::Select)] = ":/icons/resources/Select.png";
     d.icons[roleName(Style::IconRole::Shaded)] = ":/icons/resources/Shaded.png";
-    d.icons[roleName(Style::IconRole::Star)] = ":/icons/resources/Star.png";
     d.icons[roleName(Style::IconRole::Transform)] = ":/icons/resources/Transform.png";
     d.icons[roleName(Style::IconRole::Undo)] = ":/icons/resources/Undo.png";
     d.icons[roleName(Style::IconRole::Up)] = ":/icons/resources/Up.png";

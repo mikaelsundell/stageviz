@@ -88,6 +88,16 @@ public:
     void expand();
 
     /**
+     * @brief Reveals a prim without expanding its descendants.
+     *
+     * Expands only the ancestor chain required to make the prim visible and
+     * scrolls it into view. The current multi-selection is preserved.
+     *
+     * @param path Prim path to reveal.
+     */
+    void reveal(const SdfPath& path);
+
+    /**
      * @brief Expands the tree to the specified depth.
      *
      * If a path is provided, the expansion is applied relative to that node.
