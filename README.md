@@ -2,7 +2,7 @@
 
 [![License](https://img.shields.io/badge/license-BSD%203--Clause-blue.svg?style=flat-square)](https://github.com/mikaelsundell/stageviz/blob/master/README.md)
 
-<img src="resources/stageviz.png" style="padding-bottom: 20px;" />
+<img src="resources/stageviz.jpg" style="padding-bottom: 20px;" />
 
 ## Introduction
 
