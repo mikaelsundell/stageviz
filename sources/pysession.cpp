@@ -548,9 +548,9 @@ PySession_selectionList(PySessionObject* self, PyObject*)
 }
 
 static PyObject*
-PySession_selection(PySessionObject* self, PyObject*)
+PySession_selection(PySessionObject* self, PyObject* unused)
 {
-    return PySession_selectionList(self);
+    return PySession_selectionList(self, unused);
 }
 
 static PyObject*

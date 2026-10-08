@@ -204,9 +204,7 @@ The wrapper defaults to the current native Stageviz session and does not own it.
 `primsUpdate() -> int`
 
 `setPrimsUpdate(value) -> None`
-: Exact native enum ordinals are not defined by the supplied binding source.
-
-`flushPrimsUpdates() -> None`
+: Set the prim-notice update policy. `0` is `Session::Immediate` and `1` is `Session::Deferred` in the supplied `session.h`. Switching from `Deferred` to `Immediate` automatically flushes accumulated prim changes; no explicit Python flush method is exposed. Restore the previous policy in `finally` when batching direct USD edits.
 
 ### Command stack and selection
 
@@ -285,6 +283,8 @@ All command functions run a native Stageviz command on the current session comma
 `can_undo() -> bool`
 
 `can_redo() -> bool`
+
+`can_clear() -> bool`
 
 ### Selection
 
@@ -655,11 +655,11 @@ stageviz.Style.AxisX
 
 #### ColorRole members
 
-`Accent`, `AccentAlt`, `AxisX`, `AxisY`, `AxisZ`, `Base`, `BaseAlt`, `Border`, `BorderAlt`, `Button`, `ButtonAlt`, `Error`, `Grid`, `Handle`, `Highlight`, `HighlightAlt`, `Item`, `ItemAlt`, `Progress`, `Render`, `RenderAlt`, `Selection`, `SelectionAlt`, `Text`, `Warning`.
+`Accent`, `AccentAlt`, `AxisX`, `AxisY`, `AxisZ`, `Base`, `BaseAlt`, `Border`, `BorderAlt`, `Button`, `ButtonAlt`, `Error`, `Graph`, `Grid`, `Guide`, `Handle`, `Highlight`, `HighlightAlt`, `Item`, `ItemAlt`, `Progress`, `Render`, `RenderAlt`, `Selection`, `SelectionAlt`, `Text`, `TextAlt`, `Warning`, `AccentAlt`, `AxisX`, `AxisY`, `AxisZ`, `Base`, `BaseAlt`, `Border`, `BorderAlt`, `Button`, `ButtonAlt`, `Error`, `Grid`, `Handle`, `Highlight`, `HighlightAlt`, `Item`, `ItemAlt`, `Progress`, `Render`, `RenderAlt`, `Selection`, `SelectionAlt`, `Text`, `Warning`.
 
 #### IconRole members
 
-`BranchClosed`, `BranchOpen`, `Checked`, `Clear`, `Code`, `Collapse`, `Down`, `DropDown`, `Expand`, `Export`, `ExportImage`, `Follow`, `FrameAll`, `Geometry`, `Hidden`, `Left`, `Material`, `Open`, `PartiallyChecked`, `Payload`, `Prim`, `Redo`, `Right`, `Run`, `Shaded`, `Transform`, `Undo`, `Up`, `Visible`, `Wireframe`.
+`BranchClosed`, `BranchOpen`, `Checked`, `Clear`, `Code`, `Collapse`, `DefaultPrim`, `Down`, `DropDown`, `Expand`, `Export`, `ExportImage`, `Follow`, `FrameAll`, `Geometry`, `GeomSubset`, `Hidden`, `Left`, `List`, `Material`, `Move`, `Nested`, `New`, `Open`, `Over`, `Override`, `PartiallyChecked`, `Payload`, `Pick`, `Prim`, `Redo`, `Right`, `Rotate`, `Run`, `Scale`, `Select`, `Shaded`, `Transform`, `Undo`, `Up`, `Visible`, `Wireframe`, `BranchOpen`, `Checked`, `Clear`, `Code`, `Collapse`, `Down`, `DropDown`, `Expand`, `Export`, `ExportImage`, `Follow`, `FrameAll`, `Geometry`, `Hidden`, `Left`, `Material`, `Open`, `PartiallyChecked`, `Payload`, `Prim`, `Redo`, `Right`, `Run`, `Shaded`, `Transform`, `Undo`, `Up`, `Visible`, `Wireframe`.
 
 #### UIScale members
 
@@ -754,6 +754,10 @@ The wrapper owns a native offscreen `RenderEngine` and destroys it when the Pyth
 
 `render(filename) -> str`
 : Render the current stage offscreen, save the resulting `QImage`, and return the absolute output path. A stage must be set first.
+
+### Binding version notes
+
+The Style role lists above reflect `style.h` from the supplied C++ archive. The archived `pystyle.cpp` omits `GeomSubset`, `Move`, `Rotate`, and `Scale` from `IconRole` registration; these require the corrected binding file from the subsequent binding patch. This reference describes that corrected binding, not the original archived version.
 
 ## Important behavioral notes
 

@@ -68,11 +68,15 @@ def iter_bindable_prims(prim, recursive=True):
     if not prim or not prim.IsValid():
         return
 
-    if UsdGeom.Imageable(prim):
+    # GeomSubsets are bindable, but recursively binding every subset
+    # would replace deliberate per-face material assignments.
+    if UsdGeom.Imageable(prim) and not prim.IsA(UsdGeom.Subset):
         yield prim
 
     if recursive:
         for child in prim.GetChildren():
+            if child.IsA(UsdGeom.Subset):
+                continue
             yield from iter_bindable_prims(child, recursive=True)
 
 
@@ -354,8 +358,11 @@ def find_stageviz_main_window():
     return qt_app.activeWindow()
 
 
+Signal = getattr(QtCore, "Signal", None) or QtCore.pyqtSignal
+
+
 class ColorButton(QtWidgets.QPushButton):
-    colorChanged = QtCore.Signal(object)
+    colorChanged = Signal(object)
 
     def __init__(self, color, parent=None):
         super().__init__(parent)

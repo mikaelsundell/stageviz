@@ -81,7 +81,7 @@ def selected_paths(session):
     return [str(path) for path in session.paths()]
 ```
 
-If a user-provided Stageviz build demonstrably exposes convenience functions such as `stageviz.session()` or `stageviz.application()`, preserve them in existing code. Do not invent those module-level functions from C++ naming alone.
+The supplied `pymodule.cpp` exports convenience accessors such as `stageviz.session()` and `stageviz.application()`. Existing scripts may use them; the `Session()` and `Application()` constructors remain valid alternatives.
 
 For selection-driven tools:
 
@@ -373,32 +373,24 @@ For material tools, an `Apply recursively to children` option is useful unless r
 
 ## Batch authoring and prim updates
 
-Large direct-USD authoring operations may benefit from temporarily deferring Stageviz prim-update processing. The canonical API proves these methods exist:
+Stageviz normally propagates USD prim changes automatically. Do not manually flush session prim updates; the current C++ `Session` interface has no public `flushPrimsUpdates()` method.
 
-- `session.primsUpdate()`
-- `session.setPrimsUpdate(value)`
-- `session.flushPrimsUpdates()`
+For large batches of **direct `pxr` USD edits**, Stageviz exposes `session.primsUpdate()` and `session.setPrimsUpdate(value)`. The supplied `session.h` defines `Session::Immediate = 0` and `Session::Deferred = 1`. Deferred buffers prim-change notifications; **switching back to Immediate flushes pending changes automatically**.
 
-The current binding reference does **not** prove symbolic enum members or numeric ordinals for the prim-update policy. Therefore:
-
-- Do not invent `stageviz.Session.PrimsUpdate.Deferred` or `Immediate` unless the user's installed Stageviz API or supplied code proves those symbols exist.
-- Preserve and restore the prior value in `finally` whenever changing update policy.
-- If the required deferred-policy value is unknown, do not guess it. Either use a user-supplied/documented value or omit the optimization.
-
-Safe structural pattern when a known deferred value is available:
+Use this only when a large batch justifies deferral, and always restore the original policy:
 
 ```python
+session = stageviz.Session()
 previous_update = session.primsUpdate()
-session.setPrimsUpdate(DEFERRED_VALUE)
+session.setPrimsUpdate(1)  # Session::Deferred
 try:
-    # Perform the batch of direct USD edits.
+    # Perform direct USD authoring here.
     ...
 finally:
     session.setPrimsUpdate(previous_update)
-    session.flushPrimsUpdates()
 ```
 
-Use this only for sufficiently large edits. A one-attribute or one-shader-input change does not need deferred processing.
+If the previous policy was already `Deferred`, restoring it intentionally leaves notification delivery deferred for its owner. Do not force `Immediate` or call an undocumented flush method. Prefer `stageviz.command` for undoable edits; do not add custom update-policy handling around ordinary commands or individual shader/attribute edits.
 
 ## Shortcut ownership
 
@@ -491,7 +483,7 @@ Before returning a Stageviz dialog script, verify:
 - Stageviz-specific methods exist in `python-api.md` or are proven by user-supplied code.
 - Undoable user edits use `stageviz.command` when an appropriate command exists.
 - No enum value is invented.
-- Large direct USD authoring restores prim-update state in `finally` if update deferral is used.
+- Large direct USD authoring restores the previous prim-update policy in `finally`; never manually flush session prim updates.
 - `QColor` handling uses actual `QtGui.QColor` instances.
 - `Sdf.ValueTypeNames.Int` is used for integer shader inputs.
 - Material binding uses `stageviz.command.bind_material` for undoable binding or `UsdShade.MaterialBindingAPI` for intentional direct authoring.

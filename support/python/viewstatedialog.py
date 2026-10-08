@@ -202,19 +202,19 @@ class ViewStateDialog(QtWidgets.QDialog):
         self.camera_axis = QtWidgets.QCheckBox()
 
         self.render_mode = QtWidgets.QComboBox()
-        self.render_mode.addItem("Shaded", 0)
-        self.render_mode.addItem("Wireframe", 1)
+        self.render_mode.addItem("Shaded")
+        self.render_mode.addItem("Wireframe")
 
         self.complexity = QtWidgets.QComboBox()
-        self.complexity.addItem("Low", 0)
-        self.complexity.addItem("Medium", 1)
-        self.complexity.addItem("High", 2)
-        self.complexity.addItem("Very High", 3)
+        self.complexity.addItem("Low")
+        self.complexity.addItem("Medium")
+        self.complexity.addItem("High")
+        self.complexity.addItem("Very High")
 
         self.material_mode = QtWidgets.QComboBox()
-        self.material_mode.addItem("All", 0)
-        self.material_mode.addItem("Clay", 1)
-        self.material_mode.addItem("Override", 2)
+        self.material_mode.addItem("All")
+        self.material_mode.addItem("Clay")
+        self.material_mode.addItem("Override")
 
         self.override_material = QtWidgets.QLineEdit()
         self.override_material.setPlaceholderText(
@@ -271,14 +271,11 @@ class ViewStateDialog(QtWidgets.QDialog):
         values = list(color)
 
         if len(values) == 3:
-            values.append(1.0)
+            values.append(255 if any(float(v) > 1.0 for v in values) else 1.0)
 
-        return QtGui.QColor.fromRgbF(
-            float(values[0]),
-            float(values[1]),
-            float(values[2]),
-            float(values[3]),
-        )
+        if any(float(v) > 1.0 for v in values):
+            values = [float(v) / 255.0 for v in values]
+        return QtGui.QColor.fromRgbF(*[max(0.0, min(1.0, float(v))) for v in values])
 
     @staticmethod
     def _set_color_button(button, color):
@@ -322,8 +319,8 @@ class ViewStateDialog(QtWidgets.QDialog):
                 color.alphaF(),
             )
 
-            setter(value)
-            self._set_color_button(button, value)
+            setter(tuple(round(component * 255) for component in value))
+            self._set_color_button(button, tuple(round(component * 255) for component in value))
             self.refresh_output()
 
         except Exception:
@@ -420,6 +417,14 @@ class ViewStateDialog(QtWidgets.QDialog):
             )
             traceback.print_exc()
 
+    @staticmethod
+    def _set_known_combo_values(combo, current_value):
+        # Native enum ordinals are not exported by the documented bindings.
+        # Display the current value without exposing speculative choices.
+        combo.clear()
+        combo.addItem(f"Current ({int(current_value)})", int(current_value))
+        combo.setEnabled(False)
+
     def refresh_controls(self):
         try:
             self.fov.setValue(
@@ -485,17 +490,17 @@ class ViewStateDialog(QtWidgets.QDialog):
                 self._view_state.cameraAxisEnabled()
             )
 
-            self._set_combo_value(
+            self._set_known_combo_values(
                 self.render_mode,
                 self._view_state.renderMode(),
             )
 
-            self._set_combo_value(
+            self._set_known_combo_values(
                 self.complexity,
                 self._view_state.complexityLevel(),
             )
 
-            self._set_combo_value(
+            self._set_known_combo_values(
                 self.material_mode,
                 self._view_state.materialMode(),
             )
@@ -596,7 +601,7 @@ class ViewStateDialog(QtWidgets.QDialog):
             else:
                 self._view_state.setOverrideMaterial("")
                 self._view_state.setMaterialMode(
-                    self.material_mode.currentData()
+                    int(self.material_mode.currentData())
                 )
 
             self.refresh_output()

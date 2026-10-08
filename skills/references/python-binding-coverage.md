@@ -6,7 +6,7 @@ Scope: the seven types registered in `pymodule.cpp`, their corresponding C++ pub
 
 | C++ interface | Python coverage | Remaining differences |
 | --- | --- | --- |
-| Session | All public operation/accessor names are represented, including file operations, edit layers, progress, auxiliary stage, and update flushing. | Locks and `commandStack()` return pointer integers, not usable Python wrappers. Signals are not exposed. |
+| Session | All public operation/accessor names are represented, including file operations, edit layers, progress, auxiliary stage, and prim-update policy. | Locks and `commandStack()` return pointer integers, not usable Python wrappers. Signals are not exposed. |
 | SelectionList | All nine public operations/accessors are bound. | Paths use strings; Qt signals are not exposed. |
 | ViewState | All public operations/accessors are bound. | Colors and paths use Python tuples/strings; Qt signals are not exposed. Enum constants were added at module level. |
 | ViewCamera | All public operation names are bound after adding `frame()`. | Constructors wrap the current session camera instead of creating independent cameras. `camera()` returns an opaque capsule rather than `pxr.Gf.Camera`. Bounding-box tuples cannot preserve an oriented box's transform. Signals are not exposed. |
@@ -31,6 +31,14 @@ The wrapper remains an offscreen rendering interface rather than a one-to-one bi
 The existing `set_camera` accepts a USD camera prim path, whereas native `setCamera` accepts GfCamera. `render(filename)` writes an image file instead of returning QImage. Most Settings fields, including dome lighting, material override, draw mode, sidedness, complexity, purposes and selection-related controls, have no Python setters.
 
 The stage conversion bug was fixed: `set_stage()` now retains the supplied USD stage instead of opening another stage from its root layer and losing session-specific composition state.
+
+## Deferred prim-update behavior
+
+The current `Session` C++ interface exposes `primsUpdate()` and `setPrimsUpdate()`, but not `flushPrimsUpdates()`. `Immediate = 0` and `Deferred = 1` are defined in `session.h`. Changing the policy back to `Immediate` flushes pending notices automatically in `session.cpp`. The Python binding exposes the two policy accessors and does not need a separate flush function. Large direct USD edit batches should restore the previous policy in `finally`; ordinary commands should rely on native Stageviz update handling.
+
+## Style enum registration
+
+The supplied `style.h` declares 42 `IconRole` members and 28 `ColorRole` members. The original archived `pystyle.cpp` registers 38 icon roles and omits `GeomSubset`, `Move`, `Rotate`, `Scale`. The corrected `pystyle.cpp` from the binding patch must be used to expose those roles. This is a static comparison, not a runtime resource or icon-path test.
 
 ## Compatibility and follow-up
 

@@ -346,7 +346,7 @@ class TransformDialog(QtWidgets.QDialog):
             api.SetTranslate(Gf.Vec3d(t[0], t[1], t[2]))
             api.SetRotate(Gf.Vec3f(r[0], r[1], r[2]), rotation_order)
             api.SetScale(Gf.Vec3f(s[0], s[1], s[2]))
-            api.SetResetXformStack(self.reset_stack_check.isChecked())
+            UsdGeom.Xformable(prim).SetResetXformStack(self.reset_stack_check.isChecked())
 
             self._dirty = False
             self.set_status(f"Transform applied to {prim.GetPath()}.")
