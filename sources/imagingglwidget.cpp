@@ -52,6 +52,7 @@
 #include <pxr/base/gf/matrix4d.h>
 #include <pxr/base/gf/rotation.h>
 #include <pxr/base/tf/error.h>
+#include <pxr/base/vt/array.h>
 #include <pxr/usd/sdf/changeBlock.h>
 #include <pxr/usd/sdf/layer.h>
 #include <pxr/usd/usd/attribute.h>
@@ -65,6 +66,8 @@
 #include <pxr/usd/usdGeom/metrics.h>
 #include <pxr/usd/usdGeom/primvarsAPI.h>
 #include <pxr/usd/usdGeom/scope.h>
+#include <pxr/usd/usdGeom/subset.h>
+#include <pxr/usd/usdGeom/tokens.h>
 #include <pxr/usd/usdGeom/xform.h>
 #include <pxr/usd/usdGeom/xformable.h>
 #include <pxr/usd/usdShade/material.h>
@@ -185,6 +188,7 @@ public:
     bool isPathMaskedIn(const SdfPath& path) const;
     bool isSelectionVisible(const SdfPath& path) const;
     SdfPath pickNearestPath(const QPoint& pos);
+    SdfPath resolveGeomSubsetTarget(const SdfPath& hitPath, const QPoint& pos);
     bool pickMaskedIntersection(const UsdImagingGLEngine::PickParams& pickParams, const GfFrustum& pickFrustum,
                                 UsdImagingGLEngine::IntersectionResultVector* results);
     struct Data {
@@ -746,6 +750,75 @@ ImagingGLWidgetPrivate::pickNearestPath(const QPoint& pos)
     }
     return nearestPath;
 }
+
+SdfPath
+ImagingGLWidgetPrivate::resolveGeomSubsetTarget(const SdfPath& hitPath, const QPoint& pos)
+{
+    if (hitPath.IsEmpty() || !d.stage || !d.renderEngine)
+        return hitPath;
+
+    const QPoint devicePos = deviceRatio(pos);
+    const GfVec2i framebufferSize = widgetSize();
+    if (devicePos.x() < 0 || devicePos.y() < 0 || devicePos.x() >= framebufferSize[0]
+        || devicePos.y() >= framebufferSize[1]) {
+        return hitPath;
+    }
+
+    const GfVec2i pixel(devicePos.x(), framebufferSize[1] - 1 - devicePos.y());
+
+    int elementId = -1;
+    {
+        READ_LOCKER(locker, d.context->stageLock(), "stageLock");
+        if (d.stage)
+            elementId = d.renderEngine->captureElementIdAt(pixel);
+    }
+
+    if (elementId < 0)
+        return hitPath;
+
+    READ_LOCKER(locker, d.context->stageLock(), "stageLock");
+    if (!d.stage)
+        return hitPath;
+
+    const UsdPrim hitPrim = d.stage->GetPrimAtPath(hitPath);
+    if (!hitPrim)
+        return hitPath;
+
+    SdfPath firstMatch;
+    SdfPath materialMatch;
+
+    for (const UsdPrim& child : hitPrim.GetChildren()) {
+        const UsdGeomSubset subset(child);
+        if (!subset)
+            continue;
+
+        TfToken elementType;
+        VtIntArray indices;
+        if (!subset.GetElementTypeAttr().Get(&elementType) || elementType != UsdGeomTokens->face
+            || !subset.GetIndicesAttr().Get(&indices)) {
+            continue;
+        }
+
+        if (std::find(indices.begin(), indices.end(), elementId) == indices.end())
+            continue;
+
+        if (firstMatch.IsEmpty())
+            firstMatch = child.GetPath();
+
+        TfToken familyName;
+        if (subset.GetFamilyNameAttr().Get(&familyName) && familyName == TfToken("materialBind")) {
+            materialMatch = child.GetPath();
+            break;
+        }
+    }
+
+    if (!materialMatch.IsEmpty())
+        return materialMatch;
+    if (!firstMatch.IsEmpty())
+        return firstMatch;
+    return hitPath;
+}
+
 void
 ImagingGLWidgetPrivate::dragEnterEvent(QDragEnterEvent* event)
 {
@@ -807,7 +880,9 @@ ImagingGLWidgetPrivate::dropEvent(QDropEvent* event)
         }
     }
 
-    const SdfPath targetPath = pickNearestPath(event->position().toPoint());
+    const QPoint dropPosition = event->position().toPoint();
+    const SdfPath hitPath = pickNearestPath(dropPosition);
+    const SdfPath targetPath = resolveGeomSubsetTarget(hitPath, dropPosition);
     if (targetPath.IsEmpty()) {
         event->ignore();
         return;
@@ -1086,7 +1161,12 @@ ImagingGLWidgetPrivate::sweepEvent(const QRect& rect, QMouseEvent* event)
 
                 d.lastPickPosition = clickPosition;
                 d.lastPickPaths = depthPaths;
-                selectedPaths.append(depthPaths.at(d.lastPickIndex));
+
+                SdfPath selectedPath = depthPaths.at(d.lastPickIndex);
+                if (d.lastPickIndex == 0)
+                    selectedPath = resolveGeomSubsetTarget(selectedPath, rect.normalized().center());
+
+                selectedPaths.append(selectedPath);
             }
         }
         else {

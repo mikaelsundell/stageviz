@@ -38,6 +38,8 @@
 #include <pxr/usd/usd/relationship.h>
 #include <pxr/usd/usd/variantSets.h>
 #include <pxr/usd/usdGeom/cube.h>
+#include <pxr/usd/usdGeom/mesh.h>
+#include <pxr/usd/usdGeom/subset.h>
 #include <pxr/usd/usdGeom/scope.h>
 #include <pxr/usd/usdGeom/xform.h>
 #include <pxr/usd/usdGeom/xformCommonAPI.h>
@@ -2622,6 +2624,65 @@ commandPayloadApi()
     undoCommand(load, session);
     require(!session.stage()->GetPrimAtPath(SdfPath("/Payload")).IsLoaded(), "loadPayloads undo");
 }
+
+void
+geometrySubsetApi()
+{
+    Session session;
+    require(session.newStage(), "subset stage created");
+    const auto stage = session.stage();
+    const SdfPath meshPath("/Mesh");
+    const UsdGeomMesh mesh = UsdGeomMesh::Define(stage, meshPath);
+    require(bool(mesh), "subset mesh defined");
+    mesh.CreateFaceVertexCountsAttr().Set(VtArray<int> { 3, 3 });
+    mesh.CreateFaceVertexIndicesAttr().Set(VtArray<int> { 0, 1, 2, 0, 2, 3 });
+    mesh.CreatePointsAttr().Set(VtArray<GfVec3f> {
+        GfVec3f(0, 0, 0), GfVec3f(1, 0, 0), GfVec3f(1, 1, 0), GfVec3f(0, 1, 0)
+    });
+
+    const TfToken family("materialBind");
+    const auto left = UsdGeomSubset::CreateGeomSubset(mesh, TfToken("Left"),
+        UsdGeomTokens->face, VtArray<int> { 0 }, family);
+    const auto right = UsdGeomSubset::CreateGeomSubset(mesh, TfToken("Right"),
+        UsdGeomTokens->face, VtArray<int> { 1 }, family);
+    require(bool(left) && bool(right), "two face subsets created");
+    UsdGeomSubset::SetFamilyType(mesh, family, UsdGeomTokens->partition);
+    std::string validationReason;
+    require(UsdGeomSubset::ValidateFamily(mesh, UsdGeomTokens->face, family, &validationReason),
+        "complete subset partition valid");
+
+    const SdfPath red = stageviz::MaterialUtils::createPreviewSurfaceMaterial(stage);
+    const SdfPath blue = stageviz::MaterialUtils::createPreviewSurfaceMaterial(stage);
+    require(red != blue && !red.IsEmpty() && !blue.IsEmpty(), "two subset materials created");
+    require(UsdShadeMaterialBindingAPI::Apply(left.GetPrim()).Bind(UsdShadeMaterial(stage->GetPrimAtPath(red))),
+        "bind left subset");
+    require(UsdShadeMaterialBindingAPI::Apply(right.GetPrim()).Bind(UsdShadeMaterial(stage->GetPrimAtPath(blue))),
+        "bind right subset");
+    require(UsdShadeMaterialBindingAPI(left.GetPrim()).ComputeBoundMaterial().GetPath() == red,
+        "left subset resolves red material");
+    require(UsdShadeMaterialBindingAPI(right.GetPrim()).ComputeBoundMaterial().GetPath() == blue,
+        "right subset resolves blue material");
+
+    const auto subsets = UsdGeomSubset::GetGeomSubsets(mesh, UsdGeomTokens->face, family);
+    require(subsets.size() == 2, "materialBind family enumerates both subsets");
+    VtArray<int> indices;
+    require(left.GetIndicesAttr().Get(&indices) && indices == VtArray<int> { 0 },
+        "left face index retained");
+    require(right.GetIndicesAttr().Get(&indices) && indices == VtArray<int> { 1 },
+        "right face index retained");
+
+    std::string layerText;
+    require(stage->GetRootLayer()->ExportToString(&layerText), "subset layer exported");
+    const auto reopenedLayer = SdfLayer::CreateAnonymous("subset.usda");
+    require(reopenedLayer->ImportFromString(layerText),
+        "subset layer roundtrip");
+    const auto reopened = UsdStage::Open(reopenedLayer);
+    require(bool(reopened) && bool(reopened->GetPrimAtPath(meshPath.AppendChild(TfToken("Left")))),
+        "subset persists after reopening layer");
+    require(UsdShadeMaterialBindingAPI(reopened->GetPrimAtPath(meshPath.AppendChild(TfToken("Right"))))
+        .ComputeBoundMaterial().GetPath() == blue, "subset binding persists after reopening layer");
+}
+
 }  // namespace
 
 int
@@ -2665,6 +2726,7 @@ main(int argc, char** argv)
         { "usd_stage_utils_api", usdStageUtilsApi },
         { "usd_payload_utils_api", usdPayloadUtilsApi },
         { "material_utils_api", materialUtilsApi },
+        { "geometry_subset_api", geometrySubsetApi },
         { "material_menu_api", materialMenuApi },
         { "command_material_api", commandMaterialApi },
         { "command_selection_api", commandSelectionApi },

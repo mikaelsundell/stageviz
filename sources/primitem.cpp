@@ -29,7 +29,6 @@ public:
         UsdStageRefPtr stage;
         SdfPath path;
         PrimItem* item = nullptr;
-
         bool dirty = true;
         bool visible = true;
         bool active = true;
@@ -40,7 +39,6 @@ public:
         bool isDefaultPrim = false;
         bool hasDirectOverride = false;
         bool hasDescendantOverride = false;
-
         QString editName;
         QString name;
         QString typeName;
@@ -175,6 +173,8 @@ PrimItem::data(int column, int role) const
 
         if (p->d.typeName == "Material" || p->d.typeName == "Shader")
             iconRole = Style::IconRole::Material;
+        else if (p->d.typeName == "GeomSubset")
+            iconRole = Style::IconRole::GeomSubset;
         else if (p->d.isGprim)
             iconRole = Style::IconRole::Geometry;
 

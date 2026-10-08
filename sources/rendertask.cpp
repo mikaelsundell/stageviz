@@ -95,11 +95,26 @@ namespace {
         GfVec4f color = GfVec4f(1.0f);
         GfVec2i screenSize = GfVec2i(1);
         GfVec2i selectedMaskSize = GfVec2i(1);
+        GfVec2i selectedSubsetPrimMaskSize = GfVec2i(1);
+        GfVec2i selectedSubsetElementMaskSize = GfVec2i(1);
         int selectedMaskCapacity = 0;
+        int selectedSubsetPrimMaskCapacity = 0;
+        int selectedSubsetElementCapacity = 0;
         int radius = 3;
         float softnessStrength = 0.85f;
         float softnessFalloff = 0.45f;
-        float padding = 0.0f;
+        float padding0 = 0.0f;
+        float padding1 = 0.0f;
+    };
+
+    struct ResolvedSubsetSelection {
+        int32_t primId = -1;
+        std::vector<int32_t> elementIds;
+
+        bool operator==(const ResolvedSubsetSelection& other) const
+        {
+            return primId == other.primId && elementIds == other.elementIds;
+        }
     };
 
     HgiShaderFunctionTextureDesc textureDesc(const char* name, uint32_t bindIndex, HgiFormat format)
@@ -175,16 +190,24 @@ namespace {
         HgiShaderFunctionDesc desc = baseFragmentDesc("Stageviz Selection Outline Composite");
         desc.textures.push_back(textureDesc("colorIn", 0, colorFormat));
         desc.textures.push_back(textureDesc("scenePrimIdIn", 1, sceneIdFormat));
-        desc.textures.push_back(textureDesc("selectedIdMaskIn", 2, HgiFormatInt32));
+        desc.textures.push_back(textureDesc("sceneElementIdIn", 2, sceneIdFormat));
+        desc.textures.push_back(textureDesc("selectedIdMaskIn", 3, HgiFormatInt32));
+        desc.textures.push_back(textureDesc("selectedSubsetPrimMaskIn", 4, HgiFormatInt32));
+        desc.textures.push_back(textureDesc("selectedSubsetElementMaskIn", 5, HgiFormatInt32));
 
         HgiShaderFunctionAddConstantParam(&desc, "uSelectionColor", "vec4");
         HgiShaderFunctionAddConstantParam(&desc, "uScreenSize", "ivec2");
         HgiShaderFunctionAddConstantParam(&desc, "uSelectedMaskSize", "ivec2");
+        HgiShaderFunctionAddConstantParam(&desc, "uSelectedSubsetPrimMaskSize", "ivec2");
+        HgiShaderFunctionAddConstantParam(&desc, "uSelectedSubsetElementMaskSize", "ivec2");
         HgiShaderFunctionAddConstantParam(&desc, "uSelectedMaskCapacity", "int");
+        HgiShaderFunctionAddConstantParam(&desc, "uSelectedSubsetPrimMaskCapacity", "int");
+        HgiShaderFunctionAddConstantParam(&desc, "uSelectedSubsetElementCapacity", "int");
         HgiShaderFunctionAddConstantParam(&desc, "uRadius", "int");
         HgiShaderFunctionAddConstantParam(&desc, "uSoftnessStrength", "float");
         HgiShaderFunctionAddConstantParam(&desc, "uSoftnessFalloff", "float");
-        HgiShaderFunctionAddConstantParam(&desc, "uPadding", "float");
+        HgiShaderFunctionAddConstantParam(&desc, "uPadding0", "float");
+        HgiShaderFunctionAddConstantParam(&desc, "uPadding1", "float");
         return desc;
     }
 
@@ -223,6 +246,7 @@ public:
     {
         destroyAoTextures();
         destroySelectedMask();
+        destroySelectedSubsetMasks();
     }
 
     void destroyAoTextures()
@@ -280,15 +304,35 @@ public:
 
     bool ensureSelectedMask(const std::vector<int32_t>& ids)
     {
-        if (!hgi || ids.empty()) {
-            destroySelectedMask();
+        if (!hgi)
             return false;
-        }
 
         if (selectedIdMask && selectedIds == ids)
             return true;
 
         destroySelectedMask();
+
+        // The selection shader always binds this texture. Keep a valid 1x1
+        // zero mask when selection consists only of GeomSubset elements.
+        if (ids.empty()) {
+            const int32_t zero = 0;
+            HgiTextureDesc desc;
+            desc.debugName = "Stageviz Selected PrimId Mask";
+            desc.type = HgiTextureType2D;
+            desc.dimensions = GfVec3i(1, 1, 1);
+            desc.layerCount = 1;
+            desc.mipLevels = 1;
+            desc.sampleCount = HgiSampleCount1;
+            desc.format = HgiFormatInt32;
+            desc.usage = HgiTextureUsageBitsShaderRead;
+            desc.pixelsByteSize = sizeof(zero);
+            desc.initialData = &zero;
+            selectedIdMask = hgi->CreateTexture(desc);
+            selectedMaskSize = GfVec2i(1);
+            selectedMaskCapacity = 0;
+            selectedIds.clear();
+            return static_cast<bool>(selectedIdMask);
+        }
 
         const int32_t maxId = *std::max_element(ids.begin(), ids.end());
         if (maxId < 0)
@@ -325,6 +369,137 @@ public:
         }
 
         selectedIds = ids;
+        return true;
+    }
+
+    void destroySelectedSubsetMasks()
+    {
+        if (hgi && selectedSubsetPrimMask)
+            hgi->DestroyTexture(&selectedSubsetPrimMask);
+        if (hgi && selectedSubsetElementMask)
+            hgi->DestroyTexture(&selectedSubsetElementMask);
+
+        selectedSubsetPrimMaskSize = GfVec2i(0);
+        selectedSubsetElementMaskSize = GfVec2i(0);
+        selectedSubsetPrimMaskCapacity = 0;
+        selectedSubsetElementCapacity = 0;
+        selectedSubsets.clear();
+    }
+
+    bool ensureSelectedSubsetMask(const std::vector<ResolvedSubsetSelection>& subsets)
+    {
+        if (!hgi)
+            return false;
+
+        if (selectedSubsetPrimMask && selectedSubsetElementMask && selectedSubsets == subsets)
+            return true;
+
+        destroySelectedSubsetMasks();
+
+        // As with the whole-prim mask, keep valid dummy textures so the shader
+        // binding layout is identical for ordinary and subset-only selection.
+        if (subsets.empty()) {
+            const int32_t zero = 0;
+            HgiTextureDesc desc;
+            desc.type = HgiTextureType2D;
+            desc.dimensions = GfVec3i(1, 1, 1);
+            desc.layerCount = 1;
+            desc.mipLevels = 1;
+            desc.sampleCount = HgiSampleCount1;
+            desc.format = HgiFormatInt32;
+            desc.usage = HgiTextureUsageBitsShaderRead;
+            desc.pixelsByteSize = sizeof(zero);
+            desc.initialData = &zero;
+
+            desc.debugName = "Stageviz Selected GeomSubset Prim Rows";
+            selectedSubsetPrimMask = hgi->CreateTexture(desc);
+            desc.debugName = "Stageviz Selected GeomSubset Elements";
+            selectedSubsetElementMask = hgi->CreateTexture(desc);
+
+            selectedSubsetPrimMaskSize = GfVec2i(1);
+            selectedSubsetElementMaskSize = GfVec2i(1);
+            selectedSubsetPrimMaskCapacity = 0;
+            selectedSubsetElementCapacity = 0;
+            selectedSubsets.clear();
+            if (!selectedSubsetPrimMask || !selectedSubsetElementMask) {
+                destroySelectedSubsetMasks();
+                return false;
+            }
+            return true;
+        }
+
+        int32_t maxPrimId = -1;
+        int32_t maxElementId = -1;
+        for (const ResolvedSubsetSelection& subset : subsets) {
+            maxPrimId = std::max(maxPrimId, subset.primId);
+            for (const int32_t elementId : subset.elementIds)
+                maxElementId = std::max(maxElementId, elementId);
+        }
+        if (maxPrimId < 0 || maxElementId < 0)
+            return ensureSelectedSubsetMask({});
+
+        constexpr int kMaskWidth = 4096;
+        selectedSubsetPrimMaskCapacity = maxPrimId + 1;
+        const int primWidth = std::min(kMaskWidth, selectedSubsetPrimMaskCapacity);
+        const int primHeight = (selectedSubsetPrimMaskCapacity + primWidth - 1) / primWidth;
+        selectedSubsetPrimMaskSize = GfVec2i(primWidth, std::max(1, primHeight));
+
+        selectedSubsetElementCapacity = maxElementId + 1;
+        const size_t totalElementSlots = static_cast<size_t>(selectedSubsetElementCapacity) * subsets.size();
+        const int elementWidth = static_cast<int>(std::min<size_t>(kMaskWidth, std::max<size_t>(1, totalElementSlots)));
+        const int elementHeight = static_cast<int>((totalElementSlots + elementWidth - 1) / elementWidth);
+        selectedSubsetElementMaskSize = GfVec2i(elementWidth, std::max(1, elementHeight));
+
+        std::vector<int32_t> primRows(static_cast<size_t>(selectedSubsetPrimMaskSize[0])
+                                          * selectedSubsetPrimMaskSize[1],
+                                      0);
+        std::vector<int32_t> elementMask(static_cast<size_t>(selectedSubsetElementMaskSize[0])
+                                             * selectedSubsetElementMaskSize[1],
+                                         0);
+
+        for (size_t row = 0; row < subsets.size(); ++row) {
+            const ResolvedSubsetSelection& subset = subsets[row];
+            if (subset.primId < 0 || subset.primId >= selectedSubsetPrimMaskCapacity)
+                continue;
+
+            // 0 means no subset row; row+1 keeps row zero representable.
+            primRows[static_cast<size_t>(subset.primId)] = static_cast<int32_t>(row + 1);
+            for (const int32_t elementId : subset.elementIds) {
+                if (elementId < 0 || elementId >= selectedSubsetElementCapacity)
+                    continue;
+                const size_t flat = row * static_cast<size_t>(selectedSubsetElementCapacity)
+                                    + static_cast<size_t>(elementId);
+                if (flat < elementMask.size())
+                    elementMask[flat] = 1;
+            }
+        }
+
+        HgiTextureDesc desc;
+        desc.type = HgiTextureType2D;
+        desc.layerCount = 1;
+        desc.mipLevels = 1;
+        desc.sampleCount = HgiSampleCount1;
+        desc.format = HgiFormatInt32;
+        desc.usage = HgiTextureUsageBitsShaderRead;
+
+        desc.debugName = "Stageviz Selected GeomSubset Prim Rows";
+        desc.dimensions = GfVec3i(selectedSubsetPrimMaskSize[0], selectedSubsetPrimMaskSize[1], 1);
+        desc.pixelsByteSize = primRows.size() * sizeof(int32_t);
+        desc.initialData = primRows.data();
+        selectedSubsetPrimMask = hgi->CreateTexture(desc);
+
+        desc.debugName = "Stageviz Selected GeomSubset Elements";
+        desc.dimensions = GfVec3i(selectedSubsetElementMaskSize[0], selectedSubsetElementMaskSize[1], 1);
+        desc.pixelsByteSize = elementMask.size() * sizeof(int32_t);
+        desc.initialData = elementMask.data();
+        selectedSubsetElementMask = hgi->CreateTexture(desc);
+
+        if (!selectedSubsetPrimMask || !selectedSubsetElementMask) {
+            destroySelectedSubsetMasks();
+            return false;
+        }
+
+        selectedSubsets = subsets;
         return true;
     }
 
@@ -382,6 +557,14 @@ public:
     int selectedMaskCapacity = 0;
     std::vector<int32_t> selectedIds;
 
+    HgiTextureHandle selectedSubsetPrimMask;
+    HgiTextureHandle selectedSubsetElementMask;
+    GfVec2i selectedSubsetPrimMaskSize = GfVec2i(0);
+    GfVec2i selectedSubsetElementMaskSize = GfVec2i(0);
+    int selectedSubsetPrimMaskCapacity = 0;
+    int selectedSubsetElementCapacity = 0;
+    std::vector<ResolvedSubsetSelection> selectedSubsets;
+
     TfToken aoShaderPath;
     HgiFormat aoColorFormat = HgiFormatInvalid;
     HgiFormat aoDepthFormat = HgiFormatInvalid;
@@ -435,6 +618,30 @@ public:
         return textureHandle(0);
     }
 
+    HgiTextureHandle elementIdTexture() const { return textureHandle(2); }
+
+    int32_t elementIdAt(const GfVec2i& pixel)
+    {
+        if (m_aovBuffers.size() <= 2 || !m_aovBuffers[2])
+            return -1;
+
+        HdStRenderBuffer* buffer = m_aovBuffers[2].get();
+        const int width = static_cast<int>(buffer->GetWidth());
+        const int height = static_cast<int>(buffer->GetHeight());
+        if (width <= 0 || height <= 0 || buffer->GetFormat() != HdFormatInt32 || pixel[0] < 0 || pixel[1] < 0
+            || pixel[0] >= width || pixel[1] >= height)
+            return -1;
+
+        const auto* values = static_cast<const int32_t*>(buffer->Map());
+        if (!values)
+            return -1;
+
+        const size_t index = static_cast<size_t>(pixel[1]) * static_cast<size_t>(width) + static_cast<size_t>(pixel[0]);
+        const int32_t value = values[index];
+        buffer->Unmap();
+        return value;
+    }
+
     std::vector<int32_t> selectedPrimIds(SdfPathVector paths)
     {
         if (!m_renderIndex || paths.empty())
@@ -473,6 +680,51 @@ public:
         m_selectedPrimIds = ids;
         m_selectedRprimIndexVersion = rprimIndexVersion;
         return ids;
+    }
+
+    std::vector<ResolvedSubsetSelection> selectedSubsetElements(const std::vector<SelectionSubsetSettings>& subsets)
+    {
+        if (!m_renderIndex || subsets.empty())
+            return {};
+
+        const unsigned rprimIndexVersion = m_renderIndex->GetChangeTracker().GetRprimIndexVersion();
+        if (subsets == m_selectedSubsetSettings && rprimIndexVersion == m_selectedSubsetRprimIndexVersion)
+            return m_selectedSubsetElements;
+
+        std::unordered_map<int32_t, std::unordered_set<int32_t>> grouped;
+        for (const SelectionSubsetSettings& subset : subsets) {
+            const HdRprim* rprim = m_renderIndex->GetRprim(subset.meshPath);
+            if (!rprim)
+                continue;
+
+            const int32_t primId = rprim->GetPrimId();
+            if (primId < 0)
+                continue;
+
+            std::unordered_set<int32_t>& elements = grouped[primId];
+            for (const int32_t elementId : subset.elementIds) {
+                if (elementId >= 0)
+                    elements.insert(elementId);
+            }
+        }
+
+        std::vector<ResolvedSubsetSelection> result;
+        result.reserve(grouped.size());
+        for (auto& entry : grouped) {
+            ResolvedSubsetSelection subset;
+            subset.primId = entry.first;
+            subset.elementIds.assign(entry.second.begin(), entry.second.end());
+            std::sort(subset.elementIds.begin(), subset.elementIds.end());
+            result.push_back(std::move(subset));
+        }
+        std::sort(result.begin(), result.end(), [](const ResolvedSubsetSelection& a, const ResolvedSubsetSelection& b) {
+            return a.primId < b.primId;
+        });
+
+        m_selectedSubsetSettings = subsets;
+        m_selectedSubsetElements = result;
+        m_selectedSubsetRprimIndexVersion = rprimIndexVersion;
+        return result;
     }
 
     SdfPathVector captureVisiblePaths(const std::vector<GfMatrix4d>& captureProjectionMatrices,
@@ -609,16 +861,34 @@ private:
         if (!registry)
             return false;
 
-        const TfToken aovs[] = { HdAovTokens->primId, HdAovTokens->depth };
-        const char* names[] = { "primId", "depth" };
+        // SceneId.glslfx is the same shallow-pick shader used by Hydra-style
+        // picking. Its integer fragment outputs are declared in this order:
+        // primId, instanceId, elementId, edgeId, pointId. Keep the bound color
+        // AOVs in the exact same order. Binding only primId + elementId causes
+        // the second attachment to receive instanceId (normally 0), which is
+        // why every face previously appeared to have elementId 0.
+        const TfToken aovs[] = { HdAovTokens->primId, HdAovTokens->instanceId, HdAovTokens->elementId,
+                                 HdAovTokens->edgeId, HdAovTokens->pointId,    HdAovTokens->depth };
+        const char* names[] = { "primId", "instanceId", "elementId", "edgeId", "pointId", "depth" };
 
-        for (size_t i = 0; i < 2; ++i) {
-            const HdAovDescriptor desc = m_renderIndex->GetRenderDelegate()->GetDefaultAovDescriptor(aovs[i]);
+        for (size_t i = 0; i < 6; ++i) {
+            HdAovDescriptor desc = m_renderIndex->GetRenderDelegate()->GetDefaultAovDescriptor(aovs[i]);
+
+            // The five picking IDs are signed integer render targets. Be
+            // explicit because these buffers are single-sample on Metal.
+            if (i < 5) {
+                desc.format = HdFormatInt32;
+                desc.multiSampled = false;
+                desc.clearValue = VtValue(int32_t(-1));
+            }
+            else {
+                desc.format = HdFormatFloat32;
+                desc.multiSampled = false;
+                desc.clearValue = VtValue(1.0f);
+            }
+
             const SdfPath id(std::string("/__Stageviz/SceneIds/") + names[i]);
-
             auto buffer = std::make_unique<HdStRenderBuffer>(registry.get(), id);
-            // Integer primId targets cannot be MSAA resolve targets on Metal.
-            // Keep both ID-pass attachments explicitly single-sample.
             if (!buffer->Allocate(GfVec3i(size[0], size[1], 1), desc.format, false)) {
                 cleanupBuffers();
                 return false;
@@ -737,6 +1007,10 @@ private:
     std::vector<int32_t> m_selectedPrimIds;
     unsigned m_selectedRprimIndexVersion = std::numeric_limits<unsigned>::max();
 
+    std::vector<SelectionSubsetSettings> m_selectedSubsetSettings;
+    std::vector<ResolvedSubsetSelection> m_selectedSubsetElements;
+    unsigned m_selectedSubsetRprimIndexVersion = std::numeric_limits<unsigned>::max();
+
     std::unordered_map<int32_t, SdfPath> m_rprimPathsById;
     unsigned m_rprimPathCacheVersion = std::numeric_limits<unsigned>::max();
 };
@@ -744,7 +1018,8 @@ private:
 bool
 RenderTaskParams::enabled() const
 {
-    return ambientOcclusion.enabled || sceneIds.enabled || selectionOutline.enabled || captureVisible;
+    return ambientOcclusion.enabled || sceneIds.enabled || selectionOutline.enabled || captureVisible
+           || captureElementId;
 }
 
 bool
@@ -764,9 +1039,11 @@ operator==(const RenderTaskParams& lhs, const RenderTaskParams& rhs)
            && a.debugMode == b.debugMode && ia.enabled == ib.enabled && ia.roots == ib.roots
            && ia.renderTags == ib.renderTags && ia.reprSelector == ib.reprSelector && ia.size == ib.size
            && ia.viewport == ib.viewport && ia.viewMatrix == ib.viewMatrix && ia.projectionMatrix == ib.projectionMatrix
-           && sa.enabled == sb.enabled && sa.paths == sb.paths && sa.color == sb.color && sa.radius == sb.radius
-           && lhs.captureVisible == rhs.captureVisible && lhs.captureProjectionMatrices == rhs.captureProjectionMatrices
-           && lhs.nearClip == rhs.nearClip && lhs.farClip == rhs.farClip && lhs.orthographic == rhs.orthographic
+           && sa.enabled == sb.enabled && sa.paths == sb.paths && sa.subsets == sb.subsets && sa.color == sb.color
+           && sa.radius == sb.radius && lhs.captureVisible == rhs.captureVisible
+           && lhs.captureElementId == rhs.captureElementId && lhs.captureElementPixel == rhs.captureElementPixel
+           && lhs.captureProjectionMatrices == rhs.captureProjectionMatrices && lhs.nearClip == rhs.nearClip
+           && lhs.farClip == rhs.farClip && lhs.orthographic == rhs.orthographic
            && lhs.projectionMatrix == rhs.projectionMatrix && lhs.shaderPath == rhs.shaderPath
            && lhs.sceneIdShaderPath == rhs.sceneIdShaderPath;
 }
@@ -786,7 +1063,9 @@ operator<<(std::ostream& out, const RenderTaskParams& params)
         << "px, quality=" << static_cast<int>(ao.quality) << ", sceneIds=" << params.sceneIds.enabled
         << ", selectionOutline=" << params.selectionOutline.enabled
         << ", selectedPaths=" << params.selectionOutline.paths.size()
+        << ", selectedSubsets=" << params.selectionOutline.subsets.size()
         << ", selectionRadius=" << params.selectionOutline.radius << ", captureVisible=" << params.captureVisible
+        << ", captureElementId=" << params.captureElementId
         << ", captureTiles=" << params.captureProjectionMatrices.size() << ", nearClip=" << params.nearClip
         << ", farClip=" << params.farClip << ", orthographic=" << params.orthographic << ")";
     return out;
@@ -815,6 +1094,14 @@ RenderTask::takeCapturedVisiblePaths()
     return paths;
 }
 
+int32_t
+RenderTask::takeCapturedElementId()
+{
+    const int32_t value = m_capturedElementId;
+    m_capturedElementId = -1;
+    return value;
+}
+
 void
 RenderTask::_Sync(HdSceneDelegate* delegate, HdTaskContext* ctx, HdDirtyBits* dirtyBits)
 {
@@ -832,6 +1119,7 @@ RenderTask::_Sync(HdSceneDelegate* delegate, HdTaskContext* ctx, HdDirtyBits* di
                 m_params.sceneIds.enabled = false;
                 m_params.selectionOutline.enabled = false;
                 m_params.captureVisible = false;
+                m_params.captureElementId = false;
             }
         }
     }
@@ -857,10 +1145,14 @@ RenderTask::Prepare(HdTaskContext* ctx, HdRenderIndex* renderIndex)
 
     if (m_params.selectionOutline.enabled && m_sceneIdPass && m_shader) {
         const std::vector<int32_t> ids = m_sceneIdPass->selectedPrimIds(m_params.selectionOutline.paths);
+        const std::vector<ResolvedSubsetSelection> subsets = m_sceneIdPass->selectedSubsetElements(
+            m_params.selectionOutline.subsets);
         m_shader->ensureSelectedMask(ids);
+        m_shader->ensureSelectedSubsetMask(subsets);
     }
     else if (m_shader) {
         m_shader->ensureSelectedMask({});
+        m_shader->ensureSelectedSubsetMask({});
     }
 }
 
@@ -871,10 +1163,18 @@ RenderTask::Execute(HdTaskContext* ctx)
         return;
 
     HgiTextureHandle scenePrimId;
-    const bool needsViewportSceneIds = m_params.selectionOutline.enabled
+    HgiTextureHandle sceneElementId;
+    const bool needsViewportSceneIds = m_params.selectionOutline.enabled || m_params.captureElementId
                                        || (m_params.captureVisible && m_params.captureProjectionMatrices.empty());
-    if (m_params.sceneIds.enabled && m_sceneIdPass && needsViewportSceneIds)
+    if (m_params.sceneIds.enabled && m_sceneIdPass && needsViewportSceneIds) {
         scenePrimId = m_sceneIdPass->execute();
+        sceneElementId = m_sceneIdPass->elementIdTexture();
+    }
+
+    if (m_params.captureElementId && m_sceneIdPass && scenePrimId)
+        m_capturedElementId = m_sceneIdPass->elementIdAt(m_params.captureElementPixel);
+    else if (m_params.captureElementId)
+        m_capturedElementId = -1;
 
     if (m_params.ambientOcclusion.enabled && m_shader && !m_params.shaderPath.IsEmpty()) {
         HgiTextureHandle inputColor;
@@ -956,8 +1256,8 @@ RenderTask::Execute(HdTaskContext* ctx)
         }
     }
 
-    if (m_params.selectionOutline.enabled && m_shader && scenePrimId && m_shader->selectedIdMask
-        && !m_params.shaderPath.IsEmpty()) {
+    if (m_params.selectionOutline.enabled && m_shader && scenePrimId && sceneElementId && m_shader->selectedIdMask
+        && m_shader->selectedSubsetPrimMask && m_shader->selectedSubsetElementMask && !m_params.shaderPath.IsEmpty()) {
         HgiTextureHandle inputColor;
         if (_GetTaskContextData(ctx, HdAovTokens->color, &inputColor) && inputColor) {
             const HgiTextureDesc& colorDesc = inputColor->GetDescriptor();
@@ -974,11 +1274,17 @@ RenderTask::Execute(HdTaskContext* ctx)
                     constants.color = m_params.selectionOutline.color;
                     constants.screenSize = screenSize;
                     constants.selectedMaskSize = m_shader->selectedMaskSize;
+                    constants.selectedSubsetPrimMaskSize = m_shader->selectedSubsetPrimMaskSize;
+                    constants.selectedSubsetElementMaskSize = m_shader->selectedSubsetElementMaskSize;
                     constants.selectedMaskCapacity = m_shader->selectedMaskCapacity;
+                    constants.selectedSubsetPrimMaskCapacity = m_shader->selectedSubsetPrimMaskCapacity;
+                    constants.selectedSubsetElementCapacity = m_shader->selectedSubsetElementCapacity;
                     constants.radius = static_cast<int>(
                         std::clamp(m_params.selectionOutline.radius, 1u, kMaxSelectionRadius));
 
-                    m_shader->selection.BindTextures({ inputColor, scenePrimId, m_shader->selectedIdMask });
+                    m_shader->selection.BindTextures({ inputColor, scenePrimId, sceneElementId,
+                                                       m_shader->selectedIdMask, m_shader->selectedSubsetPrimMask,
+                                                       m_shader->selectedSubsetElementMask });
                     m_shader->selection.SetShaderConstants(sizeof(constants), &constants);
                     m_shader->selection.Draw(outputColor, HgiTextureHandle());
                 }

@@ -268,10 +268,10 @@ main(void)
 // Selection outline rendering is derived from the ID-buffer architecture in
 // Autodesk Hydra Viewport Toolbox (Apache-2.0), simplified for Stageviz.
 //
-// Stageviz renders the scene primId/depth layer once with HdCullStyleNothing.
-// Selected USD paths are resolved to HdRprim::GetPrimId() values on the CPU and
-// uploaded as a compact integer lookup texture. The fragment shader therefore
-// tests selection membership without rendering selected geometry a second time.
+// Stageviz renders scene primId + elementId once with HdCullStyleNothing.
+// Ordinary selected USD paths resolve to HdRprim::GetPrimId() values. Selected
+// face GeomSubsets resolve to mesh primId + elementId pairs. Compact integer
+// lookup textures let the shader test both forms without a second geometry pass.
 
 bool
 isSelectedPrimId(int primId)
@@ -289,13 +289,53 @@ isSelectedPrimId(int primId)
     return HgiTexelFetch_selectedIdMaskIn(ivec2(x, y)).x != 0;
 }
 
+int
+selectedSubsetRow(int primId)
+{
+    if (primId < 0 || primId >= uSelectedSubsetPrimMaskCapacity)
+        return -1;
+    if (uSelectedSubsetPrimMaskSize.x <= 0 || uSelectedSubsetPrimMaskSize.y <= 0)
+        return -1;
+
+    int x = primId % uSelectedSubsetPrimMaskSize.x;
+    int y = primId / uSelectedSubsetPrimMaskSize.x;
+    if (y >= uSelectedSubsetPrimMaskSize.y)
+        return -1;
+
+    // Zero means no selected subset for the prim; rows are stored as row+1.
+    return HgiTexelFetch_selectedSubsetPrimMaskIn(ivec2(x, y)).x - 1;
+}
+
+bool
+isSelectedSubsetElement(int primId, int elementId)
+{
+    int row = selectedSubsetRow(primId);
+    if (row < 0 || elementId < 0 || elementId >= uSelectedSubsetElementCapacity)
+        return false;
+    if (uSelectedSubsetElementMaskSize.x <= 0 || uSelectedSubsetElementMaskSize.y <= 0)
+        return false;
+
+    int flatIndex = row * uSelectedSubsetElementCapacity + elementId;
+    int x = flatIndex % uSelectedSubsetElementMaskSize.x;
+    int y = flatIndex / uSelectedSubsetElementMaskSize.x;
+    if (y >= uSelectedSubsetElementMaskSize.y)
+        return false;
+
+    return HgiTexelFetch_selectedSubsetElementMaskIn(ivec2(x, y)).x != 0;
+}
+
 bool
 visibleSelectedPixel(ivec2 location)
 {
     if (any(lessThan(location, ivec2(0))) || any(greaterThanEqual(location, uScreenSize)))
         return false;
 
-    return isSelectedPrimId(HgiTexelFetch_scenePrimIdIn(location).x);
+    int primId = HgiTexelFetch_scenePrimIdIn(location).x;
+    if (isSelectedPrimId(primId))
+        return true;
+
+    int elementId = HgiTexelFetch_sceneElementIdIn(location).x;
+    return isSelectedSubsetElement(primId, elementId);
 }
 
 float

@@ -1524,6 +1524,36 @@ def _material_row_visible(view, text):
         return False
 
 
+
+def test_geometry_subset_ui(main):
+    """Keep geometry subsets intact while the material editor is displayed."""
+    reload_fixture(main, stageviz.LoadNone)
+    scene = stage()
+    mesh = UsdGeom.Mesh.Define(scene, "/World/SubsetUiMesh")
+    mesh.CreatePointsAttr([(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)])
+    mesh.CreateFaceVertexCountsAttr([3, 3])
+    mesh.CreateFaceVertexIndicesAttr([0, 1, 2, 0, 2, 3])
+    a = UsdGeom.Subset.CreateGeomSubset(mesh, "Front", UsdGeom.Tokens.face, [0], "materialBind")
+    b = UsdGeom.Subset.CreateGeomSubset(mesh, "Back", UsdGeom.Tokens.face, [1], "materialBind")
+    UsdGeom.Subset.SetFamilyType(mesh, "materialBind", UsdGeom.Tokens.partition)
+    red = UsdShade.Material.Define(scene, "/World/SubsetUiRed")
+    blue = UsdShade.Material.Define(scene, "/World/SubsetUiBlue")
+    UsdShade.MaterialBindingAPI.Apply(a.GetPrim()).Bind(red)
+    UsdShade.MaterialBindingAPI.Apply(b.GetPrim()).Bind(blue)
+
+    dialog = open_material_dialog()
+    require(dialog is not None, "material editor opens with face subsets")
+    process_events()
+    for name, expected in (("Front", red), ("Back", blue)):
+        path = "/World/SubsetUiMesh/" + name
+        require(bool(scene.GetPrimAtPath(path)), name + " subset survives UI refresh")
+        actual, _ = UsdShade.MaterialBindingAPI(scene.GetPrimAtPath(path)).ComputeBoundMaterial()
+        require(bool(actual) and actual.GetPath() == expected.GetPath(),
+                name + " subset retains its material with editor open")
+    if dialog is not None:
+        dialog.close()
+        process_events()
+
 def test_material_editor_ui(main):
     reload_fixture(main, stageviz.LoadNone)
     material_paths = _ensure_material_ui_fixture()
@@ -5616,6 +5646,7 @@ def run():
         test_all_policy(main)
         test_payload_selection_synchronization(main)
         test_payload_menu_commands(payload_menu_main)
+        test_geometry_subset_ui(main)
         test_material_editor_ui(main)
         test_save_as_preserves_expansion(main, root)
         test_invalid_move_keeps_tree_stable(main)

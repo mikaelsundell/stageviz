@@ -23,6 +23,8 @@ public:
     bool active() const;
     bool isDisplayPath(const SdfPath& path) const;
     bool isGprim(const HdSceneIndexPrim& prim) const;
+    bool isGeomSubset(const HdSceneIndexPrim& prim) const;
+    bool isMaterialTarget(const HdSceneIndexPrim& prim) const;
     bool isMesh(const HdSceneIndexPrim& prim) const;
     SdfPath effectiveMaterialPath() const;
     HdContainerDataSourceHandle createMaterialBindings(const SdfPath& materialPath) const;
@@ -71,6 +73,22 @@ RenderSceneIndexPrivate::isGprim(const HdSceneIndexPrim& prim) const
            || type == HdPrimTypeTokens->nurbsPatch || type == HdPrimTypeTokens->plane || type == HdPrimTypeTokens->cube
            || type == HdPrimTypeTokens->sphere || type == HdPrimTypeTokens->cylinder || type == HdPrimTypeTokens->cone
            || type == HdPrimTypeTokens->capsule;
+}
+
+bool
+RenderSceneIndexPrivate::isGeomSubset(const HdSceneIndexPrim& prim) const
+{
+    return prim.primType == HdPrimTypeTokens->geomSubset;
+}
+
+bool
+RenderSceneIndexPrivate::isMaterialTarget(const HdSceneIndexPrim& prim) const
+{
+    // GeomSubset prims carry their own materialBindings in the Hydra scene
+    // index. These bindings are more specific than the parent mesh binding,
+    // so viewport Clay/Custom presentation and Scene Materials Off must
+    // filter them too.
+    return isGprim(prim) || isGeomSubset(prim);
 }
 
 bool
@@ -209,7 +227,7 @@ RenderSceneIndex::GetPrim(const SdfPath& primPath) const
 {
     HdSceneIndexPrim prim = _GetInputSceneIndex()->GetPrim(primPath);
 
-    if (!p->isGprim(prim))
+    if (!p->isMaterialTarget(prim))
         return prim;
 
     // Never override auxiliary display geometry such as the grid.
@@ -256,9 +274,12 @@ RenderSceneIndex::dirtyMaterialBindings()
     if (!_IsObserved())
         return;
 
-    HdSceneIndexObserver::DirtiedPrimEntries entries;
-    HdDataSourceLocatorSet locators;
-    locators.insert(HdMaterialBindingsSchema::GetDefaultLocator());
+    HdSceneIndexObserver::DirtiedPrimEntries gprimEntries;
+    HdDataSourceLocatorSet materialLocators;
+    materialLocators.insert(HdMaterialBindingsSchema::GetDefaultLocator());
+
+    HdSceneIndexObserver::RemovedPrimEntries subsetRemoved;
+    HdSceneIndexObserver::AddedPrimEntries subsetAdded;
 
     std::vector<SdfPath> pending { SdfPath::AbsoluteRootPath() };
     while (!pending.empty()) {
@@ -275,12 +296,22 @@ RenderSceneIndex::dirtyMaterialBindings()
 
             const HdSceneIndexPrim prim = _GetInputSceneIndex()->GetPrim(child);
 
-            if (p->isGprim(prim))
-                entries.push_back({ child, locators });
+            if (p->isGeomSubset(prim)) {
+                subsetRemoved.push_back({ child });
+                subsetAdded.push_back({ child, prim.primType });
+            }
+            else if (p->isGprim(prim)) {
+                gprimEntries.push_back({ child, materialLocators });
+            }
         }
     }
-    if (!entries.empty())
-        _SendPrimsDirtied(entries);
+
+    if (!subsetRemoved.empty())
+        _SendPrimsRemoved(subsetRemoved);
+    if (!subsetAdded.empty())
+        _SendPrimsAdded(subsetAdded);
+    if (!gprimEntries.empty())
+        _SendPrimsDirtied(gprimEntries);
 }
 
 void

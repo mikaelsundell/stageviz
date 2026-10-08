@@ -36,6 +36,7 @@
 #include <pxr/usd/usd/stageLoadRules.h>
 #include <pxr/usd/usdGeom/bboxCache.h>
 #include <pxr/usd/usdGeom/metrics.h>
+#include <pxr/usd/usdGeom/subset.h>
 #include <pxr/usd/usdGeom/xform.h>
 #include <pxr/usd/usdUtils/dependencies.h>
 
@@ -73,6 +74,7 @@ public:
     void syncStageUp();
     void syncStageMetadata(const NoticeBatch& batch);
     GfBBox3d boundingBox();
+    GfBBox3d boundingBox(const QList<SdfPath>& paths);
     bool needsBoundingBoxUpdate(const NoticeBatch& batch) const;
     void updatePrims(const NoticeBatch& batch);
     void flushPrims();
@@ -1353,6 +1355,45 @@ SessionPrivate::boundingBox()
     return d.bbox;
 }
 
+GfBBox3d
+SessionPrivate::boundingBox(const QList<SdfPath>& paths)
+{
+    READ_LOCKER(locker, &d.stageLock, "stageLock");
+
+    if (!d.stage || paths.isEmpty())
+        return GfBBox3d();
+
+    QList<SdfPath> framePaths;
+    framePaths.reserve(paths.size());
+
+    for (const SdfPath& path : paths) {
+        const SdfPath primPath = path.IsPropertyPath() ? path.GetPrimPath() : path;
+        const UsdPrim prim = d.stage->GetPrimAtPath(primPath);
+        if (!prim || !prim.IsValid())
+            continue;
+
+        SdfPath framePath = primPath;
+
+        // GeomSubsets are not independently imageable. Frame their owning
+        // geometry instead so viewport operations such as Frame Selected keep
+        // working when a subset is the semantic selection.
+        if (prim.IsA<UsdGeomSubset>()) {
+            const UsdPrim parent = prim.GetParent();
+            if (!parent || !parent.IsValid())
+                continue;
+            framePath = parent.GetPath();
+        }
+
+        if (!framePaths.contains(framePath))
+            framePaths.append(framePath);
+    }
+
+    if (framePaths.isEmpty())
+        return GfBBox3d();
+
+    return stage::boundingBox(d.stage, framePaths);
+}
+
 bool
 SessionPrivate::needsBoundingBoxUpdate(const NoticeBatch& batch) const
 {
@@ -1650,6 +1691,12 @@ GfBBox3d
 Session::boundingBox()
 {
     return p->boundingBox();
+}
+
+GfBBox3d
+Session::boundingBox(const QList<SdfPath>& paths)
+{
+    return p->boundingBox(paths);
 }
 
 Session::LoadPolicy

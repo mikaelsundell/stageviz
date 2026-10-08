@@ -2018,16 +2018,7 @@ ViewerPrivate::frameSelected()
     if (paths.isEmpty())
         return;
 
-    GfBBox3d bbox;
-    {
-        READ_LOCKER(locker, session()->stageLock(), "stageLock");
-        const UsdStageRefPtr stage = session()->stageUnsafe();
-        if (!stage)
-            return;
-
-        bbox = stageviz::stage::boundingBox(stage, paths);
-    }
-
+    const GfBBox3d bbox = session()->boundingBox(paths);
     if (bbox.GetRange().IsEmpty())
         return;
 

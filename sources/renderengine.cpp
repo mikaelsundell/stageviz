@@ -18,9 +18,11 @@
 #include <QSurfaceFormat>
 #include <QtGui/qopengl.h>
 #include <algorithm>
+#include <cstdint>
 #include <memory>
 #include <pxr/base/gf/rotation.h>
 #include <pxr/base/gf/vec2d.h>
+#include <pxr/base/vt/array.h>
 #include <pxr/imaging/cameraUtil/framing.h>
 #include <pxr/imaging/glf/simpleLight.h>
 #include <pxr/imaging/glf/simpleMaterial.h>
@@ -40,6 +42,7 @@
 #include <pxr/imaging/hgi/hgi.h>
 #include <pxr/usd/sdf/assetPath.h>
 #include <pxr/usd/usdGeom/metrics.h>
+#include <pxr/usd/usdGeom/subset.h>
 #include <pxr/usd/usdGeom/tokens.h>
 #include <pxr/usdImaging/usdImaging/sceneIndices.h>
 #include <pxr/usdImaging/usdImaging/stageSceneIndex.h>
@@ -347,6 +350,17 @@ namespace {
             return renderTask ? renderTask->takeCapturedVisiblePaths() : SdfPathVector {};
         }
 
+        int32_t takeCapturedElementId()
+        {
+            HdRenderIndex* renderIndex = _GetRenderIndex();
+            if (!renderIndex || !renderIndex->HasTask(m_renderTaskPath))
+                return -1;
+
+            const HdTaskSharedPtr& task = renderIndex->GetTask(m_renderTaskPath);
+            auto* renderTask = dynamic_cast<RenderTask*>(task.get());
+            return renderTask ? renderTask->takeCapturedElementId() : -1;
+        }
+
         void renderBatchWithDepthBias(const SdfPathVector& paths, const UsdImagingGLRenderParams& params,
                                       float constantFactor, float slopeFactor, const GfVec4f& wireframeColor)
         {
@@ -515,6 +529,9 @@ public:
     QList<SdfPath> selected;
     QColor selectionColor = QColor(255, 210, 0);
     bool captureVisibleRequested = false;
+    bool captureElementIdRequested = false;
+    GfVec2i captureElementPixel = GfVec2i(-1, -1);
+    int32_t capturedElementId = -1;
     int captureVisibleGridSize = 4;
     SdfPathVector capturedVisiblePaths;
     UsdImagingGLRenderParams params;
@@ -857,8 +874,41 @@ RenderEngine::Private::render()
 
     SdfPathVector selectedPaths;
     selectedPaths.reserve(selected.size());
-    for (const SdfPath& path : selected)
+    std::vector<SelectionSubsetSettings> selectedSubsets;
+
+    for (const SdfPath& path : selected) {
+        const UsdPrim prim = stage->GetPrimAtPath(path);
+        const UsdGeomSubset subset(prim);
+
+        if (subset) {
+            TfToken elementType;
+            VtIntArray indices;
+            const bool isFaceSubset = subset.GetElementTypeAttr().Get(&elementType)
+                                      && elementType == UsdGeomTokens->face;
+            const bool hasIndices = subset.GetIndicesAttr().Get(&indices) && !indices.empty();
+            const UsdPrim parent = prim.GetParent();
+
+            if (isFaceSubset && hasIndices && parent) {
+                SelectionSubsetSettings subsetSettings;
+                subsetSettings.meshPath = parent.GetPath();
+                subsetSettings.elementIds.reserve(indices.size());
+                for (const int value : indices) {
+                    if (value >= 0)
+                        subsetSettings.elementIds.push_back(static_cast<int32_t>(value));
+                }
+                if (!subsetSettings.elementIds.empty()) {
+                    std::sort(subsetSettings.elementIds.begin(), subsetSettings.elementIds.end());
+                    subsetSettings.elementIds.erase(std::unique(subsetSettings.elementIds.begin(),
+                                                                subsetSettings.elementIds.end()),
+                                                    subsetSettings.elementIds.end());
+                    selectedSubsets.push_back(std::move(subsetSettings));
+                    continue;
+                }
+            }
+        }
+
         selectedPaths.push_back(path);
+    }
 
     Hgi* documentHgi = engine->GetHgi();
     if (!documentHgi)
@@ -884,13 +934,17 @@ RenderEngine::Private::render()
                                                 && settings.drawMode != UsdImagingGLDrawMode::DRAW_WIREFRAME_ON_SURFACE;
     renderTaskParams.projectionMatrix = GfMatrix4f(projectionMatrix);
 
-    renderTaskParams.selectionOutline.enabled = contextMode == ContextMode::Current && !selectedPaths.empty()
+    renderTaskParams.selectionOutline.enabled = contextMode == ContextMode::Current
+                                                && (!selectedPaths.empty() || !selectedSubsets.empty())
                                                 && settings.aov == HdAovTokens->color;
     renderTaskParams.selectionOutline.paths = selectedPaths;
+    renderTaskParams.selectionOutline.subsets = std::move(selectedSubsets);
     renderTaskParams.selectionOutline.color = qt::QColorToGfVec4f(selectionColor);
     renderTaskParams.selectionOutline.radius = 3;
 
     renderTaskParams.captureVisible = captureVisibleRequested;
+    renderTaskParams.captureElementId = captureElementIdRequested;
+    renderTaskParams.captureElementPixel = captureElementPixel;
     renderTaskParams.captureProjectionMatrices.clear();
     if (renderTaskParams.captureVisible) {
         const int gridSize = std::clamp(captureVisibleGridSize, 1, 8);
@@ -913,7 +967,8 @@ RenderEngine::Private::render()
             }
         }
     }
-    renderTaskParams.sceneIds.enabled = renderTaskParams.selectionOutline.enabled || renderTaskParams.captureVisible;
+    renderTaskParams.sceneIds.enabled = renderTaskParams.selectionOutline.enabled || renderTaskParams.captureVisible
+                                        || renderTaskParams.captureElementId;
     renderTaskParams.sceneIds.roots = renderPaths;
     renderTaskParams.sceneIds.renderTags = { HdRenderTagTokens->geometry };
     if (settings.showGuides)
@@ -971,6 +1026,11 @@ RenderEngine::Private::render()
     if (captureVisibleRequested) {
         capturedVisiblePaths = renderTaskParams.captureVisible ? engine->takeCapturedVisiblePaths() : SdfPathVector {};
         captureVisibleRequested = false;
+    }
+
+    if (captureElementIdRequested) {
+        capturedElementId = renderTaskParams.captureElementId ? engine->takeCapturedElementId() : -1;
+        captureElementIdRequested = false;
     }
 
     documentHgi->EndFrame();
@@ -1214,6 +1274,26 @@ RenderEngine::captureVisiblePaths(int gridSize)
         result.append(path);
 
     p->capturedVisiblePaths.clear();
+    return result;
+}
+
+int
+RenderEngine::captureElementIdAt(const GfVec2i& pixel)
+{
+    if (p->contextMode != ContextMode::Current || !QOpenGLContext::currentContext())
+        return -1;
+
+    p->captureElementIdRequested = true;
+    p->captureElementPixel = pixel;
+    p->capturedElementId = -1;
+
+    if (!renderToCurrentFramebuffer()) {
+        p->captureElementIdRequested = false;
+        return -1;
+    }
+
+    const int result = static_cast<int>(p->capturedElementId);
+    p->capturedElementId = -1;
     return result;
 }
 

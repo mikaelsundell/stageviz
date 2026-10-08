@@ -5,6 +5,7 @@
 #pragma once
 
 #include "viewstate.h"
+#include <cstdint>
 #include <memory>
 #include <ostream>
 #include <pxr/base/gf/matrix4d.h>
@@ -44,16 +45,35 @@ struct SceneIdSettings {
 };
 
 /**
+ * @brief Face elements selected through a UsdGeomSubset.
+ *
+ * The mesh path resolves to a Storm HdRprim ID while elementIds are the
+ * authored mesh face indices carried by the scene elementId AOV.
+ */
+struct SelectionSubsetSettings {
+    SdfPath meshPath;
+    std::vector<int32_t> elementIds;
+
+    bool operator==(const SelectionSubsetSettings& other) const
+    {
+        return meshPath == other.meshPath && elementIds == other.elementIds;
+    }
+
+    bool operator!=(const SelectionSubsetSettings& other) const { return !(*this == other); }
+};
+
+/**
  * @brief Settings for the screen-space selection outline.
  *
- * Selected USD paths are resolved to Storm HdRprim IDs. The outline shader
- * tests the shared scene primId image against a compact GPU lookup texture,
- * then edge-detects the resulting selected-pixel mask. Selection changes no
- * longer require a second geometry pass.
+ * Ordinary selected USD paths are resolved to Storm HdRprim IDs. Face
+ * GeomSubsets are resolved to mesh-rprim/element-id pairs. The outline shader
+ * tests the shared primId + elementId images against compact GPU lookup
+ * textures, so subset selection does not require a second geometry pass.
  */
 struct SelectionOutlineSettings {
     bool enabled = false;
     SdfPathVector paths;
+    std::vector<SelectionSubsetSettings> subsets;
     GfVec4f color = GfVec4f(1.0f, 0.82f, 0.0f, 1.0f);
     unsigned int radius = 3;
 };
@@ -70,6 +90,8 @@ struct RenderTaskParams {
     SceneIdSettings sceneIds;
     SelectionOutlineSettings selectionOutline;
     bool captureVisible = false;
+    bool captureElementId = false;
+    GfVec2i captureElementPixel = GfVec2i(-1, -1);
 
     // Projection matrices for the thorough visible-capture scan. Each matrix
     // represents one narrowed camera tile rendered into the same full-size
@@ -114,6 +136,9 @@ public:
      */
     SdfPathVector takeCapturedVisiblePaths();
 
+    /** @brief Returns and clears the element ID captured at the requested scene-ID pixel. */
+    int32_t takeCapturedElementId();
+
     static const TfToken& token();
 
 protected:
@@ -127,6 +152,7 @@ private:
     std::unique_ptr<Shader> m_shader;
     std::unique_ptr<SceneIdPass> m_sceneIdPass;
     SdfPathVector m_capturedVisiblePaths;
+    int32_t m_capturedElementId = -1;
 };
 
 }  // namespace stageviz

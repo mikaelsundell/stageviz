@@ -24,6 +24,10 @@
 #include <pxr/base/gf/vec3d.h>
 #include <pxr/usd/usd/stage.h>
 #include <pxr/usd/usdGeom/cube.h>
+#include <pxr/usd/usdGeom/mesh.h>
+#include <pxr/usd/usdGeom/subset.h>
+#include <pxr/usd/usdShade/material.h>
+#include <pxr/usd/usdShade/materialBindingAPI.h>
 
 PXR_NAMESPACE_USING_DIRECTIVE
 
@@ -236,6 +240,29 @@ namespace {
         require(!browser.updateEntry(10, updated), "material browser rejects invalid row update");
     }
 
+
+    void geometrySubsetGuiApi()
+    {
+        const auto stage = UsdStage::CreateInMemory();
+        const auto mesh = UsdGeomMesh::Define(stage, SdfPath("/Mesh"));
+        mesh.CreateFaceVertexCountsAttr().Set(VtArray<int> { 3, 3 });
+        mesh.CreateFaceVertexIndicesAttr().Set(VtArray<int> { 0, 1, 2, 0, 2, 3 });
+        mesh.CreatePointsAttr().Set(VtArray<GfVec3f> {
+            GfVec3f(0, 0, 0), GfVec3f(1, 0, 0), GfVec3f(1, 1, 0), GfVec3f(0, 1, 0)
+        });
+        const auto subset = UsdGeomSubset::CreateGeomSubset(mesh, TfToken("Front"),
+            UsdGeomTokens->face, VtArray<int> { 0 }, TfToken("materialBind"));
+        const auto material = UsdShadeMaterial::Define(stage, SdfPath("/FrontMaterial"));
+        require(bool(subset) && bool(material), "GUI subset fixture created");
+        require(UsdShadeMaterialBindingAPI::Apply(subset.GetPrim()).Bind(material),
+                "GUI subset material bound");
+        require(UsdShadeMaterialBindingAPI(subset.GetPrim()).ComputeBoundMaterial().GetPath()
+                == material.GetPath(), "GUI subset resolves material");
+        QCoreApplication::processEvents();
+        require(bool(stage->GetPrimAtPath(SdfPath("/Mesh/Front"))),
+                "GUI event processing retains subset");
+    }
+
 }
 
 int main(int argc, char** argv)
@@ -246,6 +273,7 @@ int main(int argc, char** argv)
         {"style_api", styleApi},
         {"renderengine_api", renderEngineApi},
         {"material_browser_api", materialBrowserApi},
+        {"geometry_subset_gui_api", geometrySubsetGuiApi},
     };
 
     if (argc != 2 || !cases.count(argv[1])) {

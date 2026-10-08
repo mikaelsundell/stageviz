@@ -245,6 +245,14 @@ public:
     QList<SdfPath> captureVisiblePaths(int gridSize = 4);
 
     /**
+     * @brief Captures the coarse mesh element ID at a device-pixel position.
+     *
+     * The pixel uses the scene-ID render-buffer coordinate system: origin at
+     * the lower-left of the framebuffer. Returns -1 when no geometry is hit.
+     */
+    int captureElementIdAt(const GfVec2i& pixel);
+
+    /**
      * @brief Renders the current stage into an offscreen image.
      * @return Rendered image, or a null image if rendering failed.
      *

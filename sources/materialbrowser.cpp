@@ -49,6 +49,8 @@
 #include <cmath>
 #include <pxr/usd/usd/primRange.h>
 #include <pxr/usd/usdGeom/gprim.h>
+#include <pxr/usd/usdGeom/subset.h>
+#include <pxr/usd/usdShade/materialBindingAPI.h>
 
 // generated files
 #include "ui_materialbrowser.h"
@@ -71,6 +73,7 @@ public:
     void showViewMenu();
     void showContextMenu(QAbstractItemView* view, const QPoint& position);
     void assignMaterial(const MaterialEntry& material);
+    void selectMaterial(const MaterialEntry& material);
     void beginRename(QAbstractItemView* view, int row = -1);
     void commitRename(int row, const QString& name);
     QAbstractItemView* currentView() const;
@@ -389,6 +392,10 @@ MaterialBrowserPrivate::showContextMenu(QAbstractItemView* view, const QPoint& p
 
     menu.addSeparator();
 
+    QAction* selectAction = menu.addAction(tr("Select"));
+
+    menu.addSeparator();
+
     QMenu* copy = menu.addMenu(tr("Copy"));
     copy->setAttribute(Qt::WA_NoMouseReplay);
     QAction* copyName = copy->addAction(tr("Name"));
@@ -422,6 +429,9 @@ MaterialBrowserPrivate::showContextMenu(QAbstractItemView* view, const QPoint& p
         return;
     if (action == assignAction) {
         assignMaterial(contextMaterial);
+    }
+    else if (action == selectAction) {
+        selectMaterial(contextMaterial);
     }
     else if (action == duplicateMaterial) {
         // Duplicate only the RMB material and preserve the current scene/browser selection.
@@ -475,6 +485,34 @@ MaterialBrowserPrivate::showContextMenu(QAbstractItemView* view, const QPoint& p
     else if (action == deleteMaterial) {
         Q_EMIT d.browser->deleteRequested();
     }
+}
+
+
+void
+MaterialBrowserPrivate::selectMaterial(const MaterialEntry& material)
+{
+    QList<SdfPath> paths;
+
+    {
+        READ_LOCKER(locker, session()->stageLock(), "stageLock");
+        const UsdStageRefPtr stage = session()->stageUnsafe();
+        if (!stage)
+            return;
+
+        for (const UsdPrim& prim : stage->Traverse()) {
+            if (!prim || !prim.IsValid() || prim.IsInstanceProxy())
+                continue;
+
+            if (!prim.IsA<UsdGeomGprim>() && !prim.IsA<UsdGeomSubset>())
+                continue;
+
+            const UsdShadeMaterial bound = UsdShadeMaterialBindingAPI(prim).ComputeBoundMaterial();
+            if (bound && bound.GetPath() == material.materialPath)
+                paths.append(prim.GetPath());
+        }
+    }
+
+    session()->commandStack()->execute(new Command(selectPaths(paths)));
 }
 
 

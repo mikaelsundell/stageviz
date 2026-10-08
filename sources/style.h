@@ -78,6 +78,7 @@ public:
         Follow,
         FrameAll,
         Geometry,
+        GeomSubset,
         Hidden,
         Left,
         List,

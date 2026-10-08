@@ -390,6 +390,14 @@ public:
     GfBBox3d boundingBox();
 
     /**
+     * @brief Returns the combined bounding box for the specified prim paths.
+     *
+     * GeomSubset paths are resolved to their owning geometry so selections
+     * without an independent imageable bound can still be framed.
+     */
+    GfBBox3d boundingBox(const QList<SdfPath>& paths);
+
+    /**
      * @brief Returns the current stage filename.
      */
     QString filename() const;

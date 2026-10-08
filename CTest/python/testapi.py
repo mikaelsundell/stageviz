@@ -6283,6 +6283,70 @@ def test_save_reload(saved_path):
     _assert(bool(reopened.GetPrimAtPath("/World")), "saved stage contains /World")
 
 
+
+def test_geometry_subsets_materials_and_commands():
+    """Exercise face partitions, subset bindings, and Stageviz namespace commands."""
+    stage = _stage()
+    mesh_path = "/World/SubsetRegressionMesh"
+    mesh = UsdGeom.Mesh.Define(stage, mesh_path)
+    mesh.CreatePointsAttr([(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)])
+    mesh.CreateFaceVertexCountsAttr([3, 3])
+    mesh.CreateFaceVertexIndicesAttr([0, 1, 2, 0, 2, 3])
+
+    family = "materialBind"
+    left = UsdGeom.Subset.CreateGeomSubset(mesh, "Left", UsdGeom.Tokens.face, [0], family)
+    right = UsdGeom.Subset.CreateGeomSubset(mesh, "Right", UsdGeom.Tokens.face, [1], family)
+    UsdGeom.Subset.SetFamilyType(mesh, family, UsdGeom.Tokens.partition)
+    _assert(bool(left and right), "two face subsets created")
+    _assert_equal(list(left.GetIndicesAttr().Get()), [0], "left subset indexes face zero")
+    _assert_equal(list(right.GetIndicesAttr().Get()), [1], "right subset indexes face one")
+    _assert_equal(len(UsdGeom.Subset.GetGeomSubsets(mesh, UsdGeom.Tokens.face, family)),
+                  2, "materialBind family contains two subsets")
+
+    red_path = "/World/SubsetRegressionRed"
+    blue_path = "/World/SubsetRegressionBlue"
+    red = UsdShade.Material.Define(stage, red_path)
+    blue = UsdShade.Material.Define(stage, blue_path)
+    UsdShade.MaterialBindingAPI.Apply(left.GetPrim()).Bind(red)
+    UsdShade.MaterialBindingAPI.Apply(right.GetPrim()).Bind(blue)
+
+    def bound(path):
+        material, _ = UsdShade.MaterialBindingAPI(_prim(path)).ComputeBoundMaterial()
+        return str(material.GetPath()) if material else ""
+
+    left_path = mesh_path + "/Left"
+    right_path = mesh_path + "/Right"
+    _assert_equal(bound(left_path), red_path, "left subset resolves its material")
+    _assert_equal(bound(right_path), blue_path, "right subset resolves its material")
+
+    if _has_command("bind_material"):
+        stageviz.command.bind_material([left_path], blue_path)
+        _assert(_wait_until(lambda: bound(left_path) == blue_path),
+                "Stageviz bind_material accepts a subset prim")
+        if _undo():
+            _assert(_wait_until(lambda: bound(left_path) == red_path),
+                    "undo restores subset material")
+        if _redo():
+            _assert(_wait_until(lambda: bound(left_path) == blue_path),
+                    "redo restores subset material")
+
+    if _has_command("rename_path"):
+        stageviz.command.rename_path(mesh_path, "SubsetRegressionRenamed")
+        renamed = "/World/SubsetRegressionRenamed"
+        _assert(_wait_until(lambda: _exists(renamed + "/Left")),
+                "mesh rename retains subset children")
+        _assert_equal(bound(renamed + "/Right"), blue_path,
+                      "mesh rename retains subset material binding")
+        if _undo():
+            _assert(_wait_until(lambda: _exists(right_path)),
+                    "undo mesh rename restores subset path")
+
+    # Check the authored face-index topology independently of rendering.
+    current_mesh = UsdGeom.Mesh(_prim(mesh_path) or _prim("/World/SubsetRegressionRenamed"))
+    _assert_equal(list(current_mesh.GetFaceVertexCountsAttr().Get()), [3, 3],
+                  "mesh remains two triangles")
+
+
 def run():
     _FAILURES.clear()
     _PERF_RESULTS.clear()
@@ -6326,6 +6390,7 @@ def run():
         ("bind material", test_bind_material, ()),
         ("material shader commands", test_material_shader_commands, ()),
         ("material binding hierarchy", test_material_binding_hierarchy, ()),
+        ("geometry subsets and materials", test_geometry_subsets_materials_and_commands, ()),
         ("new reference", test_new_reference, (external,)),
         ("new reference default prim", test_new_reference_default_prim, (external,)),
         ("new payload", test_new_payload, (external,)),
