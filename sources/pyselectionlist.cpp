@@ -42,7 +42,7 @@ PySelectionList_isSelected(PySelectionListObject* self, PyObject* args)
 }
 
 static PyObject*
-PySelectionList_paths(PySelectionListObject* self)
+PySelectionList_paths(PySelectionListObject* self, PyObject*)
 {
     if (!checkSelectionList(self->selection))
         return nullptr;
@@ -51,7 +51,7 @@ PySelectionList_paths(PySelectionListObject* self)
 }
 
 static PyObject*
-PySelectionList_isEmpty(PySelectionListObject* self)
+PySelectionList_isEmpty(PySelectionListObject* self, PyObject*)
 {
     if (!checkSelectionList(self->selection))
         return nullptr;
@@ -60,7 +60,7 @@ PySelectionList_isEmpty(PySelectionListObject* self)
 }
 
 static PyObject*
-PySelectionList_isValid(PySelectionListObject* self)
+PySelectionList_isValid(PySelectionListObject* self, PyObject*)
 {
     if (!checkSelectionList(self->selection))
         return nullptr;
@@ -141,7 +141,7 @@ PySelectionList_updatePaths(PySelectionListObject* self, PyObject* args)
 }
 
 static PyObject*
-PySelectionList_clear(PySelectionListObject* self)
+PySelectionList_clear(PySelectionListObject* self, PyObject*)
 {
     if (!checkSelectionList(self->selection))
         return nullptr;

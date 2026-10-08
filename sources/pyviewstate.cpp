@@ -24,7 +24,7 @@ PyViewState_new(PyTypeObject* type, PyObject*, PyObject*)
 }
 
 static PyObject*
-PyViewState_camera(PyViewStateObject* self)
+PyViewState_camera(PyViewStateObject* self, PyObject*)
 {
     if (!checkViewState(self->viewState))
         return nullptr;
@@ -33,7 +33,7 @@ PyViewState_camera(PyViewStateObject* self)
 }
 
 static PyObject*
-PyViewState_backgroundColor(PyViewStateObject* self)
+PyViewState_backgroundColor(PyViewStateObject* self, PyObject*)
 {
     if (!checkViewState(self->viewState))
         return nullptr;
@@ -60,7 +60,7 @@ PyViewState_setBackgroundColor(PyViewStateObject* self, PyObject* args)
 }
 
 static PyObject*
-PyViewState_gridColor(PyViewStateObject* self)
+PyViewState_gridColor(PyViewStateObject* self, PyObject*)
 {
     if (!checkViewState(self->viewState))
         return nullptr;
@@ -87,7 +87,7 @@ PyViewState_setGridColor(PyViewStateObject* self, PyObject* args)
 }
 
 static PyObject*
-PyViewState_gridEnabled(PyViewStateObject* self)
+PyViewState_gridEnabled(PyViewStateObject* self, PyObject*)
 {
     if (!checkViewState(self->viewState))
         return nullptr;
@@ -110,7 +110,7 @@ PyViewState_setGridEnabled(PyViewStateObject* self, PyObject* args)
 }
 
 static PyObject*
-PyViewState_materialMode(PyViewStateObject* self)
+PyViewState_materialMode(PyViewStateObject* self, PyObject*)
 {
     if (!checkViewState(self->viewState))
         return nullptr;
@@ -138,7 +138,7 @@ PyViewState_setMaterialMode(PyViewStateObject* self, PyObject* args)
 }
 
 static PyObject*
-PyViewState_overrideMaterial(PyViewStateObject* self)
+PyViewState_overrideMaterial(PyViewStateObject* self, PyObject*)
 {
     if (!checkViewState(self->viewState))
         return nullptr;
@@ -170,7 +170,7 @@ PyViewState_setOverrideMaterial(PyViewStateObject* self, PyObject* args)
 }
 
 static PyObject*
-PyViewState_defaultCameraLightEnabled(PyViewStateObject* self)
+PyViewState_defaultCameraLightEnabled(PyViewStateObject* self, PyObject*)
 {
     if (!checkViewState(self->viewState))
         return nullptr;
@@ -193,7 +193,7 @@ PyViewState_setDefaultCameraLightEnabled(PyViewStateObject* self, PyObject* args
 }
 
 static PyObject*
-PyViewState_defaultDomeLightEnabled(PyViewStateObject* self)
+PyViewState_defaultDomeLightEnabled(PyViewStateObject* self, PyObject*)
 {
     if (!checkViewState(self->viewState))
         return nullptr;
@@ -216,7 +216,7 @@ PyViewState_setDefaultDomeLightEnabled(PyViewStateObject* self, PyObject* args)
 }
 
 static PyObject*
-PyViewState_domeLightTexture(PyViewStateObject* self)
+PyViewState_domeLightTexture(PyViewStateObject* self, PyObject*)
 {
     if (!checkViewState(self->viewState))
         return nullptr;
@@ -240,7 +240,7 @@ PyViewState_setDomeLightTexture(PyViewStateObject* self, PyObject* args)
 }
 
 static PyObject*
-PyViewState_domeLightCameraVisibility(PyViewStateObject* self)
+PyViewState_domeLightCameraVisibility(PyViewStateObject* self, PyObject*)
 {
     if (!checkViewState(self->viewState))
         return nullptr;
@@ -265,7 +265,7 @@ PyViewState_setDomeLightCameraVisibility(PyViewStateObject* self, PyObject* args
 
 
 static PyObject*
-PyViewState_ambientOcclusionEnabled(PyViewStateObject* self)
+PyViewState_ambientOcclusionEnabled(PyViewStateObject* self, PyObject*)
 {
     if (!checkViewState(self->viewState))
         return nullptr;
@@ -285,7 +285,7 @@ PyViewState_setAmbientOcclusionEnabled(PyViewStateObject* self, PyObject* args)
 }
 
 static PyObject*
-PyViewState_AmbientOcclusionContactAmount(PyViewStateObject* self)
+PyViewState_AmbientOcclusionContactAmount(PyViewStateObject* self, PyObject*)
 {
     if (!checkViewState(self->viewState))
         return nullptr;
@@ -308,7 +308,7 @@ PyViewState_setAmbientOcclusionContactAmount(PyViewStateObject* self, PyObject* 
 }
 
 static PyObject*
-PyViewState_AmbientOcclusionContactRadius(PyViewStateObject* self)
+PyViewState_AmbientOcclusionContactRadius(PyViewStateObject* self, PyObject*)
 {
     if (!checkViewState(self->viewState))
         return nullptr;
@@ -331,7 +331,7 @@ PyViewState_setAmbientOcclusionContactRadius(PyViewStateObject* self, PyObject* 
 }
 
 static PyObject*
-PyViewState_AmbientOcclusionBroadAmount(PyViewStateObject* self)
+PyViewState_AmbientOcclusionBroadAmount(PyViewStateObject* self, PyObject*)
 {
     if (!checkViewState(self->viewState))
         return nullptr;
@@ -354,7 +354,7 @@ PyViewState_setAmbientOcclusionBroadAmount(PyViewStateObject* self, PyObject* ar
 }
 
 static PyObject*
-PyViewState_AmbientOcclusionBroadRadius(PyViewStateObject* self)
+PyViewState_AmbientOcclusionBroadRadius(PyViewStateObject* self, PyObject*)
 {
     if (!checkViewState(self->viewState))
         return nullptr;
@@ -377,7 +377,7 @@ PyViewState_setAmbientOcclusionBroadRadius(PyViewStateObject* self, PyObject* ar
 }
 
 static PyObject*
-PyViewState_AmbientOcclusionNormalBias(PyViewStateObject* self)
+PyViewState_AmbientOcclusionNormalBias(PyViewStateObject* self, PyObject*)
 {
     if (!checkViewState(self->viewState))
         return nullptr;
@@ -400,7 +400,7 @@ PyViewState_setAmbientOcclusionNormalBias(PyViewStateObject* self, PyObject* arg
 }
 
 static PyObject*
-PyViewState_AmbientOcclusionFalloff(PyViewStateObject* self)
+PyViewState_AmbientOcclusionFalloff(PyViewStateObject* self, PyObject*)
 {
     if (!checkViewState(self->viewState))
         return nullptr;
@@ -423,7 +423,7 @@ PyViewState_setAmbientOcclusionFalloff(PyViewStateObject* self, PyObject* args)
 }
 
 static PyObject*
-PyViewState_AmbientOcclusionContrast(PyViewStateObject* self)
+PyViewState_AmbientOcclusionContrast(PyViewStateObject* self, PyObject*)
 {
     if (!checkViewState(self->viewState))
         return nullptr;
@@ -446,7 +446,7 @@ PyViewState_setAmbientOcclusionContrast(PyViewStateObject* self, PyObject* args)
 }
 
 static PyObject*
-PyViewState_AmbientOcclusionEdgeSharpness(PyViewStateObject* self)
+PyViewState_AmbientOcclusionEdgeSharpness(PyViewStateObject* self, PyObject*)
 {
     if (!checkViewState(self->viewState))
         return nullptr;
@@ -469,7 +469,7 @@ PyViewState_setAmbientOcclusionEdgeSharpness(PyViewStateObject* self, PyObject* 
 }
 
 static PyObject*
-PyViewState_AmbientOcclusionBlurRadius(PyViewStateObject* self)
+PyViewState_AmbientOcclusionBlurRadius(PyViewStateObject* self, PyObject*)
 {
     if (!checkViewState(self->viewState))
         return nullptr;
@@ -493,7 +493,7 @@ PyViewState_setAmbientOcclusionBlurRadius(PyViewStateObject* self, PyObject* arg
 
 
 static PyObject*
-PyViewState_ambientOcclusionBlurEnabled(PyViewStateObject* self)
+PyViewState_ambientOcclusionBlurEnabled(PyViewStateObject* self, PyObject*)
 {
     if (!checkViewState(self->viewState))
         return nullptr;
@@ -513,7 +513,7 @@ PyViewState_setAmbientOcclusionBlurEnabled(PyViewStateObject* self, PyObject* ar
 }
 
 static PyObject*
-PyViewState_ambientOcclusionQuality(PyViewStateObject* self)
+PyViewState_ambientOcclusionQuality(PyViewStateObject* self, PyObject*)
 {
     if (!checkViewState(self->viewState))
         return nullptr;
@@ -538,7 +538,7 @@ PyViewState_setAmbientOcclusionQuality(PyViewStateObject* self, PyObject* args)
 }
 
 static PyObject*
-PyViewState_ambientOcclusionDebugMode(PyViewStateObject* self)
+PyViewState_ambientOcclusionDebugMode(PyViewStateObject* self, PyObject*)
 {
     if (!checkViewState(self->viewState))
         return nullptr;
@@ -563,7 +563,7 @@ PyViewState_setAmbientOcclusionDebugMode(PyViewStateObject* self, PyObject* args
 }
 
 static PyObject*
-PyViewState_sceneLightsEnabled(PyViewStateObject* self)
+PyViewState_sceneLightsEnabled(PyViewStateObject* self, PyObject*)
 {
     if (!checkViewState(self->viewState))
         return nullptr;
@@ -586,7 +586,7 @@ PyViewState_setSceneLightsEnabled(PyViewStateObject* self, PyObject* args)
 }
 
 static PyObject*
-PyViewState_sceneMaterialsEnabled(PyViewStateObject* self)
+PyViewState_sceneMaterialsEnabled(PyViewStateObject* self, PyObject*)
 {
     if (!checkViewState(self->viewState))
         return nullptr;
@@ -609,7 +609,7 @@ PyViewState_setSceneMaterialsEnabled(PyViewStateObject* self, PyObject* args)
 }
 
 static PyObject*
-PyViewState_doubleSidedMode(PyViewStateObject* self)
+PyViewState_doubleSidedMode(PyViewStateObject* self, PyObject*)
 {
     if (!checkViewState(self->viewState))
         return nullptr;
@@ -638,7 +638,7 @@ PyViewState_setDoubleSidedMode(PyViewStateObject* self, PyObject* args)
 }
 
 static PyObject*
-PyViewState_renderMode(PyViewStateObject* self)
+PyViewState_renderMode(PyViewStateObject* self, PyObject*)
 {
     if (!checkViewState(self->viewState))
         return nullptr;
@@ -666,7 +666,7 @@ PyViewState_setRenderMode(PyViewStateObject* self, PyObject* args)
 }
 
 static PyObject*
-PyViewState_complexityLevel(PyViewStateObject* self)
+PyViewState_complexityLevel(PyViewStateObject* self, PyObject*)
 {
     if (!checkViewState(self->viewState))
         return nullptr;
@@ -694,7 +694,7 @@ PyViewState_setComplexityLevel(PyViewStateObject* self, PyObject* args)
 }
 
 static PyObject*
-PyViewState_rendererAov(PyViewStateObject* self)
+PyViewState_rendererAov(PyViewStateObject* self, PyObject*)
 {
     if (!checkViewState(self->viewState))
         return nullptr;
@@ -718,7 +718,7 @@ PyViewState_setRendererAov(PyViewStateObject* self, PyObject* args)
 }
 
 static PyObject*
-PyViewState_sceneStatsEnabled(PyViewStateObject* self)
+PyViewState_sceneStatsEnabled(PyViewStateObject* self, PyObject*)
 {
     if (!checkViewState(self->viewState))
         return nullptr;
@@ -741,7 +741,7 @@ PyViewState_setSceneStatsEnabled(PyViewStateObject* self, PyObject* args)
 }
 
 static PyObject*
-PyViewState_performanceStatsEnabled(PyViewStateObject* self)
+PyViewState_performanceStatsEnabled(PyViewStateObject* self, PyObject*)
 {
     if (!checkViewState(self->viewState))
         return nullptr;
@@ -764,7 +764,7 @@ PyViewState_setPerformanceStatsEnabled(PyViewStateObject* self, PyObject* args)
 }
 
 static PyObject*
-PyViewState_cameraAxisEnabled(PyViewStateObject* self)
+PyViewState_cameraAxisEnabled(PyViewStateObject* self, PyObject*)
 {
     if (!checkViewState(self->viewState))
         return nullptr;

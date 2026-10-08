@@ -84,7 +84,7 @@ PyViewCamera_new(PyTypeObject* type, PyObject*, PyObject*)
 }
 
 static PyObject*
-PyViewCamera_isIdentity(PyViewCameraObject* self)
+PyViewCamera_isIdentity(PyViewCameraObject* self, PyObject*)
 {
     if (!checkViewCamera(self->camera))
         return nullptr;
@@ -93,7 +93,7 @@ PyViewCamera_isIdentity(PyViewCameraObject* self)
 }
 
 static PyObject*
-PyViewCamera_resetView(PyViewCameraObject* self)
+PyViewCamera_resetView(PyViewCameraObject* self, PyObject*)
 {
     if (!checkViewCamera(self->camera))
         return nullptr;
@@ -164,7 +164,7 @@ PyViewCamera_mapToFrustumHeight(PyViewCameraObject* self, PyObject* args)
 }
 
 static PyObject*
-PyViewCamera_camera(PyViewCameraObject* self)
+PyViewCamera_camera(PyViewCameraObject* self, PyObject*)
 {
     if (!checkViewCamera(self->camera))
         return nullptr;
@@ -174,7 +174,7 @@ PyViewCamera_camera(PyViewCameraObject* self)
 }
 
 static PyObject*
-PyViewCamera_aspectRatio(PyViewCameraObject* self)
+PyViewCamera_aspectRatio(PyViewCameraObject* self, PyObject*)
 {
     if (!checkViewCamera(self->camera))
         return nullptr;
@@ -198,7 +198,7 @@ PyViewCamera_setAspectRatio(PyViewCameraObject* self, PyObject* args)
 }
 
 static PyObject*
-PyViewCamera_aspectRatioLocked(PyViewCameraObject* self)
+PyViewCamera_aspectRatioLocked(PyViewCameraObject* self, PyObject*)
 {
     if (!checkViewCamera(self->camera))
         return nullptr;
@@ -221,7 +221,7 @@ PyViewCamera_setAspectRatioLocked(PyViewCameraObject* self, PyObject* args)
 }
 
 static PyObject*
-PyViewCamera_letterboxEnabled(PyViewCameraObject* self)
+PyViewCamera_letterboxEnabled(PyViewCameraObject* self, PyObject*)
 {
     if (!checkViewCamera(self->camera))
         return nullptr;
@@ -244,7 +244,7 @@ PyViewCamera_setLetterboxEnabled(PyViewCameraObject* self, PyObject* args)
 }
 
 static PyObject*
-PyViewCamera_letterboxOpacity(PyViewCameraObject* self)
+PyViewCamera_letterboxOpacity(PyViewCameraObject* self, PyObject*)
 {
     if (!checkViewCamera(self->camera))
         return nullptr;
@@ -267,7 +267,7 @@ PyViewCamera_setLetterboxOpacity(PyViewCameraObject* self, PyObject* args)
 }
 
 static PyObject*
-PyViewCamera_projectionMode(PyViewCameraObject* self)
+PyViewCamera_projectionMode(PyViewCameraObject* self, PyObject*)
 {
     if (!checkViewCamera(self->camera))
         return nullptr;
@@ -290,7 +290,7 @@ PyViewCamera_setProjectionMode(PyViewCameraObject* self, PyObject* args)
 }
 
 static PyObject*
-PyViewCamera_fov(PyViewCameraObject* self)
+PyViewCamera_fov(PyViewCameraObject* self, PyObject*)
 {
     if (!checkViewCamera(self->camera))
         return nullptr;
@@ -314,7 +314,7 @@ PyViewCamera_setFov(PyViewCameraObject* self, PyObject* args)
 }
 
 static PyObject*
-PyViewCamera_fovDirection(PyViewCameraObject* self)
+PyViewCamera_fovDirection(PyViewCameraObject* self, PyObject*)
 {
     if (!checkViewCamera(self->camera))
         return nullptr;
@@ -338,7 +338,7 @@ PyViewCamera_setFovDirection(PyViewCameraObject* self, PyObject* args)
 }
 
 static PyObject*
-PyViewCamera_focalLength(PyViewCameraObject* self)
+PyViewCamera_focalLength(PyViewCameraObject* self, PyObject*)
 {
     if (!checkViewCamera(self->camera))
         return nullptr;
@@ -361,7 +361,7 @@ PyViewCamera_setFocalLength(PyViewCameraObject* self, PyObject* args)
 }
 
 static PyObject*
-PyViewCamera_sensorWidth(PyViewCameraObject* self)
+PyViewCamera_sensorWidth(PyViewCameraObject* self, PyObject*)
 {
     if (!checkViewCamera(self->camera))
         return nullptr;
@@ -384,7 +384,7 @@ PyViewCamera_setSensorWidth(PyViewCameraObject* self, PyObject* args)
 }
 
 static PyObject*
-PyViewCamera_sensorHeight(PyViewCameraObject* self)
+PyViewCamera_sensorHeight(PyViewCameraObject* self, PyObject*)
 {
     if (!checkViewCamera(self->camera))
         return nullptr;
@@ -407,7 +407,7 @@ PyViewCamera_setSensorHeight(PyViewCameraObject* self, PyObject* args)
 }
 
 static PyObject*
-PyViewCamera_focusPoint(PyViewCameraObject* self)
+PyViewCamera_focusPoint(PyViewCameraObject* self, PyObject*)
 {
     if (!checkViewCamera(self->camera))
         return nullptr;
@@ -433,7 +433,7 @@ PyViewCamera_setFocusPoint(PyViewCameraObject* self, PyObject* args)
 }
 
 static PyObject*
-PyViewCamera_boundingBox(PyViewCameraObject* self)
+PyViewCamera_boundingBox(PyViewCameraObject* self, PyObject*)
 {
     if (!checkViewCamera(self->camera))
         return nullptr;
@@ -476,7 +476,7 @@ PyViewCamera_frame(PyViewCameraObject* self, PyObject* args)
 }
 
 static PyObject*
-PyViewCamera_fit(PyViewCameraObject* self)
+PyViewCamera_fit(PyViewCameraObject* self, PyObject*)
 {
     if (!checkViewCamera(self->camera))
         return nullptr;
@@ -500,7 +500,7 @@ PyViewCamera_setFit(PyViewCameraObject* self, PyObject* args)
 }
 
 static PyObject*
-PyViewCamera_cameraUp(PyViewCameraObject* self)
+PyViewCamera_cameraUp(PyViewCameraObject* self, PyObject*)
 {
     if (!checkViewCamera(self->camera))
         return nullptr;
@@ -524,7 +524,7 @@ PyViewCamera_setCameraUp(PyViewCameraObject* self, PyObject* args)
 }
 
 static PyObject*
-PyViewCamera_axisYaw(PyViewCameraObject* self)
+PyViewCamera_axisYaw(PyViewCameraObject* self, PyObject*)
 {
     if (!checkViewCamera(self->camera))
         return nullptr;
@@ -548,7 +548,7 @@ PyViewCamera_setAxisYaw(PyViewCameraObject* self, PyObject* args)
 }
 
 static PyObject*
-PyViewCamera_axisPitch(PyViewCameraObject* self)
+PyViewCamera_axisPitch(PyViewCameraObject* self, PyObject*)
 {
     if (!checkViewCamera(self->camera))
         return nullptr;
@@ -572,7 +572,7 @@ PyViewCamera_setAxisPitch(PyViewCameraObject* self, PyObject* args)
 }
 
 static PyObject*
-PyViewCamera_axisRoll(PyViewCameraObject* self)
+PyViewCamera_axisRoll(PyViewCameraObject* self, PyObject*)
 {
     if (!checkViewCamera(self->camera))
         return nullptr;
@@ -596,7 +596,7 @@ PyViewCamera_setAxisRoll(PyViewCameraObject* self, PyObject* args)
 }
 
 static PyObject*
-PyViewCamera_cameraMode(PyViewCameraObject* self)
+PyViewCamera_cameraMode(PyViewCameraObject* self, PyObject*)
 {
     if (!checkViewCamera(self->camera))
         return nullptr;
@@ -620,7 +620,7 @@ PyViewCamera_setCameraMode(PyViewCameraObject* self, PyObject* args)
 }
 
 static PyObject*
-PyViewCamera_nearClipping(PyViewCameraObject* self)
+PyViewCamera_nearClipping(PyViewCameraObject* self, PyObject*)
 {
     if (!checkViewCamera(self->camera))
         return nullptr;
@@ -644,7 +644,7 @@ PyViewCamera_setNearClipping(PyViewCameraObject* self, PyObject* args)
 }
 
 static PyObject*
-PyViewCamera_farClipping(PyViewCameraObject* self)
+PyViewCamera_farClipping(PyViewCameraObject* self, PyObject*)
 {
     if (!checkViewCamera(self->camera))
         return nullptr;
@@ -668,7 +668,7 @@ PyViewCamera_setFarClipping(PyViewCameraObject* self, PyObject* args)
 }
 
 static PyObject*
-PyViewCamera_cameraDistance(PyViewCameraObject* self)
+PyViewCamera_cameraDistance(PyViewCameraObject* self, PyObject*)
 {
     if (!checkViewCamera(self->camera))
         return nullptr;
@@ -692,7 +692,7 @@ PyViewCamera_setCameraDistance(PyViewCameraObject* self, PyObject* args)
 }
 
 static PyObject*
-PyViewCamera_reset(PyViewCameraObject* self)
+PyViewCamera_reset(PyViewCameraObject* self, PyObject*)
 {
     if (!checkViewCamera(self->camera))
         return nullptr;

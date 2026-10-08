@@ -79,7 +79,7 @@ PySession_updateProgressNotify(PySessionObject* self, PyObject* args, PyObject* 
 }
 
 static PyObject*
-PySession_cancelProgressBlock(PySessionObject* self)
+PySession_cancelProgressBlock(PySessionObject* self, PyObject*)
 {
     if (!checkSession(self->session))
         return nullptr;
@@ -89,7 +89,7 @@ PySession_cancelProgressBlock(PySessionObject* self)
 }
 
 static PyObject*
-PySession_endProgressBlock(PySessionObject* self)
+PySession_endProgressBlock(PySessionObject* self, PyObject*)
 {
     if (!checkSession(self->session))
         return nullptr;
@@ -99,7 +99,7 @@ PySession_endProgressBlock(PySessionObject* self)
 }
 
 static PyObject*
-PySession_isProgressBlockCancelled(PySessionObject* self)
+PySession_isProgressBlockCancelled(PySessionObject* self, PyObject*)
 {
     if (!checkSession(self->session))
         return nullptr;
@@ -235,7 +235,7 @@ PySession_setPreserveState(PySessionObject* self, PyObject* args)
 }
 
 static PyObject*
-PySession_reload(PySessionObject* self)
+PySession_reload(PySessionObject* self, PyObject*)
 {
     if (!checkSession(self->session))
         return nullptr;
@@ -244,7 +244,7 @@ PySession_reload(PySessionObject* self)
 }
 
 static PyObject*
-PySession_close(PySessionObject* self)
+PySession_close(PySessionObject* self, PyObject*)
 {
     if (!checkSession(self->session))
         return nullptr;
@@ -253,7 +253,7 @@ PySession_close(PySessionObject* self)
 }
 
 static PyObject*
-PySession_isLoaded(PySessionObject* self)
+PySession_isLoaded(PySessionObject* self, PyObject*)
 {
     if (!checkSession(self->session))
         return nullptr;
@@ -262,7 +262,7 @@ PySession_isLoaded(PySessionObject* self)
 }
 
 static PyObject*
-PySession_mask(PySessionObject* self)
+PySession_mask(PySessionObject* self, PyObject*)
 {
     if (!checkSession(self->session))
         return nullptr;
@@ -289,7 +289,7 @@ PySession_setMask(PySessionObject* self, PyObject* args)
 }
 
 static PyObject*
-PySession_stageUp(PySessionObject* self)
+PySession_stageUp(PySessionObject* self, PyObject*)
 {
     if (!checkSession(self->session))
         return nullptr;
@@ -312,7 +312,7 @@ PySession_setStageUp(PySessionObject* self, PyObject* args)
 }
 
 static PyObject*
-PySession_loadPolicy(PySessionObject* self)
+PySession_loadPolicy(PySessionObject* self, PyObject*)
 {
     if (!checkSession(self->session))
         return nullptr;
@@ -321,7 +321,7 @@ PySession_loadPolicy(PySessionObject* self)
 }
 
 static PyObject*
-PySession_boundingBox(PySessionObject* self)
+PySession_boundingBox(PySessionObject* self, PyObject*)
 {
     if (!checkSession(self->session))
         return nullptr;
@@ -330,7 +330,7 @@ PySession_boundingBox(PySessionObject* self)
 }
 
 static PyObject*
-PySession_filename(PySessionObject* self)
+PySession_filename(PySessionObject* self, PyObject*)
 {
     if (!checkSession(self->session))
         return nullptr;
@@ -340,7 +340,7 @@ PySession_filename(PySessionObject* self)
 }
 
 static PyObject*
-PySession_editLayer(PySessionObject* self)
+PySession_editLayer(PySessionObject* self, PyObject*)
 {
     if (!checkSession(self->session))
         return nullptr;
@@ -358,7 +358,7 @@ PySession_editLayer(PySessionObject* self)
 }
 
 static PyObject*
-PySession_editLayers(PySessionObject* self)
+PySession_editLayers(PySessionObject* self, PyObject*)
 {
     if (!checkSession(self->session))
         return nullptr;
@@ -441,7 +441,7 @@ PySession_setEditLayer(PySessionObject* self, PyObject* args)
 }
 
 static PyObject*
-PySession_auxiliary(PySessionObject* self)
+PySession_auxiliary(PySessionObject* self, PyObject*)
 {
     if (!checkSession(self->session))
         return nullptr;
@@ -450,7 +450,7 @@ PySession_auxiliary(PySessionObject* self)
 }
 
 static PyObject*
-PySession_auxiliaryUnsafe(PySessionObject* self)
+PySession_auxiliaryUnsafe(PySessionObject* self, PyObject*)
 {
     if (!checkSession(self->session))
         return nullptr;
@@ -459,7 +459,7 @@ PySession_auxiliaryUnsafe(PySessionObject* self)
 }
 
 static PyObject*
-PySession_auxiliaryLock(PySessionObject* self)
+PySession_auxiliaryLock(PySessionObject* self, PyObject*)
 {
     if (!checkSession(self->session))
         return nullptr;
@@ -472,7 +472,7 @@ PySession_auxiliaryLock(PySessionObject* self)
 }
 
 static PyObject*
-PySession_stage(PySessionObject* self)
+PySession_stage(PySessionObject* self, PyObject*)
 {
     if (!checkSession(self->session))
         return nullptr;
@@ -481,7 +481,7 @@ PySession_stage(PySessionObject* self)
 }
 
 static PyObject*
-PySession_stageUnsafe(PySessionObject* self)
+PySession_stageUnsafe(PySessionObject* self, PyObject*)
 {
     if (!checkSession(self->session))
         return nullptr;
@@ -490,7 +490,7 @@ PySession_stageUnsafe(PySessionObject* self)
 }
 
 static PyObject*
-PySession_stageLock(PySessionObject* self)
+PySession_stageLock(PySessionObject* self, PyObject*)
 {
     if (!checkSession(self->session))
         return nullptr;
@@ -503,7 +503,7 @@ PySession_stageLock(PySessionObject* self)
 }
 
 static PyObject*
-PySession_primsUpdate(PySessionObject* self)
+PySession_primsUpdate(PySessionObject* self, PyObject*)
 {
     if (!checkSession(self->session))
         return nullptr;
@@ -526,7 +526,7 @@ PySession_setPrimsUpdate(PySessionObject* self, PyObject* args)
 }
 
 static PyObject*
-PySession_commandStack(PySessionObject* self)
+PySession_commandStack(PySessionObject* self, PyObject*)
 {
     if (!checkSession(self->session))
         return nullptr;
@@ -539,7 +539,7 @@ PySession_commandStack(PySessionObject* self)
 }
 
 static PyObject*
-PySession_selectionList(PySessionObject* self)
+PySession_selectionList(PySessionObject* self, PyObject*)
 {
     if (!checkSession(self->session))
         return nullptr;
@@ -548,13 +548,13 @@ PySession_selectionList(PySessionObject* self)
 }
 
 static PyObject*
-PySession_selection(PySessionObject* self)
+PySession_selection(PySessionObject* self, PyObject*)
 {
     return PySession_selectionList(self);
 }
 
 static PyObject*
-PySession_paths(PySessionObject* self)
+PySession_paths(PySessionObject* self, PyObject*)
 {
     if (!checkSession(self->session))
         return nullptr;
@@ -567,7 +567,7 @@ PySession_paths(PySessionObject* self)
 }
 
 static PyObject*
-PySession_viewState(PySessionObject* self)
+PySession_viewState(PySessionObject* self, PyObject*)
 {
     if (!checkSession(self->session))
         return nullptr;
@@ -576,7 +576,7 @@ PySession_viewState(PySessionObject* self)
 }
 
 static PyObject*
-PySession_notifyRedraw(PySessionObject* self)
+PySession_notifyRedraw(PySessionObject* self, PyObject*)
 {
     if (!checkSession(self->session))
         return nullptr;

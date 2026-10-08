@@ -165,10 +165,12 @@ addStyleEnums()
                                            { "Follow", static_cast<long>(Style::IconRole::Follow) },
                                            { "FrameAll", static_cast<long>(Style::IconRole::FrameAll) },
                                            { "Geometry", static_cast<long>(Style::IconRole::Geometry) },
+                                           { "GeomSubset", static_cast<long>(Style::IconRole::GeomSubset) },
                                            { "Hidden", static_cast<long>(Style::IconRole::Hidden) },
                                            { "Left", static_cast<long>(Style::IconRole::Left) },
                                            { "List", static_cast<long>(Style::IconRole::List) },
                                            { "Material", static_cast<long>(Style::IconRole::Material) },
+                                           { "Move", static_cast<long>(Style::IconRole::Move) },
                                            { "Nested", static_cast<long>(Style::IconRole::Nested) },
                                            { "New", static_cast<long>(Style::IconRole::New) },
                                            { "Open", static_cast<long>(Style::IconRole::Open) },
@@ -180,7 +182,9 @@ addStyleEnums()
                                            { "Prim", static_cast<long>(Style::IconRole::Prim) },
                                            { "Redo", static_cast<long>(Style::IconRole::Redo) },
                                            { "Right", static_cast<long>(Style::IconRole::Right) },
+                                           { "Rotate", static_cast<long>(Style::IconRole::Rotate) },
                                            { "Run", static_cast<long>(Style::IconRole::Run) },
+                                           { "Scale", static_cast<long>(Style::IconRole::Scale) },
                                            { "Select", static_cast<long>(Style::IconRole::Select) },
                                            { "Shaded", static_cast<long>(Style::IconRole::Shaded) },
                                            { "Transform", static_cast<long>(Style::IconRole::Transform) },
@@ -355,7 +359,7 @@ PyStyle_setIconSize(PyStyleObject* self, PyObject* args)
 }
 
 static PyObject*
-PyStyle_styleSheet(PyStyleObject* self)
+PyStyle_styleSheet(PyStyleObject* self, PyObject*)
 {
     if (!checkStyle(self->style))
         return nullptr;
@@ -379,7 +383,7 @@ PyStyle_setStyleSheet(PyStyleObject* self, PyObject* args)
 }
 
 static PyObject*
-PyStyle_refresh(PyStyleObject* self)
+PyStyle_refresh(PyStyleObject* self, PyObject*)
 {
     if (!checkStyle(self->style))
         return nullptr;
@@ -389,7 +393,7 @@ PyStyle_refresh(PyStyleObject* self)
 }
 
 static PyObject*
-PyStyle_colorSpace(PyStyleObject* self)
+PyStyle_colorSpace(PyStyleObject* self, PyObject*)
 {
     if (!checkStyle(self->style))
         return nullptr;
