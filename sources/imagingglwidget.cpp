@@ -159,6 +159,7 @@ public:
                                         float roughness, float specular);
 
     bool projectWorldToScreen(const GfVec3d& world, QPointF& screen);
+    QList<SdfPath> transformVisiblePaths() const;
     bool transformSelectionPivot(GfVec3d& pivot);
     QPointF transformAxisDirection(int axis);
     GfVec3d transformAxisVector(int axis);
@@ -1107,7 +1108,7 @@ ImagingGLWidgetPrivate::sweepEvent(const QRect& rect, QMouseEvent* event)
             }
             if (!hitPath.IsEmpty() && isPathMaskedIn(hitPath)) {
                 d.lastPickPaths.append(hitPath);
-                d.lastPickIndex = d.lastPickPaths.size() - 1;
+                d.lastPickIndex = static_cast<int>(d.lastPickPaths.size()) - 1;
                 d.lastPickPosition = clickPosition;
                 SdfPath selectedPath = hitPath;
                 if (d.lastPickIndex == 0)
@@ -1352,6 +1353,10 @@ void
 ImagingGLWidgetPrivate::updateMask(const QList<SdfPath>& paths)
 {
     SignalGuard::Scope guard(this);
+    if (d.transformDragging)
+        endTransformDrag();
+    d.transformPivotValid = false;
+    d.transformHoverAxis = 0;
     // GeomSubsets are face collections, not Hydra drawables. Resolve their
     // render mask to the owning mesh while retaining the original selection.
     d.mask.clear();
@@ -1767,23 +1772,37 @@ ImagingGLWidgetPrivate::projectWorldToScreen(const GfVec3d& world, QPointF& scre
 
     return std::isfinite(screen.x()) && std::isfinite(screen.y());
 }
-bool
-ImagingGLWidgetPrivate::transformSelectionPivot(GfVec3d& pivot)
+QList<SdfPath>
+ImagingGLWidgetPrivate::transformVisiblePaths() const
 {
-    if (!d.stage || d.selection.isEmpty())
-        return false;
-
     QList<SdfPath> paths;
-    paths.reserve(d.selection.size());
+    if (!d.stage)
+        return paths;
 
+    paths.reserve(d.selection.size());
     for (const SdfPath& selectedPath : d.selection) {
         const SdfPath path = selectedPath.IsPropertyPath() ? selectedPath.GetPrimPath() : selectedPath;
-        if (!stage::isTransformEditable(d.stage, path))
+        if (!isPathMaskedIn(path) || !stage::isTransformEditable(d.stage, path))
+            continue;
+
+        const UsdPrim prim = d.stage->GetPrimAtPath(path);
+        if (!prim)
+            continue;
+
+        const UsdGeomImageable imageable(prim);
+        if (imageable && imageable.ComputeVisibility() == UsdGeomTokens->invisible)
             continue;
 
         if (!paths.contains(path))
             paths.append(path);
     }
+    return paths;
+}
+
+bool
+ImagingGLWidgetPrivate::transformSelectionPivot(GfVec3d& pivot)
+{
+    const QList<SdfPath> paths = transformVisiblePaths();
 
     if (paths.isEmpty())
         return false;
@@ -1983,7 +2002,7 @@ ImagingGLWidgetPrivate::transformRotationAngle(int axis, const QPointF& pos, dou
 int
 ImagingGLWidgetPrivate::hitTestTransform(const QPointF& pos)
 {
-    if (!d.transformEnabled || d.transformMode == TransformMode::None || d.selection.isEmpty() || !d.stage)
+    if (!d.transformEnabled || d.transformMode == TransformMode::None || transformVisiblePaths().isEmpty())
         return 0;
 
     QPointF center;
@@ -2084,10 +2103,7 @@ ImagingGLWidgetPrivate::beginTransformDrag(const QPointF& pos)
         if (!std::isfinite(d.transformMetersPerUnit) || d.transformMetersPerUnit <= 0.0)
             d.transformMetersPerUnit = 1.0;
 
-        for (const SdfPath& selectedPath : d.selection) {
-            const SdfPath path = selectedPath.IsPropertyPath() ? selectedPath.GetPrimPath() : selectedPath;
-            if (!stage::isTransformEditable(d.stage, path))
-                continue;
+        for (const SdfPath& path : transformVisiblePaths()) {
             GfMatrix4d matrix(1.0);
             QString error;
             if (!stage::worldTransform(d.stage, path, matrix, error))
@@ -2601,7 +2617,7 @@ ImagingGLWidgetPrivate::updateTransformHover(const QPointF& pos)
 void
 ImagingGLWidgetPrivate::drawTransformTransform(QPainter& painter)
 {
-    if (!d.transformEnabled || d.transformMode == TransformMode::None || !d.stage || d.selection.isEmpty())
+    if (!d.transformEnabled || d.transformMode == TransformMode::None || transformVisiblePaths().isEmpty())
         return;
 
     if (!d.transformDragging && !d.transformPivotValid) {
