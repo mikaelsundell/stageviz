@@ -36,6 +36,7 @@ public:
         bool isAuthoredInEditTarget = true;
         bool isRoot = false;
         bool isGprim = false;
+        bool supportsVisibility = false;
         bool isDefaultPrim = false;
         bool hasDirectOverride = false;
         bool hasDescendantOverride = false;
@@ -67,6 +68,7 @@ PrimItemPrivate::updateCache()
     d.isAuthoredInEditTarget = true;
     d.isRoot = false;
     d.isGprim = false;
+    d.supportsVisibility = false;
     d.isDefaultPrim = false;
     d.name.clear();
     d.typeName.clear();
@@ -87,6 +89,8 @@ PrimItemPrivate::updateCache()
         const SdfLayerHandle editLayer = d.stage->GetEditTarget().GetLayer();
         d.isAuthoredInEditTarget = editLayer && stage::isAuthoredInLayer(d.stage, editLayer, d.path);
         d.isGprim = prim.IsA<UsdGeomGprim>();
+        d.supportsVisibility = prim.IsA<UsdGeomImageable>()
+                               && d.typeName != QStringLiteral("GeomSet");
 
         const UsdPrim defaultPrim = d.stage->GetDefaultPrim();
         d.isDefaultPrim = defaultPrim && defaultPrim == prim;
@@ -198,7 +202,7 @@ PrimItem::data(int column, int role) const
     }
 
     if (role == Qt::DecorationRole && column == Visibility) {
-        if (!p->d.active || p->d.isRoot)
+        if (!p->d.active || p->d.isRoot || !p->d.supportsVisibility)
             return QVariant();
 
         return style()->icon(p->d.visible ? Style::IconRole::Visible : Style::IconRole::Hidden, Style::UIScale::Medium);
@@ -230,6 +234,13 @@ PrimItem::setData(int column, int role, const QVariant& value)
     }
 
     TreeItem::setData(column, role, value);
+}
+
+bool
+PrimItem::supportsVisibility() const
+{
+    p->updateCache();
+    return p->d.active && !p->d.isRoot && p->d.supportsVisibility;
 }
 
 SdfPath

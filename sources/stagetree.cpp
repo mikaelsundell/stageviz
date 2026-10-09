@@ -2196,7 +2196,9 @@ StageTree::mousePressEvent(QMouseEvent* event)
     if (item) {
         const int column = columnAt(event->pos().x());
         if (column == PrimItem::Visibility) {
-            p->toggleVisible(static_cast<PrimItem*>(item));
+            auto* primItem = static_cast<PrimItem*>(item);
+            if (primItem->supportsVisibility())
+                p->toggleVisible(primItem);
             event->accept();
             return;
         }

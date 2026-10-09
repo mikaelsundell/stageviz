@@ -83,7 +83,12 @@ public:
     void setData(int column, int role, const QVariant& value) override;
 
     /**
-     * @brief Returns the prim path for this item.
+     * @brief Returns whether the prim supports geometry visibility.
+     */
+    bool supportsVisibility() const;
+
+    /**
+     * @brief Returns the USD prim path represented by this item.
      */
     SdfPath path() const;
 
