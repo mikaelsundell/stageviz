@@ -775,7 +775,7 @@ ViewerPrivate::initRecentFiles()
             const QFileInfo fileInfo(file);
 
             if (!fileInfo.exists() || !fileInfo.isFile()) {
-                session()->notifyStatus(Session::Notify::Status::Warning, QString("File does not exist: %1").arg(file));
+                session()->notifyStatus(Session::Notify::Status::Error, QString("File does not exist: %1").arg(file));
                 return;
             }
 
@@ -1414,7 +1414,7 @@ ViewerPrivate::revealInFolder()
 
     const QFileInfo fileInfo(filename);
     if (!fileInfo.exists()) {
-        session()->notifyStatus(Session::Notify::Status::Warning, QString("File does not exist: %1").arg(filename));
+        session()->notifyStatus(Session::Notify::Status::Error, QString("File does not exist: %1").arg(filename));
         return;
     }
 
@@ -3086,7 +3086,7 @@ Viewer::openFile(const QString& filename)
     const QFileInfo fileInfo(filename);
 
     if (!fileInfo.exists() || !fileInfo.isFile()) {
-        session()->notifyStatus(Session::Notify::Status::Warning, QString("File does not exist: %1").arg(filename));
+        session()->notifyStatus(Session::Notify::Status::Error, QString("File does not exist: %1").arg(filename));
         return;
     }
 
