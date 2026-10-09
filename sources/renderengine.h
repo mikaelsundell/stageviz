@@ -253,6 +253,15 @@ public:
     int captureElementIdAt(const GfVec2i& pixel);
 
     /**
+      * @brief Picks the next renderable behind the excluded paths using GPU picking.
+      *
+      * Skips the specified paths without modifying USD visibility.
+      * Coordinates use the scene-ID render buffer, with the origin at the
+      * lower-left corner. Returns an empty path if nothing is hit.
+      */
+    SdfPath pickNextIdAt(const GfVec2i& pixel, const QList<SdfPath>& excludedPaths);
+
+    /**
      * @brief Renders the current stage into an offscreen image.
      * @return Rendered image, or a null image if rendering failed.
      *

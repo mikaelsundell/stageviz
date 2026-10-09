@@ -50,6 +50,14 @@ struct SceneIdSettings {
  * The mesh path resolves to a Storm HdRprim ID while elementIds are the
  * authored mesh face indices carried by the scene elementId AOV.
  */
+struct GpuPickResult {
+    SdfPath path;
+    int32_t primId = -1;
+    int32_t instanceId = -1;
+    int32_t elementId = -1;
+    float depth = 1.0f;
+};
+
 struct SelectionSubsetSettings {
     SdfPath meshPath;
     std::vector<int32_t> elementIds;
@@ -89,6 +97,9 @@ struct RenderTaskParams {
     ViewState::AmbientOcclusionSettings ambientOcclusion;
     SceneIdSettings sceneIds;
     SelectionOutlineSettings selectionOutline;
+    bool captureGpuPick = false;
+    GfVec2i gpuPickPixel = GfVec2i(-1, -1);
+    SdfPathVector gpuPickExcludes;
     bool captureVisible = false;
     bool captureElementId = false;
     GfVec2i captureElementPixel = GfVec2i(-1, -1);
@@ -136,6 +147,11 @@ public:
      */
     SdfPathVector takeCapturedVisiblePaths();
 
+    /**
+     * @brief Returns and clears the result of the most recent GPU pick request.
+     */
+    GpuPickResult takeGpuPickResult();
+
     /** @brief Returns and clears the element ID captured at the requested scene-ID pixel. */
     int32_t takeCapturedElementId();
 
@@ -153,6 +169,7 @@ private:
     std::unique_ptr<SceneIdPass> m_sceneIdPass;
     SdfPathVector m_capturedVisiblePaths;
     int32_t m_capturedElementId = -1;
+    GpuPickResult m_gpuPickResult;
 };
 
 }  // namespace stageviz

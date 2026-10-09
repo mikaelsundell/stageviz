@@ -350,6 +350,16 @@ namespace {
             return renderTask ? renderTask->takeCapturedVisiblePaths() : SdfPathVector {};
         }
 
+        GpuPickResult takeGpuPickResult()
+        {
+            HdRenderIndex* index = _GetRenderIndex();
+            if (!index || !index->HasTask(m_renderTaskPath))
+                return {};
+            const HdTaskSharedPtr& task = index->GetTask(m_renderTaskPath);
+            auto* renderTask = dynamic_cast<RenderTask*>(task.get());
+            return renderTask ? renderTask->takeGpuPickResult() : GpuPickResult {};
+        }
+
         int32_t takeCapturedElementId()
         {
             HdRenderIndex* renderIndex = _GetRenderIndex();
@@ -530,6 +540,10 @@ public:
     QColor selectionColor = QColor(255, 210, 0);
     bool captureVisibleRequested = false;
     bool captureElementIdRequested = false;
+    bool captureGpuPickRequested = false;
+    GfVec2i gpuPickPixel = GfVec2i(-1, -1);
+    SdfPathVector gpuPickExcludes;
+    GpuPickResult capturedGpuPick;
     GfVec2i captureElementPixel = GfVec2i(-1, -1);
     int32_t capturedElementId = -1;
     int captureVisibleGridSize = 4;
@@ -944,6 +958,9 @@ RenderEngine::Private::render()
 
     renderTaskParams.captureVisible = captureVisibleRequested;
     renderTaskParams.captureElementId = captureElementIdRequested;
+    renderTaskParams.captureGpuPick = captureGpuPickRequested;
+    renderTaskParams.gpuPickPixel = gpuPickPixel;
+    renderTaskParams.gpuPickExcludes = gpuPickExcludes;
     renderTaskParams.captureElementPixel = captureElementPixel;
     renderTaskParams.captureProjectionMatrices.clear();
     if (renderTaskParams.captureVisible) {
@@ -968,7 +985,7 @@ RenderEngine::Private::render()
         }
     }
     renderTaskParams.sceneIds.enabled = renderTaskParams.selectionOutline.enabled || renderTaskParams.captureVisible
-                                        || renderTaskParams.captureElementId;
+                                        || renderTaskParams.captureElementId || renderTaskParams.captureGpuPick;
     renderTaskParams.sceneIds.roots = renderPaths;
     renderTaskParams.sceneIds.renderTags = { HdRenderTagTokens->geometry };
     if (settings.showGuides)
@@ -1026,6 +1043,11 @@ RenderEngine::Private::render()
     if (captureVisibleRequested) {
         capturedVisiblePaths = renderTaskParams.captureVisible ? engine->takeCapturedVisiblePaths() : SdfPathVector {};
         captureVisibleRequested = false;
+    }
+
+    if (captureGpuPickRequested) {
+        capturedGpuPick = renderTaskParams.captureGpuPick ? engine->takeGpuPickResult() : GpuPickResult {};
+        captureGpuPickRequested = false;
     }
 
     if (captureElementIdRequested) {
@@ -1295,6 +1317,24 @@ RenderEngine::captureElementIdAt(const GfVec2i& pixel)
     const int result = static_cast<int>(p->capturedElementId);
     p->capturedElementId = -1;
     return result;
+}
+
+SdfPath
+RenderEngine::pickNextIdAt(const GfVec2i& pixel, const QList<SdfPath>& excludedPaths)
+{
+    if (p->contextMode != ContextMode::Current || !QOpenGLContext::currentContext())
+        return {};
+
+    p->captureGpuPickRequested = true;
+    p->gpuPickPixel = pixel;
+    p->gpuPickExcludes.assign(excludedPaths.begin(), excludedPaths.end());
+    p->capturedGpuPick = GpuPickResult {};
+
+    if (!renderToCurrentFramebuffer()) {
+        p->captureGpuPickRequested = false;
+        return {};
+    }
+    return p->capturedGpuPick.path;
 }
 
 QImage

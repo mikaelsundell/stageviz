@@ -620,6 +620,60 @@ public:
 
     HgiTextureHandle elementIdTexture() const { return textureHandle(2); }
 
+    // A picking-only collection: exclude previously picked rprims without
+    // touching USD visibility, scene indices, or the regular outline ID image.
+    GpuPickResult pickAt(const GfVec2i& pixel, const SdfPathVector& excludes)
+    {
+        GpuPickResult result;
+        if (!enabled() || !m_renderPass || !m_renderIndex || m_aovBuffers.size() < 6)
+            return result;
+
+        HdRprimCollection pickCollection = sceneCollection(m_settings.roots, m_settings.reprSelector);
+        pickCollection.SetExcludePaths(excludes);
+        m_renderPass->SetRprimCollection(pickCollection);
+        m_renderPass->Sync();
+        prepare(m_renderIndex);
+        execute();
+
+        auto readInt = [&](size_t slot) -> int32_t {
+            HdStRenderBuffer* buffer = m_aovBuffers[slot].get();
+            if (!buffer || buffer->GetFormat() != HdFormatInt32 || pixel[0] < 0 || pixel[1] < 0
+                || pixel[0] >= static_cast<int>(buffer->GetWidth())
+                || pixel[1] >= static_cast<int>(buffer->GetHeight()))
+                return -1;
+            const auto* values = static_cast<const int32_t*>(buffer->Map());
+            if (!values)
+                return -1;
+            const size_t offset = static_cast<size_t>(pixel[1]) * buffer->GetWidth() + pixel[0];
+            const int32_t value = values[offset];
+            buffer->Unmap();
+            return value;
+        };
+        result.primId = readInt(0);
+        if (result.primId >= 0) {
+            result.instanceId = readInt(1);
+            result.elementId = readInt(2);
+            HdStRenderBuffer* depthBuffer = m_aovBuffers[5].get();
+            if (depthBuffer && depthBuffer->GetFormat() == HdFormatFloat32) {
+                const auto* depths = static_cast<const float*>(depthBuffer->Map());
+                if (depths) {
+                    result.depth = depths[static_cast<size_t>(pixel[1]) * depthBuffer->GetWidth() + pixel[0]];
+                    depthBuffer->Unmap();
+                }
+            }
+            refreshRprimPathCache();
+            const auto it = m_rprimPathsById.find(result.primId);
+            if (it != m_rprimPathsById.end())
+                result.path = it->second;
+        }
+
+        // Restore collection before the next regular scene-ID render.
+        m_renderPass->SetRprimCollection(sceneCollection(m_settings.roots, m_settings.reprSelector));
+        m_renderPass->Sync();
+        return result;
+    }
+
+
     int32_t elementIdAt(const GfVec2i& pixel)
     {
         if (m_aovBuffers.size() <= 2 || !m_aovBuffers[2])
@@ -1018,7 +1072,7 @@ private:
 bool
 RenderTaskParams::enabled() const
 {
-    return ambientOcclusion.enabled || sceneIds.enabled || selectionOutline.enabled || captureVisible
+    return ambientOcclusion.enabled || sceneIds.enabled || selectionOutline.enabled || captureGpuPick || captureVisible
            || captureElementId;
 }
 
@@ -1042,6 +1096,8 @@ operator==(const RenderTaskParams& lhs, const RenderTaskParams& rhs)
            && sa.enabled == sb.enabled && sa.paths == sb.paths && sa.subsets == sb.subsets && sa.color == sb.color
            && sa.radius == sb.radius && lhs.captureVisible == rhs.captureVisible
            && lhs.captureElementId == rhs.captureElementId && lhs.captureElementPixel == rhs.captureElementPixel
+           && lhs.captureGpuPick == rhs.captureGpuPick && lhs.gpuPickPixel == rhs.gpuPickPixel
+           && lhs.gpuPickExcludes == rhs.gpuPickExcludes
            && lhs.captureProjectionMatrices == rhs.captureProjectionMatrices && lhs.nearClip == rhs.nearClip
            && lhs.farClip == rhs.farClip && lhs.orthographic == rhs.orthographic
            && lhs.projectionMatrix == rhs.projectionMatrix && lhs.shaderPath == rhs.shaderPath
@@ -1094,6 +1150,14 @@ RenderTask::takeCapturedVisiblePaths()
     return paths;
 }
 
+GpuPickResult
+RenderTask::takeGpuPickResult()
+{
+    GpuPickResult result = m_gpuPickResult;
+    m_gpuPickResult = GpuPickResult {};
+    return result;
+}
+
 int32_t
 RenderTask::takeCapturedElementId()
 {
@@ -1120,6 +1184,7 @@ RenderTask::_Sync(HdSceneDelegate* delegate, HdTaskContext* ctx, HdDirtyBits* di
                 m_params.selectionOutline.enabled = false;
                 m_params.captureVisible = false;
                 m_params.captureElementId = false;
+                m_params.captureGpuPick = false;
             }
         }
     }
@@ -1306,6 +1371,12 @@ RenderTask::Execute(HdTaskContext* ctx)
     else if (m_params.captureVisible) {
         m_capturedVisiblePaths.clear();
     }
+
+    // Execute picking after the outline has consumed the unmodified ID image.
+    if (m_params.captureGpuPick && m_sceneIdPass && m_params.sceneIds.enabled)
+        m_gpuPickResult = m_sceneIdPass->pickAt(m_params.gpuPickPixel, m_params.gpuPickExcludes);
+    else if (m_params.captureGpuPick)
+        m_gpuPickResult = GpuPickResult {};
 }
 
 }  // namespace stageviz

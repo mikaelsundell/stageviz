@@ -1079,100 +1079,47 @@ ImagingGLWidgetPrivate::sweepEvent(const QRect& rect, QMouseEvent* event)
     QList<SdfPath> selectedPaths;
 
     if (isClick) {
-        // Keep point picking on Hydra so exact surface hits and repeated-click
-        // depth cycling retain their existing behavior.
-        UsdImagingGLEngine::PickParams pickParams;
-        pickParams.resolveMode = TfToken("resolveDeep");
-        UsdImagingGLEngine::IntersectionResultVector results;
-        const bool hit = pickMaskedIntersection(pickParams, pickFrustum, &results);
-        if (hit) {
-            QList<SdfPath> candidatePaths;
-            for (const auto& result : results) {
-                if (result.hitPrimPath.IsEmpty())
-                    continue;
-                if (!candidatePaths.contains(result.hitPrimPath))
-                    candidatePaths.append(result.hitPrimPath);
-            }
-
-            struct DepthHit {
-                SdfPath path;
-                GfVec3d hitPoint;
-                double distance = std::numeric_limits<double>::max();
-                bool valid = false;
-            };
-
-            std::vector<DepthHit> depthHits;
-            depthHits.reserve(candidatePaths.size());
-            const GfMatrix4d viewMatrix = pickFrustum.ComputeViewMatrix();
-            const GfMatrix4d projectionMatrix = pickFrustum.ComputeProjectionMatrix();
-            const GfVec3d cameraPosition = camera.GetTransform().ExtractTranslation();
-            {
-                READ_LOCKER(locker, d.context->stageLock(), "stageLock");
-                if (!d.stage)
-                    return;
-
-                for (const SdfPath& candidatePath : candidatePaths) {
-                    DepthHit depthHit;
-                    depthHit.path = candidatePath;
-                    const UsdPrim candidate = d.stage->GetPrimAtPath(candidatePath);
-                    if (!candidate) {
-                        depthHits.push_back(depthHit);
-                        continue;
-                    }
-
-                    GfVec3d hitPoint;
-                    GfVec3d hitNormal;
-                    SdfPath hitPrimPath;
-                    SdfPath hitInstancerPath;
-                    const bool candidateHit = d.renderEngine->testIntersection(viewMatrix, projectionMatrix, candidate,
-                                                                               &hitPoint, &hitNormal, &hitPrimPath,
-                                                                               &hitInstancerPath);
-                    if (candidateHit && !hitPrimPath.IsEmpty()) {
-                        depthHit.hitPoint = hitPoint;
-                        depthHit.distance = (hitPoint - cameraPosition).GetLength();
-                        depthHit.valid = true;
-                    }
-                    depthHits.push_back(depthHit);
-                }
-            }
-
-            std::stable_sort(depthHits.begin(), depthHits.end(), [](const DepthHit& a, const DepthHit& b) {
-                if (a.valid != b.valid)
-                    return a.valid;
-                if (!a.valid)
-                    return false;
-                return a.distance < b.distance;
-            });
-
-            QList<SdfPath> depthPaths;
-            for (const DepthHit& depthHit : depthHits)
-                depthPaths.append(depthHit.path);
-
-            if (!depthPaths.isEmpty()) {
-                constexpr int pickCycleTolerance = 6;
-                const QPoint clickPosition = rect.normalized().center();
-                const bool samePosition = std::abs(clickPosition.x() - d.lastPickPosition.x()) <= pickCycleTolerance
-                                          && std::abs(clickPosition.y() - d.lastPickPosition.y()) <= pickCycleTolerance;
-                const bool sameStack = depthPaths == d.lastPickPaths;
-                if (samePosition && sameStack && d.lastPickIndex >= 0)
-                    d.lastPickIndex = (d.lastPickIndex + 1) % depthPaths.size();
-                else
-                    d.lastPickIndex = 0;
-
-                d.lastPickPosition = clickPosition;
-                d.lastPickPaths = depthPaths;
-
-                SdfPath selectedPath = depthPaths.at(d.lastPickIndex);
-                if (d.lastPickIndex == 0)
-                    selectedPath = resolveGeomSubsetTarget(selectedPath, rect.normalized().center());
-
-                selectedPaths.append(selectedPath);
-            }
-        }
-        else {
-            d.lastPickPosition = QPoint();
+        constexpr int pickCycleTolerance = 6;
+        const QPoint clickPosition = rect.normalized().center();
+        const bool samePosition = d.lastPickIndex >= 0
+                                  && std::abs(clickPosition.x() - d.lastPickPosition.x()) <= pickCycleTolerance
+                                  && std::abs(clickPosition.y() - d.lastPickPosition.y()) <= pickCycleTolerance;
+        if (!samePosition) {
             d.lastPickPaths.clear();
             d.lastPickIndex = -1;
+        }
+
+        const QPoint devicePos = deviceRatio(clickPosition);
+        const GfVec2i framebufferSize = widgetSize();
+        const GfVec2i pixel(devicePos.x(), framebufferSize[1] - 1 - devicePos.y());
+        if (pixel[0] >= 0 && pixel[1] >= 0 && pixel[0] < framebufferSize[0] && pixel[1] < framebufferSize[1]) {
+            SdfPath hitPath;
+            {
+                READ_LOCKER(locker, d.context->stageLock(), "stageLock");
+                if (d.stage)
+                    hitPath = d.renderEngine->pickNextIdAt(pixel, d.lastPickPaths);
+            }
+            if (hitPath.IsEmpty() && !d.lastPickPaths.isEmpty()) {
+                d.lastPickPaths.clear();
+                READ_LOCKER(locker, d.context->stageLock(), "stageLock");
+                if (d.stage)
+                    hitPath = d.renderEngine->pickNextIdAt(pixel, {});
+            }
+            if (!hitPath.IsEmpty() && isPathMaskedIn(hitPath)) {
+                d.lastPickPaths.append(hitPath);
+                d.lastPickIndex = d.lastPickPaths.size() - 1;
+                d.lastPickPosition = clickPosition;
+                SdfPath selectedPath = hitPath;
+                if (d.lastPickIndex == 0)
+                    selectedPath = resolveGeomSubsetTarget(hitPath, clickPosition);
+                qInfo().noquote() << "[GpuPick] path=" << QString::fromStdString(selectedPath.GetString())
+                                  << "layer=" << d.lastPickIndex;
+                selectedPaths.append(selectedPath);
+            }
+            else {
+                d.lastPickPaths.clear();
+                d.lastPickIndex = -1;
+            }
         }
     }
     else {
@@ -1405,8 +1352,21 @@ void
 ImagingGLWidgetPrivate::updateMask(const QList<SdfPath>& paths)
 {
     SignalGuard::Scope guard(this);
-    d.mask = paths;
-
+    // GeomSubsets are face collections, not Hydra drawables. Resolve their
+    // render mask to the owning mesh while retaining the original selection.
+    d.mask.clear();
+    d.mask.reserve(paths.size());
+    for (const SdfPath& path : paths) {
+        SdfPath renderPath = path.IsPropertyPath() ? path.GetPrimPath() : path;
+        const UsdPrim prim = d.stage ? d.stage->GetPrimAtPath(renderPath) : UsdPrim();
+        if (prim && UsdGeomSubset(prim)) {
+            renderPath = prim.GetParent().GetPath();
+            qInfo().noquote() << "[MaskDebug] subset mask resolved:" << QString::fromStdString(path.GetString()) << "->"
+                              << QString::fromStdString(renderPath.GetString());
+        }
+        if (!renderPath.IsEmpty() && !d.mask.contains(renderPath))
+            d.mask.append(renderPath);
+    }
 
     if (d.renderEngine) {
         QList<SdfPath> visibleSelection;
@@ -3288,15 +3248,18 @@ ImagingGLWidgetPrivate::pickMaskedIntersection(const UsdImagingGLEngine::PickPar
         return false;
 
     if (d.mask.isEmpty()) {
-        return d.renderEngine->testIntersection(pickParams, viewMatrix, projectionMatrix, d.stage->GetPseudoRoot(),
-                                                results);
+        const bool hit = d.renderEngine->testIntersection(pickParams, viewMatrix, projectionMatrix,
+                                                          d.stage->GetPseudoRoot(), results);
+        return hit;
     }
 
     bool hitAny = false;
     for (const SdfPath& maskPath : d.mask) {
         UsdPrim root = d.stage->GetPrimAtPath(maskPath);
-        if (!root)
+        if (!root) {
+            qWarning().noquote() << "[MaskDebug] invalid pick root=" << QString::fromStdString(maskPath.GetString());
             continue;
+        }
 
         UsdImagingGLEngine::IntersectionResultVector localResults;
         const bool hit = d.renderEngine->testIntersection(pickParams, viewMatrix, projectionMatrix, root,
