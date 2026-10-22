@@ -1,0 +1,328 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2025 - present Mikael Sundell
+// https://github.com/mikaelsundell/stageviz
+
+#include "primitem.h"
+#include "application.h"
+#include "command.h"
+#include "indextree.h"
+#include "qtutils.h"
+#include "style.h"
+#include "usdutils.h"
+#include <QBrush>
+#include <QIcon>
+#include <QItemSelectionModel>
+#include <QPixmap>
+#include <QPointer>
+#include <pxr/usd/usd/prim.h>
+#include <pxr/usd/usdGeom/gprim.h>
+#include <pxr/usd/usdGeom/imageable.h>
+#include <pxr/usd/usdGeom/tokens.h>
+
+PXR_NAMESPACE_USING_DIRECTIVE
+
+namespace stageviz {
+
+class PrimItemPrivate {
+public:
+    void init();
+    void updateCache();
+
+    struct Data {
+        UsdStageRefPtr stage;
+        SdfPath path;
+        PrimItem* item = nullptr;
+        bool dirty = true;
+        bool visible = true;
+        bool active = true;
+        bool hasPayload = false;
+        bool isAuthoredInEditTarget = true;
+        bool isRoot = false;
+        bool isGprim = false;
+        bool isInstance = false;
+        bool isInstanceProxy = false;
+        bool supportsVisibility = false;
+        bool isDefaultPrim = false;
+        bool hasDirectOverride = false;
+        bool hasDescendantOverride = false;
+        QString editName;
+        QString name;
+        QString typeName;
+    };
+
+    Data d;
+};
+
+void
+PrimItemPrivate::init()
+{
+    d.item->setFlags(d.item->flags() | Qt::ItemIsEnabled | Qt::ItemIsSelectable | Qt::ItemIsUserCheckable
+                     | Qt::ItemIsEditable);
+    d.item->setCheckState(0, Qt::Unchecked);
+}
+
+void
+PrimItemPrivate::updateCache()
+{
+    if (!d.dirty)
+        return;
+
+    d.visible = true;
+    d.active = false;
+    d.hasPayload = false;
+    d.isAuthoredInEditTarget = true;
+    d.isRoot = false;
+    d.isGprim = false;
+    d.isInstance = false;
+    d.isInstanceProxy = false;
+    d.supportsVisibility = false;
+    d.isDefaultPrim = false;
+    d.name.clear();
+    d.typeName.clear();
+
+    if (!d.stage) {
+        d.dirty = false;
+        return;
+    }
+
+    const UsdPrim prim = d.stage->GetPrimAtPath(d.path);
+    d.isRoot = prim == d.stage->GetPseudoRoot();
+
+    if (prim) {
+        d.active = prim.IsActive();
+        d.hasPayload = prim.HasPayload();
+        d.name = StringToQString(prim.GetName().GetString());
+        d.typeName = StringToQString(prim.GetTypeName().GetString());
+        const SdfLayerHandle editLayer = d.stage->GetEditTarget().GetLayer();
+        d.isAuthoredInEditTarget = editLayer && stage::isAuthoredInLayer(d.stage, editLayer, d.path);
+        d.isGprim = prim.IsA<UsdGeomGprim>();
+        d.isInstance = prim.IsInstance();
+        d.isInstanceProxy = prim.IsInstanceProxy();
+        d.supportsVisibility = !d.isInstanceProxy && prim.IsA<UsdGeomImageable>()
+                               && d.typeName != QStringLiteral("GeomSet");
+
+        const UsdPrim defaultPrim = d.stage->GetDefaultPrim();
+        d.isDefaultPrim = defaultPrim && defaultPrim == prim;
+
+        if (d.active && prim != d.stage->GetPseudoRoot())
+            d.visible = stage::isVisible(d.stage, d.path);
+    }
+    else {
+        d.name = StringToQString(d.path.GetName());
+    }
+
+    d.dirty = false;
+}
+
+PrimItem::PrimItem(QTreeWidget* parent, const UsdStageRefPtr& stage, const SdfPath& path)
+    : TreeItem(parent)
+    , p(new PrimItemPrivate())
+{
+    p->d.item = this;
+    p->d.stage = stage;
+    p->d.path = path;
+    p->init();
+}
+
+PrimItem::PrimItem(QTreeWidgetItem* parent, const UsdStageRefPtr& stage, const SdfPath& path)
+    : TreeItem(parent)
+    , p(new PrimItemPrivate())
+{
+    p->d.item = this;
+    p->d.stage = stage;
+    p->d.path = path;
+    p->init();
+}
+
+PrimItem::~PrimItem() = default;
+
+QVariant
+PrimItem::data(int column, int role) const
+{
+    p->updateCache();
+    const SdfPath path = p->d.path;
+
+    bool selected = false;
+    if (const QTreeWidget* tree = treeWidget()) {
+        if (const auto* indexTree = dynamic_cast<const IndexTree*>(tree))
+            selected = indexTree->isItemSelected(this);
+        else if (tree->selectionModel())
+            selected = tree->selectionModel()->isSelected(tree->indexFromItem(this, column));
+    }
+
+    if (role == Qt::ForegroundRole && p->d.visible && (p->d.isInstance || p->d.isInstanceProxy) && !selected) {
+        return QBrush(style()->color(Style::ColorRole::Readonly));
+    }
+
+    if (column == Name) {
+        if (role == Qt::DisplayRole)
+            return p->d.name;
+
+        if (role == Qt::EditRole)
+            return p->d.editName.isEmpty() ? p->d.name : p->d.editName;
+
+        if (role == PrimItem::EditName)
+            return p->d.editName;
+    }
+
+    if (role == Qt::DisplayRole || role == Qt::EditRole) {
+        switch (column) {
+        case Override:
+        case Visibility: return QString();
+        default: break;
+        }
+    }
+
+    if (role == Qt::ToolTipRole) {
+        if (column == Override) {
+            if (p->d.hasDirectOverride)
+                return QStringLiteral("Direct edit-layer override");
+
+            if (p->d.hasDescendantOverride)
+                return QStringLiteral("Contains edit-layer overrides");
+
+            return QVariant();
+        }
+
+        if (p->d.name.isEmpty())
+            return QVariant();
+
+        const QString pathText = StringToQString(path.GetString());
+        const QString typeText = p->d.typeName.isEmpty() ? "Unknown" : p->d.typeName;
+
+        return QString("Type\n%2%3\nPath\n%1")
+            .arg(pathText)
+            .arg(typeText)
+            .arg(p->d.isInstanceProxy ? QStringLiteral(" (Instance proxy)")
+                 : p->d.isInstance    ? QStringLiteral(" (Instance)")
+                                      : QString());
+    }
+
+    if (role == Qt::DecorationRole && column == Name) {
+        Style::IconRole iconRole = Style::IconRole::Prim;
+
+        if (p->d.typeName == "Material" || p->d.typeName == "Shader")
+            iconRole = Style::IconRole::Material;
+        else if (p->d.typeName == "GeomSubset")
+            iconRole = Style::IconRole::GeomSubset;
+        else if (p->d.isGprim)
+            iconRole = Style::IconRole::Geometry;
+
+        if (p->d.hasPayload)
+            iconRole = Style::IconRole::Payload;
+
+        if (p->d.isInstance)
+            iconRole = Style::IconRole::Instance;
+
+        if (p->d.isDefaultPrim)
+            iconRole = Style::IconRole::DefaultPrim;
+
+        return QIcon(style()->icon(iconRole, Style::UIScale::Medium));
+    }
+
+    if (role == Qt::DecorationRole && column == Override) {
+        if (p->d.hasDirectOverride)
+            return style()->icon(Style::IconRole::Override, Style::UIScale::Medium);
+
+        if (p->d.hasDescendantOverride)
+            return style()->icon(Style::IconRole::Over, Style::UIScale::Medium);
+
+        return QVariant();
+    }
+
+    if (role == Qt::DecorationRole && column == Visibility) {
+        if (!p->d.active || p->d.isRoot || !p->d.supportsVisibility)
+            return QVariant();
+
+        return style()->icon(p->d.visible ? Style::IconRole::Visible : Style::IconRole::Hidden, Style::UIScale::Medium);
+    }
+
+    if (role == PrimItem::Path)
+        return StringToQString(path.GetString());
+
+    return TreeItem::data(column, role);
+}
+
+void
+PrimItem::setData(int column, int role, const QVariant& value)
+{
+    if (column == Name && (role == Qt::EditRole || role == PrimItem::EditName)) {
+        const QString newName = value.toString().trimmed();
+
+        p->updateCache();
+
+        if (newName.isEmpty() || newName == p->d.name) {
+            p->d.editName.clear();
+            TreeItem::setData(column, PrimItem::EditName, QString());
+            return;
+        }
+
+        p->d.editName = newName;
+        TreeItem::setData(column, PrimItem::EditName, newName);
+        return;
+    }
+
+    TreeItem::setData(column, role, value);
+}
+
+bool
+PrimItem::supportsVisibility() const
+{
+    p->updateCache();
+    return p->d.active && !p->d.isRoot && p->d.supportsVisibility;
+}
+
+SdfPath
+PrimItem::path() const
+{
+    return p->d.path;
+}
+
+void
+PrimItem::setPath(const SdfPath& path)
+{
+    if (p->d.path == path)
+        return;
+
+    p->d.path = path;
+    p->d.dirty = true;
+    p->d.editName.clear();
+}
+
+void
+PrimItem::invalidate()
+{
+    p->d.dirty = true;
+    p->d.editName.clear();
+}
+
+void
+PrimItem::setOverrideState(bool direct, bool descendant)
+{
+    if (p->d.hasDirectOverride == direct && p->d.hasDescendantOverride == descendant)
+        return;
+
+    p->d.hasDirectOverride = direct;
+    p->d.hasDescendantOverride = descendant;
+}
+
+TreeItem::ItemStates
+PrimItem::itemStates() const
+{
+    p->updateCache();
+
+    ItemStates states = None;
+
+    if (!p->d.active)
+        return states;
+
+    if (p->d.visible)
+        states |= Visible;
+
+    if (!p->d.isAuthoredInEditTarget || p->d.isInstanceProxy)
+        states |= ReadOnly;
+
+    return states;
+}
+
+}  // namespace stageviz

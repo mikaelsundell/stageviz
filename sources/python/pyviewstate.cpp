@@ -1,0 +1,984 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2025 - present Mikael Sundell
+// https://github.com/mikaelsundell/stageviz
+
+#include "pyviewstate.h"
+#include "pyutils.h"
+#include "pyviewcamera.h"
+
+namespace stageviz::python {
+
+static void
+PyViewState_dealloc(PyViewStateObject* self)
+{
+    Py_TYPE(self)->tp_free(reinterpret_cast<PyObject*>(self));
+}
+
+static PyObject*
+PyViewState_new(PyTypeObject* type, PyObject*, PyObject*)
+{
+    PyViewStateObject* self = reinterpret_cast<PyViewStateObject*>(type->tp_alloc(type, 0));
+    if (self)
+        self->viewState = nullptr;
+    return reinterpret_cast<PyObject*>(self);
+}
+
+static PyObject*
+PyViewState_camera(PyViewStateObject* self, PyObject*)
+{
+    if (!checkViewState(self->viewState))
+        return nullptr;
+
+    return createPyViewCamera(self->viewState->camera());
+}
+
+static PyObject*
+PyViewState_backgroundColor(PyViewStateObject* self, PyObject*)
+{
+    if (!checkViewState(self->viewState))
+        return nullptr;
+
+    return colorToPyTuple(self->viewState->backgroundColor());
+}
+
+static PyObject*
+PyViewState_setBackgroundColor(PyViewStateObject* self, PyObject* args)
+{
+    if (!checkViewState(self->viewState))
+        return nullptr;
+
+    PyObject* object = nullptr;
+    if (!PyArg_ParseTuple(args, "O", &object))
+        return nullptr;
+
+    QColor color;
+    if (!pyToColor(object, &color))
+        return nullptr;
+
+    self->viewState->setBackgroundColor(color);
+    Py_RETURN_NONE;
+}
+
+static PyObject*
+PyViewState_gridColor(PyViewStateObject* self, PyObject*)
+{
+    if (!checkViewState(self->viewState))
+        return nullptr;
+
+    return colorToPyTuple(self->viewState->gridColor());
+}
+
+static PyObject*
+PyViewState_setGridColor(PyViewStateObject* self, PyObject* args)
+{
+    if (!checkViewState(self->viewState))
+        return nullptr;
+
+    PyObject* object = nullptr;
+    if (!PyArg_ParseTuple(args, "O", &object))
+        return nullptr;
+
+    QColor color;
+    if (!pyToColor(object, &color))
+        return nullptr;
+
+    self->viewState->setGridColor(color);
+    Py_RETURN_NONE;
+}
+
+static PyObject*
+PyViewState_gridEnabled(PyViewStateObject* self, PyObject*)
+{
+    if (!checkViewState(self->viewState))
+        return nullptr;
+
+    return PyBool_FromLong(self->viewState->gridEnabled());
+}
+
+static PyObject*
+PyViewState_setGridEnabled(PyViewStateObject* self, PyObject* args)
+{
+    if (!checkViewState(self->viewState))
+        return nullptr;
+
+    int enabled = 0;
+    if (!PyArg_ParseTuple(args, "p", &enabled))
+        return nullptr;
+
+    self->viewState->setGridEnabled(enabled != 0);
+    Py_RETURN_NONE;
+}
+
+static PyObject*
+PyViewState_materialMode(PyViewStateObject* self, PyObject*)
+{
+    if (!checkViewState(self->viewState))
+        return nullptr;
+
+    return PyLong_FromLong(static_cast<long>(self->viewState->materialMode()));
+}
+
+static PyObject*
+PyViewState_setMaterialMode(PyViewStateObject* self, PyObject* args)
+{
+    if (!checkViewState(self->viewState))
+        return nullptr;
+
+    long mode = 0;
+    if (!PyArg_ParseTuple(args, "l", &mode))
+        return nullptr;
+
+    if (mode < static_cast<long>(ViewState::All) || mode > static_cast<long>(ViewState::Override)) {
+        PyErr_SetString(PyExc_ValueError, "Invalid material mode");
+        return nullptr;
+    }
+
+    self->viewState->setMaterialMode(static_cast<ViewState::MaterialMode>(mode));
+    Py_RETURN_NONE;
+}
+
+static PyObject*
+PyViewState_overrideMaterial(PyViewStateObject* self, PyObject*)
+{
+    if (!checkViewState(self->viewState))
+        return nullptr;
+
+    return sdfPathToPyString(self->viewState->overrideMaterial());
+}
+
+static PyObject*
+PyViewState_setOverrideMaterial(PyViewStateObject* self, PyObject* args)
+{
+    if (!checkViewState(self->viewState))
+        return nullptr;
+
+    PyObject* object = nullptr;
+    if (!PyArg_ParseTuple(args, "O", &object))
+        return nullptr;
+
+    SdfPath path;
+    if (!pyToPath(object, &path))
+        return nullptr;
+
+    if (!path.IsEmpty() && !path.IsPrimPath()) {
+        PyErr_SetString(PyExc_ValueError, "Override material must be an absolute prim path on the auxiliary stage");
+        return nullptr;
+    }
+
+    self->viewState->setOverrideMaterial(path);
+    Py_RETURN_NONE;
+}
+
+static PyObject*
+PyViewState_defaultCameraLightEnabled(PyViewStateObject* self, PyObject*)
+{
+    if (!checkViewState(self->viewState))
+        return nullptr;
+
+    return PyBool_FromLong(self->viewState->defaultCameraLightEnabled());
+}
+
+static PyObject*
+PyViewState_setDefaultCameraLightEnabled(PyViewStateObject* self, PyObject* args)
+{
+    if (!checkViewState(self->viewState))
+        return nullptr;
+
+    int enabled = 0;
+    if (!PyArg_ParseTuple(args, "p", &enabled))
+        return nullptr;
+
+    self->viewState->setDefaultCameraLightEnabled(enabled != 0);
+    Py_RETURN_NONE;
+}
+
+static PyObject*
+PyViewState_defaultDomeLightEnabled(PyViewStateObject* self, PyObject*)
+{
+    if (!checkViewState(self->viewState))
+        return nullptr;
+
+    return PyBool_FromLong(self->viewState->defaultDomeLightEnabled());
+}
+
+static PyObject*
+PyViewState_setDefaultDomeLightEnabled(PyViewStateObject* self, PyObject* args)
+{
+    if (!checkViewState(self->viewState))
+        return nullptr;
+
+    int enabled = 0;
+    if (!PyArg_ParseTuple(args, "p", &enabled))
+        return nullptr;
+
+    self->viewState->setDefaultDomeLightEnabled(enabled != 0);
+    Py_RETURN_NONE;
+}
+
+static PyObject*
+PyViewState_domeLightTexture(PyViewStateObject* self, PyObject*)
+{
+    if (!checkViewState(self->viewState))
+        return nullptr;
+
+    const QByteArray value = self->viewState->domeLightTexture().toUtf8();
+    return PyUnicode_FromString(value.constData());
+}
+
+static PyObject*
+PyViewState_setDomeLightTexture(PyViewStateObject* self, PyObject* args)
+{
+    if (!checkViewState(self->viewState))
+        return nullptr;
+
+    const char* value = nullptr;
+    if (!PyArg_ParseTuple(args, "s", &value))
+        return nullptr;
+
+    self->viewState->setDomeLightTexture(QString::fromUtf8(value));
+    Py_RETURN_NONE;
+}
+
+static PyObject*
+PyViewState_domeLightCameraVisibility(PyViewStateObject* self, PyObject*)
+{
+    if (!checkViewState(self->viewState))
+        return nullptr;
+
+    return PyBool_FromLong(self->viewState->domeLightCameraVisibility());
+}
+
+static PyObject*
+PyViewState_setDomeLightCameraVisibility(PyViewStateObject* self, PyObject* args)
+{
+    if (!checkViewState(self->viewState))
+        return nullptr;
+
+    int visible = 0;
+    if (!PyArg_ParseTuple(args, "p", &visible))
+        return nullptr;
+
+    self->viewState->setDomeLightCameraVisibility(visible != 0);
+    Py_RETURN_NONE;
+}
+
+
+
+static PyObject*
+PyViewState_ambientOcclusionEnabled(PyViewStateObject* self, PyObject*)
+{
+    if (!checkViewState(self->viewState))
+        return nullptr;
+    return PyBool_FromLong(self->viewState->ambientOcclusionEnabled());
+}
+
+static PyObject*
+PyViewState_setAmbientOcclusionEnabled(PyViewStateObject* self, PyObject* args)
+{
+    if (!checkViewState(self->viewState))
+        return nullptr;
+    int value = 0;
+    if (!PyArg_ParseTuple(args, "p", &value))
+        return nullptr;
+    self->viewState->setAmbientOcclusionEnabled(value != 0);
+    Py_RETURN_NONE;
+}
+
+static PyObject*
+PyViewState_AmbientOcclusionContactAmount(PyViewStateObject* self, PyObject*)
+{
+    if (!checkViewState(self->viewState))
+        return nullptr;
+
+    return PyFloat_FromDouble(self->viewState->ambientOcclusionContactAmount());
+}
+
+static PyObject*
+PyViewState_setAmbientOcclusionContactAmount(PyViewStateObject* self, PyObject* args)
+{
+    if (!checkViewState(self->viewState))
+        return nullptr;
+
+    double value = 0.0;
+    if (!PyArg_ParseTuple(args, "d", &value))
+        return nullptr;
+
+    self->viewState->setAmbientOcclusionContactAmount(static_cast<float>(value));
+    Py_RETURN_NONE;
+}
+
+static PyObject*
+PyViewState_AmbientOcclusionContactRadius(PyViewStateObject* self, PyObject*)
+{
+    if (!checkViewState(self->viewState))
+        return nullptr;
+
+    return PyFloat_FromDouble(self->viewState->ambientOcclusionContactRadius());
+}
+
+static PyObject*
+PyViewState_setAmbientOcclusionContactRadius(PyViewStateObject* self, PyObject* args)
+{
+    if (!checkViewState(self->viewState))
+        return nullptr;
+
+    double value = 0.0;
+    if (!PyArg_ParseTuple(args, "d", &value))
+        return nullptr;
+
+    self->viewState->setAmbientOcclusionContactRadius(static_cast<float>(value));
+    Py_RETURN_NONE;
+}
+
+static PyObject*
+PyViewState_AmbientOcclusionBroadAmount(PyViewStateObject* self, PyObject*)
+{
+    if (!checkViewState(self->viewState))
+        return nullptr;
+
+    return PyFloat_FromDouble(self->viewState->ambientOcclusionBroadAmount());
+}
+
+static PyObject*
+PyViewState_setAmbientOcclusionBroadAmount(PyViewStateObject* self, PyObject* args)
+{
+    if (!checkViewState(self->viewState))
+        return nullptr;
+
+    double value = 0.0;
+    if (!PyArg_ParseTuple(args, "d", &value))
+        return nullptr;
+
+    self->viewState->setAmbientOcclusionBroadAmount(static_cast<float>(value));
+    Py_RETURN_NONE;
+}
+
+static PyObject*
+PyViewState_AmbientOcclusionBroadRadius(PyViewStateObject* self, PyObject*)
+{
+    if (!checkViewState(self->viewState))
+        return nullptr;
+
+    return PyFloat_FromDouble(self->viewState->ambientOcclusionBroadRadius());
+}
+
+static PyObject*
+PyViewState_setAmbientOcclusionBroadRadius(PyViewStateObject* self, PyObject* args)
+{
+    if (!checkViewState(self->viewState))
+        return nullptr;
+
+    double value = 0.0;
+    if (!PyArg_ParseTuple(args, "d", &value))
+        return nullptr;
+
+    self->viewState->setAmbientOcclusionBroadRadius(static_cast<float>(value));
+    Py_RETURN_NONE;
+}
+
+static PyObject*
+PyViewState_AmbientOcclusionNormalBias(PyViewStateObject* self, PyObject*)
+{
+    if (!checkViewState(self->viewState))
+        return nullptr;
+
+    return PyFloat_FromDouble(self->viewState->ambientOcclusionNormalBias());
+}
+
+static PyObject*
+PyViewState_setAmbientOcclusionNormalBias(PyViewStateObject* self, PyObject* args)
+{
+    if (!checkViewState(self->viewState))
+        return nullptr;
+
+    double value = 0.0;
+    if (!PyArg_ParseTuple(args, "d", &value))
+        return nullptr;
+
+    self->viewState->setAmbientOcclusionNormalBias(static_cast<float>(value));
+    Py_RETURN_NONE;
+}
+
+static PyObject*
+PyViewState_AmbientOcclusionFalloff(PyViewStateObject* self, PyObject*)
+{
+    if (!checkViewState(self->viewState))
+        return nullptr;
+
+    return PyFloat_FromDouble(self->viewState->ambientOcclusionFalloff());
+}
+
+static PyObject*
+PyViewState_setAmbientOcclusionFalloff(PyViewStateObject* self, PyObject* args)
+{
+    if (!checkViewState(self->viewState))
+        return nullptr;
+
+    double value = 0.0;
+    if (!PyArg_ParseTuple(args, "d", &value))
+        return nullptr;
+
+    self->viewState->setAmbientOcclusionFalloff(static_cast<float>(value));
+    Py_RETURN_NONE;
+}
+
+static PyObject*
+PyViewState_AmbientOcclusionContrast(PyViewStateObject* self, PyObject*)
+{
+    if (!checkViewState(self->viewState))
+        return nullptr;
+
+    return PyFloat_FromDouble(self->viewState->ambientOcclusionContrast());
+}
+
+static PyObject*
+PyViewState_setAmbientOcclusionContrast(PyViewStateObject* self, PyObject* args)
+{
+    if (!checkViewState(self->viewState))
+        return nullptr;
+
+    double value = 0.0;
+    if (!PyArg_ParseTuple(args, "d", &value))
+        return nullptr;
+
+    self->viewState->setAmbientOcclusionContrast(static_cast<float>(value));
+    Py_RETURN_NONE;
+}
+
+static PyObject*
+PyViewState_AmbientOcclusionEdgeSharpness(PyViewStateObject* self, PyObject*)
+{
+    if (!checkViewState(self->viewState))
+        return nullptr;
+
+    return PyFloat_FromDouble(self->viewState->ambientOcclusionEdgeSharpness());
+}
+
+static PyObject*
+PyViewState_setAmbientOcclusionEdgeSharpness(PyViewStateObject* self, PyObject* args)
+{
+    if (!checkViewState(self->viewState))
+        return nullptr;
+
+    double value = 0.0;
+    if (!PyArg_ParseTuple(args, "d", &value))
+        return nullptr;
+
+    self->viewState->setAmbientOcclusionEdgeSharpness(static_cast<float>(value));
+    Py_RETURN_NONE;
+}
+
+static PyObject*
+PyViewState_AmbientOcclusionBlurRadius(PyViewStateObject* self, PyObject*)
+{
+    if (!checkViewState(self->viewState))
+        return nullptr;
+
+    return PyFloat_FromDouble(self->viewState->ambientOcclusionBlurRadius());
+}
+
+static PyObject*
+PyViewState_setAmbientOcclusionBlurRadius(PyViewStateObject* self, PyObject* args)
+{
+    if (!checkViewState(self->viewState))
+        return nullptr;
+
+    double value = 0.0;
+    if (!PyArg_ParseTuple(args, "d", &value))
+        return nullptr;
+
+    self->viewState->setAmbientOcclusionBlurRadius(static_cast<float>(value));
+    Py_RETURN_NONE;
+}
+
+
+static PyObject*
+PyViewState_ambientOcclusionBlurEnabled(PyViewStateObject* self, PyObject*)
+{
+    if (!checkViewState(self->viewState))
+        return nullptr;
+    return PyBool_FromLong(self->viewState->ambientOcclusionBlurEnabled());
+}
+
+static PyObject*
+PyViewState_setAmbientOcclusionBlurEnabled(PyViewStateObject* self, PyObject* args)
+{
+    if (!checkViewState(self->viewState))
+        return nullptr;
+    int value = 0;
+    if (!PyArg_ParseTuple(args, "p", &value))
+        return nullptr;
+    self->viewState->setAmbientOcclusionBlurEnabled(value != 0);
+    Py_RETURN_NONE;
+}
+
+static PyObject*
+PyViewState_ambientOcclusionQuality(PyViewStateObject* self, PyObject*)
+{
+    if (!checkViewState(self->viewState))
+        return nullptr;
+    return PyLong_FromLong(static_cast<long>(self->viewState->ambientOcclusionQuality()));
+}
+
+static PyObject*
+PyViewState_setAmbientOcclusionQuality(PyViewStateObject* self, PyObject* args)
+{
+    if (!checkViewState(self->viewState))
+        return nullptr;
+    long value = 0;
+    if (!PyArg_ParseTuple(args, "l", &value))
+        return nullptr;
+    if (value < static_cast<long>(ViewState::AmbientOcclusionLow)
+        || value > static_cast<long>(ViewState::AmbientOcclusionUltra)) {
+        PyErr_SetString(PyExc_ValueError, "Invalid ambient occlusion quality");
+        return nullptr;
+    }
+    self->viewState->setAmbientOcclusionQuality(static_cast<ViewState::AmbientOcclusionQuality>(value));
+    Py_RETURN_NONE;
+}
+
+static PyObject*
+PyViewState_ambientOcclusionDebugMode(PyViewStateObject* self, PyObject*)
+{
+    if (!checkViewState(self->viewState))
+        return nullptr;
+    return PyLong_FromLong(static_cast<long>(self->viewState->ambientOcclusionDebugMode()));
+}
+
+static PyObject*
+PyViewState_setAmbientOcclusionDebugMode(PyViewStateObject* self, PyObject* args)
+{
+    if (!checkViewState(self->viewState))
+        return nullptr;
+    long value = 0;
+    if (!PyArg_ParseTuple(args, "l", &value))
+        return nullptr;
+    if (value < static_cast<long>(ViewState::AmbientOcclusionComposite)
+        || value > static_cast<long>(ViewState::AmbientOcclusionBroad)) {
+        PyErr_SetString(PyExc_ValueError, "Invalid ambient occlusion debug mode");
+        return nullptr;
+    }
+    self->viewState->setAmbientOcclusionDebugMode(static_cast<ViewState::AmbientOcclusionDebugMode>(value));
+    Py_RETURN_NONE;
+}
+
+static PyObject*
+PyViewState_sceneLightsEnabled(PyViewStateObject* self, PyObject*)
+{
+    if (!checkViewState(self->viewState))
+        return nullptr;
+
+    return PyBool_FromLong(self->viewState->sceneLightsEnabled());
+}
+
+static PyObject*
+PyViewState_setSceneLightsEnabled(PyViewStateObject* self, PyObject* args)
+{
+    if (!checkViewState(self->viewState))
+        return nullptr;
+
+    int enabled = 0;
+    if (!PyArg_ParseTuple(args, "p", &enabled))
+        return nullptr;
+
+    self->viewState->setSceneLightsEnabled(enabled != 0);
+    Py_RETURN_NONE;
+}
+
+static PyObject*
+PyViewState_sceneMaterialsEnabled(PyViewStateObject* self, PyObject*)
+{
+    if (!checkViewState(self->viewState))
+        return nullptr;
+
+    return PyBool_FromLong(self->viewState->sceneMaterialsEnabled());
+}
+
+static PyObject*
+PyViewState_setSceneMaterialsEnabled(PyViewStateObject* self, PyObject* args)
+{
+    if (!checkViewState(self->viewState))
+        return nullptr;
+
+    int enabled = 0;
+    if (!PyArg_ParseTuple(args, "p", &enabled))
+        return nullptr;
+
+    self->viewState->setSceneMaterialsEnabled(enabled != 0);
+    Py_RETURN_NONE;
+}
+
+static PyObject*
+PyViewState_doubleSidedMode(PyViewStateObject* self, PyObject*)
+{
+    if (!checkViewState(self->viewState))
+        return nullptr;
+
+    return PyLong_FromLong(static_cast<long>(self->viewState->doubleSidedMode()));
+}
+
+static PyObject*
+PyViewState_setDoubleSidedMode(PyViewStateObject* self, PyObject* args)
+{
+    if (!checkViewState(self->viewState))
+        return nullptr;
+
+    long mode = 0;
+    if (!PyArg_ParseTuple(args, "l", &mode))
+        return nullptr;
+
+    if (mode < static_cast<long>(ViewState::Primitive) || mode > static_cast<long>(ViewState::SingleSided)) {
+        PyErr_SetString(PyExc_ValueError,
+                        "Invalid double-sided mode. Expected Primitive, DoubleSided, or SingleSided.");
+        return nullptr;
+    }
+
+    self->viewState->setDoubleSidedMode(static_cast<ViewState::DoubleSidedMode>(mode));
+    Py_RETURN_NONE;
+}
+
+static PyObject*
+PyViewState_renderMode(PyViewStateObject* self, PyObject*)
+{
+    if (!checkViewState(self->viewState))
+        return nullptr;
+
+    return PyLong_FromLong(static_cast<long>(self->viewState->renderMode()));
+}
+
+static PyObject*
+PyViewState_setRenderMode(PyViewStateObject* self, PyObject* args)
+{
+    if (!checkViewState(self->viewState))
+        return nullptr;
+
+    long mode = 0;
+    if (!PyArg_ParseTuple(args, "l", &mode))
+        return nullptr;
+
+    if (mode < static_cast<long>(ViewState::Shaded) || mode > static_cast<long>(ViewState::Wireframe)) {
+        PyErr_SetString(PyExc_ValueError, "Invalid render mode");
+        return nullptr;
+    }
+
+    self->viewState->setRenderMode(static_cast<ViewState::RenderMode>(mode));
+    Py_RETURN_NONE;
+}
+
+static PyObject*
+PyViewState_complexityLevel(PyViewStateObject* self, PyObject*)
+{
+    if (!checkViewState(self->viewState))
+        return nullptr;
+
+    return PyLong_FromLong(static_cast<long>(self->viewState->complexityLevel()));
+}
+
+static PyObject*
+PyViewState_setComplexityLevel(PyViewStateObject* self, PyObject* args)
+{
+    if (!checkViewState(self->viewState))
+        return nullptr;
+
+    long level = 0;
+    if (!PyArg_ParseTuple(args, "l", &level))
+        return nullptr;
+
+    if (level < static_cast<long>(ViewState::Low) || level > static_cast<long>(ViewState::VeryHigh)) {
+        PyErr_SetString(PyExc_ValueError, "Invalid complexity level");
+        return nullptr;
+    }
+
+    self->viewState->setComplexityLevel(static_cast<ViewState::ComplexityLevel>(level));
+    Py_RETURN_NONE;
+}
+
+static PyObject*
+PyViewState_rendererAov(PyViewStateObject* self, PyObject*)
+{
+    if (!checkViewState(self->viewState))
+        return nullptr;
+
+    const QByteArray value = self->viewState->rendererAov().toUtf8();
+    return PyUnicode_FromString(value.constData());
+}
+
+static PyObject*
+PyViewState_setRendererAov(PyViewStateObject* self, PyObject* args)
+{
+    if (!checkViewState(self->viewState))
+        return nullptr;
+
+    const char* value = nullptr;
+    if (!PyArg_ParseTuple(args, "s", &value))
+        return nullptr;
+
+    self->viewState->setRendererAov(QString::fromUtf8(value));
+    Py_RETURN_NONE;
+}
+
+static PyObject*
+PyViewState_sceneStatsEnabled(PyViewStateObject* self, PyObject*)
+{
+    if (!checkViewState(self->viewState))
+        return nullptr;
+
+    return PyBool_FromLong(self->viewState->sceneStatsEnabled());
+}
+
+static PyObject*
+PyViewState_setSceneStatsEnabled(PyViewStateObject* self, PyObject* args)
+{
+    if (!checkViewState(self->viewState))
+        return nullptr;
+
+    int enabled = 0;
+    if (!PyArg_ParseTuple(args, "p", &enabled))
+        return nullptr;
+
+    self->viewState->setSceneStatsEnabled(enabled != 0);
+    Py_RETURN_NONE;
+}
+
+static PyObject*
+PyViewState_performanceStatsEnabled(PyViewStateObject* self, PyObject*)
+{
+    if (!checkViewState(self->viewState))
+        return nullptr;
+
+    return PyBool_FromLong(self->viewState->performanceStatsEnabled());
+}
+
+static PyObject*
+PyViewState_setPerformanceStatsEnabled(PyViewStateObject* self, PyObject* args)
+{
+    if (!checkViewState(self->viewState))
+        return nullptr;
+
+    int enabled = 0;
+    if (!PyArg_ParseTuple(args, "p", &enabled))
+        return nullptr;
+
+    self->viewState->setPerformanceStatsEnabled(enabled != 0);
+    Py_RETURN_NONE;
+}
+
+static PyObject*
+PyViewState_cameraAxisEnabled(PyViewStateObject* self, PyObject*)
+{
+    if (!checkViewState(self->viewState))
+        return nullptr;
+
+    return PyBool_FromLong(self->viewState->cameraAxisEnabled());
+}
+
+static PyObject*
+PyViewState_setCameraAxisEnabled(PyViewStateObject* self, PyObject* args)
+{
+    if (!checkViewState(self->viewState))
+        return nullptr;
+
+    int enabled = 0;
+    if (!PyArg_ParseTuple(args, "p", &enabled))
+        return nullptr;
+
+    self->viewState->setCameraAxisEnabled(enabled != 0);
+    Py_RETURN_NONE;
+}
+
+static PyMethodDef PyViewState_methods[] = {
+    { "camera", reinterpret_cast<PyCFunction>(PyViewState_camera), METH_NOARGS, "Get the view camera wrapper" },
+
+    { "backgroundColor", reinterpret_cast<PyCFunction>(PyViewState_backgroundColor), METH_NOARGS,
+      "Get the viewport background color as (r, g, b, a)" },
+    { "setBackgroundColor", reinterpret_cast<PyCFunction>(PyViewState_setBackgroundColor), METH_VARARGS,
+      "Set the viewport background color from an RGB or RGBA sequence" },
+
+    { "gridColor", reinterpret_cast<PyCFunction>(PyViewState_gridColor), METH_NOARGS,
+      "Get the viewport grid color as (r, g, b, a)" },
+    { "setGridColor", reinterpret_cast<PyCFunction>(PyViewState_setGridColor), METH_VARARGS,
+      "Set the viewport grid color from an RGB or RGBA sequence" },
+
+    { "gridEnabled", reinterpret_cast<PyCFunction>(PyViewState_gridEnabled), METH_NOARGS,
+      "Get the viewport grid display state" },
+    { "setGridEnabled", reinterpret_cast<PyCFunction>(PyViewState_setGridEnabled), METH_VARARGS,
+      "Set the viewport grid display state" },
+
+    { "materialMode", reinterpret_cast<PyCFunction>(PyViewState_materialMode), METH_NOARGS,
+      "Get the viewport material mode" },
+    { "setMaterialMode", reinterpret_cast<PyCFunction>(PyViewState_setMaterialMode), METH_VARARGS,
+      "Set the viewport material mode" },
+
+    { "overrideMaterial", reinterpret_cast<PyCFunction>(PyViewState_overrideMaterial), METH_NOARGS,
+      "Get the viewport override material prim path" },
+    { "setOverrideMaterial", reinterpret_cast<PyCFunction>(PyViewState_setOverrideMaterial), METH_VARARGS,
+      "Set the viewport override material prim path" },
+
+    { "defaultCameraLightEnabled", reinterpret_cast<PyCFunction>(PyViewState_defaultCameraLightEnabled), METH_NOARGS,
+      "Get the default camera light state" },
+    { "setDefaultCameraLightEnabled", reinterpret_cast<PyCFunction>(PyViewState_setDefaultCameraLightEnabled),
+      METH_VARARGS, "Set the default camera light state" },
+
+    { "defaultDomeLightEnabled", reinterpret_cast<PyCFunction>(PyViewState_defaultDomeLightEnabled), METH_NOARGS,
+      "Get the default viewport dome light state" },
+    { "setDefaultDomeLightEnabled", reinterpret_cast<PyCFunction>(PyViewState_setDefaultDomeLightEnabled), METH_VARARGS,
+      "Set the default viewport dome light state" },
+
+    { "domeLightTexture", reinterpret_cast<PyCFunction>(PyViewState_domeLightTexture), METH_NOARGS,
+      "Get the custom dome light HDRI path; empty uses OpenUSD's default dome texture" },
+    { "setDomeLightTexture", reinterpret_cast<PyCFunction>(PyViewState_setDomeLightTexture), METH_VARARGS,
+      "Set a custom dome light HDRI path; empty restores OpenUSD's default dome texture" },
+
+    { "domeLightCameraVisibility", reinterpret_cast<PyCFunction>(PyViewState_domeLightCameraVisibility), METH_NOARGS,
+      "Get whether the dome texture is visible to the camera" },
+    { "setDomeLightCameraVisibility", reinterpret_cast<PyCFunction>(PyViewState_setDomeLightCameraVisibility),
+      METH_VARARGS, "Set whether the dome texture is visible to the camera" },
+
+    { "ambientOcclusionEnabled", reinterpret_cast<PyCFunction>(PyViewState_ambientOcclusionEnabled), METH_NOARGS,
+      "Get the Stageviz ambient occlusion state" },
+    { "setAmbientOcclusionEnabled", reinterpret_cast<PyCFunction>(PyViewState_setAmbientOcclusionEnabled), METH_VARARGS,
+      "Set the Stageviz ambient occlusion state" },
+    { "ambientOcclusionContactAmount", reinterpret_cast<PyCFunction>(PyViewState_AmbientOcclusionContactAmount),
+      METH_NOARGS, "Get contact ambient occlusion strength" },
+    { "setAmbientOcclusionContactAmount", reinterpret_cast<PyCFunction>(PyViewState_setAmbientOcclusionContactAmount),
+      METH_VARARGS, "Set contact ambient occlusion strength" },
+    { "ambientOcclusionContactRadius", reinterpret_cast<PyCFunction>(PyViewState_AmbientOcclusionContactRadius),
+      METH_NOARGS, "Get contact ambient occlusion radius in device pixels" },
+    { "setAmbientOcclusionContactRadius", reinterpret_cast<PyCFunction>(PyViewState_setAmbientOcclusionContactRadius),
+      METH_VARARGS, "Set contact ambient occlusion radius in device pixels" },
+    { "ambientOcclusionBroadAmount", reinterpret_cast<PyCFunction>(PyViewState_AmbientOcclusionBroadAmount),
+      METH_NOARGS, "Get broad ambient occlusion strength" },
+    { "setAmbientOcclusionBroadAmount", reinterpret_cast<PyCFunction>(PyViewState_setAmbientOcclusionBroadAmount),
+      METH_VARARGS, "Set broad ambient occlusion strength" },
+    { "ambientOcclusionBroadRadius", reinterpret_cast<PyCFunction>(PyViewState_AmbientOcclusionBroadRadius),
+      METH_NOARGS, "Get broad ambient occlusion radius in device pixels" },
+    { "setAmbientOcclusionBroadRadius", reinterpret_cast<PyCFunction>(PyViewState_setAmbientOcclusionBroadRadius),
+      METH_VARARGS, "Set broad ambient occlusion radius in device pixels" },
+    { "ambientOcclusionNormalBias", reinterpret_cast<PyCFunction>(PyViewState_AmbientOcclusionNormalBias), METH_NOARGS,
+      "Get ambient occlusion normal bias" },
+    { "setAmbientOcclusionNormalBias", reinterpret_cast<PyCFunction>(PyViewState_setAmbientOcclusionNormalBias),
+      METH_VARARGS, "Set ambient occlusion normal bias" },
+    { "ambientOcclusionFalloff", reinterpret_cast<PyCFunction>(PyViewState_AmbientOcclusionFalloff), METH_NOARGS,
+      "Get ambient occlusion distance falloff" },
+    { "setAmbientOcclusionFalloff", reinterpret_cast<PyCFunction>(PyViewState_setAmbientOcclusionFalloff), METH_VARARGS,
+      "Set ambient occlusion distance falloff" },
+    { "ambientOcclusionContrast", reinterpret_cast<PyCFunction>(PyViewState_AmbientOcclusionContrast), METH_NOARGS,
+      "Get ambient occlusion visibility contrast" },
+    { "setAmbientOcclusionContrast", reinterpret_cast<PyCFunction>(PyViewState_setAmbientOcclusionContrast),
+      METH_VARARGS, "Set ambient occlusion visibility contrast" },
+    { "ambientOcclusionEdgeSharpness", reinterpret_cast<PyCFunction>(PyViewState_AmbientOcclusionEdgeSharpness),
+      METH_NOARGS, "Get bilateral blur edge sharpness" },
+    { "setAmbientOcclusionEdgeSharpness", reinterpret_cast<PyCFunction>(PyViewState_setAmbientOcclusionEdgeSharpness),
+      METH_VARARGS, "Set bilateral blur edge sharpness" },
+    { "ambientOcclusionBlurEnabled", reinterpret_cast<PyCFunction>(PyViewState_ambientOcclusionBlurEnabled),
+      METH_NOARGS, "Get ambient occlusion blur state" },
+    { "setAmbientOcclusionBlurEnabled", reinterpret_cast<PyCFunction>(PyViewState_setAmbientOcclusionBlurEnabled),
+      METH_VARARGS, "Set ambient occlusion blur state" },
+    { "ambientOcclusionBlurRadius", reinterpret_cast<PyCFunction>(PyViewState_AmbientOcclusionBlurRadius), METH_NOARGS,
+      "Get ambient occlusion blur radius" },
+    { "setAmbientOcclusionBlurRadius", reinterpret_cast<PyCFunction>(PyViewState_setAmbientOcclusionBlurRadius),
+      METH_VARARGS, "Set ambient occlusion blur radius" },
+    { "ambientOcclusionQuality", reinterpret_cast<PyCFunction>(PyViewState_ambientOcclusionQuality), METH_NOARGS,
+      "Get ambient occlusion quality: 0=Low, 1=Medium, 2=High, 3=Ultra" },
+    { "setAmbientOcclusionQuality", reinterpret_cast<PyCFunction>(PyViewState_setAmbientOcclusionQuality), METH_VARARGS,
+      "Set ambient occlusion quality: 0=Low, 1=Medium, 2=High, 3=Ultra" },
+    { "ambientOcclusionDebugMode", reinterpret_cast<PyCFunction>(PyViewState_ambientOcclusionDebugMode), METH_NOARGS,
+      "Get ambient occlusion view: 0=Composite, 1=Combined, 2=Contact, 3=Broad" },
+    { "setAmbientOcclusionDebugMode", reinterpret_cast<PyCFunction>(PyViewState_setAmbientOcclusionDebugMode),
+      METH_VARARGS, "Set ambient occlusion view: 0=Composite, 1=Combined, 2=Contact, 3=Broad" },
+
+    { "sceneLightsEnabled", reinterpret_cast<PyCFunction>(PyViewState_sceneLightsEnabled), METH_NOARGS,
+      "Get the scene light state" },
+    { "setSceneLightsEnabled", reinterpret_cast<PyCFunction>(PyViewState_setSceneLightsEnabled), METH_VARARGS,
+      "Set the scene light state" },
+
+    { "sceneMaterialsEnabled", reinterpret_cast<PyCFunction>(PyViewState_sceneMaterialsEnabled), METH_NOARGS,
+      "Get the scene material state" },
+    { "setSceneMaterialsEnabled", reinterpret_cast<PyCFunction>(PyViewState_setSceneMaterialsEnabled), METH_VARARGS,
+      "Set the scene material state" },
+
+    { "doubleSidedMode", reinterpret_cast<PyCFunction>(PyViewState_doubleSidedMode), METH_NOARGS,
+      "Get the viewport double-sided rendering mode: 0=Primitive, 1=DoubleSided, 2=SingleSided" },
+    { "setDoubleSidedMode", reinterpret_cast<PyCFunction>(PyViewState_setDoubleSidedMode), METH_VARARGS,
+      "Set the viewport double-sided rendering mode: 0=Primitive, 1=DoubleSided, 2=SingleSided" },
+
+    { "renderMode", reinterpret_cast<PyCFunction>(PyViewState_renderMode), METH_NOARGS, "Get the viewport render mode" },
+    { "setRenderMode", reinterpret_cast<PyCFunction>(PyViewState_setRenderMode), METH_VARARGS,
+      "Set the viewport render mode" },
+
+    { "complexityLevel", reinterpret_cast<PyCFunction>(PyViewState_complexityLevel), METH_NOARGS,
+      "Get the viewport complexity level" },
+    { "setComplexityLevel", reinterpret_cast<PyCFunction>(PyViewState_setComplexityLevel), METH_VARARGS,
+      "Set the viewport complexity level" },
+
+    { "rendererAov", reinterpret_cast<PyCFunction>(PyViewState_rendererAov), METH_NOARGS, "Get the renderer AOV" },
+    { "setRendererAov", reinterpret_cast<PyCFunction>(PyViewState_setRendererAov), METH_VARARGS,
+      "Set the renderer AOV" },
+
+    { "sceneStatsEnabled", reinterpret_cast<PyCFunction>(PyViewState_sceneStatsEnabled), METH_NOARGS,
+      "Get the scene statistics display state" },
+    { "setSceneStatsEnabled", reinterpret_cast<PyCFunction>(PyViewState_setSceneStatsEnabled), METH_VARARGS,
+      "Set the scene statistics display state" },
+
+    { "performanceStatsEnabled", reinterpret_cast<PyCFunction>(PyViewState_performanceStatsEnabled), METH_NOARGS,
+      "Get the performance statistics display state" },
+    { "setPerformanceStatsEnabled", reinterpret_cast<PyCFunction>(PyViewState_setPerformanceStatsEnabled), METH_VARARGS,
+      "Set the performance statistics display state" },
+
+    { "cameraAxisEnabled", reinterpret_cast<PyCFunction>(PyViewState_cameraAxisEnabled), METH_NOARGS,
+      "Get the camera axis display state" },
+    { "setCameraAxisEnabled", reinterpret_cast<PyCFunction>(PyViewState_setCameraAxisEnabled), METH_VARARGS,
+      "Set the camera axis display state" },
+
+    { nullptr }
+};
+
+PyTypeObject PyViewStateType = { PyVarObject_HEAD_INIT(nullptr, 0) };
+
+bool
+initPyViewStateType()
+{
+    PyViewStateType.tp_name = "stageviz.ViewState";
+    PyViewStateType.tp_basicsize = sizeof(PyViewStateObject);
+    PyViewStateType.tp_itemsize = 0;
+    PyViewStateType.tp_flags = Py_TPFLAGS_DEFAULT;
+    PyViewStateType.tp_new = PyViewState_new;
+    PyViewStateType.tp_dealloc = reinterpret_cast<destructor>(PyViewState_dealloc);
+    PyViewStateType.tp_methods = PyViewState_methods;
+    return PyType_Ready(&PyViewStateType) >= 0;
+}
+
+int
+addPyViewStateType(PyObject* module)
+{
+    Py_INCREF(&PyViewStateType);
+
+    if (PyModule_AddObject(module, "ViewState", reinterpret_cast<PyObject*>(&PyViewStateType)) < 0) {
+        Py_DECREF(&PyViewStateType);
+        return -1;
+    }
+
+    return 0;
+}
+
+PyObject*
+createPyViewState(ViewState* viewState)
+{
+    if (!viewState)
+        Py_RETURN_NONE;
+
+    PyObject* args = PyTuple_New(0);
+    if (!args)
+        return nullptr;
+
+    PyObject* object = PyObject_CallObject(reinterpret_cast<PyObject*>(&PyViewStateType), args);
+    Py_DECREF(args);
+
+    if (!object)
+        return nullptr;
+
+    reinterpret_cast<PyViewStateObject*>(object)->viewState = viewState;
+    return object;
+}
+
+}  // namespace stageviz::python

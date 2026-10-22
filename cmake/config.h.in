@@ -1,0 +1,9 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2025 - present Mikael Sundell
+// https://github.com/mikaelsundell/stageviz
+
+#pragma once
+
+#define PYTHON_MODULE_PATHS "@PYTHON_MODULE_PATHS_STR@"
+#define PYTHON_RUNTIME_LIBRARY_PATHS "@PYTHON_RUNTIME_LIBRARY_PATHS_STR@"
+#cmakedefine01 DEPLOY_BUILD

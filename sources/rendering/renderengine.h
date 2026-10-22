@@ -1,0 +1,318 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2025 - present Mikael Sundell
+// https://github.com/mikaelsundell/stageviz
+
+#ifndef STAGEVIZ_RENDERENGINE_H
+#define STAGEVIZ_RENDERENGINE_H
+
+#include "rendertask.h"
+#include "viewstate.h"
+#include <QColor>
+#include <QImage>
+#include <QList>
+#include <QString>
+#include <memory>
+#include <pxr/base/gf/camera.h>
+#include <pxr/base/gf/frustum.h>
+#include <pxr/base/gf/vec2i.h>
+#include <pxr/base/gf/vec4d.h>
+#include <pxr/base/gf/vec4f.h>
+#include <pxr/base/tf/token.h>
+#include <pxr/base/vt/dictionary.h>
+#include <pxr/usd/sdf/path.h>
+#include <pxr/usd/usd/stage.h>
+#include <pxr/usdImaging/usdImagingGL/engine.h>
+
+PXR_NAMESPACE_USING_DIRECTIVE
+
+namespace stageviz {
+
+/**
+ * @brief Reusable Hydra renderer for Stageviz viewports and scripted rendering.
+ *
+ * RenderEngine owns the Stageviz-specific UsdImagingGLEngine configuration and
+ * hides Hydra scene-index setup from callers. It can render into an already
+ * current OpenGL context, as used by ImagingGLWidget, or create an offscreen
+ * context for scripted image rendering.
+ */
+class RenderEngine final {
+public:
+    /**
+     * @brief Selects how the renderer obtains an OpenGL context.
+     */
+    enum class ContextMode { Current, Offscreen };
+
+    /**
+     * @brief Selects the material presentation applied by Stageviz.
+     */
+    enum class MaterialMode { Scene, Clay, Override };
+
+    /**
+     * @brief Selects the rasterized sidedness behavior.
+     */
+    enum class DoubleSidedMode { Primitive, SingleSided, DoubleSided };
+
+    /**
+     * @brief Rendering options independent of the Stageviz user interface.
+     */
+    struct Settings {
+        QColor clearColor = Qt::black;
+        TfToken aov = TfToken("color");
+        UsdImagingGLDrawMode drawMode = UsdImagingGLDrawMode::DRAW_SHADED_SMOOTH;
+        DoubleSidedMode doubleSidedMode = DoubleSidedMode::DoubleSided;
+        MaterialMode materialMode = MaterialMode::Scene;
+        SdfPath overrideMaterial;
+        double complexity = 1.0;
+        bool sceneLightsEnabled = true;
+        bool sceneMaterialsEnabled = true;
+        bool defaultCameraLightEnabled = true;
+        bool defaultDomeLightEnabled = false;
+        QString domeLightTexture;
+        bool domeLightCameraVisibility = false;
+        // Shared Stageviz AO settings keep defaults identical between the
+        // viewport state, renderer and Hydra post-process task.
+        ViewState::AmbientOcclusionSettings ambientOcclusion;
+        bool gammaCorrectColors = true;
+        bool sampleAlphaToCoverageEnabled = true;
+        bool flipFrontFacing = true;
+        bool showGuides = false;
+        bool showProxy = true;
+        bool showRender = true;
+        float defaultAmbient = 0.4f;
+        float defaultSpecular = 0.5f;
+        float defaultShininess = 32.0f;
+    };
+
+    /**
+     * @brief Creates a render engine.
+     * @param mode OpenGL context mode used by the renderer.
+     */
+    explicit RenderEngine(ContextMode mode = ContextMode::Current);
+
+    /**
+     * @brief Destroys the render engine and its owned graphics resources.
+     */
+    ~RenderEngine();
+
+    RenderEngine(const RenderEngine&) = delete;
+    RenderEngine& operator=(const RenderEngine&) = delete;
+
+    /**
+     * @brief Initializes Hydra and the required OpenGL resources.
+     * @return True if the renderer is ready for rendering.
+     *
+     * Current mode requires a current QOpenGLContext. Offscreen mode creates
+     * and makes current an internal context before Hydra is initialized.
+     */
+    bool initialize();
+
+    /**
+     * @brief Releases Hydra and owned OpenGL resources.
+     */
+    void reset();
+
+    /**
+     * @brief Returns whether the Hydra renderer has been initialized.
+     */
+    bool isInitialized() const;
+
+    /**
+     * @brief Sets the primary USD stage.
+     * @param stage Stage rendered by Hydra.
+     */
+    void setStage(UsdStageRefPtr stage);
+
+    /**
+     * @brief Returns the primary USD stage.
+     */
+    UsdStageRefPtr stage() const;
+
+    /**
+     * @brief Sets the optional Stageviz auxiliary stage.
+     *
+     * Auxiliary materials remain available to document presentation, while
+     * /Display geometry is rendered later as a viewport-only overlay so
+     * it cannot affect document look effects such as ambient occlusion.
+     *
+     * @param stage Auxiliary stage, or null to disable it.
+     */
+    void setAuxiliaryStage(UsdStageRefPtr stage);
+
+    /**
+     * @brief Returns the auxiliary USD stage.
+     */
+    UsdStageRefPtr auxiliaryStage() const;
+
+    /**
+     * @brief Flushes pending edits from the auxiliary USD scene-index chain.
+     */
+    void refreshAuxiliaryStage();
+
+    /**
+     * @brief Sets the camera used for rendering and intersection tests.
+     * @param camera Camera state.
+     */
+    void setCamera(const GfCamera& camera);
+
+    /**
+     * @brief Returns the current rendering camera.
+     */
+    const GfCamera& camera() const;
+
+    /**
+     * @brief Sets the render resolution in device pixels.
+     * @param size Width and height in pixels.
+     */
+    void setSize(const GfVec2i& size);
+
+    /**
+     * @brief Returns the render resolution in device pixels.
+     */
+    const GfVec2i& size() const;
+
+    /**
+     * @brief Sets the render viewport inside the current framebuffer.
+     *
+     * The value is expressed as x, y, width, height in device pixels. A
+     * non-positive width or height selects the complete render buffer.
+     *
+     * @param viewport Render viewport in device pixels.
+     */
+    void setViewport(const GfVec4d& viewport);
+
+    /**
+     * @brief Returns the configured render viewport.
+     */
+    const GfVec4d& viewport() const;
+
+    /**
+     * @brief Sets render settings.
+     * @param settings Render settings to apply.
+     */
+    void setSettings(const Settings& settings);
+
+    /**
+     * @brief Returns the current render settings.
+     */
+    const Settings& settings() const;
+
+    /**
+     * @brief Limits rendering to the supplied USD paths.
+     * @param paths Root paths to render. An empty list renders the whole stage.
+     */
+    void setMask(const QList<SdfPath>& paths);
+
+    /**
+     * @brief Sets selected prim roots used by the screen-space outline.
+     *
+     * Paths may refer to leaf rprims or parent xforms. Parent paths are
+     * resolved to their Hydra rprim subtree by the shared scene-ID task.
+     *
+     * @param paths Selected prim paths.
+     */
+    void setSelected(const QList<SdfPath>& paths);
+
+    /** Invalidates cached USD selection data after stage edits. */
+    void invalidateSelectionCache();
+
+    /** Disables costly AO while the viewport camera is moving. */
+    void setInteractiveNavigation(bool enabled);
+
+    /**
+     * @brief Sets the screen-space selection outline color.
+     * @param color Selection color.
+     */
+    void setSelectionColor(const QColor& color);
+
+    /**
+     * @brief Renders into the framebuffer of the current OpenGL context.
+     * @return True if a render pass was submitted.
+     *
+     * This is the path used by ImagingGLWidget. The caller is responsible for
+     * making its OpenGL context and target framebuffer current before calling.
+     */
+    bool renderToCurrentFramebuffer();
+
+    /**
+     * @brief Captures prims that are visible in the current viewport.
+     *
+     * The normal scene-ID image is included first. When @p gridSize is greater
+     * than one, the camera frustum is then split into gridSize x gridSize
+     * tiles. Every tile is rendered into the same full-size single-sample
+     * primId/depth buffers, giving an effective linear visibility resolution
+     * of roughly gridSize times the viewport without allocating giant AOVs.
+     *
+     * This is intended for explicit visibility capture, not every viewport
+     * frame. Selection outlines still use only the normal one-pass ID image.
+     *
+     * @param gridSize Thorough-scan grid dimension. 1 performs a quick capture;
+     *                 4 is the default and is robust for small/distant prims.
+     * @return Visible front-most prim paths from the current masked scene.
+     */
+    QList<SdfPath> captureVisiblePaths(int gridSize = 4);
+
+    /**
+     * @brief Captures the coarse mesh element ID at a device-pixel position.
+     *
+     * The pixel uses the scene-ID render-buffer coordinate system: origin at
+     * the lower-left of the framebuffer. Returns -1 when no geometry is hit.
+     */
+    int captureElementIdAt(const GfVec2i& pixel);
+
+    /**
+      * @brief Picks the next renderable behind the excluded paths using GPU picking.
+      *
+      * Skips the specified paths without modifying USD visibility.
+      * Coordinates use the scene-ID render buffer, with the origin at the
+      * lower-left corner. Returns an empty path if nothing is hit.
+      */
+    SdfPath pickNextIdAt(const GfVec2i& pixel, const QList<SdfPath>& excludedPaths);
+
+    /** GPU prim ID, instance ID, element ID and depth for the specified framebuffer pixel. */
+    GpuPickResult gpuPickAt(const GfVec2i& pixel, const QList<SdfPath>& excludedPaths);
+
+    /**
+     * @brief Renders the current stage into an offscreen image.
+     * @return Rendered image, or a null image if rendering failed.
+     *
+     * The engine must have been created with ContextMode::Offscreen. The
+     * previously current OpenGL context and surface are restored before this
+     * function returns, including on failure paths.
+     */
+    QImage renderImage();
+
+    /**
+     * @brief Tests intersections using Hydra pick parameters for a root prim.
+     */
+    bool testIntersection(const UsdImagingGLEngine::PickParams& pickParams, const GfMatrix4d& viewMatrix,
+                          const GfMatrix4d& projectionMatrix, const UsdPrim& root,
+                          UsdImagingGLEngine::IntersectionResultVector* results);
+
+    /**
+     * @brief Returns renderer AOV names supported by the active delegate.
+     */
+    QList<QString> rendererAovs() const;
+
+    /**
+     * @brief Returns renderer statistics from Hydra.
+     */
+    VtDictionary renderStats() const;
+
+    /**
+     * @brief Returns the active Hgi API name.
+     */
+    QString hgiApiName() const;
+
+    /**
+     * @brief Returns whether Hydra supports its own color correction path.
+     */
+    bool isColorCorrectionCapable() const;
+
+private:
+    class Private;
+    std::unique_ptr<Private> p;
+};
+
+}  // namespace stageviz
+
+#endif  // STAGEVIZ_RENDERENGINE_H

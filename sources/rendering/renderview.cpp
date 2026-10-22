@@ -1,0 +1,207 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2025 - present Mikael Sundell
+// https://github.com/mikaelsundell/stageviz
+
+#include "renderview.h"
+#include "application.h"
+#include "notice.h"
+#include "viewcontext.h"
+#include <QPointer>
+#include <pxr/usd/usdGeom/tokens.h>
+
+// generated files
+#include "ui_renderview.h"
+
+namespace stageviz {
+
+class RenderViewPrivate : public QObject {
+public:
+    void init();
+    ImagingGLWidget* imageGLWidget();
+
+public Q_SLOTS:
+    void updateBoundingBox(const GfBBox3d& bbox);
+    void updateMask(const QList<SdfPath>& paths);
+    void updatePrims(const NoticeBatch& batch);
+    void updateSelection(const QList<SdfPath>& paths);
+    void updateStage(UsdStageRefPtr stage, Session::LoadPolicy policy, Session::StageStatus status);
+    void updateAuxiliary(UsdStageRefPtr auxiliary);
+    void updateStageUp(Session::StageUp stageUp);
+
+public:
+    struct Data {
+        QScopedPointer<ViewContext> context;
+        QScopedPointer<Ui_RenderView> ui;
+        QPointer<RenderView> view;
+    };
+    Data d;
+};
+
+void
+RenderViewPrivate::init()
+{
+    d.ui.reset(new Ui_RenderView());
+    d.ui->setupUi(d.view.data());
+    d.context.reset(new ViewContext(d.view.data()));
+    d.context->setStageLock(session()->stageLock());
+    d.context->setCommandStack(session()->commandStack());
+    d.context->setSelectionList(session()->selectionList());
+    d.context->setViewState(session()->viewState());
+    imageGLWidget()->setContext(d.context.data());
+    // connect
+    connect(imageGLWidget(), &ImagingGLWidget::captureReady, d.view, &RenderView::captureReady);
+    connect(imageGLWidget(), &ImagingGLWidget::renderReady, d.view, &RenderView::renderReady);
+    connect(imageGLWidget(), &ImagingGLWidget::statusMessage, d.view, &RenderView::statusMessage);
+    connect(imageGLWidget(), &ImagingGLWidget::statusReady, d.view, &RenderView::statusReady);
+    connect(session(), &Session::boundingBoxChanged, this, &RenderViewPrivate::updateBoundingBox);
+    connect(session(), &Session::maskChanged, this, &RenderViewPrivate::updateMask);
+    connect(session(), &Session::primsChanged, this, &RenderViewPrivate::updatePrims);
+    connect(session(), &Session::redrawRequested, imageGLWidget(), QOverload<>::of(&QWidget::update));
+    connect(session(), &Session::stageChanged, this, &RenderViewPrivate::updateStage);
+    connect(session(), &Session::stageUpChanged, this, &RenderViewPrivate::updateStageUp);
+}
+
+ImagingGLWidget*
+RenderViewPrivate::imageGLWidget()
+{
+    return d.ui->imagingGLWidget;
+}
+
+void
+RenderViewPrivate::updateBoundingBox(const GfBBox3d& bbox)
+{
+    imageGLWidget()->updateBoundingBox(bbox);
+}
+
+void
+RenderViewPrivate::updateMask(const QList<SdfPath>& paths)
+{
+    imageGLWidget()->updateMask(paths);
+}
+
+void
+RenderViewPrivate::updatePrims(const NoticeBatch& batch)
+{
+    imageGLWidget()->updatePrims(batch);
+}
+
+void
+RenderViewPrivate::updateStage(UsdStageRefPtr stage, Session::LoadPolicy policy, Session::StageStatus status)
+{
+    Q_UNUSED(stage);
+    Q_UNUSED(policy);
+
+    if (status == Session::StageStatus::Loaded) {
+        const TfToken stageUp = session()->stageUp() == Session::StageUp::Z ? UsdGeomTokens->z : UsdGeomTokens->y;
+
+        imageGLWidget()->updateStageUp(stageUp);
+        imageGLWidget()->updateStage(session()->stage());
+    }
+    else {
+        imageGLWidget()->close();
+    }
+}
+
+void
+RenderViewPrivate::updateAuxiliary(UsdStageRefPtr auxiliary)
+{
+    imageGLWidget()->updateAuxiliary(auxiliary);
+}
+
+void
+RenderViewPrivate::updateStageUp(Session::StageUp stageUp)
+{
+    const TfToken token = stageUp == Session::StageUp::Z ? UsdGeomTokens->z : UsdGeomTokens->y;
+
+    imageGLWidget()->updateStageUp(token);
+}
+
+RenderView::RenderView(QWidget* parent)
+    : QWidget(parent)
+    , p(new RenderViewPrivate())
+{
+    p->d.view = this;
+    p->init();
+}
+
+RenderView::~RenderView() = default;
+
+QImage
+RenderView::captureImage()
+{
+    return p->imageGLWidget()->captureImage();
+}
+
+void
+RenderView::captureVisible()
+{
+    p->imageGLWidget()->captureVisible();
+}
+
+void
+RenderView::clearVisibleCapture()
+{
+    p->imageGLWidget()->clearVisibleCapture();
+}
+
+QList<SdfPath>
+RenderView::visibleCapturePaths() const
+{
+    return p->imageGLWidget()->visibleCapturePaths();
+}
+
+bool
+RenderView::transformEnabled() const
+{
+    return p->imageGLWidget()->transformEnabled();
+}
+
+void
+RenderView::setTransformEnabled(bool enabled)
+{
+    p->imageGLWidget()->setTransformEnabled(enabled);
+}
+
+bool
+RenderView::moveEnabled() const
+{
+    return p->imageGLWidget()->moveEnabled();
+}
+
+void
+RenderView::setMoveEnabled(bool enabled)
+{
+    p->imageGLWidget()->setMoveEnabled(enabled);
+}
+
+bool
+RenderView::rotateEnabled() const
+{
+    return p->imageGLWidget()->rotateEnabled();
+}
+
+void
+RenderView::setRotateEnabled(bool enabled)
+{
+    p->imageGLWidget()->setRotateEnabled(enabled);
+}
+
+bool
+RenderView::scaleEnabled() const
+{
+    return p->imageGLWidget()->scaleEnabled();
+}
+
+void
+RenderView::setScaleEnabled(bool enabled)
+{
+    p->imageGLWidget()->setScaleEnabled(enabled);
+}
+
+void
+RenderView::updateAuxiliary(UsdStageRefPtr auxiliary)
+{
+    p->updateAuxiliary(auxiliary);
+}
+
+}  // namespace stageviz

@@ -1,0 +1,84 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2025 - present Mikael Sundell
+// https://github.com/mikaelsundell/stageviz
+
+#pragma once
+
+#include <QDialog>
+#include <QUrl>
+
+namespace stageviz {
+
+class MessageDialogPrivate;
+
+/**
+ * @class MessageDialog
+ * @brief Application-styled modal message dialog.
+ *
+ * MessageDialog provides convenience entry points for common dialog types while
+ * keeping construction private. Use the static functions instead of creating
+ * MessageDialog instances directly.
+ */
+class MessageDialog : public QDialog {
+public:
+    /**
+     * @brief Result returned by a save-changes dialog.
+     */
+    enum class SaveResult { Save, DontSave, Cancel };
+
+    /**
+     * @brief Shows an informational message.
+     * @return true if the dialog was accepted, otherwise false.
+     */
+    static bool information(QWidget* parent, const QString& title, const QString& text);
+
+    /**
+     * @brief Shows a warning message.
+     * @return true if the dialog was accepted, otherwise false.
+     */
+    static bool warning(QWidget* parent, const QString& title, const QString& text);
+
+    /**
+     * @brief Shows a yes/no question dialog.
+     *
+     * Yes returns true. No, Escape, or closing the dialog returns false.
+     */
+    static bool question(QWidget* parent, const QString& title, const QString& text);
+
+    /**
+     * @brief Shows a save-changes question.
+     *
+     * Save and Don't Save are explicit choices. Escape or closing the dialog
+     * returns SaveResult::Cancel.
+     */
+    static SaveResult saveQuestion(QWidget* parent, const QString& title, const QString& text);
+
+    /**
+     * @brief Shows an about dialog with heading, details, and an optional URL.
+     * @return true if the dialog was accepted, otherwise false.
+     */
+    static bool about(QWidget* parent, const QString& title, const QString& heading, const QString& details,
+                      const QString& url = QString());
+
+    /**
+     * @brief Shows an update dialog with heading, details, and an optional URL.
+     * @return true if the dialog was accepted, otherwise false.
+     */
+    static bool update(QWidget* parent, const QString& title, const QString& heading, const QString& details,
+                       const QString& url = QString());
+
+private:
+    /**
+     * @brief Constructs the dialog used by the static message helpers.
+     */
+    MessageDialog(QWidget* parent = nullptr);
+    /**
+     * @brief Releases the dialog and its private state.
+     */
+    ~MessageDialog();
+
+private:
+    QScopedPointer<MessageDialogPrivate> p;
+};
+
+}  // namespace stageviz

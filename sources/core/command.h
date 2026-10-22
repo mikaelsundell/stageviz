@@ -1,0 +1,1007 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2025 - present Mikael Sundell
+// https://github.com/mikaelsundell/stageviz
+
+#pragma once
+
+#include "session.h"
+#include "stageviz.h"
+#include <pxr/base/gf/matrix4d.h>
+#include <pxr/base/tf/token.h>
+#include <pxr/base/vt/value.h>
+#include <pxr/usd/sdf/path.h>
+#include <pxr/usd/sdf/types.h>
+#include <pxr/usd/usdGeom/xformOp.h>
+
+PXR_NAMESPACE_USING_DIRECTIVE
+
+namespace stageviz {
+
+struct MaterialXNodeDefinition;
+
+/**
+ * @class Command
+ * @brief Encapsulates an executable operation with optional undo support.
+ *
+ * A Command represents a unit of work that modifies session or stage state.
+ * It provides a redo function (execute) and an optional undo function.
+ *
+ * Commands are intended to be executed through CommandStack, which manages
+ * execution and undo/redo history.
+ *
+ * All commands operate on a Session, which provides access to the USD stage,
+ * selection model, masking, and notification system.
+ */
+class Command {
+public:
+    /**
+     * @brief Function signature used by commands.
+     *
+     * The function receives the active Session and is responsible for
+     * performing the operation. Implementations may perform work
+     * asynchronously but must ensure thread-safe access to the session.
+     */
+    using Func = std::function<void(Session*)>;
+
+    /**
+     * @brief Constructs a command with redo and optional undo functions.
+     *
+     * @param redo Function executed when the command runs.
+     * @param undo Function executed when the command is undone. If omitted,
+     *             the command is treated as non-undoable.
+     */
+    Command(Func redo, Func undo = Func())
+        : m_redo(std::move(redo))
+        , m_undo(std::move(undo))
+    {}
+
+    /**
+     * @brief Executes the command (redo).
+     *
+     * @param s Active session.
+     */
+    void execute(Session* s)
+    {
+        if (m_redo)
+            m_redo(s);
+    }
+
+    /**
+     * @brief Undoes the command.
+     *
+     * @param s Active session.
+     */
+    void undo(Session* s)
+    {
+        if (m_undo)
+            m_undo(s);
+    }
+
+    /**
+     * @brief Returns whether the command provides an undo operation.
+     */
+    bool isUndoable() const { return static_cast<bool>(m_undo); }
+
+private:
+    /**
+     * @brief Redo operation.
+     */
+    Func m_redo;
+    /**
+     * @brief Undo operation.
+     */
+    Func m_undo;
+};
+
+
+/**
+ * @struct XformState
+ * @brief Captures the edit-layer transform opinions that existed before an
+ * interactive transform preview authored a stronger matrix override.
+ *
+ * The state is used by transform undo to restore the original edit-layer
+ * xformOpOrder/matrix opinions exactly, or remove the temporary override when
+ * no edit-layer transform opinion existed before the drag.
+ */
+struct XformState {
+    bool hadPrimSpec = false;
+    bool hadXformOpOrderSpec = false;
+    bool hadXformOpOrderDefault = false;
+    VtValue xformOpOrderDefault;
+    bool hadMatrixOpSpec = false;
+    bool hadMatrixOpDefault = false;
+    VtValue matrixOpDefault;
+};
+
+/**
+ * @struct XformEdit
+ * @brief Durable before/after state for an undoable transform edit.
+ *
+ * Stores only persistent command data. Live UsdGeomXformOp handles are kept in
+ * PreparedTransform while an interactive edit is active and are not retained by
+ * the undo stack.
+ */
+struct XformEdit {
+    QList<GfMatrix4d> before;
+    QList<GfMatrix4d> after;
+    QList<XformState> beforeState;
+    GfMatrix4d delta = GfMatrix4d(1.0);
+    bool hasDelta = false;
+};
+
+/**
+ * @struct PreparedTransform
+ * @brief Temporary cached USD transform state used for fast repeated authoring.
+ */
+struct PreparedTransform {
+    SdfPath path;
+    UsdGeomXformOp matrixOp;
+    GfMatrix4d parentWorld = GfMatrix4d(1.0);
+    bool parentFollowsSelection = false;
+    bool fast = false;
+};
+
+/**
+ * @brief Normalizes the supplied prims to their base world transforms and caches
+ * the resulting matrix xformOps where possible.
+ *
+ * Normalization authors a matrix xformOp and xformOpOrder in the active edit
+ * layer. Weaker composed transform opinions are left untouched, allowing the
+ * same prepared path to work for root-layer and sublayer editing.
+ *
+ * The caller must hold the stage write lock.
+ */
+QList<PreparedTransform>
+prepareTransforms(const UsdStageRefPtr& stage, const QList<SdfPath>& paths, const QList<GfMatrix4d>& baseMatrices,
+                  QStringList* errors = nullptr);
+
+/**
+ * @brief Applies world transforms using prepared matrix ops when safe and the
+ * canonical stage transform path otherwise.
+ *
+ * The caller must hold the stage write lock.
+ */
+bool
+applyPreparedTransforms(const UsdStageRefPtr& stage, const QList<PreparedTransform>& prepared,
+                        const QList<GfMatrix4d>& matrices, const GfMatrix4d& selectionDelta, bool hasSelectionDelta,
+                        QStringList* errors = nullptr, QList<SdfPath>* changed = nullptr);
+
+/**
+ * @name Command Factory Helpers
+ */
+/**
+ * @{
+ */
+
+/**
+ * @brief Built-in material network type created by newMaterial().
+ */
+enum class MaterialType { PreviewSurface = 0, StandardSurface, OpenPBRSurface };
+
+/**
+ * @brief Creates one built-in material network in the stage material scope.
+ *
+ * Creation is undoable and preserves the current scene selection and mask.
+ * The material is authored in the active edit layer through MaterialUtils so
+ * the Material Editor and command API use the same network definitions.
+ *
+ * @param type Built-in material network type to create.
+ * @return Undoable material-creation command.
+ */
+Command
+newMaterial(MaterialType type);
+
+/**
+ * @brief Creates an undoable command that binds a material to prims.
+ *
+ * The material must already exist in the current USD stage. A direct material
+ * binding is authored on every valid target prim. Undo restores the previous
+ * direct binding when one existed, or removes the newly-authored direct binding
+ * otherwise.
+ *
+ * @param paths Prim paths that should receive the material.
+ * @param materialPath Path to an existing UsdShadeMaterial prim.
+ * @return Undoable material-binding command.
+ */
+Command
+bindMaterial(const QList<SdfPath>& paths, const SdfPath& materialPath);
+
+
+/**
+ * @brief Creates an undoable command that removes authored path dependencies from properties.
+ *
+ * For each supplied property path, relationship target opinions and attribute
+ * connection opinions authored in the current edit layer are removed. Other
+ * property data is preserved. This covers material bindings, collection
+ * membership relationships, skeleton/custom relationships, shader connections,
+ * and other relationship/connection based dependencies.
+ *
+ * Undo restores the original edit-layer property specs exactly.
+ *
+ * @param propertyPaths Relationship or attribute property paths to reset.
+ * @return Undoable dependency-reset command.
+ */
+/** Break incoming shader-input connections while preserving the input property. */
+Command
+disconnectShaderInputs(const QList<SdfPath>& inputPaths);
+
+/** Connect an existing shader output to an existing shader input. */
+Command
+connectShaderInput(const SdfPath& inputPath, const SdfPath& sourceOutputPath);
+
+/** Remove edit-layer shader-input opinions so weaker/default values are exposed. */
+Command
+resetShaderInputs(const QList<SdfPath>& inputPaths);
+
+/** Create a shader node and connect one of its outputs to an input. */
+Command
+connectShaderNode(const SdfPath& inputPath, const QString& shaderId, const QString& nodeName,
+                  const TfToken& outputName);
+
+/**
+ * Create a MaterialX shader node from its NodeDef and connect its typed out output to an input.
+ * The complete declared input/output interface is authored so USD socket types match MaterialX.
+ */
+Command
+connectMaterialXNode(const SdfPath& inputPath, const QString& nodeDef, const QString& nodeName);
+
+/** Create a free shader node below a material without connecting it. */
+Command
+newShaderNode(const SdfPath& materialPath, const QString& shaderId, const QString& nodeName, const TfToken& outputName,
+              const SdfValueTypeName& outputType);
+
+/**
+ * Create a free MaterialX node below a material without connecting it.
+ * The complete typed NodeDef interface and declared defaults are authored.
+ */
+Command
+newMaterialXNode(const SdfPath& materialPath, const MaterialXNodeDefinition& definition);
+
+/** Delete a shader node, preserving weaker composed nodes through an inactive override. */
+Command
+deleteShaderNode(const SdfPath& nodePath);
+
+/**
+ * @brief Creates an undoable command that removes authored relationship targets and attribute connections.
+ *
+ * Only dependency fields authored in the current edit layer are removed. Undo
+ * restores the original property specs exactly.
+ *
+ * @param propertyPaths Relationship or attribute property paths to reset.
+ * @return Undoable dependency-reset command.
+ */
+Command
+resetDependencies(const QList<SdfPath>& propertyPaths);
+
+/**
+ * @brief Creates an undoable command that merges authored USD content into the current edit layer.
+ *
+ * The active edit layer is snapshotted before the merge. Undo restores the
+ * complete previous edit-layer contents exactly.
+ */
+Command
+mergeStage(const QString& filename);
+
+/**
+ * @brief Creates an undoable command that flattens an incoming stage and merges it into the current edit layer.
+ */
+Command
+mergeFlattenedStage(const QString& filename);
+
+/**
+ * @brief Creates an undoable command that adds a USD file as a sublayer of the current edit layer.
+ */
+Command
+addSublayer(const QString& filename);
+
+/**
+ * @brief Creates an undoable command that authors a reference on an existing prim.
+ */
+Command
+addReference(const QString& filename, const SdfPath& targetPath);
+
+/**
+ * @brief Creates an undoable command that authors a payload on an existing prim.
+ */
+Command
+addPayload(const QString& filename, const SdfPath& targetPath);
+
+
+/**
+ * @brief Creates an undoable command that sets a USD variant selection.
+ *
+ * The selection is authored into the stage's current edit target, so composed
+ * prims receive a stronger variant-selection opinion without modifying their
+ * source layer. Only prims that expose @p setName and contain @p value are
+ * modified.
+ *
+ * Undo restores the edit layer's previous variantSelection field exactly. If
+ * the command created an otherwise-inert override prim solely for the variant
+ * opinion, undo removes that empty override again.
+ *
+ * @param paths Prim paths whose variant selection should be changed.
+ * @param setName Variant set name.
+ * @param value Variant value to select.
+ * @return Undoable variant-selection command.
+ */
+Command
+setVariantSelection(const QList<SdfPath>& paths, const QString& setName, const QString& value);
+
+
+/**
+ * @brief Creates a command that loads payloads resolved from the specified paths.
+ *
+ * Each input path is expected to identify a payload prim. Callers that start
+ * from arbitrary prim selections should resolve those selections to payload
+ * paths before constructing the command.
+ *
+ * If a variant set and value are provided, the variant selection is applied
+ * before loading.
+ *
+ * The operation records enough state to restore both load state and variant
+ * selections on undo.
+ *
+ * @param paths        Input prim paths used to resolve payloads.
+ * @param variantSet   Optional variant set name.
+ * @param variantValue Optional variant selection value.
+ */
+Command
+loadPayloads(const QList<SdfPath>& paths, const QString& variantSet = QString(),
+             const QString& variantValue = QString());
+
+/**
+ * @brief Creates a command that loads spatially neighboring payloads.
+ *
+ * The input paths are resolved to their outermost payload ancestors and their
+ * world-space extentsHint bounds are combined into one source bounding box.
+ *
+ * The source box is expanded by a factor of 1.5 around its center while
+ * preserving its proportions. Only unloaded outermost payloads with usable
+ * extentsHint are considered. A payload is treated as a neighbor when the
+ * center of its world-space extents lies inside the expanded search box.
+ *
+ * Neighbor payloads are loaded nearest-first by center distance. If a selected
+ * source payload itself is unloaded, it is loaded together with its neighbors.
+ * Undo restores the previous payload load states, selection, and mask.
+ *
+ * @param paths Payload prim paths or descendant paths inside payloads.
+ */
+Command
+loadNeighborPayloads(const QList<SdfPath>& paths);
+
+/**
+ * @brief Creates a command that unloads payloads resolved from the specified paths.
+ *
+ * Each input path is expected to identify a payload prim. After unloading,
+ * selections and masks on the payload root are preserved, while selections or
+ * masks on descendants that disappear are remapped to the payload root.
+ *
+ * Undo restores the previous load state, selection, and mask exactly.
+ *
+ * @param paths Payload prim paths to unload.
+ */
+Command
+unloadPayloads(const QList<SdfPath>& paths);
+
+/**
+ * @brief Selects the nearest payload ancestor for the current selection.
+ *
+ * Each selected prim is walked upward until the first payload prim is found.
+ * If a selected prim is itself a payload, that prim is selected directly.
+ * Results are deduplicated, so multiple selected prims inside the same payload
+ * resolve to a single payload path.
+ *
+ * Undo restores the previous selection.
+ */
+Command
+selectPayload();
+
+/**
+ * @brief Selects the nearest enclosing payload authored in the active edit layer.
+ *
+ * This provides the layer-level navigation counterpart to selectPayload().
+ * Nested payloads from weaker/composed layers are skipped until a payload
+ * opinion authored in the current edit layer is found.
+ */
+Command
+selectLayer();
+
+/**
+ * @brief Inverts selection within the nearest enclosing payload scope.
+ *
+ * The current selection is resolved to nearest payload ancestors and the
+ * normal leaf-selection inversion is performed only within those payloads.
+ * Undo restores the previous selection.
+ */
+Command
+selectInvertInPayload();
+
+/**
+ * @brief Inverts payload selection within the current edit layer.
+ *
+ * The current selection is resolved to the nearest payload authored in the
+ * active edit layer. The result selects all other payload roots authored in
+ * that same layer. Undo restores the previous selection.
+ */
+Command
+selectInvertInLayer();
+
+/**
+ * @brief Creates a command that sets the session mask to the specified paths.
+ *
+ * This effectively isolates the given prim paths by restricting traversal
+ * and visibility to the masked subset of the stage.
+ *
+ * Undo restores the previous mask.
+ *
+ * @param paths Prim paths to isolate.
+ */
+Command
+isolatePaths(const QList<SdfPath>& paths);
+
+/**
+ * @brief Creates a command that replaces the current selection.
+ *
+ * The provided paths become the new selection exactly as given.
+ *
+ * Undo restores the previous selection.
+ *
+ * @param paths Prim paths to select.
+ */
+Command
+selectPaths(const QList<SdfPath>& paths);
+
+/**
+ * @brief Creates a command that selects prims from the stage.
+ *
+ * By default, selects only the direct children of the stage pseudo-root.
+ * When @p recursive is true, selects all traversable prims in the stage.
+ *
+ * Undo restores the previous selection.
+ *
+ * @param recursive If true, select all prims recursively.
+ */
+Command
+selectAll(bool recursive = false);
+
+/**
+ * @brief Creates a command that inverts the current selection across leaf prims.
+ *
+ * The domain is defined as all leaf prim paths within the current mask.
+ * A leaf is considered selected if it is directly selected or covered by
+ * a selected ancestor path.
+ *
+ * The resulting selection contains all leaf prim paths not covered by the
+ * current selection.
+ *
+ * Undo restores the previous selection.
+ */
+Command
+selectInvert();
+
+/**
+ * @brief Creates a command that makes prims visible.
+ *
+ * Authors visibility = inherited (visible) on the specified prims.
+ * If @p recursive is true, the visibility change is applied to all descendants.
+ *
+ * Undo restores the previous visibility state per prim.
+ *
+ * @param paths     Prim paths to show.
+ * @param recursive If true, apply recursively to descendants.
+ */
+Command
+showPaths(const QList<SdfPath>& paths, bool recursive);
+
+/**
+ * @brief Creates a command that hides prims.
+ *
+ * Authors visibility = invisible on the specified prims.
+ * If @p recursive is true, the visibility change is applied to all descendants.
+ *
+ * Undo restores the previous visibility state per prim.
+ *
+ * @param paths     Prim paths to hide.
+ * @param recursive If true, apply recursively to descendants.
+ */
+Command
+hidePaths(const QList<SdfPath>& paths, bool recursive);
+
+/**
+ * @brief Creates a command that sets the stage up axis.
+ *
+ * Updates the stage metadata to use the specified up axis.
+ *
+ * Undo restores the previous up axis.
+ *
+ * @param stageUp Up axis to apply (Y or Z).
+ */
+Command
+stageUp(Session::StageUp stageUp);
+
+/**
+ * @brief Creates a command that changes the active edit layer.
+ *
+ * The target layer must already be a local layer of the current stage. The
+ * layer is addressed by its SdfLayer identifier so UI and Python callers use
+ * the same command-stack path. Session::editLayerChanged is emitted whenever
+ * the command changes or restores the edit target. Undo restores the previously
+ * active edit layer.
+ *
+ * @param layerIdentifier Identifier of a local SdfLayer in the current stage.
+ * @return Undoable edit-layer selection command.
+ */
+Command
+setEditLayer(const QString& layerIdentifier);
+
+/**
+ * @brief Creates a command that sets the stage default prim.
+ *
+ * The path must refer to a valid root prim, for example `/World`.
+ * The pseudo-root `/`, empty paths, child prims such as `/World/Geom`,
+ * and invalid prim paths are rejected.
+ *
+ * The previous default prim is stored so the operation can be undone.
+ * If the stage had no default prim before the command, undo clears the
+ * default prim metadata.
+ *
+ * @param path Root prim path to set as the stage default prim.
+ * @return Command that applies and undoes the default prim change.
+ */
+Command
+defaultPrimPath(const SdfPath& path);
+
+/**
+ * @brief Creates a command that clears the stage default prim.
+ *
+ * The previous default prim is stored so the operation can be undone.
+ *
+ * @return Command that clears and restores the default prim metadata.
+ */
+Command
+clearDefaultPrim();
+
+/**
+ * @brief Creates a command that deletes prims at the specified paths.
+ *
+ * Paths are reduced to minimal root paths to avoid redundant edits.
+ * Only strongest-editable prims in the current edit target are affected.
+ *
+ * Before deletion, edit-layer relationship targets and attribute connections
+ * that point at the deleted prims or anything below them are removed so the
+ * stage does not retain dangling authored dependencies. Material bindings,
+ * collection relationships, shader connections, and custom relationship
+ * targets are covered by the same generic dependency cleanup.
+ *
+ * The command captures sufficient snapshot state to fully restore deleted
+ * prims, dependency properties, and child order on undo.
+ *
+ * Selection and mask are updated to remove affected paths.
+ *
+ * @param paths Prim paths to delete.
+ */
+Command
+deletePaths(const QList<SdfPath>& paths);
+
+/**
+ * @brief Creates a command that duplicates prim specs as sibling prims.
+ *
+ * Each input path is reduced to a minimal root path and resolved to its
+ * strongest authored SdfPrimSpec. That spec is copied into the opened root
+ * layer under the same parent using a unique sibling name.
+ *
+ * This allows a prim introduced by a payload, reference, or other composition
+ * arc to be copied into the editable stage without modifying the source asset.
+ *
+ * On success, the newly-created prims become the current selection.
+ * Undo removes the duplicated prim specs and restores child ordering,
+ * selection, and mask.
+ *
+ * @param paths Prim paths to duplicate.
+ * @param selectDuplicates When true, select the newly-created duplicates on success.
+ *                         Set false for callers such as the material browser that
+ *                         must preserve the current scene selection.
+ */
+Command
+duplicatePaths(const QList<SdfPath>& paths, bool selectDuplicates = true);
+
+/**
+ * @brief Creates a command that defines a generic prim under a parent.
+ *
+ * The name is sanitized and made unique under the parent. When @p typeName is
+ * non-empty, the prim is defined with that USD type; otherwise an untyped prim
+ * is defined.
+ *
+ * By default the new prim becomes the current selection. Callers may preserve
+ * the current selection by passing selectCreated = false. Undo removes the
+ * created prim and restores child ordering, selection, and mask.
+ *
+ * @param parentPath Parent prim path.
+ * @param nameInput Desired name for the new prim.
+ * @param typeName Optional USD schema type name, for example "Xform", "Mesh",
+ *                 "Camera", or "Scope". Axis-based built-in primitives follow
+ *                 the stage up axis.
+ * @param selectCreated If true, select the new prim on success.
+ */
+Command
+newPrimPath(const SdfPath& parentPath, const QString& nameInput, const TfToken& typeName = TfToken(),
+            bool selectCreated = true);
+
+/**
+ * @brief Creates a Scope prim under a parent.
+ *
+ * This is a convenience wrapper around newPrimPath() using the USD "Scope"
+ * type. The command is fully undoable.
+ *
+ * @param parentPath Parent prim path.
+ * @param nameInput Desired scope name.
+ * @param selectCreated If true, select the new scope on success.
+ */
+Command
+newScopePath(const SdfPath& parentPath, const QString& nameInput, bool selectCreated = true);
+
+/**
+ * @brief Creates a visible wavy UsdGeomMesh example under a parent.
+ *
+ * The mesh contains a regular quad grid whose Z positions are displaced by a
+ * deterministic sinusoidal function, so Create > Mesh produces immediately
+ * visible geometry instead of an empty Mesh prim.
+ */
+Command
+newMeshPath(const SdfPath& parentPath, const QString& nameInput, bool selectCreated = true);
+
+/** @brief Creates a visible UsdGeomPoints particle-style point cloud. */
+Command
+newPointsPath(const SdfPath& parentPath, const QString& nameInput, bool selectCreated = true);
+
+/** @brief Creates visible cubic B-spline UsdGeomBasisCurves. */
+Command
+newBasisCurvesPath(const SdfPath& parentPath, const QString& nameInput, bool selectCreated = true);
+
+/** @brief Creates visible cubic UsdGeomNurbsCurves. */
+Command
+newNurbsCurvesPath(const SdfPath& parentPath, const QString& nameInput, bool selectCreated = true);
+
+/** @brief Creates a visible wavy UsdGeomNurbsPatch. */
+Command
+newNurbsPatchPath(const SdfPath& parentPath, const QString& nameInput, bool selectCreated = true);
+
+/**
+ * @brief Creates a UsdGeomPointInstancer with an internal Cube prototype and
+ * a small deterministic grid of instances.
+ */
+Command
+newPointInstancerPath(const SdfPath& parentPath, const QString& nameInput, bool selectCreated = true);
+
+/**
+ * @brief Creates a UsdShadeMaterial with a default UsdPreviewSurface shader.
+ *
+ * The material is created under the specified parent using a unique name. A
+ * child shader named "PreviewSurface" is created, assigned the
+ * "UsdPreviewSurface" shader id, and connected to the material surface output.
+ *
+ * On success, the material becomes the current selection. Undo removes the
+ * complete material hierarchy and restores child ordering, selection, and mask.
+ *
+ * @param parentPath Parent path, typically a Looks or Materials scope.
+ * @param nameInput Desired material name.
+ */
+Command
+newMaterialPath(const SdfPath& parentPath, const QString& nameInput);
+
+/**
+ * @brief Creates an Xform prim with a reference composition arc.
+ *
+ * The prim is created under @p parentPath using a unique name and authors a
+ * reference to @p assetPath. When @p primPath is empty, the referenced file's
+ * default prim is used.
+ *
+ * @param parentPath Parent prim path.
+ * @param nameInput Desired prim name.
+ * @param assetPath Referenced USD asset path.
+ * @param primPath Optional prim path inside the referenced asset.
+ */
+Command
+newReferencePath(const SdfPath& parentPath, const QString& nameInput, const QString& assetPath,
+                 const SdfPath& primPath = SdfPath());
+
+/**
+ * @brief Creates an Xform prim with a payload composition arc.
+ *
+ * The prim is created under @p parentPath using a unique name and authors a
+ * payload to @p assetPath. When @p primPath is empty, the payload file's
+ * default prim is used.
+ *
+ * @param parentPath Parent prim path.
+ * @param nameInput Desired prim name.
+ * @param assetPath Payload USD asset path.
+ * @param primPath Optional prim path inside the payload asset.
+ */
+Command
+newPayloadPath(const SdfPath& parentPath, const QString& nameInput, const QString& assetPath,
+               const SdfPath& primPath = SdfPath());
+
+/**
+ * @brief Creates a command that renames a prim.
+ *
+ * The new name is sanitized and made unique under the parent.
+ * The operation preserves child ordering and remaps selection, mask,
+ * and load rules accordingly.
+ *
+ * Undo restores the original name and ordering.
+ *
+ * @param path         Prim path to rename.
+ * @param newNameInput Desired new name.
+ */
+Command
+renamePath(const SdfPath& path, const QString& newNameInput);
+
+/**
+ * @brief Creates a command that defines a new Xform prim under a parent.
+ *
+ * The name is sanitized and made unique under the parent. The new prim
+ * is appended to the child order.
+ *
+ * By default the new prim becomes the current selection. Callers may preserve
+ * the current selection by passing selectCreated = false.
+ *
+ * Undo removes the created prim and restores child ordering and mask.
+ *
+ * @param parentPath Parent prim path.
+ * @param nameInput  Desired name for the new prim.
+ * @param selectCreated If true, select the new Xform on success. When false and
+ *                      selected paths are grouped below it, their selection is
+ *                      remapped to the new child paths instead.
+ */
+Command
+newXformPath(const SdfPath& parentPath, const QString& nameInput, bool selectCreated = true);
+
+/**
+ * @brief Creates a command that reparents or reorders one or more prims.
+ *
+ * Moves the prims in @p paths to @p newParentPath. When the destination parent
+ * is the same as the current parent, the operation behaves as a reorder using
+ * @p insertIndex. When multiple prims are moved, their relative order is
+ * preserved.
+ *
+ * When @p preserveWorldTransform is true and a prim changes parent, its
+ * world-space transform is preserved by recomputing its local transform
+ * relative to the new parent.
+ *
+ * Child ordering is updated for all affected parents. Selection and mask are
+ * remapped to the new paths for every moved prim.
+ *
+ * Undo restores the original hierarchy, child ordering, selection, and mask.
+ *
+ * @param paths         Prim paths to move.
+ * @param newParentPath Destination parent path.
+ * @param insertIndex   Target index for the first moved prim in the destination
+ *                      parent's child order.
+ * @param preserveTransform If true, preserve each moved prim's world-space
+ *                           transform when changing parent.
+ */
+Command
+movePath(const QList<SdfPath>& paths, const SdfPath& newParentPath, int insertIndex, bool preserveTransform = true);
+
+
+/**
+ * @brief Creates an undoable command that adds an attribute to one or more prims.
+ *
+ * The attribute is authored in the active USD edit target using the specified
+ * name and value type. When @p custom is true, the attribute is marked as a
+ * custom USD property. Existing properties must not be overwritten.
+ *
+ * @param primPaths Prim paths that should receive the attribute.
+ * @param name Name of the attribute to create.
+ * @param type USD value type of the new attribute.
+ * @param custom Whether to create a custom attribute.
+ * @return Undoable attribute-creation command.
+ */
+Command
+addAttributes(const QList<SdfPath>& primPaths, const TfToken& name, const SdfValueTypeName& type, bool custom);
+
+/**
+ * @brief Creates an undoable command that removes custom attributes.
+ *
+ * Only removable custom attributes may be deleted; schema-defined built-in
+ * attributes are protected. The command operates on USD attribute property
+ * paths rather than prim paths and preserves the previous authored state for
+ * undo.
+ *
+ * @param attributePaths USD property paths of attributes to remove.
+ * @return Undoable attribute-removal command.
+ */
+Command
+removeAttributes(const QList<SdfPath>& attributePaths);
+
+/**
+ * @brief Creates an undoable command that renames custom attributes.
+ *
+ * Schema-defined built-in attributes cannot be renamed. The new name must
+ * be a valid USD property name and must not collide with another property
+ * on any target prim. Renamed attributes remain custom properties.
+ *
+ * @param attributePaths USD property paths of attributes to rename.
+ * @param newName New attribute name to apply to each target.
+ * @return Undoable attribute-rename command.
+ */
+Command
+renameAttributes(const QList<SdfPath>& attributePaths, const TfToken& newName);
+
+/**
+ * @brief Creates an undoable command that authors an attribute's default value.
+ *
+ * The value is authored in the active edit target. Undo restores the previous
+ * edit-layer default opinion, or clears the newly authored default when none
+ * existed previously.
+ *
+ * Supports scalar, vector, matrix, token/string, asset-path and VtArray values.
+ * PropertyTree array editing reconstructs the typed array before submission.
+ *
+ * Editing xformOp:translate:pivot rebuilds the canonical paired
+ * pivot/matrix/inverse-pivot stack while preserving the evaluated local
+ * transform, so moving a pivot does not move the geometry.
+ *
+ * @param attributePath USD property path identifying the attribute.
+ * @param value Typed value to author.
+ * @return Undoable attribute-value command.
+ */
+Command
+setAttributeValue(const SdfPath& attributePath, const VtValue& value);
+
+/**
+ * @brief Creates one undoable command that authors the same value to several attributes.
+ *
+ * Every path must identify an existing USD attribute compatible with @p value.
+ * Previous edit-layer default opinions are captured individually and restored
+ * by a single undo step. Standard xformOp:translate:pivot edits preserve each
+ * prim's evaluated local transform.
+ */
+Command
+setAttributeValues(const QList<SdfPath>& attributePaths, const VtValue& value);
+
+/**
+ * @brief Creates one undoable command that clears edit-layer default values.
+ *
+ * Clearing the default value exposes any weaker composed default while leaving
+ * the rest of each property spec intact. Undo restores every previous
+ * edit-layer default exactly.
+ */
+Command
+resetAttributeValues(const QList<SdfPath>& attributePaths);
+
+/**
+ * @brief Creates a command that removes one edit-layer attribute override.
+ *
+ * The attribute must be authored in the opened edit layer on a prim that also
+ * has an underlying opinion from a weaker composition layer, such as a
+ * sublayer, reference, or payload. Edit-layer-owned prims are never modified.
+ *
+ * The complete attribute spec is snapshotted before removal so undo restores
+ * the authored value, metadata, connections, and other attribute information
+ * exactly.
+ *
+ * If removing the attribute leaves an inert edit-layer prim spec, the empty
+ * prim spec is removed so the weaker composed prim is exposed cleanly.
+ *
+ * @param attributePath USD attribute path whose edit-layer override should be removed.
+ */
+Command
+resetAttributeOverride(const SdfPath& attributePath);
+
+/**
+ * @brief Creates one undoable command that removes edit-layer overrides for several attributes.
+ *
+ * Attributes without an applicable edit-layer override are skipped. Each
+ * removed property spec is snapshotted so undo restores the complete authored
+ * property information.
+ */
+Command
+resetAttributeOverrides(const QList<SdfPath>& attributePaths);
+
+/**
+ * @brief Creates a command that centers manipulation pivots on prim bounds.
+ *
+ * Each selected xformable prim receives its own pivot at the center of its
+ * world-space bound. The standard paired USD pivot representation
+ * xformOp:translate:pivot / !invert!xformOp:translate:pivot is authored while
+ * preserving the prim's evaluated local transform.
+ *
+ * Undo restores the previous edit-layer transform property specs exactly.
+ *
+ * @param paths Prim paths whose pivots should be centered.
+ */
+Command
+centerPivots(const QList<SdfPath>& paths);
+
+/**
+ * @brief Creates a command that removes the Stageviz-authored pivot.
+ *
+ * The active edit-layer pivot properties are removed by rewriting the prim to
+ * Stageviz's canonical matrix-only transform while preserving its evaluated
+ * local transform. No zero-valued pivot attribute is left behind.
+ *
+ * After reset, stage::worldPivot() resolves a weaker authored paired pivot when
+ * one exists. If no authored pivot exists in the composed stack, the gizmo
+ * falls back to the prim's transformed local origin.
+ *
+ * Undo restores the previous edit-layer transform property specs exactly.
+ *
+ * @param paths Prim paths whose pivots should be reset.
+ */
+Command
+resetPivots(const QList<SdfPath>& paths);
+
+/**
+ * @brief Creates a command that resets local transforms for xformable prims.
+ *
+ * All transform properties authored in the active edit layer are removed,
+ * including xformOpOrder and every xformOp:* property. This prevents stale
+ * translate, rotate, scale, pivot, or matrix operations from remaining after
+ * the reset.
+ *
+ * When a weaker composed transform opinion exists, removing the edit-layer
+ * transform properties exposes that weaker transform again. When no weaker
+ * transform opinion exists, a single identity xformOp:transform is authored in
+ * the active edit layer.
+ *
+ * Undo restores the complete previous set of edit-layer transform properties
+ * exactly.
+ *
+ * @param paths Prim paths whose local transforms should be reset.
+ */
+Command
+resetTransforms(const QList<SdfPath>& paths);
+
+/**
+ * @brief UI-named wrapper for resetTransforms().
+ *
+ * Transform > Identity uses the same edit-layer-aware reset behavior: stale
+ * transform ops are removed, weaker composed transforms are exposed when they
+ * exist, otherwise a single identity matrix op is authored.
+ */
+Command
+identityTransforms(const QList<SdfPath>& paths);
+
+/**
+ * @brief Creates a command that removes edit-layer property overrides from composed prims.
+ *
+ * The selected prims and their descendants are inspected recursively. Only
+ * property specs on SdfSpecifierOver prim specs authored in the opened edit
+ * layer are removed when the prim also has an underlying opinion from a weaker
+ * layer, such as a sublayer, reference, or payload. SdfSpecifierDef prim specs
+ * are traversed but never modified. This exposes the composed attribute or
+ * relationship value again.
+ *
+ * Prim metadata and composition arcs are preserved, so resetting overrides does
+ * not remove references, payloads, variants, or otherwise change payload load
+ * state. Edit-layer-owned prims are ignored and are never deleted.
+ *
+ * If removing property opinions leaves an inert edit-layer prim spec, the empty
+ * override spec is removed so the weaker composed prim is exposed cleanly.
+ *
+ * Undo restores the removed edit-layer property specs exactly.
+ *
+ * @param paths Root prim paths of the hierarchies whose property overrides should be removed.
+ */
+Command
+resetOverrides(const QList<SdfPath>& paths);
+
+/**
+ * @brief Creates a command that applies world-space transforms to prims.
+ *
+ * The edit stores the before/after transform state required for deterministic
+ * undo and redo. Interactive tools may apply the final state live and add the
+ * command to CommandStack using ExecutionMode::Applied.
+ *
+ * @param paths Prim paths to transform.
+ * @param edit Transform state used for execute, undo, and redo.
+ */
+Command
+setTransforms(const QList<SdfPath>& paths, const XformEdit& edit);
+
+/**
+ * @}
+ */
+
+}  // namespace stageviz

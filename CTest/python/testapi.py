@@ -1,0 +1,6672 @@
+# SPDX-License-Identifier: BSD-3-Clause
+# Copyright (c) 2025 - present Mikael Sundell
+# https://github.com/mikaelsundell/stageviz
+
+"""
+Stageviz smoke/regression tests.
+
+Run from the Stageviz Python editor.
+"""
+
+import faulthandler
+import json
+import os
+import platform
+import statistics
+import sys
+import tempfile
+import threading
+import time
+import traceback
+
+
+# Temporary release-build output modes:
+#   "console"            - original direct Stageviz stdout/stderr
+#   "file"               - ~/stageviz.txt only
+#   "both"               - log first, then forward to the original console
+#   "serialized-console" - pipe native output through serialized forwarding,
+#                          without writing a log file
+_RELEASE_LOG_MODE = "both"
+_RELEASE_LOG_PATH = os.path.expanduser("~/stageviz.txt")
+_RELEASE_LOG_ACTIVE = False
+_RELEASE_LOG_STDOUT = None
+_RELEASE_LOG_STDERR = None
+_RELEASE_LOG_SAVED_STDOUT_FD = None
+_RELEASE_LOG_SAVED_STDERR_FD = None
+_RELEASE_LOG_FD = None
+_RELEASE_LOG_FAULT_FILE = None
+_RELEASE_LOG_THREADS = []
+_RELEASE_LOG_LOCK = threading.Lock()
+
+
+def _release_log_to_file():
+    return _RELEASE_LOG_MODE in ("file", "both")
+
+
+def _release_log_to_console():
+    return _RELEASE_LOG_MODE in ("both", "serialized-console")
+
+
+def _write_all(fd, data):
+    view = memoryview(data)
+    while view:
+        written = os.write(fd, view)
+        view = view[written:]
+
+
+def _write_release_log(data):
+    if not data or _RELEASE_LOG_FD is None:
+        return
+
+    with _RELEASE_LOG_LOCK:
+        _write_all(_RELEASE_LOG_FD, data)
+
+
+def _pump_native_output(read_fd, console_fd):
+    """Tee native stdout/stderr to the log first, then the original fd."""
+    try:
+        while True:
+            try:
+                data = os.read(read_fd, 65536)
+            except OSError:
+                break
+
+            if not data:
+                break
+
+            _write_release_log(data)
+
+            if _release_log_to_console():
+                try:
+                    _write_all(console_fd, data)
+                except OSError:
+                    # Keep recording even when the original console disappears.
+                    pass
+    finally:
+        try:
+            os.close(read_fd)
+        except OSError:
+            pass
+
+
+class _ReleaseTextTee:
+    """Write Python text to the log before forwarding it to the console."""
+
+    def __init__(self, original, console_fd, stream_fd):
+        self.original = original
+        self.console_fd = console_fd
+        self.stream_fd = stream_fd
+        self.encoding = getattr(original, "encoding", None) or "utf-8"
+        self.errors = getattr(original, "errors", None) or "backslashreplace"
+
+    def write(self, text):
+        if not isinstance(text, str):
+            text = str(text)
+
+        data = text.encode(self.encoding, errors="backslashreplace")
+        _write_release_log(data)
+
+        if _RELEASE_LOG_MODE == "serialized-console":
+            try:
+                _write_all(self.stream_fd, data)
+            except OSError:
+                pass
+            return len(text)
+
+        if self.original is None or not _release_log_to_console():
+            return len(text)
+
+        try:
+            original_fd = self.original.fileno()
+        except (AttributeError, OSError, ValueError):
+            original_fd = None
+
+        if original_fd in (1, 2):
+            try:
+                _write_all(self.console_fd, data)
+            except OSError:
+                pass
+        else:
+            # Embedded applications commonly expose a Qt-backed stdout object
+            # without a file descriptor. Preserve that console behavior.
+            self.original.write(text)
+
+        return len(text)
+
+    def flush(self):
+        if _RELEASE_LOG_FD is not None:
+            try:
+                os.fsync(_RELEASE_LOG_FD)
+            except OSError:
+                pass
+
+        if self.original is not None and _release_log_to_console():
+            try:
+                self.original.flush()
+            except (AttributeError, OSError, ValueError):
+                pass
+
+    def isatty(self):
+        if self.original is None:
+            return False
+        try:
+            return self.original.isatty()
+        except (AttributeError, OSError, ValueError):
+            return False
+
+
+def _start_release_log():
+    global _RELEASE_LOG_ACTIVE
+    global _RELEASE_LOG_STDOUT
+    global _RELEASE_LOG_STDERR
+    global _RELEASE_LOG_SAVED_STDOUT_FD
+    global _RELEASE_LOG_SAVED_STDERR_FD
+    global _RELEASE_LOG_FD
+    global _RELEASE_LOG_FAULT_FILE
+    global _RELEASE_LOG_THREADS
+
+    if _RELEASE_LOG_ACTIVE:
+        return
+
+    _RELEASE_LOG_STDOUT = sys.stdout
+    _RELEASE_LOG_STDERR = sys.stderr
+    _RELEASE_LOG_SAVED_STDOUT_FD = os.dup(1)
+    _RELEASE_LOG_SAVED_STDERR_FD = os.dup(2)
+
+    if _release_log_to_file():
+        _RELEASE_LOG_FD = os.open(
+            _RELEASE_LOG_PATH,
+            os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_APPEND,
+            0o644,
+        )
+
+    stdout_read_fd, stdout_write_fd = os.pipe()
+    stderr_read_fd, stderr_write_fd = os.pipe()
+
+    stdout_thread = threading.Thread(
+        target=_pump_native_output,
+        args=(stdout_read_fd, _RELEASE_LOG_SAVED_STDOUT_FD),
+        name="stageviz-log-stdout",
+        daemon=True,
+    )
+    stderr_thread = threading.Thread(
+        target=_pump_native_output,
+        args=(stderr_read_fd, _RELEASE_LOG_SAVED_STDERR_FD),
+        name="stageviz-log-stderr",
+        daemon=True,
+    )
+    _RELEASE_LOG_THREADS = [stdout_thread, stderr_thread]
+    stdout_thread.start()
+    stderr_thread.start()
+
+    try:
+        os.dup2(stdout_write_fd, 1)
+        os.dup2(stderr_write_fd, 2)
+    finally:
+        os.close(stdout_write_fd)
+        os.close(stderr_write_fd)
+
+    sys.stdout = _ReleaseTextTee(
+        _RELEASE_LOG_STDOUT,
+        _RELEASE_LOG_SAVED_STDOUT_FD,
+        1,
+    )
+    sys.stderr = _ReleaseTextTee(
+        _RELEASE_LOG_STDERR,
+        _RELEASE_LOG_SAVED_STDERR_FD,
+        2,
+    )
+
+    fault_fd = (
+        _RELEASE_LOG_FD
+        if _RELEASE_LOG_FD is not None
+        else _RELEASE_LOG_SAVED_STDERR_FD
+    )
+    _RELEASE_LOG_FAULT_FILE = os.fdopen(
+        os.dup(fault_fd),
+        "w",
+        buffering=1,
+        encoding="utf-8",
+        errors="backslashreplace",
+    )
+
+    faulthandler.enable(file=_RELEASE_LOG_FAULT_FILE, all_threads=True)
+    _RELEASE_LOG_ACTIVE = True
+
+    print("=" * 78)
+    print("STAGEVIZ RELEASE TEST LOG")
+    print("=" * 78)
+    print(f"Started: {time.strftime('%Y-%m-%d %H:%M:%S %z')}")
+    print(f"PID: {os.getpid()}")
+    print(f"Output mode: {_RELEASE_LOG_MODE}")
+    if _release_log_to_file():
+        print(f"Log: {_RELEASE_LOG_PATH}")
+    print()
+
+
+def _stop_release_log():
+    global _RELEASE_LOG_ACTIVE
+    global _RELEASE_LOG_FD
+    global _RELEASE_LOG_FAULT_FILE
+    global _RELEASE_LOG_THREADS
+
+    if not _RELEASE_LOG_ACTIVE:
+        return
+
+    log_stdout = sys.stdout
+    log_stderr = sys.stderr
+
+    try:
+        print()
+        print(f"Finished: {time.strftime('%Y-%m-%d %H:%M:%S %z')}")
+        log_stdout.flush()
+        log_stderr.flush()
+        faulthandler.disable()
+    finally:
+        os.dup2(_RELEASE_LOG_SAVED_STDOUT_FD, 1)
+        os.dup2(_RELEASE_LOG_SAVED_STDERR_FD, 2)
+        sys.stdout = _RELEASE_LOG_STDOUT
+        sys.stderr = _RELEASE_LOG_STDERR
+
+        # Restoring fd 1/2 closes the last pipe writers. Drain both readers
+        # before closing the shared log and original console descriptors.
+        for thread in _RELEASE_LOG_THREADS:
+            thread.join(timeout=2.0)
+
+        if _RELEASE_LOG_FAULT_FILE is not None:
+            _RELEASE_LOG_FAULT_FILE.close()
+            _RELEASE_LOG_FAULT_FILE = None
+
+        if _RELEASE_LOG_FD is not None:
+            os.close(_RELEASE_LOG_FD)
+            _RELEASE_LOG_FD = None
+
+        os.close(_RELEASE_LOG_SAVED_STDOUT_FD)
+        os.close(_RELEASE_LOG_SAVED_STDERR_FD)
+        _RELEASE_LOG_THREADS = []
+        _RELEASE_LOG_ACTIVE = False
+
+
+if _RELEASE_LOG_MODE not in (
+    "console",
+    "file",
+    "both",
+    "serialized-console",
+):
+    raise ValueError(f"Invalid _RELEASE_LOG_MODE: {_RELEASE_LOG_MODE!r}")
+
+
+if __name__ == "__main__" and _RELEASE_LOG_MODE != "console":
+    _start_release_log()
+
+
+from pxr import Gf, Kind, Sdf, Usd, UsdGeom, UsdShade
+import stageviz
+
+
+_FAILURES = []
+_PERF_RESULTS = {}
+_PERF_FIXTURE_RELOADS = []
+_PERF_FAILURES = []
+_PERF_WARNINGS = []
+
+_PERF_ENABLED = True
+_PERF_BASELINE_RESET = False
+_PERF_BASELINE_VERSION = 1
+_PERF_BASELINE_PATH = os.path.join(
+    os.path.expanduser("~"),
+    ".stageviz",
+    "testapi_performance.json",
+)
+
+_PERF_WARN_PERCENT = 35.0
+_PERF_FAIL_PERCENT = 100.0
+_PERF_WARN_SECONDS = 0.050
+_PERF_FAIL_SECONDS = 0.200
+
+
+def _fail(message):
+    _FAILURES.append(message)
+    print(f"[FAIL] {message}")
+
+
+def _ok(message):
+    print(f"[ OK ] {message}")
+
+
+def _assert(condition, message):
+    if condition:
+        _ok(message)
+    else:
+        _fail(message)
+
+
+def _assert_equal(actual, expected, message):
+    if actual == expected:
+        _ok(f"{message}: {actual!r}")
+    else:
+        _fail(f"{message}: expected {expected!r}, got {actual!r}")
+
+
+def _assert_set_equal(actual, expected, message):
+    actual_set = set(actual)
+    expected_set = set(expected)
+    if actual_set == expected_set:
+        _ok(f"{message}: {actual!r}")
+    else:
+        _fail(f"{message}: expected set {sorted(expected_set)!r}, got {sorted(actual_set)!r}")
+
+
+def _path_list(values):
+    return [str(v) for v in values]
+
+
+def _disable_preserve_state():
+    session = stageviz.session()
+    if hasattr(session, "setPreserveState"):
+        session.setPreserveState(False)
+
+
+def _process_events():
+    try:
+        from PySide6 import QtWidgets, QtCore
+        qt_app = QtWidgets.QApplication.instance()
+        if qt_app:
+            flags = (
+                QtCore.QEventLoop.ProcessEventsFlag.ExcludeUserInputEvents
+                | QtCore.QEventLoop.ProcessEventsFlag.ExcludeSocketNotifiers
+            )
+            qt_app.processEvents(flags)
+            return
+    except Exception:
+        pass
+
+    try:
+        from PyQt6 import QtWidgets, QtCore
+        qt_app = QtWidgets.QApplication.instance()
+        if qt_app:
+            flags = (
+                QtCore.QEventLoop.ProcessEventsFlag.ExcludeUserInputEvents
+                | QtCore.QEventLoop.ProcessEventsFlag.ExcludeSocketNotifiers
+            )
+            qt_app.processEvents(flags)
+            return
+    except Exception:
+        pass
+
+
+def _wait(ms=250):
+    end = time.time() + (ms / 1000.0)
+    while time.time() < end:
+        _process_events()
+        time.sleep(0.01)
+
+
+def _wait_until(predicate, timeout=3.0, interval=0.02):
+    end = time.time() + timeout
+    last_error = None
+
+    while time.time() < end:
+        _process_events()
+
+        try:
+            if predicate():
+                _process_events()
+                return True
+        except Exception as exc:
+            last_error = exc
+
+        time.sleep(interval)
+
+    if last_error:
+        print(f"[wait] last predicate exception: {last_error}")
+
+    return False
+
+
+def _run(label, func, args=()):
+    print(f"\n--- {label} ---")
+    start = time.perf_counter()
+
+    try:
+        func(*args)
+    except Exception as exc:
+        _fail(f"{label}: exception: {exc}")
+        traceback.print_exc()
+    finally:
+        elapsed = time.perf_counter() - start
+        _PERF_RESULTS[label] = elapsed
+        print(f"[TIME] {label}: {elapsed:.4f}s")
+
+
+def _performance_environment():
+    return {
+        "platform": platform.platform(),
+        "machine": platform.machine(),
+        "python": sys.version.split()[0],
+    }
+
+
+def _load_performance_baseline():
+    if not _PERF_ENABLED or not os.path.exists(_PERF_BASELINE_PATH):
+        return None
+
+    try:
+        with open(_PERF_BASELINE_PATH, "r", encoding="utf-8") as file:
+            baseline = json.load(file)
+    except Exception as exc:
+        print(f"[PERF WARN] could not read baseline: {exc}")
+        return None
+
+    if baseline.get("version") != _PERF_BASELINE_VERSION:
+        print(
+            "[PERF WARN] baseline version mismatch: "
+            f"expected {_PERF_BASELINE_VERSION}, got {baseline.get('version')!r}"
+        )
+        return None
+
+    return baseline
+
+
+def _save_performance_baseline(fixture_create, fixture_reload_median, suite_total):
+    directory = os.path.dirname(_PERF_BASELINE_PATH)
+    os.makedirs(directory, exist_ok=True)
+
+    data = {
+        "version": _PERF_BASELINE_VERSION,
+        "created": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "environment": _performance_environment(),
+        "thresholds": {
+            "warn_percent": _PERF_WARN_PERCENT,
+            "fail_percent": _PERF_FAIL_PERCENT,
+            "warn_seconds": _PERF_WARN_SECONDS,
+            "fail_seconds": _PERF_FAIL_SECONDS,
+        },
+        "tests": dict(_PERF_RESULTS),
+        "fixture": {
+            "create": fixture_create,
+            "reload_median": fixture_reload_median,
+        },
+        "suite": {
+            "total": suite_total,
+        },
+    }
+
+    temp_path = _PERF_BASELINE_PATH + ".tmp"
+
+    with open(temp_path, "w", encoding="utf-8") as file:
+        json.dump(data, file, indent=2, sort_keys=True)
+        file.write("\n")
+
+    os.replace(temp_path, _PERF_BASELINE_PATH)
+
+
+def _performance_level(current, baseline):
+    if baseline is None or baseline < 0.0:
+        return "ok", current, None
+
+    delta = current - baseline
+    percent = None
+
+    if baseline > 1e-9:
+        percent = (delta / baseline) * 100.0
+
+    fail_delta = max(
+        _PERF_FAIL_SECONDS,
+        baseline * (_PERF_FAIL_PERCENT / 100.0),
+    )
+    warn_delta = max(
+        _PERF_WARN_SECONDS,
+        baseline * (_PERF_WARN_PERCENT / 100.0),
+    )
+
+    if delta >= fail_delta:
+        return "fail", delta, percent
+
+    if delta >= warn_delta:
+        return "warn", delta, percent
+
+    return "ok", delta, percent
+
+
+def _format_performance_delta(delta, percent):
+    if percent is None:
+        return f"{delta:+.4f}s"
+    return f"{percent:+.1f}% ({delta:+.4f}s)"
+
+
+def _compare_performance_metric(label, current, baseline):
+    level, delta, percent = _performance_level(current, baseline)
+
+    if level == "fail":
+        message = (
+            f"{label}: baseline {baseline:.4f}s, current {current:.4f}s, "
+            f"delta {_format_performance_delta(delta, percent)}"
+        )
+        _PERF_FAILURES.append(message)
+        return
+
+    if level == "warn":
+        message = (
+            f"{label}: baseline {baseline:.4f}s, current {current:.4f}s, "
+            f"delta {_format_performance_delta(delta, percent)}"
+        )
+        _PERF_WARNINGS.append(message)
+
+
+def _compare_performance(baseline, fixture_create, fixture_reload_median, suite_total):
+    baseline_tests = baseline.get("tests", {})
+
+    for label, current in _PERF_RESULTS.items():
+        previous = baseline_tests.get(label)
+        if previous is None:
+            _PERF_WARNINGS.append(
+                f"{label}: new test has no performance baseline"
+            )
+            continue
+
+        _compare_performance_metric(label, current, float(previous))
+
+    missing_tests = sorted(set(baseline_tests) - set(_PERF_RESULTS))
+    for label in missing_tests:
+        _PERF_WARNINGS.append(
+            f"{label}: baseline test was not run in the current suite"
+        )
+
+    baseline_fixture = baseline.get("fixture", {})
+    if "create" in baseline_fixture:
+        _compare_performance_metric(
+            "fixture create",
+            fixture_create,
+            float(baseline_fixture["create"]),
+        )
+
+    if "reload_median" in baseline_fixture:
+        _compare_performance_metric(
+            "fixture reload median",
+            fixture_reload_median,
+            float(baseline_fixture["reload_median"]),
+        )
+
+    baseline_suite = baseline.get("suite", {})
+    if "total" in baseline_suite:
+        _compare_performance_metric(
+            "suite total",
+            suite_total,
+            float(baseline_suite["total"]),
+        )
+
+
+def _print_performance_summary(
+    baseline,
+    fixture_create,
+    fixture_reload_median,
+    suite_total,
+    functional_passed,
+):
+    print("\n=== Stageviz performance summary ===")
+    print(f"Baseline: {_PERF_BASELINE_PATH}")
+    print(f"Fixture create: {fixture_create:.4f}s")
+    print(f"Fixture reload median: {fixture_reload_median:.4f}s")
+    print(f"Suite total: {suite_total:.4f}s")
+
+    if not _PERF_ENABLED:
+        print("Performance regression checks are disabled.")
+        return True
+
+    if _PERF_BASELINE_RESET:
+        if not functional_passed:
+            print("[PERF WARN] baseline was not reset because functional tests failed.")
+            return True
+
+        try:
+            _save_performance_baseline(
+                fixture_create,
+                fixture_reload_median,
+                suite_total,
+            )
+            print("Performance baseline replaced.")
+        except Exception as exc:
+            _PERF_FAILURES.append(f"could not replace performance baseline: {exc}")
+            print(f"[PERF FAIL] {_PERF_FAILURES[-1]}")
+            return False
+
+        return True
+
+    if baseline is None:
+        if not functional_passed:
+            print("[PERF WARN] baseline was not created because functional tests failed.")
+            return True
+
+        try:
+            _save_performance_baseline(
+                fixture_create,
+                fixture_reload_median,
+                suite_total,
+            )
+            print("Performance baseline created.")
+        except Exception as exc:
+            _PERF_FAILURES.append(f"could not create performance baseline: {exc}")
+            print(f"[PERF FAIL] {_PERF_FAILURES[-1]}")
+            return False
+
+        return True
+
+    baseline_environment = baseline.get("environment", {})
+    current_environment = _performance_environment()
+
+    if baseline_environment and baseline_environment != current_environment:
+        print("[PERF WARN] baseline environment differs from current environment.")
+        print(f"  baseline: {baseline_environment}")
+        print(f"  current:  {current_environment}")
+
+    _compare_performance(
+        baseline,
+        fixture_create,
+        fixture_reload_median,
+        suite_total,
+    )
+
+    if _PERF_FAILURES:
+        print(f"[PERF FAIL] {len(_PERF_FAILURES)} performance regression(s)")
+        for message in _PERF_FAILURES:
+            print(f" - {message}")
+
+    if _PERF_WARNINGS:
+        print(f"[PERF WARN] {len(_PERF_WARNINGS)} performance warning(s)")
+        for message in _PERF_WARNINGS:
+            print(f" - {message}")
+
+    if not _PERF_FAILURES and not _PERF_WARNINGS:
+        print(f"[ OK ] {len(_PERF_RESULTS)} tests within performance tolerance")
+
+    return not _PERF_FAILURES
+
+
+def _stage():
+    return stageviz.session().stage()
+
+
+def _selection():
+    return _path_list(stageviz.session().paths())
+
+
+def _mask():
+    return _path_list(stageviz.session().mask())
+
+
+def _prim(path):
+    stage = _stage()
+    if not stage:
+        return None
+    return stage.GetPrimAtPath(path)
+
+
+def _exists(path):
+    prim = _prim(path)
+    return bool(prim and prim.IsValid())
+
+
+def _visibility(path):
+    prim = _prim(path)
+    if not prim:
+        return None
+    return UsdGeom.Imageable(prim).GetVisibilityAttr().Get()
+
+
+def _children(path):
+    prim = _prim(path)
+    if not prim:
+        return []
+    return [str(child.GetPath()) for child in prim.GetChildren()]
+
+
+def _child_names(path):
+    prim = _prim(path)
+    if not prim:
+        return []
+    return [child.GetName() for child in prim.GetChildren()]
+
+
+def _default_prim_path():
+    stage = _stage()
+    if not stage:
+        return ""
+    prim = stage.GetDefaultPrim()
+    if not prim:
+        return ""
+    return str(prim.GetPath())
+
+
+def _root_layer():
+    stage = _stage()
+    return stage.GetRootLayer() if stage else None
+
+
+def _root_has_property(path):
+    layer = _root_layer()
+    if not layer:
+        return False
+    return bool(layer.GetPropertyAtPath(Sdf.Path(path)))
+
+
+def _root_has_prim(path):
+    layer = _root_layer()
+    if not layer:
+        return False
+    return bool(layer.GetPrimAtPath(Sdf.Path(path)))
+
+
+def _edit_layer_identifier():
+    session = stageviz.session()
+    if not hasattr(session, "editLayer"):
+        return ""
+    return session.editLayer()
+
+
+def _edit_layer():
+    stage = _stage()
+    identifier = _edit_layer_identifier()
+
+    if not stage or not identifier:
+        return None
+
+    for layer in stage.GetLayerStack(False):
+        if layer.identifier == identifier or layer.realPath == identifier:
+            return layer
+
+    return None
+
+
+def _edit_has_property(path):
+    layer = _edit_layer()
+    if not layer:
+        return False
+    return bool(layer.GetPropertyAtPath(Sdf.Path(path)))
+
+
+def _edit_has_prim(path):
+    layer = _edit_layer()
+    if not layer:
+        return False
+    return bool(layer.GetPrimAtPath(Sdf.Path(path)))
+
+
+def _layer_variant_selection(layer, path, set_name):
+    if not layer:
+        return ""
+
+    spec = layer.GetPrimAtPath(Sdf.Path(path))
+    if not spec:
+        return ""
+
+    try:
+        selections = dict(spec.variantSelections)
+    except Exception:
+        return ""
+
+    return str(selections.get(set_name, ""))
+
+
+def _root_variant_selection(path, set_name):
+    return _layer_variant_selection(_root_layer(), path, set_name)
+
+
+def _edit_variant_selection(path, set_name):
+    return _layer_variant_selection(_edit_layer(), path, set_name)
+
+
+def _layer_has_default(layer, path):
+    if not layer:
+        return False
+
+    prop = layer.GetPropertyAtPath(Sdf.Path(path))
+    return bool(prop and prop.HasInfo("default"))
+
+
+def _ensure_cube(path, size=2.0):
+    stage = _stage()
+    if not stage:
+        return None
+
+    cube = UsdGeom.Cube.Define(stage, path)
+    cube.CreateSizeAttr(float(size))
+    return cube.GetPrim()
+
+
+def _define_xform(stage, path):
+    return UsdGeom.Xform.Define(stage, path).GetPrim()
+
+
+def _world_transform(path):
+    prim = _prim(path)
+    if not prim:
+        return None
+    return UsdGeom.Xformable(prim).ComputeLocalToWorldTransform(Usd.TimeCode.Default())
+
+
+def _matrix_close(actual, expected, tolerance=1e-8):
+    if actual is None or expected is None:
+        return False
+
+    for row in range(4):
+        for column in range(4):
+            if abs(actual[row][column] - expected[row][column]) > tolerance:
+                return False
+
+    return True
+
+
+def _set_translate(path, value):
+    prim = _prim(path)
+    if not prim:
+        return False
+
+    xform = UsdGeom.Xformable(prim)
+    xform.ClearXformOpOrder()
+    xform.AddTranslateOp().Set(Gf.Vec3d(*value))
+    return True
+
+
+def _set_complex_transform(path, translate, rotate, scale):
+    prim = _prim(path)
+    if not prim:
+        return False
+
+    xform = UsdGeom.Xformable(prim)
+    xform.ClearXformOpOrder()
+    xform.AddTranslateOp().Set(Gf.Vec3d(*translate))
+    xform.AddRotateXYZOp().Set(Gf.Vec3f(*rotate))
+    xform.AddScaleOp().Set(Gf.Vec3f(*scale))
+    return True
+
+
+def _transform_property_names(path):
+    layer = _edit_layer()
+    if not layer:
+        return []
+
+    spec = layer.GetPrimAtPath(Sdf.Path(path))
+    if not spec:
+        return []
+
+    names = []
+    for prop in spec.properties:
+        name = prop.name
+        if name == "xformOpOrder" or name.startswith("xformOp:"):
+            names.append(name)
+
+    return sorted(names)
+
+
+def _local_transform(path):
+    prim = _prim(path)
+    if not prim:
+        return None
+
+    xformable = UsdGeom.Xformable(prim)
+    if not xformable:
+        return None
+
+    value = xformable.GetLocalTransformation(Usd.TimeCode.Default())
+    if isinstance(value, tuple):
+        value = value[0]
+
+    return Gf.Matrix4d(value)
+
+
+def _identity_matrix():
+    return Gf.Matrix4d(1.0)
+
+
+def _xform_order(path):
+    prim = _prim(path)
+    if not prim:
+        return []
+
+    attr = UsdGeom.Xformable(prim).GetXformOpOrderAttr()
+    value = attr.Get() if attr else None
+    return [str(token) for token in value] if value is not None else []
+
+
+def _has_command(name):
+    return hasattr(stageviz.command, name)
+
+
+def _undo():
+    for name in ("undo", "undo_command"):
+        if _has_command(name):
+            getattr(stageviz.command, name)()
+            _wait()
+            return True
+
+    stack = getattr(stageviz, "command_stack", None)
+    if stack and hasattr(stack, "undo"):
+        stack.undo()
+        _wait()
+        return True
+
+    print("[skip] undo is not bound")
+    return False
+
+
+def _redo():
+    for name in ("redo", "redo_command"):
+        if _has_command(name):
+            getattr(stageviz.command, name)()
+            _wait()
+            return True
+
+    stack = getattr(stageviz, "command_stack", None)
+    if stack and hasattr(stack, "redo"):
+        stack.redo()
+        _wait()
+        return True
+
+    print("[skip] redo is not bound")
+    return False
+
+
+def _create_payload_file(path, name):
+    stage = Usd.Stage.CreateNew(path)
+
+    root = _define_xform(stage, f"/{name}")
+    Usd.ModelAPI(root).SetKind(Kind.Tokens.component)
+
+    geom = UsdGeom.Cube.Define(stage, f"/{name}/Geom")
+    geom.CreateSizeAttr(2.0)
+
+    stage.SetDefaultPrim(root)
+    stage.GetRootLayer().Save()
+
+
+def _create_external_file(path):
+    stage = Usd.Stage.CreateNew(path)
+    root = _define_xform(stage, "/ExternalRoot")
+    _define_xform(stage, "/ExternalRoot/Child")
+
+    style = root.GetVariantSets().AddVariantSet("style")
+    style.AddVariant("A")
+    style.AddVariant("B")
+
+    style.SetVariantSelection("A")
+    with style.GetVariantEditContext():
+        _define_xform(stage, "/ExternalRoot/StyleA")
+
+    style.SetVariantSelection("B")
+    with style.GetVariantEditContext():
+        _define_xform(stage, "/ExternalRoot/StyleB")
+
+    style.SetVariantSelection("A")
+
+    stage.SetDefaultPrim(root)
+    stage.GetRootLayer().Save()
+
+
+def _create_merge_source(path, external):
+    stage = Usd.Stage.CreateNew(path)
+
+    root = _define_xform(stage, "/MergeSource")
+    _define_xform(stage, "/MergeSource/Merged")
+    stage.SetDefaultPrim(root)
+
+    referenced = _define_xform(stage, "/MergeSource/MergedReference")
+    referenced.GetReferences().AddReference(
+        os.path.basename(external),
+        "/ExternalRoot",
+    )
+
+    stage.GetRootLayer().Save()
+
+
+def _create_main_file(path, payload_a, payload_b, external):
+    stage = Usd.Stage.CreateNew(path)
+
+    world = _define_xform(stage, "/World")
+    stage.SetDefaultPrim(world)
+
+    _define_xform(stage, "/World/A")
+    _define_xform(stage, "/World/A/A1")
+    _define_xform(stage, "/World/A/A2")
+
+    _define_xform(stage, "/World/B")
+    _define_xform(stage, "/World/B/B1")
+    _define_xform(stage, "/World/B/B2")
+
+    _define_xform(stage, "/World/C")
+    _define_xform(stage, "/World/D")
+
+    _define_xform(stage, "/OtherRoot")
+
+    referenced = _define_xform(stage, "/World/Referenced")
+    referenced.GetReferences().AddReference(os.path.basename(external), "/ExternalRoot")
+
+    stage.GetRootLayer().subLayerPaths.append(os.path.basename(external))
+
+    # Properly applied UsdGeomModelAPI source.
+    p1 = _define_xform(stage, "/World/PayloadA")
+    p1.GetPayloads().AddPayload(os.path.basename(payload_a), "/PayloadA")
+    Usd.ModelAPI(p1).SetKind(Kind.Tokens.component)
+    UsdGeom.ModelAPI.Apply(p1).SetExtentsHint([
+        Gf.Vec3f(-5.0, -5.0, -5.0),
+        Gf.Vec3f(5.0, 5.0, 5.0),
+    ])
+
+    # Authored extentsHint without applying UsdGeomModelAPI.
+    p2 = _define_xform(stage, "/World/PayloadB")
+    p2.GetPayloads().AddPayload(os.path.basename(payload_b), "/PayloadB")
+    Usd.ModelAPI(p2).SetKind(Kind.Tokens.component)
+    UsdGeom.Xformable(p2).AddTranslateOp().Set(Gf.Vec3d(6.0, 0.0, 0.0))
+    p2.CreateAttribute("extentsHint", Sdf.ValueTypeNames.Float3Array).Set([
+        Gf.Vec3f(-2.0, -2.0, -2.0),
+        Gf.Vec3f(2.0, 2.0, 2.0),
+    ])
+
+    payload_selected_near = _define_xform(stage, "/World/PayloadSelectedNear")
+    payload_selected_near.GetPayloads().AddPayload(
+        os.path.basename(payload_b),
+        "/PayloadB",
+    )
+    Usd.ModelAPI(payload_selected_near).SetKind(Kind.Tokens.component)
+    UsdGeom.Xformable(payload_selected_near).AddTranslateOp().Set(
+        Gf.Vec3d(1.0, 0.0, 0.0)
+    )
+    payload_selected_near.CreateAttribute(
+        "extentsHint",
+        Sdf.ValueTypeNames.Float3Array,
+    ).Set([
+        Gf.Vec3f(-0.25, -0.25, -0.25),
+        Gf.Vec3f(0.25, 0.25, 0.25),
+    ])
+
+    payload_far = _define_xform(stage, "/World/PayloadFar")
+    payload_far.GetPayloads().AddPayload(os.path.basename(payload_b), "/PayloadB")
+    Usd.ModelAPI(payload_far).SetKind(Kind.Tokens.component)
+    UsdGeom.Xformable(payload_far).AddTranslateOp().Set(Gf.Vec3d(100.0, 0.0, 0.0))
+    payload_far.CreateAttribute("extentsHint", Sdf.ValueTypeNames.Float3Array).Set([
+        Gf.Vec3f(-2.0, -2.0, -2.0),
+        Gf.Vec3f(2.0, 2.0, 2.0),
+    ])
+
+    payload_wide = _define_xform(stage, "/World/PayloadWide")
+    payload_wide.GetPayloads().AddPayload(os.path.basename(payload_b), "/PayloadB")
+    Usd.ModelAPI(payload_wide).SetKind(Kind.Tokens.component)
+    UsdGeom.Xformable(payload_wide).AddTranslateOp().Set(Gf.Vec3d(80.0, 0.0, 0.0))
+    payload_wide.CreateAttribute("extentsHint", Sdf.ValueTypeNames.Float3Array).Set([
+        Gf.Vec3f(-100.0, -2.0, -2.0),
+        Gf.Vec3f(100.0, 2.0, 2.0),
+    ])
+
+    # Reverse coverage: raw extentsHint source with an applied ModelAPI neighbor.
+    fallback_source = _define_xform(stage, "/World/PayloadFallbackSource")
+    fallback_source.GetPayloads().AddPayload(os.path.basename(payload_a), "/PayloadA")
+    Usd.ModelAPI(fallback_source).SetKind(Kind.Tokens.component)
+    UsdGeom.Xformable(fallback_source).AddTranslateOp().Set(Gf.Vec3d(50.0, 0.0, 0.0))
+    fallback_source.CreateAttribute("extentsHint", Sdf.ValueTypeNames.Float3Array).Set([
+        Gf.Vec3f(-5.0, -5.0, -5.0),
+        Gf.Vec3f(5.0, 5.0, 5.0),
+    ])
+
+    model_neighbor = _define_xform(stage, "/World/PayloadModelNeighbor")
+    model_neighbor.GetPayloads().AddPayload(os.path.basename(payload_b), "/PayloadB")
+    Usd.ModelAPI(model_neighbor).SetKind(Kind.Tokens.component)
+    UsdGeom.Xformable(model_neighbor).AddTranslateOp().Set(Gf.Vec3d(56.0, 0.0, 0.0))
+    UsdGeom.ModelAPI.Apply(model_neighbor).SetExtentsHint([
+        Gf.Vec3f(-2.0, -2.0, -2.0),
+        Gf.Vec3f(2.0, 2.0, 2.0),
+    ])
+
+    model_selected_near = _define_xform(stage, "/World/PayloadModelSelectedNear")
+    model_selected_near.GetPayloads().AddPayload(
+        os.path.basename(payload_b),
+        "/PayloadB",
+    )
+    Usd.ModelAPI(model_selected_near).SetKind(Kind.Tokens.component)
+    UsdGeom.Xformable(model_selected_near).AddTranslateOp().Set(
+        Gf.Vec3d(51.0, 0.0, 0.0)
+    )
+    UsdGeom.ModelAPI.Apply(model_selected_near).SetExtentsHint([
+        Gf.Vec3f(-0.25, -0.25, -0.25),
+        Gf.Vec3f(0.25, 0.25, 0.25),
+    ])
+
+    nested_outer = _define_xform(stage, "/World/NestedOuter")
+    nested_outer.GetPayloads().AddPayload(
+        os.path.basename(payload_a),
+        "/PayloadA",
+    )
+    Usd.ModelAPI(nested_outer).SetKind(Kind.Tokens.component)
+
+    nested_inner = _define_xform(stage, "/World/NestedOuter/NestedInner")
+    nested_inner.GetPayloads().AddPayload(
+        os.path.basename(payload_b),
+        "/PayloadB",
+    )
+    Usd.ModelAPI(nested_inner).SetKind(Kind.Tokens.component)
+
+    variant_payload = _define_xform(stage, "/World/VariantPayload")
+    Usd.ModelAPI(variant_payload).SetKind(Kind.Tokens.component)
+    variant_set = variant_payload.GetVariantSets().AddVariantSet("model")
+    variant_set.AddVariant("A")
+    variant_set.AddVariant("B")
+    variant_set.SetVariantSelection("A")
+    with variant_set.GetVariantEditContext():
+        variant_payload.GetPayloads().AddPayload(
+            os.path.basename(payload_a),
+            "/PayloadA",
+        )
+    variant_set.SetVariantSelection("B")
+    with variant_set.GetVariantEditContext():
+        variant_payload.GetPayloads().AddPayload(
+            os.path.basename(payload_b),
+            "/PayloadB",
+        )
+    variant_set.SetVariantSelection("A")
+
+    # A second payload with the same variant-set/value names exercises
+    # multi-target payload-variant commands and guards against accidental
+    # sibling changes when only one target is supplied.
+    variant_payload_sibling = _define_xform(stage, "/World/VariantPayloadSibling")
+    Usd.ModelAPI(variant_payload_sibling).SetKind(Kind.Tokens.component)
+    sibling_set = variant_payload_sibling.GetVariantSets().AddVariantSet("model")
+    sibling_set.AddVariant("A")
+    sibling_set.AddVariant("B")
+    sibling_set.SetVariantSelection("A")
+    with sibling_set.GetVariantEditContext():
+        variant_payload_sibling.GetPayloads().AddPayload(
+            os.path.basename(payload_a),
+            "/PayloadA",
+        )
+    sibling_set.SetVariantSelection("B")
+    with sibling_set.GetVariantEditContext():
+        variant_payload_sibling.GetPayloads().AddPayload(
+            os.path.basename(payload_b),
+            "/PayloadB",
+        )
+    sibling_set.SetVariantSelection("A")
+
+    stage.GetRootLayer().Save()
+
+
+def create_fixture():
+    root = tempfile.mkdtemp(prefix="stageviz_command_tests_")
+    payload_a = os.path.join(root, "payload_a.usda")
+    payload_b = os.path.join(root, "payload_b.usda")
+    external = os.path.join(root, "external.usda")
+    main = os.path.join(root, "command_test.usda")
+    merge_source = os.path.join(root, "merge_source.usda")
+    saved = os.path.join(root, "command_test_saved.usda")
+
+    _create_payload_file(payload_a, "PayloadA")
+    _create_payload_file(payload_b, "PayloadB")
+    _create_external_file(external)
+    _create_main_file(main, payload_a, payload_b, external)
+    _create_merge_source(merge_source, external)
+
+    return root, main, merge_source, saved, external
+
+
+def reload_fixture(main_path):
+    _disable_preserve_state()
+
+    loaded = stageviz.session().load(main_path, stageviz.LoadNone)
+    _assert(loaded, "session.load fixture with LoadNone")
+
+    _assert(
+        _wait_until(
+            lambda: bool(
+                stageviz.session().stage()
+                and stageviz.session().stage().GetPrimAtPath("/World")
+            )
+        ),
+        "fixture stage is available",
+    )
+
+    _wait_until(lambda: _selection() == [], timeout=1.0)
+    _wait_until(lambda: _mask() == [], timeout=1.0)
+
+
+def test_command_api():
+    expected = [
+        "select_paths",
+        "select_all",
+        "select_invert",
+        "select_payload",
+        "select_layer",
+        "select_invert_in_payload",
+        "select_invert_in_layer",
+        "isolate_paths",
+        "show_paths",
+        "hide_paths",
+        "load_payloads",
+        "load_neighbor_payloads",
+        "unload_payloads",
+        "set_variant_selection",
+        "set_stage_up",
+        "set_default_prim",
+        "clear_default_prim",
+        "delete_paths",
+        "duplicate_paths",
+        "new_prim",
+        "new_scope",
+        "new_material",
+        "new_reference",
+        "new_payload",
+        "rename_path",
+        "new_xform",
+        "move_path",
+        "set_attribute_value",
+        "set_attribute_values",
+        "reset_attribute_values",
+        "reset_attribute_override",
+        "reset_attribute_overrides",
+        "center_pivots",
+        "reset_pivots",
+        "reset_transforms",
+        "identity_transforms",
+        "connect_shader_input",
+        "connect_shader_node",
+        "reset_dependencies",
+        "disconnect_shader_inputs",
+        "reset_shader_inputs",
+        "connect_materialx_node",
+        "bind_material",
+        "merge_stage",
+        "merge_flattened_stage",
+        "add_sublayer",
+        "add_reference",
+        "add_payload",
+    ]
+
+    # reset_overrides was added after the original Python command surface.
+    if _has_command("reset_overrides"):
+        expected.append("reset_overrides")
+
+    missing = [name for name in expected if not _has_command(name)]
+
+    _assert(
+        not missing,
+        "expected command API is exposed"
+        + (f": missing {missing}" if missing else ""),
+    )
+
+
+def test_session_edit_layer_api():
+    session = stageviz.session()
+
+    required = ("editLayer", "editLayers", "setEditLayer")
+    missing = [name for name in required if not hasattr(session, name)]
+
+    _assert(
+        not missing,
+        "session edit-layer API is exposed"
+        + (f": missing {missing}" if missing else ""),
+    )
+
+    if missing:
+        return
+
+    root = _root_layer()
+    _assert(bool(root), "root layer exists for edit-layer test")
+
+    if not root:
+        return
+
+    _assert_equal(
+        session.editLayer(),
+        root.identifier,
+        "edit layer defaults to root layer",
+    )
+
+    layers = list(session.editLayers())
+
+    _assert(
+        root.identifier in layers,
+        "editLayers includes root layer",
+    )
+
+    sublayers = [
+        identifier
+        for identifier in layers
+        if identifier != root.identifier
+    ]
+
+    _assert(
+        bool(sublayers),
+        "fixture exposes at least one local sublayer",
+    )
+
+    if not sublayers:
+        return
+
+    sublayer = sublayers[0]
+
+    _assert(
+        bool(session.setEditLayer(sublayer)),
+        "setEditLayer accepts local sublayer",
+    )
+
+    _assert_equal(
+        session.editLayer(),
+        sublayer,
+        "session switches active edit layer",
+    )
+
+    stage_target = _stage().GetEditTarget().GetLayer()
+    _assert(
+        bool(stage_target),
+        "USD stage has active edit target",
+    )
+
+    if stage_target:
+        _assert_equal(
+            stage_target.identifier,
+            sublayer,
+            "USD stage edit target follows Session edit layer",
+        )
+
+    rejected_missing = False
+    try:
+        rejected_missing = not bool(
+            session.setEditLayer("__stageviz_missing_layer__.usda")
+        )
+    except ValueError:
+        rejected_missing = True
+
+    _assert(
+        rejected_missing,
+        "setEditLayer rejects unknown layer",
+    )
+
+    _assert(
+        bool(session.setEditLayer(root.identifier)),
+        "setEditLayer switches back to root",
+    )
+
+    _assert_equal(
+        session.editLayer(),
+        root.identifier,
+        "edit layer restored to root",
+    )
+
+
+def test_property_edit_uses_selected_sublayer():
+    session = stageviz.session()
+
+    if not all(hasattr(session, name) for name in ("editLayer", "editLayers", "setEditLayer")):
+        print("[skip] session edit-layer API is not bound")
+        return
+
+    root = _root_layer()
+    layers = list(session.editLayers())
+    sublayers = [
+        identifier
+        for identifier in layers
+        if root and identifier != root.identifier
+    ]
+
+    if not sublayers:
+        print("[skip] no local sublayer available")
+        return
+
+    sublayer = sublayers[0]
+
+    _assert(
+        bool(session.setEditLayer(sublayer)),
+        "select sublayer for property authoring",
+    )
+
+    property_path = "/ExternalRoot.visibility"
+
+    _assert(
+        not _edit_has_property(property_path),
+        "selected edit layer has no visibility opinion initially",
+    )
+
+    _assert(
+        not _root_has_property(property_path),
+        "root layer has no visibility opinion initially",
+    )
+
+    stageviz.command.hide_paths(["/ExternalRoot"], recursive=False)
+
+    _assert(
+        _wait_until(lambda: str(_visibility("/ExternalRoot")) == "invisible"),
+        "hide_paths edits composed sublayer prim",
+    )
+
+    _assert(
+        _edit_has_property(property_path),
+        "visibility is authored in selected edit layer",
+    )
+
+    _assert(
+        not _root_has_property(property_path),
+        "visibility is not accidentally authored in root layer",
+    )
+
+    session.setEditLayer(root.identifier)
+
+
+def test_select_paths():
+    stageviz.command.select_paths(["/World/A", "/World/B"])
+
+    _assert(
+        _wait_until(lambda: _selection() == ["/World/A", "/World/B"]),
+        "select_paths updates selection",
+    )
+
+    if _undo():
+        _assert(
+            _wait_until(lambda: _selection() == []),
+            "undo select_paths restores previous empty selection",
+        )
+
+    if _redo():
+        _assert(
+            _wait_until(lambda: _selection() == ["/World/A", "/World/B"]),
+            "redo select_paths restores selected paths",
+        )
+
+
+def test_instance_proxy_selection():
+    """Selection keeps native instance proxy paths distinct from their source."""
+    usd_stage = _stage()
+    source_path = "/World/InstanceSelectionSource"
+    source_geom_path = source_path + "/Geom"
+    instance_paths = [
+        "/World/InstanceSelectionA",
+        "/World/InstanceSelectionB",
+    ]
+    proxy_paths = [path + "/Geom" for path in instance_paths]
+
+    source = UsdGeom.Xform.Define(usd_stage, source_path).GetPrim()
+    UsdGeom.Cube.Define(usd_stage, source_geom_path).CreateSizeAttr(1.0)
+    for path in instance_paths:
+        instance = UsdGeom.Xform.Define(usd_stage, path).GetPrim()
+        instance.GetReferences().AddInternalReference(source.GetPath())
+        instance.SetInstanceable(True)
+
+    _assert(
+        all(_prim(path) and _prim(path).IsInstanceProxy() for path in proxy_paths),
+        "native instance fixture exposes both geometry paths as instance proxies",
+    )
+    prototype_paths = [str(_prim(path).GetPrimInPrototype().GetPath()) for path in proxy_paths]
+    _assert(
+        prototype_paths[0] and prototype_paths[0] == prototype_paths[1],
+        "both instance proxies resolve to shared prototype geometry",
+    )
+
+    stageviz.command.select_paths([proxy_paths[0]])
+    _assert(
+        _wait_until(lambda: _selection() == [proxy_paths[0]]),
+        "select_paths preserves the chosen instance proxy path",
+    )
+    _assert(
+        source_geom_path not in _selection() and proxy_paths[1] not in _selection(),
+        "selecting one proxy does not select its source or sibling instance",
+    )
+
+    stageviz.command.select_paths([instance_paths[0]])
+    _assert(
+        _wait_until(lambda: _selection() == [instance_paths[0]]),
+        "select_paths preserves the instance root path",
+    )
+    stageviz.command.select_paths([proxy_paths[0], proxy_paths[1]])
+    _assert(
+        _wait_until(lambda: set(_selection()) == set(proxy_paths)),
+        "multi-selection retains two distinct paths into the same native instance source",
+    )
+    stageviz.command.select_paths([])
+    _wait_until(lambda: not _selection())
+
+    for path in instance_paths:
+        usd_stage.RemovePrim(path)
+    usd_stage.RemovePrim(source_path)
+
+
+def test_select_all_and_invert():
+    stageviz.command.select_all(recursive=False)
+
+    _assert(
+        _wait_until(
+            lambda: set(_selection()) == {
+                "/ExternalRoot",
+                "/World",
+                "/OtherRoot",
+            }
+        ),
+        "select_all non-recursive selects root prims only",
+    )
+
+    stageviz.command.select_paths([])
+
+    _assert(
+        _wait_until(lambda: _selection() == []),
+        "selection cleared before recursive select_all",
+    )
+
+    expected_recursive = {
+        str(prim.GetPath())
+        for prim in _stage().Traverse()
+        if prim and prim.IsValid()
+    }
+
+    _assert(
+        "/World/PayloadA" not in expected_recursive
+        and "/World/PayloadB" not in expected_recursive,
+        "unloaded payload prims are excluded from recursive traversal",
+    )
+
+    stageviz.command.select_all(recursive=True)
+
+    _assert(
+        _wait_until(
+            lambda: set(_selection()) == expected_recursive
+        ),
+        "select_all recursive selects exactly the traversable prims",
+    )
+
+    before = set(_selection())
+    stageviz.command.select_invert()
+
+    _assert(
+        _wait_until(lambda: set(_selection()) != before),
+        "select_invert changes selection domain",
+    )
+
+def test_isolate_paths():
+    stageviz.command.select_paths(["/World/A/A1"])
+
+    _assert(
+        _wait_until(lambda: _selection() == ["/World/A/A1"]),
+        "selection prepared for isolate_paths",
+    )
+
+    stageviz.command.isolate_paths(["/World/A"])
+
+    _assert(
+        _wait_until(lambda: _mask() == ["/World/A"]),
+        "isolate_paths sets mask",
+    )
+
+    if _undo():
+        _assert(
+            _wait_until(lambda: _mask() == []),
+            "undo isolate_paths restores previous mask",
+        )
+
+
+def test_show_hide_paths():
+    stageviz.command.hide_paths(["/World/A"], recursive=False)
+
+    _assert(
+        _wait_until(lambda: str(_visibility("/World/A")) == "invisible"),
+        "hide_paths authors invisible",
+    )
+
+    _assert(
+        str(_visibility("/World/A/A1")) != "invisible",
+        "non-recursive hide does not author invisible on child",
+    )
+
+    if _undo():
+        _assert(
+            _wait_until(lambda: str(_visibility("/World/A")) != "invisible"),
+            "undo hide_paths restores previous visibility",
+        )
+
+    stageviz.command.hide_paths(["/World/A"], recursive=True)
+
+    _assert(
+        _wait_until(lambda: str(_visibility("/World/A/A1")) == "invisible"),
+        "recursive hide authors invisible on child",
+    )
+
+    stageviz.command.show_paths(["/World/A"], recursive=True)
+
+    _assert(
+        _wait_until(lambda: str(_visibility("/World/A/A1")) != "invisible"),
+        "recursive show restores visible/inherited on child",
+    )
+
+
+
+def test_new_prim():
+    _assert(
+        _has_command("new_prim"),
+        "new_prim command is exposed",
+    )
+
+    if not _has_command("new_prim"):
+        return
+
+    before_order = _child_names("/World")
+
+    stageviz.command.new_prim("/World", "GenericPrim")
+
+    _assert(
+        _wait_until(lambda: _exists("/World/GenericPrim")),
+        "new_prim creates untyped prim",
+    )
+
+    prim = _prim("/World/GenericPrim")
+    _assert(
+        bool(prim and not prim.GetTypeName()),
+        "new_prim without type creates untyped prim",
+    )
+
+    _assert_equal(
+        _selection(),
+        ["/World/GenericPrim"],
+        "new_prim selects created prim",
+    )
+
+    _assert_equal(
+        _child_names("/World"),
+        before_order + ["GenericPrim"],
+        "new_prim appends child order",
+    )
+
+    if _undo():
+        _assert(
+            _wait_until(lambda: not _exists("/World/GenericPrim")),
+            "undo new_prim removes created prim",
+        )
+
+        _assert_equal(
+            _child_names("/World"),
+            before_order,
+            "undo new_prim restores child order",
+        )
+
+    if _redo():
+        _assert(
+            _wait_until(lambda: _exists("/World/GenericPrim")),
+            "redo new_prim recreates prim",
+        )
+
+
+def test_new_typed_prim():
+    if not _has_command("new_prim"):
+        print("[skip] new_prim is not bound")
+        return
+
+    stageviz.command.new_prim("/World", "CameraPrim", "Camera")
+
+    _assert(
+        _wait_until(lambda: _exists("/World/CameraPrim")),
+        "new_prim creates typed prim",
+    )
+
+    prim = _prim("/World/CameraPrim")
+    _assert_equal(
+        str(prim.GetTypeName()) if prim else "",
+        "Camera",
+        "new_prim preserves requested USD type",
+    )
+
+
+def test_new_prim_unique_name():
+    if not _has_command("new_prim"):
+        print("[skip] new_prim is not bound")
+        return
+
+    stageviz.command.new_prim("/World", "A", "Xform")
+
+    _assert(
+        _wait_until(lambda: _exists("/World/A_1") or _exists("/World/A1")),
+        "new_prim creates unique sibling name",
+    )
+
+
+def test_new_scope():
+    _assert(
+        _has_command("new_scope"),
+        "new_scope command is exposed",
+    )
+
+    if not _has_command("new_scope"):
+        return
+
+    stageviz.command.new_scope("/World", "Looks")
+
+    _assert(
+        _wait_until(lambda: _exists("/World/Looks")),
+        "new_scope creates scope",
+    )
+
+    prim = _prim("/World/Looks")
+    _assert_equal(
+        str(prim.GetTypeName()) if prim else "",
+        "Scope",
+        "new_scope creates USD Scope type",
+    )
+
+    _assert_equal(
+        _selection(),
+        ["/World/Looks"],
+        "new_scope selects created scope",
+    )
+
+    if _undo():
+        _assert(
+            _wait_until(lambda: not _exists("/World/Looks")),
+            "undo new_scope removes scope",
+        )
+
+
+def test_new_material():
+    _assert(
+        _has_command("new_material"),
+        "new_material command is exposed",
+    )
+
+    if not _has_command("new_material"):
+        return
+
+    if not _exists("/World/Looks"):
+        UsdGeom.Scope.Define(_stage(), "/World/Looks")
+
+    stageviz.command.new_material("/World/Looks", "TestMaterial")
+
+    material_path = "/World/Looks/TestMaterial"
+    shader_path = f"{material_path}/PreviewSurface"
+
+    _assert(
+        _wait_until(lambda: _exists(material_path) and _exists(shader_path)),
+        "new_material creates material and preview shader",
+    )
+
+    material_prim = _prim(material_path)
+    shader_prim = _prim(shader_path)
+
+    _assert_equal(
+        str(material_prim.GetTypeName()) if material_prim else "",
+        "Material",
+        "new_material creates UsdShadeMaterial",
+    )
+
+    _assert_equal(
+        str(shader_prim.GetTypeName()) if shader_prim else "",
+        "Shader",
+        "new_material creates child Shader",
+    )
+
+    shader = UsdShade.Shader(shader_prim) if shader_prim else None
+    shader_id = shader.GetIdAttr().Get() if shader else None
+
+    _assert_equal(
+        str(shader_id) if shader_id is not None else "",
+        "UsdPreviewSurface",
+        "new_material assigns UsdPreviewSurface shader id",
+    )
+
+    material = UsdShade.Material(material_prim) if material_prim else None
+    surface_output = material.GetSurfaceOutput() if material else None
+    source = surface_output.GetConnectedSource() if surface_output else None
+
+    _assert(
+        bool(source),
+        "new_material connects material surface output",
+    )
+
+    _assert_equal(
+        _selection(),
+        [material_path],
+        "new_material selects created material",
+    )
+
+    if _undo():
+        _assert(
+            _wait_until(lambda: not _exists(material_path)),
+            "undo new_material removes complete material hierarchy",
+        )
+
+    if _redo():
+        _assert(
+            _wait_until(lambda: _exists(material_path) and _exists(shader_path)),
+            "redo new_material restores material hierarchy",
+        )
+
+
+def test_bind_material():
+    if not _has_command("bind_material"):
+        print("[skip] bind_material is not bound")
+        return
+
+    stage = _stage()
+
+    if not _exists("/World/Looks"):
+        UsdGeom.Scope.Define(stage, "/World/Looks")
+
+    material_path = "/World/Looks/BoundMaterial"
+
+    if not _exists(material_path):
+        material = UsdShade.Material.Define(stage, material_path)
+        shader = UsdShade.Shader.Define(stage, f"{material_path}/PreviewSurface")
+        shader.CreateIdAttr("UsdPreviewSurface")
+        material.CreateSurfaceOutput().ConnectToSource(
+            shader.ConnectableAPI(),
+            "surface",
+        )
+
+    stageviz.command.bind_material(
+        ["/World/A", "/World/B"],
+        material_path,
+    )
+
+    def bound_material(path):
+        prim = _prim(path)
+        if not prim:
+            return ""
+        bound, _ = UsdShade.MaterialBindingAPI(prim).ComputeBoundMaterial()
+        return str(bound.GetPath()) if bound else ""
+
+    _assert(
+        _wait_until(
+            lambda: bound_material("/World/A") == material_path
+            and bound_material("/World/B") == material_path
+        ),
+        "bind_material binds material to all requested prims",
+    )
+
+    if _undo():
+        _assert(
+            _wait_until(
+                lambda: bound_material("/World/A") != material_path
+                and bound_material("/World/B") != material_path
+            ),
+            "undo bind_material restores previous bindings",
+        )
+
+    if _redo():
+        _assert(
+            _wait_until(
+                lambda: bound_material("/World/A") == material_path
+                and bound_material("/World/B") == material_path
+            ),
+            "redo bind_material restores bindings",
+        )
+
+
+
+def _shader_input(path):
+    attribute = _stage().GetAttributeAtPath(Sdf.Path(path)) if _stage() else None
+    if not attribute:
+        return None
+    return UsdShade.Input(attribute)
+
+
+def _connected_source(input_value):
+    if not input_value:
+        return None
+    try:
+        return input_value.GetConnectedSource()
+    except Exception:
+        return None
+
+
+def _connected_source_path(input_value):
+    source = _connected_source(input_value)
+    if not source:
+        return ""
+    try:
+        return str(source[0].GetPrim().GetPath())
+    except Exception:
+        return ""
+
+
+def _connected_source_name(input_value):
+    source = _connected_source(input_value)
+    if not source:
+        return ""
+    try:
+        return str(source[1])
+    except Exception:
+        return ""
+
+
+def _ensure_preview_material(path="/World/Looks/GraphMaterial"):
+    stage = _stage()
+    if not stage:
+        return None, None
+
+    parent = str(Sdf.Path(path).GetParentPath())
+    if parent and parent != "/" and not _exists(parent):
+        UsdGeom.Scope.Define(stage, parent)
+
+    material = UsdShade.Material.Get(stage, path)
+    if not material:
+        material = UsdShade.Material.Define(stage, path)
+
+    shader_path = f"{path}/PreviewSurface"
+    shader = UsdShade.Shader.Get(stage, shader_path)
+    if not shader:
+        shader = UsdShade.Shader.Define(stage, shader_path)
+        shader.CreateIdAttr("UsdPreviewSurface")
+        shader.CreateInput("diffuseColor", Sdf.ValueTypeNames.Color3f).Set(
+            Gf.Vec3f(0.18, 0.18, 0.18)
+        )
+        shader.CreateInput("roughness", Sdf.ValueTypeNames.Float).Set(0.5)
+        shader.CreateOutput("surface", Sdf.ValueTypeNames.Token)
+        material.CreateSurfaceOutput().ConnectToSource(
+            shader.ConnectableAPI(),
+            "surface",
+        )
+
+    return material, shader
+
+
+def _ensure_standard_surface_material(path="/World/Looks/StandardGraphMaterial"):
+    stage = _stage()
+    if not stage:
+        return None, None
+
+    parent = str(Sdf.Path(path).GetParentPath())
+    if parent and parent != "/" and not _exists(parent):
+        UsdGeom.Scope.Define(stage, parent)
+
+    material = UsdShade.Material.Get(stage, path)
+    if not material:
+        material = UsdShade.Material.Define(stage, path)
+
+    shader_path = f"{path}/StandardSurface"
+    shader = UsdShade.Shader.Get(stage, shader_path)
+    if not shader:
+        shader = UsdShade.Shader.Define(stage, shader_path)
+        shader.CreateIdAttr("ND_standard_surface_surfaceshader")
+        shader.CreateInput("base", Sdf.ValueTypeNames.Float).Set(1.0)
+        shader.CreateInput("base_color", Sdf.ValueTypeNames.Color3f).Set(
+            Gf.Vec3f(0.18, 0.18, 0.18)
+        )
+        shader.CreateOutput("out", Sdf.ValueTypeNames.Token)
+        material.CreateSurfaceOutput("mtlx").ConnectToSource(
+            shader.ConnectableAPI(),
+            "out",
+        )
+
+    return material, shader
+
+
+def test_material_shader_commands():
+    required = (
+        "connect_shader_input",
+        "connect_shader_node",
+        "reset_dependencies",
+        "disconnect_shader_inputs",
+        "reset_shader_inputs",
+        "connect_materialx_node",
+    )
+    missing = [name for name in required if not _has_command(name)]
+    _assert(
+        not missing,
+        "material shader command API is exposed"
+        + (f": missing {missing}" if missing else ""),
+    )
+    if missing:
+        return
+
+    stage = _stage()
+    material, preview = _ensure_preview_material()
+    _assert(bool(material and preview), "preview material fixture is available")
+    if not material or not preview:
+        return
+
+    diffuse = preview.GetInput("diffuseColor")
+    roughness = preview.GetInput("roughness")
+    _assert(bool(diffuse and roughness), "preview shader exposes material test inputs")
+    if not diffuse or not roughness:
+        return
+
+    # Existing compatible output -> input connection.
+    color_source = UsdShade.Shader.Define(stage, "/World/Looks/GraphMaterial/ColorSource")
+    color_source.CreateIdAttr("StagevizTestColorSource")
+    color_output = color_source.CreateOutput("out", Sdf.ValueTypeNames.Color3f)
+    color_output.Set(Gf.Vec3f(0.25, 0.5, 0.75))
+
+    diffuse_path = str(diffuse.GetAttr().GetPath())
+    color_output_path = str(color_output.GetAttr().GetPath())
+
+    stageviz.command.connect_shader_input(diffuse_path, color_output_path)
+    _assert(
+        _wait_until(lambda: _connected_source_path(diffuse) == str(color_source.GetPath())),
+        "connect_shader_input connects an exact Color3f output",
+    )
+    _assert_equal(
+        _connected_source_name(diffuse),
+        "out",
+        "connect_shader_input preserves source output name",
+    )
+
+    if _undo():
+        _assert(
+            _wait_until(lambda: _connected_source_path(diffuse) == ""),
+            "undo connect_shader_input restores disconnected input",
+        )
+    if _redo():
+        _assert(
+            _wait_until(lambda: _connected_source_path(diffuse) == str(color_source.GetPath())),
+            "redo connect_shader_input restores connection",
+        )
+
+    # Disconnect is independently undoable.
+    stageviz.command.disconnect_shader_inputs([diffuse_path])
+    _assert(
+        _wait_until(lambda: _connected_source_path(diffuse) == ""),
+        "disconnect_shader_inputs removes incoming connection",
+    )
+    if _undo():
+        _assert(
+            _wait_until(lambda: _connected_source_path(diffuse) == str(color_source.GetPath())),
+            "undo disconnect_shader_inputs restores source",
+        )
+
+    # reset_dependencies clears authored connections on the property and is undoable.
+    stageviz.command.reset_dependencies([diffuse_path])
+    _assert(
+        _wait_until(lambda: _connected_source_path(diffuse) == ""),
+        "reset_dependencies clears shader input connection",
+    )
+    if _undo():
+        _assert(
+            _wait_until(lambda: _connected_source_path(diffuse) == str(color_source.GetPath())),
+            "undo reset_dependencies restores shader input connection",
+        )
+
+    # Create a Preview Surface texture node through the same command used by the UI.
+    stageviz.command.disconnect_shader_inputs([diffuse_path])
+    _wait_until(lambda: _connected_source_path(diffuse) == "")
+    texture_path = "/World/Looks/GraphMaterial/TestTexture"
+    stageviz.command.connect_shader_node(
+        diffuse_path,
+        "UsdUVTexture",
+        "TestTexture",
+        "rgb",
+    )
+    _assert(
+        _wait_until(lambda: _exists(texture_path) and _connected_source_path(diffuse) == texture_path),
+        "connect_shader_node creates and connects UsdUVTexture RGB to Color3f",
+    )
+    texture = UsdShade.Shader(_prim(texture_path)) if _exists(texture_path) else None
+    texture_id = texture.GetIdAttr().Get() if texture else None
+    _assert_equal(
+        str(texture_id) if texture_id is not None else "",
+        "UsdUVTexture",
+        "connect_shader_node authors requested shader id",
+    )
+    if _undo():
+        _assert(
+            _wait_until(lambda: not _exists(texture_path) and _connected_source_path(diffuse) == ""),
+            "undo connect_shader_node removes helper node and connection",
+        )
+    if _redo():
+        _assert(
+            _wait_until(lambda: _exists(texture_path) and _connected_source_path(diffuse) == texture_path),
+            "redo connect_shader_node recreates helper node and connection",
+        )
+
+    # Regression guard for the Storm crash: generic Float3 must not connect to Color3f.
+    stageviz.command.disconnect_shader_inputs([diffuse_path])
+    _wait_until(lambda: _connected_source_path(diffuse) == "")
+    invalid_path = "/World/Looks/GraphMaterial/InvalidFloat3"
+    stageviz.command.connect_shader_node(
+        diffuse_path,
+        "UsdPrimvarReader_float3",
+        "InvalidFloat3",
+        "result",
+    )
+    _wait(150)
+    _assert(
+        not _exists(invalid_path),
+        "incompatible Float3 helper node is not authored for Color3f input",
+    )
+    _assert_equal(
+        _connected_source_path(diffuse),
+        "",
+        "incompatible Float3 -> Color3f connection is rejected",
+    )
+
+    # Reset authored shader input values and verify undo restores them.
+    roughness.Set(0.37)
+    roughness_path = str(roughness.GetAttr().GetPath())
+    _assert(bool(roughness.GetAttr().HasAuthoredValueOpinion()), "roughness has authored value before reset")
+    stageviz.command.reset_shader_inputs([roughness_path])
+    _assert(
+        _wait_until(lambda: not roughness.GetAttr().HasAuthoredValueOpinion()),
+        "reset_shader_inputs clears authored shader value",
+    )
+    if _undo():
+        _assert(
+            _wait_until(
+                lambda: roughness.GetAttr().HasAuthoredValueOpinion()
+                and abs(float(roughness.Get()) - 0.37) < 1e-6
+            ),
+            "undo reset_shader_inputs restores authored shader value",
+        )
+
+    # MaterialX-specific create/connect path. A scalar image node is valid for Standard Surface base.
+    standard_material, standard = _ensure_standard_surface_material()
+    _assert(bool(standard_material and standard), "MaterialX Standard Surface fixture is available")
+    if standard_material and standard:
+        base_input = standard.GetInput("base")
+        base_path = str(base_input.GetAttr().GetPath())
+        image_path = "/World/Looks/StandardGraphMaterial/BaseImage"
+        stageviz.command.connect_materialx_node(
+            base_path,
+            "ND_image_float",
+            "BaseImage",
+        )
+        _assert(
+            _wait_until(lambda: _exists(image_path) and _connected_source_path(base_input) == image_path),
+            "connect_materialx_node connects ND_image_float to float base input",
+        )
+        image_shader = UsdShade.Shader(_prim(image_path)) if _exists(image_path) else None
+        image_id = image_shader.GetIdAttr().Get() if image_shader else None
+        _assert_equal(
+            str(image_id) if image_id is not None else "",
+            "ND_image_float",
+            "connect_materialx_node authors requested NodeDef id",
+        )
+        if _undo():
+            _assert(
+                _wait_until(lambda: not _exists(image_path) and _connected_source_path(base_input) == ""),
+                "undo connect_materialx_node removes node and connection",
+            )
+
+
+def test_material_binding_hierarchy():
+    if not _has_command("bind_material"):
+        print("[skip] bind_material is not bound")
+        return
+
+    stage = _stage()
+    material, _ = _ensure_preview_material("/World/Looks/HierarchyMaterial")
+    _assert(bool(material), "hierarchy material fixture is available")
+    if not material:
+        return
+
+    root_path = "/World/MaterialBindingRoot"
+    child_path = root_path + "/Child"
+    UsdGeom.Xform.Define(stage, root_path)
+    UsdGeom.Cube.Define(stage, child_path)
+
+    material_path = str(material.GetPath())
+    stageviz.command.bind_material([root_path, child_path], material_path)
+
+    def bound_material(path):
+        prim = _prim(path)
+        if not prim:
+            return ""
+        bound, _ = UsdShade.MaterialBindingAPI(prim).ComputeBoundMaterial()
+        return str(bound.GetPath()) if bound else ""
+
+    _assert(
+        _wait_until(
+            lambda: bound_material(root_path) == material_path
+            and bound_material(child_path) == material_path
+        ),
+        "bind_material applies material to every explicitly requested hierarchy path",
+    )
+
+    if _undo():
+        _assert(
+            _wait_until(
+                lambda: bound_material(root_path) != material_path
+                and bound_material(child_path) != material_path
+            ),
+            "undo hierarchy material binding restores previous bindings",
+        )
+
+
+def test_new_reference(external):
+    _assert(
+        _has_command("new_reference"),
+        "new_reference command is exposed",
+    )
+
+    if not _has_command("new_reference"):
+        return
+
+    stageviz.command.new_reference(
+        "/World",
+        "CreatedReference",
+        external,
+        "/ExternalRoot",
+    )
+
+    path = "/World/CreatedReference"
+
+    _assert(
+        _wait_until(lambda: _exists(path) and _exists(f"{path}/Child")),
+        "new_reference creates composed reference hierarchy",
+    )
+
+    prim = _prim(path)
+    references = prim.GetMetadata("references") if prim else None
+    has_reference = bool(
+        references
+        and references.GetAddedOrExplicitItems()
+    )
+
+    _assert(
+        has_reference,
+        "new_reference authors reference arc",
+    )
+
+    _assert_equal(
+        _selection(),
+        [path],
+        "new_reference selects created prim",
+    )
+
+    if _undo():
+        _assert(
+            _wait_until(lambda: not _exists(path)),
+            "undo new_reference removes reference prim",
+        )
+
+    if _redo():
+        _assert(
+            _wait_until(lambda: _exists(path) and _exists(f"{path}/Child")),
+            "redo new_reference restores composed hierarchy",
+        )
+
+
+def test_new_reference_default_prim(external):
+    if not _has_command("new_reference"):
+        print("[skip] new_reference is not bound")
+        return
+
+    stageviz.command.new_reference(
+        "/World",
+        "DefaultReference",
+        external,
+    )
+
+    _assert(
+        _wait_until(lambda: _exists("/World/DefaultReference/Child")),
+        "new_reference empty prim path uses referenced default prim",
+    )
+
+
+def test_new_payload(external):
+    _assert(
+        _has_command("new_payload"),
+        "new_payload command is exposed",
+    )
+
+    if not _has_command("new_payload"):
+        return
+
+    stageviz.command.new_payload(
+        "/World",
+        "CreatedPayload",
+        external,
+        "/ExternalRoot",
+    )
+
+    path = "/World/CreatedPayload"
+
+    _assert(
+        _wait_until(lambda: bool(_prim(path) and _prim(path).HasPayload())),
+        "new_payload authors payload arc",
+    )
+
+    _assert(
+        _wait_until(lambda: _exists(f"{path}/Child"), timeout=5.0),
+        "new_payload composes payload hierarchy",
+    )
+
+    _assert_equal(
+        _selection(),
+        [path],
+        "new_payload selects created prim",
+    )
+
+    if _undo():
+        _assert(
+            _wait_until(lambda: not _exists(path)),
+            "undo new_payload removes payload prim",
+        )
+
+    if _redo():
+        _assert(
+            _wait_until(lambda: bool(_prim(path) and _prim(path).HasPayload())),
+            "redo new_payload restores payload arc",
+        )
+
+
+def test_new_payload_default_prim(external):
+    if not _has_command("new_payload"):
+        print("[skip] new_payload is not bound")
+        return
+
+    stageviz.command.new_payload(
+        "/World",
+        "DefaultPayload",
+        external,
+    )
+
+    _assert(
+        _wait_until(lambda: _exists("/World/DefaultPayload/Child"), timeout=5.0),
+        "new_payload empty prim path uses payload default prim",
+    )
+
+
+def test_duplicate_paths():
+    _assert(
+        _has_command("duplicate_paths"),
+        "duplicate_paths command is exposed",
+    )
+
+    if not _has_command("duplicate_paths"):
+        return
+
+    before_order = _child_names("/World")
+
+    stageviz.command.duplicate_paths(["/World/A"])
+
+    duplicate_candidates = [
+        name for name in _child_names("/World")
+        if name not in before_order
+    ]
+
+    _assert(
+        _wait_until(
+            lambda: any(
+                _exists(f"/World/{name}")
+                for name in _child_names("/World")
+                if name not in before_order
+            )
+        ),
+        "duplicate_paths creates sibling prim",
+    )
+
+    duplicate_candidates = [
+        name for name in _child_names("/World")
+        if name not in before_order
+    ]
+    duplicate_name = duplicate_candidates[0] if duplicate_candidates else ""
+    duplicate_path = f"/World/{duplicate_name}" if duplicate_name else ""
+
+    _assert(
+        bool(duplicate_path),
+        "duplicate_paths resolves created duplicate path",
+    )
+
+    if duplicate_path:
+        _assert(
+            _exists(f"{duplicate_path}/A1") and _exists(f"{duplicate_path}/A2"),
+            "duplicate_paths copies descendant specs",
+        )
+
+        _assert_equal(
+            _selection(),
+            [duplicate_path],
+            "duplicate_paths selects new duplicate",
+        )
+
+    if _undo():
+        if duplicate_path:
+            _assert(
+                _wait_until(lambda: not _exists(duplicate_path)),
+                "undo duplicate_paths removes duplicate",
+            )
+
+        _assert_equal(
+            _child_names("/World"),
+            before_order,
+            "undo duplicate_paths restores child order",
+        )
+
+    if _redo():
+        _assert(
+            _wait_until(lambda: len(_child_names("/World")) == len(before_order) + 1),
+            "redo duplicate_paths restores duplicate",
+        )
+
+
+def test_duplicate_composed_payload_prim():
+    if not _has_command("duplicate_paths"):
+        print("[skip] duplicate_paths is not bound")
+        return
+
+    stageviz.command.load_payloads(["/World/PayloadA"])
+
+    _assert(
+        _wait_until(lambda: _exists("/World/PayloadA/Geom"), timeout=5.0),
+        "payload prepared for duplicate composed prim",
+    )
+
+    before = set(_child_names("/World/PayloadA"))
+
+    stageviz.command.duplicate_paths(["/World/PayloadA/Geom"])
+
+    _assert(
+        _wait_until(
+            lambda: len(set(_child_names("/World/PayloadA")) - before) == 1
+        ),
+        "duplicate_paths copies strongest payload-owned prim spec into root layer",
+    )
+
+    added = list(set(_child_names("/World/PayloadA")) - before)
+    duplicate_path = f"/World/PayloadA/{added[0]}" if added else ""
+
+    _assert(
+        bool(duplicate_path and _root_has_prim(duplicate_path)),
+        "duplicate of payload-owned prim is authored in root layer",
+    )
+
+    if _undo() and duplicate_path:
+        _assert(
+            _wait_until(lambda: not _exists(duplicate_path)),
+            "undo duplicate payload-owned prim removes root-layer copy",
+        )
+
+
+def test_new_rename_move_delete():
+    stageviz.command.new_xform("/World", "Created")
+
+    _assert(
+        _wait_until(lambda: _exists("/World/Created")),
+        "new_xform creates prim",
+    )
+
+    _assert(
+        _wait_until(lambda: _selection() == ["/World/Created"]),
+        "new_xform selects created prim",
+    )
+
+    stageviz.command.rename_path("/World/Created", "Renamed")
+
+    _assert(
+        _wait_until(lambda: not _exists("/World/Created") and _exists("/World/Renamed")),
+        "rename_path renames prim",
+    )
+
+    _assert(
+        _wait_until(lambda: _selection() == ["/World/Renamed"]),
+        "rename_path remaps selection",
+    )
+
+    stageviz.command.move_path(["/World/Renamed"], "/World/B", insert_index=-1)
+
+    _assert(
+        _wait_until(lambda: not _exists("/World/Renamed") and _exists("/World/B/Renamed")),
+        "move_path reparents prim",
+    )
+
+    _assert(
+        _wait_until(lambda: _selection() == ["/World/B/Renamed"]),
+        "move_path remaps selection",
+    )
+
+    stageviz.command.delete_paths(["/World/B/Renamed"])
+
+    _assert(
+        _wait_until(lambda: not _exists("/World/B/Renamed")),
+        "delete_paths removes prim",
+    )
+
+
+def test_new_xform_root_parent():
+    stageviz.command.new_xform("/", "RootGroup")
+
+    _assert(
+        _wait_until(lambda: _exists("/RootGroup")),
+        "new_xform can create below absolute root",
+    )
+
+    _assert(
+        _wait_until(lambda: _selection() == ["/RootGroup"]),
+        "new_xform below root selects created root prim",
+    )
+
+
+def test_new_xform_unique_name():
+    stageviz.command.new_xform("/World", "A")
+
+    _assert(
+        _wait_until(lambda: _exists("/World/A_1") or _exists("/World/A1")),
+        "new_xform creates unique name when sibling exists",
+    )
+
+
+def test_new_xform_wraps_multiple_selection():
+    stageviz.command.select_paths(["/World/A", "/World/B"])
+
+    _assert(
+        _wait_until(lambda: _selection() == ["/World/A", "/World/B"]),
+        "selection prepared for multi-new_xform",
+    )
+
+    before_order = _child_names("/World")
+
+    stageviz.command.new_xform("/World", "Group")
+
+    _assert(
+        _wait_until(
+            lambda: _exists("/World/Group")
+            and _exists("/World/Group/A")
+            and _exists("/World/Group/B")
+            and not _exists("/World/A")
+            and not _exists("/World/B")
+        ),
+        "new_xform wraps selected siblings",
+    )
+
+    _assert(
+        _wait_until(lambda: _selection() == ["/World/Group"]),
+        "new_xform selects wrapper prim",
+    )
+
+    if _undo():
+        _assert(
+            _wait_until(
+                lambda: _exists("/World/A")
+                and _exists("/World/B")
+                and not _exists("/World/Group")
+            ),
+            "undo new_xform wrapper restores moved prims",
+        )
+
+        _assert_equal(
+            _selection(),
+            ["/World/A", "/World/B"],
+            "undo new_xform restores previous selection",
+        )
+
+        _assert_equal(
+            _child_names("/World"),
+            before_order,
+            "undo new_xform restores child order",
+        )
+
+    if _redo():
+        _assert(
+            _wait_until(
+                lambda: _exists("/World/Group")
+                and _exists("/World/Group/A")
+                and _exists("/World/Group/B")
+            ),
+            "redo new_xform wrapper reapplies move",
+        )
+
+
+def test_new_xform_minimal_root_selection():
+    stageviz.command.select_paths(["/World/A", "/World/A/A1", "/World/B"])
+
+    _assert(
+        _wait_until(lambda: _selection() == ["/World/A", "/World/A/A1", "/World/B"]),
+        "selection prepared for minimal root new_xform",
+    )
+
+    stageviz.command.new_xform("/World", "MinimalGroup")
+
+    _assert(
+        _wait_until(
+            lambda: _exists("/World/MinimalGroup/A")
+            and _exists("/World/MinimalGroup/A/A1")
+            and _exists("/World/MinimalGroup/B")
+            and not _exists("/World/A")
+            and not _exists("/World/B")
+        ),
+        "new_xform wraps only minimal root paths from selection",
+    )
+
+    _assert(
+        not _exists("/World/MinimalGroup/A/A1/A1"),
+        "new_xform does not duplicate descendant selection",
+    )
+
+
+def test_rename_remaps_child_selection_and_mask():
+    stageviz.command.select_paths(["/World/A/A1"])
+    _assert(
+        _wait_until(lambda: _selection() == ["/World/A/A1"]),
+        "selection prepared for rename remap",
+    )
+
+    stageviz.command.isolate_paths(["/World/A/A2"])
+    _assert(
+        _wait_until(lambda: _mask() == ["/World/A/A2"]),
+        "mask prepared for rename remap",
+    )
+
+    before_order = _child_names("/World")
+
+    stageviz.command.rename_path("/World/A", "ARenamed")
+
+    _assert(
+        _wait_until(
+            lambda: _exists("/World/ARenamed")
+            and _exists("/World/ARenamed/A1")
+            and not _exists("/World/A")
+        ),
+        "rename_path renames parent with children",
+    )
+
+    _assert_equal(
+        _selection(),
+        ["/World/ARenamed/A1"],
+        "rename_path remaps child selection",
+    )
+
+    _assert_equal(
+        _mask(),
+        ["/World/ARenamed/A2"],
+        "rename_path remaps child mask",
+    )
+
+    expected_order = ["ARenamed" if name == "A" else name for name in before_order]
+    _assert_equal(
+        _child_names("/World"),
+        expected_order,
+        "rename_path preserves child order with renamed token",
+    )
+
+    if _undo():
+        _assert(
+            _wait_until(lambda: _exists("/World/A") and not _exists("/World/ARenamed")),
+            "undo rename_path restores old prim path",
+        )
+
+        _assert_equal(
+            _selection(),
+            ["/World/A/A1"],
+            "undo rename_path restores previous selection",
+        )
+
+        _assert_equal(
+            _mask(),
+            ["/World/A/A2"],
+            "undo rename_path restores previous mask",
+        )
+
+        _assert_equal(
+            _child_names("/World"),
+            before_order,
+            "undo rename_path restores child order",
+        )
+
+
+def test_rename_noop_is_safe():
+    stageviz.command.select_paths(["/World/A"])
+    _assert(
+        _wait_until(lambda: _selection() == ["/World/A"]),
+        "selection prepared for rename noop",
+    )
+
+    stageviz.command.isolate_paths(["/World/B"])
+    _assert(
+        _wait_until(lambda: _mask() == ["/World/B"]),
+        "mask prepared for rename noop",
+    )
+
+    before_selection = _selection()
+    before_mask = _mask()
+    before_order = _child_names("/World")
+
+    stageviz.command.rename_path("/World/A", "A")
+
+    _assert(
+        _wait_until(lambda: _exists("/World/A")),
+        "rename noop leaves prim valid",
+    )
+
+    _assert_equal(
+        _selection(),
+        before_selection,
+        "rename noop preserves selection",
+    )
+
+    _assert_equal(
+        _mask(),
+        before_mask,
+        "rename noop preserves mask",
+    )
+
+    _assert_equal(
+        _child_names("/World"),
+        before_order,
+        "rename noop preserves child order",
+    )
+
+
+def test_move_selection_mask_and_insert_order():
+    stageviz.command.select_paths(["/World/A/A1"])
+    _assert(
+        _wait_until(lambda: _selection() == ["/World/A/A1"]),
+        "selection prepared for move remap",
+    )
+
+    stageviz.command.isolate_paths(["/World/A/A2"])
+    _assert(
+        _wait_until(lambda: _mask() == ["/World/A/A2"]),
+        "mask prepared for move remap",
+    )
+
+    before_world_order = _child_names("/World")
+    before_b_order = _child_names("/World/B")
+
+    stageviz.command.move_path(["/World/A"], "/World/B", insert_index=0)
+
+    _assert(
+        _wait_until(
+            lambda: _exists("/World/B/A")
+            and _exists("/World/B/A/A1")
+            and not _exists("/World/A")
+        ),
+        "move_path moves parent and children",
+    )
+
+    _assert_equal(
+        _selection(),
+        ["/World/B/A/A1"],
+        "move_path remaps child selection",
+    )
+
+    _assert_equal(
+        _mask(),
+        ["/World/B/A/A2"],
+        "move_path remaps child mask",
+    )
+
+    _assert_equal(
+        _child_names("/World/B")[0],
+        "A",
+        "move_path insert_index inserts moved name at requested position",
+    )
+
+    if _undo():
+        _assert(
+            _wait_until(
+                lambda: _exists("/World/A")
+                and _exists("/World/A/A1")
+                and not _exists("/World/B/A")
+            ),
+            "undo move_path restores old path",
+        )
+
+        _assert_equal(
+            _selection(),
+            ["/World/A/A1"],
+            "undo move_path restores previous selection",
+        )
+
+        _assert_equal(
+            _mask(),
+            ["/World/A/A2"],
+            "undo move_path restores previous mask",
+        )
+
+        _assert_equal(
+            _child_names("/World"),
+            before_world_order,
+            "undo move_path restores source parent order",
+        )
+
+        _assert_equal(
+            _child_names("/World/B"),
+            before_b_order,
+            "undo move_path restores destination parent order",
+        )
+
+
+def test_move_preserve_world_transform():
+    _assert(_set_translate("/World/A", (10.0, 2.0, -3.0)), "set source parent transform")
+    _assert(_set_translate("/World/A/A1", (4.0, -1.0, 2.0)), "set preserved child transform")
+    _assert(_set_translate("/World/A/A2", (4.0, -1.0, 2.0)), "set non-preserved child transform")
+    _assert(_set_translate("/World/B", (-7.0, 5.0, 1.0)), "set destination parent transform")
+
+    preserved_before = _world_transform("/World/A/A1")
+    changed_before = _world_transform("/World/A/A2")
+
+    _assert(
+        preserved_before is not None,
+        "capture preserved child world transform before move",
+    )
+
+    _assert(
+        changed_before is not None,
+        "capture non-preserved child world transform before move",
+    )
+
+    stageviz.command.move_path(
+        ["/World/A/A1"],
+        "/World/B",
+        insert_index=-1,
+        preserve_world_transform=True,
+    )
+
+    _assert(
+        _wait_until(
+            lambda: _exists("/World/B/A1")
+            and not _exists("/World/A/A1")
+        ),
+        "move_path reparents transformed child with preserve_world_transform",
+    )
+
+    preserved_after = _world_transform("/World/B/A1")
+    _assert(
+        _matrix_close(preserved_after, preserved_before),
+        "move_path preserves world transform when requested",
+    )
+
+    stageviz.command.move_path(
+        ["/World/A/A2"],
+        "/World/B",
+        insert_index=-1,
+        preserve_world_transform=False,
+    )
+
+    _assert(
+        _wait_until(
+            lambda: _exists("/World/B/A2")
+            and not _exists("/World/A/A2")
+        ),
+        "move_path reparents transformed child without preserving world transform",
+    )
+
+    changed_after = _world_transform("/World/B/A2")
+    _assert(
+        not _matrix_close(changed_after, changed_before),
+        "move_path allows world transform to change when preservation is disabled",
+    )
+
+
+def test_move_preserve_world_transform_keeps_pivot_stack():
+    if not _has_command("center_pivots"):
+        print("[skip] center_pivots is not bound")
+        return
+
+    path = "/World/A/A1"
+    _ensure_cube(f"{path}/PivotGeom", size=3.0)
+
+    _assert(
+        _set_complex_transform(
+            "/World/A",
+            (8.0, -2.0, 3.0),
+            (12.0, 19.0, -7.0),
+            (1.1, 0.9, 1.2),
+        ),
+        "set source parent transform for pivot-preserving move",
+    )
+
+    _assert(
+        _set_complex_transform(
+            path,
+            (4.0, 1.0, -2.0),
+            (21.0, -16.0, 9.0),
+            (1.3, 0.8, 1.1),
+        ),
+        "set child transform for pivot-preserving move",
+    )
+
+    _assert(
+        _set_complex_transform(
+            "/World/B",
+            (-5.0, 7.0, 2.0),
+            (-8.0, 14.0, 23.0),
+            (0.9, 1.2, 1.0),
+        ),
+        "set destination parent transform for pivot-preserving move",
+    )
+
+    stageviz.command.center_pivots([path])
+
+    expected_order = [
+        "xformOp:translate:pivot",
+        "xformOp:transform",
+        "!invert!xformOp:translate:pivot",
+    ]
+
+    _assert(
+        _wait_until(lambda: _xform_order(path) == expected_order),
+        "center_pivots creates canonical paired pivot stack before move",
+    )
+
+    pivot_before = _prim(path).GetAttribute("xformOp:translate:pivot").Get()
+    world_before = _world_transform(path)
+
+    stageviz.command.move_path(
+        [path],
+        "/World/B",
+        insert_index=-1,
+        preserve_world_transform=True,
+    )
+
+    moved_path = "/World/B/A1"
+
+    _assert(
+        _wait_until(lambda: _exists(moved_path) and not _exists(path)),
+        "pivoted prim moved to destination parent",
+    )
+
+    _assert(
+        _matrix_close(_world_transform(moved_path), world_before),
+        "pivoted prim preserves world transform during move",
+    )
+
+    _assert_equal(
+        _xform_order(moved_path),
+        expected_order,
+        "world-transform authoring preserves pivot/matrix/inverse-pivot order",
+    )
+
+    pivot_after = _prim(moved_path).GetAttribute("xformOp:translate:pivot").Get()
+
+    _assert(
+        pivot_after is not None and pivot_before is not None
+        and all(abs(float(pivot_after[i]) - float(pivot_before[i])) < 1e-8 for i in range(3)),
+        "world-transform authoring preserves pivot value",
+    )
+
+    if _undo():
+        _assert(
+            _wait_until(lambda: _exists(path) and not _exists(moved_path)),
+            "undo pivot-preserving move restores original path",
+        )
+
+        _assert_equal(
+            _xform_order(path),
+            expected_order,
+            "undo pivot-preserving move restores canonical pivot order",
+        )
+
+        _assert(
+            _matrix_close(_world_transform(path), world_before),
+            "undo pivot-preserving move restores world transform",
+        )
+
+
+def test_float_pivot_precision_survives_edit_and_world_transform():
+    if not _has_command("set_attribute_value"):
+        print("[skip] set_attribute_value is not bound")
+        return
+
+    path = "/World/A/A1"
+    pivot_path = f"{path}.xformOp:translate:pivot"
+
+    _assert(
+        _set_complex_transform(
+            "/World/A",
+            (8.0, -2.0, 3.0),
+            (12.0, 19.0, -7.0),
+            (1.1, 0.9, 1.2),
+        ),
+        "set source parent transform for float-pivot regression",
+    )
+
+    _assert(
+        _set_complex_transform(
+            "/World/B",
+            (-5.0, 7.0, 2.0),
+            (-8.0, 14.0, 23.0),
+            (0.9, 1.2, 1.0),
+        ),
+        "set destination parent transform for float-pivot regression",
+    )
+
+    prim = _prim(path)
+    xformable = UsdGeom.Xformable(prim)
+    xformable.ClearXformOpOrder()
+
+    pivot_op = xformable.AddTranslateOp(
+        UsdGeom.XformOp.PrecisionFloat,
+        "pivot",
+        False,
+    )
+    matrix_op = xformable.AddTransformOp(
+        UsdGeom.XformOp.PrecisionDouble,
+    )
+    inverse_pivot_op = xformable.AddTranslateOp(
+        UsdGeom.XformOp.PrecisionFloat,
+        "pivot",
+        True,
+    )
+
+    pivot_before = Gf.Vec3f(1.25, -2.5, 3.75)
+    local_matrix = Gf.Matrix4d(1.0)
+    local_matrix.SetTranslate(Gf.Vec3d(4.0, 1.0, -2.0))
+
+    _assert(
+        bool(
+            pivot_op
+            and matrix_op
+            and inverse_pivot_op
+            and pivot_op.Set(pivot_before)
+            and matrix_op.Set(local_matrix)
+        ),
+        "float3 pivot stack prepared",
+    )
+
+    expected_order = [
+        "xformOp:translate:pivot",
+        "xformOp:transform",
+        "!invert!xformOp:translate:pivot",
+    ]
+
+    _assert_equal(
+        _xform_order(path),
+        expected_order,
+        "float3 pivot stack uses canonical order",
+    )
+
+    pivot_attr = _prim(path).GetAttribute("xformOp:translate:pivot")
+    _assert(
+        bool(pivot_attr and pivot_attr.GetTypeName() == Sdf.ValueTypeNames.Float3),
+        "pivot starts authored as float3",
+    )
+
+    local_before_edit = _local_transform(path)
+
+    # This exercises command.cpp::authorCanonicalTransformWithPivot().
+    stageviz.command.set_attribute_value(
+        pivot_path,
+        (2.5, -1.5, 5.25),
+    )
+
+    _assert(
+        _wait_until(
+            lambda: bool(
+                _prim(path)
+                and _prim(path).GetAttribute("xformOp:translate:pivot").Get()
+                and abs(
+                    float(
+                        _prim(path)
+                        .GetAttribute("xformOp:translate:pivot")
+                        .Get()[0]
+                    )
+                    - 2.5
+                )
+                < 1e-6
+            )
+        ),
+        "float3 pivot value is edited",
+    )
+
+    pivot_attr = _prim(path).GetAttribute("xformOp:translate:pivot")
+    _assert(
+        pivot_attr.GetTypeName() == Sdf.ValueTypeNames.Float3,
+        "pivot edit preserves float3 type",
+    )
+
+    _assert(
+        _matrix_close(
+            _local_transform(path),
+            local_before_edit,
+            tolerance=1e-6,
+        ),
+        "float3 pivot edit preserves local transform",
+    )
+
+    pivot_after_edit = pivot_attr.Get()
+    world_before_move = _world_transform(path)
+
+    # preserve_world_transform uses stage::setWorldTransform(), the same
+    # transform-authoring path used by interactive gizmo dragging.
+    stageviz.command.move_path(
+        [path],
+        "/World/B",
+        insert_index=-1,
+        preserve_world_transform=True,
+    )
+
+    moved_path = "/World/B/A1"
+
+    _assert(
+        _wait_until(
+            lambda: _exists(moved_path) and not _exists(path)
+        ),
+        "float-pivot prim moves with world-transform preservation",
+    )
+
+    moved_pivot_attr = _prim(moved_path).GetAttribute(
+        "xformOp:translate:pivot"
+    )
+
+    _assert(
+        bool(
+            moved_pivot_attr
+            and moved_pivot_attr.GetTypeName() == Sdf.ValueTypeNames.Float3
+        ),
+        "world-transform authoring preserves float3 pivot type",
+    )
+
+    _assert_equal(
+        _xform_order(moved_path),
+        expected_order,
+        "world-transform authoring preserves float pivot stack order",
+    )
+
+    moved_pivot = moved_pivot_attr.Get() if moved_pivot_attr else None
+    _assert(
+        moved_pivot is not None
+        and pivot_after_edit is not None
+        and all(
+            abs(float(moved_pivot[i]) - float(pivot_after_edit[i])) < 1e-6
+            for i in range(3)
+        ),
+        "world-transform authoring preserves float pivot value",
+    )
+
+    _assert(
+        _matrix_close(
+            _world_transform(moved_path),
+            world_before_move,
+            tolerance=1e-6,
+        ),
+        "float-pivot prim preserves world transform",
+    )
+
+    if _undo():
+        _assert(
+            _wait_until(
+                lambda: _exists(path) and not _exists(moved_path)
+            ),
+            "undo float-pivot move restores original path",
+        )
+
+        restored_pivot_attr = _prim(path).GetAttribute(
+            "xformOp:translate:pivot"
+        )
+        _assert(
+            bool(
+                restored_pivot_attr
+                and restored_pivot_attr.GetTypeName()
+                == Sdf.ValueTypeNames.Float3
+            ),
+            "undo float-pivot move restores float3 pivot type",
+        )
+
+
+def test_move_multiple_siblings():
+    stageviz.command.move_path(["/World/A/A1", "/World/A/A2"], "/World/B", insert_index=1)
+
+    _assert(
+        _wait_until(
+            lambda: _exists("/World/B/A1")
+            and _exists("/World/B/A2")
+            and not _exists("/World/A/A1")
+            and not _exists("/World/A/A2")
+        ),
+        "move_path moves multiple siblings",
+    )
+
+    names = _child_names("/World/B")
+    _assert(
+        names.index("A1") < names.index("A2"),
+        "move_path preserves moved item order",
+    )
+
+
+def test_move_rejects_self_parenting():
+    before = _children("/World/A")
+
+    stageviz.command.move_path(["/World/A"], "/World/A/A1", insert_index=-1)
+
+    _assert(
+        _wait_until(lambda: _exists("/World/A") and _exists("/World/A/A1")),
+        "invalid move below itself leaves source intact",
+    )
+
+    _assert_equal(
+        _children("/World/A"),
+        before,
+        "invalid move below itself preserves children",
+    )
+
+
+def test_move_rejects_destination_collision():
+    stageviz.command.move_path(["/World/A"], "/World/B", insert_index=-1)
+
+    _assert(
+        _wait_until(lambda: not _exists("/World/A") and _exists("/World/B/A")),
+        "first move creates destination child",
+    )
+
+    before_b = _children("/World/B")
+
+    stageviz.command.move_path(["/World/B/A"], "/World/B", insert_index=-1)
+
+    _assert(
+        _wait_until(lambda: _exists("/World/B/A")),
+        "move to same parent/path is safe/no-op",
+    )
+
+    _assert_equal(
+        _children("/World/B"),
+        before_b,
+        "move to same parent/path preserves destination children",
+    )
+
+
+def test_delete_removes_selection_mask_and_restores_default_prim():
+    stageviz.command.select_paths(["/World/A/A1", "/World/B"])
+    _assert(
+        _wait_until(lambda: _selection() == ["/World/A/A1", "/World/B"]),
+        "selection prepared for delete",
+    )
+
+    stageviz.command.isolate_paths(["/World/A/A2", "/World/C"])
+    _assert(
+        _wait_until(lambda: _mask() == ["/World/A/A2", "/World/C"]),
+        "mask prepared for delete",
+    )
+
+    stageviz.command.set_default_prim("/World")
+    _assert(
+        _wait_until(lambda: _default_prim_path() == "/World"),
+        "default prim prepared",
+    )
+
+    before_world_order = _child_names("/World")
+
+    stageviz.command.delete_paths(["/World/A"])
+
+    _assert(
+        _wait_until(lambda: not _exists("/World/A")),
+        "delete_paths removes parent prim",
+    )
+
+    _assert_equal(
+        _selection(),
+        ["/World/B"],
+        "delete_paths removes affected selected child paths",
+    )
+
+    _assert_equal(
+        _mask(),
+        ["/World/C"],
+        "delete_paths removes affected masked child paths",
+    )
+
+    _assert_equal(
+        _default_prim_path(),
+        "/World",
+        "delete non-default prim keeps default prim",
+    )
+
+    if _undo():
+        _assert(
+            _wait_until(lambda: _exists("/World/A") and _exists("/World/A/A1")),
+            "undo delete_paths restores deleted prim hierarchy",
+        )
+
+        _assert_equal(
+            _selection(),
+            ["/World/A/A1", "/World/B"],
+            "undo delete_paths restores previous selection",
+        )
+
+        _assert_equal(
+            _mask(),
+            ["/World/A/A2", "/World/C"],
+            "undo delete_paths restores previous mask",
+        )
+
+        _assert_equal(
+            _child_names("/World"),
+            before_world_order,
+            "undo delete_paths restores child order",
+        )
+
+
+def test_delete_default_prim_and_undo():
+    stageviz.command.set_default_prim("/World")
+
+    _assert(
+        _wait_until(lambda: _default_prim_path() == "/World"),
+        "default prim prepared",
+    )
+
+    stageviz.command.delete_paths(["/World"])
+
+    _assert(
+        _wait_until(lambda: not _exists("/World")),
+        "delete_paths removes default prim",
+    )
+
+    _assert_equal(
+        _default_prim_path(),
+        "",
+        "delete_paths clears default prim when deleting it",
+    )
+
+    if _undo():
+        _assert(
+            _wait_until(lambda: _exists("/World")),
+            "undo delete default prim restores /World",
+        )
+
+        _assert_equal(
+            _default_prim_path(),
+            "/World",
+            "undo delete default prim restores default prim",
+        )
+
+
+def test_default_prim_validation():
+    stageviz.command.set_default_prim("/World/A")
+
+    _assert(
+        _wait_until(lambda: _default_prim_path() == "/World"),
+        "set_default_prim rejects non-root prim",
+    )
+
+    stageviz.command.set_default_prim("/OtherRoot")
+
+    _assert(
+        _wait_until(lambda: _default_prim_path() == "/OtherRoot"),
+        "set_default_prim accepts root prim",
+    )
+
+    if _undo():
+        _assert_equal(
+            _default_prim_path(),
+            "/World",
+            "undo set_default_prim restores previous default prim",
+        )
+
+
+def test_clear_default_prim():
+    stageviz.command.set_default_prim("/World")
+    _assert(
+        _wait_until(lambda: _default_prim_path() == "/World"),
+        "default prim prepared for clear",
+    )
+
+    stageviz.command.clear_default_prim()
+    _assert(
+        _wait_until(lambda: _default_prim_path() == ""),
+        "clear_default_prim clears the default prim",
+    )
+
+    if _undo():
+        _assert(
+            _wait_until(lambda: _default_prim_path() == "/World"),
+            "undo clear_default_prim restores the previous default prim",
+        )
+
+
+def test_stage_up():
+    stageviz.command.set_stage_up(stageviz.StageUpZ)
+
+    _assert(
+        _wait_until(lambda: stageviz.session().stageUp() == stageviz.StageUpZ),
+        "set_stage_up sets Z",
+    )
+
+    if _undo():
+        _assert(
+            _wait_until(lambda: stageviz.session().stageUp() == stageviz.StageUpY),
+            "undo set_stage_up restores Y",
+        )
+
+    stageviz.command.set_stage_up(stageviz.StageUpZ)
+
+    _assert(
+        _wait_until(lambda: stageviz.session().stageUp() == stageviz.StageUpZ),
+        "set_stage_up sets Z again",
+    )
+
+    stageviz.command.set_stage_up(stageviz.StageUpY)
+
+    _assert(
+        _wait_until(lambda: stageviz.session().stageUp() == stageviz.StageUpY),
+        "set_stage_up sets Y",
+    )
+
+
+def test_variant_selection():
+    if not _has_command("set_variant_selection"):
+        print("[skip] set_variant_selection is not bound")
+        return
+
+    path = "/ExternalRoot"
+    set_name = "style"
+
+    prim = _prim(path)
+    _assert(bool(prim), "normal variant prim is composed from sublayer")
+    if not prim:
+        return
+
+    variant_set = prim.GetVariantSet(set_name)
+    _assert(
+        bool(variant_set and variant_set.IsValid()),
+        "normal variant set exists",
+    )
+    if not variant_set or not variant_set.IsValid():
+        return
+
+    _assert_equal(
+        variant_set.GetVariantSelection(),
+        "A",
+        "normal variant fixture starts on A",
+    )
+    _assert(
+        not _root_has_prim(path),
+        "normal variant prim starts without a root-layer override",
+    )
+    _assert_equal(
+        _root_variant_selection(path, set_name),
+        "",
+        "root layer starts without variant selection override",
+    )
+
+    stageviz.command.set_variant_selection([path], set_name, "B")
+
+    _assert(
+        _wait_until(
+            lambda: bool(
+                _prim(path)
+                and _prim(path).GetVariantSet(set_name).GetVariantSelection() == "B"
+                and _exists(f"{path}/StyleB")
+                and not _exists(f"{path}/StyleA")
+            )
+        ),
+        "set_variant_selection switches composed variant",
+    )
+    _assert_equal(
+        _root_variant_selection(path, set_name),
+        "B",
+        "variant selection is authored in active root edit layer",
+    )
+    _assert(
+        _root_has_prim(path),
+        "variant selection creates root-layer override for composed prim",
+    )
+
+    if _undo():
+        _assert(
+            _wait_until(
+                lambda: bool(
+                    _prim(path)
+                    and _prim(path).GetVariantSet(set_name).GetVariantSelection() == "A"
+                    and _exists(f"{path}/StyleA")
+                    and not _exists(f"{path}/StyleB")
+                )
+            ),
+            "undo set_variant_selection restores weaker variant",
+        )
+        _assert_equal(
+            _root_variant_selection(path, set_name),
+            "",
+            "undo removes root-layer variant selection opinion",
+        )
+        _assert(
+            not _root_has_prim(path),
+            "undo removes newly-created inert variant override prim",
+        )
+
+    if _redo():
+        _assert(
+            _wait_until(
+                lambda: bool(
+                    _prim(path)
+                    and _prim(path).GetVariantSet(set_name).GetVariantSelection() == "B"
+                    and _exists(f"{path}/StyleB")
+                )
+            ),
+            "redo set_variant_selection restores variant B",
+        )
+        _assert_equal(
+            _root_variant_selection(path, set_name),
+            "B",
+            "redo restores root-layer variant selection opinion",
+        )
+
+
+def test_variant_selection_uses_selected_edit_layer():
+    if not _has_command("set_variant_selection"):
+        print("[skip] set_variant_selection is not bound")
+        return
+
+    session = stageviz.session()
+    if not all(hasattr(session, name) for name in ("editLayer", "editLayers", "setEditLayer")):
+        print("[skip] session edit-layer API is not bound")
+        return
+
+    root = _root_layer()
+    layers = list(session.editLayers())
+    sublayers = [
+        identifier
+        for identifier in layers
+        if root and identifier != root.identifier
+    ]
+
+    if not root or not sublayers:
+        print("[skip] no local sublayer available")
+        return
+
+    path = "/ExternalRoot"
+    set_name = "style"
+    sublayer = sublayers[0]
+
+    _assert(
+        bool(session.setEditLayer(sublayer)),
+        "select sublayer for variant authoring",
+    )
+    _assert_equal(
+        _edit_variant_selection(path, set_name),
+        "A",
+        "selected sublayer starts with authored variant A",
+    )
+    _assert_equal(
+        _root_variant_selection(path, set_name),
+        "",
+        "root layer has no variant override before sublayer edit",
+    )
+
+    stageviz.command.set_variant_selection([path], set_name, "B")
+
+    _assert(
+        _wait_until(
+            lambda: _prim(path).GetVariantSet(set_name).GetVariantSelection() == "B"
+        ),
+        "set_variant_selection edits variant in selected sublayer",
+    )
+    _assert_equal(
+        _edit_variant_selection(path, set_name),
+        "B",
+        "variant selection is authored in selected sublayer",
+    )
+    _assert_equal(
+        _root_variant_selection(path, set_name),
+        "",
+        "variant selection is not accidentally authored in root layer",
+    )
+
+    if _undo():
+        _assert(
+            _wait_until(
+                lambda: _prim(path).GetVariantSet(set_name).GetVariantSelection() == "A"
+            ),
+            "undo selected-sublayer variant edit restores A",
+        )
+        _assert_equal(
+            _edit_variant_selection(path, set_name),
+            "A",
+            "undo restores previous sublayer variant selection field",
+        )
+
+    _assert(
+        bool(session.setEditLayer(root.identifier)),
+        "restore root edit layer after variant sublayer test",
+    )
+
+
+def test_payload_variant_load_command():
+    path = "/World/VariantPayload"
+    prim = _prim(path)
+
+    _assert(bool(prim and prim.HasPayload()), "variant payload is available for load command")
+    if not prim:
+        return
+
+    variant_set = prim.GetVariantSet("model")
+    _assert(
+        bool(variant_set and variant_set.IsValid()),
+        "payload load command fixture has model variants",
+    )
+    if not variant_set or not variant_set.IsValid():
+        return
+
+    _assert_equal(
+        variant_set.GetVariantSelection(),
+        "A",
+        "payload load command starts on variant A",
+    )
+    _assert(
+        not prim.IsLoaded(),
+        "payload load command starts unloaded under LoadNone",
+    )
+
+    stageviz.command.load_payloads(
+        [path],
+        variant_set="model",
+        variant_value="B",
+    )
+
+    _assert(
+        _wait_until(
+            lambda: bool(
+                _prim(path)
+                and _prim(path).IsLoaded()
+                and _prim(path).GetVariantSet("model").GetVariantSelection() == "B"
+                and _exists(f"{path}/Geom")
+            ),
+            timeout=5.0,
+        ),
+        "load_payloads switches payload variant and loads it",
+    )
+
+    if _undo():
+        _assert(
+            _wait_until(
+                lambda: bool(
+                    _prim(path)
+                    and not _prim(path).IsLoaded()
+                    and _prim(path).GetVariantSet("model").GetVariantSelection() == "A"
+                ),
+                timeout=5.0,
+            ),
+            "undo payload variant load restores variant A and unloaded state",
+        )
+
+    if _redo():
+        _assert(
+            _wait_until(
+                lambda: bool(
+                    _prim(path)
+                    and _prim(path).IsLoaded()
+                    and _prim(path).GetVariantSet("model").GetVariantSelection() == "B"
+                ),
+                timeout=5.0,
+            ),
+            "redo payload variant load restores variant B and loaded state",
+        )
+
+
+
+def test_payload_variant_multi_target_command():
+    first = "/World/VariantPayload"
+    second = "/World/VariantPayloadSibling"
+
+    first_prim = _prim(first)
+    second_prim = _prim(second)
+
+    _assert(
+        bool(first_prim and first_prim.HasPayload()),
+        "first variant payload exists for multi-target command test",
+    )
+    _assert(
+        bool(second_prim and second_prim.HasPayload()),
+        "second variant payload exists for multi-target command test",
+    )
+    if not first_prim or not second_prim:
+        return
+
+    _assert_equal(
+        first_prim.GetVariantSet("model").GetVariantSelection(),
+        "A",
+        "first variant payload starts on A",
+    )
+    _assert_equal(
+        second_prim.GetVariantSet("model").GetVariantSelection(),
+        "A",
+        "sibling variant payload starts on A",
+    )
+
+    stageviz.command.load_payloads(
+        [first],
+        variant_set="model",
+        variant_value="B",
+    )
+
+    _assert(
+        _wait_until(
+            lambda: bool(
+                _prim(first)
+                and _prim(first).IsLoaded()
+                and _prim(first).GetVariantSet("model").GetVariantSelection() == "B"
+            ),
+            timeout=5.0,
+        ),
+        "single-target payload variant command switches and loads first payload",
+    )
+
+    _assert_equal(
+        _prim(second).GetVariantSet("model").GetVariantSelection(),
+        "A",
+        "single-target payload variant command does not modify sibling variant",
+    )
+    _assert(
+        bool(_prim(second) and not _prim(second).IsLoaded()),
+        "single-target payload variant command does not load sibling payload",
+    )
+
+    stageviz.command.load_payloads(
+        [first, second],
+        variant_set="model",
+        variant_value="B",
+    )
+
+    _assert(
+        _wait_until(
+            lambda: bool(
+                _prim(first)
+                and _prim(second)
+                and _prim(first).IsLoaded()
+                and _prim(second).IsLoaded()
+                and _prim(first).GetVariantSet("model").GetVariantSelection() == "B"
+                and _prim(second).GetVariantSet("model").GetVariantSelection() == "B"
+            ),
+            timeout=5.0,
+        ),
+        "multi-target payload variant command applies the shared variant to both targets",
+    )
+
+    stageviz.command.unload_payloads([first, second])
+    _assert(
+        _wait_until(
+            lambda: bool(
+                _prim(first)
+                and _prim(second)
+                and not _prim(first).IsLoaded()
+                and not _prim(second).IsLoaded()
+            ),
+            timeout=5.0,
+        ),
+        "multi-target unload restores both payloads to unloaded state",
+    )
+
+
+def test_payload_load_rules_session_state(root):
+    session = stageviz.session()
+    required = ("saveState", "loadState")
+    if not all(hasattr(session, name) for name in required):
+        print("[skip] session state API is not fully bound")
+        return
+
+    loaded_path = "/World/PayloadA"
+    unloaded_path = "/World/PayloadB"
+
+    stageviz.command.load_payloads([loaded_path])
+    _assert(
+        _wait_until(
+            lambda: bool(
+                _prim(loaded_path)
+                and _prim(loaded_path).IsLoaded()
+                and _prim(unloaded_path)
+                and not _prim(unloaded_path).IsLoaded()
+            ),
+            timeout=5.0,
+        ),
+        "mixed payload load state prepared for session loadRules",
+    )
+
+    state_path = os.path.join(root, "payload_load_rules.session")
+    _assert(bool(session.saveState(state_path)), "session state saves payload load rules")
+
+    try:
+        with open(state_path, "r", encoding="utf-8") as file:
+            state = json.load(file)
+    except Exception as exc:
+        _fail(f"read saved payload load rules state: {exc}")
+        return
+
+    _assert(
+        bool(state.get("loadRules")),
+        "saved session contains serialized loadRules",
+    )
+    _assert(
+        not state.get("payloadVariants"),
+        "payload loadRules session state does not store variant selections",
+    )
+    _assert(
+        loaded_path in state.get("loadedPayloads", []),
+        "legacy loadedPayloads records loaded payload",
+    )
+    _assert(
+        unloaded_path not in state.get("loadedPayloads", []),
+        "legacy loadedPayloads excludes unloaded payload",
+    )
+
+    stageviz.command.unload_payloads([loaded_path])
+    stageviz.command.load_payloads([unloaded_path])
+
+    _assert(
+        _wait_until(
+            lambda: bool(
+                _prim(loaded_path)
+                and not _prim(loaded_path).IsLoaded()
+                and _prim(unloaded_path)
+                and _prim(unloaded_path).IsLoaded()
+            ),
+            timeout=5.0,
+        ),
+        "payload load state inverted before session restore",
+    )
+
+    _assert(bool(session.loadState(state_path)), "session state restores serialized loadRules")
+
+    _assert(
+        _wait_until(
+            lambda: bool(
+                _prim(loaded_path)
+                and _prim(loaded_path).IsLoaded()
+                and _prim(unloaded_path)
+                and not _prim(unloaded_path).IsLoaded()
+            ),
+            timeout=5.0,
+        ),
+        "loadState restores mixed payload load state from loadRules",
+    )
+
+
+def test_payload_load_unload():
+    stageviz.command.load_payloads(["/World/PayloadA"])
+
+    _assert(
+        _wait_until(
+            lambda: bool(
+                _prim("/World/PayloadA")
+                and _prim("/World/PayloadA").IsLoaded()
+            ),
+            timeout=5.0,
+        ),
+        "load_payloads loads payload",
+    )
+
+    stageviz.command.select_paths(["/World/PayloadA/Geom"])
+    _assert(
+        _wait_until(lambda: _selection() == ["/World/PayloadA/Geom"]),
+        "payload child selection prepared",
+    )
+
+    stageviz.command.isolate_paths(["/World/PayloadA/Geom"])
+    _assert(
+        _wait_until(lambda: _mask() == ["/World/PayloadA/Geom"]),
+        "payload child mask prepared",
+    )
+
+    stageviz.command.unload_payloads(["/World/PayloadA"])
+
+    _assert(
+        _wait_until(
+            lambda: bool(
+                _prim("/World/PayloadA")
+                and not _prim("/World/PayloadA").IsLoaded()
+            ),
+            timeout=5.0,
+        ),
+        "unload_payloads unloads payload",
+    )
+
+    _assert_equal(
+        _selection(),
+        ["/World/PayloadA"],
+        "unload_payloads remaps affected payload child selection to payload root",
+    )
+
+    _assert_equal(
+        _mask(),
+        ["/World/PayloadA"],
+        "unload_payloads remaps affected payload child mask to payload root",
+    )
+
+    if _undo():
+        _assert(
+            _wait_until(
+                lambda: bool(
+                    _prim("/World/PayloadA")
+                    and _prim("/World/PayloadA").IsLoaded()
+                ),
+                timeout=5.0,
+            ),
+            "undo unload_payloads reloads payload",
+        )
+
+        _assert_equal(
+            _selection(),
+            ["/World/PayloadA/Geom"],
+            "undo unload_payloads restores previous selection",
+        )
+
+        _assert_equal(
+            _mask(),
+            ["/World/PayloadA/Geom"],
+            "undo unload_payloads restores previous mask",
+        )
+
+
+
+def test_payload_variant_session_state(root):
+    session = stageviz.session()
+    required = ("saveState", "loadState")
+    missing = [name for name in required if not hasattr(session, name)]
+
+    _assert(
+        not missing,
+        "session state API is exposed"
+        + (f": missing {missing}" if missing else ""),
+    )
+    if missing:
+        return
+
+    if not _has_command("set_variant_selection"):
+        print("[skip] set_variant_selection is not bound")
+        return
+
+    path = "/World/VariantPayload"
+    set_name = "model"
+
+    prim = _prim(path)
+    _assert(bool(prim and prim.HasPayload()), "variant payload is composed")
+    if not prim:
+        return
+
+    variant_set = prim.GetVariantSet(set_name)
+    _assert(
+        bool(variant_set and variant_set.IsValid()),
+        "variant payload has model variant set",
+    )
+    if not variant_set or not variant_set.IsValid():
+        return
+
+    _assert_equal(
+        variant_set.GetVariantSelection(),
+        "A",
+        "variant payload fixture starts on variant A",
+    )
+    _assert(
+        not prim.IsLoaded(),
+        "variant payload starts unloaded under LoadNone",
+    )
+
+    # New architecture:
+    #   - variant selections are authored as USD opinions in the active edit layer
+    #   - payload loaded/unloaded state is persisted in the .session loadRules
+    stageviz.command.set_variant_selection([path], set_name, "B")
+
+    _assert(
+        _wait_until(
+            lambda: bool(
+                _prim(path)
+                and _prim(path).GetVariantSet(set_name).GetVariantSelection() == "B"
+            ),
+            timeout=5.0,
+        ),
+        "variant B is authored before loading payload",
+    )
+
+    _assert_equal(
+        _edit_variant_selection(path, set_name),
+        "B",
+        "payload variant selection is authored in active edit layer",
+    )
+
+    _assert(
+        not _prim(path).IsLoaded(),
+        "setting payload variant does not load payload",
+    )
+
+    stageviz.command.load_payloads([path])
+
+    _assert(
+        _wait_until(
+            lambda: bool(
+                _prim(path)
+                and _prim(path).IsLoaded()
+                and _prim(path).GetVariantSet(set_name).GetVariantSelection() == "B"
+                and _exists(f"{path}/Geom")
+            ),
+            timeout=5.0,
+        ),
+        "payload loads using authored variant B",
+    )
+
+    state_path = os.path.join(root, "variant_payload.session")
+    _assert(
+        bool(session.saveState(state_path)),
+        "session state saves variant payload load state",
+    )
+
+    try:
+        with open(state_path, "r", encoding="utf-8") as file:
+            state = json.load(file)
+    except Exception as exc:
+        _fail(f"read saved variant payload session state: {exc}")
+        return
+
+    _assert(
+        bool(state.get("loadRules")),
+        "variant payload session contains serialized loadRules",
+    )
+    _assert(
+        path in state.get("loadedPayloads", []),
+        "saved session records variant payload as loaded",
+    )
+    _assert(
+        not state.get("payloadVariants"),
+        "session does not duplicate USD variant selections",
+    )
+
+    # Change only runtime payload state. The authored USD variant stays B.
+    stageviz.command.unload_payloads([path])
+
+    _assert(
+        _wait_until(
+            lambda: bool(
+                _prim(path)
+                and not _prim(path).IsLoaded()
+            ),
+            timeout=5.0,
+        ),
+        "variant payload is unloaded before session restore",
+    )
+
+    _assert_equal(
+        _prim(path).GetVariantSet(set_name).GetVariantSelection(),
+        "B",
+        "variant B remains selected while payload is unloaded",
+    )
+    _assert_equal(
+        _edit_variant_selection(path, set_name),
+        "B",
+        "variant B remains authored in edit layer while payload is unloaded",
+    )
+
+    _assert(
+        bool(session.loadState(state_path)),
+        "session state restores variant payload load state",
+    )
+
+    _assert(
+        _wait_until(
+            lambda: bool(
+                _prim(path)
+                and _prim(path).IsLoaded()
+            ),
+            timeout=5.0,
+        ),
+        "session restore reloads payload from saved loadRules",
+    )
+
+    _assert_equal(
+        _prim(path).GetVariantSet(set_name).GetVariantSelection(),
+        "B",
+        "session restore leaves USD variant selection unchanged",
+    )
+    _assert_equal(
+        _edit_variant_selection(path, set_name),
+        "B",
+        "session restore leaves edit-layer variant opinion unchanged",
+    )
+
+
+def _prim_world_bounds(path):
+    prim = _prim(path)
+    if not prim or not prim.IsA(UsdGeom.Imageable):
+        return None
+
+    cache = UsdGeom.BBoxCache(
+        Usd.TimeCode.Default(),
+        UsdGeom.Imageable.GetOrderedPurposeTokens(),
+        useExtentsHint=True,
+    )
+    bounds = cache.ComputeWorldBound(prim).ComputeAlignedRange()
+    return None if bounds.IsEmpty() else bounds
+
+
+def _expanded_bounds(bounds, scale=1.5):
+    if bounds is None or bounds.IsEmpty():
+        return None
+
+    center = bounds.GetMidpoint()
+    half_size = bounds.GetSize() * 0.5 * scale
+    return Gf.Range3d(center - half_size, center + half_size)
+
+
+def _payload_world_bounds(path):
+    prim = _prim(path)
+    if not prim:
+        return None
+
+    attribute = prim.GetAttribute("extentsHint")
+    extents = attribute.Get() if attribute else None
+    if not extents or len(extents) < 2 or (len(extents) % 2) != 0:
+        return None
+
+    world = UsdGeom.XformCache(
+        Usd.TimeCode.Default()
+    ).GetLocalToWorldTransform(prim)
+
+    bounds = Gf.Range3d()
+
+    for index in range(0, len(extents), 2):
+        minimum = Gf.Vec3d(extents[index])
+        maximum = Gf.Vec3d(extents[index + 1])
+
+        for x in range(2):
+            for y in range(2):
+                for z in range(2):
+                    corner = Gf.Vec3d(
+                        maximum[0] if x else minimum[0],
+                        maximum[1] if y else minimum[1],
+                        maximum[2] if z else minimum[2],
+                    )
+                    bounds.UnionWith(world.Transform(corner))
+
+    return None if bounds.IsEmpty() else bounds
+
+
+def _point_inside(bounds, point):
+    if bounds is None or bounds.IsEmpty():
+        return False
+
+    minimum = bounds.GetMin()
+    maximum = bounds.GetMax()
+
+    return all(
+        minimum[axis] <= point[axis] <= maximum[axis]
+        for axis in range(3)
+    )
+
+
+def test_load_neighbor_payloads():
+    if not _has_command("load_neighbor_payloads"):
+        print("[skip] load_neighbor_payloads is not bound")
+        return
+
+    source_path = "/World/PayloadA"
+    source_child_path = "/World/PayloadA/Geom"
+    selected_near_path = "/World/PayloadSelectedNear"
+    old_root_near_path = "/World/PayloadB"
+    far_path = "/World/PayloadFar"
+    wide_path = "/World/PayloadWide"
+
+    source_prim = _prim(source_path)
+    old_root_near_prim = _prim(old_root_near_path)
+
+    _assert(
+        bool(source_prim and UsdGeom.ModelAPI(source_prim)),
+        "neighbor source payload has applied UsdGeomModelAPI",
+    )
+    _assert(
+        bool(old_root_near_prim and not UsdGeom.ModelAPI(old_root_near_prim)),
+        "neighbor candidate exercises raw extentsHint fallback",
+    )
+
+    payload_bounds = _payload_world_bounds(source_path)
+
+    stageviz.command.load_payloads([source_path])
+
+    _assert(
+        _wait_until(
+            lambda: bool(
+                _prim(source_path)
+                and _prim(source_path).IsLoaded()
+                and _exists(source_child_path)
+            ),
+            timeout=5.0,
+        ),
+        "source payload prepared for selected-prim neighbor search",
+    )
+
+    selected_bounds = _prim_world_bounds(source_child_path)
+    selected_near_bounds = _payload_world_bounds(selected_near_path)
+    old_root_near_bounds = _payload_world_bounds(old_root_near_path)
+    far_bounds = _payload_world_bounds(far_path)
+    wide_bounds = _payload_world_bounds(wide_path)
+
+    for bounds, label in (
+        (selected_bounds, "selected child world bounds are available"),
+        (payload_bounds, "owning payload extentsHint bounds are available"),
+        (selected_near_bounds, "selected-near payload bounds are available"),
+        (old_root_near_bounds, "old root-near payload bounds are available"),
+        (far_bounds, "far payload bounds are available"),
+        (wide_bounds, "wide payload bounds are available"),
+    ):
+        _assert(bounds is not None, label)
+
+    if any(
+        bounds is None
+        for bounds in (
+            selected_bounds,
+            payload_bounds,
+            selected_near_bounds,
+            old_root_near_bounds,
+            far_bounds,
+            wide_bounds,
+        )
+    ):
+        return
+
+    selected_search = _expanded_bounds(selected_bounds)
+    old_payload_search = _expanded_bounds(payload_bounds)
+
+    _assert(
+        _point_inside(selected_search, selected_near_bounds.GetMidpoint()),
+        "selected-near payload center is inside 1.5x selected child bounds",
+    )
+    _assert(
+        not _point_inside(selected_search, old_root_near_bounds.GetMidpoint()),
+        "old root-near payload is outside selected child search bounds",
+    )
+    _assert(
+        _point_inside(old_payload_search, old_root_near_bounds.GetMidpoint()),
+        "old root-near payload would match the former payload-root bounds",
+    )
+    _assert(
+        not _point_inside(selected_search, far_bounds.GetMidpoint()),
+        "far payload center is outside selected child search bounds",
+    )
+    _assert(
+        not _point_inside(selected_search, wide_bounds.GetMidpoint()),
+        "wide payload center is outside selected child search bounds",
+    )
+
+    stageviz.command.select_paths([source_child_path])
+    _assert(
+        _wait_until(lambda: _selection() == [source_child_path]),
+        "payload descendant selected for neighbor search",
+    )
+
+    stageviz.command.load_neighbor_payloads([source_child_path])
+
+    _assert(
+        _wait_until(
+            lambda: bool(
+                _prim(selected_near_path)
+                and _prim(selected_near_path).IsLoaded()
+            ),
+            timeout=5.0,
+        ),
+        "neighbor search loads top-most payload inside selected child bounds",
+    )
+    _assert(
+        bool(
+            _prim(old_root_near_path)
+            and not _prim(old_root_near_path).IsLoaded()
+        ),
+        "neighbor search does not use owning payload bounds as source bounds",
+    )
+    _assert(
+        bool(_prim(far_path) and not _prim(far_path).IsLoaded()),
+        "neighbor search rejects far top-most payload",
+    )
+    _assert(
+        bool(_prim(wide_path) and not _prim(wide_path).IsLoaded()),
+        "neighbor search tests candidate center rather than bbox intersection",
+    )
+    _assert(
+        bool(_prim(source_path) and _prim(source_path).IsLoaded()),
+        "selected prim owning payload stays the source and is not a neighbor candidate",
+    )
+
+    if _undo():
+        _assert(
+            _wait_until(
+                lambda: bool(
+                    _prim(selected_near_path)
+                    and not _prim(selected_near_path).IsLoaded()
+                ),
+                timeout=5.0,
+            ),
+            "undo neighbor search restores selected-near payload load state",
+        )
+        _assert_equal(
+            _selection(),
+            [source_child_path],
+            "undo neighbor search restores previous selection",
+        )
+
+    if _redo():
+        _assert(
+            _wait_until(
+                lambda: bool(
+                    _prim(selected_near_path)
+                    and _prim(selected_near_path).IsLoaded()
+                ),
+                timeout=5.0,
+            ),
+            "redo neighbor search reloads selected-near top-most payload",
+        )
+
+
+def test_load_neighbor_payloads_raw_source():
+    if not _has_command("load_neighbor_payloads"):
+        print("[skip] load_neighbor_payloads is not bound")
+        return
+
+    source_path = "/World/PayloadFallbackSource"
+    source_child_path = "/World/PayloadFallbackSource/Geom"
+    selected_near_path = "/World/PayloadModelSelectedNear"
+    old_root_near_path = "/World/PayloadModelNeighbor"
+
+    source_prim = _prim(source_path)
+    old_root_near_prim = _prim(old_root_near_path)
+
+    _assert(
+        bool(source_prim and not UsdGeom.ModelAPI(source_prim)),
+        "raw-extents source payload exercises direct extentsHint fallback",
+    )
+    _assert(
+        bool(old_root_near_prim and UsdGeom.ModelAPI(old_root_near_prim)),
+        "ModelAPI candidate is available",
+    )
+
+    payload_bounds = _payload_world_bounds(source_path)
+
+    stageviz.command.load_payloads([source_path])
+
+    _assert(
+        _wait_until(
+            lambda: bool(
+                _prim(source_path)
+                and _prim(source_path).IsLoaded()
+                and _exists(source_child_path)
+            ),
+            timeout=5.0,
+        ),
+        "raw-extents source prepared for selected-prim neighbor search",
+    )
+
+    selected_bounds = _prim_world_bounds(source_child_path)
+    selected_near_bounds = _payload_world_bounds(selected_near_path)
+    old_root_near_bounds = _payload_world_bounds(old_root_near_path)
+
+    for bounds, label in (
+        (selected_bounds, "raw-source selected child world bounds are available"),
+        (payload_bounds, "raw-source payload extentsHint bounds are available"),
+        (selected_near_bounds, "selected-near ModelAPI candidate bounds are available"),
+        (old_root_near_bounds, "old root-near ModelAPI candidate bounds are available"),
+    ):
+        _assert(bounds is not None, label)
+
+    if any(
+        bounds is None
+        for bounds in (
+            selected_bounds,
+            payload_bounds,
+            selected_near_bounds,
+            old_root_near_bounds,
+        )
+    ):
+        return
+
+    selected_search = _expanded_bounds(selected_bounds)
+    old_payload_search = _expanded_bounds(payload_bounds)
+
+    _assert(
+        _point_inside(selected_search, selected_near_bounds.GetMidpoint()),
+        "ModelAPI candidate center is inside selected child search bounds",
+    )
+    _assert(
+        not _point_inside(selected_search, old_root_near_bounds.GetMidpoint()),
+        "old ModelAPI near candidate is outside selected child search bounds",
+    )
+    _assert(
+        _point_inside(old_payload_search, old_root_near_bounds.GetMidpoint()),
+        "old ModelAPI near candidate would match payload-root bounds",
+    )
+
+    stageviz.command.select_paths([source_child_path])
+    _assert(
+        _wait_until(lambda: _selection() == [source_child_path]),
+        "raw-source child selected for neighbor search",
+    )
+
+    stageviz.command.load_neighbor_payloads([source_child_path])
+
+    _assert(
+        _wait_until(
+            lambda: bool(
+                _prim(selected_near_path)
+                and _prim(selected_near_path).IsLoaded()
+            ),
+            timeout=5.0,
+        ),
+        "raw source loads top-most ModelAPI payload near selected child",
+    )
+    _assert(
+        bool(
+            _prim(old_root_near_path)
+            and not _prim(old_root_near_path).IsLoaded()
+        ),
+        "raw source does not load candidate only near payload-root bounds",
+    )
+
+    if _undo():
+        _assert(
+            _wait_until(
+                lambda: bool(
+                    _prim(selected_near_path)
+                    and not _prim(selected_near_path).IsLoaded()
+                ),
+                timeout=5.0,
+            ),
+            "undo raw-source neighbor search restores selected-near payload",
+        )
+        _assert_equal(
+            _selection(),
+            [source_child_path],
+            "undo raw-source neighbor search restores previous selection",
+        )
+
+    if _redo():
+        _assert(
+            _wait_until(
+                lambda: bool(
+                    _prim(selected_near_path)
+                    and _prim(selected_near_path).IsLoaded()
+                ),
+                timeout=5.0,
+            ),
+            "redo raw-source neighbor search reloads selected-near payload",
+        )
+
+
+def test_select_payload():
+    if not _has_command("select_payload"):
+        print("[skip] select_payload is not bound")
+        return
+
+    stageviz.command.load_payloads(["/World/PayloadA", "/World/PayloadB"])
+
+    _assert(
+        _wait_until(
+            lambda: bool(
+                _exists("/World/PayloadA/Geom")
+                and _exists("/World/PayloadB/Geom")
+            ),
+            timeout=5.0,
+        ),
+        "payload descendants prepared for select_payload",
+    )
+
+    stageviz.command.select_paths(
+        ["/World/PayloadA/Geom", "/World/PayloadB/Geom"]
+    )
+
+    _assert(
+        _wait_until(
+            lambda: _selection()
+            == ["/World/PayloadA/Geom", "/World/PayloadB/Geom"]
+        ),
+        "payload descendants selected for select_payload",
+    )
+
+    stageviz.command.select_payload()
+
+    _assert(
+        _wait_until(
+            lambda: _selection()
+            == ["/World/PayloadA", "/World/PayloadB"]
+        ),
+        "select_payload selects each nearest owning payload",
+    )
+
+    if _undo():
+        _assert_equal(
+            _selection(),
+            ["/World/PayloadA/Geom", "/World/PayloadB/Geom"],
+            "undo select_payload restores previous descendant selection",
+        )
+
+    stageviz.command.select_paths(
+        ["/World/PayloadA/Geom", "/World/A"]
+    )
+
+    _assert(
+        _wait_until(
+            lambda: _selection()
+            == ["/World/PayloadA/Geom", "/World/A"]
+        ),
+        "mixed payload/non-payload selection prepared",
+    )
+
+    stageviz.command.select_payload()
+
+    _assert(
+        _wait_until(lambda: _selection() == ["/World/PayloadA"]),
+        "select_payload keeps only selections with an owning payload",
+    )
+
+    stageviz.command.load_payloads(
+        ["/World/NestedOuter", "/World/NestedOuter/NestedInner"]
+    )
+
+    _assert(
+        _wait_until(
+            lambda: bool(
+                _prim("/World/NestedOuter")
+                and _prim("/World/NestedOuter").IsLoaded()
+                and _prim("/World/NestedOuter/NestedInner")
+                and _prim("/World/NestedOuter/NestedInner").IsLoaded()
+                and _exists("/World/NestedOuter/NestedInner/Geom")
+            ),
+            timeout=5.0,
+        ),
+        "nested payload hierarchy prepared for select_payload",
+    )
+
+    stageviz.command.select_paths(
+        ["/World/NestedOuter/NestedInner/Geom"]
+    )
+    _assert(
+        _wait_until(
+            lambda: _selection()
+            == ["/World/NestedOuter/NestedInner/Geom"]
+        ),
+        "nested payload descendant selected",
+    )
+
+    stageviz.command.select_payload()
+
+    _assert(
+        _wait_until(
+            lambda: _selection()
+            == ["/World/NestedOuter/NestedInner"]
+        ),
+        "select_payload chooses nearest owning payload, not top-most payload",
+    )
+
+    if _undo():
+        _assert_equal(
+            _selection(),
+            ["/World/NestedOuter/NestedInner/Geom"],
+            "undo nearest select_payload restores nested descendant selection",
+        )
+
+    stageviz.command.select_paths(["/World/A"])
+
+    _assert(
+        _wait_until(lambda: _selection() == ["/World/A"]),
+        "non-payload selection prepared for select_payload",
+    )
+
+    stageviz.command.select_payload()
+
+    _wait(100)
+    _assert_equal(
+        _selection(),
+        ["/World/A"],
+        "select_payload leaves selection unchanged when no owning payload exists",
+    )
+
+
+def test_select_layer():
+    if not _has_command("select_layer"):
+        print("[skip] select_layer is not bound")
+        return
+
+    stageviz.command.load_payloads(["/World/PayloadA"])
+
+    _assert(
+        _wait_until(
+            lambda: bool(
+                _prim("/World/PayloadA")
+                and _prim("/World/PayloadA").IsLoaded()
+                and _exists("/World/PayloadA/Geom")
+            ),
+            timeout=5.0,
+        ),
+        "payload hierarchy prepared for select_layer",
+    )
+
+    stageviz.command.select_paths(["/World/PayloadA/Geom"])
+
+    _assert(
+        _wait_until(lambda: _selection() == ["/World/PayloadA/Geom"]),
+        "payload descendant selected for select_layer",
+    )
+
+    stageviz.command.select_layer()
+
+    _assert(
+        _wait_until(lambda: _selection() == ["/World/PayloadA"]),
+        "select_layer selects nearest payload authored in active edit layer",
+    )
+
+    if _undo():
+        _assert_equal(
+            _selection(),
+            ["/World/PayloadA/Geom"],
+            "undo select_layer restores previous descendant selection",
+        )
+
+    stageviz.command.select_paths(["/World/A"])
+
+    _assert(
+        _wait_until(lambda: _selection() == ["/World/A"]),
+        "non-payload selection prepared for select_layer",
+    )
+
+    stageviz.command.select_layer()
+
+    _wait(100)
+    _assert_equal(
+        _selection(),
+        ["/World/A"],
+        "select_layer leaves selection unchanged when no layer payload exists",
+    )
+
+
+def test_select_invert_in_payload():
+    if not _has_command("select_invert_in_payload"):
+        print("[skip] select_invert_in_payload is not bound")
+        return
+
+    stageviz.command.load_payloads(["/World/PayloadA"])
+
+    _assert(
+        _wait_until(
+            lambda: bool(
+                _prim("/World/PayloadA")
+                and _prim("/World/PayloadA").IsLoaded()
+                and _exists("/World/PayloadA/Geom")
+            ),
+            timeout=5.0,
+        ),
+        "payload hierarchy prepared for invert in payload",
+    )
+
+    # Add a second leaf as a root-layer opinion below the payload scope so the
+    # inversion has an unambiguous second target without changing the shared
+    # payload fixture on disk.
+    extra_path = "/World/PayloadA/ExtraLeaf"
+    _define_xform(_stage(), extra_path)
+
+    _assert(
+        _wait_until(lambda: _exists(extra_path)),
+        "second payload-scope leaf prepared",
+    )
+
+    stageviz.command.select_paths(["/World/PayloadA/Geom"])
+
+    _assert(
+        _wait_until(lambda: _selection() == ["/World/PayloadA/Geom"]),
+        "payload leaf selected for invert in payload",
+    )
+
+    stageviz.command.select_invert_in_payload()
+
+    _assert_equal(
+        _selection(),
+        [extra_path],
+        "invert in payload selects only unselected leaves inside nearest payload",
+    )
+
+    _assert(
+        "/World/A" not in _selection()
+        and "/World/PayloadB" not in _selection(),
+        "invert in payload does not escape the nearest payload scope",
+    )
+
+    if _undo():
+        _assert_equal(
+            _selection(),
+            ["/World/PayloadA/Geom"],
+            "undo invert in payload restores previous payload leaf selection",
+        )
+
+
+def test_select_invert_in_layer():
+    if not _has_command("select_invert_in_layer"):
+        print("[skip] select_invert_in_layer is not bound")
+        return
+
+    # Invert-in-layer operates on payload roots authored in the active edit
+    # layer. Payloads do not need to be loaded for this selection operation.
+    stageviz.command.select_paths(["/World/PayloadA"])
+
+    _assert(
+        _wait_until(lambda: _selection() == ["/World/PayloadA"]),
+        "layer payload selected for invert in layer",
+    )
+
+    stageviz.command.select_invert_in_layer()
+
+    inverted = _selection()
+
+    _assert(
+        "/World/PayloadA" not in inverted,
+        "invert in layer excludes the selected layer payload",
+    )
+
+    _assert(
+        "/World/PayloadB" in inverted,
+        "invert in layer includes another payload authored in active edit layer",
+    )
+
+    _assert(
+        "/World/A" not in inverted and "/World/B" not in inverted,
+        "invert in layer selects payload roots rather than ordinary prims",
+    )
+
+    _assert(
+        bool(inverted)
+        and all(
+            bool(_prim(path) and _prim(path).HasPayload())
+            for path in inverted
+        ),
+        "invert in layer result contains only composed payload prims",
+    )
+
+    if _undo():
+        _assert_equal(
+            _selection(),
+            ["/World/PayloadA"],
+            "undo invert in layer restores previous layer payload selection",
+        )
+
+    # The command must also resolve a descendant back to the payload authored
+    # by the active edit layer before performing the inversion.
+    stageviz.command.load_payloads(["/World/PayloadA"])
+
+    _assert(
+        _wait_until(
+            lambda: _exists("/World/PayloadA/Geom"),
+            timeout=5.0,
+        ),
+        "payload descendant prepared for layer inversion",
+    )
+
+    stageviz.command.select_paths(["/World/PayloadA/Geom"])
+
+    _assert(
+        _wait_until(lambda: _selection() == ["/World/PayloadA/Geom"]),
+        "payload descendant selected for invert in layer",
+    )
+
+    stageviz.command.select_invert_in_layer()
+
+    inverted_from_descendant = _selection()
+
+    _assert(
+        "/World/PayloadA" not in inverted_from_descendant
+        and "/World/PayloadB" in inverted_from_descendant,
+        "invert in layer resolves descendant to nearest active-layer payload",
+    )
+
+
+def test_root_prim_order_create_move_and_undo():
+    before = _child_names("/")
+
+    stageviz.command.new_xform("/", "RootGroup")
+
+    _assert(
+        _wait_until(lambda: _exists("/RootGroup")),
+        "root-level xform is created",
+    )
+
+    _assert(
+        _wait_until(lambda: _child_names("/") == before + ["RootGroup"]),
+        "root-level create appends root prim order",
+    )
+
+    stageviz.command.move_path(["/RootGroup"], "/", insert_index=0)
+
+    _assert(
+        _wait_until(
+            lambda: bool(_child_names("/"))
+            and _child_names("/")[0] == "RootGroup"
+        ),
+        "root-level move authors requested root prim order",
+    )
+
+    if _undo():
+        _assert(
+            _wait_until(lambda: _child_names("/") == before + ["RootGroup"]),
+            "undo root-level move restores root prim order",
+        )
+
+
+def test_root_layer_policy_rejects_sublayer_prim():
+    _assert(_exists("/ExternalRoot"), "sublayer prim is composed")
+    before_roots = _child_names("/")
+
+    stageviz.command.rename_path("/ExternalRoot", "ExternalRenamed")
+    _wait()
+
+    _assert(_exists("/ExternalRoot"), "rename rejects prim authored only in sublayer")
+    _assert(not _exists("/ExternalRenamed"), "rejected sublayer rename authors no root override")
+    _assert_equal(_child_names("/"), before_roots, "rejected sublayer rename preserves root order")
+
+    stageviz.command.delete_paths(["/ExternalRoot"])
+    _wait()
+    _assert(_exists("/ExternalRoot"), "delete rejects prim authored only in sublayer")
+
+
+def test_composition_boundary_rejects_namespace_edit():
+    _assert(_exists("/World/Referenced/Child"), "referenced child is composed")
+
+    stageviz.command.move_path(["/World/Referenced/Child"], "/World/B", insert_index=-1)
+    _wait()
+
+    _assert(
+        _exists("/World/Referenced/Child"),
+        "move rejects prim below reference composition arc",
+    )
+    _assert(
+        not _exists("/World/B/Child"),
+        "composition-boundary rejection does not author relocates or destination prim",
+    )
+
+
+def test_multi_move_is_transactional_on_collision():
+    stage = _stage()
+    _define_xform(stage, "/World/B/A2")
+    stage.GetRootLayer().Save()
+
+    before_a = _child_names("/World/A")
+    before_b = _child_names("/World/B")
+
+    stageviz.command.move_path(["/World/A/A1", "/World/A/A2"], "/World/B", insert_index=0)
+    _wait()
+
+    _assert(_exists("/World/A/A1"), "failed batch move keeps first source")
+    _assert(_exists("/World/A/A2"), "failed batch move keeps colliding source")
+    _assert(not _exists("/World/B/A1"), "failed batch move does not partially move first prim")
+    _assert_equal(_child_names("/World/A"), before_a, "failed batch move preserves source order")
+    _assert_equal(_child_names("/World/B"), before_b, "failed batch move preserves destination order")
+
+
+def test_composed_visibility_override_and_undo():
+    stageviz.command.load_payloads(["/World/PayloadA"])
+
+    _assert(
+        _wait_until(lambda: _exists("/World/PayloadA/Geom")),
+        "payload content loaded for visibility override",
+    )
+
+    property_path = "/World/PayloadA/Geom.visibility"
+
+    _assert(
+        not _edit_has_property(property_path),
+        "composed visibility has no edit-layer opinion initially",
+    )
+
+    stageviz.command.hide_paths(["/World/PayloadA/Geom"], recursive=False)
+
+    _assert(
+        _wait_until(
+            lambda: str(_visibility("/World/PayloadA/Geom")) == "invisible"
+        ),
+        "hide composed prim authors invisible",
+    )
+
+    _assert(
+        _edit_has_property(property_path),
+        "hide composed prim creates edit-layer visibility override",
+    )
+
+    if _undo():
+        _assert(
+            _wait_until(
+                lambda: str(_visibility("/World/PayloadA/Geom")) != "invisible"
+            ),
+            "undo restores composed visibility",
+        )
+
+        _assert(
+            not _edit_has_property(property_path),
+            "undo removes newly-created edit-layer visibility override",
+        )
+
+
+
+def test_reset_overrides():
+    if not _has_command("reset_overrides"):
+        print("[skip] reset_overrides is not bound")
+        return
+
+    stageviz.command.load_payloads(["/World/PayloadA"])
+
+    _assert(
+        _wait_until(lambda: _exists("/World/PayloadA/Geom")),
+        "payload content loaded for reset overrides",
+    )
+
+    payload_path = "/World/PayloadA"
+    child_path = "/World/PayloadA/Geom"
+    visibility_path = f"{child_path}.visibility"
+    payload_translate_path = f"{payload_path}.xformOp:translate"
+
+    payload_prim = _prim(payload_path)
+    child_prim = _prim(child_path)
+
+    _assert(
+        bool(payload_prim and payload_prim.HasPayload() and payload_prim.IsLoaded()),
+        "payload root prepared for reset overrides",
+    )
+    _assert(
+        bool(child_prim),
+        "payload child prepared for reset overrides",
+    )
+
+    # The payload root is owned by the root layer. Its authored transform is
+    # stage content, not an override, and must survive Reset > Overrides.
+    _assert(
+        _set_translate(payload_path, (8.0, -3.0, 2.0)),
+        "payload root transform authored",
+    )
+
+    payload_world_before = _world_transform(payload_path)
+
+    _assert(
+        _root_has_property(payload_translate_path),
+        "payload root transform exists in root layer",
+    )
+
+    # Hide a composed child exactly as the UI does. This creates a root-layer
+    # over containing only the visibility opinion.
+    stageviz.command.hide_paths([child_path], recursive=False)
+
+    _assert(
+        _wait_until(lambda: str(_visibility(child_path)) == "invisible"),
+        "payload child hidden",
+    )
+
+    _assert(
+        _root_has_property(visibility_path),
+        "hide creates descendant root-layer visibility override",
+    )
+
+    _assert(
+        bool(_prim(payload_path) and _prim(payload_path).HasPayload() and _prim(payload_path).IsLoaded()),
+        "payload remains loaded before reset",
+    )
+
+    # Resetting the payload root must recurse into composed descendants and
+    # remove their override properties without touching the payload root def.
+    stageviz.command.reset_overrides([payload_path])
+
+    _assert(
+        _wait_until(lambda: not _root_has_property(visibility_path)),
+        "reset_overrides recursively removes descendant visibility override",
+    )
+
+    _assert(
+        str(_visibility(child_path)) != "invisible",
+        "reset_overrides exposes weaker payload visibility",
+    )
+
+    _assert(
+        _exists(child_path),
+        "reset_overrides preserves payload child",
+    )
+
+    payload_prim = _prim(payload_path)
+    _assert(
+        bool(payload_prim and payload_prim.HasPayload() and payload_prim.IsLoaded()),
+        "reset_overrides preserves payload arc and load state",
+    )
+
+    _assert(
+        _root_has_property(payload_translate_path),
+        "reset_overrides preserves root-owned payload transform",
+    )
+
+    _assert(
+        _matrix_close(_world_transform(payload_path), payload_world_before, tolerance=1e-8),
+        "reset_overrides preserves payload root world transform",
+    )
+
+    if _undo():
+        _assert(
+            _wait_until(lambda: _root_has_property(visibility_path)),
+            "undo reset_overrides restores descendant visibility override",
+        )
+
+        _assert_equal(
+            str(_visibility(child_path)),
+            "invisible",
+            "undo reset_overrides restores hidden child",
+        )
+
+        payload_prim = _prim(payload_path)
+        _assert(
+            bool(payload_prim and payload_prim.HasPayload() and payload_prim.IsLoaded()),
+            "undo reset_overrides keeps payload loaded",
+        )
+
+        _assert(
+            _matrix_close(_world_transform(payload_path), payload_world_before, tolerance=1e-8),
+            "undo reset_overrides keeps payload root transform unchanged",
+        )
+
+    if _redo():
+        _assert(
+            _wait_until(lambda: not _root_has_property(visibility_path)),
+            "redo reset_overrides removes descendant visibility override again",
+        )
+
+        payload_prim = _prim(payload_path)
+        _assert(
+            bool(payload_prim and payload_prim.HasPayload() and payload_prim.IsLoaded()),
+            "redo reset_overrides keeps payload loaded",
+        )
+
+        _assert(
+            _root_has_property(payload_translate_path),
+            "redo reset_overrides still preserves payload root transform",
+        )
+
+        _assert(
+            _matrix_close(_world_transform(payload_path), payload_world_before, tolerance=1e-8),
+            "redo reset_overrides preserves payload root world transform",
+        )
+
+
+def test_reset_overrides_ignores_root_owned_prim():
+    if not _has_command("reset_overrides"):
+        print("[skip] reset_overrides is not bound")
+        return
+
+    path = "/World/A"
+    prim = _prim(path)
+
+    _assert(bool(prim), "root-owned prim prepared for reset override policy")
+
+    prim.SetMetadata("documentation", "Root owned")
+    UsdGeom.Imageable(prim).CreatePurposeAttr().Set(UsdGeom.Tokens.render)
+
+    _assert(
+        _root_has_prim(path),
+        "root-owned prim has root-layer spec",
+    )
+
+    stageviz.command.reset_overrides([path])
+    _wait()
+
+    _assert(
+        _exists(path),
+        "reset_overrides never deletes root-owned prim",
+    )
+
+    root_spec = _root_layer().GetPrimAtPath(Sdf.Path(path))
+    _assert(
+        bool(root_spec and root_spec.HasInfo("documentation")),
+        "reset_overrides leaves root-owned metadata unchanged",
+    )
+
+    _assert(
+        _root_has_property(f"{path}.purpose"),
+        "reset_overrides leaves root-owned properties unchanged",
+    )
+
+
+def test_reset_attribute_override():
+    if not _has_command("reset_attribute_override"):
+        print("[skip] reset_attribute_override is not bound")
+        return
+
+    stageviz.command.load_payloads(["/World/PayloadA"])
+
+    _assert(
+        _wait_until(lambda: _exists("/World/PayloadA/Geom")),
+        "payload content loaded for attribute override reset",
+    )
+
+    path = "/World/PayloadA/Geom"
+    visibility_path = f"{path}.visibility"
+
+    prim = _prim(path)
+    _assert(bool(prim), "composed prim prepared for attribute override reset")
+
+    # Author one root-layer visibility override.
+    UsdGeom.Imageable(prim).GetVisibilityAttr().Set(UsdGeom.Tokens.invisible)
+
+    _assert(
+        _edit_has_property(visibility_path),
+        "attribute override is authored in edit layer",
+    )
+
+    _assert_equal(
+        str(_visibility(path)),
+        "invisible",
+        "composed attribute reflects edit-layer override",
+    )
+
+    stageviz.command.reset_attribute_override(visibility_path)
+
+    _assert(
+        _wait_until(lambda: not _edit_has_property(visibility_path)),
+        "reset_attribute_override removes only the edit-layer attribute spec",
+    )
+
+    _assert(
+        _exists(path),
+        "reset_attribute_override preserves composed prim",
+    )
+
+    _assert(
+        str(_visibility(path)) != "invisible",
+        "reset_attribute_override exposes weaker composed attribute value",
+    )
+
+    if _undo():
+        _assert(
+            _wait_until(lambda: _edit_has_property(visibility_path)),
+            "undo reset_attribute_override restores edit-layer attribute spec",
+        )
+
+        _assert_equal(
+            str(_visibility(path)),
+            "invisible",
+            "undo reset_attribute_override restores overridden value",
+        )
+
+    if _redo():
+        _assert(
+            _wait_until(lambda: not _edit_has_property(visibility_path)),
+            "redo reset_attribute_override removes attribute override again",
+        )
+
+
+def test_reset_attribute_override_ignores_root_owned_prim():
+    if not _has_command("reset_attribute_override"):
+        print("[skip] reset_attribute_override is not bound")
+        return
+
+    path = "/World/A"
+    attribute_path = f"{path}.purpose"
+
+    prim = _prim(path)
+    _assert(bool(prim), "root-owned prim prepared for attribute override policy")
+
+    UsdGeom.Imageable(prim).CreatePurposeAttr().Set(UsdGeom.Tokens.render)
+
+    _assert(
+        _root_has_property(attribute_path),
+        "root-owned attribute is authored in root layer",
+    )
+
+    stageviz.command.reset_attribute_override(attribute_path)
+    _wait()
+
+    _assert(
+        _root_has_property(attribute_path),
+        "reset_attribute_override leaves root-owned attribute unchanged",
+    )
+
+    _assert(
+        _exists(path),
+        "reset_attribute_override never removes root-owned prim",
+    )
+
+
+
+def test_pivot_attribute_edit_preserves_local_transform():
+    if not _has_command("set_attribute_value"):
+        print("[skip] set_attribute_value is not bound")
+        return
+
+    path = "/World/A"
+    _ensure_cube(f"{path}/PivotGeom", size=4.0)
+
+    _assert(
+        _set_complex_transform(
+            path,
+            (18.0, 0.0, 0.0),
+            (27.0, -38.0, 16.0),
+            (1.7, 0.65, 1.2),
+        ),
+        "complex transform prepared for pivot edit",
+    )
+
+    prim = _prim(path)
+    xformable = UsdGeom.Xformable(prim)
+
+    before = _local_transform(path)
+
+    # Create the Stageviz canonical pivot stack first.
+    stageviz.command.center_pivots([path])
+
+    _assert(
+        _wait_until(
+            lambda: bool(
+                _prim(path).GetAttribute("xformOp:translate:pivot")
+            )
+        ),
+        "pivot created before direct pivot edit",
+    )
+
+    before_edit = _local_transform(path)
+
+    _assert(
+        _matrix_close(before_edit, before, tolerance=1e-8),
+        "centering pivot preserves local transform",
+    )
+
+    stageviz.command.set_attribute_value(
+        f"{path}.xformOp:translate:pivot",
+        (3.0, -2.0, 7.0),
+    )
+
+    _assert(
+        _wait_until(
+            lambda: _matrix_close(
+                _local_transform(path),
+                before_edit,
+                tolerance=1e-8,
+            )
+        ),
+        "editing pivot attribute preserves local transform",
+    )
+
+    pivot = _prim(path).GetAttribute("xformOp:translate:pivot").Get()
+
+    _assert(
+        pivot is not None
+        and abs(float(pivot[0]) - 3.0) < 1e-8
+        and abs(float(pivot[1]) + 2.0) < 1e-8
+        and abs(float(pivot[2]) - 7.0) < 1e-8,
+        "pivot attribute receives requested value",
+    )
+
+    if _undo():
+        _assert(
+            _wait_until(
+                lambda: _matrix_close(
+                    _local_transform(path),
+                    before_edit,
+                    tolerance=1e-8,
+                )
+            ),
+            "undo pivot edit preserves local transform",
+        )
+
+    if _redo():
+        _assert(
+            _wait_until(
+                lambda: _matrix_close(
+                    _local_transform(path),
+                    before_edit,
+                    tolerance=1e-8,
+                )
+            ),
+            "redo pivot edit preserves local transform",
+        )
+
+
+def test_reset_pivots_removes_attribute_and_preserves_transform():
+    if not _has_command("center_pivots") or not _has_command("reset_pivots"):
+        print("[skip] pivot commands are not fully bound")
+        return
+
+    path = "/World/A"
+    _ensure_cube(f"{path}/PivotGeom", size=4.0)
+
+    _assert(
+        _set_complex_transform(
+            path,
+            (11.0, -3.0, 5.0),
+            (23.0, -31.0, 14.0),
+            (1.4, 0.8, 1.2),
+        ),
+        "complex transform prepared for reset pivot",
+    )
+
+    before = _local_transform(path)
+
+    stageviz.command.center_pivots([path])
+
+    pivot_path = f"{path}.xformOp:translate:pivot"
+
+    _assert(
+        _wait_until(lambda: _edit_has_property(pivot_path)),
+        "center_pivots authors pivot attribute",
+    )
+
+    centered = _local_transform(path)
+
+    _assert(
+        _matrix_close(centered, before, tolerance=1e-8),
+        "center_pivots preserves local transform before reset",
+    )
+
+    stageviz.command.reset_pivots([path])
+
+    _assert(
+        _wait_until(lambda: not _edit_has_property(pivot_path)),
+        "reset_pivots removes pivot attribute from edit layer",
+    )
+
+    _assert(
+        _matrix_close(_local_transform(path), before, tolerance=1e-8),
+        "reset_pivots preserves local transform",
+    )
+
+    properties = _transform_property_names(path)
+
+    _assert(
+        "xformOp:translate:pivot" not in properties,
+        "reset_pivots leaves no pivot property",
+    )
+
+    if _undo():
+        _assert(
+            _wait_until(lambda: _edit_has_property(pivot_path)),
+            "undo reset_pivots restores pivot attribute",
+        )
+
+        _assert(
+            _matrix_close(_local_transform(path), before, tolerance=1e-8),
+            "undo reset_pivots preserves local transform",
+        )
+
+    if _redo():
+        _assert(
+            _wait_until(lambda: not _edit_has_property(pivot_path)),
+            "redo reset_pivots removes pivot attribute again",
+        )
+
+        _assert(
+            _matrix_close(_local_transform(path), before, tolerance=1e-8),
+            "redo reset_pivots preserves local transform",
+        )
+
+def test_identity_transforms_removes_existing_ops():
+    if not _has_command("identity_transforms"):
+        print("[skip] identity_transforms is not bound")
+        return
+
+    path = "/World/A"
+
+    _assert(
+        _set_complex_transform(
+            path,
+            (6.0, -4.0, 2.0),
+            (17.0, 29.0, -33.0),
+            (1.8, 0.65, 1.25),
+        ),
+        "complex transform prepared for identity",
+    )
+
+    before = _local_transform(path)
+
+    _assert(
+        before is not None and not _matrix_close(before, _identity_matrix()),
+        "prepared transform is not identity",
+    )
+
+    before_properties = _transform_property_names(path)
+
+    _assert(
+        "xformOp:translate" in before_properties,
+        "translate op exists before identity",
+    )
+
+    _assert(
+        "xformOp:rotateXYZ" in before_properties,
+        "rotate op exists before identity",
+    )
+
+    _assert(
+        "xformOp:scale" in before_properties,
+        "scale op exists before identity",
+    )
+
+    stageviz.command.identity_transforms([path])
+
+    _assert(
+        _wait_until(
+            lambda: _matrix_close(
+                _local_transform(path),
+                _identity_matrix(),
+                tolerance=1e-8,
+            )
+        ),
+        "identity_transforms evaluates to local identity",
+    )
+
+    properties = _transform_property_names(path)
+
+    _assert_equal(
+        properties,
+        ["xformOp:transform", "xformOpOrder"],
+        "identity_transforms removes stale translate/rotate/scale ops",
+    )
+
+    if _undo():
+        _assert(
+            _wait_until(
+                lambda: _matrix_close(
+                    _local_transform(path),
+                    before,
+                    tolerance=1e-8,
+                )
+            ),
+            "undo identity_transforms restores original local transform",
+        )
+
+        _assert_equal(
+            _transform_property_names(path),
+            before_properties,
+            "undo identity_transforms restores original transform properties",
+        )
+
+    if _redo():
+        _assert(
+            _wait_until(
+                lambda: _matrix_close(
+                    _local_transform(path),
+                    _identity_matrix(),
+                    tolerance=1e-8,
+                )
+            ),
+            "redo identity_transforms returns to identity",
+        )
+
+        _assert_equal(
+            _transform_property_names(path),
+            ["xformOp:transform", "xformOpOrder"],
+            "redo identity_transforms removes stale transform ops again",
+        )
+
+
+def test_reset_transforms_removes_existing_ops():
+    if not _has_command("reset_transforms"):
+        print("[skip] reset_transforms is not bound")
+        return
+
+    path = "/World/A"
+
+    _assert(
+        _set_complex_transform(
+            path,
+            (9.0, 3.0, -2.0),
+            (-11.0, 37.0, 21.0),
+            (0.7, 1.6, 1.2),
+        ),
+        "complex transform prepared for reset_transforms",
+    )
+
+    stageviz.command.reset_transforms([path])
+
+    _assert(
+        _wait_until(
+            lambda: _matrix_close(
+                _local_transform(path),
+                _identity_matrix(),
+                tolerance=1e-8,
+            )
+        ),
+        "reset_transforms evaluates to local identity",
+    )
+
+    _assert_equal(
+        _transform_property_names(path),
+        ["xformOp:transform", "xformOpOrder"],
+        "reset_transforms leaves only canonical identity matrix op",
+    )
+
+
+def test_identity_transforms_exposes_weaker_transform():
+    if not _has_command("identity_transforms"):
+        print("[skip] identity_transforms is not bound")
+        return
+
+    session = stageviz.session()
+
+    if not all(hasattr(session, name) for name in ("editLayer", "editLayers", "setEditLayer")):
+        print("[skip] session edit-layer API is not bound")
+        return
+
+    root = _root_layer()
+    layers = list(session.editLayers())
+    sublayers = [
+        identifier
+        for identifier in layers
+        if root and identifier != root.identifier
+    ]
+
+    if not root or not sublayers:
+        print("[skip] no local sublayer available")
+        return
+
+    path = "/ExternalRoot"
+    weaker_layer = sublayers[0]
+
+    _assert(
+        bool(session.setEditLayer(weaker_layer)),
+        "select local sublayer for weaker transform",
+    )
+
+    _assert(
+        _set_translate(path, (4.0, 2.0, -1.0)),
+        "author weaker transform in local sublayer",
+    )
+
+    weaker = _local_transform(path)
+
+    _assert(
+        bool(session.setEditLayer(root.identifier)),
+        "switch back to root edit layer",
+    )
+
+    _assert(
+        _set_complex_transform(
+            path,
+            (20.0, 0.0, 0.0),
+            (17.0, -9.0, 6.0),
+            (2.0, 2.0, 2.0),
+        ),
+        "author stronger root-layer transform",
+    )
+
+    stronger = _local_transform(path)
+
+    _assert(
+        not _matrix_close(stronger, weaker),
+        "stronger edit-layer transform overrides weaker sublayer transform",
+    )
+
+    stageviz.command.identity_transforms([path])
+
+    _assert(
+        _wait_until(
+            lambda: _matrix_close(
+                _local_transform(path),
+                weaker,
+                tolerance=1e-8,
+            )
+        ),
+        "identity_transforms exposes weaker composed transform",
+    )
+
+    _assert_equal(
+        _transform_property_names(path),
+        [],
+        "identity_transforms removes all root edit-layer transform properties when weaker transform exists",
+    )
+
+
+
+def test_attribute_lifecycle_commands():
+    """Create, rename, collide, remove, and undo/redo custom attributes."""
+    required = ("add_attributes", "rename_attributes", "remove_attributes", "undo", "redo")
+    _assert(all(_has_command(n) for n in required), "attribute lifecycle bindings available")
+    owner = "/World/A"
+    original = owner + ".stageviz:regressionAttribute"
+    renamed = owner + ".stageviz:regressionRenamed"
+    for path in (original, renamed):
+        _assert(not _prim(owner).HasProperty(path.split(".", 1)[1]), "test attribute absent: " + path)
+
+    stageviz.command.add_attributes([owner], "stageviz:regressionAttribute", "double", custom=True)
+    _assert(_wait_until(lambda: bool(_prim(owner).GetAttribute("stageviz:regressionAttribute"))),
+            "custom attribute created")
+    _assert(_prim(owner).GetAttribute("stageviz:regressionAttribute").IsCustom(), "attribute is custom")
+    stageviz.command.undo()
+    _assert(_wait_until(lambda: not bool(_prim(owner).GetAttribute("stageviz:regressionAttribute"))),
+            "undo removes custom attribute")
+    stageviz.command.redo()
+    _assert(_wait_until(lambda: bool(_prim(owner).GetAttribute("stageviz:regressionAttribute"))),
+            "redo restores custom attribute")
+
+    stageviz.command.rename_attributes([original], "stageviz:regressionRenamed")
+    _assert(_wait_until(lambda: bool(_prim(owner).GetAttribute("stageviz:regressionRenamed"))
+                        and not bool(_prim(owner).GetAttribute("stageviz:regressionAttribute"))),
+            "rename preserves namespaced custom attribute")
+    stageviz.command.undo()
+    _assert(_wait_until(lambda: bool(_prim(owner).GetAttribute("stageviz:regressionAttribute"))
+                        and not bool(_prim(owner).GetAttribute("stageviz:regressionRenamed"))),
+            "undo restores original attribute name")
+    stageviz.command.redo()
+    _assert(_wait_until(lambda: bool(_prim(owner).GetAttribute("stageviz:regressionRenamed"))),
+            "redo restores renamed attribute")
+    stageviz.command.remove_attributes([renamed])
+    _assert(_wait_until(lambda: not bool(_prim(owner).GetAttribute("stageviz:regressionRenamed"))),
+            "remove deletes authored custom attribute")
+    stageviz.command.undo()
+    _assert(_wait_until(lambda: bool(_prim(owner).GetAttribute("stageviz:regressionRenamed"))),
+            "undo restores removed custom attribute")
+
+
+def test_attribute_multi_selection_commands():
+    """Exercise one command against two prims, including undo and redo."""
+    required = ("add_attributes", "rename_attributes", "remove_attributes")
+    _assert(all(_has_command(n) for n in required), "multi-attribute bindings available")
+    owners = ["/World/A", "/World/B"]
+    name = "stageviz:multiRegression"
+    renamed = "stageviz:multiRenamed"
+    _assert(all(not _prim(p).HasProperty(name) for p in owners), "multi-test names available")
+    stageviz.command.add_attributes(owners, name, "string", custom=True)
+    _assert(_wait_until(lambda: all(bool(_prim(p).GetAttribute(name)) for p in owners)),
+            "batch creates both attributes")
+    paths = [p + "." + name for p in owners]
+    stageviz.command.rename_attributes(paths, renamed)
+    _assert(_wait_until(lambda: all(bool(_prim(p).GetAttribute(renamed)) for p in owners)),
+            "batch renames both attributes")
+    stageviz.command.undo()
+    _assert(_wait_until(lambda: all(bool(_prim(p).GetAttribute(name)) for p in owners)),
+            "undo restores both names")
+    stageviz.command.redo()
+    _assert(_wait_until(lambda: all(bool(_prim(p).GetAttribute(renamed)) for p in owners)),
+            "redo renames both again")
+    stageviz.command.remove_attributes([p + "." + renamed for p in owners])
+    _assert(_wait_until(lambda: all(not bool(_prim(p).GetAttribute(renamed)) for p in owners)),
+            "batch removes both attributes")
+    stageviz.command.undo()
+    _assert(_wait_until(lambda: all(bool(_prim(p).GetAttribute(renamed)) for p in owners)),
+            "undo restores both removed attributes")
+
+
+def test_center_pivots_command_roundtrip():
+    """Center a pivot without moving geometry; undo and redo the pivot edit."""
+    _assert(_has_command("center_pivots") and _has_command("reset_pivots"), "pivot bindings available")
+    owner = "/World/A"
+    _ensure_cube(owner + "/CenterPivotRegressionGeom", size=4.0)
+    before = _local_transform(owner)
+    stageviz.command.center_pivots([owner])
+    pivot_name = "xformOp:translate:pivot"
+    _assert(_wait_until(lambda: bool(_prim(owner).GetAttribute(pivot_name))), "center pivot authors pivot")
+    _assert(_matrix_close(_local_transform(owner), before, tolerance=1e-6), "center pivot preserves local transform")
+    stageviz.command.undo()
+    _assert(_wait_until(lambda: not bool(_prim(owner).GetAttribute(pivot_name))), "undo center pivot")
+    stageviz.command.redo()
+    _assert(_wait_until(lambda: bool(_prim(owner).GetAttribute(pivot_name))), "redo center pivot")
+    stageviz.command.reset_pivots([owner])
+    _assert(_wait_until(lambda: not bool(_prim(owner).GetAttribute(pivot_name))), "reset centered pivot")
+    _assert(_matrix_close(_local_transform(owner), before, tolerance=1e-6), "reset pivot preserves local transform")
+
+def test_attribute_value_commands():
+    required = (
+        "set_attribute_value",
+        "set_attribute_values",
+        "reset_attribute_values",
+    )
+
+    if not all(_has_command(name) for name in required):
+        print("[skip] attribute value commands are not fully bound")
+        return
+
+    stage = _stage()
+    prim_a = _prim("/World/A")
+    prim_b = _prim("/World/B")
+
+    attr_a = prim_a.CreateAttribute(
+        "stageviz:testValue",
+        Sdf.ValueTypeNames.Double,
+    )
+    attr_b = prim_b.CreateAttribute(
+        "stageviz:testValue",
+        Sdf.ValueTypeNames.Double,
+    )
+
+    attr_a.Set(1.0)
+    attr_b.Set(2.0)
+
+    path_a = "/World/A.stageviz:testValue"
+    path_b = "/World/B.stageviz:testValue"
+
+    stageviz.command.set_attribute_value(path_a, 4.25)
+
+    _assert(
+        _wait_until(
+            lambda: abs(float(attr_a.Get()) - 4.25) < 1e-8
+        ),
+        "set_attribute_value authors one numeric value",
+    )
+
+    stageviz.command.set_attribute_values(
+        [path_a, path_b],
+        7.5,
+    )
+
+    _assert(
+        _wait_until(
+            lambda: abs(float(attr_a.Get()) - 7.5) < 1e-8
+            and abs(float(attr_b.Get()) - 7.5) < 1e-8
+        ),
+        "set_attribute_values authors one numeric value to several attributes",
+    )
+
+    stageviz.command.reset_attribute_values([path_a, path_b])
+
+    _assert(
+        _wait_until(
+            lambda: not _layer_has_default(_edit_layer(), path_a)
+            and not _layer_has_default(_edit_layer(), path_b)
+        ),
+        "reset_attribute_values clears authored defaults",
+    )
+
+
+def test_reset_attribute_overrides_batch():
+    if not _has_command("reset_attribute_overrides"):
+        print("[skip] reset_attribute_overrides is not bound")
+        return
+
+    stageviz.command.load_payloads(["/World/PayloadA"])
+
+    _assert(
+        _wait_until(lambda: _exists("/World/PayloadA/Geom"), timeout=5.0),
+        "payload child prepared for batch override reset",
+    )
+
+    path = "/World/PayloadA/Geom"
+    imageable = UsdGeom.Imageable(_prim(path))
+
+    imageable.CreateVisibilityAttr().Set(UsdGeom.Tokens.invisible)
+    imageable.CreatePurposeAttr().Set(UsdGeom.Tokens.render)
+
+    visibility = f"{path}.visibility"
+    purpose = f"{path}.purpose"
+
+    _assert(
+        _edit_has_property(visibility) and _edit_has_property(purpose),
+        "two composed attribute overrides prepared",
+    )
+
+    stageviz.command.reset_attribute_overrides([visibility, purpose])
+
+    _assert(
+        _wait_until(
+            lambda: not _edit_has_property(visibility)
+            and not _edit_has_property(purpose)
+        ),
+        "reset_attribute_overrides removes several overrides in one command",
+    )
+
+    if _undo():
+        _assert(
+            _wait_until(
+                lambda: _edit_has_property(visibility)
+                and _edit_has_property(purpose)
+            ),
+            "undo reset_attribute_overrides restores all removed overrides",
+        )
+
+
+def test_move_non_xformable_prim():
+    stage = _stage()
+
+    UsdGeom.Scope.Define(stage, "/World/Looks")
+    UsdGeom.Scope.Define(stage, "/World/LooksDestination")
+    UsdShade.Material.Define(stage, "/World/Looks/TestMaterial")
+
+    _assert(
+        _exists("/World/Looks/TestMaterial"),
+        "material prepared for namespace move",
+    )
+
+    stageviz.command.move_path(
+        ["/World/Looks/TestMaterial"],
+        "/World/LooksDestination",
+        insert_index=-1,
+        preserve_world_transform=True,
+    )
+
+    _assert(
+        _wait_until(
+            lambda: not _exists("/World/Looks/TestMaterial")
+            and _exists("/World/LooksDestination/TestMaterial")
+        ),
+        "non-xformable material moves with transform preservation enabled",
+    )
+
+    if _undo():
+        _assert(
+            _wait_until(
+                lambda: _exists("/World/Looks/TestMaterial")
+                and not _exists("/World/LooksDestination/TestMaterial")
+            ),
+            "undo restores moved non-xformable material",
+        )
+
+
+def test_move_preserve_complex_world_transform():
+    _assert(
+        _set_complex_transform(
+            "/World/A",
+            (13.0, -7.0, 4.0),
+            (27.0, -38.0, 16.0),
+            (1.7, 0.65, 1.2),
+        ),
+        "set complex source parent transform",
+    )
+
+    _assert(
+        _set_complex_transform(
+            "/World/A/A1",
+            (4.0, 9.0, -3.0),
+            (-21.0, 44.0, 33.0),
+            (0.8, 1.35, 0.7),
+        ),
+        "set complex child transform",
+    )
+
+    _assert(
+        _set_complex_transform(
+            "/World/B",
+            (-11.0, 18.0, 6.0),
+            (31.0, 19.0, -42.0),
+            (0.75, 1.4, 1.1),
+        ),
+        "set complex destination parent transform",
+    )
+
+    before = _world_transform("/World/A/A1")
+
+    _assert(
+        before is not None,
+        "capture complex child world transform before move",
+    )
+
+    stageviz.command.move_path(
+        ["/World/A/A1"],
+        "/World/B",
+        insert_index=-1,
+        preserve_world_transform=True,
+    )
+
+    _assert(
+        _wait_until(
+            lambda: _exists("/World/B/A1")
+            and not _exists("/World/A/A1")
+        ),
+        "complex transformed prim moved",
+    )
+
+    after = _world_transform("/World/B/A1")
+
+    _assert(
+        _matrix_close(after, before, tolerance=1e-6),
+        "complex reparent preserves full world transform",
+    )
+
+    if _undo():
+        _assert(
+            _wait_until(
+                lambda: _exists("/World/A/A1")
+                and not _exists("/World/B/A1")
+            ),
+            "undo complex reparent restores original hierarchy",
+        )
+
+        restored = _world_transform("/World/A/A1")
+
+        _assert(
+            _matrix_close(restored, before, tolerance=1e-6),
+            "undo complex reparent restores original world transform",
+        )
+
+
+def test_stage_load_resets_edit_layer(main_path):
+    session = stageviz.session()
+
+    if not all(hasattr(session, name) for name in ("editLayer", "editLayers", "setEditLayer")):
+        print("[skip] session edit-layer API is not bound")
+        return
+
+    root = _root_layer()
+    layers = list(session.editLayers())
+    sublayers = [
+        identifier
+        for identifier in layers
+        if root and identifier != root.identifier
+    ]
+
+    if not sublayers:
+        print("[skip] no local sublayer available")
+        return
+
+    _assert(
+        bool(session.setEditLayer(sublayers[0])),
+        "sublayer selected before stage reload",
+    )
+
+    loaded = session.load(main_path, stageviz.LoadNone)
+
+    _assert(
+        loaded,
+        "stage reload succeeds for edit-layer reset test",
+    )
+
+    new_root = _root_layer()
+
+    _assert(
+        bool(new_root),
+        "reloaded stage has root layer",
+    )
+
+    if new_root:
+        _assert_equal(
+            session.editLayer(),
+            new_root.identifier,
+            "loading stage resets edit layer to root",
+        )
+
+
+def test_failed_load_leaves_valid_stage():
+    _disable_preserve_state()
+
+    missing_path = os.path.join(
+        tempfile.gettempdir(),
+        "stageviz_this_file_must_not_exist.usda",
+    )
+
+    try:
+        os.remove(missing_path)
+    except FileNotFoundError:
+        pass
+
+    loaded = stageviz.session().load(
+        missing_path,
+        stageviz.LoadNone,
+    )
+
+    _assert(
+        not loaded,
+        "loading missing stage reports failure",
+    )
+
+    _assert(
+        stageviz.session().stage() is not None,
+        "failed load leaves a valid stage object",
+    )
+
+
+
+def test_move_payload_root_is_allowed():
+    stageviz.command.load_payloads(["/World/PayloadA"])
+
+    _assert(
+        _wait_until(
+            lambda: bool(
+                _prim("/World/PayloadA")
+                and _prim("/World/PayloadA").IsLoaded()
+                and _exists("/World/PayloadA/Geom")
+            ),
+            timeout=5.0,
+        ),
+        "payload root prepared for namespace move",
+    )
+
+    _assert(_set_translate("/World/PayloadA", (8.0, -3.0, 2.0)), "payload root transform prepared")
+    _assert(_set_translate("/World/B", (-4.0, 7.0, 1.0)), "payload destination transform prepared")
+
+    before = _world_transform("/World/PayloadA")
+
+    stageviz.command.move_path(
+        ["/World/PayloadA"],
+        "/World/B",
+        insert_index=-1,
+        preserve_world_transform=True,
+    )
+
+    _assert(
+        _wait_until(
+            lambda: not _exists("/World/PayloadA")
+            and _exists("/World/B/PayloadA")
+            and bool(_prim("/World/B/PayloadA").HasPayload())
+        ),
+        "move_path allows moving a root-layer payload root",
+    )
+
+    _assert(
+        _wait_until(lambda: _exists("/World/B/PayloadA/Geom"), timeout=5.0),
+        "moved payload root keeps composed payload content",
+    )
+
+    after = _world_transform("/World/B/PayloadA")
+    _assert(
+        _matrix_close(after, before, tolerance=1e-6),
+        "moving payload root preserves world transform",
+    )
+
+    if _undo():
+        _assert(
+            _wait_until(
+                lambda: _exists("/World/PayloadA")
+                and not _exists("/World/B/PayloadA")
+                and bool(_prim("/World/PayloadA").HasPayload())
+            ),
+            "undo restores moved payload root",
+        )
+
+        _assert(
+            _wait_until(lambda: _exists("/World/PayloadA/Geom"), timeout=5.0),
+            "undo restores payload composition below original root",
+        )
+
+        restored = _world_transform("/World/PayloadA")
+        _assert(
+            _matrix_close(restored, before, tolerance=1e-6),
+            "undo payload-root move restores world transform",
+        )
+
+
+def test_move_reference_root_is_allowed():
+    _assert(
+        _exists("/World/Referenced/Child"),
+        "reference root prepared for namespace move",
+    )
+
+    before = _world_transform("/World/Referenced")
+
+    stageviz.command.move_path(
+        ["/World/Referenced"],
+        "/World/B",
+        insert_index=-1,
+        preserve_world_transform=True,
+    )
+
+    _assert(
+        _wait_until(
+            lambda: not _exists("/World/Referenced")
+            and _exists("/World/B/Referenced")
+            and _exists("/World/B/Referenced/Child")
+        ),
+        "move_path allows moving a root-layer reference root",
+    )
+
+    moved = _world_transform("/World/B/Referenced")
+    _assert(
+        _matrix_close(moved, before, tolerance=1e-6),
+        "moving reference root preserves world transform",
+    )
+
+    if _undo():
+        _assert(
+            _wait_until(
+                lambda: _exists("/World/Referenced")
+                and _exists("/World/Referenced/Child")
+                and not _exists("/World/B/Referenced")
+            ),
+            "undo restores moved reference root",
+        )
+
+
+def test_new_xform_wraps_payload_roots():
+    stageviz.command.load_payloads(["/World/PayloadA", "/World/PayloadB"])
+
+    _assert(
+        _wait_until(
+            lambda: bool(
+                _prim("/World/PayloadA")
+                and _prim("/World/PayloadA").IsLoaded()
+                and _prim("/World/PayloadB")
+                and _prim("/World/PayloadB").IsLoaded()
+            ),
+            timeout=5.0,
+        ),
+        "payload roots prepared for new_xform wrapping",
+    )
+
+    stageviz.command.select_paths(["/World/PayloadA", "/World/PayloadB"])
+
+    _assert(
+        _wait_until(lambda: _selection() == ["/World/PayloadA", "/World/PayloadB"]),
+        "payload roots selected for new_xform wrapping",
+    )
+
+    stageviz.command.new_xform("/World", "PayloadGroup")
+
+    _assert(
+        _wait_until(
+            lambda: _exists("/World/PayloadGroup")
+            and _exists("/World/PayloadGroup/PayloadA")
+            and _exists("/World/PayloadGroup/PayloadB")
+            and not _exists("/World/PayloadA")
+            and not _exists("/World/PayloadB")
+        ),
+        "new_xform can wrap root-layer payload roots",
+    )
+
+    _assert(
+        bool(_prim("/World/PayloadGroup/PayloadA").HasPayload())
+        and bool(_prim("/World/PayloadGroup/PayloadB").HasPayload()),
+        "wrapped payload roots retain payload arcs",
+    )
+
+    if _undo():
+        _assert(
+            _wait_until(
+                lambda: _exists("/World/PayloadA")
+                and _exists("/World/PayloadB")
+                and not _exists("/World/PayloadGroup")
+            ),
+            "undo new_xform restores payload roots",
+        )
+
+
+def test_payload_descendant_rejects_namespace_edit():
+    stageviz.command.load_payloads(["/World/PayloadA"])
+
+    _assert(
+        _wait_until(lambda: _exists("/World/PayloadA/Geom")),
+        "payload descendant prepared",
+    )
+
+    stageviz.command.move_path(
+        ["/World/PayloadA/Geom"],
+        "/World/B",
+        insert_index=-1,
+    )
+
+    _wait()
+
+    _assert(
+        _exists("/World/PayloadA/Geom"),
+        "payload descendant remains at composed path",
+    )
+
+    _assert(
+        not _exists("/World/B/Geom"),
+        "payload descendant move creates no destination override",
+    )
+
+    stageviz.command.delete_paths(["/World/PayloadA/Geom"])
+
+    _wait()
+
+    _assert(
+        _exists("/World/PayloadA/Geom"),
+        "delete rejects payload-owned descendant",
+    )
+
+
+def test_merge_into_stage(merge_source):
+    session = stageviz.session()
+
+    _assert(_has_command("merge_stage"), "merge_stage command is exposed")
+    _assert(
+        not hasattr(session, "merge") and not hasattr(session, "mergeFromFile"),
+        "destructive merge is no longer exposed on Session",
+    )
+
+    before_sublayers = list(_root_layer().subLayerPaths)
+
+    stageviz.command.merge_stage(merge_source)
+
+    _assert(
+        _wait_until(lambda: _exists("/MergeSource") and _exists("/MergeSource/Merged")),
+        "merge_stage imports authored source hierarchy",
+    )
+    _assert_equal(
+        list(_root_layer().subLayerPaths),
+        before_sublayers,
+        "merge_stage does not add the source as a sublayer",
+    )
+
+    if _undo():
+        _assert(
+            _wait_until(lambda: not _exists("/MergeSource")),
+            "undo merge_stage restores the previous edit layer",
+        )
+        _assert_equal(
+            list(_root_layer().subLayerPaths),
+            before_sublayers,
+            "undo merge_stage preserves previous sublayers",
+        )
+
+    if _redo():
+        _assert(
+            _wait_until(lambda: _exists("/MergeSource/Merged")),
+            "redo merge_stage reapplies imported hierarchy",
+        )
+
+    stageviz.command.merge_stage(merge_source)
+    _assert(
+        _wait_until(lambda: _exists("/MergeSource_1/Merged")),
+        "second merge_stage uses a unique root identifier",
+    )
+
+
+def test_merge_flattened(merge_source):
+    _assert(_has_command("merge_flattened_stage"), "merge_flattened_stage command is exposed")
+
+    stageviz.command.merge_flattened_stage(merge_source)
+
+    _assert(
+        _wait_until(lambda: _exists("/MergeSource/MergedReference/Child")),
+        "merge_flattened_stage includes composed referenced content",
+    )
+
+    prim = _prim("/MergeSource/MergedReference")
+    references = prim.GetMetadata("references") if prim else None
+    _assert(
+        not bool(references and references.GetAddedOrExplicitItems()),
+        "merge_flattened_stage removes the incoming reference arc",
+    )
+
+    if _undo():
+        _assert(
+            _wait_until(lambda: not _exists("/MergeSource")),
+            "undo merge_flattened_stage restores the previous edit layer",
+        )
+
+    if _redo():
+        _assert(
+            _wait_until(lambda: _exists("/MergeSource/MergedReference/Child")),
+            "redo merge_flattened_stage restores flattened content",
+        )
+
+    stageviz.command.merge_flattened_stage(merge_source)
+    _assert(
+        _wait_until(lambda: _exists("/MergeSource_1/MergedReference/Child")),
+        "second flattened merge uses a unique root identifier",
+    )
+
+
+def test_merge_sublayer(merge_source):
+    session = stageviz.session()
+
+    _assert(_has_command("add_sublayer"), "add_sublayer command is exposed")
+    _assert(
+        not hasattr(session, "mergeSublayer") and not hasattr(session, "mergeSublayerFromFile"),
+        "sublayer authoring is no longer exposed on Session",
+    )
+
+    before = list(_root_layer().subLayerPaths)
+    stageviz.command.add_sublayer(merge_source)
+
+    _assert(
+        _wait_until(lambda: _exists("/MergeSource/Merged")),
+        "add_sublayer composes source content",
+    )
+    after = list(_root_layer().subLayerPaths)
+    _assert_equal(len(after), len(before) + 1, "add_sublayer adds exactly one dependency")
+
+    if _undo():
+        _assert_equal(
+            list(_root_layer().subLayerPaths),
+            before,
+            "undo add_sublayer restores previous sublayer paths",
+        )
+        _assert(
+            _wait_until(lambda: not _exists("/MergeSource")),
+            "undo add_sublayer removes composed source content",
+        )
+
+    if _redo():
+        _assert_equal(
+            list(_root_layer().subLayerPaths),
+            after,
+            "redo add_sublayer restores sublayer path",
+        )
+        _assert(
+            _wait_until(lambda: _exists("/MergeSource/Merged")),
+            "redo add_sublayer restores composed content",
+        )
+
+
+def test_merge_reference(merge_source):
+    session = stageviz.session()
+    stage = _stage()
+
+    _assert(_has_command("add_reference"), "add_reference command is exposed")
+    _assert(
+        not hasattr(session, "mergeReference") and not hasattr(session, "mergeReferenceFromFile"),
+        "reference authoring is no longer exposed on Session",
+    )
+
+    target_path = "/World/ReferenceTarget"
+    _define_xform(stage, target_path)
+
+    stageviz.command.add_reference(merge_source, target_path)
+    _assert(
+        _wait_until(lambda: _exists(target_path + "/Merged")),
+        "add_reference composes source default prim below target",
+    )
+
+    target = _prim(target_path)
+    _assert(
+        bool(target and target.HasAuthoredReferences()),
+        "add_reference authors a reference arc",
+    )
+
+    if _undo():
+        target = _prim(target_path)
+        _assert(bool(target), "undo add_reference keeps the target prim")
+        _assert(
+            bool(target and not target.HasAuthoredReferences()),
+            "undo add_reference restores the previous reference field",
+        )
+        _assert(
+            _wait_until(lambda: not _exists(target_path + "/Merged")),
+            "undo add_reference removes composed referenced content",
+        )
+
+    if _redo():
+        _assert(
+            _wait_until(lambda: _exists(target_path + "/Merged")),
+            "redo add_reference restores composed referenced content",
+        )
+
+
+def test_merge_payload(merge_source):
+    session = stageviz.session()
+    stage = _stage()
+
+    _assert(_has_command("add_payload"), "add_payload command is exposed")
+    _assert(
+        not hasattr(session, "mergePayload") and not hasattr(session, "mergePayloadFromFile"),
+        "payload authoring is no longer exposed on Session",
+    )
+
+    target_path = "/World/PayloadTarget"
+    _define_xform(stage, target_path)
+
+    stageviz.command.add_payload(merge_source, target_path)
+
+    target = _prim(target_path)
+    _assert(bool(target and target.HasPayload()), "add_payload authors payload arc")
+    _assert(
+        bool(target and not target.IsLoaded()),
+        "add_payload respects fixture LoadNone policy",
+    )
+
+    if _undo():
+        target = _prim(target_path)
+        _assert(bool(target), "undo add_payload keeps the target prim")
+        _assert(
+            bool(target and not target.HasPayload()),
+            "undo add_payload restores the previous payload field",
+        )
+
+    if _redo():
+        target = _prim(target_path)
+        _assert(bool(target and target.HasPayload()), "redo add_payload restores payload arc")
+        _assert(
+            bool(target and not target.IsLoaded()),
+            "redo add_payload preserves LoadNone state",
+        )
+
+    stageviz.command.load_payloads([target_path])
+    _assert(
+        _wait_until(lambda: _exists(target_path + "/Merged"), timeout=5.0),
+        "loading added payload composes source default prim below target",
+    )
+
+
+def test_variant_selection_save_reload(saved_path):
+    if not _has_command("set_variant_selection"):
+        print("[skip] set_variant_selection is not bound")
+        return
+
+    path = "/ExternalRoot"
+    set_name = "style"
+    variant_saved_path = os.path.splitext(saved_path)[0] + "_variant.usda"
+
+    stageviz.command.set_variant_selection([path], set_name, "B")
+
+    _assert(
+        _wait_until(
+            lambda: _prim(path).GetVariantSet(set_name).GetVariantSelection() == "B"
+        ),
+        "variant B prepared before USD save",
+    )
+    _assert_equal(
+        _root_variant_selection(path, set_name),
+        "B",
+        "variant B is authored in document edit layer before save",
+    )
+
+    _assert(
+        bool(stageviz.session().save(variant_saved_path)),
+        "session.save writes stage with variant selection",
+    )
+
+    reopened = Usd.Stage.Open(variant_saved_path, load=Usd.Stage.LoadNone)
+    _assert(bool(reopened), "variant test stage reopens with USD")
+    if not reopened:
+        return
+
+    reopened_prim = reopened.GetPrimAtPath(path)
+    _assert(bool(reopened_prim), "reopened stage contains variant prim")
+    if not reopened_prim:
+        return
+
+    _assert_equal(
+        reopened_prim.GetVariantSet(set_name).GetVariantSelection(),
+        "B",
+        "variant selection survives USD save/reopen without session state",
+    )
+    _assert(
+        bool(reopened.GetPrimAtPath(f"{path}/StyleB")),
+        "reopened stage composes selected variant B content",
+    )
+
+
+def test_save_reload(saved_path):
+    ok = stageviz.session().save(saved_path)
+    _assert(ok, "session.save writes test stage")
+
+    reopened = Usd.Stage.Open(saved_path)
+    _assert(bool(reopened), "saved stage reopens with USD")
+    _assert(bool(reopened.GetPrimAtPath("/World")), "saved stage contains /World")
+
+
+
+def test_geometry_subsets_materials_and_commands():
+    """Exercise face partitions, subset bindings, and Stageviz namespace commands."""
+    stage = _stage()
+    mesh_path = "/World/SubsetRegressionMesh"
+    mesh = UsdGeom.Mesh.Define(stage, mesh_path)
+    mesh.CreatePointsAttr([(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)])
+    mesh.CreateFaceVertexCountsAttr([3, 3])
+    mesh.CreateFaceVertexIndicesAttr([0, 1, 2, 0, 2, 3])
+
+    family = "materialBind"
+    left = UsdGeom.Subset.CreateGeomSubset(mesh, "Left", UsdGeom.Tokens.face, [0], family)
+    right = UsdGeom.Subset.CreateGeomSubset(mesh, "Right", UsdGeom.Tokens.face, [1], family)
+    UsdGeom.Subset.SetFamilyType(mesh, family, UsdGeom.Tokens.partition)
+    _assert(bool(left and right), "two face subsets created")
+    _assert_equal(list(left.GetIndicesAttr().Get()), [0], "left subset indexes face zero")
+    _assert_equal(list(right.GetIndicesAttr().Get()), [1], "right subset indexes face one")
+    _assert_equal(len(UsdGeom.Subset.GetGeomSubsets(mesh, UsdGeom.Tokens.face, family)),
+                  2, "materialBind family contains two subsets")
+
+    red_path = "/World/SubsetRegressionRed"
+    blue_path = "/World/SubsetRegressionBlue"
+    red = UsdShade.Material.Define(stage, red_path)
+    blue = UsdShade.Material.Define(stage, blue_path)
+    UsdShade.MaterialBindingAPI.Apply(left.GetPrim()).Bind(red)
+    UsdShade.MaterialBindingAPI.Apply(right.GetPrim()).Bind(blue)
+
+    def bound(path):
+        material, _ = UsdShade.MaterialBindingAPI(_prim(path)).ComputeBoundMaterial()
+        return str(material.GetPath()) if material else ""
+
+    left_path = mesh_path + "/Left"
+    right_path = mesh_path + "/Right"
+    _assert_equal(bound(left_path), red_path, "left subset resolves its material")
+    _assert_equal(bound(right_path), blue_path, "right subset resolves its material")
+
+    if _has_command("bind_material"):
+        stageviz.command.bind_material([left_path], blue_path)
+        _assert(_wait_until(lambda: bound(left_path) == blue_path),
+                "Stageviz bind_material accepts a subset prim")
+        if _undo():
+            _assert(_wait_until(lambda: bound(left_path) == red_path),
+                    "undo restores subset material")
+        if _redo():
+            _assert(_wait_until(lambda: bound(left_path) == blue_path),
+                    "redo restores subset material")
+
+    if _has_command("rename_path"):
+        stageviz.command.rename_path(mesh_path, "SubsetRegressionRenamed")
+        renamed = "/World/SubsetRegressionRenamed"
+        _assert(_wait_until(lambda: _exists(renamed + "/Left")),
+                "mesh rename retains subset children")
+        _assert_equal(bound(renamed + "/Right"), blue_path,
+                      "mesh rename retains subset material binding")
+        if _undo():
+            _assert(_wait_until(lambda: _exists(right_path)),
+                    "undo mesh rename restores subset path")
+
+    # Check the authored face-index topology independently of rendering.
+    current_mesh = UsdGeom.Mesh(_prim(mesh_path) or _prim("/World/SubsetRegressionRenamed"))
+    _assert_equal(list(current_mesh.GetFaceVertexCountsAttr().Get()), [3, 3],
+                  "mesh remains two triangles")
+
+
+def run():
+    _FAILURES.clear()
+    _PERF_RESULTS.clear()
+    _PERF_FIXTURE_RELOADS.clear()
+    _PERF_FAILURES.clear()
+    _PERF_WARNINGS.clear()
+
+    suite_start = time.perf_counter()
+    baseline = _load_performance_baseline()
+
+    fixture_start = time.perf_counter()
+    root, main_path, merge_source, saved_path, external = create_fixture()
+    fixture_create = time.perf_counter() - fixture_start
+
+    print(f"Stageviz command test root: {root}")
+    print(f"Performance baseline: {_PERF_BASELINE_PATH}")
+
+    if _PERF_ENABLED:
+        if _PERF_BASELINE_RESET:
+            print("Performance baseline reset requested.")
+        elif baseline is None:
+            print("No performance baseline found; this successful run will create one.")
+        else:
+            print("Performance regression comparison enabled.")
+
+    _disable_preserve_state()
+
+    tests = [
+        ("command API", test_command_api, ()),
+        ("session edit layer API", test_session_edit_layer_api, ()),
+        ("property edit uses selected sublayer", test_property_edit_uses_selected_sublayer, ()),
+        ("select paths", test_select_paths, ()),
+        ("native instance proxy selection", test_instance_proxy_selection, ()),
+        ("select all and invert", test_select_all_and_invert, ()),
+        ("isolate paths", test_isolate_paths, ()),
+        ("show/hide paths", test_show_hide_paths, ()),
+        ("new prim", test_new_prim, ()),
+        ("new typed prim", test_new_typed_prim, ()),
+        ("new prim unique name", test_new_prim_unique_name, ()),
+        ("new scope", test_new_scope, ()),
+        ("new material", test_new_material, ()),
+        ("bind material", test_bind_material, ()),
+        ("material shader commands", test_material_shader_commands, ()),
+        ("material binding hierarchy", test_material_binding_hierarchy, ()),
+        ("geometry subsets and materials", test_geometry_subsets_materials_and_commands, ()),
+        ("new reference", test_new_reference, (external,)),
+        ("new reference default prim", test_new_reference_default_prim, (external,)),
+        ("new payload", test_new_payload, (external,)),
+        ("new payload default prim", test_new_payload_default_prim, (external,)),
+        ("duplicate paths", test_duplicate_paths, ()),
+        ("duplicate composed payload prim", test_duplicate_composed_payload_prim, ()),
+        ("new/rename/move/delete", test_new_rename_move_delete, ()),
+        ("new_xform root parent", test_new_xform_root_parent, ()),
+        ("new_xform unique name", test_new_xform_unique_name, ()),
+        ("new_xform wraps multiple selection", test_new_xform_wraps_multiple_selection, ()),
+        ("new_xform minimal root selection", test_new_xform_minimal_root_selection, ()),
+        ("rename remaps child selection and mask", test_rename_remaps_child_selection_and_mask, ()),
+        ("rename noop is safe", test_rename_noop_is_safe, ()),
+        ("move selection/mask and insert order", test_move_selection_mask_and_insert_order, ()),
+        ("move preserve world transform", test_move_preserve_world_transform, ()),
+        ("move preserve world transform keeps pivot stack", test_move_preserve_world_transform_keeps_pivot_stack, ()),
+        ("float pivot precision survives edit and world transform", test_float_pivot_precision_survives_edit_and_world_transform, ()),
+        ("move multiple siblings", test_move_multiple_siblings, ()),
+        ("move rejects self parenting", test_move_rejects_self_parenting, ()),
+        ("move rejects destination collision/no-op", test_move_rejects_destination_collision, ()),
+        ("delete selection/mask and default prim", test_delete_removes_selection_mask_and_restores_default_prim, ()),
+        ("delete default prim and undo", test_delete_default_prim_and_undo, ()),
+        ("default prim validation", test_default_prim_validation, ()),
+        ("stage up", test_stage_up, ()),
+        ("variant selection", test_variant_selection, ()),
+        ("variant selection uses selected edit layer", test_variant_selection_uses_selected_edit_layer, ()),
+        ("payload load/unload", test_payload_load_unload, ()),
+        ("payload variant load command", test_payload_variant_load_command, ()),
+        ("payload variant multi-target command", test_payload_variant_multi_target_command, ()),
+        ("payload variant session state", test_payload_variant_session_state, (root,)),
+        ("payload load rules session state", test_payload_load_rules_session_state, (root,)),
+        ("load neighbor payloads", test_load_neighbor_payloads, ()),
+        ("load neighbor payloads raw source", test_load_neighbor_payloads_raw_source, ()),
+        ("select payload", test_select_payload, ()),
+        ("select layer", test_select_layer, ()),
+        ("invert in payload", test_select_invert_in_payload, ()),
+        ("invert in layer", test_select_invert_in_layer, ()),
+        ("root prim order", test_root_prim_order_create_move_and_undo, ()),
+        ("root layer policy", test_root_layer_policy_rejects_sublayer_prim, ()),
+        ("composition boundary", test_composition_boundary_rejects_namespace_edit, ()),
+        ("transactional multi move", test_multi_move_is_transactional_on_collision, ()),
+        ("composed visibility override", test_composed_visibility_override_and_undo, ()),
+        ("reset overrides", test_reset_overrides, ()),
+        ("reset overrides root-owned policy", test_reset_overrides_ignores_root_owned_prim, ()),
+        ("reset attribute override", test_reset_attribute_override, ()),
+        ("reset attribute overrides batch", test_reset_attribute_overrides_batch, ()),
+        ("reset attribute override root-owned policy", test_reset_attribute_override_ignores_root_owned_prim, ()),
+        ("attribute lifecycle commands", test_attribute_lifecycle_commands, ()),
+        ("attribute multi-selection commands", test_attribute_multi_selection_commands, ()),
+        ("center pivots command roundtrip", test_center_pivots_command_roundtrip, ()),
+        ("attribute value commands", test_attribute_value_commands, ()),
+        ("pivot attribute edit preserves local transform", test_pivot_attribute_edit_preserves_local_transform, ()),
+        ("reset pivots removes attribute", test_reset_pivots_removes_attribute_and_preserves_transform, ()),
+        ("identity transforms removes existing ops", test_identity_transforms_removes_existing_ops, ()),
+        ("reset transforms removes existing ops", test_reset_transforms_removes_existing_ops, ()),
+        ("identity transforms exposes weaker transform", test_identity_transforms_exposes_weaker_transform, ()),
+        ("move non-xformable prim", test_move_non_xformable_prim, ()),
+        ("move preserve complex transform", test_move_preserve_complex_world_transform, ()),
+        ("stage load resets edit layer", test_stage_load_resets_edit_layer, (main_path,)),
+        ("failed load recovery", test_failed_load_leaves_valid_stage, ()),
+        ("move payload root", test_move_payload_root_is_allowed, ()),
+        ("move reference root", test_move_reference_root_is_allowed, ()),
+        ("new_xform wraps payload roots", test_new_xform_wraps_payload_roots, ()),
+        ("payload descendant namespace policy", test_payload_descendant_rejects_namespace_edit, ()),
+        ("merge into stage", test_merge_into_stage, (merge_source,)),
+        ("merge flattened", test_merge_flattened, (merge_source,)),
+        ("merge sublayer", test_merge_sublayer, (merge_source,)),
+        ("merge reference", test_merge_reference, (merge_source,)),
+        ("merge payload", test_merge_payload, (merge_source,)),
+        ("variant selection save/reopen", test_variant_selection_save_reload, (saved_path,)),
+        ("save/reopen", test_save_reload, (saved_path,)),
+    ]
+
+    for label, func, args in tests:
+        reload_start = time.perf_counter()
+        reload_fixture(main_path)
+        reload_elapsed = time.perf_counter() - reload_start
+        _PERF_FIXTURE_RELOADS.append(reload_elapsed)
+        print(f"[TIME] fixture reload: {reload_elapsed:.4f}s")
+
+        _run(label, func, args)
+
+    suite_total = time.perf_counter() - suite_start
+    fixture_reload_median = (
+        statistics.median(_PERF_FIXTURE_RELOADS)
+        if _PERF_FIXTURE_RELOADS
+        else 0.0
+    )
+
+    functional_passed = not _FAILURES
+
+    print("\n=== Stageviz command test summary ===")
+    if _FAILURES:
+        print(f"FAILED: {len(_FAILURES)} failure(s)")
+        for failure in _FAILURES:
+            print(f" - {failure}")
+    else:
+        print("PASSED")
+
+    performance_passed = _print_performance_summary(
+        baseline,
+        fixture_create,
+        fixture_reload_median,
+        suite_total,
+        functional_passed,
+    )
+
+    print("\n=== Stageviz final result ===")
+
+    if not functional_passed:
+        print("FAILED: functional regression(s) detected")
+        return False
+
+    if not performance_passed:
+        print("FAILED: performance regression(s) detected")
+        return False
+
+    if _PERF_WARNINGS:
+        print("PASSED WITH PERFORMANCE WARNINGS")
+    else:
+        print("PASSED")
+
+    return True
+
+
+if __name__ == "__main__":
+    try:
+        run()
+    except BaseException:
+        print("\n=== UNHANDLED PYTHON EXCEPTION ===", file=sys.stderr)
+        traceback.print_exc(file=sys.stderr)
+        raise
+    finally:
+        _stop_release_log()

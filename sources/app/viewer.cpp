@@ -1,0 +1,3315 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2025 - present Mikael Sundell
+// https\://github.com/mikaelsundell/stageviz
+
+#include "viewer.h"
+#include "application.h"
+#include "command.h"
+#include "commandstack.h"
+#include "consoledialog.h"
+#include "githubclient.h"
+#include "imagingglwidget.h"
+#include "materialdialog.h"
+#include "messagedialog.h"
+#include "mouseevent.h"
+#include "notice.h"
+#include "os.h"
+#include "outlinerview.h"
+#include "progressdialog.h"
+#include "propertyview.h"
+#include "pythondialog.h"
+#include "pythonshelf.h"
+#include "qtutils.h"
+#include "renderview.h"
+#include "selectionlist.h"
+#include "session.h"
+#include "settings.h"
+#include "signalguard.h"
+#include "style.h"
+#include "tracelocks.h"
+#include "usdutils.h"
+#include "viewcamera.h"
+#include "viewstate.h"
+#include <QActionGroup>
+#include <QApplication>
+#include <QClipboard>
+#include <QColorDialog>
+#include <QDesktopServices>
+#include <QDragEnterEvent>
+#include <QEasingCurve>
+#include <QElapsedTimer>
+#include <QEvent>
+#include <QEventLoop>
+#include <QFileDialog>
+#include <QImageWriter>
+#include <QMimeData>
+#include <QObject>
+#include <QParallelAnimationGroup>
+#include <QPointer>
+#include <QPropertyAnimation>
+#include <QSettings>
+#include <QSizePolicy>
+#include <QStatusBar>
+#include <QTimer>
+#include <QToolButton>
+#include <QVBoxLayout>
+#include <pxr/usd/usdGeom/modelAPI.h>
+#include <utility>
+
+// generated files
+#include "ui_viewer.h"
+
+namespace stageviz {
+
+class ViewerPrivate : public QObject, public SignalGuard {
+    Q_OBJECT
+public:
+    ViewerPrivate();
+    void init();
+    void initDocks();
+    void initRecentFiles();
+    void initLayerMenu();
+    void initSettings();
+    bool loadFile(const QString& fileName);
+    bool mergeFile(const QString& fileName);
+    bool mergeFlattenedFile(const QString& fileName);
+    bool mergeSublayerFile(const QString& fileName);
+    bool mergeReferenceFile(const QString& fileName, const SdfPath& targetPath);
+    bool mergePayloadFile(const QString& fileName, const SdfPath& targetPath);
+    QString selectUsdFile(const QString& title);
+    SdfPath compositionTarget() const;
+    OutlinerView* outlinerView();
+    PropertyView* propertyView();
+    ProgressDialog* progressDialog();
+    PythonDialog* pythonDialog();
+    ConsoleDialog* consoleDialog();
+    MaterialDialog* materialDialog();
+    RenderView* renderView();
+    void showDialog(QDialog* window);
+    bool eventFilter(QObject* object, QEvent* event);
+    void enable(bool enable);
+    void newPrim(const TfToken& typeName);
+
+public Q_SLOTS:
+    void newFile();
+    void open();
+    void merge();
+    void mergeFlattened();
+    void mergeSublayer();
+    void mergeReference();
+    void mergePayload();
+    void save();
+    void saveAs();
+    void saveCopy();
+    void revealInFolder();
+    void preserveState();
+    void exportAll();
+    void exportSelected();
+    void exportVisible();
+    void exportImage();
+    void reload();
+    void close();
+    void saveSettings();
+    void exit();
+    void undo();
+    void redo();
+    void clear();
+    void copyImage();
+    void selectAll();
+    void selectInvert();
+    void selectParent();
+    void showSelected();
+    void showRecursive();
+    void hideSelected();
+    void hideRecursive();
+    void selectVisibleCapture();
+    void selectVisibleSelect();
+    void selectVisibleClear();
+    void stageUpY();
+    void stageUpZ();
+    void payloadLoad();
+    void payloadUnload();
+    void payloadLoadNeighbors();
+    void payloadSelect();
+    void layerSelect();
+    void payloadInvert();
+    void layerInvert();
+    void newXform();
+    void duplicateSelected();
+    void deleteSelected();
+    void isolate(bool checked);
+    void frameAll();
+    void frameSelected();
+    void resetView();
+    void select(bool checked);
+    void move(bool checked);
+    void rotate(bool checked);
+    void scale(bool checked);
+    void cameraLight(bool checked);
+    void domeLight(bool checked);
+    void domeBackground(bool checked);
+    void ambientOcclusion(bool checked);
+    void loadDomeTexture();
+    void clearDomeTexture();
+    void useDefaultDomeTexture();
+    void sceneLights(bool checked);
+    void useSceneShaders(bool checked);
+    void materialScene();
+    void materialChrome();
+    void materialGlossy();
+    void materialReflection();
+    void togglePanels();
+    void grid(bool checked);
+    void renderWireframe();
+    void renderShaded();
+    void renderClay(bool checked);
+    void complexityLow();
+    void complexityMedium();
+    void complexityHigh();
+    void complexityVeryHigh();
+    void toggleProgress(bool checked);
+    void togglePython(bool checked);
+    void toggleConsole(bool checked);
+    void openAbout();
+    void checkUpdates();
+    void openDocumentation();
+    void openPythonApiReference();
+    void openPythonDialogsReference();
+    void openAgentSkill();
+    void reportIssue();
+    void backgroundColor();
+    void updateMask(const QList<SdfPath>& paths);
+    void updatePrims(const NoticeBatch& batch);
+    void updateStage(UsdStageRefPtr stage, Session::LoadPolicy policy, Session::StageStatus status);
+    void updateEditLayer(SdfLayerHandle layer);
+    void updateAuxiliary(UsdStageRefPtr auxiliary);
+    void updateStageUp(Session::StageUp stageUp);
+    void updateSelection(const QList<SdfPath>& paths);
+    void refreshPayloadMenu();
+    void updatePreserveState(bool enabled);
+    void updateMaterialMode(ViewState::MaterialMode mode);
+    void captureReady(qint64 elapsed);
+    void renderReady(qint64 elapsed);
+    void statusMessage(const QString& message);
+    void statusReady();
+    void notifyStatusChanged(Session::Notify::Status status, const QString& message, const QString& details);
+
+public:
+    void updateToolsModal();
+    void updateToolsSuppressed(bool suppressed, bool animated = false);
+    void updateDockAction(QAction* action, bool checked);
+    void updateModified(bool modified);
+    void updateRecentFiles(const QString& filename);
+    void updateWindowTitle();
+    bool saveFile();
+    bool saveChanges();
+    void clearChanges();
+    bool hasChanges() const;
+    struct ToolWidget {
+        QPointer<QWidget> widget;
+        qreal opacity = 1.0;
+        bool enabled = true;
+        QByteArray geometry;
+    };
+    struct Data {
+        Session::LoadPolicy loadPolicy;
+        bool modified;
+        int changes;
+        quint64 statusRevision = 0;
+        QStringList arguments;
+        QStringList extensions;
+        QStringList recentFiles;
+        QList<int> panelSplitterSizes;
+        bool panelsHidden = false;
+        bool toolsSuppressed = false;
+        QList<ToolWidget> toolWidgets;
+        QScopedPointer<MouseEvent> backgroundColorFilter;
+        QScopedPointer<Ui_Viewer> ui;
+        QPointer<Viewer> viewer;
+        QPointer<OutlinerView> outlinerView;
+        QPointer<PropertyView> propertyView;
+        QPointer<PythonShelf> pythonShelf;
+        QPointer<ProgressDialog> progressDialog;
+        QPointer<PythonDialog> pythonDialog;
+        QPointer<ConsoleDialog> consoleDialog;
+        QPointer<MaterialDialog> materialDialog;
+    };
+    Data d;
+};
+
+ViewerPrivate::ViewerPrivate()
+{
+    d.loadPolicy = Session::LoadPolicy::All;
+    d.modified = false;
+    d.changes = 0;
+    d.extensions = { "usd", "usda", "usdc", "usdz" };
+}
+
+void
+ViewerPrivate::init()
+{
+    d.ui.reset(new Ui_Viewer());
+    d.ui->setupUi(d.viewer.data());
+#ifdef Q_OS_MAC
+    d.ui->fileRevealInFolder->setText("Reveal in Finder");
+#elif defined(Q_OS_WIN)
+    d.ui->fileRevealInFolder->setText("Reveal in Explorer");
+#else
+    d.ui->fileRevealInFolder->setText("Reveal in Folder");
+#endif
+    d.ui->fileRevealInFolder->setEnabled(false);
+    attach(d.ui->displayIsolate);
+    initDocks();
+    ViewState* viewState = session()->viewState();
+    const QColor backgroundColor(
+        settings()->value("backgroundColor", style()->color(Style::ColorRole::Render)).toString());
+    viewState->setBackgroundColor(backgroundColor);
+    viewState->setGridColor(style()->color(Style::ColorRole::Grid));
+    d.ui->backgroundColor->setStyleSheet("background-color: " + backgroundColor.name() + ";");
+    d.backgroundColorFilter.reset(new MouseEvent);
+    d.ui->backgroundColor->installEventFilter(d.backgroundColorFilter.data());
+    d.viewer->installEventFilter(this);
+    qApp->installEventFilter(this);
+    d.ui->fileNew->setIcon(style()->icon(Style::IconRole::New));
+    d.ui->fileOpen->setIcon(style()->icon(Style::IconRole::Open));
+    d.ui->fileExportAll->setIcon(style()->icon(Style::IconRole::Export));
+    d.ui->fileExportImage->setIcon(style()->icon(Style::IconRole::ExportImage));
+    d.ui->editUndo->setIcon(style()->icon(Style::IconRole::Undo));
+    d.ui->editRedo->setIcon(style()->icon(Style::IconRole::Redo));
+    d.ui->displayFrameAll->setIcon(style()->icon(Style::IconRole::FrameAll));
+    d.ui->displayRenderWireframe->setIcon(style()->icon(Style::IconRole::Wireframe));
+    d.ui->displayRenderShaded->setIcon(style()->icon(Style::IconRole::Shaded));
+    d.ui->displaySelect->setIcon(style()->icon(Style::IconRole::Select));
+    d.ui->displaySelect->setCheckable(true);
+    d.ui->displaySelect->setChecked(false);
+    d.ui->displayMove->setIcon(style()->icon(Style::IconRole::Move));
+    d.ui->displayMove->setCheckable(true);
+    d.ui->displayMove->setChecked(false);
+    d.ui->displayRotate->setIcon(style()->icon(Style::IconRole::Rotate));
+    d.ui->displayRotate->setCheckable(true);
+    d.ui->displayRotate->setChecked(false);
+    d.ui->displayScale->setIcon(style()->icon(Style::IconRole::Scale));
+    d.ui->displayScale->setCheckable(true);
+    d.ui->displayScale->setChecked(false);
+    {
+        QActionGroup* actions = new QActionGroup(this);
+        actions->setExclusive(true);
+        actions->addAction(d.ui->displaySelect);
+        actions->addAction(d.ui->displayMove);
+        actions->addAction(d.ui->displayRotate);
+        actions->addAction(d.ui->displayScale);
+    }
+    // connect
+    connect(d.ui->policyAll, &QAction::triggered, this, [this]() {
+        d.loadPolicy = Session::LoadPolicy::All;
+        settings()->setValue("loadType", "all");
+    });
+    connect(d.ui->policyPayload, &QAction::triggered, this, [this]() {
+        d.loadPolicy = Session::LoadPolicy::None;
+        settings()->setValue("loadType", "payload");
+    });
+    {
+        QActionGroup* actions = new QActionGroup(this);
+        actions->setExclusive(true);
+        actions->addAction(d.ui->policyAll);
+        actions->addAction(d.ui->policyPayload);
+    }
+    connect(d.ui->fileNew, &QAction::triggered, this, &ViewerPrivate::newFile);
+    connect(d.ui->fileOpen, &QAction::triggered, this, &ViewerPrivate::open);
+    connect(d.ui->fileMergeStage, &QAction::triggered, this, &ViewerPrivate::merge);
+    connect(d.ui->fileMergeFlattened, &QAction::triggered, this, &ViewerPrivate::mergeFlattened);
+    connect(d.ui->fileMergeSublayer, &QAction::triggered, this, &ViewerPrivate::mergeSublayer);
+    connect(d.ui->fileMergeReference, &QAction::triggered, this, &ViewerPrivate::mergeReference);
+    connect(d.ui->fileMergePayload, &QAction::triggered, this, &ViewerPrivate::mergePayload);
+    connect(d.ui->fileLayer, &QMenu::aboutToShow, this, &ViewerPrivate::initLayerMenu);
+    connect(d.ui->menuPayloads, &QMenu::aboutToShow, this, &ViewerPrivate::refreshPayloadMenu);
+    connect(d.ui->fileSave, &QAction::triggered, this, &ViewerPrivate::save);
+    connect(d.ui->fileSaveAs, &QAction::triggered, this, &ViewerPrivate::saveAs);
+    connect(d.ui->fileSaveCopy, &QAction::triggered, this, &ViewerPrivate::saveCopy);
+    connect(d.ui->fileRevealInFolder, &QAction::triggered, this, &ViewerPrivate::revealInFolder);
+    connect(d.ui->filePreserveState, &QAction::triggered, this, &ViewerPrivate::preserveState);
+    connect(d.ui->fileExportAll, &QAction::triggered, this, &ViewerPrivate::exportAll);
+    connect(d.ui->fileExportSelected, &QAction::triggered, this, &ViewerPrivate::exportSelected);
+    connect(d.ui->fileExportVisible, &QAction::triggered, this, &ViewerPrivate::exportVisible);
+    connect(d.ui->fileExportImage, &QAction::triggered, this, &ViewerPrivate::exportImage);
+    connect(d.ui->fileReload, &QAction::triggered, this, &ViewerPrivate::reload);
+    connect(d.ui->fileClose, &QAction::triggered, this, &ViewerPrivate::close);
+    connect(d.ui->fileSaveSettings, &QAction::triggered, this, &ViewerPrivate::saveSettings);
+    connect(d.ui->fileExit, &QAction::triggered, this, &ViewerPrivate::exit);
+    connect(d.ui->editUndo, &QAction::triggered, this, &ViewerPrivate::undo);
+    connect(d.ui->editRedo, &QAction::triggered, this, &ViewerPrivate::redo);
+    connect(d.ui->editClear, &QAction::triggered, this, &ViewerPrivate::clear);
+    connect(d.ui->editCopyImage, &QAction::triggered, this, &ViewerPrivate::copyImage);
+    connect(d.ui->editSelectAll, &QAction::triggered, this, &ViewerPrivate::selectAll);
+    connect(d.ui->editSelectInvert, &QAction::triggered, this, &ViewerPrivate::selectInvert);
+    connect(d.ui->editSelectParent, &QAction::triggered, this, &ViewerPrivate::selectParent);
+    connect(d.ui->editSelectVisibleCapture, &QAction::triggered, this, &ViewerPrivate::selectVisibleCapture);
+    connect(d.ui->editSelectVisibleClear, &QAction::triggered, this, &ViewerPrivate::selectVisibleClear);
+    connect(d.ui->editSelectVisibleSelect, &QAction::triggered, this, &ViewerPrivate::selectVisibleSelect);
+    connect(d.ui->editShowSelected, &QAction::triggered, this, &ViewerPrivate::showSelected);
+    connect(d.ui->editShowRecursive, &QAction::triggered, this, &ViewerPrivate::showRecursive);
+    connect(d.ui->editHideSelected, &QAction::triggered, this, &ViewerPrivate::hideSelected);
+    connect(d.ui->editHideRecursive, &QAction::triggered, this, &ViewerPrivate::hideRecursive);
+    connect(d.ui->editStageUpY, &QAction::triggered, this, &ViewerPrivate::stageUpY);
+    connect(d.ui->editStageUpZ, &QAction::triggered, this, &ViewerPrivate::stageUpZ);
+    {
+        QActionGroup* actions = new QActionGroup(this);
+        actions->setExclusive(true);
+        actions->addAction(d.ui->editStageUpY);
+        actions->addAction(d.ui->editStageUpZ);
+    }
+    connect(d.ui->editPayloadLoad, &QAction::triggered, this, &ViewerPrivate::payloadLoad);
+    connect(d.ui->editPayloadUnload, &QAction::triggered, this, &ViewerPrivate::payloadUnload);
+    connect(d.ui->editPayloadLoadNeighbors, &QAction::triggered, this, &ViewerPrivate::payloadLoadNeighbors);
+    connect(d.ui->editPayloadSelect, &QAction::triggered, this, &ViewerPrivate::payloadSelect);
+    connect(d.ui->editLayerSelect, &QAction::triggered, this, &ViewerPrivate::layerSelect);
+    connect(d.ui->editPayloadInvert, &QAction::triggered, this, &ViewerPrivate::payloadInvert);
+    connect(d.ui->editLayerInvert, &QAction::triggered, this, &ViewerPrivate::layerInvert);
+    connect(d.ui->createXform, &QAction::triggered, this, &ViewerPrivate::newXform);
+    connect(d.ui->createScope, &QAction::triggered, this, [this]() { newPrim(TfToken("Scope")); });
+    connect(d.ui->createMesh, &QAction::triggered, this, [this]() { newPrim(TfToken("Mesh")); });
+    connect(d.ui->createPoints, &QAction::triggered, this, [this]() { newPrim(TfToken("Points")); });
+    connect(d.ui->createBasisCurves, &QAction::triggered, this, [this]() { newPrim(TfToken("BasisCurves")); });
+    connect(d.ui->createNurbsCurves, &QAction::triggered, this, [this]() { newPrim(TfToken("NurbsCurves")); });
+    connect(d.ui->createNurbsPatch, &QAction::triggered, this, [this]() { newPrim(TfToken("NurbsPatch")); });
+    connect(d.ui->createPointInstancer, &QAction::triggered, this, [this]() { newPrim(TfToken("PointInstancer")); });
+    connect(d.ui->createCube, &QAction::triggered, this, [this]() { newPrim(TfToken("Cube")); });
+    connect(d.ui->createSphere, &QAction::triggered, this, [this]() { newPrim(TfToken("Sphere")); });
+    connect(d.ui->createCylinder, &QAction::triggered, this, [this]() { newPrim(TfToken("Cylinder")); });
+    connect(d.ui->createCone, &QAction::triggered, this, [this]() { newPrim(TfToken("Cone")); });
+    connect(d.ui->createCapsule, &QAction::triggered, this, [this]() { newPrim(TfToken("Capsule")); });
+    connect(d.ui->createPlane, &QAction::triggered, this, [this]() { newPrim(TfToken("Plane")); });
+    connect(d.ui->editDuplicateSelected, &QAction::triggered, this, &ViewerPrivate::duplicateSelected);
+    connect(d.ui->editDeleteSelected, &QAction::triggered, this, &ViewerPrivate::deleteSelected);
+    connect(d.ui->displayIsolate, &QAction::toggled, this, &ViewerPrivate::isolate);
+    connect(d.ui->displayCameraLight, &QAction::toggled, this, &ViewerPrivate::cameraLight);
+    connect(d.ui->displayDomeLight, &QAction::toggled, this, &ViewerPrivate::domeLight);
+    connect(d.ui->displayDomeBackground, &QAction::toggled, this, &ViewerPrivate::domeBackground);
+    connect(d.ui->displayAmbientOcclusion, &QAction::toggled, this, &ViewerPrivate::ambientOcclusion);
+    connect(d.ui->lightLoadDomeTexture, &QAction::triggered, this, &ViewerPrivate::loadDomeTexture);
+    connect(d.ui->lightClearDomeTexture, &QAction::triggered, this, &ViewerPrivate::clearDomeTexture);
+    connect(d.ui->lightUseDefaultDomeTexture, &QAction::triggered, this, &ViewerPrivate::useDefaultDomeTexture);
+    connect(d.ui->displaySceneLights, &QAction::toggled, this, &ViewerPrivate::sceneLights);
+    connect(d.ui->useSceneShaders, &QAction::toggled, this, &ViewerPrivate::useSceneShaders);
+    connect(d.ui->materialEditor, &QAction::triggered, this, [this]() {
+        if (!d.materialDialog)
+            return;
+
+        if (!d.materialDialog->isVisible() || d.materialDialog->isMinimized() || !d.materialDialog->isActiveWindow())
+            showDialog(d.materialDialog);
+        else
+            d.materialDialog->hide();
+    });
+    connect(d.ui->materialScene, &QAction::triggered, this, &ViewerPrivate::materialScene);
+    connect(d.ui->materialChrome, &QAction::triggered, this, &ViewerPrivate::materialChrome);
+    connect(d.ui->materialGlossy, &QAction::triggered, this, &ViewerPrivate::materialGlossy);
+    connect(d.ui->materialReflection, &QAction::triggered, this, &ViewerPrivate::materialReflection);
+    connect(d.ui->viewTogglePanels, &QAction::triggered, this, &ViewerPrivate::togglePanels);
+    connect(d.ui->displayGrid, &QAction::toggled, this, &ViewerPrivate::grid);
+    connect(d.ui->displayRenderShaded, &QAction::triggered, this, &ViewerPrivate::renderShaded);
+    connect(d.ui->displayRenderWireframe, &QAction::triggered, this, &ViewerPrivate::renderWireframe);
+    connect(d.ui->displayRenderClay, &QAction::toggled, this, &ViewerPrivate::renderClay);
+    {
+        QActionGroup* actions = new QActionGroup(this);
+        actions->setExclusive(true);
+        actions->addAction(d.ui->displayRenderShaded);
+        actions->addAction(d.ui->displayRenderWireframe);
+    }
+    {
+        QActionGroup* actions = new QActionGroup(this);
+        actions->setExclusive(true);
+        actions->addAction(d.ui->materialScene);
+        actions->addAction(d.ui->displayRenderClay);
+        actions->addAction(d.ui->materialChrome);
+        actions->addAction(d.ui->materialGlossy);
+        actions->addAction(d.ui->materialReflection);
+    }
+    connect(d.ui->displayComplexityLow, &QAction::triggered, this, &ViewerPrivate::complexityLow);
+    connect(d.ui->displayComplexityMedium, &QAction::triggered, this, &ViewerPrivate::complexityMedium);
+    connect(d.ui->displayComplexityHigh, &QAction::triggered, this, &ViewerPrivate::complexityHigh);
+    connect(d.ui->displayComplexityVeryHigh, &QAction::triggered, this, &ViewerPrivate::complexityVeryHigh);
+    {
+        QActionGroup* actions = new QActionGroup(this);
+        actions->setExclusive(true);
+        actions->addAction(d.ui->displayComplexityLow);
+        actions->addAction(d.ui->displayComplexityMedium);
+        actions->addAction(d.ui->displayComplexityHigh);
+        actions->addAction(d.ui->displayComplexityVeryHigh);
+    }
+    {
+        QActionGroup* actions = new QActionGroup(this);
+        actions->setExclusive(true);
+        actions->addAction(d.ui->displayCameraPerspective);
+        actions->addAction(d.ui->displayCameraTop);
+        actions->addAction(d.ui->displayCameraFront);
+        actions->addAction(d.ui->displayCameraSide);
+        d.ui->displayCameraPerspective->setChecked(true);
+        auto cameraView = [this](ViewCamera::CameraView preset) {
+            if (session() && session()->viewState() && session()->viewState()->camera())
+                session()->viewState()->camera()->setCameraView(preset);
+        };
+        connect(d.ui->displayCameraPerspective, &QAction::triggered, this,
+                [cameraView]() { cameraView(ViewCamera::PerspectiveView); });
+        connect(d.ui->displayCameraTop, &QAction::triggered, this, [cameraView]() { cameraView(ViewCamera::TopView); });
+        connect(d.ui->displayCameraFront, &QAction::triggered, this,
+                [cameraView]() { cameraView(ViewCamera::FrontView); });
+        connect(d.ui->displayCameraSide, &QAction::triggered, this,
+                [cameraView]() { cameraView(ViewCamera::SideView); });
+    }
+    connect(d.ui->displayFrameAll, &QAction::triggered, this, &ViewerPrivate::frameAll);
+    connect(d.ui->displayFrameSelected, &QAction::triggered, this, &ViewerPrivate::frameSelected);
+    connect(d.ui->displayResetView, &QAction::triggered, this, &ViewerPrivate::resetView);
+    connect(d.ui->displaySelect, &QAction::toggled, this, &ViewerPrivate::select);
+    connect(d.ui->displayMove, &QAction::toggled, this, &ViewerPrivate::move);
+    connect(d.ui->displayRotate, &QAction::toggled, this, &ViewerPrivate::rotate);
+    connect(d.ui->displayScale, &QAction::toggled, this, &ViewerPrivate::scale);
+    connect(d.ui->helpAbout, &QAction::triggered, this, &ViewerPrivate::openAbout);
+    connect(d.ui->helpCheckUpdates, &QAction::triggered, this, &ViewerPrivate::checkUpdates);
+    connect(d.ui->helpDocumentation, &QAction::triggered, this, &ViewerPrivate::openDocumentation);
+    connect(d.ui->helpPythonApiReference, &QAction::triggered, this, &ViewerPrivate::openPythonApiReference);
+    connect(d.ui->helpPythonDialogReference, &QAction::triggered, this, &ViewerPrivate::openPythonDialogsReference);
+    connect(d.ui->helpAgentSkill, &QAction::triggered, this, &ViewerPrivate::openAgentSkill);
+    connect(d.ui->helpReportIssue, &QAction::triggered, this, &ViewerPrivate::reportIssue);
+    {
+        d.ui->newStage->setDefaultAction(d.ui->fileNew);
+        d.ui->open->setDefaultAction(d.ui->fileOpen);
+        d.ui->exportImage->setDefaultAction(d.ui->fileExportImage);
+        d.ui->exportAll->setDefaultAction(d.ui->fileExportAll);
+        d.ui->frameAll->setDefaultAction(d.ui->displayFrameAll);
+        d.ui->redo->setDefaultAction(d.ui->editRedo);
+        d.ui->undo->setDefaultAction(d.ui->editUndo);
+        d.ui->wireframe->setDefaultAction(d.ui->displayRenderWireframe);
+        d.ui->shaded->setDefaultAction(d.ui->displayRenderShaded);
+        d.ui->select->setDefaultAction(d.ui->displaySelect);
+        d.ui->move->setDefaultAction(d.ui->displayMove);
+        d.ui->rotate->setDefaultAction(d.ui->displayRotate);
+        d.ui->scale->setDefaultAction(d.ui->displayScale);
+    }
+    connect(d.backgroundColorFilter.data(), &MouseEvent::pressed, this, &ViewerPrivate::backgroundColor);
+    connect(session(), &Session::maskChanged, this, &ViewerPrivate::updateMask);
+    connect(session(), &Session::primsChanged, this, &ViewerPrivate::updatePrims);
+    connect(session(), &Session::stageChanged, this, &ViewerPrivate::updateStage);
+    connect(session(), &Session::editLayerChanged, this, &ViewerPrivate::updateEditLayer);
+    connect(session(), &Session::auxiliaryChanged, this, &ViewerPrivate::updateAuxiliary);
+    connect(session(), &Session::stageUpChanged, this, &ViewerPrivate::updateStageUp);
+    connect(session(), &Session::preserveStateChanged, this, &ViewerPrivate::updatePreserveState);
+    connect(session(), &Session::notifyStatusChanged, this, &ViewerPrivate::notifyStatusChanged);
+    connect(renderView(), &RenderView::captureReady, this, &ViewerPrivate::captureReady);
+    connect(renderView(), &RenderView::renderReady, this, &ViewerPrivate::renderReady);
+    connect(renderView(), &RenderView::statusMessage, this, &ViewerPrivate::statusMessage);
+    connect(renderView(), &RenderView::statusReady, this, &ViewerPrivate::statusReady);
+    connect(session()->selectionList(), &SelectionList::selectionChanged, this, &ViewerPrivate::updateSelection);
+    connect(session()->commandStack(), &CommandStack::canUndoChanged, d.ui->editUndo, &QAction::setEnabled);
+    connect(session()->commandStack(), &CommandStack::canRedoChanged, d.ui->editRedo, &QAction::setEnabled);
+    connect(session()->commandStack(), &CommandStack::canClearChanged, d.ui->editClear, &QAction::setEnabled);
+    connect(d.ui->hudSceneStats, &QAction::toggled, viewState, &ViewState::setSceneStatsEnabled);
+    connect(d.ui->hudPerformanceStats, &QAction::toggled, viewState, &ViewState::setPerformanceStatsEnabled);
+    connect(d.ui->hudCameraAxis, &QAction::toggled, viewState, &ViewState::setCameraAxisEnabled);
+    connect(d.ui->viewProgress, &QAction::triggered, this, [this]() {
+        if (!d.progressDialog)
+            return;
+
+        if (!d.progressDialog->isVisible() || d.progressDialog->isMinimized() || !d.progressDialog->isActiveWindow()) {
+            showDialog(d.progressDialog);
+        }
+        else {
+            d.progressDialog->hide();
+        }
+    });
+    connect(d.ui->viewPython, &QAction::triggered, this, [this]() {
+        if (!d.pythonDialog)
+            return;
+
+        if (!d.pythonDialog->isVisible() || d.pythonDialog->isMinimized() || !d.pythonDialog->isActiveWindow()) {
+            showDialog(d.pythonDialog);
+        }
+        else {
+            d.pythonDialog->hide();
+        }
+    });
+    connect(d.ui->viewConsole, &QAction::triggered, this, [this]() {
+        if (!d.consoleDialog)
+            return;
+
+        if (!d.consoleDialog->isVisible() || d.consoleDialog->isMinimized() || !d.consoleDialog->isActiveWindow()) {
+            showDialog(d.consoleDialog);
+        }
+        else {
+            d.consoleDialog->hide();
+        }
+    });
+    connect(viewState->camera(), &ViewCamera::cameraChanged, this, [this](const GfCamera&) {
+        const auto view = session()->viewState()->camera()->cameraView();
+        d.ui->displayCameraPerspective->setChecked(view == ViewCamera::PerspectiveView);
+        d.ui->displayCameraTop->setChecked(view == ViewCamera::TopView);
+        d.ui->displayCameraFront->setChecked(view == ViewCamera::FrontView);
+        d.ui->displayCameraSide->setChecked(view == ViewCamera::SideView);
+    });
+    connect(viewState, &ViewState::materialModeChanged, this, &ViewerPrivate::updateMaterialMode);
+    connect(viewState, &ViewState::overrideMaterialChanged, this,
+            [this](const SdfPath&) { updateMaterialMode(session()->viewState()->materialMode()); });
+    connect(viewState, &ViewState::backgroundColorChanged, this, [this](const QColor& color) {
+        d.ui->backgroundColor->setStyleSheet("background-color: " + color.name() + ";");
+    });
+    connect(viewState, &ViewState::defaultCameraLightEnabledChanged, this,
+            [this](bool enabled) { updateDockAction(d.ui->displayCameraLight, enabled); });
+    connect(viewState, &ViewState::defaultDomeLightEnabledChanged, this, [this](bool enabled) {
+        updateDockAction(d.ui->displayDomeLight, enabled);
+        const ViewState* state = session()->viewState();
+        updateDockAction(d.ui->lightUseDefaultDomeTexture, enabled && state && state->domeLightTexture().isEmpty());
+    });
+    connect(viewState, &ViewState::domeLightCameraVisibilityChanged, this,
+            [this](bool visible) { updateDockAction(d.ui->displayDomeBackground, visible); });
+    connect(viewState, &ViewState::ambientOcclusionEnabledChanged, this,
+            [this](bool enabled) { updateDockAction(d.ui->displayAmbientOcclusion, enabled); });
+    connect(viewState, &ViewState::domeLightTextureChanged, this, [this](const QString& filename) {
+        d.ui->lightClearDomeTexture->setEnabled(!filename.isEmpty());
+        const ViewState* state = session()->viewState();
+        updateDockAction(d.ui->lightUseDefaultDomeTexture,
+                         filename.isEmpty() && state && state->defaultDomeLightEnabled());
+    });
+    connect(viewState, &ViewState::sceneLightsEnabledChanged, this,
+            [this](bool enabled) { updateDockAction(d.ui->displaySceneLights, enabled); });
+    connect(viewState, &ViewState::sceneMaterialsEnabledChanged, this,
+            [this](bool enabled) { updateDockAction(d.ui->useSceneShaders, enabled); });
+    connect(viewState, &ViewState::gridEnabledChanged, this,
+            [this](bool enabled) { updateDockAction(d.ui->displayGrid, enabled); });
+    connect(viewState, &ViewState::renderModeChanged, this, [this](ViewState::RenderMode mode) {
+        updateDockAction(d.ui->displayRenderShaded, mode == ViewState::Shaded);
+        updateDockAction(d.ui->displayRenderWireframe, mode == ViewState::Wireframe);
+    });
+    connect(viewState, &ViewState::complexityLevelChanged, this, [this](ViewState::ComplexityLevel level) {
+        updateDockAction(d.ui->displayComplexityLow, level == ViewState::Low);
+        updateDockAction(d.ui->displayComplexityMedium, level == ViewState::Medium);
+        updateDockAction(d.ui->displayComplexityHigh, level == ViewState::High);
+        updateDockAction(d.ui->displayComplexityVeryHigh, level == ViewState::VeryHigh);
+    });
+    connect(viewState, &ViewState::sceneStatsEnabledChanged, this,
+            [this](bool enabled) { updateDockAction(d.ui->hudSceneStats, enabled); });
+    connect(viewState, &ViewState::performanceStatsEnabledChanged, this,
+            [this](bool enabled) { updateDockAction(d.ui->hudPerformanceStats, enabled); });
+    connect(viewState, &ViewState::cameraAxisEnabledChanged, this,
+            [this](bool enabled) { updateDockAction(d.ui->hudCameraAxis, enabled); });
+
+    updateMaterialMode(viewState->materialMode());
+    updateDockAction(d.ui->displayRenderShaded, viewState->renderMode() == ViewState::Shaded);
+    updateDockAction(d.ui->displayRenderWireframe, viewState->renderMode() == ViewState::Wireframe);
+    updateDockAction(d.ui->displayComplexityLow, viewState->complexityLevel() == ViewState::Low);
+    updateDockAction(d.ui->displayComplexityMedium, viewState->complexityLevel() == ViewState::Medium);
+    updateDockAction(d.ui->displayComplexityHigh, viewState->complexityLevel() == ViewState::High);
+    updateDockAction(d.ui->displayComplexityVeryHigh, viewState->complexityLevel() == ViewState::VeryHigh);
+    viewState->setDefaultCameraLightEnabled(d.ui->displayCameraLight->isChecked());
+    viewState->setDefaultDomeLightEnabled(d.ui->displayDomeLight->isChecked());
+    viewState->setDomeLightCameraVisibility(d.ui->displayDomeBackground->isChecked());
+    viewState->setSceneLightsEnabled(d.ui->displaySceneLights->isChecked());
+    viewState->setSceneMaterialsEnabled(d.ui->useSceneShaders->isChecked());
+    viewState->setAmbientOcclusionEnabled(settings()->value("ambientOcclusionEnabled", false).toBool());
+    updateDockAction(d.ui->displayAmbientOcclusion, viewState->ambientOcclusionEnabled());
+    d.ui->lightClearDomeTexture->setEnabled(!viewState->domeLightTexture().isEmpty());
+    updateDockAction(d.ui->lightUseDefaultDomeTexture,
+                     viewState->defaultDomeLightEnabled() && viewState->domeLightTexture().isEmpty());
+    renderView()->setFocus();
+    initSettings();
+    updateAuxiliary(session()->auxiliary());
+    newFile();
+}
+
+void
+ViewerPrivate::initDocks()
+{
+    auto addPanelView = [](QWidget* panel, QWidget* view, const QMargins& margins) {
+        auto* layout = qobject_cast<QVBoxLayout*>(panel->layout());
+        if (!layout) {
+            layout = new QVBoxLayout(panel);
+            layout->setSpacing(0);
+            layout->setContentsMargins(margins);
+        }
+        view->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+        layout->addWidget(view, 1);
+    };
+    d.outlinerView = new OutlinerView(d.ui->outlinerWidget);
+    d.outlinerView->setObjectName("outlinerView");
+    d.outlinerView->setAttribute(Qt::WA_DeleteOnClose, false);
+    addPanelView(d.ui->outlinerWidget, d.outlinerView, QMargins(0, 0, 0, 0));
+
+    d.propertyView = new PropertyView(d.ui->propertyWidget);
+    d.propertyView->setObjectName("propertyView");
+    d.propertyView->setAttribute(Qt::WA_DeleteOnClose, false);
+    addPanelView(d.ui->propertyWidget, d.propertyView, QMargins(0, 0, 0, 0));
+
+    d.pythonShelf = new PythonShelf(d.ui->pythonShelfWidget);
+    d.pythonShelf->setObjectName("pythonShelf");
+    d.pythonShelf->setAttribute(Qt::WA_DeleteOnClose, false);
+    addPanelView(d.ui->pythonShelfWidget, d.pythonShelf, QMargins(0, 0, 0, 0));
+
+    d.ui->splitter->setChildrenCollapsible(false);
+    d.ui->splitter->setCollapsible(0, true);
+    d.ui->splitter->setCollapsible(1, false);
+    d.ui->splitter->setCollapsible(2, true);
+    d.ui->splitter->setStretchFactor(0, 0);
+    d.ui->splitter->setStretchFactor(1, 1);
+    d.ui->splitter->setStretchFactor(2, 0);
+
+    const int left = 280;
+    const int right = 280;
+    const int total = d.ui->splitter->width() > 0 ? d.ui->splitter->width() : d.viewer->width();
+    const int center = std::max(400, total - left - right);
+    d.ui->splitter->setSizes({ left, center, right });
+    d.panelSplitterSizes = { left, center, right };
+    d.panelsHidden = false;
+
+    d.progressDialog = new ProgressDialog(d.viewer.data());
+    d.progressDialog->setObjectName("progressDialog");
+    d.progressDialog->setAttribute(Qt::WA_DeleteOnClose, false);
+    d.progressDialog->setWindowFlags(Qt::Tool | Qt::WindowTitleHint | Qt::WindowCloseButtonHint);
+#ifdef Q_OS_MAC
+    d.progressDialog->setAttribute(Qt::WA_MacAlwaysShowToolWindow, true);
+#endif
+    d.progressDialog->setWindowTitle("Progress");
+    d.progressDialog->installEventFilter(this);
+    d.progressDialog->hide();
+
+    d.pythonDialog = new PythonDialog(d.viewer.data());
+    d.pythonDialog->setObjectName("pythonDialog");
+    d.pythonDialog->setAttribute(Qt::WA_DeleteOnClose, false);
+    d.pythonDialog->setWindowFlags(Qt::Tool | Qt::WindowTitleHint | Qt::WindowCloseButtonHint);
+#ifdef Q_OS_MAC
+    d.pythonDialog->setAttribute(Qt::WA_MacAlwaysShowToolWindow, true);
+#endif
+    d.pythonDialog->setWindowTitle("Python");
+    d.pythonDialog->installEventFilter(this);
+    d.pythonDialog->hide();
+
+    d.materialDialog = new MaterialDialog(d.viewer.data());
+    d.materialDialog->setObjectName("materialDialog");
+    d.materialDialog->setAttribute(Qt::WA_DeleteOnClose, false);
+    d.materialDialog->setWindowFlags(Qt::Tool | Qt::WindowTitleHint | Qt::WindowCloseButtonHint);
+#ifdef Q_OS_MAC
+    d.materialDialog->setAttribute(Qt::WA_MacAlwaysShowToolWindow, true);
+#endif
+    d.materialDialog->setWindowTitle("Material Editor");
+    d.materialDialog->installEventFilter(this);
+    d.materialDialog->hide();
+
+    d.consoleDialog = new ConsoleDialog(d.viewer.data());
+    d.consoleDialog->setWindowFlags(Qt::Tool | Qt::WindowTitleHint | Qt::WindowCloseButtonHint);
+#ifdef Q_OS_MAC
+    d.consoleDialog->setAttribute(Qt::WA_MacAlwaysShowToolWindow, true);
+#endif
+    d.consoleDialog->setAttribute(Qt::WA_DeleteOnClose, false);
+    d.consoleDialog->setWindowTitle("Console");
+    d.consoleDialog->installEventFilter(this);
+    d.consoleDialog->hide();
+
+    connect(d.consoleDialog, &ConsoleDialog::visibilityChanged, this,
+            [this](bool visible) { updateDockAction(d.ui->viewConsole, visible); });
+
+    d.ui->outlinerWidget->show();
+    d.ui->propertyWidget->show();
+
+    updateDockAction(d.ui->viewProgress, false);
+    updateDockAction(d.ui->viewPython, false);
+    updateDockAction(d.ui->viewConsole, false);
+}
+
+void
+ViewerPrivate::initLayerMenu()
+{
+    QMenu* layerMenu = d.ui->fileLayer;
+    if (!layerMenu)
+        return;
+
+    layerMenu->clear();
+
+    std::vector<SdfLayerHandle> layers;
+    SdfLayerHandle editLayer;
+    SdfLayerHandle rootLayer;
+    {
+        READ_LOCKER(locker, session()->stageLock(), "stageLock");
+        const UsdStageRefPtr stage = session()->stageUnsafe();
+        if (stage) {
+            layers = stage->GetLayerStack(false);
+            editLayer = stage->GetEditTarget().GetLayer();
+            rootLayer = stage->GetRootLayer();
+        }
+    }
+
+    if (layers.empty()) {
+        QAction* emptyAction = layerMenu->addAction("No layers");
+        emptyAction->setEnabled(false);
+        return;
+    }
+
+    for (const SdfLayerHandle& layer : layers) {
+        if (!layer)
+            continue;
+
+        const QString identifier = QString::fromStdString(layer->GetIdentifier());
+        QString label = QString::fromStdString(layer->GetDisplayName());
+        if (label.isEmpty())
+            label = identifier;
+
+        if (layer == rootLayer)
+            label += QStringLiteral("        (Root)");
+
+        QAction* action = layerMenu->addAction(label);
+        action->setCheckable(true);
+        action->setChecked(layer == editLayer);
+        action->setData(identifier);
+        action->setToolTip(identifier);
+        connect(action, &QAction::triggered, this, [this, action]() {
+            if (!action->isChecked())
+                return;
+
+            const QString identifier = action->data().toString();
+            if (identifier.isEmpty())
+                return;
+
+            {
+                READ_LOCKER(locker, session()->stageLock(), "stageLock");
+                const UsdStageRefPtr stage = session()->stageUnsafe();
+                const SdfLayerHandle current = stage ? stage->GetEditTarget().GetLayer() : SdfLayerHandle();
+                if (current && QString::fromStdString(current->GetIdentifier()) == identifier)
+                    return;
+            }
+
+            session()->commandStack()->execute(new Command(stageviz::setEditLayer(identifier)));
+        });
+    }
+}
+
+void
+ViewerPrivate::initRecentFiles()
+{
+    QMenu* recentMenu = d.ui->fileRecent;
+    if (!recentMenu)
+        return;
+
+    recentMenu->clear();
+    if (d.recentFiles.isEmpty()) {
+        QAction* emptyAction = new QAction("No recent files", recentMenu);
+        emptyAction->setEnabled(false);
+        recentMenu->addAction(emptyAction);
+        return;
+    }
+
+    for (const QString& file : d.recentFiles) {
+        QString fileName = QFileInfo(file).fileName();
+        QAction* action = new QAction(fileName, recentMenu);
+        action->setToolTip(file);
+        action->setData(file);
+        connect(action, &QAction::triggered, this, [this, file]() {
+            const QFileInfo fileInfo(file);
+
+            if (!fileInfo.exists() || !fileInfo.isFile()) {
+                session()->notifyStatus(Session::Notify::Status::Error, QString("File does not exist: %1").arg(file));
+                return;
+            }
+
+            if (!d.extensions.contains(fileInfo.suffix().toLower())) {
+                session()->notifyStatus(Session::Notify::Status::Error,
+                                        QString("Unsupported file format: %1").arg(fileInfo.suffix()));
+                return;
+            }
+
+            if (!saveChanges())
+                return;
+
+            loadFile(file);
+        });
+        recentMenu->addAction(action);
+    }
+
+    recentMenu->addSeparator();
+    QAction* clearAction = new QAction("Clear", recentMenu);
+    connect(clearAction, &QAction::triggered, this, [this]() {
+        d.recentFiles.clear();
+        settings()->setValue("recentFiles", QStringList());
+        initRecentFiles();
+    });
+    recentMenu->addAction(clearAction);
+}
+
+void
+ViewerPrivate::initSettings()
+{
+    QString loadType = settings()->value("loadType", "all").toString();
+    if (loadType == "all") {
+        d.loadPolicy = Session::LoadPolicy::All;
+        d.ui->policyAll->setChecked(true);
+    }
+    else {
+        d.loadPolicy = Session::LoadPolicy::None;
+        d.ui->policyPayload->setChecked(true);
+    }
+
+    const bool preserveState = settings()->value("preserveState", true).toBool();
+    d.ui->filePreserveState->setChecked(preserveState);
+    session()->setPreserveState(preserveState);
+
+    bool sceneStats = settings()->value("sceneStats", true).toBool();
+    d.ui->hudSceneStats->setChecked(sceneStats);
+    session()->viewState()->setSceneStatsEnabled(sceneStats);
+
+    bool performanceStats = settings()->value("performanceStats", false).toBool();
+    d.ui->hudPerformanceStats->setChecked(performanceStats);
+    session()->viewState()->setPerformanceStatsEnabled(performanceStats);
+
+    bool cameraAxis = settings()->value("cameraAxis", true).toBool();
+    d.ui->hudCameraAxis->setChecked(cameraAxis);
+    session()->viewState()->setCameraAxisEnabled(cameraAxis);
+
+    const bool grid = settings()->value("grid", true).toBool();
+    d.ui->displayGrid->setChecked(grid);
+    session()->viewState()->setGridEnabled(grid);
+
+    const bool sceneShaders = settings()->value("sceneShaders", true).toBool();
+    d.ui->useSceneShaders->setChecked(sceneShaders);
+    session()->viewState()->setSceneMaterialsEnabled(sceneShaders);
+
+    d.recentFiles = settings()->value("recentFiles", QStringList()).toStringList();
+    initRecentFiles();
+
+    const QByteArray geometry = settings()->value("viewer/windowGeometry").toByteArray();
+    if (!geometry.isEmpty())
+        d.viewer->restoreGeometry(geometry);
+
+    if (d.ui->splitter) {
+        const QByteArray splitterState = settings()->value("viewer/splitterState").toByteArray();
+        if (!splitterState.isEmpty())
+            d.ui->splitter->restoreState(splitterState);
+    }
+
+    const Qt::WindowStates windowState = Qt::WindowStates(
+                                             settings()->value("viewer/windowState", int(Qt::WindowNoState)).toInt())
+                                         & ~Qt::WindowMinimized;
+
+    if (windowState != Qt::WindowNoState)
+        QTimer::singleShot(0, d.viewer, [viewer = d.viewer, windowState]() {
+            if (viewer)
+                viewer->setWindowState(windowState);
+        });
+}
+
+bool
+ViewerPrivate::loadFile(const QString& fileName)
+{
+    QFileInfo fileInfo(fileName);
+    if (!d.extensions.contains(fileInfo.suffix().toLower())) {
+        session()->notifyStatus(Session::Notify::Status::Error,
+                                QString("Unsupported file format: %1").arg(fileInfo.suffix()));
+        return false;
+    }
+
+    QElapsedTimer timer;
+    timer.start();
+
+    if (!session()->loadFromFile(fileName, d.loadPolicy)) {
+        session()->notifyStatus(Session::Notify::Status::Error, QString("Failed to load file: %1").arg(fileName));
+        return false;
+    }
+
+    const double elapsedSec = timer.elapsed() / 1000.0;
+
+    settings()->setValue("openDir", fileInfo.absolutePath());
+    session()->notifyStatus(Session::Notify::Status::Success,
+                            QString("Loaded %1 in %2 seconds").arg(fileName).arg(QString::number(elapsedSec, 'f', 2)));
+    updateWindowTitle();
+    updateRecentFiles(QFileInfo(fileName).absoluteFilePath());
+    clearChanges();
+    return true;
+}
+
+bool
+ViewerPrivate::mergeFile(const QString& fileName)
+{
+    const QFileInfo fileInfo(fileName);
+    if (!d.extensions.contains(fileInfo.suffix().toLower())) {
+        session()->notifyStatus(Session::Notify::Status::Error,
+                                QString("Unsupported file format: %1").arg(fileInfo.suffix()));
+        return false;
+    }
+
+    session()->commandStack()->execute(new Command(mergeStage(fileName)));
+    settings()->setValue("openDir", fileInfo.absolutePath());
+    return true;
+}
+
+bool
+ViewerPrivate::mergeFlattenedFile(const QString& fileName)
+{
+    const QFileInfo fileInfo(fileName);
+    if (!d.extensions.contains(fileInfo.suffix().toLower())) {
+        session()->notifyStatus(Session::Notify::Status::Error,
+                                QString("Unsupported file format: %1").arg(fileInfo.suffix()));
+        return false;
+    }
+
+    session()->commandStack()->execute(new Command(mergeFlattenedStage(fileName)));
+    settings()->setValue("openDir", fileInfo.absolutePath());
+    return true;
+}
+
+bool
+ViewerPrivate::mergeSublayerFile(const QString& fileName)
+{
+    const QFileInfo fileInfo(fileName);
+    if (!d.extensions.contains(fileInfo.suffix().toLower())) {
+        session()->notifyStatus(Session::Notify::Status::Error,
+                                QString("Unsupported file format: %1").arg(fileInfo.suffix()));
+        return false;
+    }
+
+    session()->commandStack()->execute(new Command(addSublayer(fileName)));
+    settings()->setValue("openDir", fileInfo.absolutePath());
+    return true;
+}
+
+bool
+ViewerPrivate::mergeReferenceFile(const QString& fileName, const SdfPath& targetPath)
+{
+    const QFileInfo fileInfo(fileName);
+    if (!d.extensions.contains(fileInfo.suffix().toLower())) {
+        session()->notifyStatus(Session::Notify::Status::Error,
+                                QString("Unsupported file format: %1").arg(fileInfo.suffix()));
+        return false;
+    }
+
+    session()->commandStack()->execute(new Command(addReference(fileName, targetPath)));
+    settings()->setValue("openDir", fileInfo.absolutePath());
+    return true;
+}
+
+bool
+ViewerPrivate::mergePayloadFile(const QString& fileName, const SdfPath& targetPath)
+{
+    const QFileInfo fileInfo(fileName);
+    if (!d.extensions.contains(fileInfo.suffix().toLower())) {
+        session()->notifyStatus(Session::Notify::Status::Error,
+                                QString("Unsupported file format: %1").arg(fileInfo.suffix()));
+        return false;
+    }
+
+    session()->commandStack()->execute(new Command(addPayload(fileName, targetPath)));
+    settings()->setValue("openDir", fileInfo.absolutePath());
+    return true;
+}
+
+QString
+ViewerPrivate::selectUsdFile(const QString& title)
+{
+    const QString openDir = settings()->value("openDir", QDir::homePath()).toString();
+
+    QStringList filters;
+    for (const QString& ext : d.extensions)
+        filters.append("*." + ext);
+
+    const QString filter = QString("USD Files (%1)").arg(filters.join(' '));
+    return QFileDialog::getOpenFileName(d.viewer.data(), title, openDir, filter);
+}
+
+SdfPath
+ViewerPrivate::compositionTarget() const
+{
+    const QList<SdfPath> paths = session()->selectionList()->paths();
+    if (paths.size() != 1)
+        return {};
+
+    const SdfPath path = paths.first();
+    return path.IsPropertyPath() ? path.GetPrimPath() : path;
+}
+
+OutlinerView*
+ViewerPrivate::outlinerView()
+{
+    return d.outlinerView.data();
+}
+
+PropertyView*
+ViewerPrivate::propertyView()
+{
+    return d.propertyView.data();
+}
+
+ProgressDialog*
+ViewerPrivate::progressDialog()
+{
+    return d.progressDialog.data();
+}
+
+PythonDialog*
+ViewerPrivate::pythonDialog()
+{
+    return d.pythonDialog.data();
+}
+
+ConsoleDialog*
+ViewerPrivate::consoleDialog()
+{
+    return d.consoleDialog.data();
+}
+
+MaterialDialog*
+ViewerPrivate::materialDialog()
+{
+    return d.materialDialog.data();
+}
+
+RenderView*
+ViewerPrivate::renderView()
+{
+    return d.ui->renderView;
+}
+
+void
+ViewerPrivate::showDialog(QDialog* dialog)
+{
+    if (!dialog)
+        return;
+
+    if (dialog->isMinimized())
+        dialog->showNormal();
+    else if (!dialog->isVisible())
+        dialog->show();
+
+    dialog->raise();
+    dialog->activateWindow();
+}
+
+bool
+ViewerPrivate::eventFilter(QObject* object, QEvent* event)
+{
+    if (qobject_cast<QDialog*>(object)) {
+        switch (event->type()) {
+        case QEvent::Show:
+        case QEvent::Hide:
+        case QEvent::Close: QTimer::singleShot(0, this, [this]() { updateToolsModal(); }); break;
+        default: break;
+        }
+    }
+
+    if (object == d.progressDialog) {
+        switch (event->type()) {
+        case QEvent::Show: updateDockAction(d.ui->viewProgress, true); break;
+        case QEvent::Hide: updateDockAction(d.ui->viewProgress, false); break;
+        default: break;
+        }
+    }
+    if (object == d.pythonDialog) {
+        switch (event->type()) {
+        case QEvent::Show: updateDockAction(d.ui->viewPython, true); break;
+        case QEvent::Hide: updateDockAction(d.ui->viewPython, false); break;
+        default: break;
+        }
+    }
+    if (object == d.consoleDialog) {
+        switch (event->type()) {
+        case QEvent::Show: updateDockAction(d.ui->viewConsole, true); break;
+        case QEvent::Hide: updateDockAction(d.ui->viewConsole, false); break;
+        default: break;
+        }
+    }
+    if (object == d.viewer
+        && (event->type() == QEvent::WindowStateChange || event->type() == QEvent::ActivationChange)) {
+        const Qt::WindowStates state = d.viewer->windowState();
+        if (!(state & Qt::WindowMinimized) && d.viewer->isActiveWindow()) {
+            QTimer::singleShot(0, d.viewer, [this]() {
+                if (d.toolsSuppressed || QApplication::activeModalWidget())
+                    return;
+                if (d.ui->viewProgress->isChecked() && d.progressDialog) {
+                    d.progressDialog->show();
+                    d.progressDialog->raise();
+                }
+                if (d.ui->viewPython->isChecked() && d.pythonDialog) {
+                    d.pythonDialog->show();
+                    d.pythonDialog->raise();
+                }
+                if (d.ui->viewConsole->isChecked() && d.consoleDialog) {
+                    d.consoleDialog->show();
+                    d.consoleDialog->raise();
+                }
+            });
+        }
+    }
+
+    return QObject::eventFilter(object, event);
+}
+
+void
+ViewerPrivate::enable(bool enable)
+{
+    d.ui->fileLayer->setEnabled(enable);
+
+    QList<QAction*> actions = { d.ui->fileMergeStage,
+                                d.ui->fileMergeFlattened,
+                                d.ui->fileMergeSublayer,
+                                d.ui->fileMergeReference,
+                                d.ui->fileMergePayload,
+                                d.ui->fileReload,
+                                d.ui->fileClose,
+                                d.ui->fileSave,
+                                d.ui->fileSaveAs,
+                                d.ui->fileSaveCopy,
+                                d.ui->filePreserveState,
+                                d.ui->fileExportAll,
+                                d.ui->fileExportSelected,
+                                d.ui->fileExportVisible,
+                                d.ui->fileExportImage,
+                                d.ui->editCopyImage,
+                                d.ui->editSelectAll,
+                                d.ui->editSelectParent,
+                                d.ui->editShowSelected,
+                                d.ui->editShowRecursive,
+                                d.ui->editHideSelected,
+                                d.ui->editHideRecursive,
+                                d.ui->editSelectVisibleCapture,
+                                d.ui->editSelectVisibleClear,
+                                d.ui->editSelectVisibleSelect,
+                                d.ui->editStageUpY,
+                                d.ui->editStageUpZ,
+                                d.ui->editPayloadLoad,
+                                d.ui->editPayloadUnload,
+                                d.ui->editPayloadLoadNeighbors,
+                                d.ui->editPayloadSelect,
+                                d.ui->editLayerSelect,
+                                d.ui->editPayloadInvert,
+                                d.ui->editLayerInvert,
+                                d.ui->createXform,
+                                d.ui->createScope,
+                                d.ui->createMesh,
+                                d.ui->createPoints,
+                                d.ui->createBasisCurves,
+                                d.ui->createNurbsCurves,
+                                d.ui->createNurbsPatch,
+                                d.ui->createPointInstancer,
+                                d.ui->createCube,
+                                d.ui->createSphere,
+                                d.ui->createCylinder,
+                                d.ui->createCone,
+                                d.ui->createCapsule,
+                                d.ui->createPlane,
+                                d.ui->editDuplicateSelected,
+                                d.ui->editDeleteSelected,
+                                d.ui->displayIsolate,
+                                d.ui->displayCameraLight,
+                                d.ui->displayDomeLight,
+                                d.ui->displayDomeBackground,
+                                d.ui->displayAmbientOcclusion,
+                                d.ui->lightLoadDomeTexture,
+                                d.ui->lightUseDefaultDomeTexture,
+                                d.ui->displaySceneLights,
+                                d.ui->useSceneShaders,
+                                d.ui->materialEditor,
+                                d.ui->materialScene,
+                                d.ui->materialChrome,
+                                d.ui->materialGlossy,
+                                d.ui->materialReflection,
+                                d.ui->displayGrid,
+                                d.ui->displayFrameAll,
+                                d.ui->displayFrameSelected,
+                                d.ui->displayResetView,
+                                d.ui->displaySelect,
+                                d.ui->displayMove,
+                                d.ui->displayRotate,
+                                d.ui->displayScale,
+                                d.ui->displayRenderShaded,
+                                d.ui->displayRenderWireframe,
+                                d.ui->displayRenderClay,
+                                d.ui->displayComplexityLow,
+                                d.ui->displayComplexityMedium,
+                                d.ui->displayComplexityHigh,
+                                d.ui->displayComplexityVeryHigh,
+                                d.ui->displayCameraPerspective,
+                                d.ui->displayCameraTop,
+                                d.ui->displayCameraFront,
+                                d.ui->displayCameraSide };
+    for (QAction* action : actions) {
+        if (action)
+            action->setEnabled(enable);
+    }
+
+    const ViewState* state = session()->viewState();
+    d.ui->lightClearDomeTexture->setEnabled(enable && state && !state->domeLightTexture().isEmpty());
+
+    d.ui->editShow->setEnabled(enable);
+    d.ui->editHide->setEnabled(enable);
+    d.ui->backgroundColor->setEnabled(enable);
+
+    if (enable)
+        updateSelection(session()->selectionList()->paths());
+}
+
+void
+ViewerPrivate::newFile()
+{
+    if (!saveChanges())
+        return;
+
+    session()->commandStack()->clear();
+    if (!session()->newStage(d.loadPolicy)) {
+        session()->notifyStatus(Session::Notify::Status::Error, "Failed to create new stage");
+        return;
+    }
+
+    updateWindowTitle();
+    clearChanges();
+    enable(true);
+}
+
+void
+ViewerPrivate::open()
+{
+    QString openDir = settings()->value("openDir", QDir::homePath()).toString();
+    QStringList filters;
+    for (const QString& ext : d.extensions)
+        filters.append("*." + ext);
+
+    QString filter = QString("USD Files (%1)").arg(filters.join(' '));
+    QString filename = QFileDialog::getOpenFileName(d.viewer.data(), "Open USD File", openDir, filter);
+    if (filename.isEmpty())
+        return;
+
+    const QFileInfo fileInfo(filename);
+    if (!fileInfo.exists() || !fileInfo.isFile())
+        return;
+
+    if (!d.extensions.contains(fileInfo.suffix().toLower()))
+        return;
+
+    if (!saveChanges())
+        return;
+
+    loadFile(filename);
+}
+
+void
+ViewerPrivate::merge()
+{
+    const QString filename = selectUsdFile("Merge into Stage");
+    if (!filename.isEmpty())
+        mergeFile(filename);
+}
+
+void
+ViewerPrivate::mergeFlattened()
+{
+    const QString filename = selectUsdFile("Merge Flattened");
+    if (!filename.isEmpty())
+        mergeFlattenedFile(filename);
+}
+
+void
+ViewerPrivate::mergeSublayer()
+{
+    const QString filename = selectUsdFile("Merge Sublayer");
+    if (!filename.isEmpty())
+        mergeSublayerFile(filename);
+}
+
+void
+ViewerPrivate::mergeReference()
+{
+    const SdfPath targetPath = compositionTarget();
+    if (targetPath.IsEmpty()) {
+        session()->notifyStatus(Session::Notify::Status::Warning, "Select exactly one prim before merging a reference");
+        return;
+    }
+
+    const QString filename = selectUsdFile("Merge Reference");
+    if (!filename.isEmpty())
+        mergeReferenceFile(filename, targetPath);
+}
+
+void
+ViewerPrivate::mergePayload()
+{
+    const SdfPath targetPath = compositionTarget();
+    if (targetPath.IsEmpty()) {
+        session()->notifyStatus(Session::Notify::Status::Warning, "Select exactly one prim before merging a payload");
+        return;
+    }
+
+    const QString filename = selectUsdFile("Merge Payload");
+    if (!filename.isEmpty())
+        mergePayloadFile(filename, targetPath);
+}
+
+void
+ViewerPrivate::save()
+{
+    saveFile();
+}
+
+void
+ViewerPrivate::saveAs()
+{
+    QString saveDir = settings()->value("saveDir", QDir::homePath()).toString();
+    QString currentFile = session()->filename();
+    QString defaultName;
+
+    if (!currentFile.isEmpty()) {
+        QFileInfo info(currentFile);
+        defaultName = info.fileName();
+        saveDir = info.absolutePath();
+    }
+    else {
+        defaultName = "Untitled.usd";
+    }
+
+    QStringList filters;
+    filters.reserve(d.extensions.size());
+    for (const QString& ext : d.extensions)
+        filters.append("*." + ext);
+
+    const QString filter = QString("USD Files (%1)").arg(filters.join(' '));
+    QString filename = QFileDialog::getSaveFileName(d.viewer.data(), "Save USD File As",
+                                                    QDir(saveDir).filePath(defaultName), filter);
+
+    if (filename.isEmpty())
+        return;
+
+    if (QFileInfo(filename).suffix().isEmpty())
+        filename += ".usd";
+
+    QElapsedTimer timer;
+    timer.start();
+
+    if (session()->saveToFile(filename)) {
+        const double elapsedSec = timer.elapsed() / 1000.0;
+
+        settings()->setValue("saveDir", QFileInfo(filename).absolutePath());
+        updateWindowTitle();
+        updateRecentFiles(QFileInfo(filename).absoluteFilePath());
+        clearChanges();
+        session()->notifyStatus(Session::Notify::Status::Success,
+                                QString("Saved %1 in %2 seconds").arg(filename, QString::number(elapsedSec, 'f', 2)));
+    }
+    else {
+        session()->notifyStatus(Session::Notify::Status::Error, QString("Failed to save file: %1").arg(filename));
+    }
+}
+
+void
+ViewerPrivate::saveCopy()
+{
+    QString copyDir = settings()->value("copyDir", QDir::homePath()).toString();
+    QString currentFile = session()->filename();
+    QString defaultName;
+
+    if (!currentFile.isEmpty()) {
+        QFileInfo info(currentFile);
+        defaultName = QString("%1 (Copy).%2").arg(info.completeBaseName(), info.suffix());
+        copyDir = info.absolutePath();
+    }
+    else {
+        defaultName = "Untitled.usd";
+    }
+
+    QStringList filters;
+    filters.reserve(d.extensions.size());
+    for (const QString& ext : d.extensions)
+        filters.append("*." + ext);
+
+    const QString filter = QString("USD Files (%1)").arg(filters.join(' '));
+    QString filename = QFileDialog::getSaveFileName(d.viewer.data(), "Save Copy of USD File",
+                                                    QDir(copyDir).filePath(defaultName), filter);
+
+    if (filename.isEmpty())
+        return;
+
+    if (QFileInfo(filename).suffix().isEmpty())
+        filename += ".usd";
+
+    QElapsedTimer timer;
+    timer.start();
+
+    if (session()->copyToFile(filename)) {
+        const double elapsedSec = timer.elapsed() / 1000.0;
+
+        settings()->setValue("copyDir", QFileInfo(filename).absolutePath());
+        session()->notifyStatus(
+            Session::Notify::Status::Success,
+            QString("Saved copy %1 in %2 seconds").arg(filename, QString::number(elapsedSec, 'f', 2)));
+    }
+    else {
+        session()->notifyStatus(Session::Notify::Status::Error, QString("Failed to save copy: %1").arg(filename));
+    }
+}
+
+void
+ViewerPrivate::revealInFolder()
+{
+    const QString filename = session()->filename();
+    if (filename.isEmpty())
+        return;
+
+    const QFileInfo fileInfo(filename);
+    if (!fileInfo.exists()) {
+        session()->notifyStatus(Session::Notify::Status::Error, QString("File does not exist: %1").arg(filename));
+        return;
+    }
+
+    const QString absoluteFilePath = fileInfo.absoluteFilePath();
+
+    if (!os::revealFileInFolder(absoluteFilePath)) {
+        session()->notifyStatus(Session::Notify::Status::Warning,
+                                QString("Could not reveal file in the file browser: %1").arg(absoluteFilePath));
+    }
+}
+
+void
+ViewerPrivate::preserveState()
+{
+    session()->setPreserveState(d.ui->filePreserveState->isChecked());
+}
+
+void
+ViewerPrivate::exportAll()
+{
+    QString exportDir = settings()->value("exportAllDir", QDir::homePath()).toString();
+    QString currentFile = session()->filename();
+    QString defaultName;
+
+    if (!currentFile.isEmpty()) {
+        QFileInfo info(currentFile);
+        defaultName = QString("%1 (Export all).%2").arg(info.completeBaseName(), info.suffix());
+        exportDir = info.absolutePath();
+    }
+    else {
+        defaultName = "Untitled.usd";
+    }
+
+    QStringList filters;
+    for (const QString& ext : d.extensions)
+        filters.append("*." + ext);
+
+    const QString filter = QString("USD Files (%1)").arg(filters.join(' '));
+    QString fileName = QFileDialog::getSaveFileName(d.viewer.data(), "Export All",
+                                                    QDir(exportDir).filePath(defaultName), filter);
+
+    if (fileName.isEmpty())
+        return;
+
+    if (QFileInfo(fileName).suffix().isEmpty())
+        fileName += ".usd";
+
+    QElapsedTimer timer;
+    timer.start();
+
+    if (session()->flattenToFile(fileName)) {
+        const double elapsedSec = timer.elapsed() / 1000.0;
+        settings()->setValue("exportAllDir", QFileInfo(fileName).absolutePath());
+        session()->notifyStatus(
+            Session::Notify::Status::Success,
+            QString("Exported all to %1 in %2 seconds").arg(fileName).arg(QString::number(elapsedSec, 'f', 2)));
+    }
+    else {
+        session()->notifyStatus(Session::Notify::Status::Error, QString("Failed to export all: %1").arg(fileName));
+    }
+}
+
+void
+ViewerPrivate::exportSelected()
+{
+    const QList<SdfPath> selectedPaths = session()->selectionList()->paths();
+    if (selectedPaths.isEmpty()) {
+        session()->notifyStatus(Session::Notify::Status::Error, "Export Selected: No objects selected.");
+        return;
+    }
+
+    QString exportDir = settings()->value("exportSelectedDir", QDir::homePath()).toString();
+    QString currentFile = session()->filename();
+    QString defaultName;
+
+    if (!currentFile.isEmpty()) {
+        QFileInfo info(currentFile);
+        defaultName = QString("%1 (Export selected).%2").arg(info.completeBaseName(), info.suffix());
+        exportDir = info.absolutePath();
+    }
+    else {
+        defaultName = "Untitled.usd";
+    }
+
+    QStringList filters;
+    for (const QString& ext : d.extensions)
+        filters.append("*." + ext);
+
+    const QString filter = QString("USD Files (%1)").arg(filters.join(' '));
+    QString fileName = QFileDialog::getSaveFileName(d.viewer.data(), "Export Selected",
+                                                    QDir(exportDir).filePath(defaultName), filter);
+
+    if (fileName.isEmpty())
+        return;
+
+    if (QFileInfo(fileName).suffix().isEmpty())
+        fileName += ".usd";
+
+    QElapsedTimer timer;
+    timer.start();
+
+    if (session()->flattenPathsToFile(selectedPaths, fileName)) {
+        const double elapsedSec = timer.elapsed() / 1000.0;
+        settings()->setValue("exportSelectedDir", QFileInfo(fileName).absolutePath());
+        session()->notifyStatus(
+            Session::Notify::Status::Success,
+            QString("Exported selected to %1 in %2 seconds").arg(fileName).arg(QString::number(elapsedSec, 'f', 2)));
+    }
+    else {
+        session()->notifyStatus(Session::Notify::Status::Error, QString("Failed to export selected: %1").arg(fileName));
+    }
+}
+
+void
+ViewerPrivate::exportVisible()
+{
+    QString exportDir = settings()->value("exportVisibleDir", QDir::homePath()).toString();
+    QString currentFile = session()->filename();
+    QString defaultName;
+
+    if (!currentFile.isEmpty()) {
+        QFileInfo info(currentFile);
+        defaultName = QString("%1 (Export visible).%2").arg(info.completeBaseName(), info.suffix());
+        exportDir = info.absolutePath();
+    }
+    else {
+        defaultName = "Untitled.usd";
+    }
+
+    QStringList filters;
+    for (const QString& ext : d.extensions)
+        filters.append("*." + ext);
+
+    const QString filter = QString("USD Files (%1)").arg(filters.join(' '));
+
+    QString fileName = QFileDialog::getSaveFileName(d.viewer.data(), "Export Visible",
+                                                    QDir(exportDir).filePath(defaultName), filter);
+
+    if (fileName.isEmpty())
+        return;
+
+    if (QFileInfo(fileName).suffix().isEmpty())
+        fileName += ".usd";
+
+    QList<SdfPath> visiblePaths;
+    {
+        READ_LOCKER(locker, session()->stageLock(), "stageLock");
+
+        const UsdStageRefPtr stage = session()->stageUnsafe();
+        if (!stage)
+            return;
+
+        visiblePaths = stage::visiblePaths(stage);
+    }
+
+    QElapsedTimer timer;
+    timer.start();
+
+    if (session()->flattenPathsToFile(visiblePaths, fileName)) {
+        const double elapsedSec = timer.elapsed() / 1000.0;
+        settings()->setValue("exportVisibleDir", QFileInfo(fileName).absolutePath());
+        session()->notifyStatus(
+            Session::Notify::Status::Success,
+            QString("Exported visible to %1 in %2 seconds").arg(fileName).arg(QString::number(elapsedSec, 'f', 2)));
+    }
+    else {
+        session()->notifyStatus(Session::Notify::Status::Error, QString("Failed to export visible: %1").arg(fileName));
+    }
+}
+
+void
+ViewerPrivate::exportImage()
+{
+    QString exportImageDir = settings()->value("exportImageDir", QDir::homePath()).toString();
+    QImage image = renderView()->captureImage();
+
+    QStringList filters;
+    QList<QByteArray> formats = QImageWriter::supportedImageFormats();
+    QString defaultFormat = "png";
+    filters.append("PNG Files (*.png)");
+    for (const QByteArray& format : formats) {
+        QString ext = QString(format).toLower();
+        if (ext != defaultFormat)
+            filters.append(QString("%1 Files (*.%2)").arg(ext.toUpper(), ext));
+    }
+    filters.append("All Files (*)");
+
+    QString filename = QFileDialog::getSaveFileName(d.viewer.data(), "Export Image",
+                                                    exportImageDir + "/image." + defaultFormat, filters.join(";;"));
+
+    if (filename.isEmpty())
+        return;
+
+    QString extension = QFileInfo(filename).suffix().toLower();
+    if (extension.isEmpty()) {
+        filename += "." + defaultFormat;
+        extension = defaultFormat;
+    }
+
+    if (!formats.contains(extension.toUtf8())) {
+        qWarning() << "unsupported file format: " << extension;
+        filename = QFileInfo(filename).completeBaseName() + ".png";
+        extension = defaultFormat;
+    }
+
+    if (image.save(filename, extension.toUtf8().constData()))
+        settings()->setValue("exportImageDir", QFileInfo(filename).absolutePath());
+    else
+        qWarning() << "failed to save image: " << filename;
+}
+
+void
+ViewerPrivate::reload()
+{
+    if (!session()->isLoaded())
+        return;
+    if (!saveChanges())
+        return;
+
+    QElapsedTimer timer;
+    timer.start();
+
+    if (!session()->reload()) {
+        session()->notifyStatus(Session::Notify::Status::Error, "Failed to reload stage");
+        return;
+    }
+
+    const double elapsedSec = timer.elapsed() / 1000.0;
+    session()->commandStack()->clear();
+    session()->notifyStatus(Session::Notify::Status::Success,
+                            QString("Reloaded stage in %1 seconds").arg(QString::number(elapsedSec, 'f', 2)));
+    clearChanges();
+}
+
+void
+ViewerPrivate::close()
+{
+    if (!session()->isLoaded())
+        return;
+    if (!saveChanges())
+        return;
+
+    session()->commandStack()->clear();
+    session()->close();
+    updateWindowTitle();
+    clearChanges();
+    enable(false);
+}
+
+void
+ViewerPrivate::undo()
+{
+    session()->commandStack()->undo();
+}
+
+void
+ViewerPrivate::redo()
+{
+    session()->commandStack()->redo();
+}
+
+void
+ViewerPrivate::clear()
+{
+    session()->commandStack()->clear();
+}
+
+void
+ViewerPrivate::copyImage()
+{
+    QImage image = renderView()->captureImage();
+    QClipboard* clipboard = QGuiApplication::clipboard();
+    clipboard->setImage(image);
+}
+
+void
+ViewerPrivate::selectAll()
+{
+    session()->commandStack()->execute(new Command(stageviz::selectAll()));
+}
+
+void
+ViewerPrivate::selectInvert()
+{
+    if (session()->selectionList()->paths().size())
+        session()->commandStack()->execute(new Command(stageviz::selectInvert()));
+}
+
+void
+ViewerPrivate::selectParent()
+{
+    const QList<SdfPath> paths = session()->selectionList()->paths();
+    if (paths.size() != 1)
+        return;
+
+    SdfPath parentPath;
+    {
+        READ_LOCKER(locker, session()->stageLock(), "stageLock");
+
+        const UsdStageRefPtr stage = session()->stageUnsafe();
+        if (!stage)
+            return;
+
+        const SdfPath selectedPath = paths.first().IsPropertyPath() ? paths.first().GetPrimPath() : paths.first();
+        if (selectedPath.IsEmpty() || selectedPath == SdfPath::AbsoluteRootPath())
+            return;
+
+        const UsdPrim prim = stage->GetPrimAtPath(selectedPath);
+        if (!prim)
+            return;
+
+        const UsdPrim parent = prim.GetParent();
+        if (!parent)
+            return;
+
+        parentPath = parent.GetPath();
+    }
+
+    if (!parentPath.IsEmpty())
+        session()->commandStack()->execute(new Command(selectPaths(QList<SdfPath> { parentPath })));
+}
+
+void
+ViewerPrivate::saveSettings()
+{
+    Qt::WindowStates windowState = d.viewer->windowState();
+    windowState &= ~Qt::WindowMinimized;
+    settings()->setValue("recentFiles", d.recentFiles);
+    settings()->setValue("sceneStats", d.ui->hudSceneStats->isChecked());
+    settings()->setValue("performanceStats", d.ui->hudPerformanceStats->isChecked());
+    settings()->setValue("cameraAxis", d.ui->hudCameraAxis->isChecked());
+    settings()->setValue("grid", d.ui->displayGrid->isChecked());
+    settings()->setValue("sceneShaders", d.ui->useSceneShaders->isChecked());
+    settings()->setValue("viewer/windowGeometry", d.viewer->saveGeometry());
+    settings()->setValue("viewer/windowState", int(windowState));
+
+    // Space temporarily maximizes the viewport. Do not persist that temporary
+    // collapsed state as the user's normal splitter layout.
+    if (d.ui->splitter && d.panelsHidden && d.panelSplitterSizes.size() == 3) {
+        const QList<int> hiddenSizes = d.ui->splitter->sizes();
+        d.ui->splitter->setSizes(d.panelSplitterSizes);
+        settings()->setValue("viewer/splitterState", d.ui->splitter->saveState());
+        d.ui->splitter->setSizes(hiddenSizes);
+    }
+    else if (d.ui->splitter) {
+        settings()->setValue("viewer/splitterState", d.ui->splitter->saveState());
+    }
+}
+
+void
+ViewerPrivate::exit()
+{
+    d.viewer->close();
+}
+
+void
+ViewerPrivate::showSelected()
+{
+    QList<SdfPath> paths = session()->selectionList()->paths();
+    if (paths.size())
+        session()->commandStack()->execute(new Command(showPaths(paths, false)));
+}
+
+void
+ViewerPrivate::showRecursive()
+{
+    QList<SdfPath> paths = session()->selectionList()->paths();
+    if (paths.size())
+        session()->commandStack()->execute(new Command(showPaths(paths, true)));
+}
+
+void
+ViewerPrivate::hideSelected()
+{
+    QList<SdfPath> paths = session()->selectionList()->paths();
+    if (paths.size())
+        session()->commandStack()->execute(new Command(hidePaths(paths, false)));
+}
+
+void
+ViewerPrivate::hideRecursive()
+{
+    QList<SdfPath> paths = session()->selectionList()->paths();
+    if (paths.size())
+        session()->commandStack()->execute(new Command(hidePaths(paths, true)));
+}
+
+void
+ViewerPrivate::selectVisibleCapture()
+{
+    renderView()->captureVisible();
+}
+
+void
+ViewerPrivate::selectVisibleSelect()
+{
+    QList<SdfPath> paths = renderView()->visibleCapturePaths();
+    if (paths.size())
+        session()->commandStack()->execute(new Command(selectPaths(paths)));
+}
+
+void
+ViewerPrivate::selectVisibleClear()
+{
+    renderView()->clearVisibleCapture();
+}
+
+void
+ViewerPrivate::stageUpY()
+{
+    session()->commandStack()->execute(new Command(stageUp(Session::StageUp::Y)));
+}
+
+void
+ViewerPrivate::stageUpZ()
+{
+    session()->commandStack()->execute(new Command(stageUp(Session::StageUp::Z)));
+}
+
+void
+ViewerPrivate::payloadLoad()
+{
+    const QList<SdfPath> selectedPaths = session()->selectionList()->paths();
+    if (selectedPaths.isEmpty())
+        return;
+
+    QList<SdfPath> payloadPaths;
+    {
+        READ_LOCKER(locker, session()->stageLock(), "stageLock");
+        const UsdStageRefPtr stage = session()->stageUnsafe();
+        if (!stage)
+            return;
+        payloadPaths = stage::resolvePayloadPaths(stage, selectedPaths);
+    }
+
+    if (!payloadPaths.isEmpty()) {
+        session()->commandStack()->execute(new Command(loadPayloads(payloadPaths)));
+        updateSelection(session()->selectionList()->paths());
+    }
+}
+
+void
+ViewerPrivate::payloadUnload()
+{
+    const QList<SdfPath> selectedPaths = session()->selectionList()->paths();
+    if (selectedPaths.isEmpty())
+        return;
+
+    QList<SdfPath> payloadPaths;
+    {
+        READ_LOCKER(locker, session()->stageLock(), "stageLock");
+        const UsdStageRefPtr stage = session()->stageUnsafe();
+        if (!stage)
+            return;
+        payloadPaths = stage::resolvePayloadPaths(stage, selectedPaths);
+    }
+
+    if (!payloadPaths.isEmpty()) {
+        session()->commandStack()->execute(new Command(unloadPayloads(payloadPaths)));
+        updateSelection(session()->selectionList()->paths());
+    }
+}
+
+void
+ViewerPrivate::payloadLoadNeighbors()
+{
+    const QList<SdfPath> paths = session()->selectionList()->paths();
+    if (!paths.isEmpty()) {
+        session()->commandStack()->execute(new Command(loadNeighborPayloads(paths)));
+        updateSelection(session()->selectionList()->paths());
+    }
+}
+
+void
+ViewerPrivate::payloadSelect()
+{
+    if (!session()->selectionList()->paths().isEmpty())
+        session()->commandStack()->execute(new Command(selectPayload()));
+}
+
+void
+ViewerPrivate::layerSelect()
+{
+    if (!session()->selectionList()->paths().isEmpty())
+        session()->commandStack()->execute(new Command(selectLayer()));
+}
+
+void
+ViewerPrivate::payloadInvert()
+{
+    if (!session()->selectionList()->paths().isEmpty())
+        session()->commandStack()->execute(new Command(selectInvertInPayload()));
+}
+
+void
+ViewerPrivate::layerInvert()
+{
+    if (!session()->selectionList()->paths().isEmpty())
+        session()->commandStack()->execute(new Command(selectInvertInLayer()));
+}
+
+void
+ViewerPrivate::newPrim(const TfToken& typeName)
+{
+    if (typeName.IsEmpty())
+        return;
+
+    SdfPath parentPath = SdfPath::AbsoluteRootPath();
+    const QList<SdfPath> paths = session()->selectionList()->paths();
+
+    if (paths.size() == 1)
+        parentPath = paths.first().IsPropertyPath() ? paths.first().GetPrimPath() : paths.first();
+    else if (paths.size() > 1)
+        parentPath = paths.first().GetParentPath();
+
+    if (parentPath.IsEmpty())
+        return;
+
+    const QString name = QString::fromStdString(typeName.GetString());
+
+    constexpr bool selectCreated = false;
+    Command command = typeName == TfToken("Mesh")             ? newMeshPath(parentPath, name, selectCreated)
+                      : typeName == TfToken("Points")         ? newPointsPath(parentPath, name, selectCreated)
+                      : typeName == TfToken("BasisCurves")    ? newBasisCurvesPath(parentPath, name, selectCreated)
+                      : typeName == TfToken("NurbsCurves")    ? newNurbsCurvesPath(parentPath, name, selectCreated)
+                      : typeName == TfToken("NurbsPatch")     ? newNurbsPatchPath(parentPath, name, selectCreated)
+                      : typeName == TfToken("PointInstancer") ? newPointInstancerPath(parentPath, name, selectCreated)
+                                                              : newPrimPath(parentPath, name, typeName, selectCreated);
+
+    session()->commandStack()->execute(new Command(std::move(command)));
+}
+
+void
+ViewerPrivate::newXform()
+{
+    SdfPath parentPath = SdfPath::AbsoluteRootPath();
+    const QList<SdfPath> paths = session()->selectionList()->paths();
+
+    if (paths.size() == 1) {
+        parentPath = paths.first();
+    }
+    else if (paths.size() > 1) {
+        parentPath = paths.first().GetParentPath();
+    }
+
+    if (!parentPath.IsEmpty())
+        session()->commandStack()->execute(new Command(newXformPath(parentPath, "Xform", false)));
+}
+
+void
+ViewerPrivate::duplicateSelected()
+{
+    const QList<SdfPath> paths = session()->selectionList()->paths();
+    if (paths.isEmpty())
+        return;
+
+    session()->commandStack()->execute(new Command(duplicatePaths(paths)));
+}
+
+void
+ViewerPrivate::deleteSelected()
+{
+    session()->commandStack()->execute(new Command(deletePaths(session()->selectionList()->paths())));
+}
+
+void
+ViewerPrivate::isolate(bool checked)
+{
+    const QList<SdfPath> paths = (checked && !session()->selectionList()->paths().isEmpty())
+                                     ? session()->selectionList()->paths()
+                                     : QList<SdfPath>();
+    session()->commandStack()->execute(new Command(isolatePaths(paths)));
+}
+
+void
+ViewerPrivate::frameAll()
+{
+    if (!session()->isLoaded())
+        return;
+
+    const GfBBox3d bbox = session()->boundingBox();
+    if (bbox.GetRange().IsEmpty())
+        return;
+
+    ViewCamera* camera = session()->viewState()->camera();
+    if (camera)
+        camera->frame(bbox);
+}
+
+void
+ViewerPrivate::frameSelected()
+{
+    const QList<SdfPath> paths = session()->selectionList()->paths();
+    if (paths.isEmpty())
+        return;
+
+    const GfBBox3d bbox = session()->boundingBox(paths);
+    if (bbox.GetRange().IsEmpty())
+        return;
+
+    ViewCamera* camera = session()->viewState()->camera();
+    if (camera)
+        camera->frame(bbox);
+}
+
+void
+ViewerPrivate::resetView()
+{
+    if (!session()->isLoaded())
+        return;
+
+    ViewCamera* camera = session()->viewState()->camera();
+    if (camera)
+        camera->resetView();
+}
+
+void
+ViewerPrivate::select(bool checked)
+{
+    Q_UNUSED(checked);
+
+    renderView()->setMoveEnabled(false);
+    renderView()->setRotateEnabled(false);
+    renderView()->setScaleEnabled(false);
+}
+
+void
+ViewerPrivate::move(bool checked)
+{
+    renderView()->setMoveEnabled(checked);
+}
+
+void
+ViewerPrivate::rotate(bool checked)
+{
+    renderView()->setRotateEnabled(checked);
+}
+
+void
+ViewerPrivate::scale(bool checked)
+{
+    renderView()->setScaleEnabled(checked);
+}
+
+void
+ViewerPrivate::cameraLight(bool checked)
+{
+    session()->viewState()->setDefaultCameraLightEnabled(checked);
+}
+
+void
+ViewerPrivate::domeLight(bool checked)
+{
+    session()->viewState()->setDefaultDomeLightEnabled(checked);
+}
+
+void
+ViewerPrivate::domeBackground(bool checked)
+{
+    session()->viewState()->setDomeLightCameraVisibility(checked);
+}
+
+void
+ViewerPrivate::ambientOcclusion(bool checked)
+{
+    settings()->setValue("ambientOcclusionEnabled", checked);
+    session()->viewState()->setAmbientOcclusionEnabled(checked);
+}
+
+void
+ViewerPrivate::loadDomeTexture()
+{
+    ViewState* state = session()->viewState();
+    if (!state)
+        return;
+
+    const QString current = state->domeLightTexture();
+    const QString directory = current.isEmpty() ? settings()->value("domeLightDir", QDir::homePath()).toString()
+                                                : QFileInfo(current).absolutePath();
+    const QString filename = QFileDialog::getOpenFileName(d.viewer.data(), "Load HDRI", directory,
+                                                          "HDR Images (*.hdr *.exr);;All Files (*)");
+
+    if (filename.isEmpty())
+        return;
+
+    settings()->setValue("domeLightDir", QFileInfo(filename).absolutePath());
+    state->setDomeLightTexture(QFileInfo(filename).absoluteFilePath());
+    state->setDefaultDomeLightEnabled(true);
+}
+
+void
+ViewerPrivate::clearDomeTexture()
+{
+    ViewState* state = session()->viewState();
+    if (!state)
+        return;
+
+    state->setDomeLightTexture(QString());
+    state->setDefaultDomeLightEnabled(false);
+}
+
+void
+ViewerPrivate::useDefaultDomeTexture()
+{
+    ViewState* state = session()->viewState();
+    if (!state)
+        return;
+
+    state->setDomeLightTexture(QString());
+    state->setDefaultDomeLightEnabled(true);
+    updateDockAction(d.ui->lightUseDefaultDomeTexture, true);
+}
+
+void
+ViewerPrivate::sceneLights(bool checked)
+{
+    session()->viewState()->setSceneLightsEnabled(checked);
+}
+
+void
+ViewerPrivate::useSceneShaders(bool checked)
+{
+    session()->viewState()->setSceneMaterialsEnabled(checked);
+}
+
+void
+ViewerPrivate::materialScene()
+{
+    ViewState* state = session()->viewState();
+    state->setOverrideMaterial(SdfPath());
+    state->setMaterialMode(ViewState::All);
+}
+
+void
+ViewerPrivate::materialChrome()
+{
+    session()->viewState()->setOverrideMaterial(SdfPath("/Materials/Chrome"));
+}
+
+void
+ViewerPrivate::materialGlossy()
+{
+    session()->viewState()->setOverrideMaterial(SdfPath("/Materials/Glossy"));
+}
+
+void
+ViewerPrivate::materialReflection()
+{
+    session()->viewState()->setOverrideMaterial(SdfPath("/Materials/Reflection"));
+}
+
+void
+ViewerPrivate::togglePanels()
+{
+    if (!d.ui->splitter)
+        return;
+
+    if (!d.panelsHidden) {
+        const QList<int> sizes = d.ui->splitter->sizes();
+        if (sizes.size() == 3 && (sizes[0] > 0 || sizes[2] > 0))
+            d.panelSplitterSizes = sizes;
+
+        const int total = std::max(1, d.ui->splitter->width());
+        d.ui->splitter->setSizes({ 0, total, 0 });
+        d.panelsHidden = true;
+    }
+    else {
+        QList<int> sizes = d.panelSplitterSizes;
+        if (sizes.size() != 3 || (sizes[0] <= 0 && sizes[2] <= 0)) {
+            const int left = 280;
+            const int right = 280;
+            const int total = std::max(1, d.ui->splitter->width());
+            sizes = { left, std::max(400, total - left - right), right };
+        }
+
+        d.ui->splitter->setSizes(sizes);
+        d.panelsHidden = false;
+    }
+
+    renderView()->setFocus();
+}
+
+void
+ViewerPrivate::grid(bool checked)
+{
+    session()->viewState()->setGridEnabled(checked);
+}
+
+void
+ViewerPrivate::renderShaded()
+{
+    session()->viewState()->setRenderMode(ViewState::Shaded);
+}
+
+void
+ViewerPrivate::renderWireframe()
+{
+    session()->viewState()->setRenderMode(ViewState::Wireframe);
+}
+
+void
+ViewerPrivate::renderClay(bool checked)
+{
+    ViewState* state = session()->viewState();
+    if (checked) {
+        state->setMaterialMode(ViewState::Clay);
+    }
+    else if (state->materialMode() == ViewState::Clay) {
+        state->setMaterialMode(ViewState::All);
+    }
+}
+
+void
+ViewerPrivate::complexityLow()
+{
+    session()->viewState()->setComplexityLevel(ViewState::Low);
+}
+
+void
+ViewerPrivate::complexityMedium()
+{
+    session()->viewState()->setComplexityLevel(ViewState::Medium);
+}
+
+void
+ViewerPrivate::complexityHigh()
+{
+    session()->viewState()->setComplexityLevel(ViewState::High);
+}
+
+void
+ViewerPrivate::complexityVeryHigh()
+{
+    session()->viewState()->setComplexityLevel(ViewState::VeryHigh);
+}
+
+void
+ViewerPrivate::toggleProgress(bool checked)
+{
+    if (!d.progressDialog)
+        return;
+
+    if (checked) {
+        d.progressDialog->show();
+        d.progressDialog->raise();
+        d.progressDialog->activateWindow();
+    }
+    else {
+        d.progressDialog->hide();
+    }
+}
+
+void
+ViewerPrivate::togglePython(bool checked)
+{
+    if (!d.pythonDialog)
+        return;
+    if (checked) {
+        d.pythonDialog->show();
+        d.pythonDialog->raise();
+        d.pythonDialog->activateWindow();
+    }
+    else {
+        d.pythonDialog->hide();
+    }
+}
+
+void
+ViewerPrivate::toggleConsole(bool checked)
+{
+    if (!d.consoleDialog)
+        return;
+
+    if (checked) {
+        d.consoleDialog->show();
+        d.consoleDialog->raise();
+        d.consoleDialog->activateWindow();
+    }
+    else {
+        d.consoleDialog->hide();
+    }
+}
+
+void
+ViewerPrivate::openAbout()
+{
+    QFile file(":/text/resources/Copyright.txt");
+    QString details;
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        qWarning() << "failed to open copyright resource:" << file.errorString();
+    }
+    else {
+        QTextStream in(&file);
+        details = in.readAll();
+    }
+    updateToolsSuppressed(true, true);
+
+    MessageDialog::about(d.viewer.data(), QString("%1 %2").arg(PROJECT_NAME).arg(PROJECT_VERSION), PROJECT_COPYRIGHT,
+                         details, GITHUB_URL);
+
+    updateToolsSuppressed(false, true);
+}
+
+void
+ViewerPrivate::checkUpdates()
+{
+    auto compareVersion = [](const QString& version, const QString& other) {
+        auto parseVersion = [](QString value) {
+            value.remove(QRegularExpression(QStringLiteral("^[^0-9]*")));
+
+            QVector<int> parts;
+            const QStringList tokens = value.split('.', Qt::SkipEmptyParts);
+            for (const QString& token : tokens) {
+                bool ok = false;
+                const int number = token.toInt(&ok);
+                parts.append(ok ? number : 0);
+            }
+            return parts;
+        };
+
+        const QVector<int> a = parseVersion(version);
+        const QVector<int> b = parseVersion(other);
+        const qsizetype n = std::max(a.size(), b.size());
+
+        for (qsizetype i = 0; i < n; ++i) {
+            const int ai = (i < a.size()) ? a[i] : 0;
+            const int bi = (i < b.size()) ? b[i] : 0;
+            if (ai < bi)
+                return -1;
+            if (ai > bi)
+                return 1;
+        }
+
+        return 0;
+    };
+
+    auto* github = new GithubClient(this);
+
+    connect(github, &GithubClient::releasesReceived, this,
+            [this, github, compareVersion](const QList<Github::Release>& releases) {
+                github->deleteLater();
+
+                if (releases.isEmpty()) {
+                    qWarning() << "no github releases found";
+                    return;
+                }
+
+                const Github::Release& latest = releases.first();
+
+                if (compareVersion(PROJECT_VERSION, latest.tag) < 0) {
+                    const QString skipTag = settings()->value("skipTag", QString()).toString();
+
+                    if (skipTag == latest.tag)
+                        return;
+
+                    if (latest.assets.isEmpty()) {
+                        qWarning() << "no github release assets found";
+                        return;
+                    }
+
+                    const QString title = QString("There is a new version of %1 available").arg(PROJECT_NAME);
+                    const QString heading = tr("What's new in version %1").arg(latest.tag);
+                    const QString details = latest.notes;
+
+                    const bool download = MessageDialog::update(d.viewer.data(), title, heading, details,
+                                                                latest.url.toString());
+
+                    if (download) {
+                        const Github::Asset& asset = latest.assets.first();
+                        QDesktopServices::openUrl(asset.url);
+                    }
+                    else {
+                        settings()->setValue("skipTag", latest.tag);
+                    }
+
+                    return;
+                }
+
+                MessageDialog::information(
+                    d.viewer.data(), QString("%1 is up to date").arg(PROJECT_NAME),
+                    tr("You are running the latest version of %1 %2.").arg(PROJECT_NAME).arg(PROJECT_VERSION));
+            });
+
+    connect(github, &GithubClient::errorOccurred, this, [github](const QString& error) {
+        qWarning() << "github error:" << error;
+        github->deleteLater();
+    });
+
+    github->setUrl(GITHUB_URL);
+}
+
+void
+ViewerPrivate::openDocumentation()
+{
+    QDesktopServices::openUrl(QUrl(QStringLiteral(GITHUB_URL "/blob/master/README.md")));
+}
+
+void
+ViewerPrivate::openPythonApiReference()
+{
+    QDesktopServices::openUrl(QUrl(QStringLiteral(GITHUB_URL "/blob/master/skills/references/python-api.md")));
+}
+
+void
+ViewerPrivate::openPythonDialogsReference()
+{
+    QDesktopServices::openUrl(QUrl(QStringLiteral(GITHUB_URL "/blob/master/skills/references/python-dialogs.md")));
+}
+
+void
+ViewerPrivate::openAgentSkill()
+{
+    QDesktopServices::openUrl(QUrl(QStringLiteral(GITHUB_URL "/blob/master/skills/SKILL.md")));
+}
+
+void
+ViewerPrivate::reportIssue()
+{
+    QDesktopServices::openUrl(QUrl(QStringLiteral(GITHUB_URL "/issues")));
+}
+
+void
+ViewerPrivate::backgroundColor()
+{
+    ViewState* state = session()->viewState();
+    if (!state)
+        return;
+
+    QColor color = QColorDialog::getColor(state->backgroundColor(), d.viewer.data(), "Select color");
+    if (!color.isValid())
+        return;
+
+    state->setBackgroundColor(color);
+    settings()->setValue("backgroundColor", color.name());
+}
+
+void
+ViewerPrivate::updateSelection(const QList<SdfPath>& paths)
+{
+    const bool hasSelection = !paths.isEmpty();
+    d.ui->editSelectInvert->setEnabled(hasSelection);
+    d.ui->editDuplicateSelected->setEnabled(hasSelection);
+
+    bool canSelectParent = false;
+    if (paths.size() == 1) {
+        READ_LOCKER(locker, session()->stageLock(), "stageLock");
+
+        const UsdStageRefPtr stage = session()->stageUnsafe();
+        if (stage) {
+            const SdfPath selectedPath = paths.first().IsPropertyPath() ? paths.first().GetPrimPath() : paths.first();
+            if (!selectedPath.IsEmpty() && selectedPath != SdfPath::AbsoluteRootPath()) {
+                const UsdPrim prim = stage->GetPrimAtPath(selectedPath);
+                canSelectParent = prim && bool(prim.GetParent());
+            }
+        }
+    }
+    d.ui->editSelectParent->setEnabled(canSelectParent);
+
+    d.ui->menuPayloads->setProperty("selectionMenuDirty", true);
+    // Old variant shortcuts must not act on the previous selection.
+    for (QAction* action : d.ui->menuPayloads->actions()) {
+        if (!action || !action->property("variantMenu").toBool() || !action->menu())
+            continue;
+        for (QAction* setAction : action->menu()->actions()) {
+            if (!setAction || !setAction->menu())
+                continue;
+            for (QAction* valueAction : setAction->menu()->actions())
+                valueAction->setShortcut(QKeySequence());
+        }
+    }
+}
+
+void
+ViewerPrivate::refreshPayloadMenu()
+{
+    if (!d.ui->menuPayloads->property("selectionMenuDirty").toBool())
+        return;
+
+    d.ui->menuPayloads->setProperty("selectionMenuDirty", false);
+    const QList<SdfPath> paths = session()->selectionList()->paths();
+    QList<QAction*> staleActions;
+    for (QAction* action : d.ui->menuPayloads->actions()) {
+        if (action && action->property("variantMenu").toBool())
+            staleActions.append(action);
+    }
+
+    for (QAction* action : staleActions) {
+        if (QMenu* menu = action->menu()) {
+            for (QAction* childAction : menu->actions()) {
+                if (QMenu* childMenu = childAction->menu()) {
+                    for (QAction* valueAction : childMenu->actions())
+                        valueAction->setShortcut(QKeySequence());
+                }
+
+                childAction->setShortcut(QKeySequence());
+            }
+
+            d.ui->menuPayloads->removeAction(action);
+            menu->deleteLater();
+        }
+        else {
+            action->setShortcut(QKeySequence());
+            d.ui->menuPayloads->removeAction(action);
+            action->deleteLater();
+        }
+    }
+
+    d.ui->editPayloadLoad->setEnabled(false);
+    d.ui->editPayloadUnload->setEnabled(false);
+    d.ui->editPayloadLoadNeighbors->setEnabled(false);
+    d.ui->editPayloadSelect->setEnabled(false);
+    d.ui->editLayerSelect->setEnabled(false);
+    d.ui->editPayloadInvert->setEnabled(false);
+    d.ui->editLayerInvert->setEnabled(false);
+
+    if (paths.isEmpty())
+        return;
+
+    QList<SdfPath> payloadPaths;
+    QList<SdfPath> nearestPayloadPaths;
+    QList<SdfPath> layerPayloadPaths;
+    payload::PayloadVariantTargets variantTargets;
+    bool canLoadSelected = false;
+    bool canUnloadSelected = false;
+
+    {
+        READ_LOCKER(locker, session()->stageLock(), "stageLock");
+
+        const UsdStageRefPtr stage = session()->stageUnsafe();
+        if (!stage)
+            return;
+
+        payloadPaths = stage::resolvePayloadPaths(stage, paths);
+        nearestPayloadPaths = stage::nearestPayloadPaths(stage, paths);
+
+        const SdfLayerHandle editLayer = stage->GetEditTarget().GetLayer();
+        if (editLayer)
+            layerPayloadPaths = stage::nearestLayerPayloadPaths(stage, editLayer, paths);
+
+        variantTargets = payload::payloadVariantTargets(stage, paths);
+
+        for (const SdfPath& payloadPath : payloadPaths) {
+            if (!stage::isPayload(stage, payloadPath))
+                continue;
+
+            if (stage::isLoaded(stage, payloadPath))
+                canUnloadSelected = true;
+            else
+                canLoadSelected = true;
+
+            if (canLoadSelected && canUnloadSelected)
+                break;
+        }
+    }
+
+    const bool hasNearestPayloadSelection = !nearestPayloadPaths.isEmpty();
+    const bool hasLayerPayloadSelection = !layerPayloadPaths.isEmpty();
+
+    d.ui->editPayloadLoad->setEnabled(canLoadSelected);
+    d.ui->editPayloadUnload->setEnabled(canUnloadSelected);
+    d.ui->editPayloadLoadNeighbors->setEnabled(hasNearestPayloadSelection);
+    d.ui->editPayloadSelect->setEnabled(hasNearestPayloadSelection);
+    d.ui->editLayerSelect->setEnabled(hasLayerPayloadSelection);
+    d.ui->editPayloadInvert->setEnabled(hasNearestPayloadSelection);
+    d.ui->editLayerInvert->setEnabled(hasLayerPayloadSelection);
+
+    if (variantTargets.isEmpty())
+        return;
+
+    QAction* separator = d.ui->menuPayloads->addSeparator();
+    separator->setProperty("variantMenu", true);
+
+    QMenu* variantMenu = d.ui->menuPayloads->addMenu("Variant");
+    variantMenu->menuAction()->setProperty("variantMenu", true);
+
+    int index = 0;
+
+    for (auto setIt = variantTargets.cbegin(); setIt != variantTargets.cend(); ++setIt) {
+        const QString& setName = setIt.key();
+
+        QMenu* setMenu = variantMenu->addMenu(setName);
+
+        for (auto valueIt = setIt.value().cbegin(); valueIt != setIt.value().cend(); ++valueIt) {
+            const QString& value = valueIt.key();
+            const QList<SdfPath> targets = valueIt.value();
+
+            QAction* action = setMenu->addAction(value);
+
+            if (index < 9) {
+                const int key = Qt::Key_1 + index;
+
+                action->setShortcut(QKeySequence(Qt::SHIFT | key));
+                action->setShortcutContext(Qt::WidgetWithChildrenShortcut);
+                action->setAutoRepeat(false);
+
+                d.viewer->addAction(action);
+            }
+
+            QObject::connect(action, &QAction::triggered, d.viewer, [this, targets, setName, value]() {
+                if (targets.isEmpty())
+                    return;
+
+                session()->commandStack()->execute(new Command(loadPayloads(targets, setName, value)));
+                d.ui->menuPayloads->setProperty("selectionMenuDirty", true);
+            });
+
+            ++index;
+        }
+    }
+}
+void
+ViewerPrivate::updatePreserveState(bool enabled)
+{
+    d.ui->filePreserveState->blockSignals(true);
+    d.ui->filePreserveState->setChecked(enabled);
+    d.ui->filePreserveState->blockSignals(false);
+    settings()->setValue("preserveState", enabled);
+}
+
+void
+ViewerPrivate::updateMaterialMode(ViewState::MaterialMode mode)
+{
+    const SdfPath overridePath = session()->viewState()->overrideMaterial();
+
+    updateDockAction(d.ui->materialScene, mode == ViewState::All);
+    updateDockAction(d.ui->displayRenderClay, mode == ViewState::Clay);
+    updateDockAction(d.ui->materialChrome, mode == ViewState::Override && overridePath == SdfPath("/Materials/Chrome"));
+    updateDockAction(d.ui->materialGlossy, mode == ViewState::Override && overridePath == SdfPath("/Materials/Glossy"));
+    updateDockAction(d.ui->materialReflection,
+                     mode == ViewState::Override && overridePath == SdfPath("/Materials/Reflection"));
+}
+
+void
+ViewerPrivate::updateMask(const QList<SdfPath>& paths)
+{
+    SignalGuard::Scope guard(this);
+    d.ui->displayIsolate->setChecked(!paths.isEmpty());
+}
+
+void
+ViewerPrivate::updatePrims(const NoticeBatch& batch)
+{
+    d.ui->menuPayloads->setProperty("selectionMenuDirty", true);
+    if (batch.entries.isEmpty())
+        return;
+    ++d.changes;
+    updateModified(true);
+}
+
+void
+ViewerPrivate::updateStage(UsdStageRefPtr stage, Session::LoadPolicy policy, Session::StageStatus status)
+{
+    d.ui->menuPayloads->setProperty("selectionMenuDirty", true);
+    Q_UNUSED(stage);
+
+    d.loadPolicy = policy;
+    d.ui->policyAll->setChecked(policy == Session::LoadPolicy::All);
+    d.ui->policyPayload->setChecked(policy == Session::LoadPolicy::None);
+
+    settings()->setValue("loadType", policy == Session::LoadPolicy::All ? "all" : "payload");
+
+    if (status == Session::StageStatus::Loaded)
+        enable(true);
+}
+
+void
+ViewerPrivate::updateEditLayer(SdfLayerHandle layer)
+{
+    if (!d.ui->fileLayer)
+        return;
+
+    const QString identifier = layer ? QString::fromStdString(layer->GetIdentifier()) : QString();
+    for (QAction* action : d.ui->fileLayer->actions()) {
+        if (action && action->isCheckable())
+            action->setChecked(!identifier.isEmpty() && action->data().toString() == identifier);
+    }
+}
+
+void
+ViewerPrivate::updateAuxiliary(UsdStageRefPtr auxiliary)
+{
+    renderView()->updateAuxiliary(auxiliary);
+}
+
+void
+ViewerPrivate::updateStageUp(Session::StageUp stageUp)
+{
+    d.ui->editStageUpY->setChecked(stageUp == Session::StageUp::Y);
+    d.ui->editStageUpZ->setChecked(stageUp == Session::StageUp::Z);
+}
+
+void
+ViewerPrivate::captureReady(qint64 elapsed)
+{
+    session()->notifyStatus(Session::Notify::Status::Success, QStringLiteral("Capture finished in %1 ms").arg(elapsed));
+}
+
+void
+ViewerPrivate::renderReady(qint64 elapsed)
+{
+    constexpr qint64 thresholdMs = 500;
+    if (elapsed <= thresholdMs)
+        return;
+
+    session()->notifyStatus(Session::Notify::Status::Success, QStringLiteral("Render finished in %1 ms").arg(elapsed));
+}
+
+void
+ViewerPrivate::statusMessage(const QString& message)
+{
+    QStatusBar* bar = d.ui->statusbar;
+    if (!bar || message.isEmpty())
+        return;
+
+    ++d.statusRevision;
+    bar->setStyleSheet(QString());
+    bar->showMessage(QStringLiteral(" %1").arg(message));
+}
+
+void
+ViewerPrivate::statusReady()
+{
+    QStatusBar* bar = d.ui->statusbar;
+    if (!bar)
+        return;
+
+    ++d.statusRevision;
+    bar->setStyleSheet(QString());
+    bar->showMessage(QStringLiteral(" Ready"));
+}
+
+void
+ViewerPrivate::notifyStatusChanged(Session::Notify::Status status, const QString& message, const QString& details)
+{
+    QStatusBar* bar = d.ui->statusbar;
+    if (!bar)
+        return;
+
+    const bool hasError = (status == Session::Notify::Status::Error);
+    const bool hasWarning = (status == Session::Notify::Status::Warning);
+
+    const char* level = hasError ? "Error" : hasWarning ? "Warning" : "Info";
+
+    QString logText = QString("[%1] %2").arg(QString::fromLatin1(level), message);
+    if (!details.isEmpty())
+        logText += QString("\n%1").arg(details);
+
+    if (hasError || hasWarning) {
+        std::fprintf(stderr, "%s\n", logText.toUtf8().constData());
+        std::fflush(stderr);
+    }
+    else {
+        std::fprintf(stdout, "%s\n", logText.toUtf8().constData());
+        std::fflush(stdout);
+    }
+
+    const QString text = hasError     ? QString(" Error: %1").arg(message)
+                         : hasWarning ? QString(" Warning: %1").arg(message)
+                                      : QString(" %1").arg(message);
+    const int timeoutMs = hasError ? 8000 : 4000;
+
+    if (hasError || hasWarning) {
+        const Style::ColorRole role = hasError ? Style::ColorRole::Error : Style::ColorRole::Warning;
+        const QColor color = style()->color(role);
+        bar->setStyleSheet(QStringLiteral("QStatusBar { background-color: rgba(%1, %2, %3, %4); }"
+                                          "QStatusBar::item { border: none; }")
+                               .arg(color.red())
+                               .arg(color.green())
+                               .arg(color.blue())
+                               .arg(color.alpha()));
+    }
+    else {
+        bar->setStyleSheet(QString());
+    }
+
+    const quint64 revision = ++d.statusRevision;
+    bar->showMessage(text, timeoutMs);
+
+    QTimer::singleShot(timeoutMs, this, [this, revision]() {
+        if (revision != d.statusRevision)
+            return;
+        statusReady();
+    });
+}
+
+void
+ViewerPrivate::updateToolsModal()
+{
+    const QWidget* modal = QApplication::activeModalWidget();
+    updateToolsSuppressed(modal != nullptr);
+}
+
+void
+ViewerPrivate::updateToolsSuppressed(bool suppressed, bool animated)
+{
+    if (d.toolsSuppressed == suppressed)
+        return;
+
+    d.toolsSuppressed = suppressed;
+
+    if (suppressed) {
+        d.toolWidgets.clear();
+
+        const QWidget* modal = QApplication::activeModalWidget();
+
+        for (QWidget* widget : QApplication::topLevelWidgets()) {
+            if (!widget || widget == modal || !widget->isVisible())
+                continue;
+
+            if (!(widget->windowFlags() & Qt::Tool))
+                continue;
+
+            QWidget* parent = widget->parentWidget();
+            while (parent && parent != d.viewer)
+                parent = parent->parentWidget();
+
+            if (parent != d.viewer)
+                continue;
+
+            ToolWidget state;
+            state.widget = widget;
+            state.opacity = widget->windowOpacity();
+            state.enabled = widget->isEnabled();
+            state.geometry = widget->saveGeometry();
+            d.toolWidgets.append(state);
+
+            widget->setEnabled(false);
+        }
+
+        if (animated && !d.toolWidgets.isEmpty()) {
+            QParallelAnimationGroup group;
+
+            for (const ToolWidget& state : std::as_const(d.toolWidgets)) {
+                if (!state.widget)
+                    continue;
+
+                auto* animation = new QPropertyAnimation(state.widget, "windowOpacity", &group);
+                animation->setDuration(140);
+                animation->setStartValue(state.widget->windowOpacity());
+                animation->setEndValue(0.0);
+                animation->setEasingCurve(QEasingCurve::InOutQuad);
+                group.addAnimation(animation);
+            }
+
+            if (group.animationCount() > 0) {
+                QEventLoop loop;
+                connect(&group, &QParallelAnimationGroup::finished, &loop, &QEventLoop::quit);
+                group.start();
+                loop.exec();
+            }
+        }
+        else {
+            for (const ToolWidget& state : std::as_const(d.toolWidgets)) {
+                if (state.widget)
+                    state.widget->setWindowOpacity(0.0);
+            }
+        }
+
+        for (const ToolWidget& state : std::as_const(d.toolWidgets)) {
+            if (state.widget)
+                state.widget->hide();
+        }
+
+        return;
+    }
+
+    const QList<ToolWidget> widgets = d.toolWidgets;
+    d.toolWidgets.clear();
+
+    for (const ToolWidget& state : widgets) {
+        if (!state.widget)
+            continue;
+
+        state.widget->setWindowOpacity(0.0);
+        state.widget->show();
+
+        if (!state.geometry.isEmpty())
+            state.widget->restoreGeometry(state.geometry);
+
+        state.widget->raise();
+    }
+
+    if (animated && !widgets.isEmpty()) {
+        QParallelAnimationGroup group;
+
+        for (const ToolWidget& state : widgets) {
+            if (!state.widget)
+                continue;
+
+            auto* animation = new QPropertyAnimation(state.widget, "windowOpacity", &group);
+            animation->setDuration(140);
+            animation->setStartValue(0.0);
+            animation->setEndValue(state.opacity);
+            animation->setEasingCurve(QEasingCurve::InOutQuad);
+            group.addAnimation(animation);
+        }
+
+        if (group.animationCount() > 0) {
+            QEventLoop loop;
+            connect(&group, &QParallelAnimationGroup::finished, &loop, &QEventLoop::quit);
+            group.start();
+            loop.exec();
+        }
+    }
+    else {
+        for (const ToolWidget& state : widgets) {
+            if (state.widget)
+                state.widget->setWindowOpacity(state.opacity);
+        }
+    }
+
+    for (const ToolWidget& state : widgets) {
+        if (state.widget)
+            state.widget->setEnabled(state.enabled);
+    }
+}
+
+void
+ViewerPrivate::updateDockAction(QAction* action, bool checked)
+{
+    if (!action)
+        return;
+    action->blockSignals(true);
+    action->setChecked(checked);
+    action->blockSignals(false);
+}
+
+void
+ViewerPrivate::updateModified(bool modified)
+{
+    if (d.modified == modified)
+        return;
+    d.modified = modified;
+    updateWindowTitle();
+}
+
+void
+ViewerPrivate::updateRecentFiles(const QString& filename)
+{
+    d.recentFiles.removeAll(filename);
+    d.recentFiles.prepend(filename);
+    const int maxRecent = 10;
+    while (d.recentFiles.size() > maxRecent)
+        d.recentFiles.removeLast();
+    settings()->setValue("recentFiles", d.recentFiles);
+    initRecentFiles();
+}
+
+void
+ViewerPrivate::updateWindowTitle()
+{
+    const QString currentFilename = session()->filename();
+    d.ui->fileRevealInFolder->setEnabled(!currentFilename.isEmpty() && QFileInfo::exists(currentFilename));
+
+#ifdef QT_DEBUG
+    const QString title = QStringLiteral("%1 %2 (%3 %4)")
+                              .arg(QStringLiteral(PROJECT_NAME), QStringLiteral(PROJECT_VERSION),
+                                   QStringLiteral(PROJECT_CONFIG), QStringLiteral(PROJECT_DATE));
+#else
+    const QString title = QStringLiteral("%1 %2").arg(QStringLiteral(PROJECT_NAME), QStringLiteral(PROJECT_VERSION));
+#endif
+
+    if (!session()->isLoaded()) {
+        d.viewer->setWindowTitle(title);
+        return;
+    }
+
+    const QString filename = session()->filename();
+    QString name = filename.isEmpty() ? QStringLiteral("Untitled") : QFileInfo(filename).fileName();
+    if (d.modified)
+        name.prepend(QLatin1Char('*'));
+
+    d.viewer->setWindowTitle(QStringLiteral("%1: %2").arg(title, name));
+}
+
+bool
+ViewerPrivate::saveFile()
+{
+    const QString filename = session()->filename();
+    if (filename.isEmpty()) {
+        saveAs();
+        return !hasChanges();
+    }
+
+    QElapsedTimer timer;
+    timer.start();
+
+    if (session()->saveToFile(filename)) {
+        const double elapsedSec = timer.elapsed() / 1000.0;
+        updateWindowTitle();
+        clearChanges();
+        session()->notifyStatus(Session::Notify::Status::Success,
+                                QString("Saved %1 in %2 seconds").arg(filename, QString::number(elapsedSec, 'f', 2)));
+        return true;
+    }
+    session()->notifyStatus(Session::Notify::Status::Error, QString("Failed to save file: %1").arg(filename));
+    return false;
+}
+
+bool
+ViewerPrivate::saveChanges()
+{
+    if (!hasChanges())
+        return true;
+
+    const QString name = session()->filename().isEmpty() ? "Untitled" : QFileInfo(session()->filename()).fileName();
+
+    updateToolsSuppressed(true, true);
+
+    d.viewer->raise();
+    d.viewer->activateWindow();
+    d.viewer->setFocus();
+
+    const MessageDialog::SaveResult result = MessageDialog::saveQuestion(d.viewer.data(), tr("Save changes?"),
+                                                                         tr("Save changes to %1?").arg(name));
+
+    updateToolsSuppressed(false, true);
+
+    switch (result) {
+    case MessageDialog::SaveResult::Save: return saveFile();
+
+    case MessageDialog::SaveResult::DontSave: return true;
+
+    case MessageDialog::SaveResult::Cancel:
+    default: return false;
+    }
+}
+
+void
+ViewerPrivate::clearChanges()
+{
+    d.changes = 0;
+    updateModified(false);
+}
+
+bool
+ViewerPrivate::hasChanges() const
+{
+    return d.changes > 0;
+}
+
+Viewer::Viewer(QWidget* parent)
+    : QMainWindow(parent)
+    , p(new ViewerPrivate())
+{
+    p->d.viewer = this;
+    p->init();
+}
+
+Viewer::~Viewer() = default;
+
+void
+Viewer::setArguments(const QStringList& arguments)
+{
+    p->d.arguments = arguments;
+
+    for (int i = 0; i < arguments.size(); ++i) {
+        if (arguments[i] == "--open" && i + 1 < arguments.size()) {
+            const QString filename = arguments[i + 1];
+            if (!filename.isEmpty()) {
+                openFile(filename);
+                return;
+            }
+        }
+    }
+
+    if (arguments.size() == 2) {
+        QString arg = arguments[1];
+        const QString protocolPrefix = "stageviz://";
+        if (arg.startsWith(protocolPrefix, Qt::CaseInsensitive)) {
+            QString pathEncoded = arg.mid(protocolPrefix.length());
+            QString decodedPath = QUrl::fromPercentEncoding(pathEncoded.toUtf8());
+#ifdef Q_OS_WIN
+            decodedPath = QDir::fromNativeSeparators(decodedPath);
+#endif
+            openFile(decodedPath);
+            return;
+        }
+        openFile(arg);
+    }
+}
+
+void
+Viewer::openFile(const QString& filename)
+{
+    if (filename.isEmpty())
+        return;
+
+    const QFileInfo fileInfo(filename);
+
+    if (!fileInfo.exists() || !fileInfo.isFile()) {
+        session()->notifyStatus(Session::Notify::Status::Error, QString("File does not exist: %1").arg(filename));
+        return;
+    }
+
+    if (!p->d.extensions.contains(fileInfo.suffix().toLower())) {
+        session()->notifyStatus(Session::Notify::Status::Error,
+                                QString("Unsupported file format: %1").arg(fileInfo.suffix()));
+        return;
+    }
+
+    if (!p->saveChanges())
+        return;
+
+    p->loadFile(filename);
+}
+
+void
+Viewer::closeEvent(QCloseEvent* event)
+{
+    if (!p->saveChanges()) {
+        event->ignore();
+        return;
+    }
+
+    p->saveSettings();
+
+    if (p->d.progressDialog) {
+        p->d.progressDialog->hide();
+        p->d.progressDialog->close();
+    }
+
+    if (p->d.pythonDialog) {
+        p->d.pythonDialog->hide();
+        p->d.pythonDialog->close();
+    }
+
+    if (p->d.consoleDialog) {
+        p->d.consoleDialog->hide();
+        p->d.consoleDialog->close();
+    }
+
+    if (p->d.materialDialog) {
+        p->d.materialDialog->hide();
+        p->d.materialDialog->close();
+    }
+
+    event->accept();
+}
+
+void
+Viewer::dragEnterEvent(QDragEnterEvent* event)
+{
+    if (event->mimeData()->hasUrls()) {
+        const QList<QUrl> urls = event->mimeData()->urls();
+        if (urls.size() == 1) {
+            QString filename = urls.first().toLocalFile();
+            QString extension = QFileInfo(filename).suffix().toLower();
+            if (p->d.extensions.contains(extension)) {
+                event->acceptProposedAction();
+                return;
+            }
+        }
+    }
+    event->ignore();
+}
+
+void
+Viewer::dropEvent(QDropEvent* event)
+{
+    if (!event || !event->mimeData()->hasUrls()) {
+        event->ignore();
+        return;
+    }
+
+    const QList<QUrl> urls = event->mimeData()->urls();
+
+    if (urls.size() != 1) {
+        event->ignore();
+        return;
+    }
+
+    const QString filename = urls.first().toLocalFile();
+
+    if (filename.isEmpty()) {
+        event->ignore();
+        return;
+    }
+
+    const QString extension = QFileInfo(filename).suffix().toLower();
+
+    if (!p->d.extensions.contains(extension)) {
+        event->ignore();
+        return;
+    }
+
+    QMenu menu(this);
+
+    QAction* openAction = menu.addAction("Open");
+
+    menu.addSeparator();
+
+    QAction* mergeAction = menu.addAction("Merge into Stage");
+    QAction* mergeFlattenedAction = menu.addAction("Merge Flattened");
+
+    menu.addSeparator();
+
+    QAction* mergeSublayerAction = menu.addAction("Merge Sublayer");
+    QAction* mergeReferenceAction = menu.addAction("Merge Reference");
+    QAction* mergePayloadAction = menu.addAction("Merge Payload");
+
+    QAction* selected = menu.exec(mapToGlobal(event->position().toPoint()));
+
+    if (!selected) {
+        event->ignore();
+        return;
+    }
+
+    auto compositionTarget = [&]() -> SdfPath {
+        const SdfPath selectedPath = p->compositionTarget();
+
+        if (!selectedPath.IsEmpty())
+            return selectedPath;
+
+        WRITE_LOCKER(locker, session()->stageLock(), "stageLock");
+
+        const UsdStageRefPtr stage = session()->stageUnsafe();
+        if (!stage)
+            return {};
+
+        return stage::buildUniqueXform(stage, QFileInfo(filename).completeBaseName());
+    };
+
+    if (selected == openAction) {
+        if (!p->saveChanges()) {
+            event->ignore();
+            return;
+        }
+
+        p->loadFile(filename);
+    }
+    else if (selected == mergeAction) {
+        p->mergeFile(filename);
+    }
+    else if (selected == mergeFlattenedAction) {
+        p->mergeFlattenedFile(filename);
+    }
+    else if (selected == mergeSublayerAction) {
+        p->mergeSublayerFile(filename);
+    }
+    else if (selected == mergeReferenceAction) {
+        const SdfPath targetPath = compositionTarget();
+
+        if (targetPath.IsEmpty()) {
+            event->ignore();
+            return;
+        }
+
+        p->mergeReferenceFile(filename, targetPath);
+    }
+    else if (selected == mergePayloadAction) {
+        const SdfPath targetPath = compositionTarget();
+
+        if (targetPath.IsEmpty()) {
+            event->ignore();
+            return;
+        }
+
+        p->mergePayloadFile(filename, targetPath);
+    }
+
+    event->acceptProposedAction();
+}
+
+}  // namespace stageviz
+
+#include "viewer.moc"

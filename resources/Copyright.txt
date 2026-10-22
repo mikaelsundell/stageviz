@@ -1,0 +1,15 @@
+3rdparty libraries acknowledgment and copyright notice:
+
+This product includes software developed by third parties. The copyrights and terms of use of these third-party libraries are fully acknowledged and respected. Below is a list of said libraries and their respective copyright notices:
+
+MaterialX Copyright Contributors to the MaterialX Project
+
+OIIO Copyright 2008 Larry Gritz and the other authors and contributors. All Rights Reserved.
+
+OpenUSD Copyright 2022 Pixar
+
+The Qt Company Ltd.: Copyright (C) 2016 by The Qt Company Ltd. All rights reserved.
+
+sRGB color profile icc file, Copyright International Color Consortium, 2015
+
+The use of the above-mentioned software within this product is in compliance with the respective licenses and/or terms and conditions of the copyright holders. The inclusion of these third-party libraries does not imply any endorsement by the copyright holders of the products developed using their software.

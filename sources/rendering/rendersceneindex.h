@@ -1,0 +1,203 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2025 - present Mikael Sundell
+// https://github.com/mikaelsundell/stageviz
+
+#pragma once
+
+#include <memory>
+#include <pxr/base/tf/refPtr.h>
+#include <pxr/imaging/hd/filteringSceneIndex.h>
+#include <pxr/usd/sdf/path.h>
+#include <set>
+
+namespace stageviz {
+
+class RenderSceneIndexPrivate;
+
+/**
+ * @class RenderSceneIndex
+ * @brief Hydra filtering scene index for Stageviz render presentation.
+ *
+ * Applies non-destructive Stageviz render presentation overrides after scene-index
+ * processing and before the render delegate.
+ *
+ * The filter does not create or own materials. Stageviz-owned materials live
+ * on Session::auxiliary() and are presented to Hydra by ImagingGLWidget.
+ * Auxiliary display geometry below /Display is always passed through
+ * unchanged.
+ *
+ * The filter can override document material presentation across supported Hydra
+ * geometry prims and can override Hydra mesh doubleSided state,
+ * without modifying the authored USD stage.
+ */
+class RenderSceneIndex final : public pxr::HdSingleInputFilteringSceneIndexBase {
+public:
+    /**
+     * @brief Material override modes.
+     */
+    enum Mode {
+        None,
+        Clay,
+        Custom,
+    };
+
+    /**
+     * @brief Creates a Stageviz render filter around an input scene index.
+     */
+    static pxr::TfRefPtr<RenderSceneIndex> New(const pxr::HdSceneIndexBaseRefPtr& inputSceneIndex);
+
+    /**
+     * @brief Destroys the render scene index.
+     */
+    ~RenderSceneIndex() override;
+
+    /**
+     * @name Scene Materials
+     */
+    /**
+     * @{
+     */
+
+    /**
+     * @brief Returns whether authored document material bindings are enabled.
+     */
+    bool sceneMaterialsEnabled() const;
+
+    /**
+     * @brief Enables or disables authored document material bindings.
+     *
+     * When disabled and no explicit override mode is active, document material
+     * bindings are blocked so renderer fallback/display color can be used.
+     */
+    void setSceneMaterialsEnabled(bool enabled);
+
+    /**
+     * @}
+     */
+
+    /**
+     * @name Override
+     */
+    /**
+     * @{
+     */
+
+    /**
+     * @brief Returns the current material override mode.
+     */
+    Mode mode() const;
+
+    /**
+     * @brief Sets the current material override mode.
+     */
+    void setMode(Mode mode);
+
+    /**
+     * @brief Returns the custom material path used by Custom mode.
+     *
+     * The path is an absolute prim path on Session::auxiliary().
+     */
+    pxr::SdfPath materialPath() const;
+
+    /**
+     * @brief Sets the custom material path used by Custom mode.
+     *
+     * The path must identify a material already presented from
+     * Session::auxiliary().
+     */
+    void setMaterialPath(const pxr::SdfPath& materialPath);
+
+    /**
+     * @}
+     */
+
+    /**
+     * @name Double-Sided Override
+     */
+    /**
+     * @{
+     */
+
+    /**
+     * @brief Returns whether mesh doubleSided values are overridden.
+     */
+    bool doubleSidedOverrideEnabled() const;
+
+    /**
+     * @brief Enables or disables the mesh doubleSided override.
+     *
+     * This is a Hydra presentation override only and does not modify the
+     * authored USD stage.
+     */
+    void setDoubleSidedOverrideEnabled(bool enabled);
+
+    /**
+     * @brief Returns the current mesh doubleSided override value.
+     */
+    bool doubleSidedOverride() const;
+
+    /**
+     * @brief Sets the mesh doubleSided override value.
+     *
+     * For front/back diagnostics this should normally be false while render
+     * culling is disabled.
+     */
+    void setDoubleSidedOverride(bool doubleSided);
+
+    /**
+     * @}
+     */
+
+    /**
+     * @name Scene Index
+     */
+    /**
+     * @{
+     */
+
+    pxr::HdSceneIndexPrim GetPrim(const pxr::SdfPath& primPath) const override;
+    pxr::SdfPathVector GetChildPrimPaths(const pxr::SdfPath& primPath) const override;
+
+    /**
+     * @}
+     */
+
+protected:
+    void _PrimsAdded(const pxr::HdSceneIndexBase& sender,
+                     const pxr::HdSceneIndexObserver::AddedPrimEntries& entries) override;
+    void _PrimsRemoved(const pxr::HdSceneIndexBase& sender,
+                       const pxr::HdSceneIndexObserver::RemovedPrimEntries& entries) override;
+    void _PrimsDirtied(const pxr::HdSceneIndexBase& sender,
+                       const pxr::HdSceneIndexObserver::DirtiedPrimEntries& entries) override;
+    void _PrimsRenamed(const pxr::HdSceneIndexBase& sender,
+                       const pxr::HdSceneIndexObserver::RenamedPrimEntries& entries) override;
+
+private:
+    explicit RenderSceneIndex(const pxr::HdSceneIndexBaseRefPtr& inputSceneIndex);
+
+    void indexSubtree(const pxr::SdfPath& path);
+    void unindexSubtree(const pxr::SdfPath& path);
+    void indexPrim(const pxr::SdfPath& path);
+
+    /**
+     * @brief Dirties material binding data on affected gprims.
+     */
+    void dirtyMaterialBindings();
+
+    /**
+     * @brief Dirties mesh doubleSided data on affected meshes.
+     */
+    void dirtyDoubleSided();
+
+    // Keep override targets current as the input scene index changes. This
+    // avoids traversing the full scene index whenever a display override is
+    // toggled.
+    std::set<pxr::SdfPath> gprimPaths;
+    std::set<pxr::SdfPath> geomSubsetPaths;
+    std::set<pxr::SdfPath> meshPaths;
+
+private:
+    std::unique_ptr<RenderSceneIndexPrivate> p;
+};
+
+}  // namespace stageviz

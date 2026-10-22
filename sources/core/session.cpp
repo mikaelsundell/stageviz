@@ -1,0 +1,1833 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2025 - present Mikael Sundell
+// https://github.com/mikaelsundell/stageviz
+
+#include "session.h"
+#include "bboxutils.h"
+#include "commandstack.h"
+#include "qtutils.h"
+#include "selectionlist.h"
+#include "tracelocks.h"
+#include "usdutils.h"
+#include "viewcamera.h"
+#include "viewstate.h"
+#include <QDir>
+#include <QFile>
+#include <QFileInfo>
+#include <QHash>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QMetaObject>
+#include <QMutex>
+#include <QMutexLocker>
+#include <QPointer>
+#include <QSaveFile>
+#include <QSet>
+#include <QTemporaryDir>
+#include <algorithm>
+#include <pxr/base/tf/weakBase.h>
+#include <pxr/usd/sdf/copyUtils.h>
+#include <pxr/usd/sdf/fileFormat.h>
+#include <pxr/usd/sdf/layerUtils.h>
+#include <pxr/usd/usd/editTarget.h>
+#include <pxr/usd/usd/notice.h>
+#include <pxr/usd/usd/payloads.h>
+#include <pxr/usd/usd/primRange.h>
+#include <pxr/usd/usd/stageLoadRules.h>
+#include <pxr/usd/usdGeom/bboxCache.h>
+#include <pxr/usd/usdGeom/imageable.h>
+#include <pxr/usd/usdGeom/metrics.h>
+#include <pxr/usd/usdGeom/subset.h>
+#include <pxr/usd/usdGeom/xform.h>
+#include <pxr/usd/usdUtils/dependencies.h>
+
+namespace stageviz {
+
+class SessionPrivate : public QSharedData {
+public:
+    SessionPrivate();
+    ~SessionPrivate();
+    void init();
+    void initStage();
+    void beginProgressBlock(const QString& name, size_t count);
+    void updateProgressNotify(const Session::Notify& notify, size_t completed);
+    void cancelProgressBlock();
+    void endProgressBlock();
+    bool isProgressBlockCancelled() const;
+    bool newStage(Session::LoadPolicy policy);
+    bool loadFromFile(const QString& filename, Session::LoadPolicy loadPolicy);
+    bool exportLayer(const SdfLayerHandle& layer, const QString& filename, QString& error);
+    SdfLayerRefPtr relocatedCopy(const SdfLayerHandle& layer);
+    bool saveSublayers(const UsdStageRefPtr& stage, QString& error);
+    bool saveToFile(const QString& filename);
+    bool copyToFile(const QString& filename);
+    bool flattenPathsToFile(const QList<SdfPath>& paths, const QString& filename);
+    bool loadState(const QString& filename);
+    bool saveState(const QString& filename);
+    bool close();
+    bool reload();
+    bool isLoaded() const;
+    void setMask(const QList<SdfPath>& paths);
+    void setPayloads(const QList<SdfPath>& paths, bool loaded);
+    void setPreserveState(bool enabled);
+    Session::StageUp stageUp();
+    void setStageUp(Session::StageUp stageUp);
+    void syncStageUp();
+    void syncStageMetadata(const NoticeBatch& batch);
+    GfBBox3d boundingBox();
+    GfBBox3d boundingBox(const QList<SdfPath>& paths);
+    bool needsBoundingBoxUpdate(const NoticeBatch& batch) const;
+    void updatePrims(const NoticeBatch& batch);
+    void flushPrims();
+    void updateStage();
+
+public:
+    class StageWatcher : public TfWeakBase {
+    public:
+        explicit StageWatcher(SessionPrivate* parent) { d.parent = parent; }
+        void init()
+        {
+            if (d.key.IsValid())
+                TfNotice::Revoke(d.key);
+            d.stage = nullptr;
+            QMutexLocker locker(&d.pendingMutex);
+            d.pending.entries.clear();
+            d.dispatchQueued = false;
+        }
+        void watch(const UsdStageRefPtr& stage)
+        {
+            init();
+            d.stage = stage;
+            if (stage)
+                d.key = TfNotice::Register(TfWeakPtr<StageWatcher>(this), &StageWatcher::objectsChanged, stage);
+        }
+        NoticeBatch takePending()
+        {
+            QMutexLocker locker(&d.pendingMutex);
+            const NoticeBatch batch = d.pending;
+            d.pending.entries.clear();
+            d.dispatchQueued = false;
+            return batch;
+        }
+        void dispatchPending()
+        {
+            const NoticeBatch batch = takePending();
+            if (!batch.entries.isEmpty())
+                d.parent->updatePrims(batch);
+        }
+        void objectsChanged(const UsdNotice::ObjectsChanged& notice, const UsdStageWeakPtr& sender)
+        {
+            if (d.suppress.load())
+                return;
+
+            UsdStageRefPtr senderStage = sender;
+            if (!d.stage || !senderStage || d.stage != senderStage)
+                return;
+
+            NoticeBatch batch;
+
+            for (const SdfPath& path : notice.GetChangedInfoOnlyPaths()) {
+                NoticeEntry entry;
+                entry.path = path;
+                entry.changedInfoOnly = true;
+                entry.changedFields = notice.GetChangedFields(path);
+                batch.entries.append(entry);
+            }
+
+            for (const SdfPath& path : notice.GetResolvedAssetPathsResyncedPaths()) {
+                NoticeEntry entry;
+                entry.path = path;
+                entry.resolvedAssetPathsResynced = true;
+                batch.entries.append(entry);
+            }
+
+            for (const SdfPath& path : notice.GetResyncedPaths()) {
+                NoticeEntry entry;
+                entry.path = path;
+
+                if (path.IsPrimPath())
+                    entry.primResyncType = notice.GetPrimResyncType(path, &entry.associatedPath);
+
+                batch.entries.append(entry);
+            }
+
+            if (batch.entries.isEmpty())
+                return;
+
+            bool queueDispatch = false;
+            {
+                QMutexLocker locker(&d.pendingMutex);
+                d.pending.entries.append(batch.entries);
+                if (!d.dispatchQueued) {
+                    d.dispatchQueued = true;
+                    queueDispatch = true;
+                }
+            }
+
+            if (!queueDispatch || !d.parent->d.session)
+                return;
+
+            QMetaObject::invokeMethod(
+                d.parent->d.session, [this]() { dispatchPending(); }, Qt::QueuedConnection);
+        }
+        void blockSignals(bool block) { d.suppress.store(block); }
+        bool signalsBlocked() const { return d.suppress.load(); }
+        struct Data {
+            std::atomic<bool> suppress { false };
+            TfNotice::Key key;
+            SessionPrivate* parent = nullptr;
+            UsdStageRefPtr stage;
+            QMutex pendingMutex;
+            NoticeBatch pending;
+            bool dispatchQueued = false;
+        };
+        Data d;
+    };
+    class StageBlocker {
+    public:
+        explicit StageBlocker(StageWatcher* w)
+            : watcher(w)
+        {
+            if (watcher)
+                watcher->blockSignals(true);
+        }
+        ~StageBlocker()
+        {
+            if (watcher)
+                watcher->blockSignals(false);
+        }
+
+    private:
+        StageWatcher* watcher = nullptr;
+    };
+    struct Data {
+        UsdStageRefPtr stage;
+        UsdStageRefPtr auxiliary;
+        Session::LoadPolicy loadPolicy = Session::LoadPolicy::All;
+        Session::PrimsUpdate primsUpdate = Session::PrimsUpdate::Immediate;
+        Session::StageStatus stageStatus = Session::StageStatus::Closed;
+        bool preserveState = true;
+        NoticeBatch pendingNotices;
+        QString filename;
+        QString changeName;
+        size_t changeDepth = 0;
+        size_t expectedChanges = 0;
+        size_t completedChanges = 0;
+        std::atomic<bool> changeCancelled { false };
+        GfBBox3d bbox;
+        std::atomic<bool> bboxDirty { true };
+        QList<SdfPath> mask;
+        mutable QReadWriteLock stageLock;
+        mutable QReadWriteLock auxiliaryLock;
+        QScopedPointer<CommandStack> commandStack;
+        QScopedPointer<SelectionList> selectionList;
+        QScopedPointer<ViewState> viewState;
+        QScopedPointer<StageWatcher> stageWatcher;
+        QPointer<Session> session;
+    };
+    Data d;
+};
+
+SessionPrivate::SessionPrivate() { d.stageWatcher.reset(new StageWatcher(this)); }
+SessionPrivate::~SessionPrivate() = default;
+
+void
+SessionPrivate::init()
+{
+    qRegisterMetaType<NoticeEntry>("stageviz::NoticeEntry");
+    qRegisterMetaType<NoticeBatch>("stageviz::NoticeBatch");
+    d.commandStack.reset(new CommandStack());
+    d.selectionList.reset(new SelectionList());
+    d.viewState.reset(new ViewState());
+    d.auxiliary = UsdStage::CreateInMemory("stageviz_auxiliary.usda");
+}
+
+void
+SessionPrivate::initStage()
+{
+    UsdStageRefPtr stage;
+    const GfBBox3d bbox = boundingBox();
+    Session::StageUp up = Session::StageUp::Z;
+    {
+        READ_LOCKER(locker, &d.stageLock, "stageLock");
+        stage = d.stage;
+        if (stage) {
+            const TfToken upAxis = UsdGeomGetStageUpAxis(stage);
+            up = (upAxis == UsdGeomTokens->y) ? Session::StageUp::Y : Session::StageUp::Z;
+        }
+    }
+    {
+        WRITE_LOCKER(locker, &d.stageLock, "stageLock");
+        d.stageStatus = Session::StageStatus::Loaded;
+        d.bbox = bbox;
+        d.pendingNotices.entries.clear();
+    }
+    if (d.viewState && d.viewState->camera()) {
+        ViewCamera* camera = d.viewState->camera();
+        camera->setBoundingBox(bbox);
+        camera->setCameraUp(up == Session::StageUp::Y ? ViewCamera::Y : ViewCamera::Z);
+        camera->resetView();
+    }
+    d.stageWatcher->watch(stage);
+}
+
+void
+SessionPrivate::beginProgressBlock(const QString& name, size_t count)
+{
+    d.changeCancelled.store(false);
+    d.changeName = name;
+    d.changeDepth++;
+    if (d.changeDepth == 1) {
+        d.expectedChanges = count;
+        d.completedChanges = 0;
+        Q_EMIT d.session->progressBlockChanged(name, Session::ProgressMode::Running);
+    }
+}
+
+void
+SessionPrivate::updateProgressNotify(const Session::Notify& notify, size_t completed)
+{
+    d.completedChanges = completed;
+    Q_EMIT d.session->progressNotifyChanged(notify, completed, d.expectedChanges);
+}
+
+void
+SessionPrivate::cancelProgressBlock()
+{
+    d.changeCancelled.store(true);
+}
+
+void
+SessionPrivate::endProgressBlock()
+{
+    if (d.changeDepth == 0)
+        return;
+    d.changeDepth--;
+    if (d.changeDepth > 0)
+        return;
+    const bool cancelled = d.changeCancelled.load();
+    d.changeCancelled.store(false);
+    Q_EMIT d.session->progressBlockChanged(d.changeName, Session::ProgressMode::Idle);
+    d.changeName.clear();
+    if (cancelled) {
+        d.pendingNotices.entries.clear();
+        if (d.stageWatcher)
+            d.stageWatcher->takePending();
+        return;
+    }
+    flushPrims();
+}
+
+bool
+SessionPrivate::isProgressBlockCancelled() const
+{
+    return d.changeCancelled.load();
+}
+
+bool
+SessionPrivate::newStage(Session::LoadPolicy policy)
+{
+    close();
+    beginProgressBlock("New stage", 1);
+    QList<SdfPath> mask;
+    bool created = false;
+    {
+        WRITE_LOCKER(locker, &d.stageLock, "stageLock");
+        StageBlocker blocker(d.stageWatcher.data());
+        d.stageWatcher->init();
+        UsdStageRefPtr stage = UsdStage::CreateInMemory();
+        if (!stage) {
+            endProgressBlock();
+            return false;
+        }
+        d.stage = stage;
+        d.stage->SetLoadRules(policy == Session::LoadPolicy::All ? UsdStageLoadRules::LoadAll()
+                                                                 : UsdStageLoadRules::LoadNone());
+        d.stage->SetEditTarget(UsdEditTarget(d.stage->GetRootLayer()));
+        UsdGeomSetStageMetersPerUnit(d.stage, UsdGeomLinearUnits::millimeters);
+        UsdGeomSetStageUpAxis(d.stage, UsdGeomTokens->z);
+        UsdGeomXform root = UsdGeomXform::Define(d.stage, SdfPath("/World"));
+        d.stage->SetDefaultPrim(root.GetPrim());
+        d.filename.clear();
+        d.loadPolicy = policy;
+        d.mask.clear();
+        d.pendingNotices.entries.clear();
+        d.bboxDirty.store(true);
+        mask = d.mask;
+        created = true;
+    }
+    d.commandStack->clear();
+    d.selectionList->clear();
+    if (created)
+        initStage();
+    endProgressBlock();
+    setMask(mask);
+    updateStage();
+    return true;
+}
+
+bool
+SessionPrivate::loadFromFile(const QString& filename, Session::LoadPolicy policy)
+{
+    const QString absFilename = QFileInfo(filename).absoluteFilePath();
+    const std::string identifier = QStringToString(absFilename);
+    close();
+    QList<SdfPath> mask;
+    bool loaded = false;
+    bool preserveState = false;
+    QString stateFilename;
+    {
+        WRITE_LOCKER(locker, &d.stageLock, "stageLock");
+        StageBlocker blocker(d.stageWatcher.data());
+        d.stageWatcher->init();
+        if (SdfLayerHandle existingLayer = SdfLayer::Find(identifier))
+            existingLayer->Reload(true);
+        if (policy == Session::LoadPolicy::All)
+            d.stage = UsdStage::Open(identifier, UsdStage::LoadAll);
+        else
+            d.stage = UsdStage::Open(identifier, UsdStage::LoadNone);
+        d.loadPolicy = policy;
+        d.mask.clear();
+        d.pendingNotices.entries.clear();
+        d.bboxDirty.store(true);
+        if (d.stage) {
+            d.stage->SetEditTarget(UsdEditTarget(d.stage->GetRootLayer()));
+            d.filename = absFilename;
+            loaded = true;
+            preserveState = d.preserveState;
+            stateFilename = QFileInfo(d.filename + ".session").absoluteFilePath();
+        }
+        mask = d.mask;
+    }
+    if (!loaded) {
+        newStage(policy);
+        return false;
+    }
+    d.commandStack->clear();
+    d.selectionList->clear();
+    const bool hasStateFile = preserveState && QFileInfo::exists(stateFilename);
+    initStage();
+    if (hasStateFile && !loadState(stateFilename)) {
+        // Optional view state must never prevent opening a valid USD stage.
+        QMetaObject::invokeMethod(
+            d.session,
+            [session = d.session, stateFilename]() {
+                if (session)
+                    session->notifyStatus(
+                        Session::Notify::Status::Warning,
+                        QString("Opened stage, but could not restore session state: %1").arg(stateFilename));
+            },
+            Qt::QueuedConnection);
+    }
+    setMask(mask);
+    updateStage();
+    return true;
+}
+
+bool
+SessionPrivate::exportLayer(const SdfLayerHandle& layer, const QString& filename, QString& error)
+{
+    if (!layer || filename.isEmpty()) {
+        error = QStringLiteral("Missing layer or destination filename");
+        return false;
+    }
+
+    const QFileInfo destination(filename);
+    QTemporaryDir temporary(destination.absolutePath() + "/.stageviz-save-XXXXXX");
+    if (!temporary.isValid()) {
+        error = QStringLiteral("Cannot create temporary save directory beside %1").arg(filename);
+        return false;
+    }
+
+    // Build the recovery file as a real file-backed layer using the requested
+    // destination extension. This is required for .usdc, whose file format
+    // cannot save a USDA-backed anonymous layer as Crate data.
+    const QString recoveryPath = temporary.filePath(destination.fileName());
+    const SdfLayerRefPtr recoveryLayer = SdfLayer::CreateNew(QStringToString(recoveryPath));
+    if (!recoveryLayer) {
+        error = QStringLiteral("Cannot create recovery layer %1").arg(recoveryPath);
+        return false;
+    }
+    recoveryLayer->TransferContent(layer);
+    if (!recoveryLayer->Save(true)) {
+        temporary.setAutoRemove(false);
+        error = QStringLiteral("Cannot save recovery layer %1").arg(recoveryPath);
+        return false;
+    }
+
+    if (!layer->IsAnonymous()
+        && QFileInfo(QString::fromStdString(layer->GetRealPath())).absoluteFilePath()
+               == destination.absoluteFilePath()) {
+        // Save the actual backing layer when the file format already matches.
+        // This clears USD's dirty state and keeps its normal save bookkeeping.
+        const bool sameFormat = layer->GetFileFormat()->IsSupportedExtension(destination.suffix().toStdString());
+        if (sameFormat) {
+            if (!layer->Save(true)) {
+                temporary.setAutoRemove(false);
+                error = QStringLiteral("Cannot save layer to %1. Recovery file: %2").arg(filename, recoveryPath);
+                return false;
+            }
+            return true;
+        }
+    }
+
+    QFile source(recoveryPath);
+    QSaveFile output(destination.absoluteFilePath());
+    output.setDirectWriteFallback(false);
+    auto failed = [&](const QString& reason) {
+        output.cancelWriting();
+        temporary.setAutoRemove(false);
+        error = QStringLiteral("%1. Recovery file: %2").arg(reason, recoveryPath);
+        return false;
+    };
+    if (!source.open(QIODevice::ReadOnly))
+        return failed(source.errorString());
+    if (!output.open(QIODevice::WriteOnly))
+        return failed(output.errorString());
+
+    while (!source.atEnd()) {
+        const QByteArray bytes = source.read(1024 * 1024);
+        if (source.error() != QFileDevice::NoError)
+            return failed(source.errorString());
+        if (output.write(bytes) != bytes.size())
+            return failed(output.errorString());
+    }
+    if (!output.commit())
+        return failed(output.errorString());
+    return true;
+}
+
+SdfLayerRefPtr
+SessionPrivate::relocatedCopy(const SdfLayerHandle& layer)
+{
+    if (!layer)
+        return {};
+    const auto copy = SdfLayer::CreateAnonymous("stageviz-save.usda");
+    if (!copy)
+        return {};
+    copy->TransferContent(layer);
+    UsdUtilsModifyAssetPaths(
+        copy,
+        [&](const std::string& path) {
+            if (path.empty() || SdfLayer::IsAnonymousLayerIdentifier(path))
+                return path;
+            const std::string anchored = SdfComputeAssetPathRelativeToLayer(layer, path);
+            // Unresolved relative paths (including texture patterns) must keep
+            // their original filesystem anchor as well.
+            const QString value = QString::fromStdString(anchored);
+            if (!value.contains(':') && QDir::isRelativePath(value)) {
+                const QString realPath = QString::fromStdString(layer->GetRealPath());
+                const QDir anchor = realPath.isEmpty() ? QDir::current() : QFileInfo(realPath).absoluteDir();
+                return anchor.absoluteFilePath(value).toStdString();
+            }
+            return anchored;
+        },
+        true);
+    return copy;
+}
+
+bool
+SessionPrivate::saveSublayers(const UsdStageRefPtr& stage, QString& error)
+{
+    if (!stage)
+        return false;
+    const auto layers = stage->GetLayerStack(false);
+    // Preflight every layer before writing any of them. Anonymous layers
+    // need an explicit filename and cannot silently count as saved.
+    for (const auto& layer : layers) {
+        if (layer == stage->GetRootLayer())
+            continue;
+        if (layer->IsAnonymous() || (layer->IsDirty() && !layer->PermissionToSave())) {
+            error = QStringLiteral("Sublayer needs a writable file before saving: %1")
+                        .arg(QString::fromStdString(layer->GetIdentifier()));
+            return false;
+        }
+    }
+    for (const auto& layer : layers) {
+        if (layer != stage->GetRootLayer() && layer->IsDirty()
+            && !exportLayer(layer, QString::fromStdString(layer->GetRealPath()), error))
+            return false;
+    }
+    return true;
+}
+
+bool
+SessionPrivate::saveToFile(const QString& filename)
+{
+    if (filename.isEmpty())
+        return false;
+
+    QString stageFilename;
+    bool preserveState = false;
+    bool stageReplaced = false;
+
+    {
+        WRITE_LOCKER(locker, &d.stageLock, "stageLock");
+        try {
+            if (!d.stage)
+                return false;
+
+            const UsdStageRefPtr oldStage = d.stage;
+            const SdfLayerHandle rootLayer = oldStage->GetRootLayer();
+            if (!rootLayer)
+                return false;
+
+            stageFilename = QFileInfo(filename).absoluteFilePath();
+            preserveState = d.preserveState;
+            const bool retarget = rootLayer->IsAnonymous() || d.filename != stageFilename;
+
+            if (!retarget && !rootLayer->PermissionToSave())
+                return false;
+
+            if (retarget) {
+                const SdfLayerHandle existing = SdfLayer::Find(QStringToString(stageFilename));
+                if (existing && existing != rootLayer)
+                    return false;
+            }
+
+            QString error;
+            if (!saveSublayers(oldStage, error)) {
+                QMetaObject::invokeMethod(
+                    d.session,
+                    [session = d.session, error]() {
+                        if (session)
+                            session->notifyStatus(Session::Notify::Status::Error, error);
+                    },
+                    Qt::QueuedConnection);
+                return false;
+            }
+
+            if (!retarget) {
+                if (!exportLayer(rootLayer, stageFilename, error)) {
+                    QMetaObject::invokeMethod(
+                        d.session,
+                        [session = d.session, error]() {
+                            if (session)
+                                session->notifyStatus(Session::Notify::Status::Error, error);
+                        },
+                        Qt::QueuedConnection);
+                    return false;
+                }
+                d.filename = stageFilename;
+            }
+            else {
+                const SdfLayerRefPtr relocated = relocatedCopy(rootLayer);
+                if (!relocated)
+                    return false;
+
+                if (!exportLayer(relocated, stageFilename, error)) {
+                    QMetaObject::invokeMethod(
+                        d.session,
+                        [session = d.session, error]() {
+                            if (session)
+                                session->notifyStatus(Session::Notify::Status::Error, error);
+                        },
+                        Qt::QueuedConnection);
+                    return false;
+                }
+
+                // A USD stage cannot change its root layer object in place, and a
+                // USDA-backed anonymous layer cannot be converted into a Crate-backed
+                // layer merely by changing its identifier. Reopen the successfully
+                // written file and replace the live stage while preserving session
+                // opinions, load rules, muted layers, and the active local edit layer.
+                const UsdStageLoadRules loadRules = oldStage->GetLoadRules();
+                const std::vector<std::string> mutedLayers = oldStage->GetMutedLayers();
+                const SdfLayerHandle oldEditLayer = oldStage->GetEditTarget().GetLayer();
+                const bool editWasRoot = oldEditLayer == rootLayer;
+                const std::string editIdentifier = oldEditLayer ? oldEditLayer->GetIdentifier() : std::string();
+
+                const SdfLayerRefPtr sessionLayer = SdfLayer::CreateAnonymous("stageviz-session.usda");
+                if (!sessionLayer)
+                    return false;
+                sessionLayer->TransferContent(oldStage->GetSessionLayer());
+
+                const SdfLayerRefPtr newRoot = SdfLayer::FindOrOpen(QStringToString(stageFilename));
+                if (!newRoot)
+                    return false;
+
+                UsdStageRefPtr replacement = UsdStage::Open(newRoot, sessionLayer, UsdStage::LoadNone);
+                if (!replacement)
+                    return false;
+
+                replacement->SetLoadRules(loadRules);
+                if (!mutedLayers.empty())
+                    replacement->MuteAndUnmuteLayers(mutedLayers, {});
+
+                SdfLayerHandle replacementEditLayer;
+                if (editWasRoot) {
+                    replacementEditLayer = replacement->GetRootLayer();
+                }
+                else if (!editIdentifier.empty()) {
+                    for (const SdfLayerHandle& layer : replacement->GetLayerStack(false)) {
+                        if (layer && layer->GetIdentifier() == editIdentifier) {
+                            replacementEditLayer = layer;
+                            break;
+                        }
+                    }
+                }
+
+                if (!replacementEditLayer)
+                    replacementEditLayer = replacement->GetRootLayer();
+
+                replacement->SetEditTarget(replacement->GetEditTargetForLocalLayer(replacementEditLayer));
+
+                d.stageWatcher->init();
+                d.stage = replacement;
+                d.filename = stageFilename;
+                d.pendingNotices.entries.clear();
+                d.stageWatcher->watch(d.stage);
+                stageReplaced = true;
+            }
+        } catch (const std::exception&) {
+            return false;
+        }
+    }
+
+    if (stageReplaced) {
+        d.bboxDirty.store(true);
+        boundingBox();
+        updateStage();
+    }
+
+    if (preserveState) {
+        const QString stateFilename = QFileInfo(stageFilename + ".session").absoluteFilePath();
+        if (!saveState(stateFilename))
+            return false;
+    }
+    return true;
+}
+
+bool
+SessionPrivate::copyToFile(const QString& filename)
+{
+    if (filename.isEmpty())
+        return false;
+    QString stageFilename;
+    bool preserveState = false;
+    {
+        READ_LOCKER(locker, &d.stageLock, "stageLock");
+        try {
+            if (!d.stage)
+                return false;
+
+            const SdfLayerHandle rootLayer = d.stage->GetRootLayer();
+            if (!rootLayer)
+                return false;
+
+            stageFilename = QFileInfo(filename).absoluteFilePath();
+            QString error;
+            if (!exportLayer(relocatedCopy(rootLayer), stageFilename, error))
+                return false;
+
+            preserveState = d.preserveState;
+        } catch (const std::exception&) {
+            return false;
+        }
+    }
+    if (preserveState) {
+        const QString stateFilename = QFileInfo(stageFilename + ".session").absoluteFilePath();
+        if (!saveState(stateFilename))
+            return false;
+    }
+    return true;
+}
+
+bool
+SessionPrivate::flattenPathsToFile(const QList<SdfPath>& paths, const QString& filename)
+{
+    READ_LOCKER(locker, &d.stageLock, "stageLock");
+    if (!d.stage)
+        return false;
+
+    UsdStagePopulationMask mask;
+    const QList<SdfPath> roots = path::topLevelPaths(paths);
+    for (const SdfPath& path : roots)
+        mask.Add(path);
+
+    if (mask.GetPaths().empty())
+        return false;
+
+    UsdStageRefPtr maskedStage = UsdStage::OpenMasked(d.stage->GetRootLayer(), d.stage->GetSessionLayer(),
+                                                      d.stage->GetPathResolverContext(), mask, UsdStage::LoadNone);
+    if (!maskedStage)
+        return false;
+
+    maskedStage->MuteAndUnmuteLayers(d.stage->GetMutedLayers(), {});
+    maskedStage->SetLoadRules(d.stage->GetLoadRules());
+    maskedStage->ExpandPopulationMask();
+    return maskedStage->Export(QStringToString(QFileInfo(filename).absoluteFilePath()));
+}
+
+bool
+SessionPrivate::loadState(const QString& filename)
+{
+    QFile file(QFileInfo(filename).absoluteFilePath());
+    if (!file.exists())
+        return true;
+
+    if (!file.open(QIODevice::ReadOnly))
+        return false;
+
+    const QJsonDocument doc = QJsonDocument::fromJson(file.readAll());
+    if (!doc.isObject())
+        return false;
+
+    const QJsonObject root = doc.object();
+    const QJsonObject cameraObject = root.value("viewCamera").toObject();
+    const QJsonObject viewStateObject = root.value("viewState").toObject();
+    const QJsonArray payloads = root.value("loadedPayloads").toArray();
+    const bool restoreLoadRules = root.contains("loadRules") || root.contains("loadedPayloads");
+    UsdStageLoadRules loadRules = UsdStageLoadRules::LoadNone();
+    if (root.contains("loadRules")) {
+        if (!root.value("loadRules").isArray())
+            return false;
+        // An empty rule set means load all in USD.
+        loadRules = UsdStageLoadRules::LoadAll();
+        QSet<QString> seenPaths;
+        for (const QJsonValue& value : root.value("loadRules").toArray()) {
+            if (!value.isObject())
+                return false;
+            const QJsonObject object = value.toObject();
+            const QString pathString = object.value("path").toString();
+            if (!SdfPath::IsValidPathString(qt::QStringToString(pathString)) || seenPaths.contains(pathString))
+                return false;
+            const SdfPath path(qt::QStringToString(pathString));
+            if (!path.IsAbsolutePath() || !path.IsAbsoluteRootOrPrimPath())
+                return false;
+            seenPaths.insert(pathString);
+            const QString rule = object.value("rule").toString();
+            if (rule == "all")
+                loadRules.AddRule(path, UsdStageLoadRules::AllRule);
+            else if (rule == "only")
+                loadRules.AddRule(path, UsdStageLoadRules::OnlyRule);
+            else if (rule == "none")
+                loadRules.AddRule(path, UsdStageLoadRules::NoneRule);
+            else
+                return false;
+        }
+    }
+    else if (root.contains("loadedPayloads")) {
+        if (!root.value("loadedPayloads").isArray())
+            return false;
+        // Legacy state lists all loaded payloads. Load each without implicitly
+        // loading its descendants; omitted payloads remain unloaded.
+        for (const QJsonValue& value : payloads) {
+            if (!value.isString() || !SdfPath::IsValidPathString(qt::QStringToString(value.toString())))
+                return false;
+            const SdfPath path(qt::QStringToString(value.toString()));
+            if (!path.IsAbsolutePath() || !path.IsPrimPath())
+                return false;
+            loadRules.AddRule(path, UsdStageLoadRules::OnlyRule);
+        }
+    }
+    {
+        WRITE_LOCKER(locker, &d.stageLock, "stageLock");
+        if (!d.stage)
+            return false;
+
+        StageBlocker blocker(d.stageWatcher.data());
+        if (restoreLoadRules)
+            d.stage->SetLoadRules(loadRules);
+    }
+    d.bboxDirty.store(true);
+    const GfBBox3d bbox = boundingBox();
+    if (d.viewState && d.viewState->camera()) {
+        ViewCamera* camera = d.viewState->camera();
+        camera->setBoundingBox(bbox);
+        if (!cameraObject.isEmpty()) {
+            if (cameraObject.contains("aspectRatio"))
+                camera->setAspectRatio(cameraObject.value("aspectRatio").toDouble(camera->aspectRatio()));
+            if (cameraObject.contains("aspectRatioLocked"))
+                camera->setAspectRatioLocked(
+                    cameraObject.value("aspectRatioLocked").toBool(camera->aspectRatioLocked()));
+            if (cameraObject.contains("letterboxEnabled"))
+                camera->setLetterboxEnabled(cameraObject.value("letterboxEnabled").toBool(camera->letterboxEnabled()));
+            if (cameraObject.contains("letterboxOpacity"))
+                camera->setLetterboxOpacity(
+                    cameraObject.value("letterboxOpacity").toDouble(camera->letterboxOpacity()));
+            if (cameraObject.contains("projectionMode")) {
+                const QString value = cameraObject.value("projectionMode").toString();
+                if (value == "FieldOfView")
+                    camera->setProjectionMode(ViewCamera::FieldOfView);
+                else if (value == "Physical")
+                    camera->setProjectionMode(ViewCamera::Physical);
+            }
+            if (cameraObject.contains("fov"))
+                camera->setFov(cameraObject.value("fov").toDouble(camera->fov()));
+            if (cameraObject.contains("fovDirection")) {
+                const QString value = cameraObject.value("fovDirection").toString();
+                if (value == "Horizontal")
+                    camera->setFovDirection(ViewCamera::Horizontal);
+                else if (value == "Vertical")
+                    camera->setFovDirection(ViewCamera::Vertical);
+            }
+            if (cameraObject.contains("focalLength"))
+                camera->setFocalLength(cameraObject.value("focalLength").toDouble(camera->focalLength()));
+            if (cameraObject.contains("sensorWidth"))
+                camera->setSensorWidth(cameraObject.value("sensorWidth").toDouble(camera->sensorWidth()));
+            if (cameraObject.contains("sensorHeight"))
+                camera->setSensorHeight(cameraObject.value("sensorHeight").toDouble(camera->sensorHeight()));
+            if (cameraObject.contains("nearClipping"))
+                camera->setNearClipping(cameraObject.value("nearClipping").toDouble(camera->nearClipping()));
+            if (cameraObject.contains("farClipping"))
+                camera->setFarClipping(cameraObject.value("farClipping").toDouble(camera->farClipping()));
+            if (cameraObject.contains("fit"))
+                camera->setFit(cameraObject.value("fit").toDouble(camera->fit()));
+            if (cameraObject.contains("cameraMode")) {
+                const QString value = cameraObject.value("cameraMode").toString();
+                if (value == "None")
+                    camera->setCameraMode(ViewCamera::None);
+                else if (value == "Truck")
+                    camera->setCameraMode(ViewCamera::Truck);
+                else if (value == "Tumble")
+                    camera->setCameraMode(ViewCamera::Tumble);
+                else if (value == "Zoom")
+                    camera->setCameraMode(ViewCamera::Zoom);
+                else if (value == "Pick")
+                    camera->setCameraMode(ViewCamera::Pick);
+            }
+            if (cameraObject.contains("cameraUp")) {
+                const QString value = cameraObject.value("cameraUp").toString();
+                if (value == "X")
+                    camera->setCameraUp(ViewCamera::X);
+                else if (value == "Y")
+                    camera->setCameraUp(ViewCamera::Y);
+                else if (value == "Z")
+                    camera->setCameraUp(ViewCamera::Z);
+            }
+            const QJsonArray focusPoint = cameraObject.value("focusPoint").toArray();
+            if (focusPoint.size() == 3) {
+                camera->setFocusPoint(
+                    GfVec3d(focusPoint.at(0).toDouble(), focusPoint.at(1).toDouble(), focusPoint.at(2).toDouble()));
+            }
+            if (cameraObject.contains("axisYaw"))
+                camera->setAxisYaw(cameraObject.value("axisYaw").toDouble(camera->axisYaw()));
+            if (cameraObject.contains("axisPitch"))
+                camera->setAxisPitch(cameraObject.value("axisPitch").toDouble(camera->axisPitch()));
+            if (cameraObject.contains("axisRoll"))
+                camera->setAxisRoll(cameraObject.value("axisRoll").toDouble(camera->axisRoll()));
+            if (cameraObject.contains("cameraDistance"))
+                camera->setCameraDistance(cameraObject.value("cameraDistance").toDouble(camera->cameraDistance()));
+        }
+        if (!viewStateObject.isEmpty()) {
+            if (viewStateObject.contains("backgroundColor")) {
+                const QColor color(viewStateObject.value("backgroundColor").toString());
+                if (color.isValid())
+                    d.viewState->setBackgroundColor(color);
+            }
+            if (viewStateObject.contains("gridColor")) {
+                const QColor color(viewStateObject.value("gridColor").toString());
+                if (color.isValid())
+                    d.viewState->setGridColor(color);
+            }
+            if (viewStateObject.contains("gridEnabled"))
+                d.viewState->setGridEnabled(viewStateObject.value("gridEnabled").toBool(d.viewState->gridEnabled()));
+            if (viewStateObject.contains("materialMode")) {
+                const QString value = viewStateObject.value("materialMode").toString();
+                if (value == "All")
+                    d.viewState->setMaterialMode(ViewState::All);
+                else if (value == "Clay")
+                    d.viewState->setMaterialMode(ViewState::Clay);
+                else if (value == "Override")
+                    d.viewState->setMaterialMode(ViewState::Override);
+            }
+            if (viewStateObject.contains("overrideMaterial")) {
+                const QString value = viewStateObject.value("overrideMaterial").toString();
+                d.viewState->setOverrideMaterial(value.isEmpty() ? SdfPath() : SdfPath(qt::QStringToString(value)));
+            }
+            if (viewStateObject.contains("defaultCameraLightEnabled"))
+                d.viewState->setDefaultCameraLightEnabled(
+                    viewStateObject.value("defaultCameraLightEnabled").toBool(d.viewState->defaultCameraLightEnabled()));
+            if (viewStateObject.contains("defaultDomeLightEnabled"))
+                d.viewState->setDefaultDomeLightEnabled(
+                    viewStateObject.value("defaultDomeLightEnabled").toBool(d.viewState->defaultDomeLightEnabled()));
+            if (viewStateObject.contains("domeLightTexture"))
+                d.viewState->setDomeLightTexture(viewStateObject.value("domeLightTexture").toString());
+            if (viewStateObject.contains("domeLightCameraVisibility"))
+                d.viewState->setDomeLightCameraVisibility(
+                    viewStateObject.value("domeLightCameraVisibility").toBool(d.viewState->domeLightCameraVisibility()));
+            if (viewStateObject.contains("sceneLightsEnabled"))
+                d.viewState->setSceneLightsEnabled(
+                    viewStateObject.value("sceneLightsEnabled").toBool(d.viewState->sceneLightsEnabled()));
+            if (viewStateObject.contains("sceneMaterialsEnabled"))
+                d.viewState->setSceneMaterialsEnabled(
+                    viewStateObject.value("sceneMaterialsEnabled").toBool(d.viewState->sceneMaterialsEnabled()));
+            if (viewStateObject.contains("doubleSidedMode")) {
+                const QString value = viewStateObject.value("doubleSidedMode").toString();
+                if (value == "Primitive")
+                    d.viewState->setDoubleSidedMode(ViewState::Primitive);
+                else if (value == "DoubleSided")
+                    d.viewState->setDoubleSidedMode(ViewState::DoubleSided);
+                else if (value == "SingleSided")
+                    d.viewState->setDoubleSidedMode(ViewState::SingleSided);
+            }
+            if (viewStateObject.contains("renderMode")) {
+                const QString value = viewStateObject.value("renderMode").toString();
+                if (value == "Shaded")
+                    d.viewState->setRenderMode(ViewState::Shaded);
+                else if (value == "Wireframe")
+                    d.viewState->setRenderMode(ViewState::Wireframe);
+            }
+            if (viewStateObject.contains("complexityLevel")) {
+                const QString value = viewStateObject.value("complexityLevel").toString();
+                if (value == "Low")
+                    d.viewState->setComplexityLevel(ViewState::Low);
+                else if (value == "Medium")
+                    d.viewState->setComplexityLevel(ViewState::Medium);
+                else if (value == "High")
+                    d.viewState->setComplexityLevel(ViewState::High);
+                else if (value == "VeryHigh")
+                    d.viewState->setComplexityLevel(ViewState::VeryHigh);
+            }
+            if (viewStateObject.contains("rendererAov"))
+                d.viewState->setRendererAov(viewStateObject.value("rendererAov").toString(d.viewState->rendererAov()));
+            if (viewStateObject.contains("sceneStatsEnabled"))
+                d.viewState->setSceneStatsEnabled(
+                    viewStateObject.value("sceneStatsEnabled").toBool(d.viewState->sceneStatsEnabled()));
+            if (viewStateObject.contains("performanceStatsEnabled"))
+                d.viewState->setPerformanceStatsEnabled(
+                    viewStateObject.value("performanceStatsEnabled").toBool(d.viewState->performanceStatsEnabled()));
+            if (viewStateObject.contains("cameraAxisEnabled"))
+                d.viewState->setCameraAxisEnabled(
+                    viewStateObject.value("cameraAxisEnabled").toBool(d.viewState->cameraAxisEnabled()));
+        }
+    }
+    Q_EMIT d.session->boundingBoxChanged(bbox);
+    return true;
+}
+
+bool
+SessionPrivate::saveState(const QString& filename)
+{
+    QString stageFilename;
+    QJsonArray payloads;
+    QJsonArray loadRules;
+    {
+        READ_LOCKER(locker, &d.stageLock, "stageLock");
+        if (!d.stage)
+            return false;
+
+        stageFilename = QFileInfo(d.filename).absoluteFilePath();
+        for (const auto& rule : d.stage->GetLoadRules().GetRules()) {
+            QJsonObject object;
+            object["path"] = qt::SdfPathToQString(rule.first);
+            object["rule"] = rule.second == UsdStageLoadRules::AllRule    ? "all"
+                             : rule.second == UsdStageLoadRules::OnlyRule ? "only"
+                                                                          : "none";
+            loadRules.append(object);
+        }
+        for (const UsdPrim& prim : d.stage->TraverseAll()) {
+            if (!prim || !prim.IsValid())
+                continue;
+
+            if (stage::isPayload(d.stage, prim.GetPath()) && prim.IsLoaded())
+                payloads.append(qt::SdfPathToQString(prim.GetPath()));
+        }
+    }
+    QJsonObject root;
+    root["version"] = 5;
+    root["stageFile"] = stageFilename;
+    root["loadedPayloads"] = payloads;
+    root["loadRules"] = loadRules;
+    if (d.viewState && d.viewState->camera()) {
+        ViewCamera* camera = d.viewState->camera();
+        auto cameraUp = [](ViewCamera::CameraUp value) {
+            switch (value) {
+            case ViewCamera::X: return QStringLiteral("X");
+            case ViewCamera::Y: return QStringLiteral("Y");
+            case ViewCamera::Z: return QStringLiteral("Z");
+            }
+            return QStringLiteral("Y");
+        };
+        auto cameraMode = [](ViewCamera::CameraMode value) {
+            switch (value) {
+            case ViewCamera::None: return QStringLiteral("None");
+            case ViewCamera::Truck: return QStringLiteral("Truck");
+            case ViewCamera::Tumble: return QStringLiteral("Tumble");
+            case ViewCamera::Zoom: return QStringLiteral("Zoom");
+            case ViewCamera::Pick: return QStringLiteral("Pick");
+            }
+            return QStringLiteral("None");
+        };
+        auto fovDirection = [](ViewCamera::FovDirection value) {
+            switch (value) {
+            case ViewCamera::Horizontal: return QStringLiteral("Horizontal");
+            case ViewCamera::Vertical: return QStringLiteral("Vertical");
+            }
+            return QStringLiteral("Vertical");
+        };
+        auto projectionMode = [](ViewCamera::ProjectionMode value) {
+            switch (value) {
+            case ViewCamera::FieldOfView: return QStringLiteral("FieldOfView");
+            case ViewCamera::Physical: return QStringLiteral("Physical");
+            case ViewCamera::Orthographic: return QStringLiteral("Orthographic");
+            }
+            return QStringLiteral("FieldOfView");
+        };
+        auto materialMode = [](ViewState::MaterialMode value) {
+            switch (value) {
+            case ViewState::All: return QStringLiteral("All");
+            case ViewState::Clay: return QStringLiteral("Clay");
+            case ViewState::Override: return QStringLiteral("Override");
+            }
+            return QStringLiteral("All");
+        };
+        auto doubleSidedMode = [](ViewState::DoubleSidedMode value) {
+            switch (value) {
+            case ViewState::Primitive: return QStringLiteral("Primitive");
+            case ViewState::DoubleSided: return QStringLiteral("DoubleSided");
+            case ViewState::SingleSided: return QStringLiteral("SingleSided");
+            }
+            return QStringLiteral("Primitive");
+        };
+        auto renderMode = [](ViewState::RenderMode value) {
+            switch (value) {
+            case ViewState::Shaded: return QStringLiteral("Shaded");
+            case ViewState::Wireframe: return QStringLiteral("Wireframe");
+            }
+            return QStringLiteral("Shaded");
+        };
+        auto complexityLevel = [](ViewState::ComplexityLevel value) {
+            switch (value) {
+            case ViewState::Low: return QStringLiteral("Low");
+            case ViewState::Medium: return QStringLiteral("Medium");
+            case ViewState::High: return QStringLiteral("High");
+            case ViewState::VeryHigh: return QStringLiteral("VeryHigh");
+            }
+            return QStringLiteral("Low");
+        };
+        const GfVec3d focusPoint = camera->focusPoint();
+        QJsonArray focusPointArray;
+        focusPointArray.append(focusPoint[0]);
+        focusPointArray.append(focusPoint[1]);
+        focusPointArray.append(focusPoint[2]);
+        QJsonObject cameraObject;
+        cameraObject["aspectRatio"] = camera->aspectRatio();
+        cameraObject["aspectRatioLocked"] = camera->aspectRatioLocked();
+        cameraObject["letterboxEnabled"] = camera->letterboxEnabled();
+        cameraObject["letterboxOpacity"] = camera->letterboxOpacity();
+        cameraObject["projectionMode"] = projectionMode(camera->projectionMode());
+        cameraObject["fov"] = camera->fov();
+        cameraObject["fovDirection"] = fovDirection(camera->fovDirection());
+        cameraObject["focalLength"] = camera->focalLength();
+        cameraObject["sensorWidth"] = camera->sensorWidth();
+        cameraObject["sensorHeight"] = camera->sensorHeight();
+        cameraObject["nearClipping"] = camera->nearClipping();
+        cameraObject["farClipping"] = camera->farClipping();
+        cameraObject["fit"] = camera->fit();
+        cameraObject["cameraMode"] = cameraMode(camera->cameraMode());
+        cameraObject["cameraUp"] = cameraUp(camera->cameraUp());
+        cameraObject["focusPoint"] = focusPointArray;
+        cameraObject["axisYaw"] = camera->axisYaw();
+        cameraObject["axisPitch"] = camera->axisPitch();
+        cameraObject["axisRoll"] = camera->axisRoll();
+        cameraObject["cameraDistance"] = camera->cameraDistance();
+        root["viewCamera"] = cameraObject;
+        QJsonObject viewStateObject;
+        viewStateObject["backgroundColor"] = d.viewState->backgroundColor().name(QColor::HexArgb);
+        viewStateObject["gridColor"] = d.viewState->gridColor().name(QColor::HexArgb);
+        viewStateObject["gridEnabled"] = d.viewState->gridEnabled();
+        viewStateObject["materialMode"] = materialMode(d.viewState->materialMode());
+        viewStateObject["overrideMaterial"] = qt::SdfPathToQString(d.viewState->overrideMaterial());
+        viewStateObject["defaultCameraLightEnabled"] = d.viewState->defaultCameraLightEnabled();
+        viewStateObject["defaultDomeLightEnabled"] = d.viewState->defaultDomeLightEnabled();
+        viewStateObject["domeLightTexture"] = d.viewState->domeLightTexture();
+        viewStateObject["domeLightCameraVisibility"] = d.viewState->domeLightCameraVisibility();
+        viewStateObject["sceneLightsEnabled"] = d.viewState->sceneLightsEnabled();
+        viewStateObject["sceneMaterialsEnabled"] = d.viewState->sceneMaterialsEnabled();
+        viewStateObject["doubleSidedMode"] = doubleSidedMode(d.viewState->doubleSidedMode());
+        viewStateObject["renderMode"] = renderMode(d.viewState->renderMode());
+        viewStateObject["complexityLevel"] = complexityLevel(d.viewState->complexityLevel());
+        viewStateObject["rendererAov"] = d.viewState->rendererAov();
+        viewStateObject["sceneStatsEnabled"] = d.viewState->sceneStatsEnabled();
+        viewStateObject["performanceStatsEnabled"] = d.viewState->performanceStatsEnabled();
+        viewStateObject["cameraAxisEnabled"] = d.viewState->cameraAxisEnabled();
+        root["viewState"] = viewStateObject;
+    }
+    QSaveFile file(QFileInfo(filename).absoluteFilePath());
+    file.setDirectWriteFallback(false);
+    if (!file.open(QIODevice::WriteOnly))
+        return false;
+
+    const QJsonDocument doc(root);
+    const QByteArray bytes = doc.toJson(QJsonDocument::Indented);
+    return file.write(bytes) == bytes.size() && file.commit();
+}
+
+bool
+SessionPrivate::close()
+{
+    {
+        WRITE_LOCKER(locker, &d.stageLock, "stageLock");
+        StageBlocker blocker(d.stageWatcher.data());
+        d.stageWatcher->init();
+        d.stage = nullptr;
+        d.stageStatus = Session::StageStatus::Closed;
+        d.pendingNotices.entries.clear();
+        d.bbox = GfBBox3d();
+        d.bboxDirty.store(true);
+
+        d.changeDepth = 0;
+        d.expectedChanges = 0;
+        d.completedChanges = 0;
+        d.changeName.clear();
+        d.changeCancelled.store(false);
+        d.filename.clear();
+        bbox::clear();
+    }
+    d.commandStack->clear();
+    d.selectionList->clear();
+    updateStage();
+    return true;
+}
+
+bool
+SessionPrivate::reload()
+{
+    QString filename;
+    Session::LoadPolicy loadPolicy;
+    {
+        READ_LOCKER(locker, &d.stageLock, "stageLock");
+        if (!d.stage)
+            return false;
+
+        filename = d.filename;
+        loadPolicy = d.loadPolicy;
+    }
+    if (filename.isEmpty())
+        return false;
+
+    close();
+    return loadFromFile(filename, loadPolicy);
+}
+
+bool
+SessionPrivate::isLoaded() const
+{
+    READ_LOCKER(locker, &d.stageLock, "stageLock");
+    return d.stage != nullptr;
+}
+
+void
+SessionPrivate::setMask(const QList<SdfPath>& paths)
+{
+    bool changed = false;
+    {
+        WRITE_LOCKER(locker, &d.stageLock, "stageLock");
+        if (d.mask != paths) {
+            d.mask = paths;
+            d.bboxDirty.store(true);
+            changed = true;
+        }
+    }
+    if (changed)
+        Q_EMIT d.session->maskChanged(paths);
+}
+
+void
+SessionPrivate::setPayloads(const QList<SdfPath>& paths, bool loaded)
+{
+    bool changed = false;
+    {
+        WRITE_LOCKER(locker, &d.stageLock, "stageLock");
+        if (!d.stage)
+            return;
+
+        StageBlocker blocker(d.stageWatcher.data());
+        for (const SdfPath& path : paths) {
+            const SdfPath primPath = path.IsPropertyPath() ? path.GetPrimPath() : path;
+            UsdPrim prim = d.stage->GetPrimAtPath(primPath);
+            if (!prim || !prim.IsValid())
+                continue;
+
+            if (!stage::isPayload(d.stage, primPath))
+                continue;
+
+            if (loaded) {
+                if (!prim.IsLoaded()) {
+                    prim.Load();
+                    changed = true;
+                }
+            }
+            else {
+                if (prim.IsLoaded()) {
+                    prim.Unload();
+                    changed = true;
+                }
+            }
+        }
+    }
+    if (!changed)
+        return;
+    d.bboxDirty.store(true);
+    const GfBBox3d bbox = boundingBox();
+    if (d.viewState && d.viewState->camera())
+        d.viewState->camera()->setBoundingBox(bbox);
+
+    Q_EMIT d.session->boundingBoxChanged(bbox);
+}
+
+void
+SessionPrivate::setPreserveState(bool enabled)
+{
+    {
+        WRITE_LOCKER(locker, &d.stageLock, "stageLock");
+        d.preserveState = enabled;
+    }
+    Q_EMIT d.session->preserveStateChanged(enabled);
+}
+
+Session::StageUp
+SessionPrivate::stageUp()
+{
+    READ_LOCKER(locker, &d.stageLock, "stageLock");
+    if (!d.stage)
+        return Session::StageUp::Z;
+
+    const TfToken upAxis = UsdGeomGetStageUpAxis(d.stage);
+    return (upAxis == UsdGeomTokens->y) ? Session::StageUp::Y : Session::StageUp::Z;
+}
+
+void
+SessionPrivate::setStageUp(Session::StageUp stageUp)
+{
+    GfBBox3d bbox;
+    {
+        WRITE_LOCKER(locker, &d.stageLock, "stageLock");
+        if (!d.stage)
+            return;
+
+        const TfToken upAxis = (stageUp == Session::StageUp::Y) ? UsdGeomTokens->y : UsdGeomTokens->z;
+        if (UsdGeomGetStageUpAxis(d.stage) != upAxis && !UsdGeomSetStageUpAxis(d.stage, upAxis))
+            return;
+    }
+    bbox = boundingBox();
+    {
+        WRITE_LOCKER(locker, &d.stageLock, "stageLock");
+        d.bbox = bbox;
+    }
+    if (d.viewState && d.viewState->camera()) {
+        ViewCamera* camera = d.viewState->camera();
+        camera->setBoundingBox(bbox);
+    }
+    syncStageUp();
+    Q_EMIT d.session->boundingBoxChanged(bbox);
+}
+
+void
+SessionPrivate::syncStageUp()
+{
+    const Session::StageUp up = stageUp();
+    if (d.viewState && d.viewState->camera())
+        d.viewState->camera()->setCameraUp(up == Session::StageUp::Y ? ViewCamera::Y : ViewCamera::Z);
+    Q_EMIT d.session->stageUpChanged(up);
+}
+
+void
+SessionPrivate::syncStageMetadata(const NoticeBatch& batch)
+{
+    for (const NoticeEntry& entry : batch.entries) {
+        if (entry.path == SdfPath::AbsoluteRootPath()) {
+            syncStageUp();
+            return;
+        }
+    }
+}
+
+GfBBox3d
+SessionPrivate::boundingBox()
+{
+    WRITE_LOCKER(locker, &d.stageLock, "stageLock");
+
+    if (!d.stage)
+        return GfBBox3d();
+
+    if (!d.bboxDirty.load())
+        return d.bbox;
+
+    // Stage mutations invalidate the shared USD bbox cache. Clear it before
+    // acquiring CacheGuard; clear() takes the same cache mutex.
+    bbox::clear();
+    if (d.mask.isEmpty()) {
+        bbox::CacheGuard cache;
+        d.bbox = cache.ComputeWorldBound(d.stage->GetPseudoRoot());
+    }
+    else {
+        // stage::boundingBox also uses the shared bbox cache.
+        d.bbox = stage::boundingBox(d.stage, d.mask);
+    }
+    d.bboxDirty.store(false);
+    return d.bbox;
+}
+
+GfBBox3d
+SessionPrivate::boundingBox(const QList<SdfPath>& paths)
+{
+    READ_LOCKER(locker, &d.stageLock, "stageLock");
+    if (!d.stage || paths.isEmpty())
+        return GfBBox3d();
+
+    UsdGeomBBoxCache bboxCache(UsdTimeCode::Default(),
+                               { UsdGeomTokens->default_, UsdGeomTokens->proxy, UsdGeomTokens->render }, true);
+
+    GfRange3d worldRange;
+    std::unordered_set<SdfPath, SdfPath::Hash> visited;
+    for (const SdfPath& path : paths) {
+        const SdfPath primPath = path.IsPropertyPath() ? path.GetPrimPath() : path;
+
+        UsdPrim prim = d.stage->GetPrimAtPath(primPath);
+        if (!prim)
+            continue;
+
+        if (prim.IsA<UsdGeomSubset>())
+            prim = prim.GetParent();
+
+        if (!prim)
+            continue;
+
+        for (const UsdPrim& descendant : UsdPrimRange(prim)) {
+            if (!descendant.IsActive() || !descendant.IsDefined())
+                continue;
+
+            if (!visited.insert(descendant.GetPath()).second)
+                continue;
+
+            const UsdGeomImageable imageable(descendant);
+            if (!imageable)
+                continue;
+
+            const GfBBox3d bbox = bboxCache.ComputeWorldBound(descendant);
+
+            const GfRange3d range = bbox.ComputeAlignedRange();
+
+            if (!range.IsEmpty())
+                worldRange.UnionWith(range);
+        }
+    }
+    return GfBBox3d(worldRange);
+}
+
+bool
+SessionPrivate::needsBoundingBoxUpdate(const NoticeBatch& batch) const
+{
+    for (const NoticeEntry& entry : batch.entries) {
+        if (entry.resolvedAssetPathsResynced)
+            return true;
+
+        if (entry.primResyncType != UsdNotice::ObjectsChanged::PrimResyncType::Invalid)
+            return true;
+
+        if (entry.changedInfoOnly && !entry.path.IsPropertyPath())
+            return true;
+    }
+    return false;
+}
+
+void
+SessionPrivate::updatePrims(const NoticeBatch& batch)
+{
+    if (batch.entries.isEmpty())
+        return;
+
+    d.bboxDirty.store(true);
+
+    if (d.changeDepth > 0 || d.primsUpdate == Session::PrimsUpdate::Deferred) {
+        d.pendingNotices.entries.append(batch.entries);
+        return;
+    }
+    const bool updateBBox = needsBoundingBoxUpdate(batch);
+    syncStageMetadata(batch);
+    if (updateBBox) {
+        const GfBBox3d bbox = boundingBox();
+        Q_EMIT d.session->primsChanged(batch);
+        Q_EMIT d.session->boundingBoxChanged(bbox);
+    }
+    else {
+        Q_EMIT d.session->primsChanged(batch);
+    }
+}
+
+
+void
+SessionPrivate::flushPrims()
+{
+    if (d.stageWatcher) {
+        const NoticeBatch watcherBatch = d.stageWatcher->takePending();
+        if (!watcherBatch.entries.isEmpty())
+            d.pendingNotices.entries.append(watcherBatch.entries);
+    }
+    if (d.pendingNotices.entries.isEmpty())
+        return;
+
+    NoticeBatch batch;
+    if (d.pendingNotices.entries.size() < 2) {
+        batch = d.pendingNotices;
+    }
+    else {
+        batch.entries.reserve(d.pendingNotices.entries.size());
+        QHash<QString, qsizetype> infoOnlyIndexByPath;
+
+        for (const NoticeEntry& entry : d.pendingNotices.entries) {
+            const bool mergeOnly = entry.changedInfoOnly && !entry.path.IsEmpty() && entry.associatedPath.IsEmpty()
+                                   && !entry.resolvedAssetPathsResynced
+                                   && entry.primResyncType == UsdNotice::ObjectsChanged::PrimResyncType::Invalid;
+
+            if (!mergeOnly) {
+                infoOnlyIndexByPath.clear();
+                batch.entries.append(entry);
+                continue;
+            }
+
+            const QString key = qt::SdfPathToQString(entry.path);
+            const auto existing = infoOnlyIndexByPath.constFind(key);
+            if (existing == infoOnlyIndexByPath.cend()) {
+                infoOnlyIndexByPath.insert(key, batch.entries.size());
+                batch.entries.append(entry);
+                continue;
+            }
+
+            NoticeEntry& merged = batch.entries[*existing];
+            for (const TfToken& field : entry.changedFields) {
+                if (std::find(merged.changedFields.begin(), merged.changedFields.end(), field)
+                    == merged.changedFields.end())
+                    merged.changedFields.push_back(field);
+            }
+        }
+    }
+    d.pendingNotices.entries.clear();
+    d.bboxDirty.store(true);
+    syncStageMetadata(batch);
+    const bool updateBBox = needsBoundingBoxUpdate(batch);
+    if (updateBBox) {
+        const GfBBox3d bbox = boundingBox();
+        Q_EMIT d.session->primsChanged(batch);
+        Q_EMIT d.session->boundingBoxChanged(bbox);
+    }
+    else {
+        Q_EMIT d.session->primsChanged(batch);
+    }
+}
+
+void
+SessionPrivate::updateStage()
+{
+    UsdStageRefPtr stage;
+    Session::LoadPolicy loadPolicy;
+    Session::StageStatus stageStatus;
+    SdfLayerHandle editLayer;
+    GfBBox3d bbox;
+    {
+        READ_LOCKER(locker, &d.stageLock, "stageLock");
+        stage = d.stage;
+        loadPolicy = d.loadPolicy;
+        stageStatus = d.stageStatus;
+        editLayer = d.stage ? d.stage->GetEditTarget().GetLayer() : SdfLayerHandle();
+        bbox = d.bbox;
+    }
+    Q_EMIT d.session->stageChanged(stage, loadPolicy, stageStatus);
+    Q_EMIT d.session->editLayerChanged(editLayer);
+    syncStageUp();
+    Q_EMIT d.session->boundingBoxChanged(bbox);
+}
+
+Session::Session()
+    : p(new SessionPrivate())
+{
+    p->d.session = this;
+    p->init();
+}
+
+Session::Session(const QString& filename, Session::LoadPolicy loadPolicy)
+    : p(new SessionPrivate())
+{
+    p->d.session = this;
+    p->init();
+    loadFromFile(filename, loadPolicy);
+}
+
+Session::Session(const Session& other)
+    : p(other.p)
+{}
+
+Session::~Session() = default;
+
+void
+Session::beginProgressBlock(const QString& name, size_t count)
+{
+    p->beginProgressBlock(name, count);
+}
+
+void
+Session::updateProgressNotify(const Notify& notify, size_t completed)
+{
+    p->updateProgressNotify(notify, completed);
+}
+
+void
+Session::cancelProgressBlock()
+{
+    p->cancelProgressBlock();
+}
+
+void
+Session::endProgressBlock()
+{
+    p->endProgressBlock();
+}
+
+bool
+Session::isProgressBlockCancelled() const
+{
+    return p->isProgressBlockCancelled();
+}
+
+bool
+Session::newStage(Session::LoadPolicy policy)
+{
+    return p->newStage(policy);
+}
+
+
+bool
+Session::loadFromFile(const QString& filename, Session::LoadPolicy loadPolicy)
+{
+    return p->loadFromFile(filename, loadPolicy);
+}
+
+bool
+Session::saveToFile(const QString& filename)
+{
+    return p->saveToFile(filename);
+}
+
+bool
+Session::copyToFile(const QString& filename)
+{
+    return p->copyToFile(filename);
+}
+
+bool
+Session::flattenToFile(const QString& filename)
+{
+    READ_LOCKER(locker, stageLock(), "stageLock");
+    if (!p->d.stage)
+        return false;
+    try {
+        return p->d.stage->Export(QStringToString(QFileInfo(filename).absoluteFilePath()));
+    } catch (const std::exception&) {
+        return false;
+    }
+}
+
+bool
+Session::flattenPathsToFile(const QList<SdfPath>& paths, const QString& filename)
+{
+    return p->flattenPathsToFile(paths, filename);
+}
+
+bool
+Session::loadState(const QString& filename)
+{
+    return p->loadState(filename);
+}
+
+bool
+Session::saveState(const QString& filename)
+{
+    return p->saveState(filename);
+}
+
+void
+Session::setPreserveState(bool enabled)
+{
+    p->d.preserveState = enabled;
+}
+
+bool
+Session::reload()
+{
+    return p->reload();
+}
+
+bool
+Session::close()
+{
+    return p->close();
+}
+
+bool
+Session::isLoaded() const
+{
+    return p->isLoaded();
+}
+
+Session::StageUp
+Session::stageUp()
+{
+    return p->stageUp();
+}
+
+
+void
+Session::setStageUp(Session::StageUp stageUp)
+{
+    p->setStageUp(stageUp);
+}
+
+QList<SdfPath>
+Session::mask() const
+{
+    READ_LOCKER(locker, stageLock(), "stageLock");
+    return p->d.mask;
+}
+
+void
+Session::setMask(const QList<SdfPath>& paths)
+{
+    p->setMask(paths);
+}
+
+void
+Session::notifyRedraw()
+{
+    Q_EMIT redrawRequested();
+}
+
+void
+Session::notifyStatus(Notify::Status status, const QString& message, const QString& details)
+{
+    Q_EMIT notifyStatusChanged(status, message, details);
+}
+
+GfBBox3d
+Session::boundingBox()
+{
+    return p->boundingBox();
+}
+
+GfBBox3d
+Session::boundingBox(const QList<SdfPath>& paths)
+{
+    return p->boundingBox(paths);
+}
+
+Session::LoadPolicy
+Session::loadPolicy() const
+{
+    READ_LOCKER(locker, stageLock(), "stageLock");
+    return p->d.loadPolicy;
+}
+
+QString
+Session::filename() const
+{
+    READ_LOCKER(locker, stageLock(), "stageLock");
+    return p->d.filename;
+}
+
+UsdStageRefPtr
+Session::auxiliary() const
+{
+    READ_LOCKER(locker, auxiliaryLock(), "auxiliaryLock");
+    return p->d.auxiliary;
+}
+
+
+UsdStageRefPtr
+Session::auxiliaryUnsafe() const
+{
+    return p->d.auxiliary;
+}
+
+QReadWriteLock*
+Session::auxiliaryLock() const
+{
+    return &p->d.auxiliaryLock;
+}
+
+UsdStageRefPtr
+Session::stage() const
+{
+    READ_LOCKER(locker, stageLock(), "stageLock");
+    return p->d.stage;
+}
+
+UsdStageRefPtr
+Session::stageUnsafe() const
+{
+    return p->d.stage;
+}
+
+bool
+Session::setEditLayer(const SdfLayerHandle& layer)
+{
+    SdfLayerHandle changedLayer;
+    {
+        WRITE_LOCKER(locker, stageLock(), "stageLock");
+        if (!p->d.stage || !layer || !p->d.stage->HasLocalLayer(layer))
+            return false;
+
+        const UsdEditTarget target = p->d.stage->GetEditTargetForLocalLayer(layer);
+        if (!target.GetLayer())
+            return false;
+
+        if (p->d.stage->GetEditTarget().GetLayer() == target.GetLayer())
+            return true;
+
+        p->d.stage->SetEditTarget(target);
+        changedLayer = target.GetLayer();
+    }
+
+    Q_EMIT editLayerChanged(changedLayer);
+    return true;
+}
+
+QReadWriteLock*
+Session::stageLock() const
+{
+    return &p->d.stageLock;
+}
+
+CommandStack*
+Session::commandStack() const
+{
+    return p->d.commandStack.data();
+}
+
+SelectionList*
+Session::selectionList() const
+{
+    return p->d.selectionList.data();
+}
+
+ViewState*
+Session::viewState() const
+{
+    return p->d.viewState.data();
+}
+
+Session::PrimsUpdate
+Session::primsUpdate() const
+{
+    READ_LOCKER(locker, stageLock(), "stageLock");
+    return p->d.primsUpdate;
+}
+
+void
+Session::setPrimsUpdate(PrimsUpdate update)
+{
+    bool flush = false;
+    {
+        WRITE_LOCKER(locker, stageLock(), "stageLock");
+        if (p->d.primsUpdate == update)
+            return;
+        p->d.primsUpdate = update;
+        flush = update == Session::PrimsUpdate::Immediate;
+    }
+    if (flush)
+        p->flushPrims();
+}
+
+}  // namespace stageviz
