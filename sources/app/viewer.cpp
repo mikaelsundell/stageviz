@@ -176,6 +176,7 @@ public Q_SLOTS:
     void openPythonApiReference();
     void openPythonDialogsReference();
     void openAgentSkill();
+    void openMcpServer();
     void reportIssue();
     void backgroundColor();
     void updateMask(const QList<SdfPath>& paths);
@@ -250,6 +251,7 @@ ViewerPrivate::init()
 {
     d.ui.reset(new Ui_Viewer());
     d.ui->setupUi(d.viewer.data());
+
 #ifdef Q_OS_MAC
     d.ui->fileRevealInFolder->setText("Reveal in Finder");
 #elif defined(Q_OS_WIN)
@@ -469,6 +471,7 @@ ViewerPrivate::init()
     connect(d.ui->helpPythonApiReference, &QAction::triggered, this, &ViewerPrivate::openPythonApiReference);
     connect(d.ui->helpPythonDialogReference, &QAction::triggered, this, &ViewerPrivate::openPythonDialogsReference);
     connect(d.ui->helpAgentSkill, &QAction::triggered, this, &ViewerPrivate::openAgentSkill);
+    connect(d.ui->helpMcpServer, &QAction::triggered, this, &ViewerPrivate::openMcpServer);
     connect(d.ui->helpReportIssue, &QAction::triggered, this, &ViewerPrivate::reportIssue);
     {
         d.ui->newStage->setDefaultAction(d.ui->fileNew);
@@ -2459,6 +2462,12 @@ void
 ViewerPrivate::openAgentSkill()
 {
     QDesktopServices::openUrl(QUrl(QStringLiteral(GITHUB_URL "/blob/master/skills/SKILL.md")));
+}
+
+void
+ViewerPrivate::openMcpServer()
+{
+    QDesktopServices::openUrl(QUrl(QStringLiteral(GITHUB_URL "/blob/master/docs/MCP.md")));
 }
 
 void

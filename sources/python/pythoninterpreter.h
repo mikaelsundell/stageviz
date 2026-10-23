@@ -67,6 +67,15 @@ public:
     QString executeScript(const QString& script);
 
     /**
+     * @brief Executes a script and returns text written to stdout or stderr.
+     *
+     * This is intended for integrations that need to return script output to
+     * their caller. Script execution has the same command-history boundary as
+     * executeScript().
+     */
+    QString executeScriptWithOutput(const QString& script);
+
+    /**
      * @}
      */
 

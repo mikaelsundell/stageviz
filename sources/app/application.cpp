@@ -4,6 +4,7 @@
 
 #include "application.h"
 #include "console.h"
+#include "mcp/mcpserver.h"
 #include "os.h"
 #include "pythoninterpreter.h"
 #include "qtutils.h"
@@ -35,6 +36,7 @@ public:
         QScopedPointer<Session> session;
         QScopedPointer<Style> style;
         QScopedPointer<Settings> settings;
+        QScopedPointer<McpServer> mcpServer;
     };
     Data d;
 };
@@ -54,6 +56,7 @@ ApplicationPrivate::init()
     d.settings.reset(new Settings());
     d.style.reset(new Style());
     d.pythonInterpreter.reset(new PythonInterpreter());
+    d.mcpServer.reset(new McpServer());
 #ifdef NDEBUG
     QStringList pluginDirs;
 #    ifdef __APPLE__
@@ -116,6 +119,12 @@ PythonInterpreter*
 Application::pythonInterpreter() const
 {
     return p->d.pythonInterpreter.data();
+}
+
+McpServer*
+Application::mcpServer() const
+{
+    return p->d.mcpServer.data();
 }
 
 Session*

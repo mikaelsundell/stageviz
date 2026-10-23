@@ -910,6 +910,7 @@
     <addaction name="helpPythonApiReference" />
     <addaction name="helpPythonDialogReference" />
     <addaction name="helpAgentSkill" />
+    <addaction name="helpMcpServer" />
     <addaction name="separator" />
     <addaction name="helpReportIssue" />
    </widget>
@@ -1154,6 +1155,11 @@
   <action name="helpAgentSkill">
    <property name="text">
     <string>Agent Skill</string>
+   </property>
+  </action>
+  <action name="helpMcpServer">
+   <property name="text">
+    <string>MCP Server</string>
    </property>
   </action>
   <action name="helpReportIssue">

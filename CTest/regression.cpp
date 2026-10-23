@@ -37,8 +37,8 @@
 #include <pxr/usd/usd/references.h>
 #include <pxr/usd/usd/relationship.h>
 #include <pxr/usd/usd/variantSets.h>
-#include <pxr/usd/usdGeom/cube.h>
 #include <pxr/usd/usdGeom/bboxCache.h>
+#include <pxr/usd/usdGeom/cube.h>
 #include <pxr/usd/usdGeom/mesh.h>
 #include <pxr/usd/usdGeom/scope.h>
 #include <pxr/usd/usdGeom/subset.h>
@@ -1533,7 +1533,8 @@ usdPayloadUtilsApi()
     require(second.GetReferences().AddInternalReference(SdfPath("/World/Source")), "author second instance reference");
     second.SetInstanceable(true);
     const UsdPrim sourcePayload = instanceStage->DefinePrim(SdfPath("/World/Source/GeometryPayload"), TfToken("Xform"));
-    require(sourcePayload.GetPayloads().AddPayload(assetPath.toStdString()), "author payload below instanceable source");
+    require(sourcePayload.GetPayloads().AddPayload(assetPath.toStdString()),
+            "author payload below instanceable source");
 
     const SdfPath firstPayloadPath("/World/First/GeometryPayload");
     const SdfPath secondPayloadPath("/World/Second/GeometryPayload");
@@ -2807,10 +2808,12 @@ commandPayloadApi()
     require(!instanceStage->GetPrimAtPath(secondPayloadPath).IsLoaded(), "loadPayloads leaves other instance unloaded");
     undoCommand(instanceLoad, session);
     require(!instanceStage->GetPrimAtPath(firstPayloadPath).IsLoaded(), "instance proxy payload load undo");
-    require(!instanceStage->GetPrimAtPath(secondPayloadPath).IsLoaded(), "instance proxy payload undo leaves sibling unloaded");
+    require(!instanceStage->GetPrimAtPath(secondPayloadPath).IsLoaded(),
+            "instance proxy payload undo leaves sibling unloaded");
     executeCommand(instanceLoad, session);
     require(instanceStage->GetPrimAtPath(firstPayloadPath).IsLoaded(), "instance proxy payload load redo");
-    require(!instanceStage->GetPrimAtPath(secondPayloadPath).IsLoaded(), "instance proxy payload redo leaves sibling unloaded");
+    require(!instanceStage->GetPrimAtPath(secondPayloadPath).IsLoaded(),
+            "instance proxy payload redo leaves sibling unloaded");
 }
 
 void
@@ -2955,12 +2958,10 @@ commandCenterPivotUsesObjectSpace()
 
     UsdGeomBBoxCache bboxCache(UsdTimeCode::Default(),
                                { UsdGeomTokens->default_, UsdGeomTokens->render, UsdGeomTokens->proxy }, true);
-    const GfVec3d expectedObjectPivot = bboxCache.ComputeUntransformedBound(stage->GetPrimAtPath(path))
-                                           .ComputeAlignedRange()
-                                           .GetMidpoint();
-    const GfVec3d incorrectlyTransformedPivot = bboxCache.ComputeLocalBound(stage->GetPrimAtPath(path))
-                                                    .ComputeAlignedRange()
-                                                    .GetMidpoint();
+    const GfVec3d expectedObjectPivot
+        = bboxCache.ComputeUntransformedBound(stage->GetPrimAtPath(path)).ComputeAlignedRange().GetMidpoint();
+    const GfVec3d incorrectlyTransformedPivot
+        = bboxCache.ComputeLocalBound(stage->GetPrimAtPath(path)).ComputeAlignedRange().GetMidpoint();
     require(!GfIsClose(expectedObjectPivot, incorrectlyTransformedPivot, 1e-6),
             "fixture distinguishes object-space and prim-transformed bounds");
 

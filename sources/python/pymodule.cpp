@@ -3,6 +3,7 @@
 // https://github.com/mikaelsundell/stageviz
 
 #include "application.h"
+#include "mcp/mcpserver.h"
 #include "pyapplication.h"
 #include "pycommand.h"
 #include "pyrenderengine.h"
@@ -57,26 +58,68 @@ PyModule_selectionList(PyObject*, PyObject*)
 }
 
 static PyObject*
-PyModule_getCurrentStage(PyObject*, PyObject*)
+PyModule_startMcpServer(PyObject*, PyObject*)
 {
-    Session* s = currentSession();
-    if (!checkSession(s))
+    McpServer* server = mcpServer();
+    if (!server) {
+        PyErr_SetString(PyExc_RuntimeError, "Stageviz MCP server is unavailable.");
         return nullptr;
-
-    return wrapUsdStage(s->stage());
+    }
+    const bool wasRunning = server->isRunning();
+    if (!server->start()) {
+        const QByteArray message = server->errorString().toUtf8();
+        PyErr_SetString(PyExc_RuntimeError, message.constData());
+        return nullptr;
+    }
+    const QByteArray url = server->url().toString().toUtf8();
+    const QString message = QStringLiteral("MCP server %1 at %2")
+                                .arg(wasRunning ? QStringLiteral("already running") : QStringLiteral("listening"),
+                                     QString::fromUtf8(url));
+    if (Session* session = currentSession())
+        session->notifyStatus(Session::Notify::Status::Success, message);
+    else
+        PySys_WriteStdout("[MCP] %s\n", message.toUtf8().constData());
+    return PyUnicode_FromString(url.constData());
 }
 
-static PyMethodDef Module_methods[] = { { "application", reinterpret_cast<PyCFunction>(PyModule_application),
-                                          METH_NOARGS, "Get the current stageviz application wrapper" },
-                                        { "session", reinterpret_cast<PyCFunction>(PyModule_session), METH_NOARGS,
-                                          "Get the current stageviz session wrapper" },
-                                        { "style", reinterpret_cast<PyCFunction>(PyModule_style), METH_NOARGS,
-                                          "Get the current stageviz style wrapper" },
-                                        { "selectionList", reinterpret_cast<PyCFunction>(PyModule_selectionList),
-                                          METH_NOARGS, "Get the current stageviz selection list wrapper" },
-                                        { "getCurrentStage", reinterpret_cast<PyCFunction>(PyModule_getCurrentStage),
-                                          METH_NOARGS, "Get the current native USD stage" },
-                                        { nullptr, nullptr, 0, nullptr } };
+static PyObject*
+PyModule_stopMcpServer(PyObject*, PyObject*)
+{
+    McpServer* server = mcpServer();
+    if (!server) {
+        PyErr_SetString(PyExc_RuntimeError, "Stageviz MCP server is unavailable.");
+        return nullptr;
+    }
+    server->stop();
+    Py_RETURN_NONE;
+}
+
+static PyObject*
+PyModule_isMcpServerRunning(PyObject*, PyObject*)
+{
+    McpServer* server = mcpServer();
+    if (!server) {
+        PyErr_SetString(PyExc_RuntimeError, "Stageviz MCP server is unavailable.");
+        return nullptr;
+    }
+    return PyBool_FromLong(server->isRunning());
+}
+
+static PyMethodDef Module_methods[] = {
+    { "application", reinterpret_cast<PyCFunction>(PyModule_application), METH_NOARGS,
+      "Get the current stageviz application wrapper" },
+    { "session", reinterpret_cast<PyCFunction>(PyModule_session), METH_NOARGS,
+      "Get the current stageviz session wrapper" },
+    { "style", reinterpret_cast<PyCFunction>(PyModule_style), METH_NOARGS, "Get the current stageviz style wrapper" },
+    { "selectionList", reinterpret_cast<PyCFunction>(PyModule_selectionList), METH_NOARGS,
+      "Get the current stageviz selection list wrapper" },
+    { "startMcpServer", reinterpret_cast<PyCFunction>(PyModule_startMcpServer), METH_NOARGS,
+      "Start the local MCP server and return its URL" },
+    { "stopMcpServer", reinterpret_cast<PyCFunction>(PyModule_stopMcpServer), METH_NOARGS, "Stop the local MCP server" },
+    { "isMcpServerRunning", reinterpret_cast<PyCFunction>(PyModule_isMcpServerRunning), METH_NOARGS,
+      "Return whether the local MCP server is running" },
+    { nullptr, nullptr, 0, nullptr }
+};
 
 PyMODINIT_FUNC
 PyInit_stageviz(void)

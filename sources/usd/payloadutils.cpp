@@ -20,8 +20,8 @@
 #include <pxr/usd/sdf/variantSetSpec.h>
 #include <pxr/usd/sdf/variantSpec.h>
 #include <pxr/usd/usd/attribute.h>
-#include <pxr/usd/usd/primFlags.h>
 #include <pxr/usd/usd/prim.h>
+#include <pxr/usd/usd/primFlags.h>
 #include <pxr/usd/usd/primRange.h>
 #include <pxr/usd/usd/variantSets.h>
 #include <pxr/usd/usdGeom/imageable.h>
@@ -569,8 +569,7 @@ namespace stage {
             // through each composed instance as instance proxies. Include
             // those proxies so selecting an instance root resolves its own
             // payload paths without changing the stage's composition.
-            for (const UsdPrim& child : prim.GetFilteredChildren(
-                     UsdTraverseInstanceProxies(UsdPrimAllPrimsPredicate)))
+            for (const UsdPrim& child : prim.GetFilteredChildren(UsdTraverseInstanceProxies(UsdPrimAllPrimsPredicate)))
                 collect(child);
         };
 

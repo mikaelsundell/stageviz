@@ -1601,8 +1601,8 @@ RenderEngine::Private::render()
             const UsdPrim parent = subset ? prim.GetParent() : UsdPrim();
             const UsdPrim viewportPrim = parent ? parent : prim;
             const SdfPath viewportPath = viewportPrim ? viewportPrim.GetPath() : path;
-            const bool newViewportPath
-                = !viewportPath.IsEmpty() && (!subset || selectedSubsetMeshes.insert(viewportPath).second);
+            const bool newViewportPath = !viewportPath.IsEmpty()
+                                         && (!subset || selectedSubsetMeshes.insert(viewportPath).second);
             if (!newViewportPath)
                 continue;
 

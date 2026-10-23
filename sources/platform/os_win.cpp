@@ -6,9 +6,9 @@
 #include <QApplication>
 #include <QDir>
 #include <QScreen>
-#include <windows.h>
 #include <objbase.h>
 #include <shlobj.h>
+#include <windows.h>
 
 namespace stageviz {
 namespace os {

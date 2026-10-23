@@ -327,6 +327,11 @@ Task-based parallelism used by the wider OpenUSD/Stageviz dependency stack.
 
 Additional dependencies are provided through the Stageviz third-party build environment.
 
+## Connect an MCP client
+
+Stageviz can host a local MCP server for tools that inspect or operate on the
+active session. See the [MCP server setup guide](docs/MCP.md).
+
 ---
 
 ## Web resources

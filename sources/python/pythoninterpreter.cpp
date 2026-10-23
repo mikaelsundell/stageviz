@@ -38,6 +38,7 @@ public:
     void configureModulePaths();
     void configureRuntimeLibraryPaths();
     QString executeScript(const QString& script);
+    QString executeScriptWithOutput(const QString& script);
     QString pythonError() const;
 
 public:
@@ -292,6 +293,82 @@ PythonInterpreterPrivate::executeScript(const QString& script)
 }
 
 QString
+PythonInterpreterPrivate::executeScriptWithOutput(const QString& script)
+{
+    if (!d.initialized) {
+        const QString error = QStringLiteral("Python not initialized");
+        session()->notifyStatus(Session::Notify::Status::Error,
+                                QStringLiteral("Python script failed. Check the Python log for details."));
+        return error;
+    }
+
+    // Match executeScript(): arbitrary Python may edit USD outside the native
+    // command model, so it starts a new undo/redo history segment.
+    if (Session* current = session()) {
+        if (CommandStack* stack = current->commandStack())
+            stack->clear();
+    }
+
+    QString output;
+    const QByteArray scriptBytes = script.toUtf8();
+    PyGILState_STATE gil = PyGILState_Ensure();
+    PyObject* source = PyUnicode_FromStringAndSize(scriptBytes.constData(), scriptBytes.size());
+    if (!source || PyDict_SetItemString(d.globals, "_stageviz_mcp_source", source) != 0) {
+        Py_XDECREF(source);
+        output = pythonError();
+        PyGILState_Release(gil);
+        return output;
+    }
+    Py_DECREF(source);
+
+    static const char* wrapper
+        = "import contextlib as _stageviz_mcp_contextlib\n"
+          "import io as _stageviz_mcp_io\n"
+          "_stageviz_mcp_capture = _stageviz_mcp_io.StringIO()\n"
+          "with _stageviz_mcp_contextlib.redirect_stdout(_stageviz_mcp_capture), "
+          "_stageviz_mcp_contextlib.redirect_stderr(_stageviz_mcp_capture):\n"
+          "    exec(compile(_stageviz_mcp_source, '<stageviz-mcp>', 'exec'), globals(), locals())\n";
+
+    PyObject* result = PyRun_String(wrapper, Py_file_input, d.globals, d.locals);
+    QString executionError;
+    if (!result) {
+        executionError = pythonError();
+        qWarning().noquote() << "[Python]" << executionError;
+        session()->notifyStatus(Session::Notify::Status::Error,
+                                QStringLiteral("Python script failed. Check the Python log for details."));
+    }
+    else {
+        Py_DECREF(result);
+    }
+
+    PyObject* captured = PyRun_String("_stageviz_mcp_capture.getvalue()", Py_eval_input, d.globals, d.locals);
+    if (captured) {
+        if (PyUnicode_Check(captured)) {
+            const char* text = PyUnicode_AsUTF8(captured);
+            if (text)
+                output = QString::fromUtf8(text);
+        }
+        Py_DECREF(captured);
+    }
+    else {
+        PyErr_Clear();
+    }
+
+    if (!executionError.isEmpty()) {
+        if (!output.isEmpty())
+            output += QLatin1Char('\n');
+        output += executionError;
+    }
+
+    PyDict_DelItemString(d.globals, "_stageviz_mcp_source");
+    PyErr_Clear();
+    PyDict_DelItemString(d.globals, "_stageviz_mcp_capture");
+    PyErr_Clear();
+    PyGILState_Release(gil);
+    return output;
+}
+
+QString
 PythonInterpreterPrivate::pythonError() const
 {
     PyObject *type = nullptr, *value = nullptr, *traceback = nullptr;
@@ -394,6 +471,12 @@ QString
 PythonInterpreter::executeScript(const QString& script)
 {
     return p->executeScript(script);
+}
+
+QString
+PythonInterpreter::executeScriptWithOutput(const QString& script)
+{
+    return p->executeScriptWithOutput(script);
 }
 
 }  // namespace stageviz

@@ -16,6 +16,7 @@ class Console;
 class Session;
 class Style;
 class Settings;
+class McpServer;
 class ApplicationPrivate;
 
 /**
@@ -57,6 +58,11 @@ public:
      * @brief Returns the python interpreter subsystem.
      */
     PythonInterpreter* pythonInterpreter() const;
+
+    /**
+     * @brief Returns the optional local MCP server.
+     */
+    McpServer* mcpServer() const;
 
     /**
      * @brief Returns the session subsystem.
@@ -134,6 +140,16 @@ pythonInterpreter()
 {
     auto* a = app();
     return a ? a->pythonInterpreter() : nullptr;
+}
+
+/**
+ * @brief Returns the local MCP server subsystem.
+ */
+inline McpServer*
+mcpServer()
+{
+    auto* a = app();
+    return a ? a->mcpServer() : nullptr;
 }
 
 /**

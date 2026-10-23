@@ -5,6 +5,7 @@ This reference describes the Stageviz CPython bindings, with the coverage audit 
 ## Binding audit additions
 
 - `Application.session()` and `Application.style()` return the corresponding wrappers.
+- `stageviz.startMcpServer()`, `stageviz.stopMcpServer()`, and `stageviz.isMcpServerRunning()` control the local MCP server.
 - `ViewCamera.frame(bbox)` frames a bounding box represented as `((min_x, min_y, min_z), (max_x, max_y, max_z))`.
 - `stageviz.command.can_clear()` reports whether command history can be cleared.
 - `stageviz.command.set_transforms(paths, before, after)` applies undoable world transforms. All three sequences must have equal lengths; each matrix is a sequence of four rows of four numbers. The native optional `TransformRootState` snapshots are not accepted.
@@ -13,6 +14,7 @@ This reference describes the Stageviz CPython bindings, with the coverage audit 
 ## Contents
 
 - [API conventions](#api-conventions)
+- [MCP server control](#mcp-server-control)
 - [stageviz.Application](#stagevizapplication)
 - [stageviz.Session](#stagevizsession)
 - [stageviz.SelectionList](#stagevizselectionlist)
@@ -28,6 +30,7 @@ This reference describes the Stageviz CPython bindings, with the coverage audit 
 ### Naming
 
 - `stageviz.command`: snake_case functions.
+- Other `stageviz` module functions use camelCase names.
 - `Application`, `Session`, `SelectionList`, `ViewState`, `ViewCamera`, `Style`: camelCase methods.
 - `RenderEngine`: snake_case methods.
 
@@ -45,6 +48,18 @@ Stageviz path-taking functions accept Python strings or string sequences and con
 ### Undoable edits
 
 Functions in `stageviz.command` create native Stageviz `Command` objects and run them on the current session's `CommandStack`. Prefer them for edits that should participate in undo/redo.
+
+## MCP server control
+
+`stageviz.startMcpServer() -> str`
+: Start the local MCP server and return its URL. Raises `RuntimeError` if the
+  server cannot start.
+
+`stageviz.stopMcpServer() -> None`
+: Stop the local MCP server.
+
+`stageviz.isMcpServerRunning() -> bool`
+: Return whether the local MCP server is running.
 
 ## stageviz.Application
 

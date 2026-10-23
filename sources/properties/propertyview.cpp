@@ -108,7 +108,7 @@ PropertyViewPrivate::updateFilter()
     const QString filter = d.filter.trimmed();
 
     std::function<bool(QTreeWidgetItem*, bool)> filterItem = [&](QTreeWidgetItem* item,
-                                                                  bool keepValueDescendants) -> bool {
+                                                                 bool keepValueDescendants) -> bool {
         if (!item)
             return false;
 
@@ -123,8 +123,8 @@ PropertyViewPrivate::updateFilter()
         }
 
         const auto* propertyItem = dynamic_cast<PropertyItem*>(item);
-        const bool keepChildren = keepValueDescendants || (matches && propertyItem
-                                                            && propertyItem->kind() != PropertyItem::Group);
+        const bool keepChildren = keepValueDescendants
+                                  || (matches && propertyItem && propertyItem->kind() != PropertyItem::Group);
 
         bool childMatches = false;
         for (int i = 0; i < item->childCount(); ++i) {
