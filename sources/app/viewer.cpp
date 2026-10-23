@@ -2510,21 +2510,36 @@ ViewerPrivate::updateSelection(const QList<SdfPath>& paths)
     const bool hasSelection = !paths.isEmpty();
     d.ui->editSelectInvert->setEnabled(hasSelection);
     d.ui->editCopySelected->setEnabled(hasSelection);
-    d.ui->editInstanceSelected->setEnabled(hasSelection);
+    bool canInstance = hasSelection;
 
     bool canSelectParent = false;
-    if (paths.size() == 1) {
+    if (hasSelection) {
         READ_LOCKER(locker, session()->stageLock(), "stageLock");
 
         const UsdStageRefPtr stage = session()->stageUnsafe();
         if (stage) {
-            const SdfPath selectedPath = paths.first().IsPropertyPath() ? paths.first().GetPrimPath() : paths.first();
-            if (!selectedPath.IsEmpty() && selectedPath != SdfPath::AbsoluteRootPath()) {
-                const UsdPrim prim = stage->GetPrimAtPath(selectedPath);
-                canSelectParent = prim && bool(prim.GetParent());
+            for (const SdfPath& selectedPath : path::minimalRootPaths(paths)) {
+                const SdfPath primPath = selectedPath.IsPropertyPath() ? selectedPath.GetPrimPath() : selectedPath;
+                if (!stage::canUseAsNativeInstanceRoot(stage->GetPrimAtPath(primPath))) {
+                    canInstance = false;
+                    break;
+                }
+            }
+
+            if (paths.size() == 1) {
+                const SdfPath selectedPath = paths.first().IsPropertyPath() ? paths.first().GetPrimPath()
+                                                                            : paths.first();
+                if (!selectedPath.IsEmpty() && selectedPath != SdfPath::AbsoluteRootPath()) {
+                    const UsdPrim prim = stage->GetPrimAtPath(selectedPath);
+                    canSelectParent = prim && bool(prim.GetParent());
+                }
             }
         }
+        else {
+            canInstance = false;
+        }
     }
+    d.ui->editInstanceSelected->setEnabled(canInstance);
     d.ui->editSelectParent->setEnabled(canSelectParent);
 
     d.ui->menuPayloads->setProperty("selectionMenuDirty", true);

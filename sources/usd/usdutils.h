@@ -7,6 +7,7 @@
 #include "stageviz.h"
 #include <QList>
 #include <QMap>
+#include <pxr/usd/usd/prim.h>
 #include <pxr/usd/usd/stage.h>
 
 PXR_NAMESPACE_USING_DIRECTIVE
@@ -250,6 +251,14 @@ namespace path {
 }  // namespace path
 
 namespace stage {
+    /**
+     * @brief Returns whether a prim can be used as a native USD instance root.
+     *
+     * Hydra cannot image directly instanced leaf geometry prims. Enclose such
+     * geometry in an Xform or Scope and instance that container instead.
+     */
+    bool canUseAsNativeInstanceRoot(const UsdPrim& prim);
+
     /**
      * @brief Builds an asset path suitable for authoring into a destination layer.
      *

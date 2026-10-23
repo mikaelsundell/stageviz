@@ -135,6 +135,7 @@ ContextMenu::exec(QWidget* parent, ViewContext* context, UsdStageRefPtr usdStage
     bool canCenterPivot = !paths.isEmpty();
     bool canResetPivot = !paths.isEmpty();
     bool canResetOverrides = false;
+    bool canInstance = !paths.isEmpty();
     SdfPath instanceRootPath;
     SdfPath instanceSourcePath;
 
@@ -151,6 +152,14 @@ ContextMenu::exec(QWidget* parent, ViewContext* context, UsdStageRefPtr usdStage
         payloadPaths = stage::resolvePayloadPaths(usdStage, topLevelPaths);
         if (!paths.isEmpty())
             variantTargets = stage::variantTargets(usdStage, paths, true);
+
+        for (const SdfPath& selectedPath : path::minimalRootPaths(paths)) {
+            const SdfPath primPath = selectedPath.IsPropertyPath() ? selectedPath.GetPrimPath() : selectedPath;
+            if (!stage::canUseAsNativeInstanceRoot(usdStage->GetPrimAtPath(primPath))) {
+                canInstance = false;
+                break;
+            }
+        }
 
         for (const SdfPath& path : paths) {
             if (stage::isPayload(usdStage, path))
@@ -437,6 +446,7 @@ ContextMenu::exec(QWidget* parent, ViewContext* context, UsdStageRefPtr usdStage
     QMenu* duplicateMenu = menu.addMenu("Duplicate");
     QAction* copySelected = duplicateMenu->addAction("Copy");
     QAction* instanceSelected = duplicateMenu->addAction("Instance");
+    instanceSelected->setEnabled(canInstance);
     QAction* deleteSelected = menu.addAction("Delete");
     newXform->setEnabled(!createParentPath.IsEmpty());
     duplicateMenu->setEnabled(!paths.isEmpty());

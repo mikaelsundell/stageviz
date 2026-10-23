@@ -427,6 +427,12 @@ namespace path {
 }  // namespace path
 
 namespace stage {
+    bool canUseAsNativeInstanceRoot(const UsdPrim& prim)
+    {
+        return prim && prim.IsValid() && !prim.IsInstanceProxy()
+               && !(prim.IsA<UsdGeomGprim>() && prim.GetChildren().empty());
+    }
+
     std::string compositionAssetPath(const SdfLayerHandle& destinationLayer, const QString& filename)
     {
         const QString absoluteFilename = QFileInfo(filename).absoluteFilePath();

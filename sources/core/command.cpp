@@ -5157,7 +5157,21 @@ instancePaths(const QList<SdfPath>& inPaths)
                             state->createdParentSpecs.clear();
 
                             const QList<SdfPath> paths = path::minimalRootPaths(path::uniquePaths(inPaths));
+                            bool hasLeafGeometryPrim = false;
                             for (const SdfPath& inputPath : paths) {
+                                const SdfPath sourcePath = inputPath.IsPropertyPath() ? inputPath.GetPrimPath()
+                                                                                      : inputPath;
+                                const UsdPrim sourcePrim = stage->GetPrimAtPath(sourcePath);
+                                if (sourcePrim && sourcePrim.IsValid() && !sourcePrim.IsInstanceProxy()
+                                    && !stage::canUseAsNativeInstanceRoot(sourcePrim)) {
+                                    errors.append(QString("cannot instance leaf geometry prim: %1; select an enclosing Xform or Scope")
+                                                      .arg(pathText(sourcePath)));
+                                    hasLeafGeometryPrim = true;
+                                }
+                            }
+
+                            const QList<SdfPath> instanceSourcePaths = hasLeafGeometryPrim ? QList<SdfPath>() : paths;
+                            for (const SdfPath& inputPath : instanceSourcePaths) {
                                 const SdfPath sourcePath = inputPath.IsPropertyPath() ? inputPath.GetPrimPath()
                                                                                       : inputPath;
                                 const UsdPrim sourcePrim = stage->GetPrimAtPath(sourcePath);
