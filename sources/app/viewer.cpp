@@ -135,7 +135,8 @@ public Q_SLOTS:
     void payloadInvert();
     void layerInvert();
     void newXform();
-    void duplicateSelected();
+    void copySelected();
+    void instanceSelected();
     void deleteSelected();
     void isolate(bool checked);
     void frameAll();
@@ -381,7 +382,8 @@ ViewerPrivate::init()
     connect(d.ui->createCone, &QAction::triggered, this, [this]() { newPrim(TfToken("Cone")); });
     connect(d.ui->createCapsule, &QAction::triggered, this, [this]() { newPrim(TfToken("Capsule")); });
     connect(d.ui->createPlane, &QAction::triggered, this, [this]() { newPrim(TfToken("Plane")); });
-    connect(d.ui->editDuplicateSelected, &QAction::triggered, this, &ViewerPrivate::duplicateSelected);
+    connect(d.ui->editCopySelected, &QAction::triggered, this, &ViewerPrivate::copySelected);
+    connect(d.ui->editInstanceSelected, &QAction::triggered, this, &ViewerPrivate::instanceSelected);
     connect(d.ui->editDeleteSelected, &QAction::triggered, this, &ViewerPrivate::deleteSelected);
     connect(d.ui->displayIsolate, &QAction::toggled, this, &ViewerPrivate::isolate);
     connect(d.ui->displayCameraLight, &QAction::toggled, this, &ViewerPrivate::cameraLight);
@@ -1191,7 +1193,8 @@ ViewerPrivate::enable(bool enable)
                                 d.ui->createCone,
                                 d.ui->createCapsule,
                                 d.ui->createPlane,
-                                d.ui->editDuplicateSelected,
+                                d.ui->editCopySelected,
+                                d.ui->editInstanceSelected,
                                 d.ui->editDeleteSelected,
                                 d.ui->displayIsolate,
                                 d.ui->displayCameraLight,
@@ -1999,13 +2002,23 @@ ViewerPrivate::newXform()
 }
 
 void
-ViewerPrivate::duplicateSelected()
+ViewerPrivate::copySelected()
 {
     const QList<SdfPath> paths = session()->selectionList()->paths();
     if (paths.isEmpty())
         return;
 
-    session()->commandStack()->execute(new Command(duplicatePaths(paths)));
+    session()->commandStack()->execute(new Command(copyPaths(paths)));
+}
+
+void
+ViewerPrivate::instanceSelected()
+{
+    const QList<SdfPath> paths = session()->selectionList()->paths();
+    if (paths.isEmpty())
+        return;
+
+    session()->commandStack()->execute(new Command(instancePaths(paths)));
 }
 
 void
@@ -2496,7 +2509,8 @@ ViewerPrivate::updateSelection(const QList<SdfPath>& paths)
 {
     const bool hasSelection = !paths.isEmpty();
     d.ui->editSelectInvert->setEnabled(hasSelection);
-    d.ui->editDuplicateSelected->setEnabled(hasSelection);
+    d.ui->editCopySelected->setEnabled(hasSelection);
+    d.ui->editInstanceSelected->setEnabled(hasSelection);
 
     bool canSelectParent = false;
     if (paths.size() == 1) {

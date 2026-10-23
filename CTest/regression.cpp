@@ -2096,11 +2096,22 @@ commandAuthoringApi()
     undoCommand(rename, session);
     require(bool(session.stage()->GetPrimAtPath(SdfPath("/World/Xform"))), "renamePath undo");
 
-    stageviz::Command duplicate = stageviz::duplicatePaths({ SdfPath("/World/Xform") });
-    executeCommand(duplicate, session);
-    require(bool(session.stage()->GetPrimAtPath(SdfPath("/World/Xform_1"))), "duplicatePaths command");
-    undoCommand(duplicate, session);
-    require(!session.stage()->GetPrimAtPath(SdfPath("/World/Xform_1")), "duplicatePaths undo");
+    stageviz::Command copy = stageviz::copyPaths({ SdfPath("/World/Xform") });
+    executeCommand(copy, session);
+    require(bool(session.stage()->GetPrimAtPath(SdfPath("/World/Xform_1"))), "copyPaths command");
+    undoCommand(copy, session);
+    require(!session.stage()->GetPrimAtPath(SdfPath("/World/Xform_1")), "copyPaths undo");
+
+    session.stage()->DefinePrim(SdfPath("/World/Xform/Geom"), TfToken("Cube"));
+    stageviz::Command instance = stageviz::instancePaths({ SdfPath("/World/Xform") });
+    executeCommand(instance, session);
+    const UsdPrim instancePrim = session.stage()->GetPrimAtPath(SdfPath("/World/Xform_1"));
+    require(instancePrim && instancePrim.IsInstanceable(), "instancePaths authors instanceable prim");
+    require(instancePrim.IsInstance(), "instancePaths composes as a USD instance");
+    require(session.stage()->GetPrimAtPath(SdfPath("/World/Xform_1/Geom")).IsInstanceProxy(),
+            "instancePaths exposes child as instance proxy");
+    undoCommand(instance, session);
+    require(!session.stage()->GetPrimAtPath(SdfPath("/World/Xform_1")), "instancePaths undo");
 
     stageviz::Command remove = stageviz::deletePaths({ SdfPath("/World/Scope") });
     executeCommand(remove, session);

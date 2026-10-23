@@ -435,7 +435,7 @@ MaterialBrowserPrivate::showContextMenu(QAbstractItemView* view, const QPoint& p
     }
     else if (action == duplicateMaterial) {
         // Duplicate only the RMB material and preserve the current scene/browser selection.
-        session()->commandStack()->execute(new Command(duplicatePaths({ contextMaterial.materialPath }, false)));
+        session()->commandStack()->execute(new Command(copyPaths({ contextMaterial.materialPath }, false)));
     }
     else if (action == copyName) {
         QApplication::clipboard()->setText(contextMaterial.name);

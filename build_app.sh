@@ -215,9 +215,10 @@ build_stageviz() {
 
     if [ "$github" == "ON" ]; then
         local app_bundle="$xcode_type/${app_name}.app"
+        local deploy_dir="$script_dir/deploy.$build_type"
         local build_date
         build_date=$(date +%y%m%d)
-        local archive_file="$script_dir/${app_name}_${project_version}_${build_date}_${machine_arch}_${xcode_type}.zip"
+        local archive_file="$deploy_dir/${app_name}_${project_version}_${build_date}_${machine_arch}_${xcode_type}.zip"
 
         if [ -z "$project_version" ]; then
             echo "Could not extract project version from CMakeLists.txt"
@@ -353,8 +354,16 @@ build_stageviz() {
         fi
         "$script_dir/scripts/deploymac.sh" "${deploymac_args[@]}"
 
+        echo "Prepare release directory: $deploy_dir"
+        rm -rf "$deploy_dir"
+        mkdir -p "$deploy_dir"
+
+        local release_bundle="$deploy_dir/$(basename "$app_bundle")"
+        echo "Copy release bundle: $release_bundle"
+        ditto "$app_bundle" "$release_bundle"
+
         echo "Create zip archive: $archive_file"
-        ditto -c -k --sequesterRsrc --keepParent "$app_bundle" "$archive_file"
+        ditto -c -k --sequesterRsrc --keepParent "$release_bundle" "$archive_file"
     fi
 }
 

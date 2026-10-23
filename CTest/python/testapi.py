@@ -1246,7 +1246,8 @@ def test_command_api():
         "set_default_prim",
         "clear_default_prim",
         "delete_paths",
-        "duplicate_paths",
+        "copy_paths",
+        "instance_paths",
         "new_prim",
         "new_scope",
         "new_material",
@@ -2354,20 +2355,20 @@ def test_new_payload_default_prim(external):
     )
 
 
-def test_duplicate_paths():
+def test_copy_paths():
     _assert(
-        _has_command("duplicate_paths"),
-        "duplicate_paths command is exposed",
+        _has_command("copy_paths"),
+        "copy_paths command is exposed",
     )
 
-    if not _has_command("duplicate_paths"):
+    if not _has_command("copy_paths"):
         return
 
     before_order = _child_names("/World")
 
-    stageviz.command.duplicate_paths(["/World/A"])
+    stageviz.command.copy_paths(["/World/A"])
 
-    duplicate_candidates = [
+    copy_candidates = [
         name for name in _child_names("/World")
         if name not in before_order
     ]
@@ -2380,88 +2381,144 @@ def test_duplicate_paths():
                 if name not in before_order
             )
         ),
-        "duplicate_paths creates sibling prim",
+        "copy_paths creates sibling prim",
     )
 
-    duplicate_candidates = [
+    copy_candidates = [
         name for name in _child_names("/World")
         if name not in before_order
     ]
-    duplicate_name = duplicate_candidates[0] if duplicate_candidates else ""
-    duplicate_path = f"/World/{duplicate_name}" if duplicate_name else ""
+    copy_name = copy_candidates[0] if copy_candidates else ""
+    copy_path = f"/World/{copy_name}" if copy_name else ""
 
     _assert(
-        bool(duplicate_path),
-        "duplicate_paths resolves created duplicate path",
+        bool(copy_path),
+        "copy_paths resolves created copy path",
     )
 
-    if duplicate_path:
+    if copy_path:
         _assert(
-            _exists(f"{duplicate_path}/A1") and _exists(f"{duplicate_path}/A2"),
-            "duplicate_paths copies descendant specs",
+            _exists(f"{copy_path}/A1") and _exists(f"{copy_path}/A2"),
+            "copy_paths copies descendant specs",
         )
 
         _assert_equal(
             _selection(),
-            [duplicate_path],
-            "duplicate_paths selects new duplicate",
+            [copy_path],
+            "copy_paths selects new copy",
         )
 
     if _undo():
-        if duplicate_path:
+        if copy_path:
             _assert(
-                _wait_until(lambda: not _exists(duplicate_path)),
-                "undo duplicate_paths removes duplicate",
+                _wait_until(lambda: not _exists(copy_path)),
+                "undo copy_paths removes copy",
             )
 
         _assert_equal(
             _child_names("/World"),
             before_order,
-            "undo duplicate_paths restores child order",
+            "undo copy_paths restores child order",
         )
 
     if _redo():
         _assert(
             _wait_until(lambda: len(_child_names("/World")) == len(before_order) + 1),
-            "redo duplicate_paths restores duplicate",
+            "redo copy_paths restores copy",
         )
 
 
-def test_duplicate_composed_payload_prim():
-    if not _has_command("duplicate_paths"):
-        print("[skip] duplicate_paths is not bound")
+def test_instance_paths():
+    _assert(
+        _has_command("instance_paths"),
+        "instance_paths command is exposed",
+    )
+
+    if not _has_command("instance_paths"):
+        return
+
+    before_order = _child_names("/World")
+    stageviz.command.instance_paths(["/World/A"])
+
+    _assert(
+        _wait_until(lambda: len(_child_names("/World")) == len(before_order) + 1),
+        "instance_paths creates sibling prim",
+    )
+
+    added = [name for name in _child_names("/World") if name not in before_order]
+    instance_path = f"/World/{added[0]}" if added else ""
+    instance = _prim(instance_path) if instance_path else None
+
+    _assert(
+        bool(instance and instance.IsInstanceable() and instance.IsInstance()),
+        "instance_paths creates an instanceable USD instance",
+    )
+    _assert_equal(
+        _selection(),
+        [instance_path] if instance_path else [],
+        "instance_paths selects the new instance",
+    )
+
+    if _undo():
+        if instance_path:
+            _assert(
+                _wait_until(lambda: not _exists(instance_path)),
+                "undo instance_paths removes the instance",
+            )
+        _assert_equal(
+            _child_names("/World"),
+            before_order,
+            "undo instance_paths restores child order",
+        )
+
+    if _redo() and instance_path:
+        _assert(
+            _wait_until(
+                lambda: bool(
+                    _prim(instance_path)
+                    and _prim(instance_path).IsInstanceable()
+                    and _prim(instance_path).IsInstance()
+                )
+            ),
+            "redo instance_paths restores the instance",
+        )
+
+
+def test_copy_composed_payload_prim():
+    if not _has_command("copy_paths"):
+        print("[skip] copy_paths is not bound")
         return
 
     stageviz.command.load_payloads(["/World/PayloadA"])
 
     _assert(
         _wait_until(lambda: _exists("/World/PayloadA/Geom"), timeout=5.0),
-        "payload prepared for duplicate composed prim",
+        "payload prepared for copied composed prim",
     )
 
     before = set(_child_names("/World/PayloadA"))
 
-    stageviz.command.duplicate_paths(["/World/PayloadA/Geom"])
+    stageviz.command.copy_paths(["/World/PayloadA/Geom"])
 
     _assert(
         _wait_until(
             lambda: len(set(_child_names("/World/PayloadA")) - before) == 1
         ),
-        "duplicate_paths copies strongest payload-owned prim spec into root layer",
+        "copy_paths copies strongest payload-owned prim spec into root layer",
     )
 
     added = list(set(_child_names("/World/PayloadA")) - before)
-    duplicate_path = f"/World/PayloadA/{added[0]}" if added else ""
+    copy_path = f"/World/PayloadA/{added[0]}" if added else ""
 
     _assert(
-        bool(duplicate_path and _root_has_prim(duplicate_path)),
-        "duplicate of payload-owned prim is authored in root layer",
+        bool(copy_path and _root_has_prim(copy_path)),
+        "copy of payload-owned prim is authored in root layer",
     )
 
-    if _undo() and duplicate_path:
+    if _undo() and copy_path:
         _assert(
-            _wait_until(lambda: not _exists(duplicate_path)),
-            "undo duplicate payload-owned prim removes root-layer copy",
+            _wait_until(lambda: not _exists(copy_path)),
+            "undo copied payload-owned prim removes root-layer copy",
         )
 
 
@@ -6540,8 +6597,9 @@ def run():
         ("new reference default prim", test_new_reference_default_prim, (external,)),
         ("new payload", test_new_payload, (external,)),
         ("new payload default prim", test_new_payload_default_prim, (external,)),
-        ("duplicate paths", test_duplicate_paths, ()),
-        ("duplicate composed payload prim", test_duplicate_composed_payload_prim, ()),
+        ("copy paths", test_copy_paths, ()),
+        ("instance paths", test_instance_paths, ()),
+        ("copy composed payload prim", test_copy_composed_payload_prim, ()),
         ("new/rename/move/delete", test_new_rename_move_delete, ()),
         ("new_xform root parent", test_new_xform_root_parent, ()),
         ("new_xform unique name", test_new_xform_unique_name, ()),

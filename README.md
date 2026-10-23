@@ -259,6 +259,14 @@ Build Release:
 ./build_app.sh release
 ```
 
+Create a macOS release bundle and ZIP archive:
+
+```shell
+./build_app.sh release --github
+```
+
+The `.app` bundle and versioned ZIP are written to `deploy.release/`.
+
 When using debug versions of frameworks on macOS, configure the image suffix where required:
 
 ```shell

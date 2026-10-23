@@ -932,6 +932,13 @@
      <addaction name="editHideSelected" />
      <addaction name="editHideRecursive" />
     </widget>
+    <widget class="QMenu" name="menuDuplicate">
+     <property name="title">
+      <string>Duplicate</string>
+     </property>
+     <addaction name="editCopySelected" />
+     <addaction name="editInstanceSelected" />
+    </widget>
     <widget class="QMenu" name="menu">
      <property name="title">
       <string>Stage up</string>
@@ -982,7 +989,7 @@
     <addaction name="menuPayloads" />
     <addaction name="separator" />
     <addaction name="createXform" />
-    <addaction name="editDuplicateSelected" />
+    <addaction name="menuDuplicate" />
     <addaction name="editDeleteSelected" />
    </widget>
    <widget class="QMenu" name="menuCreate">
@@ -1299,12 +1306,17 @@
     <string>Plane</string>
    </property>
   </action>
-  <action name="editDuplicateSelected">
+  <action name="editCopySelected">
    <property name="text">
-    <string>Duplicate</string>
+    <string>Copy</string>
    </property>
    <property name="shortcut">
     <string>Ctrl+D</string>
+   </property>
+  </action>
+  <action name="editInstanceSelected">
+   <property name="text">
+    <string>Instance</string>
    </property>
   </action>
   <action name="editDeleteSelected">

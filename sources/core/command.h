@@ -208,56 +208,111 @@ bindMaterial(const QList<SdfPath>& paths, const SdfPath& materialPath);
 
 
 /**
- * @brief Creates an undoable command that removes authored path dependencies from properties.
+ * @brief Creates a command that disconnects shader inputs.
  *
- * For each supplied property path, relationship target opinions and attribute
- * connection opinions authored in the current edit layer are removed. Other
- * property data is preserved. This covers material bindings, collection
- * membership relationships, skeleton/custom relationships, shader connections,
- * and other relationship/connection based dependencies.
+ * Incoming connections authored in the current edit layer are removed while
+ * the input properties remain. Undo restores the previous input specs.
  *
- * Undo restores the original edit-layer property specs exactly.
- *
- * @param propertyPaths Relationship or attribute property paths to reset.
- * @return Undoable dependency-reset command.
+ * @param inputPaths Shader input property paths to disconnect.
+ * @return Undoable shader-input disconnection command.
  */
-/** Break incoming shader-input connections while preserving the input property. */
 Command
 disconnectShaderInputs(const QList<SdfPath>& inputPaths);
 
-/** Connect an existing shader output to an existing shader input. */
+/**
+ * @brief Creates a command that connects an existing shader output to an input.
+ *
+ * The input and output must already exist. Undo restores the input's previous
+ * authored state.
+ *
+ * @param inputPath Shader input property path.
+ * @param sourceOutputPath Shader output property path.
+ * @return Undoable shader-connection command.
+ */
 Command
 connectShaderInput(const SdfPath& inputPath, const SdfPath& sourceOutputPath);
 
-/** Remove edit-layer shader-input opinions so weaker/default values are exposed. */
+/**
+ * @brief Creates a command that resets shader-input opinions in the edit layer.
+ *
+ * Removing the authored input property exposes weaker opinions or its schema
+ * default. Undo restores the original property spec.
+ *
+ * @param inputPaths Shader input property paths to reset.
+ * @return Undoable shader-input reset command.
+ */
 Command
 resetShaderInputs(const QList<SdfPath>& inputPaths);
 
-/** Create a shader node and connect one of its outputs to an input. */
+/**
+ * @brief Creates a shader node and connects one of its outputs to an input.
+ *
+ * The node is created beside the prim that owns the input. Its selected output
+ * is connected to the input, and undo restores the input and removes the node.
+ *
+ * @param inputPath Shader input property path.
+ * @param shaderId USD shader identifier.
+ * @param nodeName Desired name for the new node.
+ * @param outputName Shader output to connect.
+ * @return Undoable shader-node creation and connection command.
+ */
 Command
 connectShaderNode(const SdfPath& inputPath, const QString& shaderId, const QString& nodeName,
                   const TfToken& outputName);
 
 /**
- * Create a MaterialX shader node from its NodeDef and connect its typed out output to an input.
- * The complete declared input/output interface is authored so USD socket types match MaterialX.
+ * @brief Creates a MaterialX node from a NodeDef and connects its output to an input.
+ *
+ * The complete typed NodeDef interface and declared defaults are authored so
+ * USD socket types match the MaterialX definition.
+ *
+ * @param inputPath Shader input property path.
+ * @param nodeDef MaterialX NodeDef identifier.
+ * @param nodeName Desired name for the new node.
+ * @return Undoable MaterialX-node creation and connection command.
  */
 Command
 connectMaterialXNode(const SdfPath& inputPath, const QString& nodeDef, const QString& nodeName);
 
-/** Create a free shader node below a material without connecting it. */
+/**
+ * @brief Creates an unconnected shader node below a material.
+ *
+ * The shader identifier and declared default inputs are authored. An output is
+ * created when @p outputName is non-empty and does not already exist.
+ *
+ * @param materialPath Material prim path that will own the shader node.
+ * @param shaderId USD shader identifier.
+ * @param nodeName Desired name for the new node.
+ * @param outputName Optional output name to create.
+ * @param outputType Type for the optional output.
+ * @return Undoable shader-node creation command.
+ */
 Command
 newShaderNode(const SdfPath& materialPath, const QString& shaderId, const QString& nodeName, const TfToken& outputName,
               const SdfValueTypeName& outputType);
 
 /**
- * Create a free MaterialX node below a material without connecting it.
+ * @brief Creates an unconnected MaterialX node below a material.
+ *
  * The complete typed NodeDef interface and declared defaults are authored.
+ *
+ * @param materialPath Material prim path that will own the node.
+ * @param definition MaterialX NodeDef definition and interface.
+ * @return Undoable MaterialX-node creation command.
  */
 Command
 newMaterialXNode(const SdfPath& materialPath, const MaterialXNodeDefinition& definition);
 
-/** Delete a shader node, preserving weaker composed nodes through an inactive override. */
+/**
+ * @brief Creates a command that deletes a shader node.
+ *
+ * An edit-layer spec is removed directly. If the node comes from a weaker
+ * layer, an inactive override hides it without modifying its source layer.
+ * Undo restores the prior spec or removes the inactive override.
+ *
+ * @param nodePath Shader prim path to delete.
+ * @return Undoable shader-node deletion command.
+ */
 Command
 deleteShaderNode(const SdfPath& nodePath);
 
@@ -584,26 +639,33 @@ Command
 deletePaths(const QList<SdfPath>& paths);
 
 /**
- * @brief Creates a command that duplicates prim specs as sibling prims.
+ * @brief Creates sibling copies of prim specs.
  *
  * Each input path is reduced to a minimal root path and resolved to its
  * strongest authored SdfPrimSpec. That spec is copied into the opened root
- * layer under the same parent using a unique sibling name.
+ * layer under the same parent using a unique sibling name. Authored subtree
+ * content and composition arcs from the strongest spec are retained.
  *
- * This allows a prim introduced by a payload, reference, or other composition
- * arc to be copied into the editable stage without modifying the source asset.
- *
- * On success, the newly-created prims become the current selection.
- * Undo removes the duplicated prim specs and restores child ordering,
- * selection, and mask.
- *
- * @param paths Prim paths to duplicate.
- * @param selectDuplicates When true, select the newly-created duplicates on success.
- *                         Set false for callers such as the material browser that
- *                         must preserve the current scene selection.
+ * @param paths Prim paths to copy.
+ * @param selectCopies When true, select the new copies on success. Set false
+ *                     for callers that need to preserve the current selection.
  */
 Command
-duplicatePaths(const QList<SdfPath>& paths, bool selectDuplicates = true);
+copyPaths(const QList<SdfPath>& paths, bool selectCopies = true);
+
+/**
+ * @brief Creates instanceable sibling prims that internally reference the selected prims.
+ *
+ * Each input path is reduced to a minimal root path. For every valid source
+ * prim, an instanceable prim with a unique sibling name is authored in the
+ * active edit layer and references the source prim within the same stage.
+ * The new instance prims become the current selection on success. Undo removes
+ * the instance prims and restores child ordering, selection, and mask.
+ *
+ * @param paths Prim paths to instance.
+ */
+Command
+instancePaths(const QList<SdfPath>& paths);
 
 /**
  * @brief Creates a command that defines a generic prim under a parent.

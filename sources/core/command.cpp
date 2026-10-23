@@ -4845,9 +4845,9 @@ deletePaths(const QList<SdfPath>& inPaths)
 }
 
 Command
-duplicatePaths(const QList<SdfPath>& inPaths, bool selectDuplicates)
+copyPaths(const QList<SdfPath>& inPaths, bool selectCopies)
 {
-    struct DuplicateState {
+    struct CopyState {
         struct Item {
             SdfPath sourcePath;
             SdfPath destinationPath;
@@ -4861,21 +4861,21 @@ duplicatePaths(const QList<SdfPath>& inPaths, bool selectDuplicates)
         QList<SdfPath> previousMask;
     };
 
-    auto state = std::make_shared<DuplicateState>();
+    auto state = std::make_shared<CopyState>();
 
     return Command(
-        [inPaths, selectDuplicates, state](Session* session) {
+        [inPaths, selectCopies, state](Session* session) {
             if (!session || inPaths.isEmpty())
                 return;
 
             state->previousSelection = session->selectionList()->paths();
             state->previousMask = session->mask();
 
-            command::beginDeferred(session, "Duplicate paths", 1);
+            command::beginDeferred(session, "Copy paths", 1);
 
-            command::runWorker([session, inPaths, selectDuplicates, state]() {
+            command::runWorker([session, inPaths, selectCopies, state]() {
                 bool success = false;
-                QList<SdfPath> duplicatedPaths;
+                QList<SdfPath> copiedPaths;
                 QList<SdfPath> changed;
                 QStringList errors;
 
@@ -4946,7 +4946,7 @@ duplicatePaths(const QList<SdfPath>& inPaths, bool selectDuplicates)
                                 if (destinationPath.IsEmpty()) {
                                     errors.append(
                                         editError.isEmpty()
-                                            ? QString("failed to build duplicate path: %1").arg(pathText(sourcePath))
+                                            ? QString("failed to build copy path: %1").arg(pathText(sourcePath))
                                             : editError);
                                     editError.clear();
                                     continue;
@@ -4974,7 +4974,7 @@ duplicatePaths(const QList<SdfPath>& inPaths, bool selectDuplicates)
                                 }
 
                                 // Explicitly remap connections/targets that point inside the
-                                // source material so the duplicate is a self-contained network
+                                // source material so the copy is a self-contained network
                                 // rather than referencing the original material hierarchy.
                                 if (prim.IsA<UsdShadeMaterial>()) {
                                     QString remapError;
@@ -4986,7 +4986,7 @@ duplicatePaths(const QList<SdfPath>& inPaths, bool selectDuplicates)
                                     }
                                 }
 
-                                DuplicateState::Item item;
+                                CopyState::Item item;
                                 item.sourcePath = sourcePath;
                                 item.destinationPath = destinationPath;
                                 item.parentPath = parentPath;
@@ -5000,7 +5000,7 @@ duplicatePaths(const QList<SdfPath>& inPaths, bool selectDuplicates)
                                     stage::restoreChildOrder(stage, parentPath, order);
                                 }
 
-                                path::appendUnique(duplicatedPaths, destinationPath);
+                                path::appendUnique(copiedPaths, destinationPath);
                                 path::appendUnique(changed, sourcePath);
                                 path::appendUnique(changed, destinationPath);
                                 path::appendUnique(changed, parentPath);
@@ -5012,19 +5012,19 @@ duplicatePaths(const QList<SdfPath>& inPaths, bool selectDuplicates)
                 }
 
                 const QString errorText = summarizeErrors(errors);
-                command::queueToSession(session, [session, duplicatedPaths, changed, success, errorText,
-                                                  selectDuplicates]() {
+                command::queueToSession(session, [session, copiedPaths, changed, success, errorText,
+                                                  selectCopies]() {
                     using Status = Session::Notify::Status;
 
                     command::finishDeferred(session,
                                             success ? (errorText.isEmpty()
-                                                           ? QStringLiteral("Paths duplicated")
-                                                           : appendError("Paths duplicated with errors", errorText))
-                                                    : appendError("Duplicate paths failed", errorText),
+                                                           ? QStringLiteral("Paths copied")
+                                                           : appendError("Paths copied with errors", errorText))
+                                                    : appendError("Copy paths failed", errorText),
                                             changed, success ? Status::Success : Status::Error);
 
-                    if (success && selectDuplicates)
-                        session->selectionList()->updatePaths(duplicatedPaths);
+                    if (success && selectCopies)
+                        session->selectionList()->updatePaths(copiedPaths);
                 });
             });
         },
@@ -5032,7 +5032,7 @@ duplicatePaths(const QList<SdfPath>& inPaths, bool selectDuplicates)
             if (!session || state->items.isEmpty())
                 return;
 
-            command::beginDeferred(session, "Undo duplicate paths", 1);
+            command::beginDeferred(session, "Undo copy paths", 1);
 
             command::runWorker([session, state]() {
                 bool success = true;
@@ -5060,7 +5060,7 @@ duplicatePaths(const QList<SdfPath>& inPaths, bool selectDuplicates)
                                 if (!stage::removePrimSpec(editLayer, it->destinationPath)) {
                                     success = false;
                                     errors.append(
-                                        QString("failed to remove duplicate: %1").arg(pathText(it->destinationPath)));
+                                        QString("failed to remove copy: %1").arg(pathText(it->destinationPath)));
                                     continue;
                                 }
 
@@ -5091,10 +5091,237 @@ duplicatePaths(const QList<SdfPath>& inPaths, bool selectDuplicates)
                     using Status = Session::Notify::Status;
 
                     command::finishDeferred(session,
-                                            success ? "Duplicate undone"
-                                                    : appendError("Undo duplicate paths failed", errorText),
+                                            success ? "Copy undone"
+                                                    : appendError("Undo copy paths failed", errorText),
                                             changed, success ? Status::Success : Status::Error);
 
+                    if (success) {
+                        session->selectionList()->updatePaths(state->previousSelection);
+                        session->setMask(state->previousMask);
+                    }
+                });
+            });
+        });
+}
+
+Command
+instancePaths(const QList<SdfPath>& inPaths)
+{
+    struct InstanceState {
+        struct Item {
+            SdfPath destinationPath;
+            SdfPath parentPath;
+        };
+
+        QList<Item> items;
+        QHash<SdfPath, TfTokenVector> oldParentOrders;
+        QSet<SdfPath> createdParentSpecs;
+        QList<SdfPath> previousSelection;
+        QList<SdfPath> previousMask;
+    };
+
+    auto state = std::make_shared<InstanceState>();
+
+    return Command(
+        [inPaths, state](Session* session) {
+            if (!session || inPaths.isEmpty())
+                return;
+
+            state->previousSelection = session->selectionList()->paths();
+            state->previousMask = session->mask();
+            command::beginDeferred(session, "Instance paths", 1);
+
+            command::runWorker([session, inPaths, state]() {
+                bool success = false;
+                QList<SdfPath> instancePaths;
+                QList<SdfPath> changed;
+                QStringList errors;
+
+                {
+                    WRITE_LOCKER(locker, session->stageLock(), "stageLock");
+                    const UsdStageRefPtr stage = session->stageUnsafe();
+
+                    if (!stage) {
+                        errors.append("stage missing");
+                    }
+                    else {
+                        QString editError;
+                        const SdfLayerHandle editLayer = currentEditLayer(stage, editError);
+
+                        if (!editLayer) {
+                            errors.append(editError);
+                        }
+                        else {
+                            state->items.clear();
+                            state->oldParentOrders.clear();
+                            state->createdParentSpecs.clear();
+
+                            const QList<SdfPath> paths = path::minimalRootPaths(path::uniquePaths(inPaths));
+                            for (const SdfPath& inputPath : paths) {
+                                const SdfPath sourcePath = inputPath.IsPropertyPath() ? inputPath.GetPrimPath()
+                                                                                      : inputPath;
+                                const UsdPrim sourcePrim = stage->GetPrimAtPath(sourcePath);
+
+                                if (!sourcePrim || !sourcePrim.IsValid() || sourcePrim.IsInstanceProxy()) {
+                                    errors.append(QString("invalid prim: %1").arg(pathText(sourcePath)));
+                                    continue;
+                                }
+
+                                const SdfPath parentPath = sourcePath.GetParentPath();
+                                if (parentPath.IsEmpty()) {
+                                    errors.append(QString("invalid parent: %1").arg(pathText(sourcePath)));
+                                    continue;
+                                }
+
+                                if (parentPath != SdfPath::AbsoluteRootPath()
+                                    && !layer::validateParent(stage, editLayer, parentPath, editError)) {
+                                    errors.append(editError);
+                                    editError.clear();
+                                    continue;
+                                }
+
+                                const QString sourceName = qt::StringToQString(sourcePath.GetName());
+                                const SdfPath destinationPath = stage::buildChildPath(stage, parentPath, sourceName,
+                                                                                      editError);
+                                if (destinationPath.IsEmpty()) {
+                                    errors.append(editError.isEmpty()
+                                                      ? QString("failed to build instance path: %1").arg(pathText(sourcePath))
+                                                      : editError);
+                                    editError.clear();
+                                    continue;
+                                }
+
+                                if (!state->oldParentOrders.contains(parentPath)) {
+                                    TfTokenVector order;
+                                    stage::captureChildOrder(stage, parentPath, order);
+                                    state->oldParentOrders.insert(parentPath, order);
+                                }
+
+                                if (parentPath != SdfPath::AbsoluteRootPath()
+                                    && !editLayer->GetPrimAtPath(parentPath)) {
+                                    if (!SdfCreatePrimInLayer(editLayer, parentPath)) {
+                                        errors.append(QString("failed to create parent override: %1")
+                                                          .arg(pathText(parentPath)));
+                                        continue;
+                                    }
+                                    state->createdParentSpecs.insert(parentPath);
+                                }
+
+                                UsdPrim instancePrim;
+                                {
+                                    UsdEditContext context(stage, UsdEditTarget(editLayer));
+                                    instancePrim = stage->OverridePrim(destinationPath);
+                                    if (instancePrim && instancePrim.IsValid()) {
+                                        const bool referenced = instancePrim.GetReferences().AddReference(
+                                            SdfReference(std::string(), sourcePath));
+                                        if (!referenced || !instancePrim.SetInstanceable(true))
+                                            instancePrim = UsdPrim();
+                                    }
+                                }
+
+                                if (!instancePrim || !instancePrim.IsValid()) {
+                                    stage::removePrimSpec(editLayer, destinationPath);
+                                    errors.append(QString("failed to author instance: %1").arg(pathText(sourcePath)));
+                                    continue;
+                                }
+
+                                InstanceState::Item item;
+                                item.destinationPath = destinationPath;
+                                item.parentPath = parentPath;
+                                state->items.append(item);
+
+                                TfTokenVector order;
+                                stage::captureChildOrder(stage, parentPath, order);
+                                if (std::find(order.begin(), order.end(), destinationPath.GetNameToken()) == order.end()) {
+                                    order.push_back(destinationPath.GetNameToken());
+                                    stage::restoreChildOrder(stage, parentPath, order);
+                                }
+
+                                path::appendUnique(instancePaths, destinationPath);
+                                path::appendUnique(changed, sourcePath);
+                                path::appendUnique(changed, destinationPath);
+                                path::appendUnique(changed, parentPath);
+                            }
+
+                            success = !state->items.isEmpty();
+                        }
+                    }
+                }
+
+                const QString errorText = summarizeErrors(errors);
+                command::queueToSession(session, [session, instancePaths, changed, success, errorText]() {
+                    using Status = Session::Notify::Status;
+                    command::finishDeferred(session,
+                                            success ? (errorText.isEmpty()
+                                                           ? QStringLiteral("Instances created")
+                                                           : appendError("Instances created with errors", errorText))
+                                                    : appendError("Instance paths failed", errorText),
+                                            changed, success ? Status::Success : Status::Error);
+                    if (success)
+                        session->selectionList()->updatePaths(instancePaths);
+                });
+            });
+        },
+        [state](Session* session) {
+            if (!session || state->items.isEmpty())
+                return;
+
+            command::beginDeferred(session, "Undo instance paths", 1);
+            command::runWorker([session, state]() {
+                bool success = true;
+                QList<SdfPath> changed;
+                QStringList errors;
+
+                {
+                    WRITE_LOCKER(locker, session->stageLock(), "stageLock");
+                    const UsdStageRefPtr stage = session->stageUnsafe();
+                    if (!stage) {
+                        success = false;
+                        errors.append("stage missing");
+                    }
+                    else {
+                        QString editError;
+                        const SdfLayerHandle editLayer = currentEditLayer(stage, editError);
+                        if (!editLayer) {
+                            success = false;
+                            errors.append(editError);
+                        }
+                        else {
+                            for (auto it = state->items.crbegin(); it != state->items.crend(); ++it) {
+                                if (!stage::removePrimSpec(editLayer, it->destinationPath)) {
+                                    success = false;
+                                    errors.append(QString("failed to remove instance: %1")
+                                                      .arg(pathText(it->destinationPath)));
+                                    continue;
+                                }
+                                path::appendUnique(changed, it->destinationPath);
+                                path::appendUnique(changed, it->parentPath);
+                            }
+
+                            for (auto it = state->oldParentOrders.cbegin(); it != state->oldParentOrders.cend(); ++it)
+                                stage::restoreChildOrder(stage, it.key(), it.value());
+
+                            QList<SdfPath> createdParents = state->createdParentSpecs.values();
+                            std::sort(createdParents.begin(), createdParents.end(),
+                                      [](const SdfPath& a, const SdfPath& b) {
+                                          return a.GetPathElementCount() > b.GetPathElementCount();
+                                      });
+                            for (const SdfPath& parentPath : createdParents) {
+                                const SdfPrimSpecHandle parentSpec = editLayer->GetPrimAtPath(parentPath);
+                                if (parentSpec && parentSpec->IsInert())
+                                    stage::removePrimSpec(editLayer, parentPath);
+                            }
+                        }
+                    }
+                }
+
+                const QString errorText = summarizeErrors(errors);
+                command::queueToSession(session, [session, state, changed, success, errorText]() {
+                    using Status = Session::Notify::Status;
+                    command::finishDeferred(session,
+                                            success ? QStringLiteral("Instances undone")
+                                                    : appendError("Undo instances failed", errorText),
+                                            changed, success ? Status::Success : Status::Error);
                     if (success) {
                         session->selectionList()->updatePaths(state->previousSelection);
                         session->setMask(state->previousMask);

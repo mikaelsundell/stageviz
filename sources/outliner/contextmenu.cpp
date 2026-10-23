@@ -393,7 +393,7 @@ ContextMenu::exec(QWidget* parent, ViewContext* context, UsdStageRefPtr usdStage
 
     QAction* copyPath = copyMenu->addAction("Path");
     QAction* copyPayload = nullptr;
-    QAction* copyPaths = nullptr;
+    QAction* copyPathsAction = nullptr;
     QAction* copyNames = nullptr;
 
     copyName->setEnabled(!paths.isEmpty());
@@ -404,7 +404,7 @@ ContextMenu::exec(QWidget* parent, ViewContext* context, UsdStageRefPtr usdStage
 
     if (paths.size() > 1) {
         copyNames = copyMenu->addAction("Names");
-        copyPaths = copyMenu->addAction("Paths");
+        copyPathsAction = copyMenu->addAction("Paths");
     }
 
     if (paths.isEmpty())
@@ -434,10 +434,12 @@ ContextMenu::exec(QWidget* parent, ViewContext* context, UsdStageRefPtr usdStage
     menu.addSeparator();
 
     QAction* newXform = menu.addAction("New xform");
-    QAction* duplicateSelected = menu.addAction("Duplicate");
+    QMenu* duplicateMenu = menu.addMenu("Duplicate");
+    QAction* copySelected = duplicateMenu->addAction("Copy");
+    QAction* instanceSelected = duplicateMenu->addAction("Instance");
     QAction* deleteSelected = menu.addAction("Delete");
     newXform->setEnabled(!createParentPath.IsEmpty());
-    duplicateSelected->setEnabled(!paths.isEmpty());
+    duplicateMenu->setEnabled(!paths.isEmpty());
     deleteSelected->setEnabled(!paths.isEmpty());
 
     QAction* chosen = menu.exec(globalPos);
@@ -477,7 +479,7 @@ ContextMenu::exec(QWidget* parent, ViewContext* context, UsdStageRefPtr usdStage
         return;
     }
 
-    if (chosen == copyPaths) {
+    if (chosen == copyPathsAction) {
         copyToClipboard(pathStrings.join('\n'));
         return;
     }
@@ -531,8 +533,13 @@ ContextMenu::exec(QWidget* parent, ViewContext* context, UsdStageRefPtr usdStage
         return;
     }
 
-    if (chosen == duplicateSelected) {
-        context->execute(new Command(duplicatePaths(paths)));
+    if (chosen == copySelected) {
+        context->execute(new Command(copyPaths(paths)));
+        return;
+    }
+
+    if (chosen == instanceSelected) {
+        context->execute(new Command(instancePaths(paths)));
         return;
     }
 

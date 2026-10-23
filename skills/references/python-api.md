@@ -345,7 +345,11 @@ All command functions run a native Stageviz command on the current session comma
 
 `delete_paths(paths) -> None`
 
-`duplicate_paths(paths) -> None`
+`copy_paths(paths) -> None`
+: Copy one or more prim paths as sibling prims.
+
+`instance_paths(paths) -> None`
+: Create instanceable sibling prims that internally reference the selected prims.
 
 `new_prim(parent_path, name, type_name="") -> None`
 

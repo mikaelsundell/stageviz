@@ -638,7 +638,7 @@ PyCommand_deletePaths(PyObject*, PyObject* args)
 }
 
 static PyObject*
-PyCommand_duplicatePaths(PyObject*, PyObject* args)
+PyCommand_copyPaths(PyObject*, PyObject* args)
 {
     PyObject* pyPaths = nullptr;
     if (!PyArg_ParseTuple(args, "O", &pyPaths))
@@ -648,7 +648,21 @@ PyCommand_duplicatePaths(PyObject*, PyObject* args)
     if (!parsePathListArg(pyPaths, "paths", &paths))
         return nullptr;
 
-    return runCommand(duplicatePaths(paths));
+    return runCommand(copyPaths(paths));
+}
+
+static PyObject*
+PyCommand_instancePaths(PyObject*, PyObject* args)
+{
+    PyObject* pyPaths = nullptr;
+    if (!PyArg_ParseTuple(args, "O", &pyPaths))
+        return nullptr;
+
+    QList<SdfPath> paths;
+    if (!parsePathListArg(pyPaths, "paths", &paths))
+        return nullptr;
+
+    return runCommand(instancePaths(paths));
 }
 
 static PyObject*
@@ -1320,8 +1334,10 @@ static PyMethodDef PyCommand_methods[] = {
     { "clear_default_prim", reinterpret_cast<PyCFunction>(PyCommand_clearDefaultPrim), METH_NOARGS,
       "Clear the default prim." },
     { "delete_paths", reinterpret_cast<PyCFunction>(PyCommand_deletePaths), METH_VARARGS, "Delete paths." },
-    { "duplicate_paths", reinterpret_cast<PyCFunction>(PyCommand_duplicatePaths), METH_VARARGS,
-      "Duplicate one or more prim paths." },
+    { "copy_paths", reinterpret_cast<PyCFunction>(PyCommand_copyPaths), METH_VARARGS,
+      "Copy one or more prim paths as sibling prims." },
+    { "instance_paths", reinterpret_cast<PyCFunction>(PyCommand_instancePaths), METH_VARARGS,
+      "Create instanceable sibling prims referencing one or more prim paths." },
     { "new_prim", reinterpret_cast<PyCFunction>(PyCommand_newPrim), METH_VARARGS | METH_KEYWORDS,
       "Create a generic prim. Optional keyword argument: type_name." },
     { "new_scope", reinterpret_cast<PyCFunction>(PyCommand_newScope), METH_VARARGS, "Create a new Scope prim." },
