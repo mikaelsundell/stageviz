@@ -67,6 +67,9 @@
           <height>16777215</height>
          </size>
         </property>
+        <property name="toolTip">
+         <string>New material</string>
+        </property>
         <property name="text">
          <string/>
         </property>
@@ -85,6 +88,9 @@
           <width>16777215</width>
           <height>16777215</height>
          </size>
+        </property>
+        <property name="toolTip">
+         <string>Load MaterialX</string>
         </property>
         <property name="text">
          <string/>
@@ -120,6 +126,9 @@
           <width>16777215</width>
           <height>16777215</height>
          </size>
+        </property>
+        <property name="toolTip">
+         <string>Select materials from selection</string>
         </property>
         <property name="text">
          <string/>

@@ -67,6 +67,9 @@
           <height>16777215</height>
          </size>
         </property>
+        <property name="toolTip">
+         <string>Create and add a sublayer under the bold, active edit layer</string>
+        </property>
         <property name="text">
          <string/>
         </property>
@@ -85,6 +88,9 @@
           <width>16777215</width>
           <height>16777215</height>
          </size>
+        </property>
+        <property name="toolTip">
+         <string>Add an existing sublayer under the bold, active edit layer</string>
         </property>
         <property name="text">
          <string/>
@@ -120,6 +126,9 @@
           <width>16777215</width>
           <height>16777215</height>
          </size>
+        </property>
+        <property name="toolTip">
+         <string>Select all composed prim paths authored by the selected layer</string>
         </property>
         <property name="text">
          <string/>

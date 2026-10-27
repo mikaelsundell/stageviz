@@ -1487,7 +1487,6 @@ MaterialGraph::MaterialGraph(QWidget* parent)
     p->d.ui->filter->setClearButtonEnabled(false);
     p->d.ui->clear->setIcon(stageviz::style()->icon(Style::IconRole::Clear));
     p->d.ui->clear->setText(QString());
-    p->d.ui->clear->setToolTip(tr("Clear"));
     p->d.ui->clear->setEnabled(false);
     p->d.view->setScene(&p->d.scene);
     p->d.scene.setSceneRect(p->d.canvasRect);

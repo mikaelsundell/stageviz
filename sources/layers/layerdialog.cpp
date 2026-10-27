@@ -65,9 +65,6 @@ LayerDialogPrivate::init()
     d.ui->newMaterial->setIcon(style()->icon(Style::IconRole::New));
     d.ui->load->setIcon(style()->icon(Style::IconRole::Open));
     d.ui->select->setIcon(style()->icon(Style::IconRole::Select));
-    d.ui->select->setToolTip(tr("Select all composed prim paths authored by the selected layer"));
-    d.ui->newMaterial->setToolTip(tr("Create and add a sublayer under the bold, active edit layer"));
-    d.ui->load->setToolTip(tr("Add an existing sublayer under the bold, active edit layer"));
 
     connect(d.ui->newMaterial, &QToolButton::clicked, this, &LayerDialogPrivate::createLayer);
     connect(d.ui->load, &QToolButton::clicked, this, &LayerDialogPrivate::addLayer);

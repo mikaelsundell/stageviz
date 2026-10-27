@@ -369,9 +369,6 @@ MaterialDialogPrivate::init()
     d.ui->load->setText(QString());
     d.ui->select->setText(QString());
 
-    d.ui->newMaterial->setToolTip(tr("New material"));
-    d.ui->load->setToolTip(tr("Load MaterialX"));
-    d.ui->select->setToolTip(tr("Select materials from selection"));
     d.ui->newMaterial->setContextMenuPolicy(Qt::CustomContextMenu);
 
     d.ui->splitter->setChildrenCollapsible(true);
