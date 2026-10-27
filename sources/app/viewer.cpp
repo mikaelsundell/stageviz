@@ -9,6 +9,7 @@
 #include "consoledialog.h"
 #include "githubclient.h"
 #include "imagingglwidget.h"
+#include "layerdialog.h"
 #include "materialdialog.h"
 #include "messagedialog.h"
 #include "mouseevent.h"
@@ -68,12 +69,10 @@ public:
     void init();
     void initDocks();
     void initRecentFiles();
-    void initLayerMenu();
     void initSettings();
     bool loadFile(const QString& fileName);
     bool mergeFile(const QString& fileName);
     bool mergeFlattenedFile(const QString& fileName);
-    bool mergeSublayerFile(const QString& fileName);
     bool mergeReferenceFile(const QString& fileName, const SdfPath& targetPath);
     bool mergePayloadFile(const QString& fileName, const SdfPath& targetPath);
     QString selectUsdFile(const QString& title);
@@ -93,14 +92,15 @@ public:
 public Q_SLOTS:
     void newFile();
     void open();
+    void openLayers();
     void merge();
     void mergeFlattened();
-    void mergeSublayer();
     void mergeReference();
     void mergePayload();
     void save();
     void saveAs();
     void saveCopy();
+    void saveAllLayers();
     void revealInFolder();
     void preserveState();
     void exportAll();
@@ -184,6 +184,7 @@ public Q_SLOTS:
     void updatePrims(const NoticeBatch& batch);
     void updateStage(UsdStageRefPtr stage, Session::LoadPolicy policy, Session::StageStatus status);
     void updateEditLayer(SdfLayerHandle layer);
+    void updateLayerState();
     void updateAuxiliary(UsdStageRefPtr auxiliary);
     void updateStageUp(Session::StageUp stageUp);
     void updateSelection(const QList<SdfPath>& paths);
@@ -200,10 +201,16 @@ public:
     void updateToolsModal();
     void updateToolsSuppressed(bool suppressed, bool animated = false);
     void updateDockAction(QAction* action, bool checked);
-    void updateModified(bool modified);
+    void updateStageChanged(bool stageChanged);
     void updateRecentFiles(const QString& filename);
+    void refreshModifiedFromLayers();
+    QStringList saveTargets(const QString& rootFilename = QString(), bool includeRoot = true,
+                            bool includeAnonymous = false) const;
+    bool confirmLayerSave(const QString& title, const QString& rootFilename = QString()) const;
+    void updateSaveActions();
     void updateWindowTitle();
     bool saveFile();
+    void saveStageAs();
     bool saveChanges();
     void clearChanges();
     bool hasChanges() const;
@@ -215,8 +222,8 @@ public:
     };
     struct Data {
         Session::LoadPolicy loadPolicy;
-        bool modified;
-        int changes;
+        bool stageChanged;
+        bool rootChanged;
         quint64 statusRevision = 0;
         QStringList arguments;
         QStringList extensions;
@@ -235,6 +242,7 @@ public:
         QPointer<PythonDialog> pythonDialog;
         QPointer<ConsoleDialog> consoleDialog;
         QPointer<MaterialDialog> materialDialog;
+        QPointer<LayerDialog> layerDialog;
     };
     Data d;
 };
@@ -242,8 +250,8 @@ public:
 ViewerPrivate::ViewerPrivate()
 {
     d.loadPolicy = Session::LoadPolicy::All;
-    d.modified = false;
-    d.changes = 0;
+    d.stageChanged = false;
+    d.rootChanged = false;
     d.extensions = { "usd", "usda", "usdc", "usdz" };
 }
 
@@ -321,14 +329,14 @@ ViewerPrivate::init()
     connect(d.ui->fileOpen, &QAction::triggered, this, &ViewerPrivate::open);
     connect(d.ui->fileMergeStage, &QAction::triggered, this, &ViewerPrivate::merge);
     connect(d.ui->fileMergeFlattened, &QAction::triggered, this, &ViewerPrivate::mergeFlattened);
-    connect(d.ui->fileMergeSublayer, &QAction::triggered, this, &ViewerPrivate::mergeSublayer);
     connect(d.ui->fileMergeReference, &QAction::triggered, this, &ViewerPrivate::mergeReference);
     connect(d.ui->fileMergePayload, &QAction::triggered, this, &ViewerPrivate::mergePayload);
-    connect(d.ui->fileLayer, &QMenu::aboutToShow, this, &ViewerPrivate::initLayerMenu);
+    connect(d.ui->fileLayers, &QAction::triggered, this, &ViewerPrivate::openLayers);
     connect(d.ui->menuPayloads, &QMenu::aboutToShow, this, &ViewerPrivate::refreshPayloadMenu);
-    connect(d.ui->fileSave, &QAction::triggered, this, &ViewerPrivate::save);
-    connect(d.ui->fileSaveAs, &QAction::triggered, this, &ViewerPrivate::saveAs);
-    connect(d.ui->fileSaveCopy, &QAction::triggered, this, &ViewerPrivate::saveCopy);
+    connect(d.ui->fileLayerSave, &QAction::triggered, this, &ViewerPrivate::save);
+    connect(d.ui->fileLayerSaveAs, &QAction::triggered, this, &ViewerPrivate::saveAs);
+    connect(d.ui->fileLayerSaveCopyAs, &QAction::triggered, this, &ViewerPrivate::saveCopy);
+    connect(d.ui->fileLayerSaveAll, &QAction::triggered, this, &ViewerPrivate::saveAllLayers);
     connect(d.ui->fileRevealInFolder, &QAction::triggered, this, &ViewerPrivate::revealInFolder);
     connect(d.ui->filePreserveState, &QAction::triggered, this, &ViewerPrivate::preserveState);
     connect(d.ui->fileExportAll, &QAction::triggered, this, &ViewerPrivate::exportAll);
@@ -495,6 +503,7 @@ ViewerPrivate::init()
     connect(session(), &Session::primsChanged, this, &ViewerPrivate::updatePrims);
     connect(session(), &Session::stageChanged, this, &ViewerPrivate::updateStage);
     connect(session(), &Session::editLayerChanged, this, &ViewerPrivate::updateEditLayer);
+    connect(session(), &Session::layerMutingChanged, this, &ViewerPrivate::updateLayerState);
     connect(session(), &Session::auxiliaryChanged, this, &ViewerPrivate::updateAuxiliary);
     connect(session(), &Session::stageUpChanged, this, &ViewerPrivate::updateStageUp);
     connect(session(), &Session::preserveStateChanged, this, &ViewerPrivate::updatePreserveState);
@@ -507,6 +516,7 @@ ViewerPrivate::init()
     connect(session()->commandStack(), &CommandStack::canUndoChanged, d.ui->editUndo, &QAction::setEnabled);
     connect(session()->commandStack(), &CommandStack::canRedoChanged, d.ui->editRedo, &QAction::setEnabled);
     connect(session()->commandStack(), &CommandStack::canClearChanged, d.ui->editClear, &QAction::setEnabled);
+    connect(session()->commandStack(), &CommandStack::changed, this, &ViewerPrivate::updateLayerState);
     connect(d.ui->hudSceneStats, &QAction::toggled, viewState, &ViewState::setSceneStatsEnabled);
     connect(d.ui->hudPerformanceStats, &QAction::toggled, viewState, &ViewState::setPerformanceStatsEnabled);
     connect(d.ui->hudCameraAxis, &QAction::toggled, viewState, &ViewState::setCameraAxisEnabled);
@@ -696,6 +706,17 @@ ViewerPrivate::initDocks()
     d.materialDialog->installEventFilter(this);
     d.materialDialog->hide();
 
+    d.layerDialog = new LayerDialog(d.viewer.data());
+    d.layerDialog->setObjectName("layerDialog");
+    d.layerDialog->setAttribute(Qt::WA_DeleteOnClose, false);
+    d.layerDialog->setWindowFlags(Qt::Tool | Qt::WindowTitleHint | Qt::WindowCloseButtonHint);
+#ifdef Q_OS_MAC
+    d.layerDialog->setAttribute(Qt::WA_MacAlwaysShowToolWindow, true);
+#endif
+    d.layerDialog->installEventFilter(this);
+    d.layerDialog->hide();
+    connect(d.layerDialog, &LayerDialog::layerSaved, this, &ViewerPrivate::refreshModifiedFromLayers);
+
     d.consoleDialog = new ConsoleDialog(d.viewer.data());
     d.consoleDialog->setWindowFlags(Qt::Tool | Qt::WindowTitleHint | Qt::WindowCloseButtonHint);
 #ifdef Q_OS_MAC
@@ -715,72 +736,6 @@ ViewerPrivate::initDocks()
     updateDockAction(d.ui->viewProgress, false);
     updateDockAction(d.ui->viewPython, false);
     updateDockAction(d.ui->viewConsole, false);
-}
-
-void
-ViewerPrivate::initLayerMenu()
-{
-    QMenu* layerMenu = d.ui->fileLayer;
-    if (!layerMenu)
-        return;
-
-    layerMenu->clear();
-
-    std::vector<SdfLayerHandle> layers;
-    SdfLayerHandle editLayer;
-    SdfLayerHandle rootLayer;
-    {
-        READ_LOCKER(locker, session()->stageLock(), "stageLock");
-        const UsdStageRefPtr stage = session()->stageUnsafe();
-        if (stage) {
-            layers = stage->GetLayerStack(false);
-            editLayer = stage->GetEditTarget().GetLayer();
-            rootLayer = stage->GetRootLayer();
-        }
-    }
-
-    if (layers.empty()) {
-        QAction* emptyAction = layerMenu->addAction("No layers");
-        emptyAction->setEnabled(false);
-        return;
-    }
-
-    for (const SdfLayerHandle& layer : layers) {
-        if (!layer)
-            continue;
-
-        const QString identifier = QString::fromStdString(layer->GetIdentifier());
-        QString label = QString::fromStdString(layer->GetDisplayName());
-        if (label.isEmpty())
-            label = identifier;
-
-        if (layer == rootLayer)
-            label += QStringLiteral("        (Root)");
-
-        QAction* action = layerMenu->addAction(label);
-        action->setCheckable(true);
-        action->setChecked(layer == editLayer);
-        action->setData(identifier);
-        action->setToolTip(identifier);
-        connect(action, &QAction::triggered, this, [this, action]() {
-            if (!action->isChecked())
-                return;
-
-            const QString identifier = action->data().toString();
-            if (identifier.isEmpty())
-                return;
-
-            {
-                READ_LOCKER(locker, session()->stageLock(), "stageLock");
-                const UsdStageRefPtr stage = session()->stageUnsafe();
-                const SdfLayerHandle current = stage ? stage->GetEditTarget().GetLayer() : SdfLayerHandle();
-                if (current && QString::fromStdString(current->GetIdentifier()) == identifier)
-                    return;
-            }
-
-            session()->commandStack()->execute(new Command(stageviz::setEditLayer(identifier)));
-        });
-    }
 }
 
 void
@@ -951,21 +906,6 @@ ViewerPrivate::mergeFlattenedFile(const QString& fileName)
     }
 
     session()->commandStack()->execute(new Command(mergeFlattenedStage(fileName)));
-    settings()->setValue("openDir", fileInfo.absolutePath());
-    return true;
-}
-
-bool
-ViewerPrivate::mergeSublayerFile(const QString& fileName)
-{
-    const QFileInfo fileInfo(fileName);
-    if (!d.extensions.contains(fileInfo.suffix().toLower())) {
-        session()->notifyStatus(Session::Notify::Status::Error,
-                                QString("Unsupported file format: %1").arg(fileInfo.suffix()));
-        return false;
-    }
-
-    session()->commandStack()->execute(new Command(addSublayer(fileName)));
     settings()->setValue("openDir", fileInfo.absolutePath());
     return true;
 }
@@ -1143,18 +1083,17 @@ ViewerPrivate::eventFilter(QObject* object, QEvent* event)
 void
 ViewerPrivate::enable(bool enable)
 {
-    d.ui->fileLayer->setEnabled(enable);
-
     QList<QAction*> actions = { d.ui->fileMergeStage,
                                 d.ui->fileMergeFlattened,
-                                d.ui->fileMergeSublayer,
                                 d.ui->fileMergeReference,
                                 d.ui->fileMergePayload,
                                 d.ui->fileReload,
                                 d.ui->fileClose,
-                                d.ui->fileSave,
-                                d.ui->fileSaveAs,
-                                d.ui->fileSaveCopy,
+                                d.ui->fileLayerSave,
+                                d.ui->fileLayerSaveAs,
+                                d.ui->fileLayerSaveCopyAs,
+                                d.ui->fileLayerSaveAll,
+                                d.ui->fileLayers,
                                 d.ui->filePreserveState,
                                 d.ui->fileExportAll,
                                 d.ui->fileExportSelected,
@@ -1240,6 +1179,14 @@ ViewerPrivate::enable(bool enable)
     d.ui->editShow->setEnabled(enable);
     d.ui->editHide->setEnabled(enable);
     d.ui->backgroundColor->setEnabled(enable);
+    if (enable)
+        updateSaveActions();
+    else {
+        d.ui->fileLayerSave->setEnabled(false);
+        d.ui->fileLayerSaveAs->setEnabled(false);
+        d.ui->fileLayerSaveCopyAs->setEnabled(false);
+        d.ui->fileLayerSaveAll->setEnabled(false);
+    }
 
     if (enable)
         updateSelection(session()->selectionList()->paths());
@@ -1289,6 +1236,13 @@ ViewerPrivate::open()
 }
 
 void
+ViewerPrivate::openLayers()
+{
+    if (d.layerDialog)
+        showDialog(d.layerDialog);
+}
+
+void
 ViewerPrivate::merge()
 {
     const QString filename = selectUsdFile("Merge into Stage");
@@ -1302,14 +1256,6 @@ ViewerPrivate::mergeFlattened()
     const QString filename = selectUsdFile("Merge Flattened");
     if (!filename.isEmpty())
         mergeFlattenedFile(filename);
-}
-
-void
-ViewerPrivate::mergeSublayer()
-{
-    const QString filename = selectUsdFile("Merge Sublayer");
-    if (!filename.isEmpty())
-        mergeSublayerFile(filename);
 }
 
 void
@@ -1343,11 +1289,106 @@ ViewerPrivate::mergePayload()
 void
 ViewerPrivate::save()
 {
-    saveFile();
+    SdfLayerHandle layer;
+    {
+        READ_LOCKER(locker, session()->stageLock(), "stageLock");
+        const UsdStageRefPtr stage = session()->stageUnsafe();
+        if (stage)
+            layer = stage->GetEditTarget().GetLayer();
+    }
+    if (!layer)
+        return;
+    if (layer->IsAnonymous()) {
+        saveAs();
+        return;
+    }
+
+    QElapsedTimer timer;
+    timer.start();
+    const QString identifier = QString::fromStdString(layer->GetIdentifier());
+    if (session()->saveLayer(identifier)) {
+        d.layerDialog->refreshLayers();
+        refreshModifiedFromLayers();
+        updateSaveActions();
+        const QString name = QString::fromStdString(layer->GetDisplayName());
+        const QString path = QString::fromStdString(layer->GetRealPath());
+        session()->notifyStatus(Session::Notify::Status::Success,
+                                tr("Saved layer %1 to %2 in %3 seconds")
+                                    .arg(name.isEmpty() ? path : name, path,
+                                         QString::number(timer.elapsed() / 1000.0, 'f', 2)),
+                                path);
+    }
 }
 
 void
 ViewerPrivate::saveAs()
+{
+    SdfLayerHandle layer;
+    {
+        READ_LOCKER(locker, session()->stageLock(), "stageLock");
+        const UsdStageRefPtr stage = session()->stageUnsafe();
+        if (stage)
+            layer = stage->GetEditTarget().GetLayer();
+    }
+    if (!layer)
+        return;
+
+    QString saveDir = settings()->value("saveDir", QDir::homePath()).toString();
+    QString defaultName = QString::fromStdString(layer->GetDisplayName());
+    const QString realPath = QString::fromStdString(layer->GetRealPath());
+    bool rootLayer = false;
+    {
+        READ_LOCKER(locker, session()->stageLock(), "stageLock");
+        const UsdStageRefPtr stage = session()->stageUnsafe();
+        rootLayer = stage && layer == stage->GetRootLayer();
+    }
+    if (!realPath.isEmpty()) {
+        const QFileInfo info(realPath);
+        defaultName = info.fileName();
+        saveDir = info.absolutePath();
+    }
+    else if (rootLayer && session()->filename().isEmpty()) {
+        defaultName = QStringLiteral("Untitled.usd");
+    }
+    else if (defaultName.isEmpty()) {
+        defaultName = QStringLiteral("Layer.usd");
+    }
+
+    QStringList filters;
+    for (const QString& ext : d.extensions)
+        filters.append("*." + ext);
+    const QString filter = QString("USD Files (%1)").arg(filters.join(' '));
+    QString filename = QFileDialog::getSaveFileName(d.viewer.data(), tr("Save Layer As"),
+                                                    QDir(saveDir).filePath(defaultName), filter);
+    if (filename.isEmpty())
+        return;
+    if (QFileInfo(filename).suffix().isEmpty())
+        filename += ".usd";
+
+    QElapsedTimer timer;
+    timer.start();
+    const QString oldIdentifier = QString::fromStdString(layer->GetIdentifier());
+    if (session()->saveLayerAs(oldIdentifier, filename)) {
+        settings()->setValue("saveDir", QFileInfo(filename).absolutePath());
+        if (rootLayer)
+            updateRecentFiles(QFileInfo(filename).absoluteFilePath());
+        d.layerDialog->refreshLayers();
+        refreshModifiedFromLayers();
+        updateSaveActions();
+        updateWindowTitle();
+        const QString details
+            = rootLayer ? QString()
+                        : tr("Parent layer references may now be dirty and need to be saved with Save All Layers.");
+        session()->notifyStatus(Session::Notify::Status::Success,
+                                tr("Saved layer %1 as %2 in %3 seconds")
+                                    .arg(QFileInfo(filename).fileName(), filename,
+                                         QString::number(timer.elapsed() / 1000.0, 'f', 2)),
+                                details);
+    }
+}
+
+void
+ViewerPrivate::saveStageAs()
 {
     QString saveDir = settings()->value("saveDir", QDir::homePath()).toString();
     QString currentFile = session()->filename();
@@ -1377,18 +1418,26 @@ ViewerPrivate::saveAs()
     if (QFileInfo(filename).suffix().isEmpty())
         filename += ".usd";
 
+    if (!confirmLayerSave(tr("Save USD File As"), filename))
+        return;
+
+    const QStringList targets = saveTargets(filename);
     QElapsedTimer timer;
     timer.start();
 
     if (session()->saveToFile(filename)) {
-        const double elapsedSec = timer.elapsed() / 1000.0;
-
         settings()->setValue("saveDir", QFileInfo(filename).absolutePath());
         updateWindowTitle();
         updateRecentFiles(QFileInfo(filename).absoluteFilePath());
-        clearChanges();
+        d.layerDialog->refreshLayers();
+        refreshModifiedFromLayers();
+        updateSaveActions();
         session()->notifyStatus(Session::Notify::Status::Success,
-                                QString("Saved %1 in %2 seconds").arg(filename, QString::number(elapsedSec, 'f', 2)));
+                                tr("Saved all layers for %1 (%2 file(s)) in %3 seconds")
+                                    .arg(filename)
+                                    .arg(targets.size())
+                                    .arg(timer.elapsed() / 1000.0, 0, 'f', 2),
+                                targets.join(QLatin1Char('\n')));
     }
     else {
         session()->notifyStatus(Session::Notify::Status::Error, QString("Failed to save file: %1").arg(filename));
@@ -1398,18 +1447,27 @@ ViewerPrivate::saveAs()
 void
 ViewerPrivate::saveCopy()
 {
-    QString copyDir = settings()->value("copyDir", QDir::homePath()).toString();
-    QString currentFile = session()->filename();
-    QString defaultName;
+    SdfLayerHandle layer;
+    {
+        READ_LOCKER(locker, session()->stageLock(), "stageLock");
+        const UsdStageRefPtr stage = session()->stageUnsafe();
+        if (stage)
+            layer = stage->GetEditTarget().GetLayer();
+    }
+    if (!layer)
+        return;
 
-    if (!currentFile.isEmpty()) {
-        QFileInfo info(currentFile);
-        defaultName = QString("%1 (Copy).%2").arg(info.completeBaseName(), info.suffix());
-        copyDir = info.absolutePath();
-    }
-    else {
-        defaultName = "Untitled.usd";
-    }
+    QString copyDir = settings()->value("copyDir", QDir::homePath()).toString();
+    const QString sourcePath = QString::fromStdString(layer->GetRealPath());
+    const QFileInfo sourceInfo(sourcePath);
+    QString defaultName = sourceInfo.completeBaseName().isEmpty() ? QString::fromStdString(layer->GetDisplayName())
+                                                                  : sourceInfo.completeBaseName();
+    if (defaultName.isEmpty())
+        defaultName = QStringLiteral("Layer");
+    defaultName
+        += QStringLiteral(" (Copy).%1").arg(sourceInfo.suffix().isEmpty() ? QStringLiteral("usd") : sourceInfo.suffix());
+    if (sourceInfo.exists())
+        copyDir = sourceInfo.absolutePath();
 
     QStringList filters;
     filters.reserve(d.extensions.size());
@@ -1417,7 +1475,7 @@ ViewerPrivate::saveCopy()
         filters.append("*." + ext);
 
     const QString filter = QString("USD Files (%1)").arg(filters.join(' '));
-    QString filename = QFileDialog::getSaveFileName(d.viewer.data(), "Save Copy of USD File",
+    QString filename = QFileDialog::getSaveFileName(d.viewer.data(), tr("Save Layer Copy As"),
                                                     QDir(copyDir).filePath(defaultName), filter);
 
     if (filename.isEmpty())
@@ -1428,18 +1486,19 @@ ViewerPrivate::saveCopy()
 
     QElapsedTimer timer;
     timer.start();
-
-    if (session()->copyToFile(filename)) {
-        const double elapsedSec = timer.elapsed() / 1000.0;
-
+    if (session()->copyLayerToFile(QString::fromStdString(layer->GetIdentifier()), filename)) {
         settings()->setValue("copyDir", QFileInfo(filename).absolutePath());
         session()->notifyStatus(
             Session::Notify::Status::Success,
-            QString("Saved copy %1 in %2 seconds").arg(filename, QString::number(elapsedSec, 'f', 2)));
+            tr("Saved layer copy %1 in %2 seconds").arg(filename, QString::number(timer.elapsed() / 1000.0, 'f', 2)),
+            sourcePath);
     }
-    else {
-        session()->notifyStatus(Session::Notify::Status::Error, QString("Failed to save copy: %1").arg(filename));
-    }
+}
+
+void
+ViewerPrivate::saveAllLayers()
+{
+    saveFile();
 }
 
 void
@@ -2727,17 +2786,24 @@ void
 ViewerPrivate::updatePrims(const NoticeBatch& batch)
 {
     d.ui->menuPayloads->setProperty("selectionMenuDirty", true);
-    if (batch.entries.isEmpty())
-        return;
-    ++d.changes;
-    updateModified(true);
+    if (!batch.entries.isEmpty()) {
+        {
+            READ_LOCKER(locker, session()->stageLock(), "stageLock");
+            const UsdStageRefPtr stage = session()->stageUnsafe();
+            if (stage && stage->GetRootLayer() && stage->GetEditTarget().GetLayer() == stage->GetRootLayer())
+                d.rootChanged = true;
+        }
+        refreshModifiedFromLayers();
+    }
+    updateSaveActions();
 }
 
 void
 ViewerPrivate::updateStage(UsdStageRefPtr stage, Session::LoadPolicy policy, Session::StageStatus status)
 {
     d.ui->menuPayloads->setProperty("selectionMenuDirty", true);
-    Q_UNUSED(stage);
+    if (!stage || status == Session::StageStatus::Loaded)
+        d.rootChanged = false;
 
     d.loadPolicy = policy;
     d.ui->policyAll->setChecked(policy == Session::LoadPolicy::All);
@@ -2747,19 +2813,16 @@ ViewerPrivate::updateStage(UsdStageRefPtr stage, Session::LoadPolicy policy, Ses
 
     if (status == Session::StageStatus::Loaded)
         enable(true);
+    updateSaveActions();
 }
 
 void
 ViewerPrivate::updateEditLayer(SdfLayerHandle layer)
 {
-    if (!d.ui->fileLayer)
-        return;
-
-    const QString identifier = layer ? QString::fromStdString(layer->GetIdentifier()) : QString();
-    for (QAction* action : d.ui->fileLayer->actions()) {
-        if (action && action->isCheckable())
-            action->setChecked(!identifier.isEmpty() && action->data().toString() == identifier);
-    }
+    Q_UNUSED(layer);
+    refreshModifiedFromLayers();
+    updateWindowTitle();
+    updateSaveActions();
 }
 
 void
@@ -3012,12 +3075,99 @@ ViewerPrivate::updateDockAction(QAction* action, bool checked)
 }
 
 void
-ViewerPrivate::updateModified(bool modified)
+ViewerPrivate::updateStageChanged(bool stageChanged)
 {
-    if (d.modified == modified)
+    if (d.stageChanged == stageChanged)
         return;
-    d.modified = modified;
+    d.stageChanged = stageChanged;
     updateWindowTitle();
+}
+
+void
+ViewerPrivate::refreshModifiedFromLayers()
+{
+    bool anyLayerModified = false;
+    bool sessionLayerDirty = false;
+    {
+        READ_LOCKER(locker, session()->stageLock(), "stageLock");
+        const UsdStageRefPtr stage = session()->stageUnsafe();
+        if (stage) {
+            sessionLayerDirty = stage->GetSessionLayer() && stage->GetSessionLayer()->IsDirty();
+            const SdfLayerHandle rootLayer = stage->GetRootLayer();
+            const SdfLayerHandle editLayer = stage->GetEditTarget().GetLayer();
+            for (const SdfLayerHandle& layer : stage->GetLayerStack(false)) {
+                if (layer) {
+                    const bool anonymousRoot = layer == rootLayer && layer->IsAnonymous()
+                                               && session()->filename().isEmpty() && !d.rootChanged
+                                               && layer->GetSubLayerPaths().empty();
+                    if (anonymousRoot) {
+                        continue;
+                    }
+                    if (layer->IsDirty()) {
+                        anyLayerModified = true;
+                    }
+                }
+            }
+        }
+    }
+    const bool sessionStateDirty = session()->isStateDirty();
+    const bool stageChanged = anyLayerModified || sessionLayerDirty || sessionStateDirty;
+    updateStageChanged(stageChanged);
+}
+
+void
+ViewerPrivate::updateLayerState()
+{
+    refreshModifiedFromLayers();
+    updateSaveActions();
+}
+
+QStringList
+ViewerPrivate::saveTargets(const QString& rootFilename, bool includeRoot, bool includeAnonymous) const
+{
+    QStringList result;
+    READ_LOCKER(locker, session()->stageLock(), "stageLock");
+    const UsdStageRefPtr stage = session()->stageUnsafe();
+    if (!stage)
+        return result;
+
+    const SdfLayerHandle rootLayer = stage->GetRootLayer();
+    for (const SdfLayerHandle& layer : stage->GetLayerStack(false)) {
+        if (!layer || (layer == rootLayer && !includeRoot)
+            || (layer != rootLayer && !layer->IsDirty() && !(includeAnonymous && layer->IsAnonymous())))
+            continue;
+
+        QString path;
+        if (layer == rootLayer && !rootFilename.isEmpty())
+            path = QFileInfo(rootFilename).absoluteFilePath();
+        else if (layer->IsAnonymous())
+            path = tr("anonymous layer");
+        else
+            path = QString::fromStdString(layer->GetRealPath());
+
+        QString name = QString::fromStdString(layer->GetDisplayName());
+        if (name.isEmpty())
+            name = layer == rootLayer ? tr("Root layer") : tr("Layer");
+        result.append(QStringLiteral("%1 — %2").arg(name, path));
+    }
+    return result;
+}
+
+bool
+ViewerPrivate::confirmLayerSave(const QString& title, const QString& rootFilename) const
+{
+    const QStringList targets = saveTargets(rootFilename);
+    if (targets.size() <= 1)
+        return true;
+
+    const QString details = targets.join(QLatin1Char('\n'));
+    QString text = tr("Saving this stage will write multiple USD layer files.\n\n%1").arg(details);
+    if (!rootFilename.isEmpty())
+        text += tr("\n\nThe sublayers will remain at their current paths; only the root layer will be written "
+                   "to the selected filename.");
+    text += tr("\n\nEach file is saved separately. If a write fails, earlier successful writes are not "
+               "rolled back.\n\nContinue?");
+    return MessageDialog::question(d.viewer.data(), title, text);
 }
 
 void
@@ -3053,10 +3203,68 @@ ViewerPrivate::updateWindowTitle()
 
     const QString filename = session()->filename();
     QString name = filename.isEmpty() ? QStringLiteral("Untitled") : QFileInfo(filename).fileName();
-    if (d.modified)
+    QString activeLayerName;
+    {
+        READ_LOCKER(locker, session()->stageLock(), "stageLock");
+        const UsdStageRefPtr stage = session()->stageUnsafe();
+        if (stage) {
+            const SdfLayerHandle rootLayer = stage->GetRootLayer();
+            const SdfLayerHandle editLayer = stage->GetEditTarget().GetLayer();
+            if (editLayer && editLayer != rootLayer) {
+                const std::string realPath = editLayer->GetRealPath();
+                activeLayerName = realPath.empty() ? QString::fromStdString(editLayer->GetDisplayName())
+                                                   : QFileInfo(QString::fromStdString(realPath)).fileName();
+                if (activeLayerName.isEmpty())
+                    activeLayerName = QString::fromStdString(editLayer->GetIdentifier());
+            }
+        }
+    }
+    if (d.stageChanged)
         name.prepend(QLatin1Char('*'));
+    if (!activeLayerName.isEmpty())
+        name += QStringLiteral(" (%1)").arg(activeLayerName);
 
     d.viewer->setWindowTitle(QStringLiteral("%1: %2").arg(title, name));
+}
+
+void
+ViewerPrivate::updateSaveActions()
+{
+    bool loaded = false;
+    bool canSaveActive = false;
+    bool hasEditLayer = false;
+    {
+        READ_LOCKER(locker, session()->stageLock(), "stageLock");
+        const UsdStageRefPtr stage = session()->stageUnsafe();
+        if (stage) {
+            loaded = true;
+            const SdfLayerHandle layer = stage->GetEditTarget().GetLayer();
+            hasEditLayer = bool(layer);
+            canSaveActive = layer && layer->IsDirty()
+                            && (layer->IsAnonymous() ? layer->PermissionToEdit()
+                                                     : layer->PermissionToSave()
+                                                           && !QString::fromStdString(layer->GetRealPath()).isEmpty());
+            if (layer && layer->IsAnonymous() && !layer->PermissionToEdit()) {
+                d.ui->fileLayerSave->setToolTip(tr("The active anonymous layer is locked."));
+            }
+            else if (layer && layer->IsAnonymous()) {
+                d.ui->fileLayerSave->setToolTip(tr("Save the active anonymous layer to a file."));
+            }
+            else if (layer && !layer->PermissionToSave()) {
+                d.ui->fileLayerSave->setToolTip(tr("The active edit layer is not writable."));
+            }
+            else if (layer && !layer->IsDirty()) {
+                d.ui->fileLayerSave->setToolTip(tr("The active edit layer has no unsaved changes."));
+            }
+            else {
+                d.ui->fileLayerSave->setToolTip(tr("Save the active edit layer."));
+            }
+        }
+    }
+    d.ui->fileLayerSave->setEnabled(canSaveActive);
+    d.ui->fileLayerSaveAs->setEnabled(loaded && hasEditLayer);
+    d.ui->fileLayerSaveCopyAs->setEnabled(loaded && hasEditLayer);
+    d.ui->fileLayerSaveAll->setEnabled(loaded);
 }
 
 bool
@@ -3064,19 +3272,25 @@ ViewerPrivate::saveFile()
 {
     const QString filename = session()->filename();
     if (filename.isEmpty()) {
-        saveAs();
+        saveStageAs();
         return !hasChanges();
     }
 
+    const QStringList targets = saveTargets();
     QElapsedTimer timer;
     timer.start();
 
     if (session()->saveToFile(filename)) {
         const double elapsedSec = timer.elapsed() / 1000.0;
-        updateWindowTitle();
-        clearChanges();
+        d.layerDialog->refreshLayers();
+        refreshModifiedFromLayers();
+        updateSaveActions();
         session()->notifyStatus(Session::Notify::Status::Success,
-                                QString("Saved %1 in %2 seconds").arg(filename, QString::number(elapsedSec, 'f', 2)));
+                                tr("Saved all layers for %1 (%2 file(s)) in %3 seconds")
+                                    .arg(filename)
+                                    .arg(targets.size())
+                                    .arg(elapsedSec, 0, 'f', 2),
+                                targets.join(QLatin1Char('\n')));
         return true;
     }
     session()->notifyStatus(Session::Notify::Status::Error, QString("Failed to save file: %1").arg(filename));
@@ -3097,8 +3311,17 @@ ViewerPrivate::saveChanges()
     d.viewer->activateWindow();
     d.viewer->setFocus();
 
+    QString question = tr("Save changes to %1?").arg(name);
+    const QStringList targets = saveTargets();
+    if (targets.size() > 1) {
+        question
+            += tr("\n\nThe following layer files will be written:\n%1\n\nEach file is saved separately. If a write fails, "
+                  "earlier successful writes are not rolled back.")
+                   .arg(targets.join(QLatin1Char('\n')));
+    }
+
     const MessageDialog::SaveResult result = MessageDialog::saveQuestion(d.viewer.data(), tr("Save changes?"),
-                                                                         tr("Save changes to %1?").arg(name));
+                                                                         question);
 
     updateToolsSuppressed(false, true);
 
@@ -3115,14 +3338,13 @@ ViewerPrivate::saveChanges()
 void
 ViewerPrivate::clearChanges()
 {
-    d.changes = 0;
-    updateModified(false);
+    updateStageChanged(false);
 }
 
 bool
 ViewerPrivate::hasChanges() const
 {
-    return d.changes > 0;
+    return d.stageChanged;
 }
 
 Viewer::Viewer(QWidget* parent)
@@ -3221,6 +3443,11 @@ Viewer::closeEvent(QCloseEvent* event)
         p->d.materialDialog->close();
     }
 
+    if (p->d.layerDialog) {
+        p->d.layerDialog->hide();
+        p->d.layerDialog->close();
+    }
+
     event->accept();
 }
 
@@ -3281,7 +3508,6 @@ Viewer::dropEvent(QDropEvent* event)
 
     menu.addSeparator();
 
-    QAction* mergeSublayerAction = menu.addAction("Merge Sublayer");
     QAction* mergeReferenceAction = menu.addAction("Merge Reference");
     QAction* mergePayloadAction = menu.addAction("Merge Payload");
 
@@ -3320,9 +3546,6 @@ Viewer::dropEvent(QDropEvent* event)
     }
     else if (selected == mergeFlattenedAction) {
         p->mergeFlattenedFile(filename);
-    }
-    else if (selected == mergeSublayerAction) {
-        p->mergeSublayerFile(filename);
     }
     else if (selected == mergeReferenceAction) {
         const SdfPath targetPath = compositionTarget();

@@ -86,6 +86,10 @@ When a user asks for a Stageviz dialog script, return a complete runnable script
 
 Use `scripts/dialogs.py` as a reusable implementation reference for main-window lookup, QApplication handling, retained dialog lifetime, standalone tool windows, dock widgets, and shortcut ownership. Generated standalone scripts should remain self-contained unless the user explicitly wants to depend on this helper module.
 
+## Qt tests
+
+When writing tests for Stageviz Qt widgets or embedded Python workflows, read [references/python-qt-testing.md](references/python-qt-testing.md). Reuse `CTest/python/testbench.py` and the existing `test*.py` suite structure; test the live Qt presentation alongside the USD/session state and use stable QObject names instead of screen coordinates.
+
 ## Output conventions
 
 - Prefer complete, directly runnable Stageviz Python over pseudocode.

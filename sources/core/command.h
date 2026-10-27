@@ -350,6 +350,40 @@ Command
 addSublayer(const QString& filename);
 
 /**
+ * @brief Creates an undoable command that reorders sibling sublayers.
+ *
+ * The source layer is moved before or after the target layer in the parent
+ * layer's sublayer list, changing their composition strength.
+ */
+Command
+reorderSublayers(const QString& parentIdentifier, const QString& sourceIdentifier, const QString& targetIdentifier,
+                 bool afterTarget);
+
+/**
+ * @brief Creates an undoable command that removes a layer from the stage.
+ *
+ * The layer's sublayer reference is removed from its parent. The USD file is
+ * kept on disk, and undo restores the original sublayer list.
+ */
+Command
+removeLayer(const QString& layerIdentifier);
+
+/**
+ * @brief Creates an undoable command that mutes or unmutes a local stage layer.
+ *
+ * The layer and its sublayers are retained while muted so their contents remain
+ * available to the application and to undo/redo.
+ */
+Command
+setLayerMuted(const QString& layerIdentifier, bool muted);
+
+/**
+ * @brief Creates an undoable command that changes a layer's edit permission.
+ */
+Command
+setLayerPermissionToEdit(const QString& layerIdentifier, bool editable);
+
+/**
  * @brief Creates an undoable command that authors a reference on an existing prim.
  */
 Command

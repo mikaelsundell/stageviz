@@ -244,6 +244,59 @@ sublayerSave()
 }
 
 void
+saveLayerAsSublayer()
+{
+    QTemporaryDir dir;
+    require(dir.isValid(), "temporary layer Save As directory");
+    const QString sourcePath = dir.filePath("Geometry.usda");
+    const auto source = UsdStage::CreateNew(sourcePath.toStdString());
+    require(bool(source), "create source sublayer");
+    source->DefinePrim(SdfPath("/Geometry"));
+    require(source->GetRootLayer()->Save(), "save source sublayer");
+
+    const QString rootPath = dir.filePath("scene.usda");
+    const auto root = UsdStage::CreateNew(rootPath.toStdString());
+    require(bool(root), "create root layer");
+    root->GetRootLayer()->SetSubLayerPaths({ sourcePath.toStdString() });
+    require(root->GetRootLayer()->Save(), "save root layer");
+
+    Session session;
+    session.setPreserveState(false);
+    require(session.loadFromFile(rootPath), "load stage with source sublayer");
+    const UsdStageRefPtr stage = session.stage();
+    const SdfLayerHandle sourceLayer = SdfLayer::FindRelativeToLayer(stage->GetRootLayer(), sourcePath.toStdString());
+    require(bool(sourceLayer), "resolve source sublayer in stage");
+    require(session.setEditLayer(sourceLayer), "set source sublayer as edit target");
+    stage->DefinePrim(SdfPath("/Geometry/Edited"));
+    require(sourceLayer->IsDirty(), "source sublayer has unsaved edits");
+
+    const QString destinationPath = dir.filePath("Geometry_Renamed.usda");
+    QString saveError;
+    QObject::connect(&session, &Session::notifyStatusChanged, &session,
+                     [&](Session::Notify::Status status, const QString& message, const QString&) {
+                         if (status == Session::Notify::Status::Error)
+                             saveError = message;
+                     });
+    TfErrorMark errorMark;
+    const bool saved = session.saveLayerAs(QString::fromStdString(sourceLayer->GetIdentifier()), destinationPath);
+    QCoreApplication::processEvents();
+    if (!saved && !saveError.isEmpty())
+        throw std::runtime_error(saveError.toStdString());
+    require(saved, "save and retarget sublayer");
+    require(errorMark.IsClean(), "Save Layer As does not produce a USD identifier collision");
+
+    const SdfLayerHandle savedLayer = SdfLayer::FindRelativeToLayer(stage->GetRootLayer(),
+                                                                    destinationPath.toStdString());
+    require(bool(savedLayer), "root layer resolves the saved destination sublayer");
+    require(savedLayer == stage->GetEditTarget().GetLayer(), "active edit target follows the saved sublayer");
+    require(stage->GetRootLayer()->IsDirty(), "root layer is dirty after its sublayer path changes");
+    require(bool(diskStage(destinationPath)->GetPrimAtPath(SdfPath("/Geometry/Edited"))),
+            "Save Layer As persists the source sublayer edits at the new path");
+    require(!bool(diskStage(sourcePath)->GetPrimAtPath(SdfPath("/Geometry/Edited"))),
+            "Save Layer As leaves the original sublayer file unchanged");
+}
+
+void
 saveAs()
 {
     QTemporaryDir dir;
@@ -1183,6 +1236,60 @@ sessionEditLayerApi()
 }
 
 void
+sessionLayerCommands()
+{
+    QTemporaryDir dir;
+    require(dir.isValid(), "temporary directory");
+
+    const QString sublayerPath = dir.filePath("sublayer.usda");
+    const SdfLayerRefPtr sublayer = SdfLayer::CreateNew(sublayerPath.toStdString());
+    require(bool(sublayer), "create file-backed sublayer");
+    require(sublayer->Save(), "save file-backed sublayer");
+
+    Session session;
+    require(session.newStage(), "new stage for layer commands");
+    const UsdStageRefPtr stage = session.stage();
+    stage->GetRootLayer()->SetSubLayerPaths({ sublayerPath.toStdString() });
+    require(stage->HasLocalLayer(sublayer), "sublayer is composed before command tests");
+    const QString identifier = QString::fromStdString(sublayer->GetIdentifier());
+    int muteNoticeCount = 0;
+    QStringList lastMutedIdentifiers;
+    QStringList lastUnmutedIdentifiers;
+    QObject::connect(&session, &Session::layerMutingChanged, &session,
+                     [&](const QStringList& muted, const QStringList& unmuted) {
+                         ++muteNoticeCount;
+                         lastMutedIdentifiers = muted;
+                         lastUnmutedIdentifiers = unmuted;
+                     });
+
+    require(!session.isStateDirty(), "new stage starts with clean preserved state");
+    stageviz::Command mute = stageviz::setLayerMuted(identifier, true);
+    executeCommand(mute, session);
+    require(stage->IsLayerMuted(identifier.toStdString()), "mute command mutes layer");
+    require(session.isStateDirty(), "mute command marks preserved session state dirty");
+    require(muteNoticeCount == 1 && lastMutedIdentifiers.contains(identifier),
+            "stage mute notice reaches Session subscribers");
+    undoCommand(mute, session);
+    require(!stage->IsLayerMuted(identifier.toStdString()), "undo unmutes layer");
+    require(session.isStateDirty(), "undoing a mute remains dirty until session state is saved");
+    require(muteNoticeCount == 2 && lastUnmutedIdentifiers.contains(identifier),
+            "stage unmute notice reaches Session subscribers");
+    require(session.saveState(dir.filePath("layers.session")), "save preserved layer state");
+    require(!session.isStateDirty(), "saving preserved state clears its dirty marker");
+    executeCommand(mute, session);
+    require(stage->IsLayerMuted(identifier.toStdString()), "redo mutes layer");
+    require(session.isStateDirty(), "redoing a mute marks preserved session state dirty again");
+
+    stageviz::Command lock = stageviz::setLayerPermissionToEdit(identifier, false);
+    executeCommand(lock, session);
+    require(!sublayer->PermissionToEdit(), "permission command locks layer");
+    undoCommand(lock, session);
+    require(sublayer->PermissionToEdit(), "undo restores layer permission");
+    executeCommand(lock, session);
+    require(!sublayer->PermissionToEdit(), "redo locks layer");
+}
+
+void
 sessionStateApi()
 {
     QTemporaryDir dir;
@@ -1220,6 +1327,55 @@ sessionStateApi()
     require(closeEnough(state->camera()->aspectRatio(), 2.39) && state->camera()->aspectRatioLocked()
                 && closeEnough(state->camera()->fov(), 47.0),
             "camera state restored");
+
+    std::vector<SdfLayerRefPtr> sublayers;
+    QStringList sublayerIdentifiers;
+    std::vector<std::string> sublayerPaths;
+    for (int index = 0; index < 4; ++index) {
+        const QString sublayerPath = dir.filePath(QString("layer%1.usda").arg(index));
+        const SdfLayerRefPtr sublayer = SdfLayer::CreateNew(sublayerPath.toStdString());
+        require(bool(sublayer), "create muted-state sublayer");
+        require(sublayer->Save(), "save muted-state sublayer");
+        sublayers.push_back(sublayer);
+        sublayerIdentifiers.append(QString::fromStdString(sublayer->GetIdentifier()));
+        sublayerPaths.push_back(sublayer->GetIdentifier());
+    }
+    session.stage()->GetRootLayer()->SetSubLayerPaths(sublayerPaths);
+    require(session.saveToFile(stagePath), "save stage with four sublayers");
+
+    for (int index = 0; index < 3; ++index)
+        session.stage()->MuteLayer(sublayerIdentifiers[index].toStdString());
+    require(session.saveToFile(stagePath), "save stage and preserved muted state");
+    {
+        QFile stateFile(statePath);
+        require(stateFile.open(QIODevice::ReadOnly), "open saved muted-state sidecar");
+        const QJsonDocument stateDocument = QJsonDocument::fromJson(stateFile.readAll());
+        require(stateDocument.isObject(), "parse muted-state sidecar");
+        const QJsonArray mutedLayers = stateDocument.object().value("mutedLayers").toArray();
+        require(mutedLayers.size() == 3, "session sidecar stores all three muted layer identifiers");
+        for (int index = 0; index < 3; ++index)
+            require(mutedLayers.contains(sublayerIdentifiers[index]),
+                    "session sidecar stores each muted layer identifier");
+    }
+
+    for (int index = 0; index < 3; ++index)
+        session.stage()->UnmuteLayer(sublayerIdentifiers[index].toStdString());
+    require(session.loadState(statePath), "restore muted state explicitly");
+    for (int index = 0; index < 3; ++index)
+        require(session.stage()->IsLayerMuted(sublayerIdentifiers[index].toStdString()),
+                "loadState restores each muted layer");
+
+    for (int index = 0; index < 3; ++index)
+        session.stage()->UnmuteLayer(sublayerIdentifiers[index].toStdString());
+    require(session.reload(), "reload stage with preserved muted state");
+    for (int index = 0; index < 3; ++index)
+        require(session.stage()->IsLayerMuted(sublayerIdentifiers[index].toStdString()),
+                "reload restores each muted layer state");
+    const UsdStageRefPtr disk = diskStage(stagePath);
+    require(disk->GetMutedLayers().empty(), "USD stage file does not store mute state");
+    require(disk->GetRootLayer()->GetSubLayerPaths().size() == 4,
+            "USD stage file retains all four sublayer references");
+    require(disk->GetLayerStack(false).size() == 5, "opening the USD stage independently composes all five layers");
 }
 
 void
@@ -3015,6 +3171,7 @@ main(int argc, char** argv)
         { "save_twice_usdc", [] { saveTwice("usdc"); } },
         { "save_failure", saveFailure },
         { "sublayer_save", sublayerSave },
+        { "save_layer_as_sublayer", saveLayerAsSublayer },
         { "save_as", saveAs },
         { "save_as_payload_anchor", saveAsPayloadAnchor },
         { "corrupt_state", corruptState },
@@ -3041,6 +3198,7 @@ main(int argc, char** argv)
         { "session_core_api", sessionCoreApi },
         { "session_file_api", sessionFileApi },
         { "session_edit_layer_api", sessionEditLayerApi },
+        { "session_layer_commands", sessionLayerCommands },
         { "session_state_api", sessionStateApi },
         { "session_load_policy_api", sessionLoadPolicyApi },
         { "command_merge_api", commandMergeApi },

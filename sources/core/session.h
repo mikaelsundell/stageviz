@@ -10,6 +10,7 @@
 #include <QMap>
 #include <QObject>
 #include <QReadWriteLock>
+#include <QStringList>
 #include <QVariant>
 #include <pxr/base/gf/bbox3d.h>
 #include <pxr/usd/usd/stage.h>
@@ -257,6 +258,41 @@ public:
     bool saveToFile(const QString& filename);
 
     /**
+     * @brief Saves one file-backed local layer in the current stage.
+     *
+     * Anonymous layers cannot be saved individually until they have a file
+     * backing path. The root layer may be saved through this method when it
+     * already has one.
+     *
+     * @param identifier Identifier of a layer in the current local layer stack.
+     * @return True if the layer was saved successfully.
+     */
+    bool saveLayer(const QString& identifier);
+
+    /**
+     * @brief Saves one local layer to a new file and retargets the live stage to it.
+     *
+     * For a sublayer, parent sublayer references are updated in memory. Those
+     * parent layers become dirty and must be saved separately to persist the
+     * new references. Saving the root layer does not save its sublayers.
+     *
+     * @param identifier Identifier of a layer in the current local layer stack.
+     * @param filename Destination filename.
+     * @return True if the layer was saved and retargeted successfully.
+     */
+    bool saveLayerAs(const QString& identifier, const QString& filename);
+
+    /**
+     * @brief Exports one local layer to a new file without changing the stage.
+     *
+     * Asset paths retain their original anchors.
+     * @param identifier Identifier of a layer in the current local layer stack.
+     * @param filename Destination filename.
+     * @return True if the layer copy was exported successfully.
+     */
+    bool copyLayerToFile(const QString& identifier, const QString& filename);
+
+    /**
      * @brief Exports a root-layer copy without changing the current filename.
      *
      * Asset paths retain their original anchors. Dirty sublayers are not saved.
@@ -282,17 +318,34 @@ public:
     bool flattenPathsToFile(const QList<SdfPath>& paths, const QString& filename);
 
     /**
-     * @brief Loads state from file.
+     * @brief Loads Stageviz state from a companion session file.
+     *
+     * Restores view settings, payload load rules, and muted layer identifiers
+     * without changing the authored USD layer files.
      */
     bool loadState(const QString& filename);
 
     /**
-     * @brief Saves state to file.
+     * @brief Saves Stageviz state to a companion session file.
+     *
+     * Stores view settings, payload load rules, and muted layer identifiers
+     * separately from the authored USD layer files.
      */
     bool saveState(const QString& filename);
 
     /**
-     * @brief Enables preservation of state.
+     * @brief Returns whether Stageviz session state has changed since it was saved.
+     *
+     * Layer muting is stage state and is persisted in the optional session sidecar,
+     * rather than in the USD layer files.
+     */
+    bool isStateDirty() const;
+
+    /**
+     * @brief Enables saving and restoring the companion Stageviz session file.
+     *
+     * The file stores application state, including muted layers; USD stage files
+     * do not persist the stage's mute list.
      */
     void setPreserveState(bool enabled);
 
@@ -529,6 +582,11 @@ Q_SIGNALS:
      * does not itself modify the composed USD stage.
      */
     void editLayerChanged(SdfLayerHandle layer);
+
+    /**
+     * @brief Emitted when layers are muted or unmuted on the current stage.
+     */
+    void layerMutingChanged(const QStringList& mutedLayers, const QStringList& unmutedLayers);
 
     /**
      * @brief Emitted when the Stageviz-owned auxiliary USD stage changes.

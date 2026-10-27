@@ -24,6 +24,11 @@ inline constexpr char primPath[] = "application/x-stageviz-prim-path";
 inline constexpr char material[] = "application/x-stageviz-material";
 
 /**
+ * @brief Mime type for dragged or dropped USD layer rows.
+ */
+inline constexpr char layer[] = "application/x-stageviz-layer";
+
+/**
  * @brief Object property storing the current drag/drop target item pointer.
  */
 inline constexpr char dropItemPtrProperty[] = "_stageviz_drop_item_ptr";

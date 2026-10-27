@@ -3,9 +3,12 @@
 
 #include "application.h"
 #include "indextree.h"
+#include "layerdialog.h"
+#include "layertree.h"
 #include "materialbrowser.h"
 #include "materialutils.h"
 #include "renderengine.h"
+#include "session.h"
 #include "settings.h"
 #include "style.h"
 #include "treewidget.h"
@@ -368,6 +371,28 @@ indexTreeSelectionModesApi()
     require(!tree.hasExternalSelection() && tree.selectedItemCount() == 0, "clearSelection exits external modes");
 }
 
+void
+layerTreeRootRowApi()
+{
+    stageviz::Session* currentSession = stageviz::session();
+    require(currentSession, "application session is available");
+    require(currentSession->newStage(), "create stage for layer tree");
+
+    stageviz::LayerDialog dialog;
+    stageviz::LayerTree* tree = dialog.findChild<stageviz::LayerTree*>(QStringLiteral("layerTree"));
+    require(tree, "layer dialog contains its LayerTree");
+    require(tree->topLevelItemCount() == 1, "new stage root layer is attached as a top-level row");
+
+    QTreeWidgetItem* rootItem = tree->topLevelItem(0);
+    require(rootItem && rootItem->text(0).contains(QStringLiteral("(Root)")),
+            "new stage root layer row is labeled as the root");
+    require(rootItem->text(0).contains(QStringLiteral("Untitled")), "anonymous root layer is displayed as Untitled");
+    require(rootItem->isExpanded(), "layer tree keeps the root row expanded");
+    rootItem->setExpanded(false);
+    QCoreApplication::processEvents();
+    require(rootItem->isExpanded(), "layer tree restores root expansion after a collapse request");
+}
+
 }  // namespace
 
 int
@@ -383,6 +408,7 @@ main(int argc, char** argv)
         { "renderengine_api", renderEngineApi },
         { "material_browser_api", materialBrowserApi },
         { "geometry_subset_gui_api", geometrySubsetGuiApi },
+        { "layer_tree_root_row_api", layerTreeRootRowApi },
     };
 
     if (argc != 2 || !cases.count(argv[1])) {

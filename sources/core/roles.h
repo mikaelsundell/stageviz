@@ -27,3 +27,22 @@ inline constexpr int scriptIcon = Qt::UserRole + 2;
 inline constexpr int scriptIconText = Qt::UserRole + 3;
 
 }  // namespace stageviz::roles::shelf
+
+namespace stageviz::roles::layer {
+
+/**
+ * @brief Item data role storing the layer identifier represented by a tree row.
+ */
+inline constexpr int identifier = Qt::UserRole + 1;
+
+/**
+ * @brief Item data role storing the identifier of the row's parent layer.
+ */
+inline constexpr int parentIdentifier = Qt::UserRole + 2;
+
+/**
+ * @brief Item data role indicating that a row inherits muteness from an ancestor.
+ */
+inline constexpr int inheritedMuted = Qt::UserRole + 3;
+
+}  // namespace stageviz::roles::layer

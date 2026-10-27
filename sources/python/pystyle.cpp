@@ -169,8 +169,10 @@ addStyleEnums()
                                            { "GeomSubset", static_cast<long>(Style::IconRole::GeomSubset) },
                                            { "Hidden", static_cast<long>(Style::IconRole::Hidden) },
                                            { "Instance", static_cast<long>(Style::IconRole::Instance) },
+                                           { "Layer", static_cast<long>(Style::IconRole::Layer) },
                                            { "Left", static_cast<long>(Style::IconRole::Left) },
                                            { "List", static_cast<long>(Style::IconRole::List) },
+                                           { "Lock", static_cast<long>(Style::IconRole::Lock) },
                                            { "Material", static_cast<long>(Style::IconRole::Material) },
                                            { "Move", static_cast<long>(Style::IconRole::Move) },
                                            { "Nested", static_cast<long>(Style::IconRole::Nested) },
@@ -191,6 +193,7 @@ addStyleEnums()
                                            { "Shaded", static_cast<long>(Style::IconRole::Shaded) },
                                            { "Transform", static_cast<long>(Style::IconRole::Transform) },
                                            { "Undo", static_cast<long>(Style::IconRole::Undo) },
+                                           { "Unlock", static_cast<long>(Style::IconRole::Unlock) },
                                            { "Up", static_cast<long>(Style::IconRole::Up) },
                                            { "Visible", static_cast<long>(Style::IconRole::Visible) },
                                            { "Wireframe", static_cast<long>(Style::IconRole::Wireframe) } };

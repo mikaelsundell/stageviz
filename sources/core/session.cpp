@@ -11,6 +11,7 @@
 #include "usdutils.h"
 #include "viewcamera.h"
 #include "viewstate.h"
+#include <QDebug>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -26,6 +27,7 @@
 #include <QSet>
 #include <QTemporaryDir>
 #include <algorithm>
+#include <atomic>
 #include <pxr/base/tf/weakBase.h>
 #include <pxr/usd/sdf/copyUtils.h>
 #include <pxr/usd/sdf/fileFormat.h>
@@ -60,7 +62,10 @@ public:
     bool exportLayer(const SdfLayerHandle& layer, const QString& filename, QString& error);
     SdfLayerRefPtr relocatedCopy(const SdfLayerHandle& layer);
     bool saveSublayers(const UsdStageRefPtr& stage, QString& error);
-    bool saveToFile(const QString& filename);
+    bool saveToFile(const QString& filename, bool saveSublayers = true);
+    bool saveLayer(const QString& identifier);
+    bool saveLayerAs(const QString& identifier, const QString& filename);
+    bool copyLayerToFile(const QString& identifier, const QString& filename);
     bool copyToFile(const QString& filename);
     bool flattenPathsToFile(const QList<SdfPath>& paths, const QString& filename);
     bool loadState(const QString& filename);
@@ -88,8 +93,10 @@ public:
         explicit StageWatcher(SessionPrivate* parent) { d.parent = parent; }
         void init()
         {
-            if (d.key.IsValid())
-                TfNotice::Revoke(d.key);
+            if (d.objectsKey.IsValid())
+                TfNotice::Revoke(d.objectsKey);
+            if (d.layerMutingKey.IsValid())
+                TfNotice::Revoke(d.layerMutingKey);
             d.stage = nullptr;
             QMutexLocker locker(&d.pendingMutex);
             d.pending.entries.clear();
@@ -99,8 +106,11 @@ public:
         {
             init();
             d.stage = stage;
-            if (stage)
-                d.key = TfNotice::Register(TfWeakPtr<StageWatcher>(this), &StageWatcher::objectsChanged, stage);
+            if (stage) {
+                const TfWeakPtr<StageWatcher> listener(this);
+                d.objectsKey = TfNotice::Register(listener, &StageWatcher::objectsChanged, stage);
+                d.layerMutingKey = TfNotice::Register(listener, &StageWatcher::layerMutingChanged, stage);
+            }
         }
         NoticeBatch takePending()
         {
@@ -171,11 +181,41 @@ public:
             QMetaObject::invokeMethod(
                 d.parent->d.session, [this]() { dispatchPending(); }, Qt::QueuedConnection);
         }
+        void layerMutingChanged(const UsdNotice::LayerMutingChanged& notice, const UsdStageWeakPtr& sender)
+        {
+            if (d.suppress.load())
+                return;
+
+            const UsdStageRefPtr senderStage = sender;
+            if (!d.stage || !senderStage || d.stage != senderStage || !d.parent->d.session)
+                return;
+
+            QStringList muted;
+            QStringList unmuted;
+            for (const std::string& identifier : notice.GetMutedLayers())
+                muted.append(QString::fromStdString(identifier));
+            for (const std::string& identifier : notice.GetUnmutedLayers())
+                unmuted.append(QString::fromStdString(identifier));
+
+            if (!muted.isEmpty() || !unmuted.isEmpty())
+                d.parent->d.sessionStateDirty.store(true);
+
+            Session* session = d.parent->d.session;
+            const UsdStageRefPtr sourceStage = sender;
+            QMetaObject::invokeMethod(
+                session,
+                [session, sourceStage, muted, unmuted]() {
+                    if (session && session->stage() == sourceStage)
+                        Q_EMIT session->layerMutingChanged(muted, unmuted);
+                },
+                Qt::QueuedConnection);
+        }
         void blockSignals(bool block) { d.suppress.store(block); }
         bool signalsBlocked() const { return d.suppress.load(); }
         struct Data {
             std::atomic<bool> suppress { false };
-            TfNotice::Key key;
+            TfNotice::Key objectsKey;
+            TfNotice::Key layerMutingKey;
             SessionPrivate* parent = nullptr;
             UsdStageRefPtr stage;
             QMutex pendingMutex;
@@ -215,6 +255,7 @@ public:
         size_t expectedChanges = 0;
         size_t completedChanges = 0;
         std::atomic<bool> changeCancelled { false };
+        std::atomic<bool> sessionStateDirty { false };
         GfBBox3d bbox;
         std::atomic<bool> bboxDirty { true };
         QList<SdfPath> mask;
@@ -409,6 +450,7 @@ SessionPrivate::loadFromFile(const QString& filename, Session::LoadPolicy policy
     const bool hasStateFile = preserveState && QFileInfo::exists(stateFilename);
     initStage();
     if (hasStateFile && !loadState(stateFilename)) {
+        qWarning() << "[Session] could not restore session state from:" << stateFilename;
         // Optional view state must never prevent opening a valid USD stage.
         QMetaObject::invokeMethod(
             d.session,
@@ -420,6 +462,7 @@ SessionPrivate::loadFromFile(const QString& filename, Session::LoadPolicy policy
             },
             Qt::QueuedConnection);
     }
+    else if (!hasStateFile) {}
     setMask(mask);
     updateStage();
     return true;
@@ -538,7 +581,7 @@ SessionPrivate::saveSublayers(const UsdStageRefPtr& stage, QString& error)
     for (const auto& layer : layers) {
         if (layer == stage->GetRootLayer())
             continue;
-        if (layer->IsAnonymous() || (layer->IsDirty() && !layer->PermissionToSave())) {
+        if (layer->IsDirty() && (layer->IsAnonymous() || !layer->PermissionToSave())) {
             error = QStringLiteral("Sublayer needs a writable file before saving: %1")
                         .arg(QString::fromStdString(layer->GetIdentifier()));
             return false;
@@ -553,7 +596,54 @@ SessionPrivate::saveSublayers(const UsdStageRefPtr& stage, QString& error)
 }
 
 bool
-SessionPrivate::saveToFile(const QString& filename)
+SessionPrivate::saveLayer(const QString& identifier)
+{
+    if (identifier.isEmpty())
+        return false;
+
+    WRITE_LOCKER(locker, &d.stageLock, "stageLock");
+    if (!d.stage)
+        return false;
+
+    SdfLayerHandle target;
+    for (const SdfLayerHandle& layer : d.stage->GetLayerStack(false)) {
+        if (layer && QString::fromStdString(layer->GetIdentifier()) == identifier) {
+            target = layer;
+            break;
+        }
+    }
+
+    QString error;
+    if (!target) {
+        error = QStringLiteral("Layer is not part of the current stage: %1").arg(identifier);
+    }
+    else if (target->IsAnonymous()) {
+        error = QStringLiteral("Cannot save anonymous layer without a file path: %1")
+                    .arg(QString::fromStdString(target->GetDisplayName()));
+    }
+    else if (!target->PermissionToSave()) {
+        error = QStringLiteral("Layer is not writable: %1").arg(QString::fromStdString(target->GetRealPath()));
+    }
+    else {
+        const QString filename = QString::fromStdString(target->GetRealPath());
+        if (filename.isEmpty())
+            error = QStringLiteral("Layer has no file path: %1").arg(identifier);
+        else if (exportLayer(target, filename, error))
+            return true;
+    }
+
+    QMetaObject::invokeMethod(
+        d.session,
+        [session = d.session, error]() {
+            if (session)
+                session->notifyStatus(Session::Notify::Status::Error, error);
+        },
+        Qt::QueuedConnection);
+    return false;
+}
+
+bool
+SessionPrivate::saveToFile(const QString& filename, bool saveSublayersFirst)
 {
     if (filename.isEmpty())
         return false;
@@ -587,7 +677,7 @@ SessionPrivate::saveToFile(const QString& filename)
             }
 
             QString error;
-            if (!saveSublayers(oldStage, error)) {
+            if (saveSublayersFirst && !saveSublayers(oldStage, error)) {
                 QMetaObject::invokeMethod(
                     d.session,
                     [session = d.session, error]() {
@@ -693,8 +783,201 @@ SessionPrivate::saveToFile(const QString& filename)
 
     if (preserveState) {
         const QString stateFilename = QFileInfo(stageFilename + ".session").absoluteFilePath();
-        if (!saveState(stateFilename))
+        if (!saveState(stateFilename)) {
+            qWarning() << "[Session] failed to save preserve-state sidecar:" << stateFilename;
             return false;
+        }
+    }
+    else {
+        d.sessionStateDirty.store(false);
+    }
+    return true;
+}
+
+bool
+SessionPrivate::saveLayerAs(const QString& identifier, const QString& filename)
+{
+    if (identifier.isEmpty() || filename.isEmpty())
+        return false;
+
+    SdfLayerHandle target;
+    SdfLayerHandle root;
+    {
+        READ_LOCKER(locker, &d.stageLock, "stageLock");
+        if (!d.stage)
+            return false;
+        root = d.stage->GetRootLayer();
+        for (const SdfLayerHandle& layer : d.stage->GetLayerStack(false)) {
+            if (layer && QString::fromStdString(layer->GetIdentifier()) == identifier) {
+                target = layer;
+                break;
+            }
+        }
+    }
+
+    if (!target)
+        return false;
+    if (target == root)
+        return saveToFile(filename, false);
+
+    QString error;
+    const QString destination = QFileInfo(filename).absoluteFilePath();
+    if (!target->PermissionToEdit())
+        error = QStringLiteral("Layer is locked and cannot be retargeted: %1")
+                    .arg(QString::fromStdString(target->GetDisplayName()));
+    else if (!target->IsAnonymous()
+             && QFileInfo(QString::fromStdString(target->GetRealPath())).absoluteFilePath() == destination)
+        return saveLayer(identifier);
+    else if (SdfLayer::Find(QStringToString(destination)))
+        error = QStringLiteral("A USD layer is already open for the destination: %1").arg(destination);
+
+    SdfLayerRefPtr relocated;
+    if (error.isEmpty()) {
+        relocated = relocatedCopy(target);
+        if (!relocated)
+            error = QStringLiteral("Could not prepare layer for saving: %1").arg(identifier);
+        else if (!exportLayer(relocated, destination, error)) {
+            // exportLayer owns the destination write and reports a recoverable
+            // error; no live stage state has been changed yet.
+        }
+    }
+
+    SdfLayerHandle changedEditLayer;
+    if (error.isEmpty()) {
+        WRITE_LOCKER(locker, &d.stageLock, "stageLock");
+        const auto currentLayers = d.stage ? d.stage->GetLayerStack(false) : std::vector<SdfLayerHandle>();
+        if (!d.stage || std::find(currentLayers.begin(), currentLayers.end(), target) == currentLayers.end()) {
+            error = QStringLiteral("Layer changed while Save Layer As was in progress");
+        }
+        else {
+            const SdfLayerHandle activeEditLayer = d.stage->GetEditTarget().GetLayer();
+            const std::string targetIdentifier = target->GetIdentifier();
+            const bool wasEditTarget = activeEditLayer
+                                       && (activeEditLayer == target
+                                           || activeEditLayer->GetIdentifier() == targetIdentifier);
+            struct ParentState {
+                SdfLayerHandle layer;
+                std::vector<std::string> paths;
+                std::vector<std::string> updated;
+            };
+            std::vector<ParentState> parents;
+            bool referenced = false;
+            for (const SdfLayerHandle& parent : d.stage->GetLayerStack(false)) {
+                if (!parent)
+                    continue;
+                const std::vector<std::string> paths = parent->GetSubLayerPaths();
+                std::vector<std::string> updated = paths;
+                bool changed = false;
+                for (size_t i = 0; i < paths.size(); ++i) {
+                    if (SdfLayer::FindRelativeToLayer(parent, paths[i]) == target) {
+                        referenced = true;
+                        if (!parent->PermissionToEdit()) {
+                            error = QStringLiteral("Parent layer is not editable: %1")
+                                        .arg(QString::fromStdString(parent->GetDisplayName()));
+                            break;
+                        }
+                        updated[i] = stage::compositionAssetPath(parent, destination);
+                        changed = true;
+                    }
+                }
+                if (!error.isEmpty())
+                    break;
+                if (changed)
+                    parents.push_back({ parent, paths, updated });
+            }
+            if (error.isEmpty() && !referenced)
+                error = QStringLiteral("Layer is not referenced by a parent in the current stage");
+
+            if (error.isEmpty()) {
+                for (const ParentState& parent : parents)
+                    parent.layer->SetSubLayerPaths(parent.updated);
+
+                SdfLayerHandle savedLayer;
+                for (const SdfLayerHandle& layer : d.stage->GetLayerStack(false)) {
+                    if (layer && QString::fromStdString(layer->GetIdentifier()) == destination) {
+                        savedLayer = layer;
+                        break;
+                    }
+                }
+
+                if (!savedLayer) {
+                    for (const ParentState& parent : parents)
+                        parent.layer->SetSubLayerPaths(parent.paths);
+                    error = QStringLiteral("Saved layer %1 was not composed into the current stage").arg(destination);
+                }
+                else if (wasEditTarget) {
+                    const UsdEditTarget editTarget = d.stage->GetEditTargetForLocalLayer(savedLayer);
+                    if (!editTarget.GetLayer()) {
+                        for (const ParentState& parent : parents)
+                            parent.layer->SetSubLayerPaths(parent.paths);
+                        error = QStringLiteral("Could not retarget the edit layer after saving to %1").arg(destination);
+                    }
+                    else {
+                        d.stage->SetEditTarget(editTarget);
+                        changedEditLayer = editTarget.GetLayer();
+                    }
+                }
+            }
+        }
+    }
+
+    if (!error.isEmpty()) {
+        QMetaObject::invokeMethod(
+            d.session,
+            [session = d.session, error]() {
+                if (session)
+                    session->notifyStatus(Session::Notify::Status::Error, error);
+            },
+            Qt::QueuedConnection);
+        return false;
+    }
+    if (changedEditLayer)
+        Q_EMIT d.session->editLayerChanged(changedEditLayer);
+    return true;
+}
+
+bool
+SessionPrivate::copyLayerToFile(const QString& identifier, const QString& filename)
+{
+    if (identifier.isEmpty() || filename.isEmpty())
+        return false;
+
+    SdfLayerHandle target;
+    {
+        READ_LOCKER(locker, &d.stageLock, "stageLock");
+        if (!d.stage)
+            return false;
+        for (const SdfLayerHandle& layer : d.stage->GetLayerStack(false)) {
+            if (layer && QString::fromStdString(layer->GetIdentifier()) == identifier) {
+                target = layer;
+                break;
+            }
+        }
+    }
+
+    QString error;
+    const QString destination = QFileInfo(filename).absoluteFilePath();
+    if (!target)
+        error = QStringLiteral("Layer is not part of the current stage: %1").arg(identifier);
+    else if (SdfLayer::Find(QStringToString(destination)))
+        error = QStringLiteral("A USD layer is already open for the destination: %1").arg(destination);
+    else {
+        const SdfLayerRefPtr copy = relocatedCopy(target);
+        if (!copy)
+            error = QStringLiteral("Could not prepare layer copy: %1").arg(identifier);
+        else
+            exportLayer(copy, destination, error);
+    }
+
+    if (!error.isEmpty()) {
+        QMetaObject::invokeMethod(
+            d.session,
+            [session = d.session, error]() {
+                if (session)
+                    session->notifyStatus(Session::Notify::Status::Error, error);
+            },
+            Qt::QueuedConnection);
+        return false;
     }
     return true;
 }
@@ -763,21 +1046,46 @@ SessionPrivate::flattenPathsToFile(const QList<SdfPath>& paths, const QString& f
 bool
 SessionPrivate::loadState(const QString& filename)
 {
-    QFile file(QFileInfo(filename).absoluteFilePath());
-    if (!file.exists())
+    const QString stateFilename = QFileInfo(filename).absoluteFilePath();
+    QFile file(stateFilename);
+    if (!file.exists()) {
         return true;
+    }
 
-    if (!file.open(QIODevice::ReadOnly))
+    if (!file.open(QIODevice::ReadOnly)) {
+        qWarning() << "[Session] cannot read session state:" << stateFilename << file.errorString();
         return false;
+    }
 
     const QJsonDocument doc = QJsonDocument::fromJson(file.readAll());
-    if (!doc.isObject())
+    if (!doc.isObject()) {
+        qWarning() << "[Session] session state is not a JSON object:" << stateFilename;
         return false;
+    }
 
     const QJsonObject root = doc.object();
     const QJsonObject cameraObject = root.value("viewCamera").toObject();
     const QJsonObject viewStateObject = root.value("viewState").toObject();
     const QJsonArray payloads = root.value("loadedPayloads").toArray();
+    QStringList mutedLayerIdentifiers;
+    if (root.contains("mutedLayers")) {
+        if (!root.value("mutedLayers").isArray()) {
+            qWarning() << "[Session] mutedLayers is not an array in:" << stateFilename;
+            return false;
+        }
+        QSet<QString> seenIdentifiers;
+        for (const QJsonValue& value : root.value("mutedLayers").toArray()) {
+            if (!value.isString() || value.toString().isEmpty()) {
+                qWarning() << "[Session] invalid muted-layer identifier in:" << stateFilename;
+                return false;
+            }
+            const QString identifier = value.toString();
+            if (!seenIdentifiers.contains(identifier)) {
+                seenIdentifiers.insert(identifier);
+                mutedLayerIdentifiers.append(identifier);
+            }
+        }
+    }
     const bool restoreLoadRules = root.contains("loadRules") || root.contains("loadedPayloads");
     UsdStageLoadRules loadRules = UsdStageLoadRules::LoadNone();
     if (root.contains("loadRules")) {
@@ -822,6 +1130,8 @@ SessionPrivate::loadState(const QString& filename)
             loadRules.AddRule(path, UsdStageLoadRules::OnlyRule);
         }
     }
+    QStringList newlyMutedLayers;
+    QStringList newlyUnmutedLayers;
     {
         WRITE_LOCKER(locker, &d.stageLock, "stageLock");
         if (!d.stage)
@@ -830,7 +1140,44 @@ SessionPrivate::loadState(const QString& filename)
         StageBlocker blocker(d.stageWatcher.data());
         if (restoreLoadRules)
             d.stage->SetLoadRules(loadRules);
+
+        if (root.contains("mutedLayers")) {
+            const std::vector<std::string> currentMuted = d.stage->GetMutedLayers();
+            QSet<QString> currentIdentifiers;
+            for (const std::string& identifier : currentMuted)
+                currentIdentifiers.insert(QString::fromStdString(identifier));
+
+            QSet<QString> desiredIdentifiers;
+            const SdfLayerHandle rootLayer = d.stage->GetRootLayer();
+            const QString rootIdentifier = rootLayer ? QString::fromStdString(rootLayer->GetIdentifier()) : QString();
+            std::vector<std::string> toMute;
+            for (const QString& identifier : mutedLayerIdentifiers) {
+                // USD does not allow muting a stage's root layer. Ignore a stale or
+                // malformed entry rather than making the whole state file fail.
+                if (identifier == rootIdentifier)
+                    continue;
+                desiredIdentifiers.insert(identifier);
+                if (!currentIdentifiers.contains(identifier)) {
+                    toMute.push_back(identifier.toStdString());
+                    newlyMutedLayers.append(identifier);
+                }
+            }
+
+            std::vector<std::string> toUnmute;
+            for (const std::string& identifier : currentMuted) {
+                const QString qIdentifier = QString::fromStdString(identifier);
+                if (!desiredIdentifiers.contains(qIdentifier)) {
+                    toUnmute.push_back(identifier);
+                    newlyUnmutedLayers.append(qIdentifier);
+                }
+            }
+            if (!toMute.empty() || !toUnmute.empty())
+                d.stage->MuteAndUnmuteLayers(toMute, toUnmute);
+        }
     }
+    d.sessionStateDirty.store(false);
+    if (!newlyMutedLayers.isEmpty() || !newlyUnmutedLayers.isEmpty())
+        Q_EMIT d.session->layerMutingChanged(newlyMutedLayers, newlyUnmutedLayers);
     d.bboxDirty.store(true);
     const GfBBox3d bbox = boundingBox();
     if (d.viewState && d.viewState->camera()) {
@@ -1001,9 +1348,11 @@ SessionPrivate::loadState(const QString& filename)
 bool
 SessionPrivate::saveState(const QString& filename)
 {
+    const QString stateFilename = QFileInfo(filename).absoluteFilePath();
     QString stageFilename;
     QJsonArray payloads;
     QJsonArray loadRules;
+    QJsonArray mutedLayers;
     {
         READ_LOCKER(locker, &d.stageLock, "stageLock");
         if (!d.stage)
@@ -1018,6 +1367,8 @@ SessionPrivate::saveState(const QString& filename)
                                                                           : "none";
             loadRules.append(object);
         }
+        for (const std::string& identifier : d.stage->GetMutedLayers())
+            mutedLayers.append(QString::fromStdString(identifier));
         for (const UsdPrim& prim : d.stage->TraverseAll()) {
             if (!prim || !prim.IsValid())
                 continue;
@@ -1027,10 +1378,11 @@ SessionPrivate::saveState(const QString& filename)
         }
     }
     QJsonObject root;
-    root["version"] = 5;
+    root["version"] = 6;
     root["stageFile"] = stageFilename;
     root["loadedPayloads"] = payloads;
     root["loadRules"] = loadRules;
+    root["mutedLayers"] = mutedLayers;
     if (d.viewState && d.viewState->camera()) {
         ViewCamera* camera = d.viewState->camera();
         auto cameraUp = [](ViewCamera::CameraUp value) {
@@ -1146,14 +1498,22 @@ SessionPrivate::saveState(const QString& filename)
         viewStateObject["cameraAxisEnabled"] = d.viewState->cameraAxisEnabled();
         root["viewState"] = viewStateObject;
     }
-    QSaveFile file(QFileInfo(filename).absoluteFilePath());
+    QSaveFile file(stateFilename);
     file.setDirectWriteFallback(false);
-    if (!file.open(QIODevice::WriteOnly))
+    if (!file.open(QIODevice::WriteOnly)) {
+        qWarning() << "[Session] cannot write session state:" << stateFilename << file.errorString();
         return false;
+    }
 
     const QJsonDocument doc(root);
     const QByteArray bytes = doc.toJson(QJsonDocument::Indented);
-    return file.write(bytes) == bytes.size() && file.commit();
+    const bool saved = file.write(bytes) == bytes.size() && file.commit();
+    if (saved) {
+        d.sessionStateDirty.store(false);
+    }
+    else
+        qWarning() << "[Session] failed to commit session state:" << stateFilename << file.errorString();
+    return saved;
 }
 
 bool
@@ -1174,6 +1534,7 @@ SessionPrivate::close()
         d.completedChanges = 0;
         d.changeName.clear();
         d.changeCancelled.store(false);
+        d.sessionStateDirty.store(false);
         d.filename.clear();
         bbox::clear();
     }
@@ -1272,11 +1633,14 @@ SessionPrivate::setPayloads(const QList<SdfPath>& paths, bool loaded)
 void
 SessionPrivate::setPreserveState(bool enabled)
 {
+    bool changed = false;
     {
         WRITE_LOCKER(locker, &d.stageLock, "stageLock");
+        changed = d.preserveState != enabled;
         d.preserveState = enabled;
     }
-    Q_EMIT d.session->preserveStateChanged(enabled);
+    if (changed)
+        Q_EMIT d.session->preserveStateChanged(enabled);
 }
 
 Session::StageUp
@@ -1603,6 +1967,24 @@ Session::saveToFile(const QString& filename)
 }
 
 bool
+Session::saveLayer(const QString& identifier)
+{
+    return p->saveLayer(identifier);
+}
+
+bool
+Session::saveLayerAs(const QString& identifier, const QString& filename)
+{
+    return p->saveLayerAs(identifier, filename);
+}
+
+bool
+Session::copyLayerToFile(const QString& identifier, const QString& filename)
+{
+    return p->copyLayerToFile(identifier, filename);
+}
+
+bool
 Session::copyToFile(const QString& filename)
 {
     return p->copyToFile(filename);
@@ -1639,10 +2021,16 @@ Session::saveState(const QString& filename)
     return p->saveState(filename);
 }
 
+bool
+Session::isStateDirty() const
+{
+    return p->d.sessionStateDirty.load();
+}
+
 void
 Session::setPreserveState(bool enabled)
 {
-    p->d.preserveState = enabled;
+    p->setPreserveState(enabled);
 }
 
 bool

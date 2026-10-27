@@ -292,6 +292,7 @@ PyInit_stageviz(void)
     PyModule_AddIntConstant(module, "IconGeometry", static_cast<int>(Style::IconRole::Geometry));
     PyModule_AddIntConstant(module, "IconHidden", static_cast<int>(Style::IconRole::Hidden));
     PyModule_AddIntConstant(module, "IconLeft", static_cast<int>(Style::IconRole::Left));
+    PyModule_AddIntConstant(module, "IconLock", static_cast<int>(Style::IconRole::Lock));
     PyModule_AddIntConstant(module, "IconMaterial", static_cast<int>(Style::IconRole::Material));
     PyModule_AddIntConstant(module, "IconOpen", static_cast<int>(Style::IconRole::Open));
     PyModule_AddIntConstant(module, "IconPartiallyChecked", static_cast<int>(Style::IconRole::PartiallyChecked));
@@ -302,6 +303,7 @@ PyInit_stageviz(void)
     PyModule_AddIntConstant(module, "IconRun", static_cast<int>(Style::IconRole::Run));
     PyModule_AddIntConstant(module, "IconShaded", static_cast<int>(Style::IconRole::Shaded));
     PyModule_AddIntConstant(module, "IconUndo", static_cast<int>(Style::IconRole::Undo));
+    PyModule_AddIntConstant(module, "IconUnlock", static_cast<int>(Style::IconRole::Unlock));
     PyModule_AddIntConstant(module, "IconVisible", static_cast<int>(Style::IconRole::Visible));
     PyModule_AddIntConstant(module, "IconWireframe", static_cast<int>(Style::IconRole::Wireframe));
 

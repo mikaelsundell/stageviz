@@ -82,6 +82,7 @@ public:
         GeomSubset,
         Hidden,
         Instance,
+        Layer,
         Left,
         List,
         Material,
@@ -106,7 +107,9 @@ public:
         Undo,
         Up,
         Visible,
-        Wireframe
+        Wireframe,
+        Lock,
+        Unlock
     };
     Q_ENUM(IconRole)
 

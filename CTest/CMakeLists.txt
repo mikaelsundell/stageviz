@@ -69,6 +69,7 @@ foreach(case IN ITEMS
     session_core_api
     session_file_api
     session_edit_layer_api
+    session_layer_commands
     session_state_api
     session_load_policy_api
     command_merge_api
@@ -124,6 +125,7 @@ foreach(case IN ITEMS
     material_browser_api
     geometry_subset_gui_api
     outliner_instance_payload_resync_api
+    layer_tree_root_row_api
 )
     if(APPLE)
         # Qt debug frameworks on macOS use the _debug image suffix. The GUI

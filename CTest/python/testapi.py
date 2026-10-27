@@ -3904,6 +3904,69 @@ def test_payload_load_rules_session_state(root):
     )
 
 
+def test_muted_layers_session_state(root):
+    session = stageviz.session()
+    required = ("save", "reload", "setPreserveState")
+    missing = [name for name in required if not hasattr(session, name)]
+    _assert(not missing, "session exposes APIs needed to test mute persistence")
+    if missing:
+        return
+
+    layer_path = os.path.join(root, "muted_layer_state.usda")
+    stage_path = os.path.join(root, "muted_layer_stage.usda")
+    state_path = stage_path + ".session"
+
+    layer_stage = Usd.Stage.CreateNew(layer_path)
+    _assert(bool(layer_stage), "create file-backed muted layer fixture")
+    if not layer_stage:
+        return
+    layer_stage.DefinePrim("/MutedContent", "Xform")
+    _assert(bool(layer_stage.GetRootLayer().Save()), "save muted layer fixture")
+
+    root_stage = Usd.Stage.CreateNew(stage_path)
+    _assert(bool(root_stage), "create stage with muted layer fixture")
+    if not root_stage:
+        return
+    root_stage.GetRootLayer().subLayerPaths = [layer_path]
+    _assert(bool(root_stage.GetRootLayer().Save()), "save stage with sublayer reference")
+
+    try:
+        session.setPreserveState(True)
+        _assert(bool(session.load(stage_path, stageviz.LoadAll)), "load stage for mute persistence test")
+        live_stage = session.stage()
+        layer_identifier = layer_stage.GetRootLayer().identifier
+        live_stage.MuteLayer(layer_identifier)
+        _assert(bool(live_stage.IsLayerMuted(layer_identifier)), "mute fixture layer in live stage")
+        _assert(bool(session.save(stage_path)), "save stage and preserved mute state")
+
+        try:
+            with open(state_path, "r", encoding="utf-8") as file:
+                state = json.load(file)
+        except Exception as exc:
+            _fail(f"read saved muted-layer session state: {exc}")
+            return
+
+        _assert_equal(
+            state.get("mutedLayers"),
+            [layer_identifier],
+            "session sidecar stores muted layer identifiers",
+        )
+        disk_stage = Usd.Stage.Open(stage_path)
+        _assert(bool(disk_stage), "open saved USD file independently of Stageviz state")
+        if disk_stage:
+            _assert_equal(list(disk_stage.GetMutedLayers()), [], "USD file does not persist mute state")
+            _assert(bool(disk_stage.GetPrimAtPath("/MutedContent")), "USD file still composes muted layer")
+
+        _assert(bool(session.reload()), "reload stage with preserved mute state")
+        reopened_stage = session.stage()
+        _assert(
+            bool(reopened_stage.IsLayerMuted(layer_identifier)),
+            "Preserve State restores muted layer when Stageviz reopens the stage",
+        )
+    finally:
+        session.setPreserveState(False)
+
+
 def test_payload_load_unload():
     stageviz.command.load_payloads(["/World/PayloadA"])
 
@@ -6625,6 +6688,7 @@ def run():
         ("payload variant multi-target command", test_payload_variant_multi_target_command, ()),
         ("payload variant session state", test_payload_variant_session_state, (root,)),
         ("payload load rules session state", test_payload_load_rules_session_state, (root,)),
+        ("muted layers session state", test_muted_layers_session_state, (root,)),
         ("load neighbor payloads", test_load_neighbor_payloads, ()),
         ("load neighbor payloads raw source", test_load_neighbor_payloads_raw_source, ()),
         ("select payload", test_select_payload, ()),
@@ -6721,7 +6785,7 @@ def run():
 
 if __name__ == "__main__":
     try:
-        run()
+        _TEST_RESULT = bool(run())
     except BaseException:
         print("\n=== UNHANDLED PYTHON EXCEPTION ===", file=sys.stderr)
         traceback.print_exc(file=sys.stderr)

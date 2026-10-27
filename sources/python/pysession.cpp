@@ -151,6 +151,47 @@ PySession_save(PySessionObject* self, PyObject* args)
 }
 
 static PyObject*
+PySession_saveLayer(PySessionObject* self, PyObject* args)
+{
+    if (!checkSession(self->session))
+        return nullptr;
+
+    const char* identifier = nullptr;
+    if (!PyArg_ParseTuple(args, "s", &identifier))
+        return nullptr;
+
+    return PyBool_FromLong(self->session->saveLayer(QString::fromUtf8(identifier)));
+}
+
+static PyObject*
+PySession_saveLayerAs(PySessionObject* self, PyObject* args)
+{
+    if (!checkSession(self->session))
+        return nullptr;
+
+    const char* identifier = nullptr;
+    const char* filename = nullptr;
+    if (!PyArg_ParseTuple(args, "ss", &identifier, &filename))
+        return nullptr;
+
+    return PyBool_FromLong(self->session->saveLayerAs(QString::fromUtf8(identifier), QString::fromUtf8(filename)));
+}
+
+static PyObject*
+PySession_copyLayerToFile(PySessionObject* self, PyObject* args)
+{
+    if (!checkSession(self->session))
+        return nullptr;
+
+    const char* identifier = nullptr;
+    const char* filename = nullptr;
+    if (!PyArg_ParseTuple(args, "ss", &identifier, &filename))
+        return nullptr;
+
+    return PyBool_FromLong(self->session->copyLayerToFile(QString::fromUtf8(identifier), QString::fromUtf8(filename)));
+}
+
+static PyObject*
 PySession_copy(PySessionObject* self, PyObject* args)
 {
     if (!checkSession(self->session))
@@ -218,6 +259,15 @@ PySession_saveState(PySessionObject* self, PyObject* args)
         return nullptr;
 
     return PyBool_FromLong(self->session->saveState(QString::fromUtf8(filename)));
+}
+
+static PyObject*
+PySession_isStateDirty(PySessionObject* self, PyObject*)
+{
+    if (!checkSession(self->session))
+        return nullptr;
+
+    return PyBool_FromLong(self->session->isStateDirty());
 }
 
 static PyObject*
@@ -652,6 +702,12 @@ static PyMethodDef PySession_methods[] = {
       "Load a USD stage from file" },
     { "save", reinterpret_cast<PyCFunction>(PySession_save), METH_VARARGS, "Save the current stage to file" },
     { "saveToFile", reinterpret_cast<PyCFunction>(PySession_save), METH_VARARGS, "Save the current stage to file" },
+    { "saveLayer", reinterpret_cast<PyCFunction>(PySession_saveLayer), METH_VARARGS,
+      "Save one local file-backed layer by identifier" },
+    { "saveLayerAs", reinterpret_cast<PyCFunction>(PySession_saveLayerAs), METH_VARARGS,
+      "Save one local layer to a new file and retarget the live stage" },
+    { "copyLayerToFile", reinterpret_cast<PyCFunction>(PySession_copyLayerToFile), METH_VARARGS,
+      "Export one local layer to a new file without changing the stage" },
     { "copy", reinterpret_cast<PyCFunction>(PySession_copy), METH_VARARGS, "Copy the current stage to file" },
     { "copyToFile", reinterpret_cast<PyCFunction>(PySession_copy), METH_VARARGS, "Copy the current stage to file" },
     { "flatten", reinterpret_cast<PyCFunction>(PySession_flatten), METH_VARARGS, "Flatten the stage to file" },
@@ -662,6 +718,8 @@ static PyMethodDef PySession_methods[] = {
       "Flatten specific paths to file" },
     { "loadState", reinterpret_cast<PyCFunction>(PySession_loadState), METH_VARARGS, "Load session state from file" },
     { "saveState", reinterpret_cast<PyCFunction>(PySession_saveState), METH_VARARGS, "Save session state to file" },
+    { "isStateDirty", reinterpret_cast<PyCFunction>(PySession_isStateDirty), METH_NOARGS,
+      "Check whether preserved session state has unsaved changes" },
     { "setPreserveState", reinterpret_cast<PyCFunction>(PySession_setPreserveState), METH_VARARGS,
       "Enable or disable state preservation" },
     { "reload", reinterpret_cast<PyCFunction>(PySession_reload), METH_NOARGS, "Reload the current stage" },

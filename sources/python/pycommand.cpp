@@ -289,6 +289,52 @@ PyCommand_addSublayer(PyObject*, PyObject* args)
 }
 
 static PyObject*
+PyCommand_reorderSublayers(PyObject*, PyObject* args)
+{
+    const char* parentIdentifier = nullptr;
+    const char* sourceIdentifier = nullptr;
+    const char* targetIdentifier = nullptr;
+    int afterTarget = 0;
+    if (!PyArg_ParseTuple(args, "sssp", &parentIdentifier, &sourceIdentifier, &targetIdentifier, &afterTarget))
+        return nullptr;
+
+    return runCommand(reorderSublayers(QString::fromUtf8(parentIdentifier), QString::fromUtf8(sourceIdentifier),
+                                       QString::fromUtf8(targetIdentifier), afterTarget != 0));
+}
+
+static PyObject*
+PyCommand_removeLayer(PyObject*, PyObject* args)
+{
+    const char* layerIdentifier = nullptr;
+    if (!PyArg_ParseTuple(args, "s", &layerIdentifier))
+        return nullptr;
+
+    return runCommand(removeLayer(QString::fromUtf8(layerIdentifier)));
+}
+
+static PyObject*
+PyCommand_setLayerMuted(PyObject*, PyObject* args)
+{
+    const char* layerIdentifier = nullptr;
+    int muted = 0;
+    if (!PyArg_ParseTuple(args, "sp", &layerIdentifier, &muted))
+        return nullptr;
+
+    return runCommand(setLayerMuted(QString::fromUtf8(layerIdentifier), muted != 0));
+}
+
+static PyObject*
+PyCommand_setLayerPermissionToEdit(PyObject*, PyObject* args)
+{
+    const char* layerIdentifier = nullptr;
+    int editable = 0;
+    if (!PyArg_ParseTuple(args, "sp", &layerIdentifier, &editable))
+        return nullptr;
+
+    return runCommand(setLayerPermissionToEdit(QString::fromUtf8(layerIdentifier), editable != 0));
+}
+
+static PyObject*
 PyCommand_addReference(PyObject*, PyObject* args)
 {
     const char* filename = nullptr;
@@ -1297,6 +1343,14 @@ static PyMethodDef PyCommand_methods[] = {
       "Flatten an incoming USD stage and merge it into the current edit layer with undo support." },
     { "add_sublayer", reinterpret_cast<PyCFunction>(PyCommand_addSublayer), METH_VARARGS,
       "Add a USD file as a sublayer of the current edit layer with undo support." },
+    { "reorder_sublayers", reinterpret_cast<PyCFunction>(PyCommand_reorderSublayers), METH_VARARGS,
+      "Reorder sibling USD sublayers: parent_identifier, source_identifier, target_identifier, after_target." },
+    { "remove_layer", reinterpret_cast<PyCFunction>(PyCommand_removeLayer), METH_VARARGS,
+      "Remove a USD layer from the stage while keeping its file on disk, with undo support." },
+    { "set_layer_muted", reinterpret_cast<PyCFunction>(PyCommand_setLayerMuted), METH_VARARGS,
+      "Mute or unmute a local USD layer with undo support." },
+    { "set_layer_permission_to_edit", reinterpret_cast<PyCFunction>(PyCommand_setLayerPermissionToEdit), METH_VARARGS,
+      "Set a local USD layer's edit permission with undo support." },
     { "add_reference", reinterpret_cast<PyCFunction>(PyCommand_addReference), METH_VARARGS,
       "Add a reference to an existing prim with undo support." },
     { "add_payload", reinterpret_cast<PyCFunction>(PyCommand_addPayload), METH_VARARGS,
@@ -1339,9 +1393,11 @@ static PyMethodDef PyCommand_methods[] = {
     { "instance_paths", reinterpret_cast<PyCFunction>(PyCommand_instancePaths), METH_VARARGS,
       "Create instanceable sibling prims referencing one or more prim paths." },
     { "new_prim", reinterpret_cast<PyCFunction>(PyCommand_newPrim), METH_VARARGS | METH_KEYWORDS,
-      "Create a generic prim. Optional keyword argument: type_name." },
-    { "new_scope", reinterpret_cast<PyCFunction>(PyCommand_newScope), METH_VARARGS, "Create a new Scope prim." },
-    { "new_mesh", reinterpret_cast<PyCFunction>(PyCommand_newMesh), METH_VARARGS, "Create a visible wavy Mesh prim." },
+      "Create a prim in the active edit layer. Optional keyword argument: type_name." },
+    { "new_scope", reinterpret_cast<PyCFunction>(PyCommand_newScope), METH_VARARGS,
+      "Create a Scope prim in the active edit layer." },
+    { "new_mesh", reinterpret_cast<PyCFunction>(PyCommand_newMesh), METH_VARARGS,
+      "Create a visible wavy Mesh prim in the active edit layer." },
     { "new_points", reinterpret_cast<PyCFunction>(PyCommand_newPoints), METH_VARARGS,
       "Create a visible particle-style Points prim." },
     { "new_basis_curves", reinterpret_cast<PyCFunction>(PyCommand_newBasisCurves), METH_VARARGS,
@@ -1353,7 +1409,7 @@ static PyMethodDef PyCommand_methods[] = {
     { "new_point_instancer", reinterpret_cast<PyCFunction>(PyCommand_newPointInstancer), METH_VARARGS,
       "Create a PointInstancer with a Cube prototype." },
     { "new_material", reinterpret_cast<PyCFunction>(PyCommand_newMaterial), METH_VARARGS,
-      "Create a new material with a UsdPreviewSurface shader." },
+      "Create a material with a UsdPreviewSurface shader in the active edit layer." },
     { "new_reference", reinterpret_cast<PyCFunction>(PyCommand_newReference), METH_VARARGS | METH_KEYWORDS,
       "Create a prim with a reference arc. Optional keyword argument: prim_path." },
     { "new_payload", reinterpret_cast<PyCFunction>(PyCommand_newPayload), METH_VARARGS | METH_KEYWORDS,
@@ -1401,7 +1457,7 @@ static PyMethodDef PyCommand_methods[] = {
     { "connect_materialx_node", reinterpret_cast<PyCFunction>(PyCommand_connectMaterialXNode), METH_VARARGS,
       "Create a MaterialX node and connect it to a shader input with undo support." },
     { "bind_material", reinterpret_cast<PyCFunction>(PyCommand_bindMaterial), METH_VARARGS,
-      "Bind an existing USD material to one or more prim paths." },
+      "Bind an existing USD material to prims in the active edit layer." },
     { nullptr, nullptr, 0, nullptr }
 };
 

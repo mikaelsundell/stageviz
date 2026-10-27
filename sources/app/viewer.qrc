@@ -20,8 +20,10 @@
     <file>../../resources/GeomSubset.png</file>
     <file>../../resources/Hidden.png</file>
     <file>../../resources/Instance.png</file>
+    <file>../../resources/Layer.png</file>
     <file>../../resources/Left.png</file>
     <file>../../resources/List.png</file>
+    <file>../../resources/Lock.png</file>
     <file>../../resources/Material.png</file>
     <file>../../resources/Move.png</file>
     <file>../../resources/Nested.png</file>
@@ -41,6 +43,7 @@
     <file>../../resources/Select.png</file>
     <file>../../resources/Shaded.png</file>
     <file>../../resources/Undo.png</file>
+    <file>../../resources/Unlock.png</file>
     <file>../../resources/Up.png</file>
     <file>../../resources/Visible.png</file>
     <file>../../resources/Wireframe.png</file>

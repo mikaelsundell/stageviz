@@ -377,7 +377,7 @@ def wait_until(predicate, timeout=3.0, interval_ms=25):
             if predicate():
                 process_events()
                 return True
-        except Exception:
+        except RuntimeError:
             pass
 
         QTest.qWait(interval_ms)
@@ -387,6 +387,10 @@ def wait_until(predicate, timeout=3.0, interval_ms=25):
 
 def stage():
     return stageviz.session().stage()
+
+
+def _selection():
+    return [str(path) for path in stageviz.session().paths()]
 
 
 def prim(path):
@@ -909,7 +913,7 @@ def find_payload_menu():
         return None
 
     menus = []
-    for widget in app.allWidgets():
+    for widget in QApplication.allWidgets():
         try:
             if isinstance(widget, QMenu):
                 menus.append(widget)
@@ -1349,7 +1353,7 @@ def find_material_dialog():
     app = QApplication.instance()
     if app is None:
         return None
-    for widget in app.topLevelWidgets():
+    for widget in QApplication.topLevelWidgets():
         try:
             if isinstance(widget, QDialog) and widget.windowTitle().strip() == "Material Editor":
                 return widget
@@ -1372,7 +1376,7 @@ def open_material_dialog():
 
     candidates = []
     seen = set()
-    for top in app.topLevelWidgets():
+    for top in QApplication.topLevelWidgets():
         try:
             actions = top.findChildren(QAction)
         except RuntimeError:
@@ -2015,7 +2019,7 @@ def find_stage_tree():
 
     # PySide exposes the QTreeWidget wrapper; validate the C++ metaobject
     # inheritance separately to catch regressions to the old tree class.
-    for widget in app.allWidgets():
+    for widget in QApplication.allWidgets():
         try:
             if (
                 isinstance(widget, QTreeWidget)
@@ -2027,7 +2031,7 @@ def find_stage_tree():
 
     # Fallback: identify a QTreeWidget whose model contains /World.
     # This stays QModelIndex-based and does not create QTreeWidgetItem wrappers.
-    for widget in app.allWidgets():
+    for widget in QApplication.allWidgets():
         try:
             if not isinstance(widget, QTreeWidget):
                 continue
@@ -5851,7 +5855,7 @@ def run():
 
 if __name__ == "__main__":
     try:
-        run()
+        _TEST_RESULT = bool(run())
     except BaseException:
         print("\n=== UNHANDLED PYTHON EXCEPTION ===", file=sys.stderr)
         traceback.print_exc(file=sys.stderr)
