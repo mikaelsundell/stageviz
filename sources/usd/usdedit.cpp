@@ -7,7 +7,10 @@
 #include "usdutils.h"
 #include <QSet>
 #include <QStringList>
+#include <pxr/usd/sdf/attributeSpec.h>
 #include <pxr/usd/sdf/namespaceEdit.h>
+#include <pxr/usd/sdf/primSpec.h>
+#include <pxr/usd/sdf/relationshipSpec.h>
 #include <pxr/usd/usd/editContext.h>
 #include <pxr/usd/usd/editTarget.h>
 #include <pxr/usd/usd/namespaceEditor.h>
@@ -15,6 +18,81 @@
 
 namespace stageviz {
 namespace edit {
+
+    namespace {
+        bool isAffectedByMoves(const SdfPath& path, const QSet<SdfPath>& sources)
+        {
+            const SdfPath primPath = path.IsPropertyPath() ? path.GetPrimPath() : path;
+            for (SdfPath ancestor = primPath; !ancestor.IsEmpty() && ancestor != SdfPath::AbsoluteRootPath();
+                 ancestor = ancestor.GetParentPath()) {
+                if (sources.contains(ancestor))
+                    return true;
+            }
+            return false;
+        }
+
+        bool canUseBatchNamespaceEdit(const UsdStageRefPtr& stage, const SdfLayerHandle& editLayer,
+                                      const QList<QPair<SdfPath, SdfPath>>& moves)
+        {
+            QSet<SdfPath> sources;
+            sources.reserve(moves.size());
+            for (const auto& move : moves)
+                sources.insert(move.first);
+
+            for (const SdfLayerHandle& layer : stage->GetLayerStack(true)) {
+                if (!layer || !layer->GetRelocates().empty())
+                    return false;
+
+                bool safe = true;
+                layer->Traverse(SdfPath::AbsoluteRootPath(), [&](const SdfPath& specPath) {
+                    if (!safe)
+                        return;
+
+                    if (specPath.ContainsPrimVariantSelection()) {
+                        safe = false;
+                        return;
+                    }
+
+                    if (specPath.IsPrimPath()) {
+                        const SdfPrimSpecHandle primSpec = layer->GetPrimAtPath(specPath);
+                        if (primSpec
+                            && (primSpec->HasInfo(SdfFieldKeys->References) || primSpec->HasInfo(SdfFieldKeys->Payload)
+                                || primSpec->HasInfo(SdfFieldKeys->InheritPaths)
+                                || primSpec->HasInfo(SdfFieldKeys->Specializes) || primSpec->HasVariantSetNames())) {
+                            safe = false;
+                            return;
+                        }
+
+                        if (layer != editLayer && isAffectedByMoves(specPath, sources)) {
+                            safe = false;
+                            return;
+                        }
+                    }
+                    else if (specPath.IsPropertyPath()) {
+                        const SdfRelationshipSpecHandle relationship = layer->GetRelationshipAtPath(specPath);
+                        if (relationship && relationship->GetTargetPathList().HasKeys()) {
+                            safe = false;
+                            return;
+                        }
+
+                        const SdfAttributeSpecHandle attribute = layer->GetAttributeAtPath(specPath);
+                        if (attribute
+                            && (attribute->GetConnectionPathList().HasKeys()
+                                || attribute->GetTypeName() == SdfValueTypeNames->PathExpression
+                                || attribute->GetTypeName() == SdfValueTypeNames->PathExpressionArray)) {
+                            safe = false;
+                        }
+                    }
+                });
+
+                if (!safe)
+                    return false;
+            }
+
+            return true;
+        }
+
+    }  // namespace
 
     NamespaceEditor::NamespaceEditor(const UsdStageRefPtr& stage, const UsdEditTarget& editTarget)
         : stage_(stage)
@@ -257,29 +335,30 @@ namespace edit {
         // has already modified the stage.  Rejecting these dependencies up
         // front keeps failed batches transactional without copying the complete
         // layer stack on every reparent.
-        for (int i = 0; i < effectiveMoves.size(); ++i) {
-            const SdfPath& from = effectiveMoves[i].first;
-            const SdfPath& to = effectiveMoves[i].second;
+        for (const auto& move : effectiveMoves) {
+            const SdfPath& from = move.first;
+            const SdfPath& to = move.second;
 
             if (!validateMove(from, to, sourcePaths, error))
                 return false;
 
-            for (int j = 0; j < effectiveMoves.size(); ++j) {
-                if (i == j)
-                    continue;
-
-                const SdfPath& otherSource = effectiveMoves[j].first;
-                // Overlapping source roots are order-dependent and cannot be
-                // applied safely one-at-a-time with OpenUSD 25.11.
-                if (from.HasPrefix(otherSource) || otherSource.HasPrefix(from)) {
+            // Check ancestors against the source set instead of comparing every
+            // move pair. The work is proportional to path depth rather than n².
+            for (SdfPath ancestor = from.GetParentPath(); ancestor != SdfPath::AbsoluteRootPath();
+                 ancestor = ancestor.GetParentPath()) {
+                if (sourcePaths.contains(ancestor)) {
                     error = QString("overlapping move sources are not supported: %1 and %2")
-                                .arg(qt::SdfPathToQString(from), qt::SdfPathToQString(otherSource));
+                                .arg(qt::SdfPathToQString(from), qt::SdfPathToQString(ancestor));
                     return false;
                 }
-                const SdfPath destinationParent = to.GetParentPath();
-                if (destinationParent == otherSource || destinationParent.HasPrefix(otherSource)) {
+            }
+
+            const SdfPath destinationParent = to.GetParentPath();
+            for (SdfPath ancestor = destinationParent; ancestor != SdfPath::AbsoluteRootPath();
+                 ancestor = ancestor.GetParentPath()) {
+                if (sourcePaths.contains(ancestor) && ancestor != from) {
                     error = QString("move destination parent is also being moved: %1 below %2")
-                                .arg(qt::SdfPathToQString(destinationParent), qt::SdfPathToQString(otherSource));
+                                .arg(qt::SdfPathToQString(destinationParent), qt::SdfPathToQString(ancestor));
                     return false;
                 }
             }
@@ -290,6 +369,33 @@ namespace edit {
         // this avoids an unnecessary stage-wide payload recomposition for the
         // common case where source and destination inherit the same policy.
         const UsdStageLoadRules loadRules = remappedLoadRules(effectiveMoves);
+
+        if (effectiveMoves.size() >= 128 && canUseBatchNamespaceEdit(stage_, editTarget_.GetLayer(), effectiveMoves)) {
+            SdfBatchNamespaceEdit batch;
+            for (const auto& move : effectiveMoves)
+                batch.Add(move.first, move.second);
+
+            if (editTarget_.GetLayer()->CanApply(batch)) {
+                if (!editTarget_.GetLayer()->Apply(batch)) {
+                    error = "Sdf namespace move batch failed";
+                    return false;
+                }
+
+                if (stage_->GetLoadRules() != loadRules)
+                    stage_->SetLoadRules(loadRules);
+
+                for (const auto& move : effectiveMoves) {
+                    const Change::Type type = move.first.GetParentPath() == move.second.GetParentPath()
+                                                  ? Change::Type::Rename
+                                                  : Change::Type::Reparent;
+                    changes_.append({ type, move.first, move.second });
+                }
+                return true;
+            }
+
+            // Keep the namespace editor path for batches the Sdf layer cannot
+            // apply as one atomic namespace edit.
+        }
 
         UsdEditContext editContext(stage_, editTarget_);
         UsdNamespaceEditor::EditOptions options;
@@ -303,7 +409,6 @@ namespace edit {
         // namespace editor API so dependency paths are repaired in reverse too.
         QList<QPair<SdfPath, SdfPath>> appliedMoves;
         appliedMoves.reserve(effectiveMoves.size());
-
         auto rollbackAppliedMoves = [&]() -> QString {
             QStringList rollbackErrors;
 
@@ -355,7 +460,6 @@ namespace edit {
                     error += QString("; rollback: %1").arg(rollbackError);
                 return false;
             }
-
             if (!editor.ApplyEdits()) {
                 const QString rollbackError = rollbackAppliedMoves();
                 error = "USD namespace move failed";
@@ -363,7 +467,6 @@ namespace edit {
                     error += QString("; rollback: %1").arg(rollbackError);
                 return false;
             }
-
             appliedMoves.append(move);
         }
 

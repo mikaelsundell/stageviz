@@ -32,6 +32,7 @@
 #include <functional>
 #include <pxr/usd/sdf/primSpec.h>
 #include <pxr/usd/usd/prim.h>
+#include <pxr/usd/usdGeom/tokens.h>
 
 PXR_NAMESPACE_USING_DIRECTIVE
 
@@ -60,6 +61,8 @@ public:
     void updateSelection(const QList<SdfPath>& paths);
     void rebuildOverrideCache();
     void updateOverrideCache(const QSet<SdfPath>& primPaths);
+    void updateOverrideCacheForNamespaceChanges(const QList<QPair<SdfPath, SdfPath>>& pathRemaps,
+                                                const QList<SdfPath>& removedPaths);
     void applyOverrideState(PrimItem* item);
     bool isTransformPropertyPath(const SdfPath& path) const;
     SelectionList* selectionList() const;
@@ -437,6 +440,114 @@ OutlinerTreePrivate::updateOverrideCache(const QSet<SdfPath>& primPaths)
         if (PrimItem* item = itemFromPath(path))
             applyOverrideState(item);
     }
+}
+
+void
+OutlinerTreePrivate::updateOverrideCacheForNamespaceChanges(const QList<QPair<SdfPath, SdfPath>>& pathRemaps,
+                                                            const QList<SdfPath>& removedPaths)
+{
+    QList<QPair<SdfPath, SdfPath>> effectiveRemaps = pathRemaps;
+    std::sort(effectiveRemaps.begin(), effectiveRemaps.end(), [](const auto& lhs, const auto& rhs) {
+        return lhs.first.GetPathElementCount() < rhs.first.GetPathElementCount();
+    });
+    for (qsizetype i = effectiveRemaps.size() - 1; i >= 0; --i) {
+        for (qsizetype j = 0; j < i; ++j) {
+            if (effectiveRemaps[i].first.HasPrefix(effectiveRemaps[j].first)) {
+                effectiveRemaps.removeAt(i);
+                break;
+            }
+        }
+    }
+    QList<SdfPath> effectiveRemovedPaths = removedPaths;
+    std::sort(effectiveRemovedPaths.begin(), effectiveRemovedPaths.end(), [](const SdfPath& lhs, const SdfPath& rhs) {
+        return lhs.GetPathElementCount() < rhs.GetPathElementCount();
+    });
+    for (qsizetype i = effectiveRemovedPaths.size() - 1; i >= 0; --i) {
+        for (qsizetype j = 0; j < i; ++j) {
+            if (effectiveRemovedPaths[i].HasPrefix(effectiveRemovedPaths[j])) {
+                effectiveRemovedPaths.removeAt(i);
+                break;
+            }
+        }
+    }
+
+    QSet<SdfPath> affectedPaths;
+    auto addAncestors = [&affectedPaths](SdfPath path) {
+        while (!path.IsEmpty()) {
+            affectedPaths.insert(path);
+            if (path == SdfPath::AbsoluteRootPath())
+                break;
+            path = path.GetParentPath();
+        }
+    };
+
+    for (const auto& remap : effectiveRemaps) {
+        addAncestors(remap.first);
+        addAncestors(remap.second);
+    }
+    for (const SdfPath& path : effectiveRemovedPaths)
+        addAncestors(path);
+
+    auto updatePaths = [&](QSet<SdfPath>& paths) {
+        QList<SdfPath> removed;
+        QList<SdfPath> added;
+        for (const SdfPath& path : paths) {
+            bool isRemoved = false;
+            for (const SdfPath& removedPath : effectiveRemovedPaths) {
+                if (path == removedPath || path.HasPrefix(removedPath)) {
+                    isRemoved = true;
+                    break;
+                }
+            }
+            if (isRemoved) {
+                removed.append(path);
+                continue;
+            }
+
+            for (const auto& remap : effectiveRemaps) {
+                if (path == remap.first || path.HasPrefix(remap.first)) {
+                    removed.append(path);
+                    added.append(path.ReplacePrefix(remap.first, remap.second));
+                    break;
+                }
+            }
+        }
+
+        for (const SdfPath& path : removed)
+            paths.remove(path);
+        for (const SdfPath& path : added)
+            paths.insert(path);
+    };
+
+    updatePaths(d.directOverridePaths);
+    updatePaths(d.descendantOverridePaths);
+
+    // Moving or deleting a subtree changes only its old and new ancestor
+    // chains. Recompute those flags against the updated direct-override set.
+    for (const SdfPath& path : affectedPaths)
+        d.descendantOverridePaths.remove(path);
+
+    for (const SdfPath& directPath : d.directOverridePaths) {
+        SdfPath ancestorPath = directPath.GetParentPath();
+        while (!ancestorPath.IsEmpty()) {
+            if (affectedPaths.contains(ancestorPath))
+                d.descendantOverridePaths.insert(ancestorPath);
+
+            if (ancestorPath == SdfPath::AbsoluteRootPath())
+                break;
+
+            ancestorPath = ancestorPath.GetParentPath();
+        }
+    }
+
+    for (const SdfPath& path : affectedPaths) {
+        if (PrimItem* item = itemFromPath(path))
+            applyOverrideState(item);
+    }
+
+    // Namespace edits retain the existing tree items. Override state inside a
+    // moved subtree is unchanged; only its roots and old/new ancestor chains
+    // need to be refreshed.
 }
 
 void
@@ -1347,7 +1458,8 @@ OutlinerTreePrivate::updatePrims(const NoticeBatch& batch)
                     item->invalidate();
             }
 
-            rebuildOverrideCache();
+            const QList<SdfPath> removedRoots = deletedPaths.values();
+            updateOverrideCacheForNamespaceChanges({}, removedRoots);
             SelectionList* list = selectionList();
             updateSelection(list ? list->paths() : QList<SdfPath>());
             if (!list || list->paths().isEmpty())
@@ -1406,6 +1518,18 @@ OutlinerTreePrivate::updatePrims(const NoticeBatch& batch)
 
         pathRemaps.append({ entry.associatedPath, entry.path });
     }
+    bool namespaceOnlyBatch = !pathRemaps.isEmpty();
+    for (const NoticeEntry& entry : batch.entries) {
+        if (entry.path.IsEmpty() || entry.path == SdfPath::AbsoluteRootPath())
+            continue;
+
+        if ((isRenameOrReparentSource(entry.primResyncType) || isRenameOrReparentDestination(entry.primResyncType))
+            && !entry.associatedPath.IsEmpty())
+            continue;
+
+        namespaceOnlyBatch = false;
+        break;
+    }
 
     auto remapPath = [&](SdfPath path) {
         bool changed = true;
@@ -1424,6 +1548,19 @@ OutlinerTreePrivate::updatePrims(const NoticeBatch& batch)
         }
 
         return path;
+    };
+
+    // A batch often contains many changed siblings. The USD stage already
+    // reflects the whole batch, so reconciling their shared parent repeatedly
+    // only repeats the same direct-child scan and Qt row updates.
+    QSet<SdfPath> refreshedParents;
+    auto refreshParentBranchOnce = [&](const SdfPath& path) {
+        const SdfPath primPath = path.IsPropertyPath() ? path.GetPrimPath() : path;
+        const SdfPath parentPath = primPath.GetParentPath();
+        if (parentPath.IsEmpty() || refreshedParents.contains(parentPath))
+            return;
+        refreshedParents.insert(parentPath);
+        refreshParentBranch(path);
     };
 
     // Preserve only UI state that can actually be disturbed by a namespace
@@ -1510,7 +1647,7 @@ OutlinerTreePrivate::updatePrims(const NoticeBatch& batch)
         // scene instance paths to expose newly composed children.
         if (!instancePaths.isEmpty()) {
             for (const SdfPath& instancePath : instancePaths)
-                refreshParentBranch(instancePath);
+                refreshParentBranchOnce(instancePath);
             return;
         }
 
@@ -1528,7 +1665,7 @@ OutlinerTreePrivate::updatePrims(const NoticeBatch& batch)
         if (item && prim)
             invalidateSubtree(item, prim);
 
-        refreshParentBranch(path);
+        refreshParentBranchOnce(path);
     };
 
     QSet<SdfPath> handledPaths;
@@ -1634,7 +1771,13 @@ OutlinerTreePrivate::updatePrims(const NoticeBatch& batch)
             continue;
 
         if (entry.changedInfoOnly) {
-            updatePrim(entry.path);
+            if (entry.path.IsPropertyPath() && entry.path.GetNameToken() == UsdGeomTokens->visibility) {
+                if (PrimItem* item = itemFromPath(entry.path.GetPrimPath()))
+                    item->invalidate();
+            }
+            else {
+                updatePrim(entry.path);
+            }
             continue;
         }
 
@@ -1646,12 +1789,12 @@ OutlinerTreePrivate::updatePrims(const NoticeBatch& batch)
         switch (entry.primResyncType) {
         case UsdNotice::ObjectsChanged::PrimResyncType::Delete:
             invalidatePrim(entry.path);
-            refreshParentBranch(entry.path);
+            refreshParentBranchOnce(entry.path);
             break;
 
         case UsdNotice::ObjectsChanged::PrimResyncType::UnchangedPrimStack:
             updatePrim(entry.path);
-            refreshParentBranch(entry.path);
+            refreshParentBranchOnce(entry.path);
             break;
 
         case UsdNotice::ObjectsChanged::PrimResyncType::RenameSource:
@@ -1681,6 +1824,13 @@ OutlinerTreePrivate::updatePrims(const NoticeBatch& batch)
     // batches keep the conservative full rebuild.
     if (propertyFastPathBatch)
         updateOverrideCache(changedPropertyPrimPaths);
+    else if (namespaceOnlyBatch) {
+        QList<QPair<SdfPath, SdfPath>> cachePathRemaps;
+        cachePathRemaps.reserve(pathRemaps.size());
+        for (const PathRemap& remap : pathRemaps)
+            cachePathRemaps.append({ remap.from, remap.to });
+        updateOverrideCacheForNamespaceChanges(cachePathRemaps, {});
+    }
     else
         rebuildOverrideCache();
 

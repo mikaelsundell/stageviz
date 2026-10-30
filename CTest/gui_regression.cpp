@@ -2,11 +2,16 @@
 // Copyright (c) 2025 - present Mikael Sundell
 
 #include "application.h"
+#include "command.h"
+#include "commandstack.h"
 #include "indextree.h"
 #include "layerdialog.h"
 #include "layertree.h"
 #include "materialbrowser.h"
 #include "materialutils.h"
+#include "outliner/outlinertree.h"
+#include "outliner/outlinerview.h"
+#include "outliner/primitem.h"
 #include "renderengine.h"
 #include "session.h"
 #include "settings.h"
@@ -16,11 +21,14 @@
 #include <QColor>
 #include <QCoreApplication>
 #include <QDir>
+#include <QElapsedTimer>
 #include <QImage>
 #include <QItemSelectionModel>
 #include <QSet>
 #include <QSettings>
 #include <QTemporaryDir>
+#include <QThread>
+#include <QThreadPool>
 #include <QTreeWidgetItem>
 #include <functional>
 #include <iostream>
@@ -29,6 +37,8 @@
 #include <pxr/base/gf/matrix4d.h>
 #include <pxr/base/gf/range1f.h>
 #include <pxr/base/gf/vec3d.h>
+#include <pxr/usd/usd/payloads.h>
+#include <pxr/usd/usd/prim.h>
 #include <pxr/usd/usd/stage.h>
 #include <pxr/usd/usdGeom/cube.h>
 #include <pxr/usd/usdGeom/mesh.h>
@@ -274,6 +284,122 @@ geometrySubsetGuiApi()
 }
 
 void
+outlinerInstancePayloadResyncApi()
+{
+    QTemporaryDir dir;
+    require(dir.isValid(), "temporary instance payload directory");
+
+    const QString assetPath = dir.filePath(QStringLiteral("payload_asset.usda"));
+    const auto assetStage = UsdStage::CreateNew(assetPath.toStdString());
+    require(bool(assetStage), "create payload asset stage");
+    assetStage->DefinePrim(SdfPath("/Geometry"), TfToken("Xform"));
+    assetStage->SetDefaultPrim(assetStage->GetPrimAtPath(SdfPath("/Geometry")));
+    require(assetStage->GetRootLayer()->Save(), "save payload asset stage");
+
+    const QString scenePath = dir.filePath(QStringLiteral("instance_payload_scene.usda"));
+    const auto sourceStage = UsdStage::CreateNew(scenePath.toStdString());
+    require(bool(sourceStage), "create instance payload scene");
+    sourceStage->DefinePrim(SdfPath("/World"), TfToken("Xform"));
+    const UsdPrim source = sourceStage->DefinePrim(SdfPath("/World/Source"), TfToken("Xform"));
+    source.SetInstanceable(true);
+
+    const UsdPrim first = sourceStage->DefinePrim(SdfPath("/World/First"), TfToken("Xform"));
+    require(first.GetReferences().AddInternalReference(source.GetPath()), "author first instance reference");
+    first.SetInstanceable(true);
+    const UsdPrim second = sourceStage->DefinePrim(SdfPath("/World/Second"), TfToken("Xform"));
+    require(second.GetReferences().AddInternalReference(source.GetPath()), "author second instance reference");
+    second.SetInstanceable(true);
+
+    const UsdPrim payload = sourceStage->DefinePrim(SdfPath("/World/Source/GeometryPayload"), TfToken("Xform"));
+    require(payload.GetPayloads().AddPayload(assetPath.toStdString(), SdfPath("/Geometry")),
+            "author payload below instance source");
+    require(sourceStage->GetRootLayer()->Save(), "save instance payload scene");
+
+    stageviz::Session* currentSession = stageviz::session();
+    require(currentSession, "application session is available");
+    stageviz::OutlinerView view;
+    require(currentSession->loadFromFile(scenePath, stageviz::Session::None), "load instance payload scene unloaded");
+    QCoreApplication::processEvents();
+
+    auto* tree = view.findChild<stageviz::OutlinerTree*>(QStringLiteral("outlinerTree"));
+    require(tree, "outliner view contains its OutlinerTree");
+    require(tree->payloadEnabled(), "Outliner enables payload rows for LoadNone stages");
+
+    const SdfPath firstPayloadPath("/World/First/GeometryPayload");
+    const SdfPath secondPayloadPath("/World/Second/GeometryPayload");
+    const auto findPathItem = [](QTreeWidget* widget, const SdfPath& path) -> QTreeWidgetItem* {
+        const QString wanted = QString::fromStdString(path.GetString());
+        std::function<QTreeWidgetItem*(QTreeWidgetItem*)> find = [&](QTreeWidgetItem* parent) {
+            const int count = parent ? parent->childCount() : widget->topLevelItemCount();
+            for (int i = 0; i < count; ++i) {
+                QTreeWidgetItem* item = parent ? parent->child(i) : widget->topLevelItem(i);
+                if (item->data(0, stageviz::PrimItem::Path).toString() == wanted)
+                    return item;
+                if (QTreeWidgetItem* child = find(item))
+                    return child;
+            }
+            return static_cast<QTreeWidgetItem*>(nullptr);
+        };
+        return find(nullptr);
+    };
+    const auto drainWorkers = []() {
+        for (int i = 0; i < 6; ++i) {
+            QThreadPool::globalInstance()->waitForDone();
+            QCoreApplication::sendPostedEvents(nullptr, 0);
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+        }
+    };
+    const auto waitUntil = [](const std::function<bool()>& predicate) {
+        QElapsedTimer timer;
+        timer.start();
+        while (timer.elapsed() < 10000) {
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 25);
+            if (predicate())
+                return true;
+            QThread::msleep(10);
+        }
+        return predicate();
+    };
+
+    const UsdStageRefPtr stage = currentSession->stage();
+    require(stage->GetPrimAtPath(firstPayloadPath).IsInstanceProxy(), "first payload is an instance proxy");
+    require(stage->GetPrimAtPath(secondPayloadPath).IsInstanceProxy(), "second payload is an instance proxy");
+    require(!stage->GetPrimAtPath(firstPayloadPath).IsLoaded(), "first instance payload starts unloaded");
+    require(!stage->GetPrimAtPath(secondPayloadPath).IsLoaded(), "sibling instance payload starts unloaded");
+    require(findPathItem(tree, firstPayloadPath), "Outliner shows the unloaded first instance payload");
+    require(findPathItem(tree, firstPayloadPath)->checkState(0) == Qt::Unchecked,
+            "Outliner marks the first instance payload as unloaded");
+
+    currentSession->commandStack()->execute(new stageviz::Command(stageviz::loadPayloads({ firstPayloadPath })));
+    drainWorkers();
+    require(waitUntil([&]() {
+                QTreeWidgetItem* item = findPathItem(tree, firstPayloadPath);
+                return stage->GetPrimAtPath(firstPayloadPath).IsLoaded() && item && item->checkState(0) == Qt::Checked;
+            }),
+            "Outliner marks the loaded instance payload row checked");
+    require(!stage->GetPrimAtPath(secondPayloadPath).IsLoaded(), "loading one instance leaves its sibling unloaded");
+    require(findPathItem(tree, secondPayloadPath)->checkState(0) == Qt::Unchecked,
+            "Outliner leaves the sibling instance payload unchecked");
+
+    currentSession->commandStack()->undo();
+    drainWorkers();
+    require(waitUntil([&]() {
+                QTreeWidgetItem* item = findPathItem(tree, firstPayloadPath);
+                return !stage->GetPrimAtPath(firstPayloadPath).IsLoaded() && item
+                       && item->checkState(0) == Qt::Unchecked;
+            }),
+            "Outliner marks the unloaded instance payload row unchecked after undo");
+
+    currentSession->commandStack()->redo();
+    drainWorkers();
+    require(waitUntil([&]() {
+                QTreeWidgetItem* item = findPathItem(tree, firstPayloadPath);
+                return stage->GetPrimAtPath(firstPayloadPath).IsLoaded() && item && item->checkState(0) == Qt::Checked;
+            }),
+            "Outliner restores the loaded instance payload row after redo");
+}
+
+void
 treeWidgetSelectionApi()
 {
     stageviz::TreeWidget tree;
@@ -408,6 +534,7 @@ main(int argc, char** argv)
         { "renderengine_api", renderEngineApi },
         { "material_browser_api", materialBrowserApi },
         { "geometry_subset_gui_api", geometrySubsetGuiApi },
+        { "outliner_instance_payload_resync_api", outlinerInstancePayloadResyncApi },
         { "layer_tree_root_row_api", layerTreeRootRowApi },
     };
 

@@ -1780,8 +1780,15 @@ SessionPrivate::needsBoundingBoxUpdate(const NoticeBatch& batch) const
         if (entry.resolvedAssetPathsResynced)
             return true;
 
-        if (entry.primResyncType != UsdNotice::ObjectsChanged::PrimResyncType::Invalid)
-            return true;
+        using ResyncType = UsdNotice::ObjectsChanged::PrimResyncType;
+        switch (entry.primResyncType) {
+        case ResyncType::Invalid: break;
+        case ResyncType::RenameSource:
+        case ResyncType::RenameDestination:
+            // A pure rename changes namespace paths, not world-space bounds.
+            break;
+        default: return true;
+        }
 
         if (entry.changedInfoOnly && !entry.path.IsPropertyPath())
             return true;

@@ -294,9 +294,17 @@ namespace {
         if (!stage)
             return result;
 
+        QSet<SdfPath> seenPaths;
+
         auto appendImageable = [&](const UsdPrim& prim) {
-            if (prim && !prim.IsInstanceProxy() && UsdGeomImageable(prim) && !result.contains(prim.GetPath()))
-                result.append(prim.GetPath());
+            if (!prim || prim.IsInstanceProxy() || !UsdGeomImageable(prim))
+                return;
+
+            const SdfPath path = prim.GetPath();
+            if (!seenPaths.contains(path)) {
+                seenPaths.insert(path);
+                result.append(path);
+            }
         };
 
         for (const SdfPath& inputPath : paths) {
@@ -7553,10 +7561,30 @@ movePath(const QList<SdfPath>& paths, const SdfPath& newParentPath, int insertIn
                     QList<SdfPath> selection = state->previousSelection;
                     QList<SdfPath> mask = state->previousMask;
 
+                    QHash<SdfPath, SdfPath> remaps;
+                    remaps.reserve(state->items.size());
                     for (const MoveItem& item : state->items) {
-                        selection = path::remapAffectedPaths(selection, item.oldPath, item.newPath);
-                        mask = path::remapAffectedPaths(mask, item.oldPath, item.newPath);
+                        if (item.oldPath != item.newPath)
+                            remaps.insert(item.oldPath, item.newPath);
                     }
+
+                    auto remapPaths = [&remaps](QList<SdfPath>& paths) {
+                        for (SdfPath& inputPath : paths) {
+                            const SdfPath primPath = inputPath.IsPropertyPath() ? inputPath.GetPrimPath() : inputPath;
+                            for (SdfPath ancestor = primPath;
+                                 !ancestor.IsEmpty() && ancestor != SdfPath::AbsoluteRootPath();
+                                 ancestor = ancestor.GetParentPath()) {
+                                const auto remap = remaps.constFind(ancestor);
+                                if (remap == remaps.cend())
+                                    continue;
+
+                                inputPath = remap.value().AppendPath(inputPath.MakeRelativePath(ancestor));
+                                break;
+                            }
+                        }
+                    };
+                    remapPaths(selection);
+                    remapPaths(mask);
 
                     session->selectionList()->updatePaths(selection);
                     session->setMask(mask);

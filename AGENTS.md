@@ -4,6 +4,12 @@ Use these conventions when adding or changing Stageviz functionality. Follow
 nearby code when it establishes a more specific pattern, and keep changes
 consistent with the existing architecture.
 
+## macOS builds and runs
+
+- Set `DYLD_IMAGE_SUFFIX=_debug` when building or running Stageviz on macOS so
+  Qt and its dependencies load their debug-suffixed libraries. Prefix both
+  build and launch commands with this environment variable.
+
 ## UI and class structure
 
 - Keep Qt Designer interfaces in `.ui` files and let `uic` generate the UI
@@ -81,11 +87,42 @@ consistent with the existing architecture.
   embedded Python test can deadlock while that same thread is running the test.
   Avoid `stageviz_run_python` for read-only inspection because it clears undo
   history.
+- Start the MCP server in the running app with
+  `stageviz.startMcpServer()` (for example,
+  `DYLD_IMAGE_SUFFIX=_debug stageviz --execute 'stageviz.startMcpServer()'`).
+  Use the MCP `tools/list` response to confirm the endpoint and available
+  Stageviz tools before testing. Keep MCP requests in the external controller;
+  embedded Python scripts must not synchronously call back into the same MCP
+  server.
+- Use `stageviz_run_python` for UI automation, Qt snapshots, and tests that
+  need to call Stageviz's Python command API. It runs on the Qt application
+  thread and clears native undo history, so use it deliberately. For tests
+  that author temporary changes in a user dataset, do not save the dataset;
+  reload the original file after the test, clear temporary command history,
+  and confirm the file path and stage contents are back at baseline.
+- Capture live app screenshots through the MCP-run script using the actual
+  viewer widget (`viewer.grab().save(...)`) and inspect the saved image after
+  meaningful operations. Pair screenshots with `testbench.snapshot_qt_state`
+  and USD assertions so the check covers both appearance and composed state.
+  Stageviz's Outliner uses pointer-backed virtual selection for performance;
+  standard `QTreeWidgetItem.isSelected()` and snapshots based on it may report
+  no selected rows. Verify selected paths with `stageviz.session().paths()` or
+  `stageviz_get_selection`, and use the live screenshot to check the visual
+  selection state.
+- For performance checks, use the scripts in `CTest/benchmark` through the
+  Stageviz MCP server on a disposable app process. They measure command
+  dispatch and end-to-end completion using `Session.primsUpdate()`, verify the
+  resulting USD state, and capture viewer screenshots. Include a populated
+  Outliner branch, parent moves, and deterministic sweep or fixed-seed random
+  selections when the issue involves a large stage. These scripts replace the
+  active stage with generated fixtures, so never run them in an app session
+  that contains unsaved user work.
 - Capture reusable Qt snapshots at meaningful UI checkpoints, especially
   before and after dialogs open/close and after state-changing commands. Include
   top-level windows and dialogs, stable `objectName` values, visible/enabled
   state, dialog labels and buttons, action state, and tree headers/rows with
-  expansion and selection. Store plain Python data in snapshots rather than
+  expansion state. Verify selection through Stageviz's selection API. Store
+  plain Python data in snapshots rather than
   retaining Qt wrappers across event processing. Native OS dialogs that are
   outside Qt's widget tree still need a GUI-level screenshot or automation
   check. Enumerate widgets with the static
