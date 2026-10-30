@@ -50,8 +50,14 @@ public:
      * @brief Controls how a command is executed by the stack.
      */
     enum class ExecutionMode {
-        Execute,  ///< Execute the command before adding it to the history.
-        Applied   ///< The command result is already applied; add only the history entry.
+        /**
+         * @brief Executes the command before adding it to the history.
+         */
+        Execute,
+        /**
+         * @brief Adds the command to history when its result is already applied.
+         */
+        Applied
     };
 
     /**

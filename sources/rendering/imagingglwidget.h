@@ -232,6 +232,12 @@ public:
     void updateStage(UsdStageRefPtr stage);
 
     /**
+     * @brief Sets the USD time code used to evaluate the viewport.
+     * @param timeCode Stage time code to render.
+     */
+    void setTimeCode(double timeCode);
+
+    /**
      * @brief Updates the Stageviz-owned auxiliary USD stage used by the renderer.
      *
      * The auxiliary stage contains Stageviz render-support content such as the

@@ -1,4 +1,4 @@
-<?xml version='1.0' encoding='UTF-8'?>
+<?xml version="1.0" encoding="UTF-8"?>
 <ui version="4.0">
  <class>Viewer</class>
  <widget class="QMainWindow" name="Viewer">
@@ -24,7 +24,7 @@
     <enum>Qt::FocusPolicy::ClickFocus</enum>
    </property>
    <property name="styleSheet">
-    <string notr="true" />
+    <string notr="true"/>
    </property>
    <property name="MainWidget" stdset="0">
     <bool>true</bool>
@@ -96,7 +96,7 @@
            </sizepolicy>
           </property>
           <property name="styleSheet">
-           <string notr="true" />
+           <string notr="true"/>
           </property>
           <layout class="QVBoxLayout" name="verticalLayout_3">
            <property name="spacing">
@@ -152,7 +152,7 @@
                 </size>
                </property>
                <property name="styleSheet">
-                <string notr="true" />
+                <string notr="true"/>
                </property>
                <property name="DockWidget" stdset="0">
                 <bool>true</bool>
@@ -496,24 +496,49 @@
                    <verstretch>0</verstretch>
                   </sizepolicy>
                  </property>
-                 <layout class="QHBoxLayout" name="horizontalLayout_2">
+                 <layout class="QVBoxLayout" name="verticalLayout_2">
                   <property name="spacing">
                    <number>2</number>
                   </property>
                   <property name="leftMargin">
-                   <number>4</number>
+                   <number>2</number>
                   </property>
                   <property name="topMargin">
                    <number>4</number>
                   </property>
                   <property name="rightMargin">
-                   <number>4</number>
+                   <number>2</number>
                   </property>
                   <property name="bottomMargin">
-                   <number>4</number>
+                   <number>0</number>
                   </property>
                   <item>
-                   <widget class="stageviz::RenderView" name="renderView" native="true" />
+                   <widget class="stageviz::RenderView" name="renderView" native="true"/>
+                  </item>
+                  <item>
+                   <widget class="QWidget" name="timelineWidget" native="true">
+                    <property name="sizePolicy">
+                     <sizepolicy hsizetype="Preferred" vsizetype="Fixed">
+                      <horstretch>0</horstretch>
+                      <verstretch>0</verstretch>
+                     </sizepolicy>
+                    </property>
+                    <property name="minimumSize">
+                     <size>
+                      <width>0</width>
+                      <height>32</height>
+                     </size>
+                    </property>
+                    <property name="maximumSize">
+                     <size>
+                      <width>16777215</width>
+                      <height>32</height>
+                     </size>
+                    </property>
+                    <property name="DockWidget" stdset="0">
+                     <bool>true</bool>
+                    </property>
+                   </widget>
                   </item>
                  </layout>
                 </widget>
@@ -678,34 +703,37 @@
                  </spacer>
                 </item>
                 <item>
-                 <widget class="QFrame" name="backgroundColor">
-                  <property name="sizePolicy">
-                   <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
-                    <horstretch>0</horstretch>
-                    <verstretch>0</verstretch>
-                   </sizepolicy>
-                  </property>
-                  <property name="minimumSize">
-                   <size>
-                    <width>32</width>
-                    <height>32</height>
-                   </size>
-                  </property>
-                  <property name="maximumSize">
-                   <size>
-                    <width>34</width>
-                    <height>34</height>
-                   </size>
-                  </property>
-                  <property name="styleSheet">
-                   <string notr="true" />
-                  </property>
-                  <property name="frameShape">
-                   <enum>QFrame::Shape::StyledPanel</enum>
-                  </property>
-                  <property name="frameShadow">
-                   <enum>QFrame::Shadow::Raised</enum>
-                  </property>
+                 <widget class="QWidget" name="widget_3" native="true">
+                  <layout class="QHBoxLayout" name="horizontalLayout_2">
+                   <property name="spacing">
+                    <number>0</number>
+                   </property>
+                   <property name="leftMargin">
+                    <number>0</number>
+                   </property>
+                   <property name="topMargin">
+                    <number>0</number>
+                   </property>
+                   <property name="rightMargin">
+                    <number>0</number>
+                   </property>
+                   <property name="bottomMargin">
+                    <number>4</number>
+                   </property>
+                   <item>
+                    <widget class="QToolButton" name="backgroundColor">
+                     <property name="minimumSize">
+                      <size>
+                       <width>32</width>
+                       <height>32</height>
+                      </size>
+                     </property>
+                     <property name="text">
+                      <string/>
+                     </property>
+                    </widget>
+                   </item>
+                  </layout>
                  </widget>
                 </item>
                </layout>
@@ -769,74 +797,76 @@
      <property name="title">
       <string>Render</string>
      </property>
-     <addaction name="displayRenderShaded" />
-     <addaction name="displayRenderWireframe" />
+     <addaction name="displayRenderShaded"/>
+     <addaction name="displayRenderWireframe"/>
     </widget>
     <widget class="QMenu" name="displayComplexity">
      <property name="title">
       <string>Complexity</string>
      </property>
-     <addaction name="displayComplexityLow" />
-     <addaction name="displayComplexityMedium" />
-     <addaction name="displayComplexityHigh" />
-     <addaction name="displayComplexityVeryHigh" />
+     <addaction name="displayComplexityLow"/>
+     <addaction name="displayComplexityMedium"/>
+     <addaction name="displayComplexityHigh"/>
+     <addaction name="displayComplexityVeryHigh"/>
     </widget>
     <widget class="QMenu" name="displayCameraView">
-     <property name="title"><string>Camera</string></property>
-     <addaction name="displayCameraPerspective" />
-     <addaction name="displayCameraTop" />
-     <addaction name="displayCameraFront" />
-     <addaction name="displayCameraSide" />
+     <property name="title">
+      <string>Camera</string>
+     </property>
+     <addaction name="displayCameraPerspective"/>
+     <addaction name="displayCameraTop"/>
+     <addaction name="displayCameraFront"/>
+     <addaction name="displayCameraSide"/>
     </widget>
-    <addaction name="displayIsolate" />
-    <addaction name="separator" />
-    <addaction name="displayRender" />
-    <addaction name="separator" />
-    <addaction name="displayComplexity" />
-    <addaction name="separator" />
-    <addaction name="displayCameraView" />
-    <addaction name="separator" />
-    <addaction name="displayFrameAll" />
-    <addaction name="displayFrameSelected" />
-    <addaction name="displayResetView" />
-    <addaction name="separator" />
-    <addaction name="displaySelect" />
-    <addaction name="displayMove" />
-    <addaction name="displayRotate" />
-    <addaction name="displayScale" />
-    <addaction name="separator" />
-    <addaction name="displayGrid" />
+    <addaction name="displayIsolate"/>
+    <addaction name="separator"/>
+    <addaction name="displayRender"/>
+    <addaction name="separator"/>
+    <addaction name="displayComplexity"/>
+    <addaction name="separator"/>
+    <addaction name="displayCameraView"/>
+    <addaction name="separator"/>
+    <addaction name="displayFrameAll"/>
+    <addaction name="displayFrameSelected"/>
+    <addaction name="displayResetView"/>
+    <addaction name="separator"/>
+    <addaction name="displaySelect"/>
+    <addaction name="displayMove"/>
+    <addaction name="displayRotate"/>
+    <addaction name="displayScale"/>
+    <addaction name="separator"/>
+    <addaction name="displayGrid"/>
    </widget>
    <widget class="QMenu" name="menuLight">
     <property name="title">
      <string>Light</string>
     </property>
-    <addaction name="displayCameraLight" />
-    <addaction name="displayDomeLight" />
-    <addaction name="displaySceneLights" />
-    <addaction name="displayAmbientOcclusion" />
-    <addaction name="separator" />
-    <addaction name="displayDomeBackground" />
-    <addaction name="separator" />
-    <addaction name="lightLoadDomeTexture" />
-    <addaction name="lightClearDomeTexture" />
-    <addaction name="separator" />
-    <addaction name="lightUseDefaultDomeTexture" />
+    <addaction name="displayCameraLight"/>
+    <addaction name="displayDomeLight"/>
+    <addaction name="displaySceneLights"/>
+    <addaction name="displayAmbientOcclusion"/>
+    <addaction name="separator"/>
+    <addaction name="displayDomeBackground"/>
+    <addaction name="separator"/>
+    <addaction name="lightLoadDomeTexture"/>
+    <addaction name="lightClearDomeTexture"/>
+    <addaction name="separator"/>
+    <addaction name="lightUseDefaultDomeTexture"/>
    </widget>
    <widget class="QMenu" name="menuMaterial">
     <property name="title">
      <string>Material</string>
     </property>
-    <addaction name="materialEditor" />
-    <addaction name="separator" />
-    <addaction name="materialScene" />
-    <addaction name="displayRenderClay" />
-    <addaction name="separator" />
-    <addaction name="materialChrome" />
-    <addaction name="materialGlossy" />
-    <addaction name="materialReflection" />
-    <addaction name="separator" />
-    <addaction name="useSceneShaders" />
+    <addaction name="materialEditor"/>
+    <addaction name="separator"/>
+    <addaction name="materialScene"/>
+    <addaction name="displayRenderClay"/>
+    <addaction name="separator"/>
+    <addaction name="materialChrome"/>
+    <addaction name="materialGlossy"/>
+    <addaction name="materialReflection"/>
+    <addaction name="separator"/>
+    <addaction name="useSceneShaders"/>
    </widget>
    <widget class="QMenu" name="menuFile">
     <property name="title">
@@ -846,69 +876,69 @@
      <property name="title">
       <string>Merge</string>
      </property>
-     <addaction name="fileMergeStage" />
-     <addaction name="fileMergeFlattened" />
-     <addaction name="separator" />
-     <addaction name="fileMergeReference" />
-     <addaction name="fileMergePayload" />
+     <addaction name="fileMergeStage"/>
+     <addaction name="fileMergeFlattened"/>
+     <addaction name="separator"/>
+     <addaction name="fileMergeReference"/>
+     <addaction name="fileMergePayload"/>
     </widget>
     <widget class="QMenu" name="filePolicy">
      <property name="title">
       <string>Policy</string>
      </property>
-     <addaction name="policyAll" />
-     <addaction name="policyPayload" />
+     <addaction name="policyAll"/>
+     <addaction name="policyPayload"/>
     </widget>
     <widget class="QMenu" name="fileRecent">
      <property name="title">
       <string>Recent</string>
      </property>
-     <addaction name="actionClear" />
+     <addaction name="actionClear"/>
     </widget>
-    <addaction name="fileNew" />
-    <addaction name="fileOpen" />
-    <addaction name="fileMerge" />
-    <addaction name="filePolicy" />
-    <addaction name="fileRecent" />
-    <addaction name="separator" />
-    <addaction name="fileLayers" />
-    <addaction name="separator" />
-    <addaction name="fileLayerSave" />
-    <addaction name="fileLayerSaveAs" />
-    <addaction name="fileLayerSaveCopyAs" />
-    <addaction name="separator" />
-    <addaction name="fileLayerSaveAll" />
-    <addaction name="separator" />
-    <addaction name="fileExportAll" />
-    <addaction name="fileExportSelected" />
-    <addaction name="fileExportVisible" />
-    <addaction name="fileExportImage" />
-    <addaction name="separator" />
-    <addaction name="filePreserveState" />
-    <addaction name="separator" />
-    <addaction name="fileRevealInFolder" />
-    <addaction name="separator" />
-    <addaction name="fileReload" />
-    <addaction name="fileClose" />
-    <addaction name="separator" />
-    <addaction name="fileSaveSettings" />
-    <addaction name="separator" />
-    <addaction name="fileExit" />
+    <addaction name="fileNew"/>
+    <addaction name="fileOpen"/>
+    <addaction name="fileMerge"/>
+    <addaction name="filePolicy"/>
+    <addaction name="fileRecent"/>
+    <addaction name="separator"/>
+    <addaction name="fileLayers"/>
+    <addaction name="separator"/>
+    <addaction name="fileLayerSave"/>
+    <addaction name="fileLayerSaveAs"/>
+    <addaction name="fileLayerSaveCopyAs"/>
+    <addaction name="separator"/>
+    <addaction name="fileLayerSaveAll"/>
+    <addaction name="separator"/>
+    <addaction name="fileExportAll"/>
+    <addaction name="fileExportSelected"/>
+    <addaction name="fileExportVisible"/>
+    <addaction name="fileExportImage"/>
+    <addaction name="separator"/>
+    <addaction name="filePreserveState"/>
+    <addaction name="separator"/>
+    <addaction name="fileRevealInFolder"/>
+    <addaction name="separator"/>
+    <addaction name="fileReload"/>
+    <addaction name="fileClose"/>
+    <addaction name="separator"/>
+    <addaction name="fileSaveSettings"/>
+    <addaction name="separator"/>
+    <addaction name="fileExit"/>
    </widget>
    <widget class="QMenu" name="menuHelp">
     <property name="title">
      <string>Help</string>
     </property>
-    <addaction name="helpAbout" />
-    <addaction name="helpCheckUpdates" />
-    <addaction name="separator" />
-    <addaction name="helpDocumentation" />
-    <addaction name="helpPythonApiReference" />
-    <addaction name="helpPythonDialogReference" />
-    <addaction name="helpAgentSkill" />
-    <addaction name="helpMcpServer" />
-    <addaction name="separator" />
-    <addaction name="helpReportIssue" />
+    <addaction name="helpAbout"/>
+    <addaction name="helpCheckUpdates"/>
+    <addaction name="separator"/>
+    <addaction name="helpDocumentation"/>
+    <addaction name="helpPythonApiReference"/>
+    <addaction name="helpPythonDialogReference"/>
+    <addaction name="helpAgentSkill"/>
+    <addaction name="helpMcpServer"/>
+    <addaction name="separator"/>
+    <addaction name="helpReportIssue"/>
    </widget>
    <widget class="QMenu" name="menuEdit">
     <property name="title">
@@ -918,95 +948,95 @@
      <property name="title">
       <string>Show</string>
      </property>
-     <addaction name="editShowSelected" />
-     <addaction name="editShowRecursive" />
+     <addaction name="editShowSelected"/>
+     <addaction name="editShowRecursive"/>
     </widget>
     <widget class="QMenu" name="editHide">
      <property name="title">
       <string>Hide</string>
      </property>
-     <addaction name="editHideSelected" />
-     <addaction name="editHideRecursive" />
+     <addaction name="editHideSelected"/>
+     <addaction name="editHideRecursive"/>
     </widget>
     <widget class="QMenu" name="menuDuplicate">
      <property name="title">
       <string>Duplicate</string>
      </property>
-     <addaction name="editCopySelected" />
-     <addaction name="editInstanceSelected" />
+     <addaction name="editCopySelected"/>
+     <addaction name="editInstanceSelected"/>
     </widget>
     <widget class="QMenu" name="menu">
      <property name="title">
       <string>Stage up</string>
      </property>
-     <addaction name="editStageUpY" />
-     <addaction name="editStageUpZ" />
+     <addaction name="editStageUpY"/>
+     <addaction name="editStageUpZ"/>
     </widget>
     <widget class="QMenu" name="menuPayloads">
      <property name="title">
       <string>Payload</string>
      </property>
-     <addaction name="editPayloadLoad" />
-     <addaction name="editPayloadLoadNeighbors" />
-     <addaction name="editPayloadUnload" />
-     <addaction name="separator" />
-     <addaction name="editPayloadSelect" />
-     <addaction name="editLayerSelect" />
-     <addaction name="separator" />
-     <addaction name="editPayloadInvert" />
-     <addaction name="editLayerInvert" />
+     <addaction name="editPayloadLoad"/>
+     <addaction name="editPayloadLoadNeighbors"/>
+     <addaction name="editPayloadUnload"/>
+     <addaction name="separator"/>
+     <addaction name="editPayloadSelect"/>
+     <addaction name="editLayerSelect"/>
+     <addaction name="separator"/>
+     <addaction name="editPayloadInvert"/>
+     <addaction name="editLayerInvert"/>
     </widget>
     <widget class="QMenu" name="menu_2">
      <property name="title">
       <string>Select visible</string>
      </property>
-     <addaction name="editSelectVisibleCapture" />
-     <addaction name="separator" />
-     <addaction name="editSelectVisibleSelect" />
-     <addaction name="editSelectVisibleClear" />
+     <addaction name="editSelectVisibleCapture"/>
+     <addaction name="separator"/>
+     <addaction name="editSelectVisibleSelect"/>
+     <addaction name="editSelectVisibleClear"/>
     </widget>
-    <addaction name="editUndo" />
-    <addaction name="editRedo" />
-    <addaction name="separator" />
-    <addaction name="editClear" />
-    <addaction name="separator" />
-    <addaction name="editCopyImage" />
-    <addaction name="separator" />
-    <addaction name="editSelectAll" />
-    <addaction name="editSelectInvert" />
-    <addaction name="editSelectParent" />
-    <addaction name="menu_2" />
-    <addaction name="separator" />
-    <addaction name="editShow" />
-    <addaction name="editHide" />
-    <addaction name="separator" />
-    <addaction name="menu" />
-    <addaction name="separator" />
-    <addaction name="menuPayloads" />
-    <addaction name="separator" />
-    <addaction name="createXform" />
-    <addaction name="menuDuplicate" />
-    <addaction name="editDeleteSelected" />
+    <addaction name="editUndo"/>
+    <addaction name="editRedo"/>
+    <addaction name="separator"/>
+    <addaction name="editClear"/>
+    <addaction name="separator"/>
+    <addaction name="editCopyImage"/>
+    <addaction name="separator"/>
+    <addaction name="editSelectAll"/>
+    <addaction name="editSelectInvert"/>
+    <addaction name="editSelectParent"/>
+    <addaction name="menu_2"/>
+    <addaction name="separator"/>
+    <addaction name="editShow"/>
+    <addaction name="editHide"/>
+    <addaction name="separator"/>
+    <addaction name="menu"/>
+    <addaction name="separator"/>
+    <addaction name="menuPayloads"/>
+    <addaction name="separator"/>
+    <addaction name="createXform"/>
+    <addaction name="menuDuplicate"/>
+    <addaction name="editDeleteSelected"/>
    </widget>
    <widget class="QMenu" name="menuCreate">
     <property name="title">
      <string>Create</string>
     </property>
-    <addaction name="createXform" />
-    <addaction name="createScope" />
-    <addaction name="createCube" />
-    <addaction name="createSphere" />
-    <addaction name="createCylinder" />
-    <addaction name="createCone" />
-    <addaction name="createCapsule" />
-    <addaction name="createPlane" />
-    <addaction name="separator" />
-    <addaction name="createMesh" />
-    <addaction name="createPoints" />
-    <addaction name="createBasisCurves" />
-    <addaction name="createNurbsCurves" />
-    <addaction name="createNurbsPatch" />
-    <addaction name="createPointInstancer" />
+    <addaction name="createXform"/>
+    <addaction name="createScope"/>
+    <addaction name="createCube"/>
+    <addaction name="createSphere"/>
+    <addaction name="createCylinder"/>
+    <addaction name="createCone"/>
+    <addaction name="createCapsule"/>
+    <addaction name="createPlane"/>
+    <addaction name="separator"/>
+    <addaction name="createMesh"/>
+    <addaction name="createPoints"/>
+    <addaction name="createBasisCurves"/>
+    <addaction name="createNurbsCurves"/>
+    <addaction name="createNurbsPatch"/>
+    <addaction name="createPointInstancer"/>
    </widget>
    <widget class="QMenu" name="menuView">
     <property name="title">
@@ -1016,29 +1046,29 @@
      <property name="title">
       <string>Head-up display</string>
      </property>
-     <addaction name="hudSceneStats" />
-     <addaction name="hudPerformanceStats" />
-     <addaction name="hudCameraAxis" />
+     <addaction name="hudSceneStats"/>
+     <addaction name="hudPerformanceStats"/>
+     <addaction name="hudCameraAxis"/>
     </widget>
-    <addaction name="viewTogglePanels" />
-    <addaction name="separator" />
-    <addaction name="separator" />
-    <addaction name="menu_3" />
-    <addaction name="separator" />
-    <addaction name="viewPython" />
-    <addaction name="viewProgress" />
-    <addaction name="separator" />
-    <addaction name="viewConsole" />
-    <addaction name="separator" />
+    <addaction name="viewTogglePanels"/>
+    <addaction name="separator"/>
+    <addaction name="separator"/>
+    <addaction name="menu_3"/>
+    <addaction name="separator"/>
+    <addaction name="viewPython"/>
+    <addaction name="viewProgress"/>
+    <addaction name="separator"/>
+    <addaction name="viewConsole"/>
+    <addaction name="separator"/>
    </widget>
-   <addaction name="menuFile" />
-   <addaction name="menuEdit" />
-   <addaction name="menuCreate" />
-   <addaction name="menuDisplay" />
-   <addaction name="menuLight" />
-   <addaction name="menuMaterial" />
-   <addaction name="menuView" />
-   <addaction name="menuHelp" />
+   <addaction name="menuFile"/>
+   <addaction name="menuEdit"/>
+   <addaction name="menuCreate"/>
+   <addaction name="menuDisplay"/>
+   <addaction name="menuLight"/>
+   <addaction name="menuMaterial"/>
+   <addaction name="menuView"/>
+   <addaction name="menuHelp"/>
   </widget>
   <action name="displayFrameAll">
    <property name="text">
@@ -1180,7 +1210,7 @@
     <string>Copy image ...</string>
    </property>
    <property name="font">
-    <font />
+    <font/>
    </property>
    <property name="shortcut">
     <string>Ctrl+C</string>
@@ -1948,20 +1978,36 @@
    </property>
   </action>
   <action name="displayCameraPerspective">
-   <property name="checkable"><bool>true</bool></property>
-   <property name="text"><string>Perspective</string></property>
+   <property name="checkable">
+    <bool>true</bool>
+   </property>
+   <property name="text">
+    <string>Perspective</string>
+   </property>
   </action>
   <action name="displayCameraTop">
-   <property name="checkable"><bool>true</bool></property>
-   <property name="text"><string>Top</string></property>
+   <property name="checkable">
+    <bool>true</bool>
+   </property>
+   <property name="text">
+    <string>Top</string>
+   </property>
   </action>
   <action name="displayCameraFront">
-   <property name="checkable"><bool>true</bool></property>
-   <property name="text"><string>Front</string></property>
+   <property name="checkable">
+    <bool>true</bool>
+   </property>
+   <property name="text">
+    <string>Front</string>
+   </property>
   </action>
   <action name="displayCameraSide">
-   <property name="checkable"><bool>true</bool></property>
-   <property name="text"><string>Side</string></property>
+   <property name="checkable">
+    <bool>true</bool>
+   </property>
+   <property name="text">
+    <string>Side</string>
+   </property>
   </action>
   <action name="displayComplexityLow">
    <property name="checkable">
@@ -2052,7 +2098,7 @@
   </customwidget>
  </customwidgets>
  <resources>
-  <include location="viewer.qrc" />
+  <include location="viewer.qrc"/>
  </resources>
- <connections />
+ <connections/>
 </ui>

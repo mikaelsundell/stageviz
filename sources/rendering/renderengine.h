@@ -63,6 +63,7 @@ public:
         MaterialMode materialMode = MaterialMode::Scene;
         SdfPath overrideMaterial;
         double complexity = 1.0;
+        double timeCode = 0.0;
         bool sceneLightsEnabled = true;
         bool sceneMaterialsEnabled = true;
         bool defaultCameraLightEnabled = true;
@@ -212,10 +213,14 @@ public:
      */
     void setSelected(const QList<SdfPath>& paths);
 
-    /** Invalidates cached USD selection data after stage edits. */
+    /**
+     * @brief Invalidates cached USD selection data after stage edits.
+     */
     void invalidateSelectionCache();
 
-    /** Disables costly AO while the viewport camera is moving. */
+    /**
+     * @brief Disables costly AO while the viewport camera is moving.
+     */
     void setInteractiveNavigation(bool enabled);
 
     /**
@@ -268,7 +273,9 @@ public:
       */
     SdfPath pickNextIdAt(const GfVec2i& pixel, const QList<SdfPath>& excludedPaths);
 
-    /** GPU prim ID, instance ID, element ID and depth for the specified framebuffer pixel. */
+    /**
+     * @brief GPU prim ID, instance ID, element ID and depth for the specified framebuffer pixel.
+     */
     GpuPickResult gpuPickAt(const GfVec2i& pixel, const QList<SdfPath>& excludedPaths);
 
     /**

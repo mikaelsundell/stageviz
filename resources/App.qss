@@ -175,7 +175,7 @@ QLabel
 QLineEdit
 {
     color: $color.text;
-    font-size: $font.size.medium;
+    font-size: $font.size.small;
     background-color: $color.basealt;
     selection-background-color: $color.highlight;
     height: 18px;
@@ -490,6 +490,7 @@ QScrollBar:vertical {
 
 QSlider {
     background: transparent;
+    font-size: $font.size.small;
 }
 
 QSlider::groove:horizontal {
@@ -526,7 +527,7 @@ QDoubleSpinBox,
 QAbstractSpinBox
 {
     color: $color.text;
-    font-size: $font.size.medium;
+    font-size: $font.size.small;
     background-color: $color.basealt;
     selection-background-color: $color.highlight;
     height: 24px;

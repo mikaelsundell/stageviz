@@ -24,20 +24,28 @@ class LayerDialogPrivate;
 class LayerDialog : public QDialog {
     Q_OBJECT
 public:
-    /** Creates the layer editor and connects it to the current session. */
+    /**
+     * @brief Creates the layer editor and connects it to the current session.
+     */
     explicit LayerDialog(QWidget* parent = nullptr);
 
-    /** Releases the layer editor. */
+    /**
+     * @brief Releases the layer editor.
+     */
     ~LayerDialog() override;
 
-    /** Refreshes the layer rows and their dirty state from the current stage. */
+    /**
+     * @brief Refreshes the layer rows and their dirty state from the current stage.
+     */
     void refreshLayers();
 
 protected:
     void showEvent(QShowEvent* event) override;
 
 Q_SIGNALS:
-    /** Emitted after saving a single layer so the viewer can refresh its dirty state. */
+    /**
+     * @brief Emitted after saving a single layer so the viewer can refresh its dirty state.
+     */
     void layerSaved();
 
 private:

@@ -530,6 +530,7 @@ public:
         size_t count;
         qint64 frame;
         double gpuPerformanceMs;
+        double timeCode;
         float defaultAmbient;
         float defaultSpecular;
         float defaultShininess;
@@ -697,6 +698,7 @@ ImagingGLWidgetPrivate::init()
     d.count = 0;
     d.frame = 0;
     d.gpuPerformanceMs = 0.0;
+    d.timeCode = 0.0;
     d.defaultAmbient = 0.4f;
     d.defaultSpecular = 0.5f;
     d.defaultShininess = 32.0f;
@@ -2235,6 +2237,7 @@ ImagingGLWidgetPrivate::updateRenderEngineSettings()
         return;
 
     RenderEngine::Settings settings = d.renderEngine->settings();
+    settings.timeCode = d.timeCode;
     settings.clearColor = state->backgroundColor().isValid() ? state->backgroundColor() : QColor(Qt::black);
     settings.aov = QStringToTfToken(state->rendererAov().isEmpty() ? QStringLiteral("color") : state->rendererAov());
     settings.drawMode = state->renderMode() == ViewState::Wireframe ? UsdImagingGLDrawMode::DRAW_WIREFRAME_ON_SURFACE
@@ -4174,6 +4177,17 @@ void
 ImagingGLWidget::updateStage(UsdStageRefPtr stage)
 {
     p->updateStage(stage);
+}
+
+void
+ImagingGLWidget::setTimeCode(double timeCode)
+{
+    if (qFuzzyCompare(p->d.timeCode + 1.0, timeCode + 1.0))
+        return;
+
+    p->d.timeCode = timeCode;
+    p->updateRenderEngineSettings();
+    update();
 }
 
 void

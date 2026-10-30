@@ -188,7 +188,9 @@ public:
      */
     GpuPickResult takeGpuPickResult();
 
-    /** @brief Returns and clears the element ID captured at the requested scene-ID pixel. */
+    /**
+     * @brief Returns and clears the element ID captured at the requested scene-ID pixel.
+     */
     int32_t takeCapturedElementId();
 
     static const TfToken& token();

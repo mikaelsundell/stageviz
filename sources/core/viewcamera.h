@@ -255,7 +255,9 @@ public:
 
     void setCameraView(CameraView preset);
 
-    /** @brief Returns the active camera view for menu synchronization. */
+    /**
+     * @brief Returns the active camera view for menu synchronization.
+     */
     CameraView cameraView() const;
 
     /**

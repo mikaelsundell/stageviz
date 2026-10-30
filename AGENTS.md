@@ -23,6 +23,16 @@ consistent with the existing architecture.
   and initialization, utility functions, slots/actions, data accessors, then
   the `Data` struct. Keep the `Data` struct near the end of the private class.
 
+## C++ header documentation
+
+- Write API documentation in headers as multiline Doxygen blocks, even when
+  the description is one line. Put `@brief` on its own documentation line and
+  leave a blank documentation line before tags such as `@param` and `@return`.
+- Place documentation blocks immediately before the declaration they describe.
+  Do not use compact `/** @brief ... */` comments or trailing `///<` comments.
+- Keep Doxygen grouping directives such as `@{` and `@}` in multiline blocks;
+  they do not need an `@brief` tag.
+
 ## USD edits, settings, and notifications
 
 - Route user-facing USD stage and layer modifications through undoable

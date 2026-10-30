@@ -95,13 +95,19 @@ public:
      */
     ~TreeWidget() override;
 
-    /** @brief Reports Qt-native selection state; IndexTree overrides this. */
+    /**
+     * @brief Reports Qt-native selection state; IndexTree overrides this.
+     */
     virtual bool isItemSelected(const QTreeWidgetItem* item) const;
 
-    /** @brief Whether the derived tree owns selection outside Qt. */
+    /**
+     * @brief Whether the derived tree owns selection outside Qt.
+     */
     virtual bool hasExternalSelection() const;
 
-    /** @brief Reports whether a row contains selected descendants. */
+    /**
+     * @brief Reports whether a row contains selected descendants.
+     */
     virtual bool hasSelectedDescendants(const QTreeWidgetItem* item) const;
 
     /**

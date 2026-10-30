@@ -199,6 +199,12 @@ RenderView::setScaleEnabled(bool enabled)
 }
 
 void
+RenderView::setTimeCode(double timeCode)
+{
+    p->imageGLWidget()->setTimeCode(timeCode);
+}
+
+void
 RenderView::updateAuxiliary(UsdStageRefPtr auxiliary)
 {
     p->updateAuxiliary(auxiliary);

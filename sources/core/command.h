@@ -746,19 +746,27 @@ newScopePath(const SdfPath& parentPath, const QString& nameInput, bool selectCre
 Command
 newMeshPath(const SdfPath& parentPath, const QString& nameInput, bool selectCreated = true);
 
-/** @brief Creates a visible UsdGeomPoints particle-style point cloud. */
+/**
+ * @brief Creates a visible UsdGeomPoints particle-style point cloud.
+ */
 Command
 newPointsPath(const SdfPath& parentPath, const QString& nameInput, bool selectCreated = true);
 
-/** @brief Creates visible cubic B-spline UsdGeomBasisCurves. */
+/**
+ * @brief Creates visible cubic B-spline UsdGeomBasisCurves.
+ */
 Command
 newBasisCurvesPath(const SdfPath& parentPath, const QString& nameInput, bool selectCreated = true);
 
-/** @brief Creates visible cubic UsdGeomNurbsCurves. */
+/**
+ * @brief Creates visible cubic UsdGeomNurbsCurves.
+ */
 Command
 newNurbsCurvesPath(const SdfPath& parentPath, const QString& nameInput, bool selectCreated = true);
 
-/** @brief Creates a visible wavy UsdGeomNurbsPatch. */
+/**
+ * @brief Creates a visible wavy UsdGeomNurbsPatch.
+ */
 Command
 newNurbsPatchPath(const SdfPath& parentPath, const QString& nameInput, bool selectCreated = true);
 

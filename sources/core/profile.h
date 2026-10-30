@@ -11,10 +11,14 @@
 
 namespace stageviz::profile {
 
-/** Controls instrumentation outside explicitly recorded diagnostic sessions. */
+/**
+ * @brief Controls instrumentation outside explicitly recorded diagnostic sessions.
+ */
 enum class Mode : uint8_t { Off, Aggregate, Trace };
 
-/** Static registration and accumulated timings for one instrumented source location. */
+/**
+ * @brief Static registration and accumulated timings for one instrumented source location.
+ */
 struct Site {
     const char* category;
     const char* name;
@@ -37,9 +41,11 @@ void
 setTraceCapacity(size_t events);
 
 /**
- * Starts an independently named diagnostic recording. Multiple recordings may
- * overlap, and each receives events from all instrumented threads. Returns a
- * nonzero handle on success, or zero if the output file cannot be opened.
+ * @brief Starts an independently named diagnostic recording.
+ *
+ * Multiple recordings may overlap, and each receives events from all
+ * instrumented threads. The function returns a nonzero handle on success, or
+ * zero if the output file cannot be opened.
  *
  * Each recording writes BEGIN/END scope events and numeric counters. If no
  * filename or STAGEVIZ_PROFILE_REPORT is supplied, output goes to stdout. The
@@ -55,23 +61,33 @@ void
 endRecording(RecordingId id) noexcept;
 bool
 recordingActive(RecordingId id) noexcept;
-/** Writes a numeric event into every currently active recording. */
+/**
+ * @brief Writes a numeric event into every currently active recording.
+ */
 void
 counter(const char* name, uint64_t value) noexcept;
-/** Records structured diagnostic text only while a named recording is active. */
+/**
+ * @brief Records structured diagnostic text only while a named recording is active.
+ */
 void
 event(const char* category, const char* name, const std::string& details);
 
-/** Reset aggregate statistics only when no measured scopes are running. */
+/**
+ * @brief Reset aggregate statistics only when no measured scopes are running.
+ */
 void
 reset();
-/** Aggregate report; preferably call when instrumented work is idle. */
+/**
+ * @brief Aggregate report; preferably call when instrumented work is idle.
+ */
 std::string
 summary();
 bool
 writeSummary(const std::string& filename);
 
-/** RAII timer for a registered source location; supports nested scopes. */
+/**
+ * @brief RAII timer for a registered source location; supports nested scopes.
+ */
 class Scope final {
 public:
     explicit Scope(Site& site) noexcept;

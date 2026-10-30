@@ -147,7 +147,7 @@
        </widget>
       </item>
       <item>
-       <widget class="stageviz::Slider" name="depth">
+       <widget class="stageviz::TimelineSlider" name="depth">
         <property name="maximum">
          <number>10</number>
         </property>
@@ -184,9 +184,9 @@
    <header>outlinertree.h</header>
   </customwidget>
   <customwidget>
-   <class>stageviz::Slider</class>
+   <class>stageviz::TimelineSlider</class>
    <extends>QSlider</extends>
-   <header>slider.h</header>
+   <header>timelineslider.h</header>
   </customwidget>
  </customwidgets>
  <resources>

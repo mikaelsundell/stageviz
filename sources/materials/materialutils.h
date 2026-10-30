@@ -62,14 +62,20 @@ struct MaterialInputInfo {
     VtValue value;
     bool hasValue = false;
 
-    /** @brief NodeDef-declared default kept separately from the effective value. */
+    /**
+     * @brief NodeDef-declared default kept separately from the effective value.
+     */
     VtValue defaultValue;
     bool hasDefaultValue = false;
 
-    /** @brief True when the input has an authored or composed USD value opinion. */
+    /**
+     * @brief True when the input has an authored or composed USD value opinion.
+     */
     bool hasAuthoredValue = false;
 
-    /** @brief True when the input is declared by the shader definition. */
+    /**
+     * @brief True when the input is declared by the shader definition.
+     */
     bool declared = false;
 
     bool connected = false;
@@ -92,10 +98,14 @@ struct MaterialInputInfo {
     double uiSoftMax = 0.0;
     double uiStep = 0.0;
 
-    /** @brief Returns true when the input type is float. */
+    /**
+     * @brief Returns true when the input type is float.
+     */
     bool isFloat() const { return typeName == SdfValueTypeNames->Float; }
 
-    /** @brief Returns true when the input type is color3f. */
+    /**
+     * @brief Returns true when the input type is color3f.
+     */
     bool isColor3() const { return typeName == SdfValueTypeNames->Color3f; }
 };
 

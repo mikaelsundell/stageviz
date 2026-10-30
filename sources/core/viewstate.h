@@ -309,9 +309,13 @@ public:
      * support geometry and selection are rendered after this effect.
      */
 
-    /** @{ */
+    /**
+     * @{
+     */
 
-    /** @brief Returns the complete ambient occlusion state. */
+    /**
+     * @brief Returns the complete ambient occlusion state.
+     */
     const AmbientOcclusionSettings& ambientOcclusionSettings() const;
     bool ambientOcclusionEnabled() const;
     void setAmbientOcclusionEnabled(bool enabled);
@@ -340,7 +344,9 @@ public:
     AmbientOcclusionDebugMode ambientOcclusionDebugMode() const;
     void setAmbientOcclusionDebugMode(AmbientOcclusionDebugMode mode);
 
-    /** @} */
+    /**
+     * @}
+     */
 
     /**
      * @brief Returns whether scene lights are enabled.

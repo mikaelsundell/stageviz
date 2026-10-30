@@ -1454,6 +1454,7 @@ RenderEngine::Private::updateRenderParams()
     params.clearColor = qt::QColorToGfVec4f(settings.clearColor);
     params.drawMode = settings.drawMode;
     params.complexity = settings.complexity;
+    params.frame = settings.timeCode;
     params.cullStyle = cullStyle(settings.doubleSidedMode);
     params.enableLighting = true;
     params.gammaCorrectColors = settings.gammaCorrectColors;

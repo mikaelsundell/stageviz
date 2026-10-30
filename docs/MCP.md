@@ -12,6 +12,21 @@ In Stageviz's Python console, start the server:
 stageviz.startMcpServer()
 ```
 
+You can also run Python code after the viewer opens by passing `--execute`:
+
+```sh
+stageviz --execute "stageviz.startMcpServer()"
+```
+
+Pass a USD file as well if you want it loaded before the code runs:
+
+```sh
+stageviz /path/to/scene.usda --execute "stageviz.startMcpServer()"
+```
+
+The argument accepts Python source code, so quote it for your shell when it
+contains spaces or special characters.
+
 This returns the endpoint URL (`http://127.0.0.1:37651/mcp`). The server remains
 active until Stageviz exits or you stop it with:
 

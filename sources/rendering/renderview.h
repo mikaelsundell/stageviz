@@ -108,23 +108,40 @@ public:
      */
     void setTransformEnabled(bool enabled);
 
-    /** @brief Returns whether the move gizmo is active. */
+    /**
+     * @brief Returns whether the move gizmo is active.
+     */
     bool moveEnabled() const;
 
-    /** @brief Activates or deactivates the move gizmo. */
+    /**
+     * @brief Activates or deactivates the move gizmo.
+     */
     void setMoveEnabled(bool enabled);
 
-    /** @brief Returns whether the rotate gizmo is active. */
+    /**
+     * @brief Returns whether the rotate gizmo is active.
+     */
     bool rotateEnabled() const;
 
-    /** @brief Activates or deactivates the rotate gizmo. */
+    /**
+     * @brief Activates or deactivates the rotate gizmo.
+     */
     void setRotateEnabled(bool enabled);
 
-    /** @brief Returns whether the scale gizmo is active. */
+    /**
+     * @brief Returns whether the scale gizmo is active.
+     */
     bool scaleEnabled() const;
 
-    /** @brief Activates or deactivates the scale gizmo. */
+    /**
+     * @brief Activates or deactivates the scale gizmo.
+     */
     void setScaleEnabled(bool enabled);
+
+    /**
+     * @brief Sets the USD time code evaluated by the viewport.
+     */
+    void setTimeCode(double timeCode);
 
     /**
      * @}
@@ -149,16 +166,24 @@ public:
      */
 
 Q_SIGNALS:
-    /** @brief Forwarded when a viewport frame has finished rendering. */
+    /**
+     * @brief Forwarded when a viewport frame has finished rendering.
+     */
     void renderReady(qint64 elapsed);
 
-    /** @brief Forwarded when a visible-prim capture has finished. */
+    /**
+     * @brief Forwarded when a visible-prim capture has finished.
+     */
     void captureReady(qint64 elapsed);
 
-    /** @brief Forwarded transient viewport status text. */
+    /**
+     * @brief Forwarded transient viewport status text.
+     */
     void statusMessage(const QString& message);
 
-    /** @brief Forwarded when transient viewport status has finished. */
+    /**
+     * @brief Forwarded when transient viewport status has finished.
+     */
     void statusReady();
 
 private:

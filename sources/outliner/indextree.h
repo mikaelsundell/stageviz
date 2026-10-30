@@ -142,7 +142,9 @@ protected:
      */
     void mousePressEvent(QMouseEvent* event) override;
 
-    /** @brief Collapses an existing multi-selection on click release, not drag press. */
+    /**
+     * @brief Collapses an existing multi-selection on click release, not drag press.
+     */
     void mouseReleaseEvent(QMouseEvent* event) override;
 
     /**
