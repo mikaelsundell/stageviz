@@ -69,7 +69,7 @@ public:
      *
      * The submenu contains Generate..., Choose Image..., and Reset actions.
      * Generate accepts between one and five characters and creates a fitted
-     * text icon using the current Stageviz style. Choose Image loads and
+     * text icon using the current Stageviz UI. Choose Image loads and
      * normalizes an image from disk. Reset restores the standard code icon.
      *
      * @param menu Context menu that should receive the Icon submenu.

@@ -5748,12 +5748,37 @@ def test_attribute_and_pivot_command_ui(main):
     require(wait_until(lambda: not bool(prim(owner).GetAttribute("xformOp:translate:pivot"))),
             "UI reset pivot")
 
+
+def test_ui_subsystem_api():
+    native = stageviz.ui()
+    application_ui = stageviz.application().ui()
+    require(isinstance(native, stageviz.UI), "stageviz.ui() returns the UI wrapper")
+    require(isinstance(application_ui, stageviz.UI), "Application.ui() returns the UI wrapper")
+
+    original = (native.gizmoSize(stageviz.UI.Medium), native.transformMoveSnap(),
+                native.transformRotateSnap(), native.transformScaleSnap())
+    try:
+        native.setGizmoSize(stageviz.UI.Medium, 73)
+        native.setTransformMoveSnap(0.25)
+        native.setTransformRotateSnap(5.0)
+        native.setTransformScaleSnap(0.5)
+        require(application_ui.gizmoSize(stageviz.UI.Medium) == 73, "UI wrapper shares application state")
+        require(native.transformMoveSnap() == 0.25, "UI move snap binding roundtrip")
+        require(native.transformRotateSnap() == 5.0, "UI rotate snap binding roundtrip")
+        require(native.transformScaleSnap() == 0.5, "UI scale snap binding roundtrip")
+    finally:
+        native.setGizmoSize(stageviz.UI.Medium, original[0])
+        native.setTransformMoveSnap(original[1])
+        native.setTransformRotateSnap(original[2])
+        native.setTransformScaleSnap(original[3])
+
 def run():
     divider()
 
     print("OutlinerTree interactive UI diagnostic")
 
     try:
+        test_ui_subsystem_api()
         root, main = create_fixture()
         payload_menu_main = create_payload_menu_fixture(root)
 

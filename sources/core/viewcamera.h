@@ -210,7 +210,7 @@ public:
     /**
      * @brief Enables or disables output aspect-ratio locking.
      *
-     * When enabled, ImagingGLWidget preserves aspectRatio() while resizing and
+     * When enabled, ViewportWidget preserves aspectRatio() while resizing and
      * renders into a centered camera gate.
      *
      * @param locked True to preserve the configured output aspect ratio.

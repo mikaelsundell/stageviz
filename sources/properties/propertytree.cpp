@@ -13,7 +13,7 @@
 #include "selectionlist.h"
 #include "signalguard.h"
 #include "spinbox.h"
-#include "style.h"
+#include "ui.h"
 #include "threadutils.h"
 #include "tracelocks.h"
 #include "viewcontext.h"
@@ -68,6 +68,9 @@
 #include <pxr/usd/usd/stage.h>
 #include <pxr/usd/usd/variantSets.h>
 #include <pxr/usd/usdGeom/gprim.h>
+#include <pxr/usd/usdGeom/subset.h>
+#include <pxr/usd/usd/primFlags.h>
+#include <pxr/usd/usdShade/materialBindingAPI.h>
 #include <pxr/usd/usdGeom/metrics.h>
 #include <set>
 #include <sstream>
@@ -86,7 +89,8 @@ namespace {
         ComponentKindRole = Qt::UserRole + 200,
         ComponentIndexRole,
         ComponentColumnRole,
-        LazyArrayRole
+        LazyArrayRole,
+        GeometrySubsetPathRole
     };
 
     enum ComponentKind { NoComponent = 0, VectorComponent, ArrayVectorComponent, MatrixComponent };
@@ -220,6 +224,8 @@ public:
     void addMetadataSection(const UsdPrim& prim);
     void addDictionaryEntries(PropertyItem* parent, const VtDictionary& dictionary);
     void addAttributesSection(const UsdPrim& prim);
+    void addGeometrySubsetsSection(const QList<UsdPrim>& prims);
+    void populateGeometrySubsetsSection(const QList<UsdPrim>& prims);
     void addMultiAttributesSection(const QList<UsdPrim>& prims);
     void populateMultiAttributesSection(const QList<UsdPrim>& prims);
     void addRelationshipsSection(const UsdPrim& prim);
@@ -396,6 +402,7 @@ public:
         bool componentScrubbing = false;
         bool pendingMultiAttributes = false;
         bool pendingMultiRelationships = false;
+        bool pendingGeometrySubsets = false;
     };
     Data d;
 };
@@ -1687,6 +1694,15 @@ PropertyTreePrivate::itemKey(const PropertyItem* item) const
     if (!item)
         return {};
 
+    QString subsetScope;
+    for (const QTreeWidgetItem* ancestor = item; ancestor; ancestor = ancestor->parent()) {
+        const QString path = ancestor->data(PropertyItem::Name, GeometrySubsetPathRole).toString();
+        if (!path.isEmpty()) {
+            subsetScope = "subset:" + path + "/";
+            break;
+        }
+    }
+
     const int componentKind = item->data(PropertyItem::Value, ComponentKindRole).toInt();
     if (componentKind != NoComponent) {
         const int component = item->data(PropertyItem::Value, ComponentIndexRole).toInt();
@@ -1695,22 +1711,22 @@ PropertyTreePrivate::itemKey(const PropertyItem* item) const
                                                  : QStringLiteral("component");
 
         if (componentKind == MatrixComponent)
-            return QString("%1/matrix:%2:%3").arg(parentKey).arg(component).arg(column);
+            return subsetScope + QString("%1/matrix:%2:%3").arg(parentKey).arg(component).arg(column);
 
-        return QString("%1/vector:%2").arg(parentKey).arg(component);
+        return subsetScope + QString("%1/vector:%2").arg(parentKey).arg(component);
     }
 
     switch (item->kind()) {
     case PropertyItem::Attribute:
         if (item->arrayIndex() >= 0)
-            return QString("matrix-row:%1:%2")
+            return subsetScope + QString("matrix-row:%1:%2")
                 .arg(item->parent() ? item->parent()->text(PropertyItem::Name) : item->text(PropertyItem::Name))
                 .arg(item->arrayIndex());
-        return QString("attribute:%1").arg(item->text(PropertyItem::Name));
+        return subsetScope + QString("attribute:%1").arg(item->text(PropertyItem::Name));
 
     case PropertyItem::ArrayChunk: {
         const QString parentName = item->parent() ? item->parent()->text(PropertyItem::Name) : QString();
-        return QString("chunk:%1:%2").arg(parentName).arg(item->chunkStart());
+        return subsetScope + QString("chunk:%1:%2").arg(parentName).arg(item->chunkStart());
     }
 
     case PropertyItem::ArrayElement: {
@@ -1724,15 +1740,15 @@ PropertyTreePrivate::itemKey(const PropertyItem* item) const
                     parentName = parentProperty->text(PropertyItem::Name);
             }
         }
-        return QString("element:%1:%2").arg(parentName).arg(item->arrayIndex());
+        return subsetScope + QString("element:%1:%2").arg(parentName).arg(item->arrayIndex());
     }
 
     case PropertyItem::Group:
     default: {
         const QString own = QString("group:%1").arg(item->text(PropertyItem::Name));
         if (auto* parent = dynamic_cast<PropertyItem*>(item->parent()))
-            return QString("%1/%2").arg(itemKey(parent), own);
-        return QString("root:%1").arg(own);
+            return subsetScope + QString("%1/%2").arg(itemKey(parent), own);
+        return subsetScope + QString("root:%1").arg(own);
     }
     }
 }
@@ -1855,8 +1871,44 @@ PropertyTreePrivate::restoreExpansionState()
             if (found != d.expansionState.constEnd()) {
                 const bool expanded = found.value();
 
-                if (expanded && item->kind() == PropertyItem::ArrayChunk)
+                if (expanded && item->kind() == PropertyItem::Group) {
+                    const QString name = item->text(PropertyItem::Name);
+                    const bool attributes = !item->parent() && name == QStringLiteral("Attributes")
+                                            && d.pendingMultiAttributes;
+                    const bool relationships = !item->parent() && name == QStringLiteral("Relationships")
+                                               && d.pendingMultiRelationships;
+                    const bool subsets = item->parent()
+                                         && item->parent()->text(PropertyItem::Name) == QStringLiteral("Attributes")
+                                         && name == QStringLiteral("subsets") && d.pendingGeometrySubsets;
+                    if (attributes || relationships || subsets) {
+                        QList<UsdPrim> prims;
+                        prims.reserve(d.paths.size());
+                        READ_LOCKER(locker, d.context ? d.context->stageLock() : session()->stageLock(), "stageLock");
+                        for (const SdfPath& path : d.paths) {
+                            const UsdPrim prim = d.stage->GetPrimAtPath(path.IsPropertyPath() ? path.GetPrimPath() : path);
+                            if (prim && prim.IsValid())
+                                prims.append(prim);
+                        }
+                        const QSignalBlocker blocker(d.tree.data());
+                        if (attributes) {
+                            d.pendingMultiAttributes = false;
+                            populateMultiAttributesSection(prims);
+                        }
+                        else if (relationships) {
+                            d.pendingMultiRelationships = false;
+                            populateMultiRelationshipsSection(prims);
+                        }
+                        else {
+                            d.pendingGeometrySubsets = false;
+                            populateGeometrySubsetsSection(prims);
+                        }
+                    }
+                }
+
+                if (expanded) {
+                    populateArrayAttribute(item);
                     populateChunk(item);
+                }
 
                 item->setExpanded(expanded);
             }
@@ -2556,7 +2608,15 @@ PropertyTreePrivate::populateMultiAttributesSection(const QList<UsdPrim>& prims)
             break;
         }
     }
+    PropertyItem* subsets = nullptr;
     if (section) {
+        for (int i = 0; i < section->childCount(); ++i) {
+            auto* child = dynamic_cast<PropertyItem*>(section->child(i));
+            if (child && child->text(PropertyItem::Name) == QStringLiteral("subsets")) {
+                subsets = dynamic_cast<PropertyItem*>(section->takeChild(i));
+                break;
+            }
+        }
         qDeleteAll(section->takeChildren());
         section->setText(PropertyItem::Value, QString::number(shared.size()));
     }
@@ -2608,7 +2668,7 @@ PropertyTreePrivate::populateMultiAttributesSection(const QList<UsdPrim>& prims)
 
         if (anyOverride) {
             toolTips.append(QStringLiteral("One or more edit-layer overrides"));
-            item->setIcon(PropertyItem::Name, QIcon(style()->icon(Style::Override, Style::UIScale::Small)));
+            item->setIcon(PropertyItem::Name, QIcon(ui()->icon(UI::Override, UI::UIScale::Small)));
             QFont nameFont = item->font(PropertyItem::Name);
             nameFont.setBold(true);
             item->setFont(PropertyItem::Name, nameFont);
@@ -2618,6 +2678,8 @@ PropertyTreePrivate::populateMultiAttributesSection(const QList<UsdPrim>& prims)
         item->setToolTip(PropertyItem::Value, mixed ? QStringLiteral("Selected prims have different composed values")
                                                     : QString::fromStdString(firstValue.GetTypeName()));
     }
+    if (subsets)
+        section->addChild(subsets);
 }
 
 
@@ -2667,8 +2729,104 @@ PropertyTreePrivate::addMultiAttributesSection(const QList<UsdPrim>& prims)
     PropertyItem* section = addSection("Attributes", QString::number(commonCount));
     addInfo(section, "Expand to inspect", "Values and mixed state resolved on demand");
     d.pendingMultiAttributes = true;
-    section->setExpanded(false);
-    d.expansionState[itemKey(section)] = false;
+    section->setExpanded(d.expansionState.value(itemKey(section), false));
+}
+
+void
+PropertyTreePrivate::addGeometrySubsetsSection(const QList<UsdPrim>& prims)
+{
+    if (prims.size() == 1) {
+        populateGeometrySubsetsSection(prims);
+        return;
+    }
+    PropertyItem* attributes = nullptr;
+    for (int i = 0; i < d.tree->topLevelItemCount(); ++i) {
+        auto* candidate = dynamic_cast<PropertyItem*>(d.tree->topLevelItem(i));
+        if (candidate && candidate->text(PropertyItem::Name) == QStringLiteral("Attributes")) {
+            attributes = candidate;
+            break;
+        }
+    }
+    if (!attributes)
+        return;
+    PropertyItem* section = addInfo(attributes, "subsets", "Expand to inspect");
+    addInfo(section, "Expand to inspect", "Subset indices and material bindings");
+    d.pendingGeometrySubsets = true;
+    section->setExpanded(d.expansionState.value(itemKey(section), false));
+}
+
+void
+PropertyTreePrivate::populateGeometrySubsetsSection(const QList<UsdPrim>& prims)
+{
+    PropertyItem* attributes = nullptr;
+    for (int i = 0; i < d.tree->topLevelItemCount(); ++i) {
+        auto* candidate = dynamic_cast<PropertyItem*>(d.tree->topLevelItem(i));
+        if (candidate && candidate->text(PropertyItem::Name) == QStringLiteral("Attributes")) {
+            attributes = candidate;
+            break;
+        }
+    }
+    PropertyItem* section = nullptr;
+    if (attributes) {
+        for (int i = 0; i < attributes->childCount(); ++i) {
+            auto* candidate = dynamic_cast<PropertyItem*>(attributes->child(i));
+            if (candidate && candidate->text(PropertyItem::Name) == QStringLiteral("subsets")) {
+                section = candidate;
+                qDeleteAll(section->takeChildren());
+                break;
+            }
+        }
+    }
+    size_t total = 0;
+    for (const UsdPrim& prim : prims) {
+        QList<UsdGeomSubset> subsets;
+        for (const UsdPrim& child : prim.GetFilteredChildren(UsdTraverseInstanceProxies(UsdPrimAllPrimsPredicate))) {
+            const UsdGeomSubset subset(child);
+            if (subset)
+                subsets.append(subset);
+        }
+        if (subsets.isEmpty())
+            continue;
+        if (!section) {
+            if (!attributes)
+                continue;
+            section = addInfo(attributes, "subsets", QString());
+        }
+        total += subsets.size();
+        PropertyItem* parent = section;
+        if (prims.size() > 1)
+            parent = addInfo(section, qt::SdfPathToQString(prim.GetPath()), QString::number(subsets.size()));
+        for (const UsdGeomSubset& subset : subsets) {
+            const UsdPrim subsetPrim = subset.GetPrim();
+            PropertyItem* group = addInfo(parent, qt::StringToQString(subsetPrim.GetName().GetString()), QString(),
+                                           qt::SdfPathToQString(subset.GetPath()));
+            group->setData(PropertyItem::Name, GeometrySubsetPathRole, qt::SdfPathToQString(subset.GetPath()));
+            group->setValuePath(subset.GetPath());
+            addAttribute(group, subset.GetElementTypeAttr());
+            addAttribute(group, subset.GetFamilyNameAttr());
+            addAttribute(group, subset.GetIndicesAttr());
+
+            UsdRelationship binding;
+            const UsdShadeMaterial material = UsdShadeMaterialBindingAPI(subsetPrim).ComputeBoundMaterial(
+                UsdShadeTokens->allPurpose, &binding);
+            group->setText(PropertyItem::Value, material ? qt::SdfPathToQString(material.GetPath())
+                                                        : QStringLiteral("<unbound>"));
+            PropertyItem* materialItem = material
+                ? addPathInfo(group, "material:binding", material.GetPath())
+                : addInfo(group, "material:binding", "<unbound>");
+            if (binding) {
+                materialItem->setToolTip(PropertyItem::Value, qt::SdfPathToQString(binding.GetPath()));
+                // Only a local subset binding belongs to this property group.
+                // Inherited bindings are displayed without a reset action here.
+                if (binding.GetPrim() == subsetPrim)
+                    materialItem->setPropertyPath(binding.GetPath());
+            }
+        }
+    }
+    if (section) {
+        section->setText(PropertyItem::Value, QStringLiteral("%1 values").arg(static_cast<qulonglong>(total)));
+        section->setExpanded(d.expansionState.value(itemKey(section), false));
+    }
 }
 
 void
@@ -2717,7 +2875,7 @@ PropertyTreePrivate::addRelationshipsSection(const UsdPrim& prim)
 
         if (editLayerOverride) {
             toolTips.append(QStringLiteral("Edit-layer override"));
-            item->setIcon(PropertyItem::Name, QIcon(style()->icon(Style::Override, Style::UIScale::Small)));
+            item->setIcon(PropertyItem::Name, QIcon(ui()->icon(UI::Override, UI::UIScale::Small)));
 
             QFont nameFont = item->font(PropertyItem::Name);
             nameFont.setBold(true);
@@ -2872,7 +3030,7 @@ PropertyTreePrivate::populateMultiRelationshipsSection(const QList<UsdPrim>& pri
             toolTips.append(allEditLayerOpinions ? QStringLiteral("Edit-layer opinions on all selected prims")
                                                  : QStringLiteral("Edit-layer opinion on some selected prims"));
 
-            item->setIcon(PropertyItem::Name, QIcon(style()->icon(Style::Override, Style::UIScale::Small)));
+            item->setIcon(PropertyItem::Name, QIcon(ui()->icon(UI::Override, UI::UIScale::Small)));
 
             QFont nameFont = item->font(PropertyItem::Name);
             nameFont.setBold(true);
@@ -2930,8 +3088,7 @@ PropertyTreePrivate::addMultiRelationshipsSection(const QList<UsdPrim>& prims)
     PropertyItem* section = addSection("Relationships", QString::number(common.size()));
     addInfo(section, "Expand to inspect", "Targets and mixed state resolved on demand");
     d.pendingMultiRelationships = true;
-    section->setExpanded(false);
-    d.expansionState[itemKey(section)] = false;
+    section->setExpanded(d.expansionState.value(itemKey(section), false));
 }
 
 void
@@ -3054,6 +3211,8 @@ void
 PropertyTreePrivate::addArrayElements(PropertyItem* parent, const SdfPath& propertyPath, const VtValue& value,
                                       int start, int count)
 {
+    const UsdPrim prim = d.stage ? d.stage->GetPrimAtPath(propertyPath.GetPrimPath()) : UsdPrim();
+    const bool editable = prim && !prim.IsInstanceProxy();
     const int end = start + count;
     for (int index = start; index < end; ++index) {
         QString text;
@@ -3066,9 +3225,9 @@ PropertyTreePrivate::addArrayElements(PropertyItem* parent, const SdfPath& prope
         child->setArrayIndex(index);
         child->setText(PropertyItem::Name, QString("[%1]").arg(index));
         child->setText(PropertyItem::Value, text);
-        child->setValueEditable(true);
-        child->setEditor(PropertyItem::TextEditor);
-        setReadOnlyValueStyle(child, false);
+        child->setValueEditable(editable);
+        child->setEditor(editable ? PropertyItem::TextEditor : PropertyItem::NoEditor);
+        setReadOnlyValueStyle(child, !editable);
 
         VtValue elementValue;
         if (arrayElementValue(value, index, elementValue) && !elementValue.IsEmpty())
@@ -3104,7 +3263,7 @@ PropertyTreePrivate::addAttribute(PropertyItem* parent, const UsdAttribute& attr
 
     if (rootOverride) {
         toolTips.append(QStringLiteral("Edit-layer override"));
-        item->setIcon(PropertyItem::Name, QIcon(style()->icon(Style::Override, Style::UIScale::Small)));
+        item->setIcon(PropertyItem::Name, QIcon(ui()->icon(UI::Override, UI::UIScale::Small)));
         QFont nameFont = item->font(PropertyItem::Name);
         nameFont.setBold(true);
         item->setFont(PropertyItem::Name, nameFont);
@@ -3212,7 +3371,7 @@ PropertyTreePrivate::addAttribute(PropertyItem* parent, const UsdAttribute& attr
         valueToolTip += QStringLiteral("\nEdit-layer override");
     item->setToolTip(PropertyItem::Value, valueToolTip);
 
-    const bool editable = scalarEditable(value);
+    const bool editable = !prim.IsInstanceProxy() && scalarEditable(value);
     item->setValueEditable(editable);
     configureEditor(item, attr, value);
     setReadOnlyValueStyle(item, !editable);
@@ -3239,39 +3398,18 @@ PropertyTreePrivate::updateSelection(const QList<SdfPath>& paths)
 
     const bool sameSelection = !d.paths.isEmpty() && !paths.isEmpty()
                                && normalizedPrimPaths(d.paths) == normalizedPrimPaths(paths);
-    const bool selectionChanged = !sameSelection;
     const TreeState treeState = sameSelection ? captureTreeState() : TreeState();
 
-    // Expansion state is shared across prims so category/group rows such as
-    // Attributes, Metadata and Relationships can stay open while browsing.
-    // Value-bearing rows are different: carrying an expanded attribute, array
-    // chunk, matrix/vector row, etc. to a newly selected prim both looks odd
-    // and may immediately trigger lazy value population. Collapse those rows
-    // whenever the semantic selection changes, while preserving Group state.
-    if (selectionChanged && d.tree) {
-        std::function<void(QTreeWidgetItem*)> collapseValueRows = [&](QTreeWidgetItem* parent) {
-            if (!parent)
-                return;
-
-            for (int i = 0; i < parent->childCount(); ++i) {
-                QTreeWidgetItem* child = parent->child(i);
-                auto* item = dynamic_cast<PropertyItem*>(child);
-
-                if (item && item->kind() != PropertyItem::Group)
-                    d.expansionState[itemKey(item)] = false;
-
-                collapseValueRows(child);
-            }
-        };
-
-        collapseValueRows(d.tree->invisibleRootItem());
-    }
+    // Expansion state is shared across selections, including expanded
+    // attribute and array rows. Lazy values are repopulated for the new prim
+    // when their saved expansion state is restored below.
 
     QSignalBlocker blocker(d.tree.data());
     d.update = true;
     d.tree->clear();
     d.pendingMultiAttributes = false;
     d.pendingMultiRelationships = false;
+    d.pendingGeometrySubsets = false;
     d.paths = paths;
     d.path = paths.size() == 1 ? paths.first() : SdfPath();
 
@@ -3301,17 +3439,26 @@ PropertyTreePrivate::updateSelection(const QList<SdfPath>& paths)
                 addCompositionSection(prim);
                 addMetadataSection(prim);
                 addAttributesSection(prim);
+                addGeometrySubsetsSection(prims);
                 addRelationshipsSection(prim);
             }
             else if (!prims.isEmpty()) {
                 addMultiPrimSection(prims);
                 addMultiAttributesSection(prims);
+                addGeometrySubsetsSection(prims);
                 addMultiRelationshipsSection(prims);
+            }
+            // Keep an already-inspected multi-selection live across descendant
+            // notices without eagerly resolving subsets for a new selection.
+            if (d.pendingGeometrySubsets
+                && treeState.expanded.value(QStringLiteral("root:group:Attributes/group:subsets"), false)) {
+                d.pendingGeometrySubsets = false;
+                populateGeometrySubsetsSection(prims);
             }
         }
 
         restoreExpansionState();
-        if (d.pendingMultiAttributes || d.pendingMultiRelationships) {
+        if (d.pendingMultiAttributes || d.pendingMultiRelationships || d.pendingGeometrySubsets) {
             for (int i = 0; i < d.tree->topLevelItemCount(); ++i) {
                 auto* section = dynamic_cast<PropertyItem*>(d.tree->topLevelItem(i));
                 if (!section)
@@ -3469,7 +3616,9 @@ PropertyTreePrivate::itemExpanded(QTreeWidgetItem* baseItem)
     const bool attributes = !item->parent() && sectionName == QStringLiteral("Attributes") && d.pendingMultiAttributes;
     const bool relationships = !item->parent() && sectionName == QStringLiteral("Relationships")
                                && d.pendingMultiRelationships;
-    if (attributes || relationships) {
+    const bool subsets = item->parent() && item->parent()->text(PropertyItem::Name) == QStringLiteral("Attributes")
+                         && sectionName == QStringLiteral("subsets") && d.pendingGeometrySubsets;
+    if (attributes || relationships || subsets) {
         QList<UsdPrim> prims;
         prims.reserve(d.paths.size());
         READ_LOCKER(locker, d.context ? d.context->stageLock() : session()->stageLock(), "stageLock");
@@ -3485,9 +3634,13 @@ PropertyTreePrivate::itemExpanded(QTreeWidgetItem* baseItem)
             d.pendingMultiAttributes = false;
             populateMultiAttributesSection(prims);
         }
-        else {
+        else if (relationships) {
             d.pendingMultiRelationships = false;
             populateMultiRelationshipsSection(prims);
+        }
+        else {
+            d.pendingGeometrySubsets = false;
+            populateGeometrySubsetsSection(prims);
         }
         d.update = previousUpdate;
         return;
@@ -3693,7 +3846,12 @@ PropertyTreePrivate::itemChanged(QTreeWidgetItem* baseItem, int column)
         return;
     }
 
-    item->setMixedValue(false);
+    {
+        // Updating presentation roles must not re-enter itemChanged and enqueue
+        // the same edit twice; one undo should restore the previous value.
+        const QSignalBlocker blocker(d.tree.data());
+        item->setMixedValue(false);
+    }
     session()->commandStack()->execute(new Command(setAttributeValues(propertyPaths, updated)));
 }
 

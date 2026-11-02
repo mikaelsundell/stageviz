@@ -46,10 +46,7 @@ struct SceneIdSettings {
 };
 
 /**
- * @brief Face elements selected through a UsdGeomSubset.
- *
- * The mesh path resolves to a Storm HdRprim ID while elementIds are the
- * authored mesh face indices carried by the scene elementId AOV.
+ * @brief Identifies a picked drawable, instance, and geometry element.
  */
 struct GpuPickResult {
     SdfPath path;
@@ -57,18 +54,6 @@ struct GpuPickResult {
     int32_t instanceId = -1;
     int32_t elementId = -1;
     float depth = 1.0f;
-};
-
-struct SelectionSubsetSettings {
-    SdfPath meshPath;
-    std::vector<int32_t> elementIds;
-
-    bool operator==(const SelectionSubsetSettings& other) const
-    {
-        return meshPath == other.meshPath && elementIds == other.elementIds;
-    }
-
-    bool operator!=(const SelectionSubsetSettings& other) const { return !(*this == other); }
 };
 
 struct SelectionProxyTarget {
@@ -101,10 +86,8 @@ struct HydraSelectionRprim {
 /**
  * @brief Settings for the screen-space selection outline.
  *
- * Ordinary selected USD paths are resolved to Storm HdRprim IDs. Face
- * GeomSubsets are resolved to mesh-rprim/element-id pairs. The outline shader
- * tests the shared primId + elementId images against compact GPU lookup
- * textures, so subset selection does not require a second geometry pass.
+ * Selected scene paths are resolved to Storm drawable and instance IDs.
+ * Geometry subsets remain material-binding data on their owning geometry.
  */
 struct SelectionOutlineSettings {
     bool enabled = false;
@@ -117,7 +100,6 @@ struct SelectionOutlineSettings {
     std::vector<HydraSelectionRprim> hydraRprims;
     bool hydraMappingResolved = false;
     std::vector<SelectionProxyTarget> proxyTargets;
-    std::vector<SelectionSubsetSettings> subsets;
     GfVec4f color = GfVec4f(1.0f, 0.82f, 0.0f, 1.0f);
     unsigned int radius = 3;
 };

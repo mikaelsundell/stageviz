@@ -4,11 +4,12 @@ This reference describes the Stageviz CPython bindings, with the coverage audit 
 
 ## Binding audit additions
 
-- `Application.session()` and `Application.style()` return the corresponding wrappers.
+- `Application.session()` and `Application.ui()` return the corresponding wrappers.
+- `stageviz.ui()` returns the application UI wrapper; the embedded interpreter also injects `ui` as a convenience global.
 - `stageviz.startMcpServer()`, `stageviz.stopMcpServer()`, and `stageviz.isMcpServerRunning()` control the local MCP server.
 - `ViewCamera.frame(bbox)` frames a bounding box represented as `((min_x, min_y, min_z), (max_x, max_y, max_z))`.
 - `stageviz.command.can_clear()` reports whether command history can be cleared.
-- `stageviz.command.set_transforms(paths, before, after)` applies undoable world transforms. All three sequences must have equal lengths; each matrix is a sequence of four rows of four numbers. The native optional `TransformRootState` snapshots are not accepted.
+- `stageviz.command.set_transforms(paths, before, after)` applies undoable world transforms. All three sequences must have equal lengths; each matrix is a sequence of four rows of four numbers. Each matrix pair defines a world delta (`inverse(before) * after`). The shared transform operation resolves subsets to owning geometry, proxy children to instance roots, and shared source geometry to reference roots before authoring. Inputs resolving to one object must agree on their delta; conflicting inputs are rejected before writes. Unselected instances inheriting a selected source transform remain fixed. Session retains its exact selection paths. Undo/redo reuse the captured targets and original edit-layer opinions. Native `XformState` snapshots are captured internally and are not Python arguments.
 - New module constants: `NotifySuccess` (same value as `NotifyInfo`), `ProjectionFieldOfView`, `ProjectionPhysical`, `RenderShaded`, `RenderWireframe`, `ComplexityLow`, `ComplexityMedium`, `ComplexityHigh`, `ComplexityVeryHigh`, `MaterialAll`, `MaterialClay`, `MaterialOverride`, `SidednessPrimitive`, `SidednessDoubleSided`, and `SidednessSingleSided`. Material and sidedness constants describe `ViewState`, not `RenderEngine`'s distinct native enums.
 
 ## Contents
@@ -21,7 +22,7 @@ This reference describes the Stageviz CPython bindings, with the coverage audit 
 - [stageviz.command](#stagevizcommand)
 - [stageviz.ViewState](#stagevizviewstate)
 - [stageviz.ViewCamera](#stagevizviewcamera)
-- [stageviz.Style](#stagevizstyle)
+- [stageviz.UI](#stagevizui)
 - [stageviz.RenderEngine](#stagevizrenderengine)
 - [Important behavioral notes](#important-behavioral-notes)
 
@@ -31,7 +32,7 @@ This reference describes the Stageviz CPython bindings, with the coverage audit 
 
 - `stageviz.command`: snake_case functions.
 - Other `stageviz` module functions use camelCase names.
-- `Application`, `Session`, `SelectionList`, `ViewState`, `ViewCamera`, `Style`: camelCase methods.
+- `Application`, `Session`, `SelectionList`, `ViewState`, `ViewCamera`, `UI`: camelCase methods.
 - `RenderEngine`: snake_case methods.
 
 ### Paths
@@ -653,23 +654,24 @@ Documented values:
 
 `reset() -> None`
 
-## stageviz.Style
+## stageviz.UI
 
 Construct with:
 
 ```python
-style = stageviz.Style()
+ui = stageviz.ui()
 ```
 
-The wrapper points to the application's native `Style` object and does not own it.
+The wrapper points to the application's native `UI` object and does not own it.
+`stageviz.UI()` and `stageviz.application().ui()` return the same application-owned subsystem.
 
 ### Enums
 
-The binding creates Python `IntEnum` classes and also exposes every member directly on `Style`, so both of these forms are valid:
+The binding creates Python `IntEnum` classes and also exposes every member directly on `UI`, so both of these forms are valid:
 
 ```python
-stageviz.Style.ColorRole.AxisX
-stageviz.Style.AxisX
+stageviz.UI.ColorRole.AxisX
+stageviz.UI.AxisX
 ```
 
 #### ColorRole members
@@ -690,7 +692,7 @@ stageviz.Style.AxisX
 
 ### Methods
 
-`color(role, state=Style.UIState.Normal) -> tuple[int, int, int, int]`
+`color(role, state=UI.UIState.Normal) -> tuple[int, int, int, int]`
 
 `setColor(role, r, g, b, a=255) -> None`
 
@@ -705,6 +707,16 @@ stageviz.Style.AxisX
 `iconSize(scale) -> int`
 
 `setIconSize(scale, size) -> None`
+
+`gizmoSize(scale) -> int`
+
+`setGizmoSize(scale, size) -> None`
+
+`transformMoveSnap() -> float` and `setTransformMoveSnap(value) -> None` use stage units.
+
+`transformRotateSnap() -> float` and `setTransformRotateSnap(value) -> None` use degrees.
+
+`transformScaleSnap() -> float` and `setTransformScaleSnap(value) -> None` use scale units.
 
 `styleSheet() -> str`
 : Return the unresolved application stylesheet template.
@@ -774,15 +786,11 @@ The wrapper owns a native offscreen `RenderEngine` and destroys it when the Pyth
 `render(filename) -> str`
 : Render the current stage offscreen, save the resulting `QImage`, and return the absolute output path. A stage must be set first.
 
-### Binding version notes
-
-The Style role lists above reflect `style.h` from the supplied C++ archive. The archived `pystyle.cpp` omits `GeomSubset`, `Move`, `Rotate`, and `Scale` from `IconRole` registration; these require the corrected binding file from the subsequent binding patch. This reference describes that corrected binding, not the original archived version.
-
 ## Important behavioral notes
 
 ### Commands versus direct mutation
 
-`stageviz.command` is explicitly connected to the native `CommandStack`, so use it for Stageviz edits that should be undoable. Direct mutations through `SelectionList`, `ViewState`, `ViewCamera`, `Style`, or normal `pxr` APIs do not automatically gain command-stack behavior from these bindings.
+`stageviz.command` is explicitly connected to the native `CommandStack`, so use it for Stageviz edits that should be undoable. Direct mutations through `SelectionList`, `ViewState`, `ViewCamera`, `UI`, or normal `pxr` APIs do not automatically gain command-stack behavior from these bindings.
 
 ### Edit layer
 

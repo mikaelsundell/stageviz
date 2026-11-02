@@ -8,7 +8,7 @@
 #include "outlinertree.h"
 #include "primitem.h"
 #include "signalguard.h"
-#include "style.h"
+#include "ui.h"
 #include "viewcontext.h"
 #include <QPointer>
 #include <QSignalBlocker>
@@ -77,10 +77,10 @@ OutlinerViewPrivate::init()
     outlinerTree()->setContext(d.context.data());
     outlinerTree()->installEventFilter(this);
 
-    d.ui->clear->setIcon(style()->icon(Style::IconRole::Clear));
-    d.ui->follow->setIcon(style()->icon(Style::IconRole::Select));
-    d.ui->collapse->setIcon(style()->icon(Style::IconRole::List));
-    d.ui->expand->setIcon(style()->icon(Style::IconRole::Nested));
+    d.ui->clear->setIcon(ui()->icon(UI::IconRole::Clear));
+    d.ui->follow->setIcon(ui()->icon(UI::IconRole::Select));
+    d.ui->collapse->setIcon(ui()->icon(UI::IconRole::List));
+    d.ui->expand->setIcon(ui()->icon(UI::IconRole::Nested));
     // connect
     connect(d.ui->filter, &QLineEdit::textChanged, this, &OutlinerViewPrivate::filterChanged);
     connect(d.ui->clear, &QToolButton::clicked, this, &OutlinerViewPrivate::clearFilter);

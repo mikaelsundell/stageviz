@@ -1202,7 +1202,6 @@ public:
     std::vector<HydraSelectionRprim> cachedSelectedHydraRprims;
     bool cachedHydraSelectionResolved = false;
     std::vector<SelectionProxyTarget> cachedSelectedProxyTargets;
-    std::vector<SelectionSubsetSettings> cachedSelectedSubsets;
     bool selectionCacheValid = false;
     uint64_t cachedSelectionMappingGeneration = 0;
     bool interactiveNavigation = false;
@@ -1589,22 +1588,17 @@ RenderEngine::Private::render()
         cachedSelectedPaths.clear();
         cachedSelectedPaths.reserve(selected.size());
         cachedSelectedProxyTargets.clear();
-        cachedSelectedSubsets.clear();
-        std::unordered_set<SdfPath, SdfPath::Hash> selectedSubsetMeshes;
+        std::unordered_set<SdfPath, SdfPath::Hash> viewportPaths;
+        viewportPaths.reserve(selected.size());
 
         for (const SdfPath& selectedPath : selected) {
             const SdfPath path = selectedPath.IsPropertyPath() ? selectedPath.GetPrimPath() : selectedPath;
             const UsdPrim prim = stage->GetPrimAtPath(path);
-            const UsdGeomSubset subset(prim);
-            // GeomSubsets are face groups in the USD hierarchy, not standalone
-            // Hydra drawables. For outliner selection, highlight the complete
-            // owning mesh while the selection model retains the subset path.
-            const UsdPrim parent = subset ? prim.GetParent() : UsdPrim();
-            const UsdPrim viewportPrim = parent ? parent : prim;
+            // Project subset selection only for drawing. The selection model
+            // retains the exact subset path for inspection and authoring.
+            const UsdPrim viewportPrim = prim && prim.IsA<UsdGeomSubset>() ? prim.GetParent() : prim;
             const SdfPath viewportPath = viewportPrim ? viewportPrim.GetPath() : path;
-            const bool newViewportPath = !viewportPath.IsEmpty()
-                                         && (!subset || selectedSubsetMeshes.insert(viewportPath).second);
-            if (!newViewportPath)
+            if (viewportPath.IsEmpty() || !viewportPaths.insert(viewportPath).second)
                 continue;
 
             if (viewportPrim && viewportPrim.IsInstanceProxy()) {
@@ -1631,7 +1625,6 @@ RenderEngine::Private::render()
         selectionCacheValid = true;
     }
     const auto& selectedPaths = cachedSelectedPaths;
-    const auto& selectedSubsets = cachedSelectedSubsets;
 
     SdfPathVector renderPaths;
     if (mask.isEmpty()) {
@@ -1651,7 +1644,7 @@ RenderEngine::Private::render()
     renderTaskParams.projectionMatrix = GfMatrix4f(projectionMatrix);
 
     renderTaskParams.selectionOutline.enabled = contextMode == ContextMode::Current
-                                                && (!selectedPaths.empty() || !selectedSubsets.empty())
+                                                && !selectedPaths.empty()
                                                 && settings.aov == HdAovTokens->color;
     {
         renderTaskParams.selectionOutline.paths = selectedPaths;
@@ -1659,7 +1652,6 @@ RenderEngine::Private::render()
         renderTaskParams.selectionOutline.hydraRprims = cachedSelectedHydraRprims;
         renderTaskParams.selectionOutline.hydraMappingResolved = cachedHydraSelectionResolved;
         renderTaskParams.selectionOutline.proxyTargets = cachedSelectedProxyTargets;
-        renderTaskParams.selectionOutline.subsets = selectedSubsets;
     }
     renderTaskParams.selectionOutline.color = qt::QColorToGfVec4f(selectionColor);
     renderTaskParams.selectionOutline.radius = 2;

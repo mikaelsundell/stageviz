@@ -14,7 +14,7 @@ namespace stageviz {
 class PythonInterpreter;
 class Console;
 class Session;
-class Style;
+class UI;
 class Settings;
 class McpServer;
 class ApplicationPrivate;
@@ -24,7 +24,7 @@ class ApplicationPrivate;
  * @brief Main application object for stageviz.
  *
  * Extends QApplication and provides access to global subsystems
- * used throughout the viewer such as settings and style.
+ * used throughout the viewer such as settings and UI.
  */
 class Application : public QApplication {
     Q_OBJECT
@@ -75,9 +75,9 @@ public:
     Settings* settings() const;
 
     /**
-     * @brief Returns the style subsystem.
+     * @brief Returns the UI subsystem.
      */
-    Style* style() const;
+    UI* ui() const;
 
     /**
      * @brief Returns the window subsystem.
@@ -163,13 +163,13 @@ session()
 }
 
 /**
- * @brief Returns the global style subsystem.
+ * @brief Returns the global UI subsystem.
  */
-inline Style*
-style()
+inline UI*
+ui()
 {
     auto* a = app();
-    return a ? a->style() : nullptr;
+    return a ? a->ui() : nullptr;
 }
 
 /**

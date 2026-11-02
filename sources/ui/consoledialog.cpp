@@ -5,7 +5,7 @@
 #include "consoledialog.h"
 #include "application.h"
 #include "console.h"
-#include "style.h"
+#include "ui.h"
 #include <QAbstractButton>
 #include <QApplication>
 #include <QEvent>
@@ -56,8 +56,8 @@ ConsoleDialogPrivate::init()
     d.ui->log->setMaximumBlockCount(Console::rowLimit);
     d.ui->log->setPlainText(console()->text());
     d.ui->log->setContextMenuPolicy(Qt::CustomContextMenu);
-    d.ui->previous->setIcon(style()->icon(Style::IconRole::Left));
-    d.ui->next->setIcon(style()->icon(Style::IconRole::Right));
+    d.ui->previous->setIcon(ui()->icon(UI::IconRole::Left));
+    d.ui->next->setIcon(ui()->icon(UI::IconRole::Right));
     d.dialog->installEventFilter(this);
     d.ui->log->installEventFilter(this);
     d.ui->find->installEventFilter(this);

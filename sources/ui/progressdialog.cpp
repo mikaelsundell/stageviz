@@ -7,7 +7,7 @@
 #include "qtutils.h"
 #include "selectionlist.h"
 #include "session.h"
-#include "style.h"
+#include "ui.h"
 #include <QAction>
 #include <QApplication>
 #include <QClipboard>
@@ -310,10 +310,10 @@ ProgressDialogPrivate::progressBlockChanged(const QString& name, Session::Progre
             delete child;
 
         const auto setStatusColor = [this](QTreeWidgetItem* item, Session::Notify::Status status) {
-            const Style::ColorRole role = status == Session::Notify::Status::Error     ? Style::ColorRole::Error
-                                          : status == Session::Notify::Status::Warning ? Style::ColorRole::Warning
-                                                                                       : Style::ColorRole::Progress;
-            const QBrush brush = status == Session::Notify::Status::Success ? QBrush() : QBrush(style()->color(role));
+            const UI::ColorRole role = status == Session::Notify::Status::Error     ? UI::ColorRole::Error
+                                          : status == Session::Notify::Status::Warning ? UI::ColorRole::Warning
+                                                                                       : UI::ColorRole::Progress;
+            const QBrush brush = status == Session::Notify::Status::Success ? QBrush() : QBrush(ui()->color(role));
             item->setBackground(0, brush);
             item->setBackground(1, brush);
         };
@@ -452,17 +452,17 @@ ProgressDialogPrivate::progressNotifyChanged(const Session::Notify& notify, size
     switch (notify.status) {
     case Session::Notify::Status::Error:
         d.errorCount += std::max(1, static_cast<int>(notify.paths.size()));
-        item->setBackground(0, style()->color(Style::ColorRole::Error));
-        item->setBackground(1, style()->color(Style::ColorRole::Error));
+        item->setBackground(0, ui()->color(UI::ColorRole::Error));
+        item->setBackground(1, ui()->color(UI::ColorRole::Error));
         break;
     case Session::Notify::Status::Warning:
         d.warningCount += std::max(1, static_cast<int>(notify.paths.size()));
-        item->setBackground(0, style()->color(Style::ColorRole::Warning));
-        item->setBackground(1, style()->color(Style::ColorRole::Warning));
+        item->setBackground(0, ui()->color(UI::ColorRole::Warning));
+        item->setBackground(1, ui()->color(UI::ColorRole::Warning));
         break;
     case Session::Notify::Status::Progress:
-        item->setBackground(0, style()->color(Style::ColorRole::Progress));
-        item->setBackground(1, style()->color(Style::ColorRole::Progress));
+        item->setBackground(0, ui()->color(UI::ColorRole::Progress));
+        item->setBackground(1, ui()->color(UI::ColorRole::Progress));
         break;
     case Session::Notify::Status::Success:
     default: break;

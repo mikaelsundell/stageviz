@@ -8,7 +8,7 @@
 #include "qtutils.h"
 #include "roles.h"
 #include "shelfwidget.h"
-#include "style.h"
+#include "ui.h"
 #include <QAbstractItemModel>
 #include <QAbstractScrollArea>
 #include <QApplication>
@@ -119,8 +119,8 @@ public:
 
             const int padding = 2;
             const QRect tileRect = opt.rect.adjusted(padding, padding, -padding, -padding);
-            const QColor fill = isPressed ? style()->color(Style::ColorRole::ButtonAlt)
-                                          : style()->color(Style::ColorRole::BaseAlt);
+            const QColor fill = isPressed ? ui()->color(UI::ColorRole::ButtonAlt)
+                                          : ui()->color(UI::ColorRole::BaseAlt);
 
             painter->fillRect(tileRect, fill);
             if (!icon.isNull()) {
@@ -185,7 +185,7 @@ ShelfListPrivate::init()
     d.list->setSizeAdjustPolicy(QAbstractScrollArea::AdjustIgnored);
     d.list->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
 
-    const int iconSize = stageviz::style()->iconSize(Style::UIScale::Medium);
+    const int iconSize = stageviz::ui()->iconSize(UI::UIScale::Medium);
     const int padding = 6;
     const int spacing = 3;
     const int tileSize = iconSize + padding * 2;
@@ -343,7 +343,7 @@ ShelfListPrivate::iconImage(const QImage& image) const
     if (image.isNull())
         return QImage();
 
-    const int iconSize = style()->iconSize(Style::UIScale::Medium);
+    const int iconSize = ui()->iconSize(UI::UIScale::Medium);
     const int tilePadding = 6;
     const int logicalSize = iconSize + tilePadding * 2;
 

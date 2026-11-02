@@ -1,6 +1,6 @@
 # Python binding coverage audit
 
-Scope: the seven types registered in `pymodule.cpp`, their corresponding C++ public interfaces, and the `stageviz.command` module. This is a static source review; no build, Python execution, or runtime tests were performed. Method presence does not establish full type or runtime parity.
+Scope: the types registered in `pymodule.cpp`, their corresponding C++ public interfaces, and the `stageviz.command` module. This audit compares declarations and binding registrations; method presence does not establish full type or runtime parity.
 
 ## Coverage after this audit
 
@@ -10,9 +10,9 @@ Scope: the seven types registered in `pymodule.cpp`, their corresponding C++ pub
 | SelectionList | All nine public operations/accessors are bound. | Paths use strings; Qt signals are not exposed. |
 | ViewState | All public operations/accessors are bound. | Colors and paths use Python tuples/strings; Qt signals are not exposed. Enum constants were added at module level. |
 | ViewCamera | All public operation names are bound after adding `frame()`. | Constructors wrap the current session camera instead of creating independent cameras. `camera()` returns an opaque capsule rather than `pxr.Gf.Camera`. Bounding-box tuples cannot preserve an oriented box's transform. Signals are not exposed. |
-| Style | Color, icon paths/sizes, fonts, stylesheet, color-space and refresh methods are bound. | `icon()` returning a QPixmap is missing. Python color-space conversion is narrower than arbitrary QColorSpace objects. Signals are not exposed. |
-| Application | Window, session and style accessors are bound; Python-specific `show()` and `invokeLater()` helpers also exist. | `console()`, `pythonInterpreter()`, `settings()` and static `instance()` have no corresponding methods. Construction and `stageviz.application()` provide access to the singleton. Signals and inherited QApplication APIs are not generally wrapped. |
-| Command factories | Every public factory has a Python entry point after adding `set_transforms()`. | TransformRootState snapshots are not accepted. Attribute values support only bool/int/float/string and numeric sequences of length 2–4, rather than all VtValue types. Commands execute immediately through the current session instead of returning Command objects. |
+| UI | Color, icon paths/sizes, gizmo sizes, fonts, transform snap increments, stylesheet, color-space and refresh methods are bound. | `icon()` returning a QPixmap is missing. Python color-space conversion is narrower than arbitrary QColorSpace objects. Signals are not exposed. |
+| Application | Window, session and UI accessors are bound; Python-specific `show()` and `invokeLater()` helpers also exist. | `console()`, `pythonInterpreter()`, `settings()` and static `instance()` have no corresponding methods. Construction and `stageviz.application()` provide access to the singleton. Signals and inherited QApplication APIs are not generally wrapped. |
+| Command factories | Every public factory has a Python entry point after adding `set_transforms()`. | XformState snapshots are captured internally and are not accepted as Python arguments. Attribute values support only bool/int/float/string and numeric sequences of length 2–4, rather than all VtValue types. Commands execute immediately through the current session instead of returning Command objects. |
 | CommandStack | Undo, redo, clear and all three availability queries are accessible through `stageviz.command`. | No CommandStack type or generic `run(Command*)` binding; no signals. |
 | RenderEngine | Offscreen construction, stage/size setters, camera-by-path, selected rendering settings, image-file rendering, AOV names and Hgi API name. | Substantial partial coverage; see below. |
 
@@ -36,9 +36,9 @@ The stage conversion bug was fixed: `set_stage()` now retains the supplied USD s
 
 The current `Session` C++ interface exposes `primsUpdate()` and `setPrimsUpdate()`, but not `flushPrimsUpdates()`. `Immediate = 0` and `Deferred = 1` are defined in `session.h`. Changing the policy back to `Immediate` flushes pending notices automatically in `session.cpp`. The Python binding exposes the two policy accessors and does not need a separate flush function. Large direct USD edit batches should restore the previous policy in `finally`; ordinary commands should rely on native Stageviz update handling.
 
-## Style enum registration
+## UI enum registration
 
-The supplied `style.h` declares 42 `IconRole` members and 28 `ColorRole` members. The original archived `pystyle.cpp` registers 38 icon roles and omits `GeomSubset`, `Move`, `Rotate`, `Scale`. The corrected `pystyle.cpp` from the binding patch must be used to expose those roles. This is a static comparison, not a runtime resource or icon-path test.
+The `pyui.cpp` binding registers the native `UI` enum members and the `UI` wrapper methods. This is a static source audit; it does not validate icon resources or runtime behavior.
 
 ## Compatibility and follow-up
 

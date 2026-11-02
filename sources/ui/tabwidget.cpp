@@ -4,7 +4,7 @@
 
 #include "tabwidget.h"
 #include "application.h"
-#include "style.h"
+#include "ui.h"
 #include <QPainter>
 #include <QPointer>
 #include <QStyle>
@@ -82,8 +82,8 @@ TabWidgetPrivate::drawPane(QPainter* painter) const
     if (!pane.isValid())
         return;
 
-    const QColor background = app()->style()->color(Style::ColorRole::Item);
-    const QColor border = app()->style()->color(Style::ColorRole::BorderAlt);
+    const QColor background = app()->ui()->color(UI::ColorRole::Item);
+    const QColor border = app()->ui()->color(UI::ColorRole::BorderAlt);
 
     painter->fillRect(pane, background);
     painter->setPen(border);

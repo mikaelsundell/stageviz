@@ -22,7 +22,7 @@ class RenderSceneIndexPrivate;
  * processing and before the render delegate.
  *
  * The filter does not create or own materials. Stageviz-owned materials live
- * on Session::auxiliary() and are presented to Hydra by ImagingGLWidget.
+ * on Session::auxiliary() and are presented to Hydra by ViewportWidget.
  * Auxiliary display geometry below /Display is always passed through
  * unchanged.
  *

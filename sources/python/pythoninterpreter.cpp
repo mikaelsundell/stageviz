@@ -173,7 +173,7 @@ PythonInterpreterPrivate::init()
     }
 
     if (!injectFactoryInstance(module, "application", "application")
-        || !injectFactoryInstance(module, "session", "session") || !injectFactoryInstance(module, "style", "style")) {
+        || !injectFactoryInstance(module, "session", "session") || !injectFactoryInstance(module, "ui", "ui")) {
         Py_DECREF(module);
         return;
     }

@@ -72,7 +72,7 @@
           <number>0</number>
          </property>
          <item>
-          <widget class="stageviz::ImagingGLWidget" name="imagingGLWidget"/>
+          <widget class="stageviz::ViewportWidget" name="imagingGLWidget"/>
          </item>
         </layout>
        </widget>
@@ -84,9 +84,9 @@
  </widget>
  <customwidgets>
   <customwidget>
-   <class>stageviz::ImagingGLWidget</class>
+   <class>stageviz::ViewportWidget</class>
    <extends>QOpenGLWidget</extends>
-   <header>imagingglwidget.h</header>
+   <header>viewportwidget.h</header>
   </customwidget>
  </customwidgets>
  <resources/>

@@ -10,7 +10,7 @@
 #include "qtutils.h"
 #include "session.h"
 #include "settings.h"
-#include "style.h"
+#include "ui.h"
 #include <QApplication>
 #include <QDir>
 #include <QFileOpenEvent>
@@ -34,7 +34,7 @@ public:
         QScopedPointer<Console> console;
         QScopedPointer<PythonInterpreter> pythonInterpreter;
         QScopedPointer<Session> session;
-        QScopedPointer<Style> style;
+        QScopedPointer<UI> ui;
         QScopedPointer<Settings> settings;
         QScopedPointer<McpServer> mcpServer;
     };
@@ -54,7 +54,7 @@ ApplicationPrivate::init()
 #endif
     d.session.reset(new Session());
     d.settings.reset(new Settings());
-    d.style.reset(new Style());
+    d.ui.reset(new UI());
     d.pythonInterpreter.reset(new PythonInterpreter());
     d.mcpServer.reset(new McpServer());
 #ifdef NDEBUG
@@ -139,10 +139,10 @@ Application::settings() const
     return p->d.settings.data();
 }
 
-Style*
-Application::style() const
+UI*
+Application::ui() const
 {
-    return p->d.style.data();
+    return p->d.ui.data();
 }
 
 QWidget*

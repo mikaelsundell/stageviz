@@ -8,7 +8,7 @@ initializes the embedded Python interpreter.
 
 Native CTest coverage includes stage/session persistence, namespace and
 composition edits, payload state, USD utilities, selection-list ordering and
-large-set semantics, command undo/redo, tree selection backends, styles,
+large-set semantics, command undo/redo, tree selection backends, UI settings,
 materials, geometry subsets, and RenderEngine initialization/image output.
 Coverage also includes repeated ASCII and Crate saves, failure recovery, Save As
 asset rebasing, namespace load rules, merge asset-path anchoring, and selected
@@ -17,8 +17,10 @@ export of session-layer opinions.
 The Python suites in `python/testapi.py` and `python/testui.py` run inside the
 Stageviz Python editor. They cover the embedded command API and live Outliner UI
 respectively; CTest cannot launch them because they require an initialized
-Stageviz application session. Run them manually from that editor after loading
-the expected Stageviz application environment.
+Stageviz application session. The UI suite also checks the `stageviz.UI`,
+`stageviz.ui()`, and `Application.ui()` bindings, including gizmo sizing and
+transform snap settings. Run the suites manually from that editor after
+loading the expected Stageviz application environment.
 
 The in-app API suite covers command selection, select-all/invert, isolation,
 selection lifecycle during edits, and now native instance proxy paths. The UI
@@ -27,14 +29,67 @@ two proxies sharing one prototype, preserving the selected proxy/root identity
 without selecting the source or sibling instance. CTest registers every case
 implemented by the native and GUI executables.
 
-Known boundary: the offscreen RenderEngine smoke test validates renderer setup
-and image production, but does not validate the viewport selection outline or
-mouse-driven click/sweep behavior. Those require a current on-screen GL context
-and interactive viewport. Add a deterministic GL viewport harness before
-treating those as covered by automated regressions.
+The offscreen RenderEngine smoke test validates renderer setup and image
+production. `python/testviewport.py` supplies an on-screen fixture for sweep
+selection and Move/Rotate/Scale center-handle gestures; it pairs USD/session
+assertions with screenshots and Qt snapshots. Axis-handle drags, snapping,
+and performance on large datasets are outside that test's coverage.
 
 Tests use temporary directories and do not modify project fixtures. Runtime
 dependency paths must be available as for a normal development build.
 
 On macOS, the application and test executable link `TBB::tbb` explicitly so
 Debug builds inherit TBB's debug compile definitions and runtime selection.
+
+The GUI case `viewport_components_api` covers viewport component boundaries:
+masked selection caching, Y/Z-up auxiliary grids, high-DPI camera axes, gizmo
+mode hit testing and visibility, auxiliary-stage resource replacement, and
+widget transform-mode forwarding. It checks that presentation changes leave
+the document stage untouched. `viewport_transform_pivot_api` checks that
+manipulation uses fresh selection bounds even when the shared session bounds
+cache still contains the previous transforms.
+
+`python/testviewport.py` runs against a disposable on-screen viewer. It sweeps
+multiple instance proxies, drags Move/Rotate/Scale center handles, verifies a
+shared world delta on the owning instances and their proxies, and checks undo
+and redo for each gesture. It captures viewer screenshots and plain Qt snapshots.
+By default the test refuses to replace a stage with unsaved work and restores
+the original file afterward. Set `_VIEWPORT_DISPOSABLE=True` only when launching
+it in a disposable process. External MCP controllers can call its setup, sweep, drag, and
+cleanup phases independently for read-only USD/session observations between
+steps; keep MCP calls outside the embedded interpreter.
+
+Geometry subsets remain exact USD paths in Session selection. They are also
+inspectable under their owning geometry's Attributes > subsets section.
+`geometry_subset_api` checks exact subset selection/undo/redo, object-action
+resolution for transforms, framing and isolation, and leaf traversal;
+`geometry_subset_gui_api` checks hidden Outliner rows, indices and material
+bindings in the Property Editor, single-step indices undo/redo, and read-only
+instance-proxy properties. It verifies that Outliner selection highlights the
+parent while Session and the PropertyTree retain the subset identity.
+`renderengine_api` compares subset and parent outlines and verifies that the
+outline is visible. `python/testsubsets.py` exercises ordinary and
+instanced geometry in a disposable live viewer, verifies face material colors,
+owner picking and sweep selection, exact subset API selection with projected
+Outliner/viewport display, binding undo/redo, and grouped properties
+for multiple owners. It captures viewer screenshots and Qt snapshots and
+supports the same external MCP checkpoint workflow as `testviewport.py`.
+
+`command_move_api` also covers selections containing an internal-reference
+source and its instance proxies. Source contents resolve to their reference
+root; unselected instance roots retain their original world transforms.
+Move, Rotate, Scale, exact layer restoration on undo, and redo are checked.
+`python/testsharedviewport.py` provides a disposable live sweep/gesture check
+for a saved dataset containing both ordinary source meshes and proxies.
+
+`transform_operation_api` exercises the shared object-action boundary used by
+Python matrix commands and interactive previews. It covers subset/proxy/source
+resolution, duplicate targets, preservation of unselected instances, repeated
+previews, Move/Rotate/Scale, exact undo/redo, and rejection before authoring for
+conflicting or invalid inputs. `transform_operation_applied_api` uses the real
+CommandStack to verify that Applied registers a preview without executing it
+again and that one undo restores its original opinions. The viewport pivot
+case also checks exact layer restoration after a no-motion drag.
+`python/testtransformoperation.py` compares Python set_transforms and real gizmo
+gestures on the same subset/source/proxy fixture in a disposable viewer, with
+selection assertions, independent MCP checkpoints, screenshots, and undo/redo.

@@ -53,7 +53,7 @@ class StyleSheetDialog(QtWidgets.QDialog):
         self.setWindowFlag(QtCore.Qt.WindowType.Tool, True)
         self.setAttribute(QtCore.Qt.WidgetAttribute.WA_DeleteOnClose, True)
 
-        self._style = stageviz.Style()
+        self._ui = stageviz.ui()
         self._loaded_stylesheet = ""
 
         layout = QtWidgets.QVBoxLayout(self)
@@ -132,7 +132,7 @@ class StyleSheetDialog(QtWidgets.QDialog):
         try:
             stylesheet = self.editor.toPlainText()
 
-            self._style.setStyleSheet(stylesheet)
+            self._ui.setStyleSheet(stylesheet)
             self._style.refresh()
 
             self._loaded_stylesheet = stylesheet

@@ -17,11 +17,11 @@ class QDropEvent;
 
 namespace stageviz {
 
-class ImagingGLWidgetPrivate;
+class ViewportWidgetPrivate;
 class ViewContext;
 
 /**
- * @class ImagingGLWidget
+ * @class ViewportWidget
  * @brief OpenGL-based viewport for rendering USD scenes.
  *
  * Provides a GPU accelerated rendering widget built on QOpenGLWidget.
@@ -33,20 +33,20 @@ class ViewContext;
  * reflect scene state and selection changes while routing edits through the
  * Stageviz command system.
  */
-class ImagingGLWidget : public QOpenGLWidget, protected QOpenGLFunctions {
+class ViewportWidget : public QOpenGLWidget, protected QOpenGLFunctions {
     Q_OBJECT
 public:
     /**
-     * @brief Constructs the OpenGL imaging widget.
+     * @brief Constructs the viewport widget.
      *
      * @param parent Optional parent widget.
      */
-    ImagingGLWidget(QWidget* parent = nullptr);
+    ViewportWidget(QWidget* parent = nullptr);
 
     /**
-     * @brief Destroys the ImagingGLWidget instance.
+     * @brief Destroys the ViewportWidget instance.
      */
-    virtual ~ImagingGLWidget();
+    virtual ~ViewportWidget();
 
     /**
      * @name Context
@@ -233,6 +233,7 @@ public:
 
     /**
      * @brief Sets the USD time code used to evaluate the viewport.
+     *
      * @param timeCode Stage time code to render.
      */
     void setTimeCode(double timeCode);
@@ -445,7 +446,7 @@ protected:
      */
 
 private:
-    QScopedPointer<ImagingGLWidgetPrivate> p;
+    QScopedPointer<ViewportWidgetPrivate> p;
 };
 
 }  // namespace stageviz

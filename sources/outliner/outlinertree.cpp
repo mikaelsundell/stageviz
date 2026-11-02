@@ -11,7 +11,7 @@
 #include "qtutils.h"
 #include "selectionlist.h"
 #include "signalguard.h"
-#include "style.h"
+#include "ui.h"
 #include "tracelocks.h"
 #include "usdutils.h"
 #include "viewcontext.h"
@@ -32,6 +32,7 @@
 #include <functional>
 #include <pxr/usd/sdf/primSpec.h>
 #include <pxr/usd/usd/prim.h>
+#include <pxr/usd/usdGeom/subset.h>
 #include <pxr/usd/usdGeom/tokens.h>
 
 PXR_NAMESPACE_USING_DIRECTIVE
@@ -185,7 +186,7 @@ OutlinerTreePrivate::init()
     attach(d.tree);
     attach(d.tree->selectionModel());
 
-    const int size = style()->iconSize(Style::UIScale::Small);
+    const int size = ui()->iconSize(UI::UIScale::Small);
     d.tree->setIconSize(QSize(size, size));
 
     d.tree->setDragEnabled(true);
@@ -655,12 +656,19 @@ OutlinerTreePrivate::reveal(const SdfPath& path)
     if (path.IsEmpty() || !d.tree)
         return;
 
-    PrimItem* item = itemFromPath(path);
+    SdfPath displayPath = path;
+    {
+        READ_LOCKER(locker, d.context->stageLock(), "stageLock");
+        const auto objects = stage::objectPaths(d.stage, { path });
+        if (!objects.isEmpty())
+            displayPath = objects.first();
+    }
+    PrimItem* item = itemFromPath(displayPath);
 
     // Payload mode deliberately omits payload descendants from the tree. In
     // that case reveal the nearest visible ancestor available in this view.
     if (!item && d.payloadEnabled) {
-        SdfPath ancestorPath = path.GetParentPath();
+        SdfPath ancestorPath = displayPath.GetParentPath();
         while (!ancestorPath.IsEmpty()) {
             item = itemFromPath(ancestorPath);
             if (item)
@@ -862,6 +870,10 @@ OutlinerTreePrivate::addItem(PrimItem* parent, const SdfPath& path)
         if (!stage)
             return nullptr;
 
+        const UsdPrim prim = stage->GetPrimAtPath(path);
+        if (!prim || prim.IsA<UsdGeomSubset>())
+            return nullptr;
+
         isPayload = stage::isPayload(stage, path);
         if (isPayload && d.payloadEnabled)
             isLoaded = stage->GetPrimAtPath(path).IsLoaded();
@@ -903,8 +915,10 @@ OutlinerTreePrivate::addChildren(PrimItem* parent, const SdfPath& path)
         if (!prim)
             return;
 
-        for (const UsdPrim& child : prim.GetFilteredChildren(UsdTraverseInstanceProxies(UsdPrimAllPrimsPredicate)))
-            childPaths.append(child.GetPath());
+        for (const UsdPrim& child : prim.GetFilteredChildren(UsdTraverseInstanceProxies(UsdPrimAllPrimsPredicate))) {
+            if (!child.IsA<UsdGeomSubset>())
+                childPaths.append(child.GetPath());
+        }
     }
 
     for (const SdfPath& childPath : childPaths)
@@ -1257,6 +1271,8 @@ OutlinerTreePrivate::syncDirectChildrenOnly(PrimItem* parentItem, const UsdPrim&
 
         for (const UsdPrim& childPrim :
              parentPrim.GetFilteredChildren(UsdTraverseInstanceProxies(UsdPrimAllPrimsPredicate))) {
+            if (childPrim.IsA<UsdGeomSubset>())
+                continue;
             const SdfPath childPath = childPrim.GetPath();
             ordered.append(childPath);
             stageSet.insert(qt::SdfPathToQString(childPath));
@@ -1950,7 +1966,7 @@ OutlinerTreePrivate::invalidatePrim(const SdfPath& path)
         prim = d.stage->GetPrimAtPath(primPath);
     }
 
-    if (!prim) {
+    if (!prim || prim.IsA<UsdGeomSubset>()) {
         PrimItem* parentItem = itemFromPath(parentPath);
 
         if (primItem)
@@ -2068,6 +2084,8 @@ OutlinerTreePrivate::invalidateChildren(PrimItem* parentItem, const UsdPrim& pri
         READ_LOCKER(locker, d.context->stageLock(), "stageLock");
         for (const UsdPrim& childPrim :
              prim.GetFilteredChildren(UsdTraverseInstanceProxies(UsdPrimAllPrimsPredicate))) {
+            if (childPrim.IsA<UsdGeomSubset>())
+                continue;
             const SdfPath childPath = childPrim.GetPath();
             const QString key = qt::StringToQString(childPath.GetString());
             ordered.append(childPath);
@@ -2280,8 +2298,13 @@ OutlinerTreePrivate::updateSelection(const QList<SdfPath>& paths)
     QSet<PrimItem*> targetItems;
     targetItems.reserve(paths.size());
 
+    QList<SdfPath> displayPaths;
     {
-        for (const SdfPath& path : paths) {
+        READ_LOCKER(locker, d.context->stageLock(), "stageLock");
+        displayPaths = stage::objectPaths(d.stage, paths);
+    }
+    {
+        for (const SdfPath& path : displayPaths) {
             if (path.IsEmpty())
                 continue;
 

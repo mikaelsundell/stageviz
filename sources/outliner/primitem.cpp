@@ -7,7 +7,7 @@
 #include "command.h"
 #include "indextree.h"
 #include "qtutils.h"
-#include "style.h"
+#include "ui.h"
 #include "usdutils.h"
 #include <QBrush>
 #include <QIcon>
@@ -151,7 +151,7 @@ PrimItem::data(int column, int role) const
     }
 
     if (role == Qt::ForegroundRole && p->d.visible && (p->d.isInstance || p->d.isInstanceProxy) && !selected) {
-        return QBrush(style()->color(Style::ColorRole::Readonly));
+        return QBrush(ui()->color(UI::ColorRole::Readonly));
     }
 
     if (column == Name) {
@@ -199,33 +199,31 @@ PrimItem::data(int column, int role) const
     }
 
     if (role == Qt::DecorationRole && column == Name) {
-        Style::IconRole iconRole = Style::IconRole::Prim;
+        UI::IconRole iconRole = UI::IconRole::Prim;
 
         if (p->d.typeName == "Material" || p->d.typeName == "Shader")
-            iconRole = Style::IconRole::Material;
-        else if (p->d.typeName == "GeomSubset")
-            iconRole = Style::IconRole::GeomSubset;
+            iconRole = UI::IconRole::Material;
         else if (p->d.isGprim)
-            iconRole = Style::IconRole::Geometry;
+            iconRole = UI::IconRole::Geometry;
 
         if (p->d.hasPayload)
-            iconRole = Style::IconRole::Payload;
+            iconRole = UI::IconRole::Payload;
 
         if (p->d.isInstance)
-            iconRole = Style::IconRole::Instance;
+            iconRole = UI::IconRole::Instance;
 
         if (p->d.isDefaultPrim)
-            iconRole = Style::IconRole::DefaultPrim;
+            iconRole = UI::IconRole::DefaultPrim;
 
-        return QIcon(style()->icon(iconRole, Style::UIScale::Medium));
+        return QIcon(ui()->icon(iconRole, UI::UIScale::Medium));
     }
 
     if (role == Qt::DecorationRole && column == Override) {
         if (p->d.hasDirectOverride)
-            return style()->icon(Style::IconRole::Override, Style::UIScale::Medium);
+            return ui()->icon(UI::IconRole::Override, UI::UIScale::Medium);
 
         if (p->d.hasDescendantOverride)
-            return style()->icon(Style::IconRole::Over, Style::UIScale::Medium);
+            return ui()->icon(UI::IconRole::Over, UI::UIScale::Medium);
 
         return QVariant();
     }
@@ -234,7 +232,7 @@ PrimItem::data(int column, int role) const
         if (!p->d.active || p->d.isRoot || !p->d.supportsVisibility)
             return QVariant();
 
-        return style()->icon(p->d.visible ? Style::IconRole::Visible : Style::IconRole::Hidden, Style::UIScale::Medium);
+        return ui()->icon(p->d.visible ? UI::IconRole::Visible : UI::IconRole::Hidden, UI::UIScale::Medium);
     }
 
     if (role == PrimItem::Path)

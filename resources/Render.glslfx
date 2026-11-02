@@ -271,7 +271,7 @@ main(void)
 // Stageviz renders scene primId + instanceId + elementId once with
 // HdCullStyleNothing. Whole-rprim selections use the primId mask; native USD
 // instance selections use sparse (primId, instanceId) pairs so other copies of
-// the same prototype are not outlined. Face subsets use primId + elementId.
+// the same prototype are not outlined. Geometry subsets remain material data.
 
 bool
 isSelectedPrimId(int primId)
@@ -327,41 +327,6 @@ isSelectedPrimInstance(int primId, int instanceId)
            && selectedInstancePairValue(low, 1) == instanceId;
 }
 
-int
-selectedSubsetRow(int primId)
-{
-    if (primId < 0 || primId >= uSelectedSubsetPrimMaskCapacity)
-        return -1;
-    if (uSelectedSubsetPrimMaskSize.x <= 0 || uSelectedSubsetPrimMaskSize.y <= 0)
-        return -1;
-
-    int x = primId % uSelectedSubsetPrimMaskSize.x;
-    int y = primId / uSelectedSubsetPrimMaskSize.x;
-    if (y >= uSelectedSubsetPrimMaskSize.y)
-        return -1;
-
-    // Zero means no selected subset for the prim; rows are stored as row+1.
-    return HgiTexelFetch_selectedSubsetPrimMaskIn(ivec2(x, y)).x - 1;
-}
-
-bool
-isSelectedSubsetElement(int primId, int elementId)
-{
-    int row = selectedSubsetRow(primId);
-    if (row < 0 || elementId < 0 || elementId >= uSelectedSubsetElementCapacity)
-        return false;
-    if (uSelectedSubsetElementMaskSize.x <= 0 || uSelectedSubsetElementMaskSize.y <= 0)
-        return false;
-
-    int flatIndex = row * uSelectedSubsetElementCapacity + elementId;
-    int x = flatIndex % uSelectedSubsetElementMaskSize.x;
-    int y = flatIndex / uSelectedSubsetElementMaskSize.x;
-    if (y >= uSelectedSubsetElementMaskSize.y)
-        return false;
-
-    return HgiTexelFetch_selectedSubsetElementMaskIn(ivec2(x, y)).x != 0;
-}
-
 bool
 visibleSelectedPixel(ivec2 location)
 {
@@ -370,11 +335,7 @@ visibleSelectedPixel(ivec2 location)
 
     int primId = HgiTexelFetch_scenePrimIdIn(location).x;
     int instanceId = HgiTexelFetch_sceneInstanceIdIn(location).x;
-    if (isSelectedPrimInstance(primId, instanceId))
-        return true;
-
-    int elementId = HgiTexelFetch_sceneElementIdIn(location).x;
-    return isSelectedSubsetElement(primId, elementId);
+    return isSelectedPrimInstance(primId, instanceId);
 }
 
 float

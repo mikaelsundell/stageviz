@@ -4,6 +4,7 @@
 
 #include "materialbrowser.h"
 #include "application.h"
+#include "primutils.h"
 #include "command.h"
 #include "commandstack.h"
 #include "materialitem.h"
@@ -11,7 +12,7 @@
 #include "mime.h"
 #include "selectionlist.h"
 #include "settings.h"
-#include "style.h"
+#include "ui.h"
 #include "tracelocks.h"
 #include <QAbstractItemView>
 #include <QAction>
@@ -279,8 +280,8 @@ MaterialBrowserPrivate::init()
     header->resizeSection(MaterialItem::Name, 180);
     header->resizeSection(MaterialItem::Type, 220);
 
-    d.ui->clear->setIcon(style()->icon(Style::IconRole::Clear));
-    d.ui->view->setIcon(style()->icon(Style::IconRole::List));
+    d.ui->clear->setIcon(ui()->icon(UI::IconRole::Clear));
+    d.ui->view->setIcon(ui()->icon(UI::IconRole::List));
     d.ui->view->setText(QString());
     d.ui->view->setContextMenuPolicy(Qt::CustomContextMenu);
 
@@ -900,7 +901,7 @@ QImage
 MaterialBrowserPrivate::placeholderImage() const
 {
     QImage image(d.swatchMaximum, d.swatchMaximum, QImage::Format_RGBA8888);
-    image.fill(style()->color(Style::ColorRole::Render));
+    image.fill(ui()->color(UI::ColorRole::Render));
     return image;
 }
 
@@ -1440,7 +1441,7 @@ MaterialBrowser::eventFilter(QObject* object, QEvent* event)
         // directly from MouseButtonPress leaves the matching release pending in
         // the native event queue. On macOS that release can be replayed to the
         // widget below the floating MaterialDialog when the menu closes, which
-        // makes ImagingGLWidget open its own context menu after choosing Assign.
+        // makes ViewportWidget open its own context menu after choosing Assign.
         //
         // Remember the context target on press, but do not enter the nested menu
         // event loop until the matching release has also been consumed. This also

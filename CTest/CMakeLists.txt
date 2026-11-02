@@ -92,6 +92,7 @@ foreach(case IN ITEMS
     command_material_variant_api
     command_composition_api
     command_move_api
+    transform_operation_api
     command_payload_api
 )
     add_test(NAME stageviz.${case} COMMAND $<TARGET_FILE:stageviz_regressions> ${case})
@@ -101,6 +102,14 @@ endforeach()
 # GUI/offscreen regressions use QApplication because Qt requires QWindow-backed
 # offscreen surfaces and OpenGL resources to be created on the GUI thread.
 add_executable(stageviz_gui_regressions gui_regression.cpp ${stageviz_test_absolute_sources})
+add_custom_command(TARGET stageviz_gui_regressions POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:stageviz_gui_regressions>/resources"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${PROJECT_SOURCE_DIR}/resources/Render.glslfx"
+        "${PROJECT_SOURCE_DIR}/resources/SceneId.glslfx"
+        "$<TARGET_FILE_DIR:stageviz_gui_regressions>/resources"
+    VERBATIM
+)
 target_include_directories(stageviz_gui_regressions PRIVATE
     "${PROJECT_SOURCE_DIR}/sources"
     "$<TARGET_PROPERTY:${project_name},INCLUDE_DIRECTORIES>"
@@ -116,11 +125,14 @@ set_target_properties(stageviz_gui_regressions PROPERTIES
 )
 
 foreach(case IN ITEMS
+    viewport_components_api
+    viewport_transform_pivot_api
+    transform_operation_applied_api
     settings_api
     treewidget_selection_api
     indextree_selection_api
     indextree_selection_modes_api
-    style_api
+    ui_api
     renderengine_api
     material_browser_api
     geometry_subset_gui_api

@@ -16,7 +16,7 @@
 #include "selectionlist.h"
 #include "session.h"
 #include "settings.h"
-#include "style.h"
+#include "ui.h"
 #include "tabwidget.h"
 #include "tracelocks.h"
 #include "usdutils.h"
@@ -171,13 +171,13 @@ MaterialDialogPrivate::GridGraphScene::drawBackground(QPainter* painter, const Q
     if (!painter)
         return;
 
-    painter->fillRect(rect, stageviz::style()->color(Style::ColorRole::Graph));
+    painter->fillRect(rect, stageviz::ui()->color(UI::ColorRole::Graph));
 
     constexpr qreal spacing = 24.0;
     const qreal left = std::floor(rect.left() / spacing) * spacing;
     const qreal top = std::floor(rect.top() / spacing) * spacing;
 
-    QColor grid = stageviz::style()->color(Style::ColorRole::Grid);
+    QColor grid = stageviz::ui()->color(UI::ColorRole::Grid);
     grid.setAlpha(72);
 
     QPen gridPen(grid, 1.0);
@@ -361,9 +361,9 @@ MaterialDialogPrivate::init()
 
     d.renderer = new MaterialRenderer(this);
 
-    d.ui->newMaterial->setIcon(style()->icon(Style::IconRole::New));
-    d.ui->load->setIcon(style()->icon(Style::IconRole::Open));
-    d.ui->select->setIcon(style()->icon(Style::IconRole::Select));
+    d.ui->newMaterial->setIcon(ui()->icon(UI::IconRole::New));
+    d.ui->load->setIcon(ui()->icon(UI::IconRole::Open));
+    d.ui->select->setIcon(ui()->icon(UI::IconRole::Select));
 
     d.ui->newMaterial->setText(QString());
     d.ui->load->setText(QString());
@@ -1202,7 +1202,7 @@ MaterialDialogPrivate::updateNodeHeader(const SdfPath& path, const QString& name
         title = QStringLiteral("Material");
 
     const QString typeText = type.isEmpty() ? shaderId : type;
-    const QColor textAlt = style()->color(Style::ColorRole::TextAlt);
+    const QColor textAlt = ui()->color(UI::ColorRole::TextAlt);
 
     d.ui->name->setText(QStringLiteral("<b>%1</b><br><span style='color:%2'>%3</span>")
                             .arg(title.toHtmlEscaped(), textAlt.name(QColor::HexRgb), typeText.toHtmlEscaped()));
@@ -1256,7 +1256,7 @@ MaterialDialogPrivate::updateSelection()
             const MaterialNodeInfo node = d.ui->tree->currentNodeInfo();
             d.previewNodeInfo = node.path == entry.shaderPath ? node : MaterialNodeInfo();
             const QString type = MaterialUtils::shaderTypeLabel(entry.shaderId);
-            const QColor textAlt = style()->color(Style::ColorRole::TextAlt);
+            const QColor textAlt = ui()->color(UI::ColorRole::TextAlt);
             const QString typeText = type.isEmpty() ? entry.shaderId : type;
 
             d.ui->name->setText(
@@ -1272,7 +1272,7 @@ MaterialDialogPrivate::updateSelection()
     else {
         d.previewNode = {};
         d.previewNodeInfo = {};
-        const QColor textAlt = style()->color(Style::ColorRole::TextAlt);
+        const QColor textAlt = ui()->color(UI::ColorRole::TextAlt);
 
         d.ui->name->setText(
             QStringLiteral("<b>%1 materials</b><br><span style='color:%2'>Common editable properties</span>")
@@ -1418,7 +1418,7 @@ MaterialDialogPrivate::imageNodePreview(const MaterialNodeInfo& node)
         return {};
 
     QImage result(canvasSize, QImage::Format_RGBA8888);
-    result.fill(style()->color(Style::ColorRole::Render));
+    result.fill(ui()->color(UI::ColorRole::Render));
 
     constexpr int margin = 16;
     const QSize available(std::max(1, canvasSize.width() - margin * 2), std::max(1, canvasSize.height() - margin * 2));

@@ -5,7 +5,7 @@
 #include "materialrenderer.h"
 #include "application.h"
 #include "renderengine.h"
-#include "style.h"
+#include "ui.h"
 #include <QApplication>
 #include <QColor>
 #include <QDir>
@@ -394,7 +394,7 @@ MaterialRendererPrivate::initializeContext(RenderContext& context, QString& erro
         return false;
 
     RenderEngine::Settings settings;
-    settings.clearColor = style()->color(Style::ColorRole::Render);
+    settings.clearColor = ui()->color(UI::ColorRole::Render);
     settings.sceneMaterialsEnabled = true;
     settings.sceneLightsEnabled = true;
     settings.defaultCameraLightEnabled = false;

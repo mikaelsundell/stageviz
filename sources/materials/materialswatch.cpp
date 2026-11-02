@@ -5,7 +5,7 @@
 #include "materialswatch.h"
 #include "application.h"
 #include "mime.h"
-#include "style.h"
+#include "ui.h"
 #include <QApplication>
 #include <QDrag>
 #include <QMimeData>
@@ -183,8 +183,8 @@ MaterialSwatch::paintEvent(QPaintEvent* event)
     QPainter painter(this);
     painter.setRenderHint(QPainter::SmoothPixmapTransform, true);
 
-    const QColor backgroundColor = stageviz::style()->color(Style::ColorRole::Render);
-    const QColor border = stageviz::style()->color(Style::ColorRole::BorderAlt);
+    const QColor backgroundColor = stageviz::ui()->color(UI::ColorRole::Render);
+    const QColor border = stageviz::ui()->color(UI::ColorRole::BorderAlt);
 
     painter.fillRect(rect(), backgroundColor);
 

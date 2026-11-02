@@ -5,7 +5,7 @@
 #include "treewidget.h"
 #include "application.h"
 #include "mime.h"
-#include "style.h"
+#include "ui.h"
 #include "treeitem.h"
 #include <QEvent>
 #include <QItemSelectionModel>
@@ -39,7 +39,7 @@ TreeWidget::ItemDelegate::layout(const QStyleOptionViewItem& option, const QMode
     const int rightMargin = 8;
     const int iconSpacing = 6;
     const int textSpacing = 8;
-    const int iconSize = stageviz::style()->iconSize(Style::UIScale::Small);
+    const int iconSize = stageviz::ui()->iconSize(UI::UIScale::Small);
     const int xOffset = 10;
     const int yOffset = 2;
 
@@ -140,23 +140,23 @@ TreeWidget::ItemDelegate::paint(QPainter* painter, const QStyleOptionViewItem& o
     opt.state &= ~QStyle::State_HasFocus;
 
     const Layout l = layout(option, index);
-    const int iconSize = stageviz::style()->iconSize(Style::UIScale::Small);
+    const int iconSize = stageviz::ui()->iconSize(UI::UIScale::Small);
 
     painter->save();
 
     if (index.column() == 0 && l.isCheckable) {
-        painter->setBrush(stageviz::style()->color(Style::ColorRole::BaseAlt));
-        painter->setPen(stageviz::style()->color(Style::ColorRole::BorderAlt));
+        painter->setBrush(stageviz::ui()->color(UI::ColorRole::BaseAlt));
+        painter->setPen(stageviz::ui()->color(UI::ColorRole::BorderAlt));
         painter->drawRect(l.checkRect.adjusted(0, 0, -1, -1));
 
         const Qt::CheckState state = static_cast<Qt::CheckState>(index.data(Qt::CheckStateRole).toInt());
 
         if (state == Qt::Checked) {
-            const QIcon checked = stageviz::style()->icon(Style::IconRole::Checked, Style::UIScale::Small);
+            const QIcon checked = stageviz::ui()->icon(UI::IconRole::Checked, UI::UIScale::Small);
             painter->drawPixmap(l.checkRect.topLeft(), checked.pixmap(iconSize, iconSize));
         }
         else if (state == Qt::PartiallyChecked) {
-            const QIcon partial = stageviz::style()->icon(Style::IconRole::PartiallyChecked, Style::UIScale::Small);
+            const QIcon partial = stageviz::ui()->icon(UI::IconRole::PartiallyChecked, UI::UIScale::Small);
             painter->drawPixmap(l.checkRect.topLeft(), partial.pixmap(iconSize, iconSize));
         }
     }
@@ -531,7 +531,7 @@ TreeWidgetPrivate::indexAtPosition(const QPoint& pos) const
 QRect
 TreeWidgetPrivate::branchRect(const QRect& rect, const QModelIndex& index) const
 {
-    const int size = style()->iconSize(Style::UIScale::Small);
+    const int size = ui()->iconSize(UI::UIScale::Small);
     const int x = 6 + indexDepth(index) * d.tree->indentation();
     const int y = rect.center().y() - size / 2 + 1;
     return QRect(x, y, size, size);
@@ -641,8 +641,8 @@ TreeWidgetPrivate::drawBranches(QPainter* painter, const QRect& rect, const QMod
     const QRect r = branchRect(vr, index);
     const QRect hr = branchHitRect(vr, index);
 
-    const QIcon icon = expanded ? app()->style()->icon(Style::IconRole::BranchOpen, Style::UIScale::Small)
-                                : app()->style()->icon(Style::IconRole::BranchClosed, Style::UIScale::Small);
+    const QIcon icon = expanded ? app()->ui()->icon(UI::IconRole::BranchOpen, UI::UIScale::Small)
+                                : app()->ui()->icon(UI::IconRole::BranchClosed, UI::UIScale::Small);
 
     icon.paint(painter, r, Qt::AlignCenter);
 
@@ -697,8 +697,8 @@ TreeWidgetPrivate::drawRow(QPainter* painter, const QStyleOptionViewItem& option
     QTreeWidgetItem* item = d.tree->itemFromIndex(index);
 
     const bool alternatingRow = visualRowIndex(index) % 2 == 1;
-    const QColor bg = alternatingRow ? app()->style()->color(Style::ColorRole::ItemAlt)
-                                     : app()->style()->color(Style::ColorRole::Item);
+    const QColor bg = alternatingRow ? app()->ui()->color(UI::ColorRole::ItemAlt)
+                                     : app()->ui()->color(UI::ColorRole::Item);
 
     const QBrush background = item ? item->background(0) : QBrush();
     if (background.style() != Qt::NoBrush && background.color().isValid())
@@ -709,10 +709,10 @@ TreeWidgetPrivate::drawRow(QPainter* painter, const QStyleOptionViewItem& option
     const bool selected = d.tree->isItemSelected(item);
 
     if (selected) {
-        painter->fillRect(rowRect, app()->style()->color(Style::ColorRole::Highlight));
+        painter->fillRect(rowRect, app()->ui()->color(UI::ColorRole::Highlight));
     }
     else if (item && d.tree->hasSelectedDescendants(item)) {
-        painter->fillRect(rowRect, app()->style()->color(Style::ColorRole::HighlightAlt));
+        painter->fillRect(rowRect, app()->ui()->color(UI::ColorRole::HighlightAlt));
     }
 
     const qulonglong dropItemPtr = d.tree->property(mime::dropItemPtrProperty).toULongLong();
@@ -721,7 +721,7 @@ TreeWidgetPrivate::drawRow(QPainter* painter, const QStyleOptionViewItem& option
     if (item && dropItemPtr != 0 && reinterpret_cast<qulonglong>(item) == dropItemPtr) {
         painter->save();
 
-        QPen pen(app()->style()->color(Style::ColorRole::Highlight));
+        QPen pen(app()->ui()->color(UI::ColorRole::Highlight));
         pen.setWidth(2);
 
         painter->setPen(pen);
@@ -754,11 +754,11 @@ TreeWidget::TreeWidget(QWidget* parent)
     setUniformRowHeights(true);
 
     QPalette treePalette = palette();
-    treePalette.setColor(QPalette::Base, app()->style()->color(Style::ColorRole::Item));
+    treePalette.setColor(QPalette::Base, app()->ui()->color(UI::ColorRole::Item));
     setPalette(treePalette);
 
     QPalette viewportPalette = viewport()->palette();
-    viewportPalette.setColor(QPalette::Base, app()->style()->color(Style::ColorRole::Item));
+    viewportPalette.setColor(QPalette::Base, app()->ui()->color(UI::ColorRole::Item));
     viewport()->setPalette(viewportPalette);
     viewport()->setAutoFillBackground(true);
 }

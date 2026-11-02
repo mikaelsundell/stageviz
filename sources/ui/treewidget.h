@@ -164,7 +164,7 @@ protected:
     /**
      * @brief Draws a custom row background and debug overlays.
      * @param painter Painter used for drawing.
-     * @param option Style option for the row.
+     * @param option UI option for the row.
      * @param index Row model index.
      */
     void drawRow(QPainter* painter, const QStyleOptionViewItem& option, const QModelIndex& index) const override;

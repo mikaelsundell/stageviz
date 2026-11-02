@@ -9,7 +9,7 @@
 #include "propertytree.h"
 #include "selectionlist.h"
 #include "session.h"
-#include "style.h"
+#include "ui.h"
 #include "viewcontext.h"
 #include <QHeaderView>
 #include <QPointer>
@@ -65,7 +65,7 @@ PropertyViewPrivate::init()
     d.ui->propertyTree->setColumnWidth(0, 200);
     d.ui->propertyTree->header()->setSectionResizeMode(1, QHeaderView::Stretch);
 
-    d.ui->clear->setIcon(style()->icon(Style::IconRole::Clear));
+    d.ui->clear->setIcon(ui()->icon(UI::IconRole::Clear));
 
     connect(d.ui->filter, &QLineEdit::textChanged, this, &PropertyViewPrivate::filterChanged);
     connect(d.ui->clear, &QToolButton::clicked, this, &PropertyViewPrivate::clearFilter);

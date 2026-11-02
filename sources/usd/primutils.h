@@ -45,6 +45,20 @@ namespace snapshot {
 
 namespace stage {
     /**
+     * @brief Resolves selected paths to object paths for presentation or object actions.
+     *
+     * Geometry subsets resolve to their owning geometry. Other paths are
+     * preserved, and duplicates are removed in input order. This projection
+     * does not modify USD data or stored selection.
+     *
+     * @param stage Stage containing the selected paths.
+     * @param paths Selected prim or property paths.
+     *
+     * @return Object paths; never use this projection to replace stored selection.
+     */
+    QList<SdfPath> objectPaths(UsdStageRefPtr stage, const QList<SdfPath>& paths);
+
+    /**
      * @brief Computes the combined world-space bounding box for prim paths.
      *
      * Evaluates each imageable prim and combines its world bound into one
@@ -78,6 +92,48 @@ namespace stage {
      * so the prim itself does not need to be authored strongest in that layer.
      */
     bool isTransformEditable(UsdStageRefPtr stage, const SdfPath& path);
+
+    /**
+     * @brief Resolves a selected prim to the prim that should receive a transform edit.
+     *
+     * Instance proxy prims resolve to their nearest transform-editable instance
+     * ancestor. Shared source contents resolve to their reference roots;
+     * other ordinary transformable prims resolve to themselves.
+     *
+     * @param stage Stage containing the prim.
+     * @param path Prim or property path selected by the user.
+     *
+     * @return Editable transform target, or an empty path when none exists.
+     */
+    SdfPath transformEditTargetPath(UsdStageRefPtr stage, const SdfPath& path);
+
+    /**
+     * @brief Resolves selected paths to unique transform targets.
+     *
+     * Proxy selections resolve to their owning instances, and shared source
+     * contents resolve to their reference roots. Duplicate targets
+     * are removed. Descendants covered by a selected ancestor are removed
+     * when minimalRoots is true.
+     *
+     * @param stage Stage containing the selected prims.
+     * @param paths Selected prim or property paths.
+     * @param minimalRoots Removes descendants covered by another target.
+     *
+     * @return Transform targets in selection order.
+     */
+    QList<SdfPath> transformEditTargetPaths(UsdStageRefPtr stage, const QList<SdfPath>& paths,
+                                           bool minimalRoots = true);
+
+    /**
+     * @brief Finds unselected instances whose root transforms need preservation
+     * when editing a selected internal reference source root.
+     *
+     * @param stage Stage containing the instances.
+     * @param targets Resolved transform targets.
+     *
+     * @return Instance roots to keep at their original world transforms.
+     */
+    QList<SdfPath> transformPreservationPaths(UsdStageRefPtr stage, const QList<SdfPath>& targets);
 
     /**
      * @brief Reads the composed world transform for a prim.

@@ -7,6 +7,7 @@
 #include "payloadutils.h"
 #include "qtutils.h"
 #include "usdutils.h"
+#include <QSet>
 #include <algorithm>
 #include <cmath>
 #include <functional>
@@ -24,6 +25,7 @@
 #include <pxr/usd/usd/primRange.h>
 #include <pxr/usd/usd/variantSets.h>
 #include <pxr/usd/usdGeom/gprim.h>
+#include <pxr/usd/usdGeom/subset.h>
 #include <pxr/usd/usdGeom/imageable.h>
 #include <pxr/usd/usdGeom/tokens.h>
 #include <pxr/usd/usdGeom/xform.h>
@@ -123,6 +125,25 @@ namespace snapshot {
 }  // namespace snapshot
 
 namespace stage {
+    QList<SdfPath> objectPaths(UsdStageRefPtr stage, const QList<SdfPath>& paths)
+    {
+        QList<SdfPath> result;
+        QSet<SdfPath> seen;
+        result.reserve(paths.size());
+        for (const SdfPath& path : paths) {
+            SdfPath target = path;
+            const SdfPath primPath = path.IsPropertyPath() ? path.GetPrimPath() : path;
+            const UsdPrim prim = stage ? stage->GetPrimAtPath(primPath) : UsdPrim();
+            if (prim && prim.IsA<UsdGeomSubset>())
+                target = prim.GetParent().GetPath();
+            if (!seen.contains(target)) {
+                seen.insert(target);
+                result.append(target);
+            }
+        }
+        return result;
+    }
+
 
     namespace {
 
@@ -292,12 +313,119 @@ namespace stage {
 
         const UsdPrim prim = stage->GetPrimAtPath(path);
 
-        if (!prim || !prim.IsValid() || prim.IsInstanceProxy() || !UsdGeomXformable(prim))
+        if (!prim || !prim.IsValid() || prim.IsInstanceProxy() || prim.IsInPrototype() || !UsdGeomXformable(prim))
             return false;
 
         // Transform editing is a property override, not a namespace edit.
         // Composed prims may therefore receive a stronger edit-target opinion.
         return bool(stage->GetEditTarget().GetLayer());
+    }
+
+    static SdfPath transformProxyTargetPath(UsdStageRefPtr stage, const SdfPath& path)
+    {
+        if (!stage || path.IsEmpty())
+            return {};
+
+        const SdfPath primPath = path.IsPropertyPath() ? path.GetPrimPath() : path;
+        const UsdPrim prim = stage->GetPrimAtPath(primPath);
+        if (!prim || !prim.IsValid())
+            return {};
+
+        if (!prim.IsInstanceProxy())
+            return isTransformEditable(stage, primPath) ? primPath : SdfPath();
+
+        for (SdfPath ancestorPath = primPath.GetParentPath(); !ancestorPath.IsEmpty()
+                                                              && ancestorPath != SdfPath::AbsoluteRootPath();
+             ancestorPath = ancestorPath.GetParentPath()) {
+            const UsdPrim ancestor = stage->GetPrimAtPath(ancestorPath);
+            if (ancestor && ancestor.IsInstance() && isTransformEditable(stage, ancestorPath))
+                return ancestorPath;
+        }
+
+        return {};
+    }
+
+    // Internal references can expose the same source as both ordinary geometry
+    // and instance proxies. Transform the reference root, not its shared contents.
+    static QList<QPair<SdfPath, SdfPath>> transformInstanceSources(UsdStageRefPtr stage)
+    {
+        QList<QPair<SdfPath, SdfPath>> sources;
+        if (!stage)
+            return sources;
+        const SdfLayerHandleVector layers = stage->GetLayerStack();
+        for (const UsdPrim& prim : stage->Traverse()) {
+            if (!prim.IsInstance())
+                continue;
+            for (const SdfPrimSpecHandle& spec : prim.GetPrimStack()) {
+                if (spec->GetPath() == prim.GetPath()
+                    || std::find(layers.begin(), layers.end(), spec->GetLayer()) == layers.end())
+                    continue;
+                if (isTransformEditable(stage, spec->GetPath()))
+                    sources.append(qMakePair(spec->GetPath(), prim.GetPath()));
+            }
+        }
+        return sources;
+    }
+
+    SdfPath transformEditTargetPath(UsdStageRefPtr stage, const SdfPath& path)
+    {
+        const QList<SdfPath> targets = transformEditTargetPaths(stage, { path });
+        return targets.isEmpty() ? SdfPath() : targets.first();
+    }
+
+    QList<SdfPath> transformEditTargetPaths(UsdStageRefPtr stage, const QList<SdfPath>& paths, bool minimalRoots)
+    {
+        QList<SdfPath> targets;
+        targets.reserve(paths.size());
+
+        const auto sources = transformInstanceSources(stage);
+        for (const SdfPath& path : objectPaths(stage, paths)) {
+            SdfPath targetPath = transformProxyTargetPath(stage, path);
+            for (const auto& source : sources) {
+                if (targetPath.HasPrefix(source.first))
+                    targetPath = source.first;
+            }
+            if (targetPath.IsEmpty() || targets.contains(targetPath))
+                continue;
+
+            if (!minimalRoots) {
+                targets.append(targetPath);
+                continue;
+            }
+
+            bool coveredByAncestor = false;
+            for (const SdfPath& existingPath : targets) {
+                if (targetPath.HasPrefix(existingPath)) {
+                    coveredByAncestor = true;
+                    break;
+                }
+            }
+            if (coveredByAncestor)
+                continue;
+
+            for (qsizetype i = targets.size() - 1; i >= 0; --i) {
+                if (targets.at(i).HasPrefix(targetPath))
+                    targets.removeAt(i);
+            }
+            targets.append(targetPath);
+        }
+
+        return targets;
+    }
+
+    QList<SdfPath> transformPreservationPaths(UsdStageRefPtr stage, const QList<SdfPath>& targets)
+    {
+        QList<SdfPath> preserved;
+        for (const auto& source : transformInstanceSources(stage)) {
+            if (!targets.contains(source.first))
+                continue;
+            bool selected = false;
+            for (const SdfPath& target : targets)
+                selected = selected || source.second.HasPrefix(target);
+            if (!selected && !preserved.contains(source.second))
+                preserved.append(source.second);
+        }
+        return preserved;
     }
 
     bool worldTransform(UsdStageRefPtr stage, const SdfPath& path, GfMatrix4d& matrix, QString& error)
@@ -470,6 +598,11 @@ namespace stage {
         const UsdPrim prim = stage->GetPrimAtPath(path);
         if (!prim || !prim.IsValid()) {
             error = QString("prim missing: %1").arg(qt::SdfPathToQString(path));
+            return false;
+        }
+
+        if (prim.IsInstanceProxy() || prim.IsInPrototype()) {
+            error = "transform requires an instance root";
             return false;
         }
 
@@ -931,7 +1064,7 @@ namespace stage {
             return paths;
 
         for (const UsdPrim& prim : stage->Traverse()) {
-            if (!prim || !prim.IsValid())
+            if (!prim || !prim.IsValid() || prim.IsA<UsdGeomSubset>())
                 continue;
 
             const SdfPath path = prim.GetPath();
@@ -943,7 +1076,7 @@ namespace stage {
 
             bool hasTraversableChild = false;
             for (const UsdPrim& child : prim.GetChildren()) {
-                if (!child || !child.IsValid())
+                if (!child || !child.IsValid() || child.IsA<UsdGeomSubset>())
                     continue;
 
                 if (!childMustBeWithinMask || path::isWithinRoots(mask, child.GetPath())) {

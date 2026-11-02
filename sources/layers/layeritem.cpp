@@ -5,7 +5,7 @@
 #include "layeritem.h"
 #include "application.h"
 #include "roles.h"
-#include "style.h"
+#include "ui.h"
 #include <QFont>
 #include <QIcon>
 #include <pxr/usd/usd/prim.h>
@@ -58,7 +58,7 @@ LayerItem::setState(const State& state)
             this->setToolTip(column, text);
     };
 
-    setIcon(Name, style()->icon(Style::IconRole::Layer));
+    setIcon(Name, ui()->icon(UI::IconRole::Layer));
     setToolTip(Name, state.tooltip);
 
     Qt::ItemFlags itemFlags = flags();
@@ -79,7 +79,7 @@ LayerItem::setState(const State& state)
         return;
     }
 
-    setIcon(Visibility, style()->icon(state.muted ? Style::IconRole::Hidden : Style::IconRole::Visible));
+    setIcon(Visibility, ui()->icon(state.muted ? UI::IconRole::Hidden : UI::IconRole::Visible));
     QString visibilityTooltip;
     if (state.inheritedMuted)
         visibilityTooltip = tr("Layer is muted by an ancestor layer.");
@@ -92,7 +92,7 @@ LayerItem::setState(const State& state)
     setToolTip(Visibility, visibilityTooltip);
 
     if (state.primSpecCount > 0) {
-        setIcon(Opinions, style()->icon(Style::IconRole::Override));
+        setIcon(Opinions, ui()->icon(UI::IconRole::Override));
         setToolTip(Opinions, tr("Contains authored opinions on %1 prim spec(s).").arg(state.primSpecCount));
     }
     else {
@@ -100,7 +100,7 @@ LayerItem::setState(const State& state)
         setToolTip(Opinions, tr("No authored prim opinions in this layer."));
     }
 
-    setIcon(Permission, style()->icon(state.editable ? Style::IconRole::Unlock : Style::IconRole::Lock));
+    setIcon(Permission, ui()->icon(state.editable ? UI::IconRole::Unlock : UI::IconRole::Lock));
     QString permissionTooltip = state.editable ? tr("Layer is editable. Click to lock it.")
                                                : tr("Layer is locked. Click to allow editing.");
     if (state.inheritedMuted)

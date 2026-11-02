@@ -17,7 +17,7 @@ namespace stageviz {
 class RenderViewPrivate : public QObject {
 public:
     void init();
-    ImagingGLWidget* imageGLWidget();
+    ViewportWidget* viewportWidget();
 
 public Q_SLOTS:
     void updateBoundingBox(const GfBBox3d& bbox);
@@ -47,22 +47,22 @@ RenderViewPrivate::init()
     d.context->setCommandStack(session()->commandStack());
     d.context->setSelectionList(session()->selectionList());
     d.context->setViewState(session()->viewState());
-    imageGLWidget()->setContext(d.context.data());
+    viewportWidget()->setContext(d.context.data());
     // connect
-    connect(imageGLWidget(), &ImagingGLWidget::captureReady, d.view, &RenderView::captureReady);
-    connect(imageGLWidget(), &ImagingGLWidget::renderReady, d.view, &RenderView::renderReady);
-    connect(imageGLWidget(), &ImagingGLWidget::statusMessage, d.view, &RenderView::statusMessage);
-    connect(imageGLWidget(), &ImagingGLWidget::statusReady, d.view, &RenderView::statusReady);
+    connect(viewportWidget(), &ViewportWidget::captureReady, d.view, &RenderView::captureReady);
+    connect(viewportWidget(), &ViewportWidget::renderReady, d.view, &RenderView::renderReady);
+    connect(viewportWidget(), &ViewportWidget::statusMessage, d.view, &RenderView::statusMessage);
+    connect(viewportWidget(), &ViewportWidget::statusReady, d.view, &RenderView::statusReady);
     connect(session(), &Session::boundingBoxChanged, this, &RenderViewPrivate::updateBoundingBox);
     connect(session(), &Session::maskChanged, this, &RenderViewPrivate::updateMask);
     connect(session(), &Session::primsChanged, this, &RenderViewPrivate::updatePrims);
-    connect(session(), &Session::redrawRequested, imageGLWidget(), QOverload<>::of(&QWidget::update));
+    connect(session(), &Session::redrawRequested, viewportWidget(), QOverload<>::of(&QWidget::update));
     connect(session(), &Session::stageChanged, this, &RenderViewPrivate::updateStage);
     connect(session(), &Session::stageUpChanged, this, &RenderViewPrivate::updateStageUp);
 }
 
-ImagingGLWidget*
-RenderViewPrivate::imageGLWidget()
+ViewportWidget*
+RenderViewPrivate::viewportWidget()
 {
     return d.ui->imagingGLWidget;
 }
@@ -70,19 +70,19 @@ RenderViewPrivate::imageGLWidget()
 void
 RenderViewPrivate::updateBoundingBox(const GfBBox3d& bbox)
 {
-    imageGLWidget()->updateBoundingBox(bbox);
+    viewportWidget()->updateBoundingBox(bbox);
 }
 
 void
 RenderViewPrivate::updateMask(const QList<SdfPath>& paths)
 {
-    imageGLWidget()->updateMask(paths);
+    viewportWidget()->updateMask(paths);
 }
 
 void
 RenderViewPrivate::updatePrims(const NoticeBatch& batch)
 {
-    imageGLWidget()->updatePrims(batch);
+    viewportWidget()->updatePrims(batch);
 }
 
 void
@@ -94,18 +94,18 @@ RenderViewPrivate::updateStage(UsdStageRefPtr stage, Session::LoadPolicy policy,
     if (status == Session::StageStatus::Loaded) {
         const TfToken stageUp = session()->stageUp() == Session::StageUp::Z ? UsdGeomTokens->z : UsdGeomTokens->y;
 
-        imageGLWidget()->updateStageUp(stageUp);
-        imageGLWidget()->updateStage(session()->stage());
+        viewportWidget()->updateStageUp(stageUp);
+        viewportWidget()->updateStage(session()->stage());
     }
     else {
-        imageGLWidget()->close();
+        viewportWidget()->close();
     }
 }
 
 void
 RenderViewPrivate::updateAuxiliary(UsdStageRefPtr auxiliary)
 {
-    imageGLWidget()->updateAuxiliary(auxiliary);
+    viewportWidget()->updateAuxiliary(auxiliary);
 }
 
 void
@@ -113,7 +113,7 @@ RenderViewPrivate::updateStageUp(Session::StageUp stageUp)
 {
     const TfToken token = stageUp == Session::StageUp::Z ? UsdGeomTokens->z : UsdGeomTokens->y;
 
-    imageGLWidget()->updateStageUp(token);
+    viewportWidget()->updateStageUp(token);
 }
 
 RenderView::RenderView(QWidget* parent)
@@ -129,79 +129,79 @@ RenderView::~RenderView() = default;
 QImage
 RenderView::captureImage()
 {
-    return p->imageGLWidget()->captureImage();
+    return p->viewportWidget()->captureImage();
 }
 
 void
 RenderView::captureVisible()
 {
-    p->imageGLWidget()->captureVisible();
+    p->viewportWidget()->captureVisible();
 }
 
 void
 RenderView::clearVisibleCapture()
 {
-    p->imageGLWidget()->clearVisibleCapture();
+    p->viewportWidget()->clearVisibleCapture();
 }
 
 QList<SdfPath>
 RenderView::visibleCapturePaths() const
 {
-    return p->imageGLWidget()->visibleCapturePaths();
+    return p->viewportWidget()->visibleCapturePaths();
 }
 
 bool
 RenderView::transformEnabled() const
 {
-    return p->imageGLWidget()->transformEnabled();
+    return p->viewportWidget()->transformEnabled();
 }
 
 void
 RenderView::setTransformEnabled(bool enabled)
 {
-    p->imageGLWidget()->setTransformEnabled(enabled);
+    p->viewportWidget()->setTransformEnabled(enabled);
 }
 
 bool
 RenderView::moveEnabled() const
 {
-    return p->imageGLWidget()->moveEnabled();
+    return p->viewportWidget()->moveEnabled();
 }
 
 void
 RenderView::setMoveEnabled(bool enabled)
 {
-    p->imageGLWidget()->setMoveEnabled(enabled);
+    p->viewportWidget()->setMoveEnabled(enabled);
 }
 
 bool
 RenderView::rotateEnabled() const
 {
-    return p->imageGLWidget()->rotateEnabled();
+    return p->viewportWidget()->rotateEnabled();
 }
 
 void
 RenderView::setRotateEnabled(bool enabled)
 {
-    p->imageGLWidget()->setRotateEnabled(enabled);
+    p->viewportWidget()->setRotateEnabled(enabled);
 }
 
 bool
 RenderView::scaleEnabled() const
 {
-    return p->imageGLWidget()->scaleEnabled();
+    return p->viewportWidget()->scaleEnabled();
 }
 
 void
 RenderView::setScaleEnabled(bool enabled)
 {
-    p->imageGLWidget()->setScaleEnabled(enabled);
+    p->viewportWidget()->setScaleEnabled(enabled);
 }
 
 void
 RenderView::setTimeCode(double timeCode)
 {
-    p->imageGLWidget()->setTimeCode(timeCode);
+    p->viewportWidget()->setTimeCode(timeCode);
 }
 
 void

@@ -4,7 +4,7 @@
 
 #include "pyapplication.h"
 #include "pysession.h"
-#include "pystyle.h"
+#include "pyui.h"
 
 #include <QTimer>
 #include <vector>
@@ -294,11 +294,11 @@ PyApplication_session(PyApplicationObject* self, PyObject*)
 }
 
 static PyObject*
-PyApplication_style(PyApplicationObject* self, PyObject*)
+PyApplication_ui(PyApplicationObject* self, PyObject*)
 {
     if (!checkApplication(self->application))
         return nullptr;
-    return createPyStyle(self->application->style());
+    return createPyUI(self->application->ui());
 }
 
 static PyMethodDef PyApplication_methods[]
@@ -308,7 +308,7 @@ static PyMethodDef PyApplication_methods[]
           "Show a Python Qt widget later on the Qt event loop." },
         { "window", reinterpret_cast<PyCFunction>(PyApplication_window), METH_NOARGS, "Return the main Qt window." },
         { "session", reinterpret_cast<PyCFunction>(PyApplication_session), METH_NOARGS, "Return the session wrapper." },
-        { "style", reinterpret_cast<PyCFunction>(PyApplication_style), METH_NOARGS, "Return the style wrapper." },
+        { "ui", reinterpret_cast<PyCFunction>(PyApplication_ui), METH_NOARGS, "Return the UI wrapper." },
         { nullptr } };
 
 PyTypeObject PyApplicationType = { PyVarObject_HEAD_INIT(nullptr, 0) };

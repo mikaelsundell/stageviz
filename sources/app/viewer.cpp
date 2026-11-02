@@ -8,7 +8,7 @@
 #include "commandstack.h"
 #include "consoledialog.h"
 #include "githubclient.h"
-#include "imagingglwidget.h"
+#include "viewportwidget.h"
 #include "layerdialog.h"
 #include "materialdialog.h"
 #include "messagedialog.h"
@@ -26,7 +26,7 @@
 #include "session.h"
 #include "settings.h"
 #include "signalguard.h"
-#include "style.h"
+#include "ui.h"
 #include "timelineview.h"
 #include "tracelocks.h"
 #include "usdutils.h"
@@ -276,33 +276,33 @@ ViewerPrivate::init()
     connect(d.timelineView, &TimelineView::timeCodeChanged, renderView(), &RenderView::setTimeCode);
     ViewState* viewState = session()->viewState();
     const QColor backgroundColor(
-        settings()->value("backgroundColor", style()->color(Style::ColorRole::Render)).toString());
+        settings()->value("backgroundColor", ui()->color(UI::ColorRole::Render)).toString());
     viewState->setBackgroundColor(backgroundColor);
-    viewState->setGridColor(style()->color(Style::ColorRole::Grid));
+    viewState->setGridColor(ui()->color(UI::ColorRole::Grid));
     d.ui->backgroundColor->setStyleSheet("background-color: " + backgroundColor.name() + ";");
     d.backgroundColorFilter.reset(new MouseEvent);
     d.ui->backgroundColor->installEventFilter(d.backgroundColorFilter.data());
     d.viewer->installEventFilter(this);
     qApp->installEventFilter(this);
-    d.ui->fileNew->setIcon(style()->icon(Style::IconRole::New));
-    d.ui->fileOpen->setIcon(style()->icon(Style::IconRole::Open));
-    d.ui->fileExportAll->setIcon(style()->icon(Style::IconRole::Export));
-    d.ui->fileExportImage->setIcon(style()->icon(Style::IconRole::ExportImage));
-    d.ui->editUndo->setIcon(style()->icon(Style::IconRole::Undo));
-    d.ui->editRedo->setIcon(style()->icon(Style::IconRole::Redo));
-    d.ui->displayFrameAll->setIcon(style()->icon(Style::IconRole::FrameAll));
-    d.ui->displayRenderWireframe->setIcon(style()->icon(Style::IconRole::Wireframe));
-    d.ui->displayRenderShaded->setIcon(style()->icon(Style::IconRole::Shaded));
-    d.ui->displaySelect->setIcon(style()->icon(Style::IconRole::Select));
+    d.ui->fileNew->setIcon(ui()->icon(UI::IconRole::New));
+    d.ui->fileOpen->setIcon(ui()->icon(UI::IconRole::Open));
+    d.ui->fileExportAll->setIcon(ui()->icon(UI::IconRole::Export));
+    d.ui->fileExportImage->setIcon(ui()->icon(UI::IconRole::ExportImage));
+    d.ui->editUndo->setIcon(ui()->icon(UI::IconRole::Undo));
+    d.ui->editRedo->setIcon(ui()->icon(UI::IconRole::Redo));
+    d.ui->displayFrameAll->setIcon(ui()->icon(UI::IconRole::FrameAll));
+    d.ui->displayRenderWireframe->setIcon(ui()->icon(UI::IconRole::Wireframe));
+    d.ui->displayRenderShaded->setIcon(ui()->icon(UI::IconRole::Shaded));
+    d.ui->displaySelect->setIcon(ui()->icon(UI::IconRole::Select));
     d.ui->displaySelect->setCheckable(true);
     d.ui->displaySelect->setChecked(false);
-    d.ui->displayMove->setIcon(style()->icon(Style::IconRole::Move));
+    d.ui->displayMove->setIcon(ui()->icon(UI::IconRole::Move));
     d.ui->displayMove->setCheckable(true);
     d.ui->displayMove->setChecked(false);
-    d.ui->displayRotate->setIcon(style()->icon(Style::IconRole::Rotate));
+    d.ui->displayRotate->setIcon(ui()->icon(UI::IconRole::Rotate));
     d.ui->displayRotate->setCheckable(true);
     d.ui->displayRotate->setChecked(false);
-    d.ui->displayScale->setIcon(style()->icon(Style::IconRole::Scale));
+    d.ui->displayScale->setIcon(ui()->icon(UI::IconRole::Scale));
     d.ui->displayScale->setCheckable(true);
     d.ui->displayScale->setChecked(false);
     {
@@ -2919,8 +2919,8 @@ ViewerPrivate::notifyStatusChanged(Session::Notify::Status status, const QString
     const int timeoutMs = hasError ? 8000 : 4000;
 
     if (hasError || hasWarning) {
-        const Style::ColorRole role = hasError ? Style::ColorRole::Error : Style::ColorRole::Warning;
-        const QColor color = style()->color(role);
+        const UI::ColorRole role = hasError ? UI::ColorRole::Error : UI::ColorRole::Warning;
+        const QColor color = ui()->color(role);
         bar->setStyleSheet(QStringLiteral("QStatusBar { background-color: rgba(%1, %2, %3, %4); }"
                                           "QStatusBar::item { border: none; }")
                                .arg(color.red())

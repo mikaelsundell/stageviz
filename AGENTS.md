@@ -15,7 +15,7 @@ consistent with the existing architecture.
 - Keep Qt Designer interfaces in `.ui` files and let `uic` generate the UI
   wrapper. Put widget tooltips in the `.ui` file so they are visible in the
   designer and stay with the control definition.
-- Set icons in C++ through the Stageviz `style()` API and its `Style::IconRole`
+- Set icons in C++ through the Stageviz `ui()` API and its `UI::IconRole`
   values. Do not hard-code resource paths or construct duplicate icon styling
   in individual dialogs.
 - For substantial dialogs and tools, provide a small, clear public interface

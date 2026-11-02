@@ -32,7 +32,7 @@ namespace stageviz {
  *
  * RenderEngine owns the Stageviz-specific UsdImagingGLEngine configuration and
  * hides Hydra scene-index setup from callers. It can render into an already
- * current OpenGL context, as used by ImagingGLWidget, or create an offscreen
+ * current OpenGL context, as used by ViewportWidget, or create an offscreen
  * context for scripted image rendering.
  */
 class RenderEngine final {
@@ -208,6 +208,8 @@ public:
      *
      * Paths may refer to leaf rprims or parent xforms. Parent paths are
      * resolved to their Hydra rprim subtree by the shared scene-ID task.
+     * Geometry subsets are drawn as selection of their owning geometry;
+     * this display projection does not modify the session selection.
      *
      * @param paths Selected prim paths.
      */
@@ -233,7 +235,7 @@ public:
      * @brief Renders into the framebuffer of the current OpenGL context.
      * @return True if a render pass was submitted.
      *
-     * This is the path used by ImagingGLWidget. The caller is responsible for
+     * This is the path used by ViewportWidget. The caller is responsible for
      * making its OpenGL context and target framebuffer current before calling.
      */
     bool renderToCurrentFramebuffer();

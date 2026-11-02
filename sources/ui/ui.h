@@ -13,15 +13,15 @@
 #include <QString>
 
 namespace stageviz {
-class StylePrivate;
+class UIPrivate;
 /**
- * @class Style
+ * @class UI
  * @brief Stores application colors, icons, UI sizes, and stylesheet settings.
  *
  * Widgets use semantic roles to share a consistent appearance. Rendering color
  * space is configured here alongside the UI styling resources.
  */
-class Style : public QObject {
+class UI : public QObject {
     Q_OBJECT
 public:
     /**
@@ -126,14 +126,14 @@ public:
     Q_ENUM(UIState)
 
     /**
-     * @brief Constructs a Style instance.
+     * @brief Constructs a UI instance.
      */
-    Style();
+    UI();
 
     /**
-     * @brief Destroys the Style instance.
+     * @brief Destroys the UI instance.
      */
-    ~Style() override;
+    ~UI() override;
 
     /**
      * @name Theme
@@ -186,6 +186,46 @@ public:
      * @brief Sets the icon size for a scale.
      */
     void setIconSize(UIScale scale, int size);
+
+    /**
+     * @brief Returns transform gizmo size for a scale.
+     */
+    int gizmoSize(UIScale scale) const;
+
+    /**
+     * @brief Sets transform gizmo size for a scale.
+     */
+    void setGizmoSize(UIScale scale, int size);
+
+    /**
+     * @brief Returns transform move snapping increment in stage units.
+     */
+    double transformMoveSnap() const;
+
+    /**
+     * @brief Sets transform move snapping increment in stage units.
+     */
+    void setTransformMoveSnap(double value);
+
+    /**
+     * @brief Returns transform rotation snapping increment in degrees.
+     */
+    double transformRotateSnap() const;
+
+    /**
+     * @brief Sets transform rotation snapping increment in degrees.
+     */
+    void setTransformRotateSnap(double value);
+
+    /**
+     * @brief Returns transform scale snapping increment.
+     */
+    double transformScaleSnap() const;
+
+    /**
+     * @brief Sets transform scale snapping increment.
+     */
+    void setTransformScaleSnap(double value);
 
     /**
      * @brief Rebuilds and reapplies the application stylesheet.
@@ -246,8 +286,8 @@ Q_SIGNALS:
     void colorChanged(ColorRole role);
 
 private:
-    Q_DISABLE_COPY_MOVE(Style)
-    QScopedPointer<StylePrivate> p;
+    Q_DISABLE_COPY_MOVE(UI)
+    QScopedPointer<UIPrivate> p;
 };
 
 }  // namespace stageviz

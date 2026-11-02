@@ -9,7 +9,7 @@
 #include "layertree.h"
 #include "session.h"
 #include "settings.h"
-#include "style.h"
+#include "ui.h"
 #include "tracelocks.h"
 #include <QDir>
 #include <QFileDialog>
@@ -62,9 +62,9 @@ LayerDialogPrivate::init()
     d.ui->setupUi(d.dialog.data());
     d.dialog->setWindowTitle(tr("Layer Editor"));
 
-    d.ui->newMaterial->setIcon(style()->icon(Style::IconRole::New));
-    d.ui->load->setIcon(style()->icon(Style::IconRole::Open));
-    d.ui->select->setIcon(style()->icon(Style::IconRole::Select));
+    d.ui->newMaterial->setIcon(ui()->icon(UI::IconRole::New));
+    d.ui->load->setIcon(ui()->icon(UI::IconRole::Open));
+    d.ui->select->setIcon(ui()->icon(UI::IconRole::Select));
 
     connect(d.ui->newMaterial, &QToolButton::clicked, this, &LayerDialogPrivate::createLayer);
     connect(d.ui->load, &QToolButton::clicked, this, &LayerDialogPrivate::addLayer);

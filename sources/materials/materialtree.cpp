@@ -11,7 +11,7 @@
 #include "materialutils.h"
 #include "session.h"
 #include "spinbox.h"
-#include "style.h"
+#include "ui.h"
 #include "tracelocks.h"
 #include <QAction>
 #include <QApplication>
@@ -198,12 +198,12 @@ MaterialTreePrivate::init()
     });
 
     // Resolve the small editor icons once. Rebuilding the property tree can create
-    // dozens of buttons; asking Style for the same PNG-backed icon on every row
+    // dozens of buttons; asking UI for the same PNG-backed icon on every row
     // caused repeated image decoding and noisy libpng warnings in Debug builds.
-    d.iconLeft = style()->icon(Style::IconRole::Left, Style::UIScale::Small);
-    d.iconRight = style()->icon(Style::IconRole::Right, Style::UIScale::Small);
-    d.iconNew = style()->icon(Style::IconRole::New, Style::UIScale::Small);
-    d.iconOpen = style()->icon(Style::IconRole::Open, Style::UIScale::Small);
+    d.iconLeft = ui()->icon(UI::IconRole::Left, UI::UIScale::Small);
+    d.iconRight = ui()->icon(UI::IconRole::Right, UI::UIScale::Small);
+    d.iconNew = ui()->icon(UI::IconRole::New, UI::UIScale::Small);
+    d.iconOpen = ui()->icon(UI::IconRole::Open, UI::UIScale::Small);
 
     d.tree->installEventFilter(this);
     d.tree->viewport()->installEventFilter(this);
@@ -467,7 +467,7 @@ MaterialTreePrivate::addInputRow(QTreeWidgetItem* group, const MaterialInputInfo
 
         int& groupRow = d.groupPropertyRows[group];
         const bool alternate = (groupRow++ & 1) == 0;
-        const QColor rowColor = style()->color(alternate ? Style::ColorRole::ItemAlt : Style::ColorRole::Item);
+        const QColor rowColor = ui()->color(alternate ? UI::ColorRole::ItemAlt : UI::ColorRole::Item);
         const QBrush rowBrush(rowColor);
         for (int column = 0; column < d.tree->columnCount(); ++column)
             row->setBackground(column, rowBrush);
@@ -486,7 +486,7 @@ MaterialTreePrivate::addInputRow(QTreeWidgetItem* group, const MaterialInputInfo
     item->setToolTip(0, QString::fromStdString(info.inputPath.GetString()));
     applyNextRowBackground(item);
 
-    auto setActionButton = [this](QTreeWidgetItem* row, Style::IconRole, const QString& tooltip, const SdfPath& path) {
+    auto setActionButton = [this](QTreeWidgetItem* row, UI::IconRole, const QString& tooltip, const SdfPath& path) {
         if (!row)
             return;
         row->setIcon(2, d.iconRight);
@@ -507,7 +507,7 @@ MaterialTreePrivate::addInputRow(QTreeWidgetItem* group, const MaterialInputInfo
         item->setToolTip(1, QString::fromStdString(info.sourcePrimPath.GetString()));
 
         if (d.materials.size() == 1 && !info.sourcePrimPath.IsEmpty())
-            setActionButton(item, Style::IconRole::Right, QStringLiteral("Open connected node"), info.sourcePrimPath);
+            setActionButton(item, UI::IconRole::Right, QStringLiteral("Open connected node"), info.sourcePrimPath);
         return;
     }
 

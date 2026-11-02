@@ -8,7 +8,7 @@
 #include "pythoninterpreter.h"
 #include "qtutils.h"
 #include "session.h"
-#include "style.h"
+#include "ui.h"
 #include <QAction>
 #include <QApplication>
 #include <QDrag>
@@ -72,10 +72,10 @@ PythonDialogPrivate::init()
 {
     d.ui.reset(new Ui_PythonDialog());
     d.ui->setupUi(d.dialog.data());
-    d.ui->run->setIcon(style()->icon(Style::IconRole::Run));
-    d.ui->clear->setIcon(style()->icon(Style::IconRole::Clear));
-    d.ui->next->setIcon(style()->icon(Style::IconRole::Right));
-    d.ui->previous->setIcon(style()->icon(Style::IconRole::Left));
+    d.ui->run->setIcon(ui()->icon(UI::IconRole::Run));
+    d.ui->clear->setIcon(ui()->icon(UI::IconRole::Clear));
+    d.ui->next->setIcon(ui()->icon(UI::IconRole::Right));
+    d.ui->previous->setIcon(ui()->icon(UI::IconRole::Left));
     d.ui->log->setReadOnly(true);
     d.ui->log->setContextMenuPolicy(Qt::CustomContextMenu);
     d.ui->log->setAcceptDrops(false);
@@ -284,7 +284,7 @@ PythonDialogPrivate::startScriptDrag(QPlainTextEdit* edit)
 
     auto* drag = new QDrag(edit);
     drag->setMimeData(mimeData);
-    drag->setPixmap(style()->icon(Style::IconRole::Code));
+    drag->setPixmap(ui()->icon(UI::IconRole::Code));
     drag->exec(Qt::CopyAction);
 }
 
@@ -415,7 +415,7 @@ PythonDialogPrivate::showLogContextMenu(const QPoint& pos)
     QMenu* menu = d.ui->log->createStandardContextMenu();
     menu->addSeparator();
 
-    QAction* clearAction = menu->addAction(style()->icon(Style::IconRole::Clear), tr("Clear"));
+    QAction* clearAction = menu->addAction(ui()->icon(UI::IconRole::Clear), tr("Clear"));
     clearAction->setEnabled(!d.ui->log->toPlainText().isEmpty());
 
     QObject::connect(clearAction, &QAction::triggered, this, [this]() { d.ui->log->clear(); });

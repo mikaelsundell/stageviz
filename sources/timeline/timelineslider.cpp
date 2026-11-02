@@ -4,7 +4,7 @@
 
 #include "timelineslider.h"
 #include "application.h"
-#include "style.h"
+#include "ui.h"
 #include <QMouseEvent>
 #include <QPainter>
 #include <QSet>
@@ -62,8 +62,8 @@ TimelineSlider::paintEvent(QPaintEvent* event)
     painter.setRenderHint(QPainter::Antialiasing, true);
     QRect groove = style()->subControlRect(QStyle::CC_Slider, &opt, QStyle::SC_SliderGroove, this);
 
-    const QColor grooveColor = app()->style()->color(Style::ColorRole::Base);
-    const QColor outline = app()->style()->color(Style::ColorRole::BorderAlt);
+    const QColor grooveColor = app()->ui()->color(UI::ColorRole::Base);
+    const QColor outline = app()->ui()->color(UI::ColorRole::BorderAlt);
     const bool timeline = p->d.timelineMode || !p->d.tickValues.isEmpty();
     QRect handle = style()->subControlRect(QStyle::CC_Slider, &opt, QStyle::SC_SliderHandle, this);
 
@@ -76,7 +76,7 @@ TimelineSlider::paintEvent(QPaintEvent* event)
     const int min = minimum();
     const int max = maximum();
     if (timeline) {
-        painter.fillRect(rect(), app()->style()->color(Style::ColorRole::Item));
+        painter.fillRect(rect(), app()->ui()->color(UI::ColorRole::Item));
         const int baseline = height() - 3;
         const int frameCount = std::max(1, max - min + 1);
         const double pixelsPerFrame = static_cast<double>(sliderLength + 1) / frameCount;
@@ -86,7 +86,7 @@ TimelineSlider::paintEvent(QPaintEvent* event)
 
         painter.setRenderHint(QPainter::Antialiasing, true);
         painter.setPen(Qt::NoPen);
-        QColor frameColor = app()->style()->color(Style::ColorRole::Handle);
+        QColor frameColor = app()->ui()->color(UI::ColorRole::Handle);
         frameColor.setAlphaF(1.0);
         painter.setBrush(frameColor);
         if (isEnabled())
@@ -131,7 +131,7 @@ TimelineSlider::paintEvent(QPaintEvent* event)
         painter.setBrush(grooveColor);
         painter.drawRoundedRect(groove.adjusted(0, 0, -1, -1), 2, 2);
         if (max > min) {
-            painter.setPen(QPen(app()->style()->color(Style::ColorRole::Base), 2));
+            painter.setPen(QPen(app()->ui()->color(UI::ColorRole::Base), 2));
             const int y1 = groove.center().y() - 2;
             const int y2 = groove.center().y() + 3;
             for (int value = min; value <= max; ++value) {

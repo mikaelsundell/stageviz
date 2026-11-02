@@ -11,7 +11,7 @@ Produce ready-to-run Python for the Stageviz embedded interpreter and reason abo
 
 Before generating or modifying Stageviz Python, load the reference that matches the task:
 
-- For any Stageviz API use, including `Session`, `SelectionList`, `ViewState`, `ViewCamera`, `Application`, `Style`, `RenderEngine`, `stageviz.command`, stage access, edit layers, selection, payloads, namespace edits, attributes, transforms, materials, progress, or rendering, read [references/python-api.md](references/python-api.md).
+- For any Stageviz API use, including `Session`, `SelectionList`, `ViewState`, `ViewCamera`, `Application`, `UI`, `RenderEngine`, `stageviz.command`, stage access, edit layers, selection, payloads, namespace edits, attributes, transforms, materials, progress, or rendering, read [references/python-api.md](references/python-api.md).
 - For any Qt UI work, including dialogs, tool windows, dock widgets, inspectors, browsers, material/look tools, primitive tools, shelf tools, selection utilities, or other interactive Stageviz Python UI, ALWAYS read [references/python-dialogs.md](references/python-dialogs.md) before generating code.
 - For requests involving both Stageviz API calls and Qt UI, read both references before producing the script.
 - For reusable Qt scaffolding and concrete helper implementations, inspect [scripts/dialogs.py](scripts/dialogs.py). Use it as a pattern or import it only when the target Stageviz environment will ship this helper module.
@@ -24,7 +24,7 @@ Do not replace these references with assumptions from the C++ API or from other 
 2. Do not infer Python methods from similarly named C++ methods.
 3. Preserve exact API casing:
    - `stageviz.command` uses snake_case.
-   - `Session`, `SelectionList`, `ViewState`, `ViewCamera`, `Application`, and `Style` use the camelCase methods documented in the bindings.
+   - `Session`, `SelectionList`, `ViewState`, `ViewCamera`, `Application`, and `UI` use the camelCase methods documented in the bindings.
    - `RenderEngine` uses snake_case.
 4. Prefer `stageviz.command` for user-edit operations that should participate in Stageviz undo/redo.
 5. Use `Session`, `SelectionList`, `ViewState`, and `ViewCamera` for querying state and direct runtime/view control.
@@ -32,7 +32,7 @@ Do not replace these references with assumptions from the C++ API or from other 
 7. Never guess integer enum values. Use a numeric value only when the reference, current user-supplied code, or the user's installed API proves it.
 8. Prefer `stage()` and `auxiliary()` in ordinary scripts. Treat `stageUnsafe()` and `auxiliaryUnsafe()` as advanced access that assumes the caller already owns the appropriate native lock.
 9. Treat `stageLock()`, `auxiliaryLock()`, and `commandStack()` as native pointer addresses, not Python lock or command objects.
-10. Do not invent convenience globals such as `stageviz.session()` or `stageviz.application()`. Preserve them only when the user's existing script proves that their installed build exposes them.
+10. Use documented module helpers such as `stageviz.session()`, `stageviz.application()`, and `stageviz.ui()` when they fit the task; do not guess undocumented convenience globals.
 11. If the requested capability is absent from the reference, say so. Then use an appropriate `pxr` API, propose a binding addition, or ask for newer binding source.
 
 ## Recommended object access
@@ -47,7 +47,7 @@ selection = session.selection()
 view_state = session.viewState()
 camera = view_state.camera()
 app = stageviz.Application()
-style = stageviz.Style()
+ui = stageviz.UI()
 ```
 
 Create `stageviz.RenderEngine()` directly for offscreen rendering. Use functions under `stageviz.command` for undoable commands.

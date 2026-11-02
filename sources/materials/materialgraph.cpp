@@ -8,7 +8,7 @@
 #include "commandstack.h"
 #include "materialmenu.h"
 #include "session.h"
-#include "style.h"
+#include "ui.h"
 #include "tracelocks.h"
 #include <QContextMenuEvent>
 #include <QGraphicsEllipseItem>
@@ -131,16 +131,16 @@ MaterialGraphPrivate::portColor(const SdfValueTypeName& type)
 {
     QColor color;
     if (type == SdfValueTypeNames->Float || type == SdfValueTypeNames->Double || type == SdfValueTypeNames->Int)
-        color = style()->color(Style::ColorRole::Warning);
+        color = ui()->color(UI::ColorRole::Warning);
     else if (type == SdfValueTypeNames->Color3f || type == SdfValueTypeNames->Color4f
              || type == SdfValueTypeNames->Float3 || type == SdfValueTypeNames->Float4)
-        color = style()->color(Style::ColorRole::AxisY);
+        color = ui()->color(UI::ColorRole::AxisY);
     else if (type == SdfValueTypeNames->Float2 || type == SdfValueTypeNames->TexCoord2f)
-        color = style()->color(Style::ColorRole::AxisZ);
+        color = ui()->color(UI::ColorRole::AxisZ);
     else if (type == SdfValueTypeNames->Asset || type == SdfValueTypeNames->String || type == SdfValueTypeNames->Token)
-        color = style()->color(Style::ColorRole::SelectionAlt);
+        color = ui()->color(UI::ColorRole::SelectionAlt);
     else
-        color = style()->color(Style::ColorRole::ButtonAlt);
+        color = ui()->color(UI::ColorRole::ButtonAlt);
 
     return color.lighter(135);
 }
@@ -183,13 +183,13 @@ MaterialGraphPrivate::GraphScene::drawBackground(QPainter* painter, const QRectF
     if (!painter)
         return;
 
-    painter->fillRect(rect, stageviz::style()->color(Style::ColorRole::Graph));
+    painter->fillRect(rect, stageviz::ui()->color(UI::ColorRole::Graph));
 
     constexpr qreal spacing = 24.0;
     const qreal left = std::floor(rect.left() / spacing) * spacing;
     const qreal top = std::floor(rect.top() / spacing) * spacing;
 
-    QColor grid = stageviz::style()->color(Style::ColorRole::Grid);
+    QColor grid = stageviz::ui()->color(UI::ColorRole::Grid);
     grid.setAlpha(72);
 
     QPen gridPen(grid, 1.0);
@@ -222,7 +222,7 @@ public:
         setRect(-5, -5, 10, 10);
         const QColor color = MaterialGraphPrivate::portColor(type);
         setBrush(color);
-        setPen(QPen(style()->color(Style::ColorRole::BorderAlt), 1.0));
+        setPen(QPen(ui()->color(UI::ColorRole::BorderAlt), 1.0));
         setAcceptedMouseButtons(Qt::LeftButton | Qt::RightButton);
         setToolTip(QString::fromStdString(path.GetString()));
         setZValue(20.0);
@@ -298,18 +298,18 @@ public:
         setBrush(Qt::NoBrush);
 
         QFont titleFont = app()->font();
-        titleFont.setPixelSize(style()->fontSize(Style::UIScale::Medium));
+        titleFont.setPixelSize(ui()->fontSize(UI::UIScale::Medium));
         titleFont.setBold(true);
         m_title = new QGraphicsSimpleTextItem(name, this);
         m_title->setFont(titleFont);
-        m_title->setBrush(style()->color(Style::ColorRole::Text));
+        m_title->setBrush(ui()->color(UI::ColorRole::Text));
         m_title->setAcceptedMouseButtons(Qt::NoButton);
 
         QFont typeFont = app()->font();
-        typeFont.setPixelSize(style()->fontSize(Style::UIScale::Small));
+        typeFont.setPixelSize(ui()->fontSize(UI::UIScale::Small));
         m_type = new QGraphicsSimpleTextItem(type, this);
         m_type->setFont(typeFont);
-        m_type->setBrush(style()->color(Style::ColorRole::Text, Style::UIState::Disabled));
+        m_type->setBrush(ui()->color(UI::ColorRole::Text, UI::UIState::Disabled));
         m_type->setAcceptedMouseButtons(Qt::NoButton);
 
         relayout();
@@ -328,15 +328,15 @@ public:
         auto* typeText = new QGraphicsSimpleTextItem(MaterialGraphPrivate::portTypeLabel(type), this);
 
         QFont font = app()->font();
-        font.setPixelSize(style()->fontSize(Style::UIScale::Small));
+        font.setPixelSize(ui()->fontSize(UI::UIScale::Small));
         text->setFont(font);
-        text->setBrush(style()->color(Style::ColorRole::Text));
+        text->setBrush(ui()->color(UI::ColorRole::Text));
         text->setAcceptedMouseButtons(Qt::NoButton);
 
         QFont typeFont = font;
-        typeFont.setPixelSize(std::max(8, style()->fontSize(Style::UIScale::Small) - 1));
+        typeFont.setPixelSize(std::max(8, ui()->fontSize(UI::UIScale::Small) - 1));
         typeText->setFont(typeFont);
-        typeText->setBrush(style()->color(Style::ColorRole::Text, Style::UIState::Disabled));
+        typeText->setBrush(ui()->color(UI::ColorRole::Text, UI::UIState::Disabled));
         typeText->setAcceptedMouseButtons(Qt::NoButton);
 
         m_inputs.append(port);
@@ -353,15 +353,15 @@ public:
         auto* typeText = new QGraphicsSimpleTextItem(MaterialGraphPrivate::portTypeLabel(type), this);
 
         QFont font = app()->font();
-        font.setPixelSize(style()->fontSize(Style::UIScale::Small));
+        font.setPixelSize(ui()->fontSize(UI::UIScale::Small));
         text->setFont(font);
-        text->setBrush(style()->color(Style::ColorRole::Text));
+        text->setBrush(ui()->color(UI::ColorRole::Text));
         text->setAcceptedMouseButtons(Qt::NoButton);
 
         QFont typeFont = font;
-        typeFont.setPixelSize(std::max(8, style()->fontSize(Style::UIScale::Small) - 1));
+        typeFont.setPixelSize(std::max(8, ui()->fontSize(UI::UIScale::Small) - 1));
         typeText->setFont(typeFont);
-        typeText->setBrush(style()->color(Style::ColorRole::Text, Style::UIState::Disabled));
+        typeText->setBrush(ui()->color(UI::ColorRole::Text, UI::UIState::Disabled));
         typeText->setAcceptedMouseButtons(Qt::NoButton);
 
         m_outputs.append(port);
@@ -383,17 +383,17 @@ protected:
 
         painter->setRenderHint(QPainter::Antialiasing, true);
         painter->setPen(Qt::NoPen);
-        painter->setBrush(style()->color(Style::ColorRole::Item));
+        painter->setBrush(ui()->color(UI::ColorRole::Item));
         painter->drawRoundedRect(r, radius, radius);
 
         QPainterPath headerPath;
         headerPath.addRoundedRect(QRectF(r.left(), r.top(), r.width(), headerHeight + radius), radius, radius);
         headerPath.addRect(QRectF(r.left(), r.top() + headerHeight - radius, r.width(), radius * 2.0));
-        painter->setBrush(style()->color(Style::ColorRole::ItemAlt));
+        painter->setBrush(ui()->color(UI::ColorRole::ItemAlt));
         painter->drawPath(headerPath);
 
-        QColor border = isSelected() ? style()->color(Style::ColorRole::Highlight)
-                                     : style()->color(Style::ColorRole::BorderAlt);
+        QColor border = isSelected() ? ui()->color(UI::ColorRole::Highlight)
+                                     : ui()->color(UI::ColorRole::BorderAlt);
         painter->setBrush(Qt::NoBrush);
         painter->setPen(QPen(border, isSelected() ? 2.0 : 1.0));
         painter->drawRoundedRect(r.adjusted(0.5, 0.5, -0.5, -0.5), radius, radius);
@@ -1068,7 +1068,7 @@ MaterialGraphPrivate::beginConnection(GraphPortItem* output, const QPointF& scen
 {
     cancelConnection();
     d.dragOutput = output;
-    const QColor dragColor = output ? portColor(output->typeName()) : style()->color(Style::ColorRole::Highlight);
+    const QColor dragColor = output ? portColor(output->typeName()) : ui()->color(UI::ColorRole::Highlight);
     d.dragPath = d.scene.addPath(QPainterPath(), QPen(dragColor, 2.4));
     d.dragPath->setZValue(100.0);
     updateConnection(scenePos);
@@ -1092,7 +1092,7 @@ MaterialGraphPrivate::updateConnection(const QPointF& scenePos)
 
     if (GraphPortItem* input = inputPortAt(scenePos)) {
         if (!compatibleConnection(d.dragOutput, input)) {
-            color = style()->color(Style::ColorRole::Error);
+            color = ui()->color(UI::ColorRole::Error);
             penStyle = Qt::DashLine;
             width = 2.8;
         }
@@ -1479,13 +1479,13 @@ MaterialGraph::MaterialGraph(QWidget* parent)
 
     setAutoFillBackground(true);
     QPalette pagePalette = palette();
-    pagePalette.setColor(QPalette::Window, stageviz::style()->color(Style::ColorRole::Item));
+    pagePalette.setColor(QPalette::Window, stageviz::ui()->color(UI::ColorRole::Item));
     setPalette(pagePalette);
 
     p->d.ui->filterBar->setAutoFillBackground(false);
     p->d.ui->filter->setMinimumHeight(30);
     p->d.ui->filter->setClearButtonEnabled(false);
-    p->d.ui->clear->setIcon(stageviz::style()->icon(Style::IconRole::Clear));
+    p->d.ui->clear->setIcon(stageviz::ui()->icon(UI::IconRole::Clear));
     p->d.ui->clear->setText(QString());
     p->d.ui->clear->setEnabled(false);
     p->d.view->setScene(&p->d.scene);

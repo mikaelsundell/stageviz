@@ -1602,6 +1602,45 @@ usdStageUtilsApi()
     require(stageviz::stage::isEditable(stage, SdfPath("/World")), "editable authored xform");
     require(stageviz::stage::isTransformEditable(stage, SdfPath("/World")), "transform editable query");
 
+    const auto transformInstanceStage = UsdStage::CreateInMemory();
+    const UsdPrim instanceSource = UsdGeomXform::Define(transformInstanceStage, SdfPath("/World/Source")).GetPrim();
+    instanceSource.SetInstanceable(true);
+    UsdGeomCube::Define(transformInstanceStage, SdfPath("/World/Source/Body"));
+    const UsdPrim transformInstanceA =
+        UsdGeomXform::Define(transformInstanceStage, SdfPath("/World/Instance_A")).GetPrim();
+    require(transformInstanceA.GetReferences().AddInternalReference(instanceSource.GetPath()),
+            "author transform instance A reference");
+    transformInstanceA.SetInstanceable(true);
+    const UsdPrim transformInstanceB =
+        UsdGeomXform::Define(transformInstanceStage, SdfPath("/World/Instance_B")).GetPrim();
+    require(transformInstanceB.GetReferences().AddInternalReference(instanceSource.GetPath()),
+            "author transform instance B reference");
+    transformInstanceB.SetInstanceable(true);
+    const SdfPath instanceProxyA("/World/Instance_A/Body");
+    const SdfPath instanceProxyB("/World/Instance_B/Body");
+    require(transformInstanceStage->GetPrimAtPath(instanceProxyA).IsInstanceProxy()
+                && transformInstanceStage->GetPrimAtPath(instanceProxyB).IsInstanceProxy(),
+            "transform fixture exposes instance proxy children");
+    require(stageviz::stage::transformEditTargetPath(transformInstanceStage, instanceProxyA)
+                == SdfPath("/World/Instance_A"),
+            "transform proxy resolves to its owning instance");
+    require(stageviz::stage::transformEditTargetPath(transformInstanceStage, instanceProxyB.AppendProperty(TfToken("size")))
+                == SdfPath("/World/Instance_B"),
+            "transform proxy property resolves to its owning instance");
+    require(stageviz::stage::transformEditTargetPaths(transformInstanceStage,
+                                                       { instanceProxyA, instanceProxyA, instanceProxyB })
+                == QList<SdfPath>({ SdfPath("/World/Instance_A"), SdfPath("/World/Instance_B") }),
+            "transform targets deduplicate proxy selections by owning instance");
+    require(stageviz::stage::transformEditTargetPaths(transformInstanceStage,
+                                                       { instanceProxyA, SdfPath("/World/Instance_A") })
+                == QList<SdfPath>({ SdfPath("/World/Instance_A") }),
+            "transform targets avoid double-applying selected instance descendants");
+    require(!stageviz::stage::boundingBox(transformInstanceStage, { instanceProxyA }).GetRange().IsEmpty(),
+            "instance proxy contributes bounds for the selection pivot");
+    require(stageviz::stage::transformEditTargetPath(transformInstanceStage, SdfPath("/World/Source"))
+                == SdfPath("/World/Source"),
+            "ordinary transformable prim resolves to itself");
+
     stageviz::stage::setVisible(stage, { SdfPath("/World/Hidden") }, false);
     require(!stageviz::stage::isVisible(stage, SdfPath("/World/Hidden")), "visibility hide helper");
     QList<SdfPath> visiblePaths = stageviz::stage::visiblePaths(stage);
@@ -2488,6 +2527,125 @@ commandCompositionApi()
 }
 
 void
+transformOperationApi()
+{
+    for (int mode = 0; mode < 3; ++mode) {
+        Session current;
+        require(current.newStage(), "new shared transform operation stage");
+        const auto stage = current.stage();
+        auto world = UsdGeomXform::Define(stage, SdfPath("/World"));
+        world.AddRotateXYZOp().Set(GfVec3f(13, 27, -8));
+        world.AddScaleOp().Set(GfVec3f(1.3, 0.8, 1.1));
+        auto source = UsdGeomXform::Define(stage, SdfPath("/World/Source"));
+        source.AddTransformOp().Set(GfMatrix4d(1).SetRotate(GfRotation(GfVec3d(1, 2, 0), 31)));
+        auto assembly = UsdGeomXform::Define(stage, SdfPath("/World/Source/Assembly"));
+        assembly.AddTranslateOp().Set(GfVec3d(3, -2, 7));
+        const SdfPath meshPath("/World/Source/Assembly/Mesh");
+        auto mesh = UsdGeomMesh::Define(stage, meshPath);
+        mesh.AddTranslateOp().Set(GfVec3d(4, 1, -2));
+        UsdGeomSubset::CreateGeomSubset(mesh, TfToken("Front"), UsdGeomTokens->face, VtIntArray { 0 });
+        UsdGeomSubset::CreateGeomSubset(mesh, TfToken("Back"), UsdGeomTokens->face, VtIntArray { 1 });
+        for (const auto& name : { "One", "Two" }) {
+            auto instance = UsdGeomXform::Define(stage, SdfPath(std::string("/World/") + name));
+            instance.GetPrim().GetReferences().AddInternalReference(source.GetPath());
+            instance.GetPrim().SetInstanceable(true);
+        }
+        UsdGeomXform(stage->GetPrimAtPath(SdfPath("/World/One"))).MakeMatrixXform().Set(
+            GfMatrix4d(1).SetTranslate(GfVec3d(12, 3, -5)));
+        const QList<SdfPath> selected { SdfPath("/World/Source/Assembly/Mesh/Front"),
+            SdfPath("/World/Source/Assembly/Mesh/Back"), SdfPath("/World/One/Assembly/Mesh/Front"),
+            SdfPath("/World/One/Assembly/Mesh/Back") };
+        current.selectionList()->updatePaths(selected);
+        const QList<SdfPath> observed { meshPath, SdfPath("/World/One/Assembly/Mesh"),
+            SdfPath("/World/Two/Assembly/Mesh") };
+        QList<GfMatrix4d> before;
+        QString error;
+        for (const auto& path : observed) {
+            GfMatrix4d matrix(1);
+            require(stageviz::stage::worldTransform(stage, path, matrix, error), "read original object transform");
+            before.append(matrix);
+        }
+        GfMatrix4d delta(1);
+        if (mode == 0)
+            delta.SetTranslate(GfVec3d(3, -4, 8));
+        else if (mode == 1)
+            delta.SetRotate(GfRotation(GfVec3d(1, 3, 2), 37));
+        else
+            delta.SetScale(GfVec3d(1.2, 0.7, 1.4));
+        std::string original;
+        const auto layer = stage->GetEditTarget().GetLayer();
+        layer->ExportToString(&original);
+        const auto verify = [&]() {
+            for (qsizetype i = 0; i < observed.size(); ++i) {
+                GfMatrix4d matrix(1);
+                require(stageviz::stage::worldTransform(stage, observed.at(i), matrix, error), "read transformed object");
+                require(GfIsClose(matrix, i == 2 ? before.at(i) : before.at(i) * delta, 1e-6),
+                        "shared source and selected proxy receive one world delta; unselected instance stays fixed");
+            }
+            require(current.selectionList()->paths() == selected, "transform keeps exact subset selection");
+            for (const auto& path : selected)
+                require(!stage->GetPrimAtPath(path).GetAttribute(TfToken("xformOp:transform")),
+                        "transform never authors subset or shared prototype contents");
+        };
+        const auto verifyOriginal = [&]() {
+            std::string restored;
+            layer->ExportToString(&restored);
+            require(restored == original, "transform restores exact original layer opinions");
+        };
+        stageviz::XformEdit input;
+        for (const auto& path : selected) {
+            GfMatrix4d matrix(1);
+            require(stageviz::stage::worldTransform(stage, path.GetParentPath(), matrix, error), "read selected subset owner");
+            input.before.append(matrix);
+            input.after.append(matrix * delta);
+        }
+        // This is exactly the state provided by Python's set_transforms API:
+        // raw selection plus before/after matrices, without resolved snapshots.
+        auto command = stageviz::setTransforms(selected, input);
+        executeCommand(command, current);
+        verify();
+        undoCommand(command, current);
+        verifyOriginal();
+        executeCommand(command, current);
+        verify();
+        undoCommand(command, current);
+        verifyOriginal();
+
+        stageviz::TransformOperation operation;
+        require(stageviz::beginTransformOperation(stage, selected, operation, error), "resolve interactive operation");
+        require(operation.targetCount == 2 && operation.paths.size() == 3,
+                "operation deduplicates subsets and captures one preservation root");
+        verifyOriginal(); // Resolution itself must not author anything.
+        QStringList errors;
+        const auto prepared = stageviz::prepareTransforms(stage, operation.paths, operation.edit.before, &errors);
+        require(errors.isEmpty(), "prepare resolved preview authoring");
+        require(stageviz::applyTransformOperation(stage, operation, prepared, delta, &errors), "preview shared world delta");
+        require(stageviz::applyTransformOperation(stage, operation, prepared, delta, &errors),
+                "repeated previews use original state instead of accumulating deltas");
+        verify();
+        auto applied = stageviz::setTransforms(operation);
+        undoCommand(applied, current); // Applied registration skips initial execute.
+        verifyOriginal();
+        executeCommand(applied, current);
+        verify();
+        undoCommand(applied, current);
+        verifyOriginal();
+
+        stageviz::XformEdit conflict;
+        conflict.before = { before.first(), before.first() };
+        conflict.after = { before.first() * delta, before.first() };
+        auto rejected = stageviz::setTransforms({ selected.at(0), selected.at(1) }, conflict);
+        executeCommand(rejected, current);
+        verifyOriginal();
+        undoCommand(rejected, current);
+        verifyOriginal();
+        auto invalid = stageviz::setTransforms({ selected.first(), SdfPath("/Missing") }, conflict);
+        executeCommand(invalid, current);
+        verifyOriginal();
+    }
+}
+
+void
 commandMoveApi()
 {
     Session session;
@@ -2520,6 +2678,98 @@ commandMoveApi()
     require(stageviz::stage::worldTransform(session.stage(), SdfPath("/A/Part"), restored, error),
             "restored prim world transform readable");
     require(GfIsClose(before, restored, 1e-6), "movePath undo restores world transform");
+
+    // A sweep can contain both an internal-reference source and its proxies.
+    // Editing source contents would change every prototype occurrence in a
+    // different coordinate frame. Author roots and preserve unselected roots.
+    for (int mode = 0; mode < 3; ++mode) {
+        Session sharedSession;
+        require(sharedSession.newStage(), "new shared-source transform stage");
+        const auto sharedStage = sharedSession.stage();
+        const SdfPath sourcePath("/World/Source");
+        UsdGeomXform source = UsdGeomXform::Define(sharedStage, sourcePath);
+        source.AddRotateXYZOp().Set(GfVec3f(12, 32, 7));
+        UsdGeomXform nested = UsdGeomXform::Define(sharedStage, sourcePath.AppendChild(TfToken("Assembly")));
+        nested.AddTranslateOp().Set(GfVec3d(4, 2, -3));
+        const SdfPath bodyPath("/World/Source/Assembly/Body");
+        UsdGeomCube body = UsdGeomCube::Define(sharedStage, bodyPath);
+        body.AddTranslateOp().Set(GfVec3d(1, 2, 3));
+        const SdfPath firstPath("/World/First");
+        const SdfPath secondPath("/World/Second");
+        for (const SdfPath& path : { firstPath, secondPath }) {
+            UsdGeomXform instance = UsdGeomXform::Define(sharedStage, path);
+            require(instance.GetPrim().GetReferences().AddInternalReference(sourcePath), "reference shared source");
+            instance.GetPrim().SetInstanceable(true);
+        }
+        // First has a distinct root placement; Second inherits Source's root.
+        UsdGeomXform first(sharedStage->GetPrimAtPath(firstPath));
+        first.MakeMatrixXform().Set(GfMatrix4d(1).SetTranslate(GfVec3d(10, -2, 8)));
+        const SdfPath firstBody("/World/First/Assembly/Body");
+        const SdfPath secondBody("/World/Second/Assembly/Body");
+        QList<SdfPath> targets = stageviz::stage::transformEditTargetPaths(sharedStage, { bodyPath, firstBody });
+        require(targets == QList<SdfPath>({ sourcePath, firstPath }), "shared source and proxy resolve to roots");
+        const auto preserved = stageviz::stage::transformPreservationPaths(sharedStage, targets);
+        require(preserved == QList<SdfPath>({ secondPath }), "unselected inheriting instance needs preservation");
+        targets.append(preserved);
+        const QList<SdfPath> observed { bodyPath, firstBody, secondBody };
+        QList<GfMatrix4d> before;
+        QString error;
+        for (const SdfPath& path : observed) {
+            GfMatrix4d matrix(1);
+            require(stageviz::stage::worldTransform(sharedStage, path, matrix, error), "capture shared geometry world");
+            before.append(matrix);
+        }
+        GfMatrix4d delta(1);
+        if (mode == 0)
+            delta.SetTranslate(GfVec3d(2, -4, 11));
+        else if (mode == 1)
+            delta.SetRotate(GfRotation(GfVec3d(1, 2, 3), 27));
+        else
+            delta.SetScale(GfVec3d(1.3, 0.7, 1.1));
+        stageviz::XformEdit edit;
+        edit.delta = delta;
+        edit.hasDelta = true;
+        const auto layer = sharedStage->GetEditTarget().GetLayer();
+        std::string original;
+        layer->ExportToString(&original);
+        QStringList rejected;
+        const auto invalid = stageviz::prepareTransforms(sharedStage, { firstBody }, { GfMatrix4d(1) }, &rejected);
+        require(!rejected.isEmpty() && invalid.size() == 1 && !invalid.first().fast,
+                "prepared transforms reject proxy children before authoring");
+        require(!stageviz::stage::setWorldTransform(sharedStage, firstBody, GfMatrix4d(1), error),
+                "world transform helper rejects proxy authoring");
+        require(!stageviz::stage::isTransformEditable(sharedStage,
+                    sharedStage->GetPrimAtPath(firstPath).GetPrototype().GetPath().AppendPath(SdfPath("Assembly/Body"))),
+                "prototype contents cannot be transform authoring targets");
+        for (const SdfPath& path : targets) {
+            GfMatrix4d matrix(1);
+            require(stageviz::stage::worldTransform(sharedStage, path, matrix, error), "capture root world");
+            edit.before.append(matrix);
+            edit.after.append(preserved.contains(path) ? matrix : matrix * delta);
+            edit.beforeState.append(captureXformState(layer, path));
+        }
+        auto command = stageviz::setTransforms(targets, edit);
+        auto verify = [&]() {
+            for (qsizetype i = 0; i < observed.size(); ++i) {
+                GfMatrix4d matrix(1);
+                require(stageviz::stage::worldTransform(sharedStage, observed.at(i), matrix, error), "read moved geometry");
+                require(GfIsClose(matrix, i == 2 ? before.at(i) : before.at(i) * delta, 1e-6),
+                        "shared source and selected proxy move once; unselected proxy stays fixed");
+            }
+            require(!layer->GetPropertyAtPath(firstBody.AppendProperty(TfToken("xformOp:transform"))),
+                    "no transform authored on proxy child");
+            require(!sharedStage->GetPrimAtPath(bodyPath).GetAttribute(TfToken("xformOp:transform")),
+                    "shared source child transform stack stays untouched");
+        };
+        executeCommand(command, sharedSession);
+        verify();
+        undoCommand(command, sharedSession);
+        std::string undone;
+        layer->ExportToString(&undone);
+        require(undone == original, "shared-source undo restores exact layer including preservation opinions");
+        executeCommand(command, sharedSession);
+        verify();
+    }
 
     // setTransforms executed normally as a command must restore both
     // the original world transforms and the exact authored xform state on undo.
@@ -3038,6 +3288,52 @@ geometrySubsetApi()
                     .GetPath()
                 == blue,
             "subset binding persists after reopening layer");
+    require(stageviz::stage::objectPaths(stage, { left.GetPath(), right.GetPath(), meshPath })
+                == QList<SdfPath> { meshPath },
+            "object projection resolves multiple subset paths to their owning geometry once");
+    require(stageviz::stage::leafPaths(stage, {}, false).contains(meshPath)
+                && !stageviz::stage::leafPaths(stage, {}, false).contains(left.GetPath()),
+            "subset children do not replace geometry in leaf selection domains");
+    auto singleSelection = stageviz::selectPaths({ left.GetPath() });
+    executeCommand(singleSelection, session);
+    require(session.selectionList()->paths() == QList<SdfPath> { left.GetPath() },
+            "Session selection retains the exact selected subset path");
+    undoCommand(singleSelection, session);
+    auto selection = stageviz::selectPaths({ left.GetPath(), right.GetPath() });
+    executeCommand(selection, session);
+    require(session.selectionList()->paths() == QList<SdfPath>({ left.GetPath(), right.GetPath() }),
+            "selection command preserves exact subset paths");
+    undoCommand(selection, session);
+    require(session.selectionList()->paths().isEmpty(), "undo restores the previous scene selection");
+    executeCommand(selection, session);
+    require(session.selectionList()->paths() == QList<SdfPath>({ left.GetPath(), right.GetPath() }),
+            "redo restores exact subset paths");
+    require(stageviz::stage::transformEditTargetPaths(stage, { left.GetPath(), right.GetPath() })
+                == QList<SdfPath> { meshPath }, "transform action resolves subsets to one object");
+    require(!session.boundingBox({ left.GetPath() }).GetRange().IsEmpty(), "framing resolves subset bounds to its mesh");
+    auto isolate = stageviz::isolatePaths({ left.GetPath() });
+    executeCommand(isolate, session);
+    require(session.mask() == QList<SdfPath> { meshPath }, "isolate action resolves subset to the mesh");
+    require(session.selectionList()->paths() == QList<SdfPath>({ left.GetPath(), right.GetPath() }),
+            "object actions leave stored subset selection unchanged");
+    undoCommand(isolate, session);
+    require(session.mask().isEmpty(), "undo restores isolate mask");
+    auto hide = stageviz::hidePaths({ left.GetPath() }, false);
+    executeCommand(hide, session);
+    require(!stageviz::stage::isVisible(stage, meshPath), "hide subset action hides its object");
+    require(session.selectionList()->paths() == QList<SdfPath>({ left.GetPath(), right.GetPath() }),
+            "visibility action preserves exact subset selection");
+    undoCommand(hide, session);
+    require(stageviz::stage::isVisible(stage, meshPath), "undo restores object visibility");
+    auto all = stageviz::selectAll(true);
+    executeCommand(all, session);
+    require(session.selectionList()->paths().contains(left.GetPath())
+                && session.selectionList()->paths().contains(right.GetPath()),
+            "recursive select-all retains subset paths in Session");
+    undoCommand(all, session);
+    require(session.selectionList()->paths() == QList<SdfPath>({ left.GetPath(), right.GetPath() }),
+            "select-all undo restores exact prior subset selection");
+
 }
 
 
@@ -3221,6 +3517,7 @@ main(int argc, char** argv)
         { "command_material_variant_api", commandMaterialVariantApi },
         { "command_composition_api", commandCompositionApi },
         { "command_move_api", commandMoveApi },
+        { "transform_operation_api", transformOperationApi },
         { "command_payload_api", commandPayloadApi }
     };
     if (argc != 2 || !cases.count(argv[1])) {

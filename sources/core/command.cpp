@@ -4077,7 +4077,12 @@ isolatePaths(const QList<SdfPath>& paths)
 
             command::runWorker([session, paths, state]() {
                 *state = session->mask();
-                session->setMask(paths);
+                QList<SdfPath> objects;
+                {
+                    READ_LOCKER(locker, session->stageLock(), "stageLock");
+                    objects = stage::objectPaths(session->stageUnsafe(), paths);
+                }
+                session->setMask(objects);
 
                 command::queueToSession(session, [session, paths]() {
                     using Status = Session::Notify::Status;
@@ -4299,8 +4304,8 @@ showPaths(const QList<SdfPath>& paths, bool recursive)
                             error = editError;
                         }
                         else {
-                            partitionEditablePrimPaths(stage, inputPaths, editablePaths, skippedProxyPaths,
-                                                       skippedInvalidPaths);
+                            partitionEditablePrimPaths(stage, stage::objectPaths(stage, inputPaths),
+                                                       editablePaths, skippedProxyPaths, skippedInvalidPaths);
                             state->rootStates.clear();
                             const QList<SdfPath> affected = visibilityAffectedPaths(stage, editablePaths, recursive,
                                                                                     true);
@@ -4419,8 +4424,8 @@ hidePaths(const QList<SdfPath>& paths, bool recursive)
                             error = editError;
                         }
                         else {
-                            partitionEditablePrimPaths(stage, inputPaths, editablePaths, skippedProxyPaths,
-                                                       skippedInvalidPaths);
+                            partitionEditablePrimPaths(stage, stage::objectPaths(stage, inputPaths),
+                                                       editablePaths, skippedProxyPaths, skippedInvalidPaths);
                             state->rootStates.clear();
                             const QList<SdfPath> affected = visibilityAffectedPaths(stage, editablePaths, recursive,
                                                                                     false);
@@ -9258,6 +9263,147 @@ resetOverrides(const QList<SdfPath>& paths)
         });
 }
 
+bool
+beginTransformOperation(const UsdStageRefPtr& stage, const QList<SdfPath>& selection,
+                        TransformOperation& operation, QString& error, bool minimalRoots)
+{
+    operation = TransformOperation();
+    const SdfLayerHandle layer = currentEditLayer(stage, error);
+    if (!layer || selection.isEmpty()) {
+        if (error.isEmpty())
+            error = "no transform selection";
+        return false;
+    }
+
+    TransformOperation resolved;
+    resolved.paths = stage::transformEditTargetPaths(stage, selection, minimalRoots);
+    // Every input must resolve before any matrix/order override is authored.
+    for (const SdfPath& selected : selection) {
+        const SdfPath primPath = selected.IsPropertyPath() ? selected.GetPrimPath() : selected;
+        if (!stage->GetPrimAtPath(primPath)) {
+            error = QString("prim missing: %1").arg(pathText(selected));
+            return false;
+        }
+        bool covered = false;
+        for (const SdfPath& target : resolved.paths)
+            covered = covered || primPath.HasPrefix(target);
+        if (!covered) {
+            error = QString("no editable transform target: %1").arg(pathText(selected));
+            return false;
+        }
+    }
+    resolved.targetCount = resolved.paths.size();
+    resolved.paths.append(stage::transformPreservationPaths(stage, resolved.paths));
+    for (const SdfPath& path : resolved.paths) {
+        GfMatrix4d world(1.0);
+        if (!stage::worldTransform(stage, path, world, error))
+            return false;
+        resolved.edit.before.append(world);
+
+        XformState state;
+        state.hadPrimSpec = bool(layer->GetPrimAtPath(path));
+        const SdfPath orderPath = path.AppendProperty(TfToken("xformOpOrder"));
+        const SdfPath matrixPath = path.AppendProperty(TfToken("xformOp:transform"));
+        state.hadXformOpOrderSpec = bool(layer->GetPropertyAtPath(orderPath));
+        state.hadXformOpOrderDefault = layer->HasField(orderPath, SdfFieldKeys->Default);
+        if (state.hadXformOpOrderDefault)
+            state.xformOpOrderDefault = layer->GetField(orderPath, SdfFieldKeys->Default);
+        state.hadMatrixOpSpec = bool(layer->GetPropertyAtPath(matrixPath));
+        state.hadMatrixOpDefault = layer->HasField(matrixPath, SdfFieldKeys->Default);
+        if (state.hadMatrixOpDefault)
+            state.matrixOpDefault = layer->GetField(matrixPath, SdfFieldKeys->Default);
+        resolved.edit.beforeState.append(state);
+    }
+    resolved.edit.after = resolved.edit.before;
+    operation = std::move(resolved);
+    return true;
+}
+
+bool
+applyTransformOperation(const UsdStageRefPtr& stage, TransformOperation& operation,
+                        const QList<PreparedTransform>& prepared, const GfMatrix4d& delta, QStringList* errors)
+{
+    if (!stage || operation.paths.isEmpty() || operation.edit.before.size() != operation.paths.size()
+        || prepared.size() != operation.paths.size() || operation.targetCount <= 0
+        || operation.targetCount > operation.paths.size()) {
+        if (errors)
+            errors->append("invalid resolved transform operation");
+        return false;
+    }
+    operation.edit.after.clear();
+    for (qsizetype i = 0; i < operation.paths.size(); ++i)
+        operation.edit.after.append(i < operation.targetCount ? operation.edit.before.at(i) * delta
+                                                             : operation.edit.before.at(i));
+    operation.edit.delta = delta;
+    operation.edit.hasDelta = true;
+    return applyPreparedTransforms(stage, prepared, operation.edit.after, delta, true, errors);
+}
+
+// Convert the absolute Python/API matrix pairs into deltas on resolved objects.
+// Different inputs resolving to one object must agree; otherwise no edit occurs.
+static bool
+resolveTransformInput(const UsdStageRefPtr& stage, const QList<SdfPath>& paths, const XformEdit& input,
+                       TransformOperation& operation, QString& error)
+{
+    if (paths.isEmpty() || input.before.size() != paths.size() || input.after.size() != paths.size()) {
+        error = "paths, before and after transforms must have equal nonzero lengths";
+        return false;
+    }
+    QList<GfMatrix4d> deltas;
+    bool sharedDelta = true;
+    for (qsizetype i = 0; i < paths.size(); ++i) {
+        const double determinant = input.before.at(i).GetDeterminant();
+        if (!std::isfinite(determinant) || determinant == 0.0) {
+            error = QString("non-invertible before transform: %1").arg(pathText(paths.at(i)));
+            return false;
+        }
+        const GfMatrix4d delta = input.before.at(i).GetInverse() * input.after.at(i);
+        for (int row = 0; row < 4; ++row) {
+            for (int column = 0; column < 4; ++column) {
+                if (!std::isfinite(delta[row][column])) {
+                    error = "transform delta contains a non-finite value";
+                    return false;
+                }
+            }
+        }
+        if (input.hasDelta && !GfIsClose(delta, input.delta, 1e-8)) {
+            error = "transform matrices disagree with the shared world delta";
+            return false;
+        }
+        sharedDelta = sharedDelta && (deltas.isEmpty() || GfIsClose(delta, deltas.first(), 1e-8));
+        deltas.append(delta);
+    }
+    if (!beginTransformOperation(stage, paths, operation, error, sharedDelta))
+        return false;
+
+    QList<bool> assigned(operation.targetCount, false);
+    QList<GfMatrix4d> targetDeltas(operation.targetCount, GfMatrix4d(1));
+    for (qsizetype i = 0; i < paths.size(); ++i) {
+        const SdfPath selected = paths.at(i).IsPropertyPath() ? paths.at(i).GetPrimPath() : paths.at(i);
+        qsizetype best = -1;
+        for (qsizetype j = 0; j < operation.targetCount; ++j) {
+            if (selected.HasPrefix(operation.paths.at(j))
+                && (best < 0 || operation.paths.at(j).GetPathElementCount()
+                                   > operation.paths.at(best).GetPathElementCount()))
+                best = j;
+        }
+        if (best < 0) {
+            error = QString("no resolved transform target: %1").arg(pathText(selected));
+            return false;
+        }
+        if (assigned.at(best) && !GfIsClose(targetDeltas.at(best), deltas.at(i), 1e-8)) {
+            error = QString("conflicting transforms resolve to the same object: %1").arg(pathText(operation.paths.at(best)));
+            return false;
+        }
+        assigned[best] = true;
+        targetDeltas[best] = deltas.at(i);
+        operation.edit.after[best] = operation.edit.before.at(best) * deltas.at(i);
+    }
+    operation.edit.hasDelta = sharedDelta;
+    operation.edit.delta = sharedDelta ? deltas.first() : GfMatrix4d(1);
+    return true;
+}
+
 QList<PreparedTransform>
 prepareTransforms(const UsdStageRefPtr& stage, const QList<SdfPath>& paths, const QList<GfMatrix4d>& baseMatrices,
                   QStringList* errors)
@@ -9287,6 +9433,9 @@ prepareTransforms(const UsdStageRefPtr& stage, const QList<SdfPath>& paths, cons
 
             if (!prim || !prim.IsValid()) {
                 error = QString("prim missing: %1").arg(qt::SdfPathToQString(path));
+            }
+            else if (prim.IsInstanceProxy() || prim.IsInPrototype()) {
+                error = QString("transform requires an instance root: %1").arg(qt::SdfPathToQString(path));
             }
             else {
                 UsdGeomXformable xformable(prim);
@@ -9339,7 +9488,7 @@ prepareTransforms(const UsdStageRefPtr& stage, const QList<SdfPath>& paths, cons
         prepared.path = path;
 
         const UsdPrim prim = stage->GetPrimAtPath(path);
-        if (!prim || !prim.IsValid()) {
+        if (!prim || !prim.IsValid() || prim.IsInstanceProxy() || prim.IsInPrototype()) {
             result.append(prepared);
             continue;
         }
@@ -9382,6 +9531,13 @@ applyPreparedTransforms(const UsdStageRefPtr& stage, const QList<PreparedTransfo
 
     for (qsizetype i = 0; i < prepared.size(); ++i) {
         const PreparedTransform& item = prepared.at(i);
+        const UsdPrim prim = stage->GetPrimAtPath(item.path);
+        if (!prim || prim.IsInstanceProxy() || prim.IsInPrototype()) {
+            if (errors)
+                errors->append(QString("invalid transform authoring target: %1").arg(qt::SdfPathToQString(item.path)));
+            success = false;
+            continue;
+        }
         bool applied = false;
 
         if (item.fast && (!item.parentFollowsSelection || hasSelectionDelta)) {
@@ -9409,126 +9565,122 @@ applyPreparedTransforms(const UsdStageRefPtr& stage, const QList<PreparedTransfo
     return success;
 }
 
+bool
+restoreTransformOperation(const UsdStageRefPtr& stage, const TransformOperation& operation, QStringList* errors)
+{
+    QString error;
+    const auto layer = currentEditLayer(stage, error);
+    if (!layer || operation.paths.size() != operation.edit.beforeState.size()) {
+        if (errors)
+            errors->append(error.isEmpty() ? QStringLiteral("missing original transform state") : error);
+        return false;
+    }
+    QList<qsizetype> order;
+    for (qsizetype i = 0; i < operation.paths.size(); ++i)
+        order.append(i);
+    std::sort(order.begin(), order.end(), [&](qsizetype a, qsizetype b) {
+        return operation.paths.at(a).GetPathElementCount() > operation.paths.at(b).GetPathElementCount();
+    });
+    bool success = true;
+    SdfChangeBlock block;
+    for (qsizetype i : order) {
+        error.clear();
+        if (!restoreXformState(stage, layer, operation.paths.at(i), operation.edit.beforeState.at(i), error)) {
+            success = false;
+            if (errors)
+                errors->append(error);
+        }
+    }
+    return success;
+}
+
 Command
 setTransforms(const QList<SdfPath>& paths, const XformEdit& edit)
 {
-    auto applyEdit = [](Session* session, const QList<SdfPath>& paths, const XformEdit& edit, bool forward,
-                        const QString& title, const QString& successMessage, const QString& failureMessage) {
-        const QList<GfMatrix4d>& base = forward ? edit.before : edit.after;
-        const QList<GfMatrix4d>& target = forward ? edit.after : edit.before;
-
-        if (!session || paths.isEmpty() || paths.size() != base.size() || base.size() != target.size())
-            return;
-
-        command::beginDeferred(session, title, static_cast<int>(paths.size()));
-
-        command::runWorker([session, paths, edit, forward, base, target, successMessage, failureMessage]() {
-            bool success = true;
-            QStringList errors;
-            QList<SdfPath> changed;
-
-            {
-                WRITE_LOCKER(locker, session->stageLock(), "stageLock");
-                const UsdStageRefPtr stage = session->stageUnsafe();
-
-                if (!stage) {
-                    success = false;
-                    errors.append("stage missing");
-                }
-                else {
-                    QString editError;
-                    const SdfLayerHandle editLayer = currentEditLayer(stage, editError);
-                    if (!editLayer) {
-                        success = false;
-                        errors.append(editError);
-                    }
-                    else {
-                        const QList<PreparedTransform> prepared = prepareTransforms(stage, paths, base, &errors);
-                        if (prepared.size() != paths.size()) {
-                            success = false;
-                        }
-                        else {
-                            const bool preparedWithoutErrors = errors.isEmpty();
-                            GfMatrix4d delta(1.0);
-                            bool hasDelta = false;
-                            if (edit.hasDelta) {
-                                delta = forward ? edit.delta : edit.delta.GetInverse();
-                                hasDelta = true;
-                            }
-                            const bool applied = applyPreparedTransforms(stage, prepared, target, delta, hasDelta,
-                                                                         &errors, &changed);
-                            success = preparedWithoutErrors && applied && success;
-                        }
-                    }
-                }
-            }
-
-            const QString errorText = summarizeErrors(errors);
-            command::queueToSession(session, [session, changed, success, successMessage, failureMessage, errorText]() {
-                using Status = Session::Notify::Status;
-                command::finishDeferred(session, success ? successMessage : appendError(failureMessage, errorText),
-                                        changed, success ? Status::Success : Status::Error);
-            });
-        });
+    struct State {
+        TransformOperation operation;
+        bool resolved = false;
     };
+    auto state = std::make_shared<State>();
+    // Interactive tools already resolved and captured this state before their
+    // first write. Applied skips execute(), so undo must have it immediately.
+    if (!paths.isEmpty() && edit.before.size() == paths.size() && edit.after.size() == paths.size()
+        && edit.beforeState.size() == paths.size()) {
+        state->operation.paths = paths;
+        state->operation.edit = edit;
+        state->operation.targetCount = paths.size();
+        state->resolved = true;
+    }
 
     return Command(
-        [paths, edit, applyEdit](Session* session) {
-            applyEdit(session, paths, edit, true, "Transform paths", "Paths transformed", "Transform paths failed");
-        },
-        [paths, edit, applyEdit](Session* session) {
-            if (edit.beforeState.size() != paths.size()) {
-                applyEdit(session, paths, edit, false, "Undo transform paths", "Transform undone",
-                          "Undo transform failed");
+        [paths, edit, state](Session* session) {
+            if (!session || paths.isEmpty())
                 return;
-            }
-
-            command::beginDeferred(session, "Undo transform paths", static_cast<int>(paths.size()));
-            command::runWorker([session, paths, edit]() {
+            command::beginDeferred(session, "Transform paths", static_cast<int>(paths.size()));
+            command::runWorker([session, paths, edit, state]() {
+                bool success = false;
+                QStringList errors;
+                QList<SdfPath> changed;
+                {
+                    WRITE_LOCKER(locker, session->stageLock(), "stageLock");
+                    const auto stage = session->stageUnsafe();
+                    if (!state->resolved) {
+                        QString error;
+                        state->resolved = resolveTransformInput(stage, paths, edit, state->operation, error);
+                        if (!state->resolved)
+                            errors.append(error);
+                    }
+                    if (state->resolved) {
+                        auto& operation = state->operation;
+                        const auto prepared = prepareTransforms(stage, operation.paths, operation.edit.before, &errors);
+                        if (errors.isEmpty()) {
+                            success = applyPreparedTransforms(stage, prepared, operation.edit.after, operation.edit.delta,
+                                                               operation.edit.hasDelta, &errors, &changed);
+                        }
+                        if (!success)
+                            restoreTransformOperation(stage, operation, &errors);
+                    }
+                }
+                const QString errorText = summarizeErrors(errors);
+                command::queueToSession(session, [session, changed, success, errorText]() {
+                    command::finishDeferred(session, success ? QStringLiteral("Paths transformed")
+                        : appendError(QStringLiteral("Transform paths failed"), errorText), changed,
+                        success ? Session::Notify::Status::Success : Session::Notify::Status::Error);
+                });
+            });
+        },
+        [state](Session* session) {
+            if (!session)
+                return;
+            command::beginDeferred(session, "Undo transform paths", 1);
+            command::runWorker([session, state]() {
                 bool success = true;
                 QStringList errors;
                 QList<SdfPath> changed;
-
                 {
                     WRITE_LOCKER(locker, session->stageLock(), "stageLock");
-                    const UsdStageRefPtr stage = session->stageUnsafe();
-                    if (!stage) {
-                        success = false;
-                        errors.append("stage missing");
-                    }
-                    else {
-                        QString editError;
-                        const SdfLayerHandle editLayer = currentEditLayer(stage, editError);
-                        if (!editLayer) {
-                            success = false;
-                            errors.append(editError);
-                        }
-                        else {
-                            for (qsizetype i = 0; i < paths.size(); ++i) {
-                                QString error;
-                                if (!restoreXformState(stage, editLayer, paths.at(i), edit.beforeState.at(i), error)) {
-                                    success = false;
-                                    errors.append(error.isEmpty() ? QString("failed: %1").arg(pathText(paths.at(i)))
-                                                                  : error);
-                                    continue;
-                                }
-                                path::appendUnique(changed, paths.at(i));
-                            }
-                        }
+                    if (state->resolved) {
+                        success = restoreTransformOperation(session->stageUnsafe(), state->operation, &errors);
+                        changed = state->operation.paths;
                     }
                 }
-
                 const QString errorText = summarizeErrors(errors);
                 command::queueToSession(session, [session, changed, success, errorText]() {
-                    using Status = Session::Notify::Status;
-                    command::finishDeferred(session,
-                                            success ? "Transform undone"
-                                                    : appendError("Undo transform failed", errorText),
-                                            changed, success ? Status::Success : Status::Error);
+                    command::finishDeferred(session, success ? QStringLiteral("Transform undone")
+                        : appendError(QStringLiteral("Undo transform failed"), errorText), changed,
+                        success ? Session::Notify::Status::Success : Session::Notify::Status::Error);
                 });
             });
         });
 }
+
+
+Command
+setTransforms(const TransformOperation& operation)
+{
+    return setTransforms(operation.paths, operation.edit);
+}
+
 
 
 

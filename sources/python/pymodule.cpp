@@ -9,7 +9,7 @@
 #include "pyrenderengine.h"
 #include "pyselectionlist.h"
 #include "pysession.h"
-#include "pystyle.h"
+#include "pyui.h"
 #include "pyutils.h"
 #include "pyviewcamera.h"
 #include "pyviewstate.h"
@@ -38,13 +38,13 @@ PyModule_session(PyObject*, PyObject*)
 }
 
 static PyObject*
-PyModule_style(PyObject*, PyObject*)
+PyModule_ui(PyObject*, PyObject*)
 {
     Application* app = Application::instance();
     if (!app)
         Py_RETURN_NONE;
 
-    return createPyStyle(app->style());
+    return createPyUI(app->ui());
 }
 
 static PyObject*
@@ -110,7 +110,7 @@ static PyMethodDef Module_methods[] = {
       "Get the current stageviz application wrapper" },
     { "session", reinterpret_cast<PyCFunction>(PyModule_session), METH_NOARGS,
       "Get the current stageviz session wrapper" },
-    { "style", reinterpret_cast<PyCFunction>(PyModule_style), METH_NOARGS, "Get the current stageviz style wrapper" },
+    { "ui", reinterpret_cast<PyCFunction>(PyModule_ui), METH_NOARGS, "Get the current stageviz UI wrapper" },
     { "selectionList", reinterpret_cast<PyCFunction>(PyModule_selectionList), METH_NOARGS,
       "Get the current stageviz selection list wrapper" },
     { "startMcpServer", reinterpret_cast<PyCFunction>(PyModule_startMcpServer), METH_NOARGS,
@@ -144,7 +144,7 @@ PyInit_stageviz(void)
     if (!initPySessionType())
         return nullptr;
 
-    if (!initPyStyleType())
+    if (!initPyUIType())
         return nullptr;
 
     PyObject* module = PyModule_Create(&pyStagevizModule);
@@ -181,7 +181,7 @@ PyInit_stageviz(void)
         return nullptr;
     }
 
-    if (addPyStyleType(module) < 0) {
+    if (addPyUIType(module) < 0) {
         Py_DECREF(module);
         return nullptr;
     }
@@ -254,65 +254,65 @@ PyInit_stageviz(void)
     PyModule_AddIntConstant(module, "AmbientOcclusionContact", static_cast<int>(ViewState::AmbientOcclusionContact));
     PyModule_AddIntConstant(module, "AmbientOcclusionBroad", static_cast<int>(ViewState::AmbientOcclusionBroad));
 
-    PyModule_AddIntConstant(module, "ColorBase", static_cast<int>(Style::ColorRole::Base));
-    PyModule_AddIntConstant(module, "ColorBaseAlt", static_cast<int>(Style::ColorRole::BaseAlt));
-    PyModule_AddIntConstant(module, "ColorAccent", static_cast<int>(Style::ColorRole::Accent));
-    PyModule_AddIntConstant(module, "ColorAccentAlt", static_cast<int>(Style::ColorRole::AccentAlt));
-    PyModule_AddIntConstant(module, "ColorText", static_cast<int>(Style::ColorRole::Text));
-    PyModule_AddIntConstant(module, "ColorHighlight", static_cast<int>(Style::ColorRole::Highlight));
-    PyModule_AddIntConstant(module, "ColorHighlightAlt", static_cast<int>(Style::ColorRole::HighlightAlt));
-    PyModule_AddIntConstant(module, "ColorBorder", static_cast<int>(Style::ColorRole::Border));
-    PyModule_AddIntConstant(module, "ColorBorderAlt", static_cast<int>(Style::ColorRole::BorderAlt));
-    PyModule_AddIntConstant(module, "ColorHandle", static_cast<int>(Style::ColorRole::Handle));
-    PyModule_AddIntConstant(module, "ColorProgress", static_cast<int>(Style::ColorRole::Progress));
-    PyModule_AddIntConstant(module, "ColorButton", static_cast<int>(Style::ColorRole::Button));
-    PyModule_AddIntConstant(module, "ColorButtonAlt", static_cast<int>(Style::ColorRole::ButtonAlt));
-    PyModule_AddIntConstant(module, "ColorItem", static_cast<int>(Style::ColorRole::Item));
-    PyModule_AddIntConstant(module, "ColorItemAlt", static_cast<int>(Style::ColorRole::ItemAlt));
-    PyModule_AddIntConstant(module, "ColorRender", static_cast<int>(Style::ColorRole::Render));
-    PyModule_AddIntConstant(module, "ColorRenderAlt", static_cast<int>(Style::ColorRole::RenderAlt));
-    PyModule_AddIntConstant(module, "ColorSelection", static_cast<int>(Style::ColorRole::Selection));
-    PyModule_AddIntConstant(module, "ColorSelectionAlt", static_cast<int>(Style::ColorRole::SelectionAlt));
-    PyModule_AddIntConstant(module, "ColorWarning", static_cast<int>(Style::ColorRole::Warning));
-    PyModule_AddIntConstant(module, "ColorReadonly", static_cast<int>(Style::ColorRole::Readonly));
-    PyModule_AddIntConstant(module, "ColorError", static_cast<int>(Style::ColorRole::Error));
+    PyModule_AddIntConstant(module, "ColorBase", static_cast<int>(UI::ColorRole::Base));
+    PyModule_AddIntConstant(module, "ColorBaseAlt", static_cast<int>(UI::ColorRole::BaseAlt));
+    PyModule_AddIntConstant(module, "ColorAccent", static_cast<int>(UI::ColorRole::Accent));
+    PyModule_AddIntConstant(module, "ColorAccentAlt", static_cast<int>(UI::ColorRole::AccentAlt));
+    PyModule_AddIntConstant(module, "ColorText", static_cast<int>(UI::ColorRole::Text));
+    PyModule_AddIntConstant(module, "ColorHighlight", static_cast<int>(UI::ColorRole::Highlight));
+    PyModule_AddIntConstant(module, "ColorHighlightAlt", static_cast<int>(UI::ColorRole::HighlightAlt));
+    PyModule_AddIntConstant(module, "ColorBorder", static_cast<int>(UI::ColorRole::Border));
+    PyModule_AddIntConstant(module, "ColorBorderAlt", static_cast<int>(UI::ColorRole::BorderAlt));
+    PyModule_AddIntConstant(module, "ColorHandle", static_cast<int>(UI::ColorRole::Handle));
+    PyModule_AddIntConstant(module, "ColorProgress", static_cast<int>(UI::ColorRole::Progress));
+    PyModule_AddIntConstant(module, "ColorButton", static_cast<int>(UI::ColorRole::Button));
+    PyModule_AddIntConstant(module, "ColorButtonAlt", static_cast<int>(UI::ColorRole::ButtonAlt));
+    PyModule_AddIntConstant(module, "ColorItem", static_cast<int>(UI::ColorRole::Item));
+    PyModule_AddIntConstant(module, "ColorItemAlt", static_cast<int>(UI::ColorRole::ItemAlt));
+    PyModule_AddIntConstant(module, "ColorRender", static_cast<int>(UI::ColorRole::Render));
+    PyModule_AddIntConstant(module, "ColorRenderAlt", static_cast<int>(UI::ColorRole::RenderAlt));
+    PyModule_AddIntConstant(module, "ColorSelection", static_cast<int>(UI::ColorRole::Selection));
+    PyModule_AddIntConstant(module, "ColorSelectionAlt", static_cast<int>(UI::ColorRole::SelectionAlt));
+    PyModule_AddIntConstant(module, "ColorWarning", static_cast<int>(UI::ColorRole::Warning));
+    PyModule_AddIntConstant(module, "ColorReadonly", static_cast<int>(UI::ColorRole::Readonly));
+    PyModule_AddIntConstant(module, "ColorError", static_cast<int>(UI::ColorRole::Error));
 
-    PyModule_AddIntConstant(module, "IconBranchClosed", static_cast<int>(Style::IconRole::BranchClosed));
-    PyModule_AddIntConstant(module, "IconBranchOpen", static_cast<int>(Style::IconRole::BranchOpen));
-    PyModule_AddIntConstant(module, "IconChecked", static_cast<int>(Style::IconRole::Checked));
-    PyModule_AddIntConstant(module, "IconClear", static_cast<int>(Style::IconRole::Clear));
-    PyModule_AddIntConstant(module, "IconCode", static_cast<int>(Style::IconRole::Code));
-    PyModule_AddIntConstant(module, "IconCollapse", static_cast<int>(Style::IconRole::Collapse));
-    PyModule_AddIntConstant(module, "IconDropdown", static_cast<int>(Style::IconRole::DropDown));
-    PyModule_AddIntConstant(module, "IconExpand", static_cast<int>(Style::IconRole::Expand));
-    PyModule_AddIntConstant(module, "IconExport", static_cast<int>(Style::IconRole::Export));
-    PyModule_AddIntConstant(module, "IconExportImage", static_cast<int>(Style::IconRole::ExportImage));
-    PyModule_AddIntConstant(module, "IconFollow", static_cast<int>(Style::IconRole::Follow));
-    PyModule_AddIntConstant(module, "IconFrameAll", static_cast<int>(Style::IconRole::FrameAll));
-    PyModule_AddIntConstant(module, "IconGeometry", static_cast<int>(Style::IconRole::Geometry));
-    PyModule_AddIntConstant(module, "IconHidden", static_cast<int>(Style::IconRole::Hidden));
-    PyModule_AddIntConstant(module, "IconLeft", static_cast<int>(Style::IconRole::Left));
-    PyModule_AddIntConstant(module, "IconLock", static_cast<int>(Style::IconRole::Lock));
-    PyModule_AddIntConstant(module, "IconMaterial", static_cast<int>(Style::IconRole::Material));
-    PyModule_AddIntConstant(module, "IconOpen", static_cast<int>(Style::IconRole::Open));
-    PyModule_AddIntConstant(module, "IconPartiallyChecked", static_cast<int>(Style::IconRole::PartiallyChecked));
-    PyModule_AddIntConstant(module, "IconPayload", static_cast<int>(Style::IconRole::Payload));
-    PyModule_AddIntConstant(module, "IconPrim", static_cast<int>(Style::IconRole::Prim));
-    PyModule_AddIntConstant(module, "IconRedo", static_cast<int>(Style::IconRole::Redo));
-    PyModule_AddIntConstant(module, "IconRight", static_cast<int>(Style::IconRole::Right));
-    PyModule_AddIntConstant(module, "IconRun", static_cast<int>(Style::IconRole::Run));
-    PyModule_AddIntConstant(module, "IconShaded", static_cast<int>(Style::IconRole::Shaded));
-    PyModule_AddIntConstant(module, "IconUndo", static_cast<int>(Style::IconRole::Undo));
-    PyModule_AddIntConstant(module, "IconUnlock", static_cast<int>(Style::IconRole::Unlock));
-    PyModule_AddIntConstant(module, "IconVisible", static_cast<int>(Style::IconRole::Visible));
-    PyModule_AddIntConstant(module, "IconWireframe", static_cast<int>(Style::IconRole::Wireframe));
+    PyModule_AddIntConstant(module, "IconBranchClosed", static_cast<int>(UI::IconRole::BranchClosed));
+    PyModule_AddIntConstant(module, "IconBranchOpen", static_cast<int>(UI::IconRole::BranchOpen));
+    PyModule_AddIntConstant(module, "IconChecked", static_cast<int>(UI::IconRole::Checked));
+    PyModule_AddIntConstant(module, "IconClear", static_cast<int>(UI::IconRole::Clear));
+    PyModule_AddIntConstant(module, "IconCode", static_cast<int>(UI::IconRole::Code));
+    PyModule_AddIntConstant(module, "IconCollapse", static_cast<int>(UI::IconRole::Collapse));
+    PyModule_AddIntConstant(module, "IconDropdown", static_cast<int>(UI::IconRole::DropDown));
+    PyModule_AddIntConstant(module, "IconExpand", static_cast<int>(UI::IconRole::Expand));
+    PyModule_AddIntConstant(module, "IconExport", static_cast<int>(UI::IconRole::Export));
+    PyModule_AddIntConstant(module, "IconExportImage", static_cast<int>(UI::IconRole::ExportImage));
+    PyModule_AddIntConstant(module, "IconFollow", static_cast<int>(UI::IconRole::Follow));
+    PyModule_AddIntConstant(module, "IconFrameAll", static_cast<int>(UI::IconRole::FrameAll));
+    PyModule_AddIntConstant(module, "IconGeometry", static_cast<int>(UI::IconRole::Geometry));
+    PyModule_AddIntConstant(module, "IconHidden", static_cast<int>(UI::IconRole::Hidden));
+    PyModule_AddIntConstant(module, "IconLeft", static_cast<int>(UI::IconRole::Left));
+    PyModule_AddIntConstant(module, "IconLock", static_cast<int>(UI::IconRole::Lock));
+    PyModule_AddIntConstant(module, "IconMaterial", static_cast<int>(UI::IconRole::Material));
+    PyModule_AddIntConstant(module, "IconOpen", static_cast<int>(UI::IconRole::Open));
+    PyModule_AddIntConstant(module, "IconPartiallyChecked", static_cast<int>(UI::IconRole::PartiallyChecked));
+    PyModule_AddIntConstant(module, "IconPayload", static_cast<int>(UI::IconRole::Payload));
+    PyModule_AddIntConstant(module, "IconPrim", static_cast<int>(UI::IconRole::Prim));
+    PyModule_AddIntConstant(module, "IconRedo", static_cast<int>(UI::IconRole::Redo));
+    PyModule_AddIntConstant(module, "IconRight", static_cast<int>(UI::IconRole::Right));
+    PyModule_AddIntConstant(module, "IconRun", static_cast<int>(UI::IconRole::Run));
+    PyModule_AddIntConstant(module, "IconShaded", static_cast<int>(UI::IconRole::Shaded));
+    PyModule_AddIntConstant(module, "IconUndo", static_cast<int>(UI::IconRole::Undo));
+    PyModule_AddIntConstant(module, "IconUnlock", static_cast<int>(UI::IconRole::Unlock));
+    PyModule_AddIntConstant(module, "IconVisible", static_cast<int>(UI::IconRole::Visible));
+    PyModule_AddIntConstant(module, "IconWireframe", static_cast<int>(UI::IconRole::Wireframe));
 
-    PyModule_AddIntConstant(module, "UIScaleSmall", static_cast<int>(Style::UIScale::Small));
-    PyModule_AddIntConstant(module, "UIScaleMedium", static_cast<int>(Style::UIScale::Medium));
-    PyModule_AddIntConstant(module, "UIScaleLarge", static_cast<int>(Style::UIScale::Large));
+    PyModule_AddIntConstant(module, "UIScaleSmall", static_cast<int>(UI::UIScale::Small));
+    PyModule_AddIntConstant(module, "UIScaleMedium", static_cast<int>(UI::UIScale::Medium));
+    PyModule_AddIntConstant(module, "UIScaleLarge", static_cast<int>(UI::UIScale::Large));
 
-    PyModule_AddIntConstant(module, "UIStateNormal", static_cast<int>(Style::UIState::Normal));
-    PyModule_AddIntConstant(module, "UIStateDisabled", static_cast<int>(Style::UIState::Disabled));
+    PyModule_AddIntConstant(module, "UIStateNormal", static_cast<int>(UI::UIState::Normal));
+    PyModule_AddIntConstant(module, "UIStateDisabled", static_cast<int>(UI::UIState::Disabled));
 
     return module;
 }

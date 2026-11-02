@@ -40,7 +40,6 @@
 #include <pxr/usd/usdGeom/bboxCache.h>
 #include <pxr/usd/usdGeom/imageable.h>
 #include <pxr/usd/usdGeom/metrics.h>
-#include <pxr/usd/usdGeom/subset.h>
 #include <pxr/usd/usdGeom/xform.h>
 #include <pxr/usd/usdUtils/dependencies.h>
 
@@ -1738,16 +1737,11 @@ SessionPrivate::boundingBox(const QList<SdfPath>& paths)
 
     GfRange3d worldRange;
     std::unordered_set<SdfPath, SdfPath::Hash> visited;
-    for (const SdfPath& path : paths) {
+    // Framing needs object bounds; keep this projection out of selection storage.
+    for (const SdfPath& path : stage::objectPaths(d.stage, paths)) {
         const SdfPath primPath = path.IsPropertyPath() ? path.GetPrimPath() : path;
 
         UsdPrim prim = d.stage->GetPrimAtPath(primPath);
-        if (!prim)
-            continue;
-
-        if (prim.IsA<UsdGeomSubset>())
-            prim = prim.GetParent();
-
         if (!prim)
             continue;
 
@@ -1763,7 +1757,6 @@ SessionPrivate::boundingBox(const QList<SdfPath>& paths)
                 continue;
 
             const GfBBox3d bbox = bboxCache.ComputeWorldBound(descendant);
-
             const GfRange3d range = bbox.ComputeAlignedRange();
 
             if (!range.IsEmpty())

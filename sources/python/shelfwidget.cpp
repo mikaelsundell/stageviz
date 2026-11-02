@@ -8,7 +8,7 @@
 #include "qtutils.h"
 #include "roles.h"
 #include "shelflist.h"
-#include "style.h"
+#include "ui.h"
 #include <QAbstractItemModel>
 #include <QApplication>
 #include <QBuffer>
@@ -114,7 +114,7 @@ ShelfWidgetPrivate::addScript(const QString& code, const QString& name, const QB
     const QString title = uniqueTitle(
         name.isEmpty() ? titleFromText(trimmed, 12, QStringLiteral("Script"), QStringLiteral(">>>")) : name.trimmed());
 
-    auto* item = new QListWidgetItem(style()->icon(Style::IconRole::Code, Style::UIScale::Medium), QString());
+    auto* item = new QListWidgetItem(ui()->icon(UI::IconRole::Code, UI::UIScale::Medium), QString());
     item->setSizeHint(d.list->gridSize());
     item->setData(Qt::UserRole, trimmed);
     item->setData(roles::shelf::scriptName, title);
@@ -215,7 +215,7 @@ ShelfWidgetPrivate::imageIconBytes(const QImage& image) const
     if (image.isNull())
         return QByteArray();
 
-    const int iconSize = style()->iconSize(Style::UIScale::Medium);
+    const int iconSize = ui()->iconSize(UI::UIScale::Medium);
     const int tilePadding = 6;
     const int logicalSize = iconSize + tilePadding * 2;
 
@@ -235,7 +235,7 @@ ShelfWidgetPrivate::textIconBytes(const QString& input) const
     if (text.isEmpty())
         return QByteArray();
 
-    const int iconSize = style()->iconSize(Style::UIScale::Medium);
+    const int iconSize = ui()->iconSize(UI::UIScale::Medium);
     const int tilePadding = 6;
     const int size = iconSize + tilePadding * 2;
 
@@ -247,12 +247,12 @@ ShelfWidgetPrivate::textIconBytes(const QString& input) const
 
     QImage image(physicalSize, physicalSize, QImage::Format_ARGB32_Premultiplied);
     image.setDevicePixelRatio(dpr);
-    image.fill(style()->color(Style::ColorRole::BaseAlt));
+    image.fill(ui()->color(UI::ColorRole::BaseAlt));
 
     QPainter painter(&image);
     painter.setRenderHint(QPainter::Antialiasing, true);
     painter.setRenderHint(QPainter::TextAntialiasing, true);
-    painter.setPen(style()->color(Style::ColorRole::Text));
+    painter.setPen(ui()->color(UI::ColorRole::Text));
 
     QFont font = painter.font();
     font.setWeight(QFont::Medium);
@@ -381,7 +381,7 @@ ShelfWidgetPrivate::itemIcon(QListWidgetItem* item, const QByteArray& iconBytes)
 
     if (iconBytes.isEmpty()) {
         item->setData(roles::shelf::scriptIcon, QByteArray());
-        item->setIcon(style()->icon(Style::IconRole::Code));
+        item->setIcon(ui()->icon(UI::IconRole::Code));
     }
     else {
         item->setData(roles::shelf::scriptIcon, iconBytes);
@@ -562,7 +562,7 @@ ShelfWidget::fromVariantList(const QVariantList& scripts)
 QSize
 ShelfWidget::sizeHint() const
 {
-    const int iconSize = stageviz::style()->iconSize(Style::UIScale::Medium);
+    const int iconSize = stageviz::ui()->iconSize(UI::UIScale::Medium);
     const int padding = 6;
     const int spacing = 3;
     const int topMargin = 8;
@@ -573,7 +573,7 @@ ShelfWidget::sizeHint() const
 QSize
 ShelfWidget::minimumSizeHint() const
 {
-    const int iconSize = stageviz::style()->iconSize(Style::UIScale::Medium);
+    const int iconSize = stageviz::ui()->iconSize(UI::UIScale::Medium);
     const int padding = 6;
     const int spacing = 3;
     const int topMargin = 8;

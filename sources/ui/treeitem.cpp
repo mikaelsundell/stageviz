@@ -4,7 +4,7 @@
 
 #include "treeitem.h"
 #include "application.h"
-#include "style.h"
+#include "ui.h"
 
 namespace stageviz {
 
@@ -37,7 +37,7 @@ TreeItem::data(int column, int role) const
 {
     const ItemStates states = itemStates();
     if (role == Qt::ForegroundRole && !(states & Visible)) {
-        return QBrush(style()->color(Style::ColorRole::Text, Style::UIState::Disabled));
+        return QBrush(ui()->color(UI::ColorRole::Text, UI::UIState::Disabled));
     }
     return QTreeWidgetItem::data(column, role);
 }

@@ -10,7 +10,7 @@
 #include "mime.h"
 #include "selectionlist.h"
 #include "session.h"
-#include "style.h"
+#include "ui.h"
 #include "tracelocks.h"
 #include <QContextMenuEvent>
 #include <QDebug>
@@ -703,7 +703,7 @@ LayerTree::contextMenuEvent(QContextMenuEvent* event)
         setCurrentItem(item);
 
     QMenu menu(this);
-    QAction* selectAction = menu.addAction(stageviz::style()->icon(Style::IconRole::Select), tr("Select"));
+    QAction* selectAction = menu.addAction(stageviz::ui()->icon(UI::IconRole::Select), tr("Select"));
     menu.addSeparator();
 
     const QString identifier = p->currentIdentifier();
