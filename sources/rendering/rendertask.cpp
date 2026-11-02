@@ -417,8 +417,6 @@ public:
 
 
 
-
-
     bool ensureAoPrograms(const TfToken& path, HgiFormat colorFormat, HgiFormat depthFormat)
     {
         if (path.IsEmpty())
@@ -1186,11 +1184,10 @@ operator==(const RenderTaskParams& lhs, const RenderTaskParams& rhs)
            && ia.viewport == ib.viewport && ia.viewMatrix == ib.viewMatrix && ia.projectionMatrix == ib.projectionMatrix
            && sa.enabled == sb.enabled && sa.paths == sb.paths && sa.directPaths == sb.directPaths
            && sa.hydraRprims == sb.hydraRprims && sa.hydraMappingResolved == sb.hydraMappingResolved
-           && sa.proxyTargets == sb.proxyTargets && sa.color == sb.color
-           && sa.radius == sb.radius && lhs.captureVisible == rhs.captureVisible
-           && lhs.captureElementId == rhs.captureElementId && lhs.captureElementPixel == rhs.captureElementPixel
-           && lhs.captureGpuPick == rhs.captureGpuPick && lhs.gpuPickPixel == rhs.gpuPickPixel
-           && lhs.gpuPickExcludes == rhs.gpuPickExcludes
+           && sa.proxyTargets == sb.proxyTargets && sa.color == sb.color && sa.radius == sb.radius
+           && lhs.captureVisible == rhs.captureVisible && lhs.captureElementId == rhs.captureElementId
+           && lhs.captureElementPixel == rhs.captureElementPixel && lhs.captureGpuPick == rhs.captureGpuPick
+           && lhs.gpuPickPixel == rhs.gpuPickPixel && lhs.gpuPickExcludes == rhs.gpuPickExcludes
            && lhs.captureProjectionMatrices == rhs.captureProjectionMatrices && lhs.nearClip == rhs.nearClip
            && lhs.farClip == rhs.farClip && lhs.orthographic == rhs.orthographic
            && lhs.projectionMatrix == rhs.projectionMatrix && lhs.shaderPath == rhs.shaderPath
@@ -1416,8 +1413,8 @@ RenderTask::Execute(HdTaskContext* ctx)
         }
     }
 
-    if (m_params.selectionOutline.enabled && m_shader && scenePrimId && sceneInstanceId
-        && m_shader->selectedIdMask && m_shader->selectedInstanceMask && !m_params.shaderPath.IsEmpty()) {
+    if (m_params.selectionOutline.enabled && m_shader && scenePrimId && sceneInstanceId && m_shader->selectedIdMask
+        && m_shader->selectedInstanceMask && !m_params.shaderPath.IsEmpty()) {
         HgiTextureHandle inputColor;
         if (_GetTaskContextData(ctx, HdAovTokens->color, &inputColor) && inputColor) {
             const HgiTextureDesc& colorDesc = inputColor->GetDescriptor();

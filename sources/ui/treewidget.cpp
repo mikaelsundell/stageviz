@@ -5,8 +5,8 @@
 #include "treewidget.h"
 #include "application.h"
 #include "mime.h"
-#include "ui.h"
 #include "treeitem.h"
+#include "ui.h"
 #include <QEvent>
 #include <QItemSelectionModel>
 #include <QKeyEvent>

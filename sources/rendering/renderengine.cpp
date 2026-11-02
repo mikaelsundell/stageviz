@@ -1643,8 +1643,7 @@ RenderEngine::Private::render()
                                                 && settings.drawMode != UsdImagingGLDrawMode::DRAW_WIREFRAME_ON_SURFACE;
     renderTaskParams.projectionMatrix = GfMatrix4f(projectionMatrix);
 
-    renderTaskParams.selectionOutline.enabled = contextMode == ContextMode::Current
-                                                && !selectedPaths.empty()
+    renderTaskParams.selectionOutline.enabled = contextMode == ContextMode::Current && !selectedPaths.empty()
                                                 && settings.aov == HdAovTokens->color;
     {
         renderTaskParams.selectionOutline.paths = selectedPaths;

@@ -11,8 +11,8 @@
 #include "materialutils.h"
 #include "session.h"
 #include "spinbox.h"
-#include "ui.h"
 #include "tracelocks.h"
+#include "ui.h"
 #include <QAction>
 #include <QApplication>
 #include <QBrush>

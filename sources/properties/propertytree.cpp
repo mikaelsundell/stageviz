@@ -13,9 +13,9 @@
 #include "selectionlist.h"
 #include "signalguard.h"
 #include "spinbox.h"
-#include "ui.h"
 #include "threadutils.h"
 #include "tracelocks.h"
+#include "ui.h"
 #include "viewcontext.h"
 #include <QApplication>
 #include <QClipboard>
@@ -64,14 +64,14 @@
 #include <pxr/usd/usd/attribute.h>
 #include <pxr/usd/usd/modelAPI.h>
 #include <pxr/usd/usd/prim.h>
+#include <pxr/usd/usd/primFlags.h>
 #include <pxr/usd/usd/relationship.h>
 #include <pxr/usd/usd/stage.h>
 #include <pxr/usd/usd/variantSets.h>
 #include <pxr/usd/usdGeom/gprim.h>
-#include <pxr/usd/usdGeom/subset.h>
-#include <pxr/usd/usd/primFlags.h>
-#include <pxr/usd/usdShade/materialBindingAPI.h>
 #include <pxr/usd/usdGeom/metrics.h>
+#include <pxr/usd/usdGeom/subset.h>
+#include <pxr/usd/usdShade/materialBindingAPI.h>
 #include <set>
 #include <sstream>
 #include <thread>
@@ -1719,9 +1719,11 @@ PropertyTreePrivate::itemKey(const PropertyItem* item) const
     switch (item->kind()) {
     case PropertyItem::Attribute:
         if (item->arrayIndex() >= 0)
-            return subsetScope + QString("matrix-row:%1:%2")
-                .arg(item->parent() ? item->parent()->text(PropertyItem::Name) : item->text(PropertyItem::Name))
-                .arg(item->arrayIndex());
+            return subsetScope
+                   + QString("matrix-row:%1:%2")
+                         .arg(item->parent() ? item->parent()->text(PropertyItem::Name)
+                                             : item->text(PropertyItem::Name))
+                         .arg(item->arrayIndex());
         return subsetScope + QString("attribute:%1").arg(item->text(PropertyItem::Name));
 
     case PropertyItem::ArrayChunk: {
@@ -1885,7 +1887,8 @@ PropertyTreePrivate::restoreExpansionState()
                         prims.reserve(d.paths.size());
                         READ_LOCKER(locker, d.context ? d.context->stageLock() : session()->stageLock(), "stageLock");
                         for (const SdfPath& path : d.paths) {
-                            const UsdPrim prim = d.stage->GetPrimAtPath(path.IsPropertyPath() ? path.GetPrimPath() : path);
+                            const UsdPrim prim = d.stage->GetPrimAtPath(path.IsPropertyPath() ? path.GetPrimPath()
+                                                                                              : path);
                             if (prim && prim.IsValid())
                                 prims.append(prim);
                         }
@@ -2799,7 +2802,7 @@ PropertyTreePrivate::populateGeometrySubsetsSection(const QList<UsdPrim>& prims)
         for (const UsdGeomSubset& subset : subsets) {
             const UsdPrim subsetPrim = subset.GetPrim();
             PropertyItem* group = addInfo(parent, qt::StringToQString(subsetPrim.GetName().GetString()), QString(),
-                                           qt::SdfPathToQString(subset.GetPath()));
+                                          qt::SdfPathToQString(subset.GetPath()));
             group->setData(PropertyItem::Name, GeometrySubsetPathRole, qt::SdfPathToQString(subset.GetPath()));
             group->setValuePath(subset.GetPath());
             addAttribute(group, subset.GetElementTypeAttr());
@@ -2807,13 +2810,12 @@ PropertyTreePrivate::populateGeometrySubsetsSection(const QList<UsdPrim>& prims)
             addAttribute(group, subset.GetIndicesAttr());
 
             UsdRelationship binding;
-            const UsdShadeMaterial material = UsdShadeMaterialBindingAPI(subsetPrim).ComputeBoundMaterial(
-                UsdShadeTokens->allPurpose, &binding);
-            group->setText(PropertyItem::Value, material ? qt::SdfPathToQString(material.GetPath())
-                                                        : QStringLiteral("<unbound>"));
-            PropertyItem* materialItem = material
-                ? addPathInfo(group, "material:binding", material.GetPath())
-                : addInfo(group, "material:binding", "<unbound>");
+            const UsdShadeMaterial material
+                = UsdShadeMaterialBindingAPI(subsetPrim).ComputeBoundMaterial(UsdShadeTokens->allPurpose, &binding);
+            group->setText(PropertyItem::Value,
+                           material ? qt::SdfPathToQString(material.GetPath()) : QStringLiteral("<unbound>"));
+            PropertyItem* materialItem = material ? addPathInfo(group, "material:binding", material.GetPath())
+                                                  : addInfo(group, "material:binding", "<unbound>");
             if (binding) {
                 materialItem->setToolTip(PropertyItem::Value, qt::SdfPathToQString(binding.GetPath()));
                 // Only a local subset binding belongs to this property group.

@@ -10,8 +10,8 @@
 #include "mime.h"
 #include "selectionlist.h"
 #include "session.h"
-#include "ui.h"
 #include "tracelocks.h"
+#include "ui.h"
 #include <QContextMenuEvent>
 #include <QDebug>
 #include <QDrag>

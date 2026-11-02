@@ -119,8 +119,7 @@ public:
 
             const int padding = 2;
             const QRect tileRect = opt.rect.adjusted(padding, padding, -padding, -padding);
-            const QColor fill = isPressed ? ui()->color(UI::ColorRole::ButtonAlt)
-                                          : ui()->color(UI::ColorRole::BaseAlt);
+            const QColor fill = isPressed ? ui()->color(UI::ColorRole::ButtonAlt) : ui()->color(UI::ColorRole::BaseAlt);
 
             painter->fillRect(tileRect, fill);
             if (!icon.isNull()) {

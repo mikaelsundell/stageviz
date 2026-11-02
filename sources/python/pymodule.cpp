@@ -105,21 +105,21 @@ PyModule_isMcpServerRunning(PyObject*, PyObject*)
     return PyBool_FromLong(server->isRunning());
 }
 
-static PyMethodDef Module_methods[] = {
-    { "application", reinterpret_cast<PyCFunction>(PyModule_application), METH_NOARGS,
-      "Get the current stageviz application wrapper" },
-    { "session", reinterpret_cast<PyCFunction>(PyModule_session), METH_NOARGS,
-      "Get the current stageviz session wrapper" },
-    { "ui", reinterpret_cast<PyCFunction>(PyModule_ui), METH_NOARGS, "Get the current stageviz UI wrapper" },
-    { "selectionList", reinterpret_cast<PyCFunction>(PyModule_selectionList), METH_NOARGS,
-      "Get the current stageviz selection list wrapper" },
-    { "startMcpServer", reinterpret_cast<PyCFunction>(PyModule_startMcpServer), METH_NOARGS,
-      "Start the local MCP server and return its URL" },
-    { "stopMcpServer", reinterpret_cast<PyCFunction>(PyModule_stopMcpServer), METH_NOARGS, "Stop the local MCP server" },
-    { "isMcpServerRunning", reinterpret_cast<PyCFunction>(PyModule_isMcpServerRunning), METH_NOARGS,
-      "Return whether the local MCP server is running" },
-    { nullptr, nullptr, 0, nullptr }
-};
+static PyMethodDef Module_methods[]
+    = { { "application", reinterpret_cast<PyCFunction>(PyModule_application), METH_NOARGS,
+          "Get the current stageviz application wrapper" },
+        { "session", reinterpret_cast<PyCFunction>(PyModule_session), METH_NOARGS,
+          "Get the current stageviz session wrapper" },
+        { "ui", reinterpret_cast<PyCFunction>(PyModule_ui), METH_NOARGS, "Get the current stageviz UI wrapper" },
+        { "selectionList", reinterpret_cast<PyCFunction>(PyModule_selectionList), METH_NOARGS,
+          "Get the current stageviz selection list wrapper" },
+        { "startMcpServer", reinterpret_cast<PyCFunction>(PyModule_startMcpServer), METH_NOARGS,
+          "Start the local MCP server and return its URL" },
+        { "stopMcpServer", reinterpret_cast<PyCFunction>(PyModule_stopMcpServer), METH_NOARGS,
+          "Stop the local MCP server" },
+        { "isMcpServerRunning", reinterpret_cast<PyCFunction>(PyModule_isMcpServerRunning), METH_NOARGS,
+          "Return whether the local MCP server is running" },
+        { nullptr, nullptr, 0, nullptr } };
 
 PyMODINIT_FUNC
 PyInit_stageviz(void)

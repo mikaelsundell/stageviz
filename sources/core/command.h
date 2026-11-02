@@ -1105,8 +1105,9 @@ struct TransformOperation {
  *
  * @return True when all inputs resolve to valid transform targets.
  */
-bool beginTransformOperation(const UsdStageRefPtr& stage, const QList<SdfPath>& selection,
-                             TransformOperation& operation, QString& error, bool minimalRoots = true);
+bool
+beginTransformOperation(const UsdStageRefPtr& stage, const QList<SdfPath>& selection, TransformOperation& operation,
+                        QString& error, bool minimalRoots = true);
 
 /**
  * @brief Applies a world delta to a resolved operation using cached authoring state.
@@ -1122,9 +1123,10 @@ bool beginTransformOperation(const UsdStageRefPtr& stage, const QList<SdfPath>& 
  *
  * @return True when all resolved targets were updated.
  */
-bool applyTransformOperation(const UsdStageRefPtr& stage, TransformOperation& operation,
-                             const QList<PreparedTransform>& prepared, const GfMatrix4d& delta,
-                             QStringList* errors = nullptr);
+bool
+applyTransformOperation(const UsdStageRefPtr& stage, TransformOperation& operation,
+                        const QList<PreparedTransform>& prepared, const GfMatrix4d& delta,
+                        QStringList* errors = nullptr);
 
 /**
  * @brief Normalizes the supplied prims to their base world transforms and caches
@@ -1162,8 +1164,9 @@ applyPreparedTransforms(const UsdStageRefPtr& stage, const QList<PreparedTransfo
  *
  * @return True when all original transform opinions were restored.
  */
-bool restoreTransformOperation(const UsdStageRefPtr& stage, const TransformOperation& operation,
-                                QStringList* errors = nullptr);
+bool
+restoreTransformOperation(const UsdStageRefPtr& stage, const TransformOperation& operation,
+                          QStringList* errors = nullptr);
 
 /**
  * @brief Creates a command that applies world-space transforms to prims.
@@ -1191,7 +1194,8 @@ setTransforms(const QList<SdfPath>& paths, const XformEdit& edit);
  *
  * @return Command that restores and replays the resolved operation.
  */
-Command setTransforms(const TransformOperation& operation);
+Command
+setTransforms(const TransformOperation& operation);
 
 /**
  * @}

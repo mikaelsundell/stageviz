@@ -16,9 +16,9 @@
 #include "selectionlist.h"
 #include "session.h"
 #include "settings.h"
-#include "ui.h"
 #include "tabwidget.h"
 #include "tracelocks.h"
+#include "ui.h"
 #include "usdutils.h"
 #include <OpenImageIO/imagebuf.h>
 #include <OpenImageIO/imagebufalgo.h>

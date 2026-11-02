@@ -11,8 +11,8 @@
 #include "qtutils.h"
 #include "selectionlist.h"
 #include "signalguard.h"
-#include "ui.h"
 #include "tracelocks.h"
+#include "ui.h"
 #include "usdutils.h"
 #include "viewcontext.h"
 #include <QApplication>

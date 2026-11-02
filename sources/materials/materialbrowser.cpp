@@ -4,16 +4,16 @@
 
 #include "materialbrowser.h"
 #include "application.h"
-#include "primutils.h"
 #include "command.h"
 #include "commandstack.h"
 #include "materialitem.h"
 #include "messagedialog.h"
 #include "mime.h"
+#include "primutils.h"
 #include "selectionlist.h"
 #include "settings.h"
-#include "ui.h"
 #include "tracelocks.h"
+#include "ui.h"
 #include <QAbstractItemView>
 #include <QAction>
 #include <QActionGroup>

@@ -9,8 +9,8 @@
 #include "primutils.h"
 #include "qtutils.h"
 #include "session.h"
-#include "ui.h"
 #include "tracelocks.h"
+#include "ui.h"
 #include "viewcamera.h"
 #include "viewcontext.h"
 #include "viewporthost.h"
@@ -363,8 +363,7 @@ ViewportTransformPrivate::beginDrag(const QPointF& pos)
         if (!d.host->stage())
             return false;
 
-        d.prepared = prepareTransforms(d.host->stage(), d.operation.paths,
-                                                 d.operation.edit.before, &errors);
+        d.prepared = prepareTransforms(d.host->stage(), d.operation.paths, d.operation.edit.before, &errors);
         if (!errors.isEmpty())
             restoreTransformOperation(d.host->stage(), d.operation, &errors);
     }
@@ -520,8 +519,8 @@ ViewportTransformPrivate::updateDrag(const QPointF& pos)
         dragDelta.SetTranslate(translation);
         const GfVec3d translationMm = translation * (d.metersPerUnit * 1000.0);
         message = QStringLiteral("Translate  X %1 mm  Y %2 mm  Z %3 mm")
-                               .arg(signedNumber(translationMm[0], 3), signedNumber(translationMm[1], 3),
-                                    signedNumber(translationMm[2], 3));
+                      .arg(signedNumber(translationMm[0], 3), signedNumber(translationMm[1], 3),
+                           signedNumber(translationMm[2], 3));
 
         d.frame.pivot = d.startPivot + translation;
     }
@@ -557,7 +556,7 @@ ViewportTransformPrivate::updateDrag(const QPointF& pos)
         const GfVec3d xyz = eulerWithoutScale(snappedCandidate);
 
         message = QStringLiteral("Rotate  X %1°  Y %2°  Z %3°")
-                               .arg(signedNumber(xyz[0], 2), signedNumber(xyz[1], 2), signedNumber(xyz[2], 2));
+                      .arg(signedNumber(xyz[0], 2), signedNumber(xyz[1], 2), signedNumber(xyz[2], 2));
 
         d.frame.pivot = d.startPivot;
     }
@@ -630,8 +629,7 @@ ViewportTransformPrivate::updateDrag(const QPointF& pos)
         const GfVec3d delta = axis * distance;
         dragDelta.SetTranslate(delta);
         const double distanceMm = distance * d.metersPerUnit * 1000.0;
-        message
-            = QStringLiteral("Translate %1  %2 mm").arg(axisName(d.frame.activeAxis), signedNumber(distanceMm, 3));
+        message = QStringLiteral("Translate %1  %2 mm").arg(axisName(d.frame.activeAxis), signedNumber(distanceMm, 3));
         d.frame.pivot = d.startPivot + delta;
     }
     else if (d.frame.activeAxis >= 4 && d.frame.activeAxis <= 6) {

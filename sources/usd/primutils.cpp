@@ -25,8 +25,8 @@
 #include <pxr/usd/usd/primRange.h>
 #include <pxr/usd/usd/variantSets.h>
 #include <pxr/usd/usdGeom/gprim.h>
-#include <pxr/usd/usdGeom/subset.h>
 #include <pxr/usd/usdGeom/imageable.h>
+#include <pxr/usd/usdGeom/subset.h>
 #include <pxr/usd/usdGeom/tokens.h>
 #include <pxr/usd/usdGeom/xform.h>
 #include <pxr/usd/usdGeom/xformCache.h>
@@ -334,8 +334,8 @@ namespace stage {
         if (!prim.IsInstanceProxy())
             return isTransformEditable(stage, primPath) ? primPath : SdfPath();
 
-        for (SdfPath ancestorPath = primPath.GetParentPath(); !ancestorPath.IsEmpty()
-                                                              && ancestorPath != SdfPath::AbsoluteRootPath();
+        for (SdfPath ancestorPath = primPath.GetParentPath();
+             !ancestorPath.IsEmpty() && ancestorPath != SdfPath::AbsoluteRootPath();
              ancestorPath = ancestorPath.GetParentPath()) {
             const UsdPrim ancestor = stage->GetPrimAtPath(ancestorPath);
             if (ancestor && ancestor.IsInstance() && isTransformEditable(stage, ancestorPath))

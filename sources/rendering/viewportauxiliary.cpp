@@ -6,8 +6,8 @@
 #include "application.h"
 #include "paths.h"
 #include "session.h"
-#include "ui.h"
 #include "tracelocks.h"
+#include "ui.h"
 #include "viewstate.h"
 #include <QColor>
 #include <QFontMetrics>

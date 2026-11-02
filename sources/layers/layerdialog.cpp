@@ -9,8 +9,8 @@
 #include "layertree.h"
 #include "session.h"
 #include "settings.h"
-#include "ui.h"
 #include "tracelocks.h"
+#include "ui.h"
 #include <QDir>
 #include <QFileDialog>
 #include <QFileInfo>

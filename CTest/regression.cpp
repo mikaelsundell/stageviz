@@ -1606,13 +1606,13 @@ usdStageUtilsApi()
     const UsdPrim instanceSource = UsdGeomXform::Define(transformInstanceStage, SdfPath("/World/Source")).GetPrim();
     instanceSource.SetInstanceable(true);
     UsdGeomCube::Define(transformInstanceStage, SdfPath("/World/Source/Body"));
-    const UsdPrim transformInstanceA =
-        UsdGeomXform::Define(transformInstanceStage, SdfPath("/World/Instance_A")).GetPrim();
+    const UsdPrim transformInstanceA
+        = UsdGeomXform::Define(transformInstanceStage, SdfPath("/World/Instance_A")).GetPrim();
     require(transformInstanceA.GetReferences().AddInternalReference(instanceSource.GetPath()),
             "author transform instance A reference");
     transformInstanceA.SetInstanceable(true);
-    const UsdPrim transformInstanceB =
-        UsdGeomXform::Define(transformInstanceStage, SdfPath("/World/Instance_B")).GetPrim();
+    const UsdPrim transformInstanceB
+        = UsdGeomXform::Define(transformInstanceStage, SdfPath("/World/Instance_B")).GetPrim();
     require(transformInstanceB.GetReferences().AddInternalReference(instanceSource.GetPath()),
             "author transform instance B reference");
     transformInstanceB.SetInstanceable(true);
@@ -1624,15 +1624,16 @@ usdStageUtilsApi()
     require(stageviz::stage::transformEditTargetPath(transformInstanceStage, instanceProxyA)
                 == SdfPath("/World/Instance_A"),
             "transform proxy resolves to its owning instance");
-    require(stageviz::stage::transformEditTargetPath(transformInstanceStage, instanceProxyB.AppendProperty(TfToken("size")))
+    require(stageviz::stage::transformEditTargetPath(transformInstanceStage,
+                                                     instanceProxyB.AppendProperty(TfToken("size")))
                 == SdfPath("/World/Instance_B"),
             "transform proxy property resolves to its owning instance");
     require(stageviz::stage::transformEditTargetPaths(transformInstanceStage,
-                                                       { instanceProxyA, instanceProxyA, instanceProxyB })
+                                                      { instanceProxyA, instanceProxyA, instanceProxyB })
                 == QList<SdfPath>({ SdfPath("/World/Instance_A"), SdfPath("/World/Instance_B") }),
             "transform targets deduplicate proxy selections by owning instance");
     require(stageviz::stage::transformEditTargetPaths(transformInstanceStage,
-                                                       { instanceProxyA, SdfPath("/World/Instance_A") })
+                                                      { instanceProxyA, SdfPath("/World/Instance_A") })
                 == QList<SdfPath>({ SdfPath("/World/Instance_A") }),
             "transform targets avoid double-applying selected instance descendants");
     require(!stageviz::stage::boundingBox(transformInstanceStage, { instanceProxyA }).GetRange().IsEmpty(),
@@ -2550,14 +2551,16 @@ transformOperationApi()
             instance.GetPrim().GetReferences().AddInternalReference(source.GetPath());
             instance.GetPrim().SetInstanceable(true);
         }
-        UsdGeomXform(stage->GetPrimAtPath(SdfPath("/World/One"))).MakeMatrixXform().Set(
-            GfMatrix4d(1).SetTranslate(GfVec3d(12, 3, -5)));
+        UsdGeomXform(stage->GetPrimAtPath(SdfPath("/World/One")))
+            .MakeMatrixXform()
+            .Set(GfMatrix4d(1).SetTranslate(GfVec3d(12, 3, -5)));
         const QList<SdfPath> selected { SdfPath("/World/Source/Assembly/Mesh/Front"),
-            SdfPath("/World/Source/Assembly/Mesh/Back"), SdfPath("/World/One/Assembly/Mesh/Front"),
-            SdfPath("/World/One/Assembly/Mesh/Back") };
+                                        SdfPath("/World/Source/Assembly/Mesh/Back"),
+                                        SdfPath("/World/One/Assembly/Mesh/Front"),
+                                        SdfPath("/World/One/Assembly/Mesh/Back") };
         current.selectionList()->updatePaths(selected);
         const QList<SdfPath> observed { meshPath, SdfPath("/World/One/Assembly/Mesh"),
-            SdfPath("/World/Two/Assembly/Mesh") };
+                                        SdfPath("/World/Two/Assembly/Mesh") };
         QList<GfMatrix4d> before;
         QString error;
         for (const auto& path : observed) {
@@ -2578,7 +2581,8 @@ transformOperationApi()
         const auto verify = [&]() {
             for (qsizetype i = 0; i < observed.size(); ++i) {
                 GfMatrix4d matrix(1);
-                require(stageviz::stage::worldTransform(stage, observed.at(i), matrix, error), "read transformed object");
+                require(stageviz::stage::worldTransform(stage, observed.at(i), matrix, error),
+                        "read transformed object");
                 require(GfIsClose(matrix, i == 2 ? before.at(i) : before.at(i) * delta, 1e-6),
                         "shared source and selected proxy receive one world delta; unselected instance stays fixed");
             }
@@ -2595,7 +2599,8 @@ transformOperationApi()
         stageviz::XformEdit input;
         for (const auto& path : selected) {
             GfMatrix4d matrix(1);
-            require(stageviz::stage::worldTransform(stage, path.GetParentPath(), matrix, error), "read selected subset owner");
+            require(stageviz::stage::worldTransform(stage, path.GetParentPath(), matrix, error),
+                    "read selected subset owner");
             input.before.append(matrix);
             input.after.append(matrix * delta);
         }
@@ -2615,16 +2620,17 @@ transformOperationApi()
         require(stageviz::beginTransformOperation(stage, selected, operation, error), "resolve interactive operation");
         require(operation.targetCount == 2 && operation.paths.size() == 3,
                 "operation deduplicates subsets and captures one preservation root");
-        verifyOriginal(); // Resolution itself must not author anything.
+        verifyOriginal();  // Resolution itself must not author anything.
         QStringList errors;
         const auto prepared = stageviz::prepareTransforms(stage, operation.paths, operation.edit.before, &errors);
         require(errors.isEmpty(), "prepare resolved preview authoring");
-        require(stageviz::applyTransformOperation(stage, operation, prepared, delta, &errors), "preview shared world delta");
+        require(stageviz::applyTransformOperation(stage, operation, prepared, delta, &errors),
+                "preview shared world delta");
         require(stageviz::applyTransformOperation(stage, operation, prepared, delta, &errors),
                 "repeated previews use original state instead of accumulating deltas");
         verify();
         auto applied = stageviz::setTransforms(operation);
-        undoCommand(applied, current); // Applied registration skips initial execute.
+        undoCommand(applied, current);  // Applied registration skips initial execute.
         verifyOriginal();
         executeCommand(applied, current);
         verify();
@@ -2738,8 +2744,9 @@ commandMoveApi()
                 "prepared transforms reject proxy children before authoring");
         require(!stageviz::stage::setWorldTransform(sharedStage, firstBody, GfMatrix4d(1), error),
                 "world transform helper rejects proxy authoring");
-        require(!stageviz::stage::isTransformEditable(sharedStage,
-                    sharedStage->GetPrimAtPath(firstPath).GetPrototype().GetPath().AppendPath(SdfPath("Assembly/Body"))),
+        require(!stageviz::stage::isTransformEditable(
+                    sharedStage, sharedStage->GetPrimAtPath(firstPath).GetPrototype().GetPath().AppendPath(
+                                     SdfPath("Assembly/Body"))),
                 "prototype contents cannot be transform authoring targets");
         for (const SdfPath& path : targets) {
             GfMatrix4d matrix(1);
@@ -2752,7 +2759,8 @@ commandMoveApi()
         auto verify = [&]() {
             for (qsizetype i = 0; i < observed.size(); ++i) {
                 GfMatrix4d matrix(1);
-                require(stageviz::stage::worldTransform(sharedStage, observed.at(i), matrix, error), "read moved geometry");
+                require(stageviz::stage::worldTransform(sharedStage, observed.at(i), matrix, error),
+                        "read moved geometry");
                 require(GfIsClose(matrix, i == 2 ? before.at(i) : before.at(i) * delta, 1e-6),
                         "shared source and selected proxy move once; unselected proxy stays fixed");
             }
@@ -3309,8 +3317,10 @@ geometrySubsetApi()
     require(session.selectionList()->paths() == QList<SdfPath>({ left.GetPath(), right.GetPath() }),
             "redo restores exact subset paths");
     require(stageviz::stage::transformEditTargetPaths(stage, { left.GetPath(), right.GetPath() })
-                == QList<SdfPath> { meshPath }, "transform action resolves subsets to one object");
-    require(!session.boundingBox({ left.GetPath() }).GetRange().IsEmpty(), "framing resolves subset bounds to its mesh");
+                == QList<SdfPath> { meshPath },
+            "transform action resolves subsets to one object");
+    require(!session.boundingBox({ left.GetPath() }).GetRange().IsEmpty(),
+            "framing resolves subset bounds to its mesh");
     auto isolate = stageviz::isolatePaths({ left.GetPath() });
     executeCommand(isolate, session);
     require(session.mask() == QList<SdfPath> { meshPath }, "isolate action resolves subset to the mesh");
@@ -3333,7 +3343,6 @@ geometrySubsetApi()
     undoCommand(all, session);
     require(session.selectionList()->paths() == QList<SdfPath>({ left.GetPath(), right.GetPath() }),
             "select-all undo restores exact prior subset selection");
-
 }
 
 

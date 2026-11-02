@@ -311,8 +311,8 @@ ProgressDialogPrivate::progressBlockChanged(const QString& name, Session::Progre
 
         const auto setStatusColor = [this](QTreeWidgetItem* item, Session::Notify::Status status) {
             const UI::ColorRole role = status == Session::Notify::Status::Error     ? UI::ColorRole::Error
-                                          : status == Session::Notify::Status::Warning ? UI::ColorRole::Warning
-                                                                                       : UI::ColorRole::Progress;
+                                       : status == Session::Notify::Status::Warning ? UI::ColorRole::Warning
+                                                                                    : UI::ColorRole::Progress;
             const QBrush brush = status == Session::Notify::Status::Success ? QBrush() : QBrush(ui()->color(role));
             item->setBackground(0, brush);
             item->setBackground(1, brush);

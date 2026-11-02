@@ -8,7 +8,6 @@
 #include "commandstack.h"
 #include "consoledialog.h"
 #include "githubclient.h"
-#include "viewportwidget.h"
 #include "layerdialog.h"
 #include "materialdialog.h"
 #include "messagedialog.h"
@@ -26,11 +25,12 @@
 #include "session.h"
 #include "settings.h"
 #include "signalguard.h"
-#include "ui.h"
 #include "timelineview.h"
 #include "tracelocks.h"
+#include "ui.h"
 #include "usdutils.h"
 #include "viewcamera.h"
+#include "viewportwidget.h"
 #include "viewstate.h"
 #include <QActionGroup>
 #include <QApplication>
@@ -275,8 +275,7 @@ ViewerPrivate::init()
     initDocks();
     connect(d.timelineView, &TimelineView::timeCodeChanged, renderView(), &RenderView::setTimeCode);
     ViewState* viewState = session()->viewState();
-    const QColor backgroundColor(
-        settings()->value("backgroundColor", ui()->color(UI::ColorRole::Render)).toString());
+    const QColor backgroundColor(settings()->value("backgroundColor", ui()->color(UI::ColorRole::Render)).toString());
     viewState->setBackgroundColor(backgroundColor);
     viewState->setGridColor(ui()->color(UI::ColorRole::Grid));
     d.ui->backgroundColor->setStyleSheet("background-color: " + backgroundColor.name() + ";");

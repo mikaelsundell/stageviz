@@ -2,11 +2,7 @@
 // Copyright (c) 2025 - present Mikael Sundell
 
 #include "application.h"
-#include "propertyitem.h"
-#include "propertytree.h"
-#include "propertyview.h"
 #include "bboxutils.h"
-#include "viewporttransform.h"
 #include "command.h"
 #include "commandstack.h"
 #include "indextree.h"
@@ -17,35 +13,37 @@
 #include "outliner/outlinertree.h"
 #include "outliner/outlinerview.h"
 #include "outliner/primitem.h"
-#include "renderengine.h"
 #include "paths.h"
+#include "propertyitem.h"
+#include "propertytree.h"
+#include "propertyview.h"
+#include "renderengine.h"
+#include "session.h"
+#include "settings.h"
+#include "treewidget.h"
+#include "ui.h"
 #include "viewcamera.h"
 #include "viewcontext.h"
-#include "viewstate.h"
 #include "viewportauxiliary.h"
 #include "viewportgizmo.h"
 #include "viewporthost.h"
 #include "viewportselection.h"
+#include "viewporttransform.h"
 #include "viewportwidget.h"
-#include <pxr/usd/usdGeom/basisCurves.h>
-#include <pxr/usd/usdGeom/xform.h>
-#include "session.h"
-#include "settings.h"
-#include "ui.h"
-#include "treewidget.h"
+#include "viewstate.h"
 #include <QApplication>
 #include <QColor>
 #include <QCoreApplication>
 #include <QDir>
 #include <QElapsedTimer>
 #include <QImage>
+#include <QItemSelectionModel>
 #include <QOffscreenSurface>
 #include <QOpenGLContext>
 #include <QOpenGLFramebufferObject>
-#include <QSurfaceFormat>
-#include <QItemSelectionModel>
 #include <QSet>
 #include <QSettings>
+#include <QSurfaceFormat>
 #include <QTemporaryDir>
 #include <QThread>
 #include <QThreadPool>
@@ -60,9 +58,11 @@
 #include <pxr/usd/usd/payloads.h>
 #include <pxr/usd/usd/prim.h>
 #include <pxr/usd/usd/stage.h>
+#include <pxr/usd/usdGeom/basisCurves.h>
 #include <pxr/usd/usdGeom/cube.h>
 #include <pxr/usd/usdGeom/mesh.h>
 #include <pxr/usd/usdGeom/subset.h>
+#include <pxr/usd/usdGeom/xform.h>
 #include <pxr/usd/usdShade/material.h>
 #include <pxr/usd/usdShade/materialBindingAPI.h>
 #include <stdexcept>
@@ -108,8 +108,7 @@ uiApi()
 {
     stageviz::UI ui;
     int colorChanges = 0;
-    QObject::connect(&ui, &stageviz::UI::colorChanged, &ui,
-                     [&](stageviz::UI::ColorRole) { ++colorChanges; });
+    QObject::connect(&ui, &stageviz::UI::colorChanged, &ui, [&](stageviz::UI::ColorRole) { ++colorChanges; });
 
     const QColor accent(11, 22, 33, 255);
     ui.setColor(stageviz::UI::Accent, accent);
@@ -353,14 +352,14 @@ geometrySubsetGuiApi()
     const auto mesh = UsdGeomMesh::Define(fixture, SdfPath("/World/Mesh"));
     mesh.CreateFaceVertexCountsAttr().Set(VtArray<int> { 3, 3 });
     mesh.CreateFaceVertexIndicesAttr().Set(VtArray<int> { 0, 1, 2, 0, 2, 3 });
-    mesh.CreatePointsAttr().Set(VtArray<GfVec3f> { GfVec3f(0, 0, 0), GfVec3f(1, 0, 0),
-                                                 GfVec3f(1, 1, 0), GfVec3f(0, 1, 0) });
+    mesh.CreatePointsAttr().Set(
+        VtArray<GfVec3f> { GfVec3f(0, 0, 0), GfVec3f(1, 0, 0), GfVec3f(1, 1, 0), GfVec3f(0, 1, 0) });
     mesh.AddTranslateOp().Set(GfVec3d(1, 2, 3));
     mesh.GetPrim().SetCustomDataByKey(TfToken("test"), VtValue(1));
-    const auto front = UsdGeomSubset::CreateGeomSubset(mesh, TfToken("Front"), UsdGeomTokens->face,
-                                                       VtArray<int> { 0 }, TfToken("materialBind"));
-    const auto back = UsdGeomSubset::CreateGeomSubset(mesh, TfToken("Back"), UsdGeomTokens->face,
-                                                      VtArray<int> { 1 }, TfToken("materialBind"));
+    const auto front = UsdGeomSubset::CreateGeomSubset(mesh, TfToken("Front"), UsdGeomTokens->face, VtArray<int> { 0 },
+                                                       TfToken("materialBind"));
+    const auto back = UsdGeomSubset::CreateGeomSubset(mesh, TfToken("Back"), UsdGeomTokens->face, VtArray<int> { 1 },
+                                                      TfToken("materialBind"));
     const auto red = UsdShadeMaterial::Define(fixture, SdfPath("/World/Looks/Red"));
     const auto blue = UsdShadeMaterial::Define(fixture, SdfPath("/World/Looks/Blue"));
     require(UsdShadeMaterialBindingAPI::Apply(front.GetPrim()).Bind(red), "bind front subset material");
@@ -379,7 +378,8 @@ geometrySubsetGuiApi()
     auto* propertyTree = properties.findChild<stageviz::PropertyTree*>("propertyTree");
     require(tree && propertyTree, "find outliner and property trees");
     const auto findProperty = [&](const SdfPath& path) -> stageviz::PropertyItem* {
-        std::function<stageviz::PropertyItem*(QTreeWidgetItem*)> find = [&](QTreeWidgetItem* parent) -> stageviz::PropertyItem* {
+        std::function<stageviz::PropertyItem*(QTreeWidgetItem*)> find =
+            [&](QTreeWidgetItem* parent) -> stageviz::PropertyItem* {
             for (int i = 0; i < parent->childCount(); ++i) {
                 auto* item = dynamic_cast<stageviz::PropertyItem*>(parent->child(i));
                 if (item && item->propertyPath() == path)
@@ -414,8 +414,7 @@ geometrySubsetGuiApi()
     checkOutliner(tree->invisibleRootItem());
     current->commandStack()->execute(new stageviz::Command(stageviz::selectPaths({ SdfPath("/World/Mesh") })));
     const auto sections = propertyTree->findItems("subsets", Qt::MatchExactly | Qt::MatchRecursive, 0);
-    require(sections.size() == 1 && sections.first()->childCount() == 2
-                && sections.first()->text(1) == "2 values"
+    require(sections.size() == 1 && sections.first()->childCount() == 2 && sections.first()->text(1) == "2 values"
                 && sections.first()->parent()->text(0) == "Attributes",
             "owning mesh presents both geometry subsets under Attributes");
     const auto topSection = [&](const QString& name) {
@@ -427,11 +426,11 @@ geometrySubsetGuiApi()
     const auto* metadataSectionAtStart = topSection("Metadata");
     const auto* attributesSectionAtStart = topSection("Attributes");
     const auto* relationshipsSectionAtStart = topSection("Relationships");
-    require(primSectionAtStart && primSectionAtStart->isExpanded()
-                && compositionSectionAtStart && compositionSectionAtStart->isExpanded()
-                && metadataSectionAtStart && metadataSectionAtStart->isExpanded()
-                && attributesSectionAtStart && attributesSectionAtStart->isExpanded()
-                && relationshipsSectionAtStart && relationshipsSectionAtStart->isExpanded(),
+    require(primSectionAtStart && primSectionAtStart->isExpanded() && compositionSectionAtStart
+                && compositionSectionAtStart->isExpanded() && metadataSectionAtStart
+                && metadataSectionAtStart->isExpanded() && attributesSectionAtStart
+                && attributesSectionAtStart->isExpanded() && relationshipsSectionAtStart
+                && relationshipsSectionAtStart->isExpanded(),
             "top-level property sections start expanded");
     require(!sections.first()->isExpanded(), "nested subsets starts collapsed");
     bool attributeCountOk = false;
@@ -473,7 +472,8 @@ geometrySubsetGuiApi()
         current->stage()->GetAttributeAtPath(indicesPath).Get(&value);
         return value;
     };
-    require(waitUntil([&]() { return authoredIndices() == VtIntArray { 1 }; }), "subset indices edit authors the property");
+    require(waitUntil([&]() { return authoredIndices() == VtIntArray { 1 }; }),
+            "subset indices edit authors the property");
     require(current->commandStack()->canUndo(), "subset property edit registers an undo command");
     current->commandStack()->undo();
     drain();
@@ -482,11 +482,13 @@ geometrySubsetGuiApi()
     current->commandStack()->redo();
     drain();
     require(waitUntil([&]() { return authoredIndices() == VtIntArray { 1 }; }), "redo restores subset indices edit");
-    current->commandStack()->execute(new stageviz::Command(stageviz::bindMaterial({ front.GetPath() }, blue.GetPath())));
+    current->commandStack()->execute(
+        new stageviz::Command(stageviz::bindMaterial({ front.GetPath() }, blue.GetPath())));
     require(waitUntil([&]() {
-        auto* item = findProperty(SdfPath("/World/Mesh/Front.material:binding"));
-        return item && item->valuePath() == blue.GetPath();
-    }), "material-binding notices refresh the owning mesh properties");
+                auto* item = findProperty(SdfPath("/World/Mesh/Front.material:binding"));
+                return item && item->valuePath() == blue.GetPath();
+            }),
+            "material-binding notices refresh the owning mesh properties");
     checkOutliner(tree->invisibleRootItem());
 
     current->commandStack()->execute(new stageviz::Command(stageviz::selectPaths({ SdfPath("/Instance/Mesh") })));
@@ -528,8 +530,8 @@ geometrySubsetGuiApi()
                 "PropertyTree inspects selected subset directly");
         require(propertyTree->findItems("subsets", Qt::MatchExactly | Qt::MatchRecursive, 0).isEmpty(),
                 "selected subset does not become its parent's property inspector");
-        current->commandStack()->execute(new stageviz::Command(stageviz::selectPaths(
-            { subsetPath, owner.AppendChild(TfToken("Back")) })));
+        current->commandStack()->execute(
+            new stageviz::Command(stageviz::selectPaths({ subsetPath, owner.AppendChild(TfToken("Back")) })));
         QCoreApplication::processEvents();
         require(current->selectionList()->paths().size() == 2 && selectedRows() == QList<SdfPath> { owner },
                 "multiple stored subset paths project to one Outliner row without feedback");
@@ -809,7 +811,11 @@ public:
         return true;
     }
     void updateOverlay() override {}
-    void syncSelection(const QList<SdfPath>& paths) override { selected = paths; selection->invalidateVisibleSelection(); }
+    void syncSelection(const QList<SdfPath>& paths) override
+    {
+        selected = paths;
+        selection->invalidateVisibleSelection();
+    }
 
     stageviz::ViewportWidget viewport;
     stageviz::ViewContext editContext;
@@ -834,8 +840,7 @@ viewportComponentsApi()
     host.selection = &selection;
     host.selected = { SdfPath("/World"), SdfPath("/World/A/Child"), SdfPath("/World/B") };
     host.mask = { SdfPath("/World/A") };
-    require(!selection.isPathMaskedIn(SdfPath("/World"))
-                && selection.isPathMaskedIn(SdfPath("/World/A/Child")),
+    require(!selection.isPathMaskedIn(SdfPath("/World")) && selection.isPathMaskedIn(SdfPath("/World/A/Child")),
             "selection keeps ancestor highlighting separate from pick masks");
     require(selection.visiblePaths() == QList<SdfPath>({ SdfPath("/World"), SdfPath("/World/A/Child") }),
             "visible-selection cache includes ancestors and masked descendants");
@@ -866,7 +871,8 @@ viewportComponentsApi()
         require(point[2] == 0, "Z-up grid lies in the XY plane");
     host.viewState()->setGridEnabled(false);
     auxiliary.updateGrid(host.viewState());
-    require(!host.auxiliary->GetPrimAtPath(stageviz::paths::auxiliary::grid), "disabling the grid removes auxiliary geometry");
+    require(!host.auxiliary->GetPrimAtPath(stageviz::paths::auxiliary::grid),
+            "disabling the grid removes auxiliary geometry");
     auxiliary.updateAxis(host.viewCamera()->camera(), true, 2.0);
     require(auxiliary.axisImage().size() == QSize(192, 192) && auxiliary.axisImage().devicePixelRatio() == 2.0,
             "camera-axis image preserves logical size on high-DPI displays");
@@ -904,14 +910,17 @@ viewportComponentsApi()
     host.viewport.setMoveEnabled(true);
     require(host.viewport.transformEnabled() && host.viewport.moveEnabled(), "widget forwards move mode to the tool");
     host.viewport.setRotateEnabled(true);
-    require(host.viewport.rotateEnabled() && !host.viewport.moveEnabled(), "widget forwards mutually exclusive rotate mode");
+    require(host.viewport.rotateEnabled() && !host.viewport.moveEnabled(),
+            "widget forwards mutually exclusive rotate mode");
     host.viewport.setScaleEnabled(true);
     require(host.viewport.scaleEnabled() && !host.viewport.rotateEnabled(), "widget forwards scale mode to the tool");
     host.viewport.setTransformEnabled(false);
-    require(!host.viewport.transformEnabled() && !host.viewport.scaleEnabled(), "widget disables manipulation through the tool");
+    require(!host.viewport.transformEnabled() && !host.viewport.scaleEnabled(),
+            "widget disables manipulation through the tool");
     std::string documentAfter;
     current->stage()->GetRootLayer()->ExportToString(&documentAfter);
-    require(documentBefore == documentAfter, "auxiliary presentation and mode changes never author into the document stage");
+    require(documentBefore == documentAfter,
+            "auxiliary presentation and mode changes never author into the document stage");
 }
 
 void
@@ -949,7 +958,8 @@ transformOperationAppliedApi()
     QStringList errors;
     const auto prepared = stageviz::prepareTransforms(stage, operation.paths, operation.edit.before, &errors);
     const GfMatrix4d delta = GfMatrix4d(1).SetTranslate(GfVec3d(3, -2, 9));
-    require(stageviz::applyTransformOperation(stage, operation, prepared, delta, &errors), "author interactive preview");
+    require(stageviz::applyTransformOperation(stage, operation, prepared, delta, &errors),
+            "author interactive preview");
     std::string preview;
     stage->GetRootLayer()->ExportToString(&preview);
     require(preview != original, "preview authors a transform before history registration");

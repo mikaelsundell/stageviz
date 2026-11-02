@@ -8,8 +8,8 @@
 #include "commandstack.h"
 #include "materialmenu.h"
 #include "session.h"
-#include "ui.h"
 #include "tracelocks.h"
+#include "ui.h"
 #include <QContextMenuEvent>
 #include <QGraphicsEllipseItem>
 #include <QGraphicsPathItem>
@@ -392,8 +392,7 @@ protected:
         painter->setBrush(ui()->color(UI::ColorRole::ItemAlt));
         painter->drawPath(headerPath);
 
-        QColor border = isSelected() ? ui()->color(UI::ColorRole::Highlight)
-                                     : ui()->color(UI::ColorRole::BorderAlt);
+        QColor border = isSelected() ? ui()->color(UI::ColorRole::Highlight) : ui()->color(UI::ColorRole::BorderAlt);
         painter->setBrush(Qt::NoBrush);
         painter->setPen(QPen(border, isSelected() ? 2.0 : 1.0));
         painter->drawRoundedRect(r.adjusted(0.5, 0.5, -0.5, -0.5), radius, radius);

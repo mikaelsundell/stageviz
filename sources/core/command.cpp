@@ -4304,8 +4304,8 @@ showPaths(const QList<SdfPath>& paths, bool recursive)
                             error = editError;
                         }
                         else {
-                            partitionEditablePrimPaths(stage, stage::objectPaths(stage, inputPaths),
-                                                       editablePaths, skippedProxyPaths, skippedInvalidPaths);
+                            partitionEditablePrimPaths(stage, stage::objectPaths(stage, inputPaths), editablePaths,
+                                                       skippedProxyPaths, skippedInvalidPaths);
                             state->rootStates.clear();
                             const QList<SdfPath> affected = visibilityAffectedPaths(stage, editablePaths, recursive,
                                                                                     true);
@@ -4424,8 +4424,8 @@ hidePaths(const QList<SdfPath>& paths, bool recursive)
                             error = editError;
                         }
                         else {
-                            partitionEditablePrimPaths(stage, stage::objectPaths(stage, inputPaths),
-                                                       editablePaths, skippedProxyPaths, skippedInvalidPaths);
+                            partitionEditablePrimPaths(stage, stage::objectPaths(stage, inputPaths), editablePaths,
+                                                       skippedProxyPaths, skippedInvalidPaths);
                             state->rootStates.clear();
                             const QList<SdfPath> affected = visibilityAffectedPaths(stage, editablePaths, recursive,
                                                                                     false);
@@ -9264,8 +9264,8 @@ resetOverrides(const QList<SdfPath>& paths)
 }
 
 bool
-beginTransformOperation(const UsdStageRefPtr& stage, const QList<SdfPath>& selection,
-                        TransformOperation& operation, QString& error, bool minimalRoots)
+beginTransformOperation(const UsdStageRefPtr& stage, const QList<SdfPath>& selection, TransformOperation& operation,
+                        QString& error, bool minimalRoots)
 {
     operation = TransformOperation();
     const SdfLayerHandle layer = currentEditLayer(stage, error);
@@ -9333,7 +9333,7 @@ applyTransformOperation(const UsdStageRefPtr& stage, TransformOperation& operati
     operation.edit.after.clear();
     for (qsizetype i = 0; i < operation.paths.size(); ++i)
         operation.edit.after.append(i < operation.targetCount ? operation.edit.before.at(i) * delta
-                                                             : operation.edit.before.at(i));
+                                                              : operation.edit.before.at(i));
     operation.edit.delta = delta;
     operation.edit.hasDelta = true;
     return applyPreparedTransforms(stage, prepared, operation.edit.after, delta, true, errors);
@@ -9343,7 +9343,7 @@ applyTransformOperation(const UsdStageRefPtr& stage, TransformOperation& operati
 // Different inputs resolving to one object must agree; otherwise no edit occurs.
 static bool
 resolveTransformInput(const UsdStageRefPtr& stage, const QList<SdfPath>& paths, const XformEdit& input,
-                       TransformOperation& operation, QString& error)
+                      TransformOperation& operation, QString& error)
 {
     if (paths.isEmpty() || input.before.size() != paths.size() || input.after.size() != paths.size()) {
         error = "paths, before and after transforms must have equal nonzero lengths";
@@ -9383,8 +9383,8 @@ resolveTransformInput(const UsdStageRefPtr& stage, const QList<SdfPath>& paths, 
         qsizetype best = -1;
         for (qsizetype j = 0; j < operation.targetCount; ++j) {
             if (selected.HasPrefix(operation.paths.at(j))
-                && (best < 0 || operation.paths.at(j).GetPathElementCount()
-                                   > operation.paths.at(best).GetPathElementCount()))
+                && (best < 0
+                    || operation.paths.at(j).GetPathElementCount() > operation.paths.at(best).GetPathElementCount()))
                 best = j;
         }
         if (best < 0) {
@@ -9392,7 +9392,8 @@ resolveTransformInput(const UsdStageRefPtr& stage, const QList<SdfPath>& paths, 
             return false;
         }
         if (assigned.at(best) && !GfIsClose(targetDeltas.at(best), deltas.at(i), 1e-8)) {
-            error = QString("conflicting transforms resolve to the same object: %1").arg(pathText(operation.paths.at(best)));
+            error = QString("conflicting transforms resolve to the same object: %1")
+                        .arg(pathText(operation.paths.at(best)));
             return false;
         }
         assigned[best] = true;
@@ -9634,8 +9635,9 @@ setTransforms(const QList<SdfPath>& paths, const XformEdit& edit)
                         auto& operation = state->operation;
                         const auto prepared = prepareTransforms(stage, operation.paths, operation.edit.before, &errors);
                         if (errors.isEmpty()) {
-                            success = applyPreparedTransforms(stage, prepared, operation.edit.after, operation.edit.delta,
-                                                               operation.edit.hasDelta, &errors, &changed);
+                            success = applyPreparedTransforms(stage, prepared, operation.edit.after,
+                                                              operation.edit.delta, operation.edit.hasDelta, &errors,
+                                                              &changed);
                         }
                         if (!success)
                             restoreTransformOperation(stage, operation, &errors);
@@ -9643,9 +9645,12 @@ setTransforms(const QList<SdfPath>& paths, const XformEdit& edit)
                 }
                 const QString errorText = summarizeErrors(errors);
                 command::queueToSession(session, [session, changed, success, errorText]() {
-                    command::finishDeferred(session, success ? QStringLiteral("Paths transformed")
-                        : appendError(QStringLiteral("Transform paths failed"), errorText), changed,
-                        success ? Session::Notify::Status::Success : Session::Notify::Status::Error);
+                    command::finishDeferred(session,
+                                            success ? QStringLiteral("Paths transformed")
+                                                    : appendError(QStringLiteral("Transform paths failed"), errorText),
+                                            changed,
+                                            success ? Session::Notify::Status::Success
+                                                    : Session::Notify::Status::Error);
                 });
             });
         },
@@ -9666,9 +9671,12 @@ setTransforms(const QList<SdfPath>& paths, const XformEdit& edit)
                 }
                 const QString errorText = summarizeErrors(errors);
                 command::queueToSession(session, [session, changed, success, errorText]() {
-                    command::finishDeferred(session, success ? QStringLiteral("Transform undone")
-                        : appendError(QStringLiteral("Undo transform failed"), errorText), changed,
-                        success ? Session::Notify::Status::Success : Session::Notify::Status::Error);
+                    command::finishDeferred(session,
+                                            success ? QStringLiteral("Transform undone")
+                                                    : appendError(QStringLiteral("Undo transform failed"), errorText),
+                                            changed,
+                                            success ? Session::Notify::Status::Success
+                                                    : Session::Notify::Status::Error);
                 });
             });
         });
@@ -9680,7 +9688,6 @@ setTransforms(const TransformOperation& operation)
 {
     return setTransforms(operation.paths, operation.edit);
 }
-
 
 
 

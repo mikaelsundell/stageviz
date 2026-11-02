@@ -122,7 +122,7 @@ namespace stage {
      * @return Transform targets in selection order.
      */
     QList<SdfPath> transformEditTargetPaths(UsdStageRefPtr stage, const QList<SdfPath>& paths,
-                                           bool minimalRoots = true);
+                                            bool minimalRoots = true);
 
     /**
      * @brief Finds unselected instances whose root transforms need preservation
