@@ -4,6 +4,7 @@
 
 #include "contextmenu.h"
 #include "command.h"
+#include "commandtransform.h"
 #include "qtutils.h"
 #include "tracelocks.h"
 #include "usdutils.h"

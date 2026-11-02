@@ -59,7 +59,7 @@ class ViewportTest:
         for button in tb.all_widgets():
             try:
                 if (button.objectName() != mode.lower() or not isinstance(button, QtWidgets.QToolButton)
-                        or not button.isVisible()):
+                        or not button.isVisible() or not button.isCheckable()):
                     continue
                 if not button.isChecked():
                     QtTest.QTest.mouseClick(button, QtCore.Qt.MouseButton.LeftButton)

@@ -42,9 +42,10 @@ consistent with the existing architecture.
 ## USD edits, settings, and notifications
 
 - Route user-facing USD stage and layer modifications through undoable
-  commands. Add command factories and implementations in `sources/core/command.h`
-  and `command.cpp`, then expose them through the Python bindings when Python
-  users need the same authoring operation. Do not write USD directly from a UI
+  commands. Add command factories and implementations in the relevant family
+  under `sources/commands/` (for example, `commandtransform.h` and
+  `commandtransform.cpp`), then expose them through the Python bindings when
+  Python users need the same authoring operation. Do not write USD directly from a UI
   callback when an undoable command is appropriate.
 - Use `Session` and its notifications to observe stage, edit-target, dirty,
   and layer-state changes. Keep UI state derived from the current session and

@@ -4,6 +4,7 @@
 #include "application.h"
 #include "bboxutils.h"
 #include "command.h"
+#include "commandtransform.h"
 #include "commandstack.h"
 #include "indextree.h"
 #include "layerdialog.h"

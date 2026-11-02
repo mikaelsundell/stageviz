@@ -5,6 +5,7 @@
 #include "viewporttransform.h"
 #include "application.h"
 #include "command.h"
+#include "commandtransform.h"
 #include "commandstack.h"
 #include "primutils.h"
 #include "qtutils.h"

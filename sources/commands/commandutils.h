@@ -15,6 +15,32 @@ namespace stageviz {
 namespace command {
 
     /**
+     * @brief Formats a USD path for command progress and error messages.
+     */
+    QString pathText(const SdfPath& path);
+
+    /**
+     * @brief Appends a nonempty error to a command message.
+     */
+    QString appendError(const QString& message, const QString& error);
+
+    /**
+     * @brief Returns the active edit layer or reports a missing stage or layer.
+     */
+    SdfLayerHandle currentEditLayer(const UsdStageRefPtr& stage, QString& error);
+
+    /**
+     * @brief Joins command errors into a multiline message.
+     */
+    QString summarizeErrors(const QStringList& errors);
+
+    /**
+     * @brief Removes an authored property spec, succeeding when already absent.
+     */
+    bool removePropertySpec(const SdfLayerHandle& layer, const SdfPath& propertyPath);
+
+
+    /**
      * @struct Result
      * @brief Result item used for per-path command progress updates.
      *

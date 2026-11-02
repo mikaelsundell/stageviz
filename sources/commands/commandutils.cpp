@@ -3,10 +3,49 @@
 // https://github.com/mikaelsundell/stageviz
 
 #include "commandutils.h"
+#include "qtutils.h"
 #include <QMetaObject>
+#include <pxr/usd/sdf/namespaceEdit.h>
 
 namespace stageviz {
 namespace command {
+
+    QString pathText(const SdfPath& path) { return qt::SdfPathToQString(path); }
+
+    QString appendError(const QString& message, const QString& error)
+    {
+        return error.isEmpty() ? message : QString("%1: %2").arg(message, error);
+    }
+
+    SdfLayerHandle currentEditLayer(const UsdStageRefPtr& stage, QString& error)
+    {
+        if (!stage) {
+            error = "stage missing";
+            return {};
+        }
+
+        const SdfLayerHandle layer = stage->GetEditTarget().GetLayer();
+        if (!layer) {
+            error = "edit layer missing";
+            return {};
+        }
+        return layer;
+    }
+
+    QString summarizeErrors(const QStringList& errors) { return errors.join('\n'); }
+
+    bool removePropertySpec(const SdfLayerHandle& layer, const SdfPath& propertyPath)
+    {
+        if (!layer || propertyPath.IsEmpty() || !propertyPath.IsPropertyPath())
+            return false;
+        if (!layer->GetPropertyAtPath(propertyPath))
+            return true;
+
+        SdfBatchNamespaceEdit edits;
+        edits.Add(propertyPath, SdfPath::EmptyPath());
+        return layer->CanApply(edits) && layer->Apply(edits);
+    }
+
 
     void appendResult(Session* session, QList<Result>& pending, const Result& result, int completed, int batchSize)
     {

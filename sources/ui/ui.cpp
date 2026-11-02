@@ -248,7 +248,6 @@ UIPrivate::updateTheme()
     d.icons[roleName(UI::IconRole::Follow)] = ":/icons/resources/Follow.png";
     d.icons[roleName(UI::IconRole::FrameAll)] = ":/icons/resources/FrameAll.png";
     d.icons[roleName(UI::IconRole::Geometry)] = ":/icons/resources/Geometry.png";
-    d.icons[roleName(UI::IconRole::GeomSubset)] = ":/icons/resources/GeomSubset.png";
     d.icons[roleName(UI::IconRole::Hidden)] = ":/icons/resources/Hidden.png";
     d.icons[roleName(UI::IconRole::Instance)] = ":/icons/resources/Instance.png";
     d.icons[roleName(UI::IconRole::Layer)] = ":/icons/resources/Layer.png";

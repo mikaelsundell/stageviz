@@ -79,7 +79,6 @@ public:
         Follow,
         FrameAll,
         Geometry,
-        GeomSubset,
         Hidden,
         Instance,
         Layer,

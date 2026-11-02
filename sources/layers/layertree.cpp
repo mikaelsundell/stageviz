@@ -8,6 +8,7 @@
 #include "commandstack.h"
 #include "layeritem.h"
 #include "mime.h"
+#include "os.h"
 #include "selectionlist.h"
 #include "session.h"
 #include "tracelocks.h"
@@ -18,6 +19,7 @@
 #include <QDragEnterEvent>
 #include <QDragMoveEvent>
 #include <QDropEvent>
+#include <QFileInfo>
 #include <QHash>
 #include <QHeaderView>
 #include <QMenu>
@@ -715,6 +717,7 @@ LayerTree::contextMenuEvent(QContextMenuEvent* event)
     bool canRemove = false;
     bool canMute = false;
     bool localLayer = false;
+    QString layerFilePath;
     const bool inheritedMuted = item && layerItem(item)->isInheritedMuted();
     if (!identifier.isEmpty() && session()) {
         READ_LOCKER(locker, session()->stageLock(), "stageLock");
@@ -732,6 +735,8 @@ LayerTree::contextMenuEvent(QContextMenuEvent* event)
             if (!layer && muted)
                 layer = SdfLayer::Find(identifier.toStdString());
             if (layer) {
+                if (!layer->IsAnonymous())
+                    layerFilePath = QString::fromStdString(layer->GetRealPath());
                 editTarget = stage->GetEditTarget().GetLayer() == layer;
                 rootLayer = stage->GetRootLayer() == layer;
                 localLayer = stage->HasLocalLayer(layer);
@@ -771,6 +776,19 @@ LayerTree::contextMenuEvent(QContextMenuEvent* event)
     lockAction->setEnabled(layer && !rootLayer && !inheritedMuted);
     if (inheritedMuted)
         lockAction->setToolTip(tr("Permission changes are unavailable while an ancestor layer is muted."));
+    QAction* revealAction = nullptr;
+    const QFileInfo layerFileInfo(layerFilePath);
+    if (!layerFilePath.isEmpty() && layerFileInfo.isFile()) {
+        layerFilePath = layerFileInfo.absoluteFilePath();
+        menu.addSeparator();
+#ifdef Q_OS_MAC
+        revealAction = menu.addAction(tr("Reveal in Finder"));
+#elif defined(Q_OS_WIN)
+        revealAction = menu.addAction(tr("Reveal in Explorer"));
+#else
+        revealAction = menu.addAction(tr("Reveal in Folder"));
+#endif
+    }
     const QAction* selected = menu.exec(event->globalPos());
     if (!selected)
         return;
@@ -797,6 +815,16 @@ LayerTree::contextMenuEvent(QContextMenuEvent* event)
     }
     else if (selected == lockAction && layer) {
         session()->commandStack()->execute(new Command(setLayerPermissionToEdit(identifier, !permissionToEdit)));
+    }
+    else if (selected == revealAction) {
+        if (!QFileInfo::exists(layerFilePath)) {
+            session()->notifyStatus(Session::Notify::Status::Error,
+                                    tr("File does not exist: %1").arg(layerFilePath));
+        }
+        else if (!os::revealFileInFolder(layerFilePath)) {
+            session()->notifyStatus(Session::Notify::Status::Warning,
+                                    tr("Could not reveal file in the file browser: %1").arg(layerFilePath));
+        }
     }
     event->accept();
 }

@@ -2,6 +2,7 @@
 // Copyright (c) 2025 - present Mikael Sundell
 
 #include "command.h"
+#include "commandtransform.h"
 #include "commandstack.h"
 #include "materialmenu.h"
 #include "materialutils.h"

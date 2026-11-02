@@ -166,7 +166,6 @@ addUIEnums()
                                            { "Follow", static_cast<long>(UI::IconRole::Follow) },
                                            { "FrameAll", static_cast<long>(UI::IconRole::FrameAll) },
                                            { "Geometry", static_cast<long>(UI::IconRole::Geometry) },
-                                           { "GeomSubset", static_cast<long>(UI::IconRole::GeomSubset) },
                                            { "Hidden", static_cast<long>(UI::IconRole::Hidden) },
                                            { "Instance", static_cast<long>(UI::IconRole::Instance) },
                                            { "Layer", static_cast<long>(UI::IconRole::Layer) },

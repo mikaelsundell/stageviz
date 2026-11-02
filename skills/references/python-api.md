@@ -680,7 +680,7 @@ stageviz.UI.AxisX
 
 #### IconRole members
 
-`BranchClosed`, `BranchOpen`, `Checked`, `Clear`, `Code`, `Collapse`, `DefaultPrim`, `Down`, `DropDown`, `Expand`, `Export`, `ExportImage`, `Follow`, `FrameAll`, `Geometry`, `GeomSubset`, `Hidden`, `Left`, `List`, `Material`, `Move`, `Nested`, `New`, `Open`, `Over`, `Override`, `PartiallyChecked`, `Payload`, `Pick`, `Prim`, `Redo`, `Right`, `Rotate`, `Run`, `Scale`, `Select`, `Shaded`, `Transform`, `Undo`, `Up`, `Visible`, `Wireframe`, `BranchOpen`, `Checked`, `Clear`, `Code`, `Collapse`, `Down`, `DropDown`, `Expand`, `Export`, `ExportImage`, `Follow`, `FrameAll`, `Geometry`, `Hidden`, `Left`, `Material`, `Open`, `PartiallyChecked`, `Payload`, `Prim`, `Redo`, `Right`, `Run`, `Shaded`, `Transform`, `Undo`, `Up`, `Visible`, `Wireframe`.
+`BranchClosed`, `BranchOpen`, `Checked`, `Clear`, `Code`, `Collapse`, `DefaultPrim`, `Down`, `DropDown`, `Expand`, `Export`, `ExportImage`, `Follow`, `FrameAll`, `Geometry`, `Hidden`, `Left`, `List`, `Material`, `Move`, `Nested`, `New`, `Open`, `Over`, `Override`, `PartiallyChecked`, `Payload`, `Pick`, `Prim`, `Redo`, `Right`, `Rotate`, `Run`, `Scale`, `Select`, `Shaded`, `Transform`, `Undo`, `Up`, `Visible`, `Wireframe`, `BranchOpen`, `Checked`, `Clear`, `Code`, `Collapse`, `Down`, `DropDown`, `Expand`, `Export`, `ExportImage`, `Follow`, `FrameAll`, `Geometry`, `Hidden`, `Left`, `Material`, `Open`, `PartiallyChecked`, `Payload`, `Prim`, `Redo`, `Right`, `Run`, `Shaded`, `Transform`, `Undo`, `Up`, `Visible`, `Wireframe`.
 
 #### UIScale members
 

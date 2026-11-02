@@ -5,6 +5,7 @@
 #include "pycommand.h"
 #include "application.h"
 #include "command.h"
+#include "commandtransform.h"
 #include "commandstack.h"
 #include "pyutils.h"
 #include "qtutils.h"
