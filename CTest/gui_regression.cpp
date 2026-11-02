@@ -4,8 +4,9 @@
 #include "application.h"
 #include "bboxutils.h"
 #include "command.h"
-#include "commandtransform.h"
+#include "commandpivot.h"
 #include "commandstack.h"
+#include "commandtransform.h"
 #include "indextree.h"
 #include "layerdialog.h"
 #include "layertree.h"
@@ -913,6 +914,10 @@ viewportComponentsApi()
     host.viewport.setRotateEnabled(true);
     require(host.viewport.rotateEnabled() && !host.viewport.moveEnabled(),
             "widget forwards mutually exclusive rotate mode");
+    host.viewport.setPivotEnabled(true);
+    require(host.viewport.pivotEnabled() && host.viewport.rotateEnabled(), "pivot toggle preserves the current tool");
+    host.viewport.setPivotEnabled(false);
+    require(!host.viewport.pivotEnabled(), "pivot toggle is independent of transform mode");
     host.viewport.setScaleEnabled(true);
     require(host.viewport.scaleEnabled() && !host.viewport.rotateEnabled(), "widget forwards scale mode to the tool");
     host.viewport.setTransformEnabled(false);
@@ -984,6 +989,63 @@ transformOperationAppliedApi()
 }
 
 void
+pivotOperationAppliedApi()
+{
+    auto* current = stageviz::session();
+    require(current->newStage(), "new applied transform operation stage");
+    const auto stage = current->stage();
+    auto source = UsdGeomXform::Define(stage, SdfPath("/Source"));
+    auto mesh = UsdGeomMesh::Define(stage, SdfPath("/Source/Mesh"));
+    mesh.AddTranslateOp().Set(GfVec3d(2, 3, 4));
+    UsdGeomSubset::CreateGeomSubset(mesh, TfToken("A"), UsdGeomTokens->face, VtIntArray { 0 });
+    UsdGeomSubset::CreateGeomSubset(mesh, TfToken("B"), UsdGeomTokens->face, VtIntArray { 1 });
+    auto instance = UsdGeomXform::Define(stage, SdfPath("/Instance"));
+    instance.GetPrim().GetReferences().AddInternalReference(source.GetPath());
+    instance.GetPrim().SetInstanceable(true);
+    instance.AddTranslateOp().Set(GfVec3d(11, 7, 1));
+    const QList<SdfPath> selected { SdfPath("/Instance/Mesh/A"), SdfPath("/Instance/Mesh/B") };
+    current->selectionList()->updatePaths(selected);
+    auto* stack = current->commandStack();
+    stack->clear();
+    const auto drain = []() {
+        for (int i = 0; i < 6; ++i) {
+            QThreadPool::globalInstance()->waitForDone();
+            QCoreApplication::sendPostedEvents(nullptr, 0);
+            QCoreApplication::processEvents();
+        }
+    };
+    std::string original;
+    stage->GetRootLayer()->ExportToString(&original);
+    stageviz::PivotOperation operation;
+    QString error;
+    require(stageviz::beginPivotOperation(stage, selected, operation, error), "begin resolved Applied operation");
+    require(operation.paths == QList<SdfPath> { SdfPath("/Instance") }, "proxy subsets share one instance target");
+    QStringList errors;
+    const GfMatrix4d delta = GfMatrix4d(1).SetTranslate(GfVec3d(3, -2, 9));
+    require(stageviz::applyPivotOperation(stage, operation, delta, &errors), "author interactive preview");
+    std::string preview;
+    stage->GetRootLayer()->ExportToString(&preview);
+    require(preview != original, "preview authors a transform before history registration");
+    stack->execute(new stageviz::Command(stageviz::setPivotTransforms(operation)),
+                   stageviz::CommandStack::ExecutionMode::Applied);
+    drain();
+    std::string registered;
+    stage->GetRootLayer()->ExportToString(&registered);
+    require(registered == preview && stack->canUndo(), "Applied records history without executing the transform twice");
+    stack->undo();
+    drain();
+    std::string restored;
+    stage->GetRootLayer()->ExportToString(&restored);
+    require(restored == original && !stack->canUndo(), "one undo restores exact original opinions");
+    require(current->selectionList()->paths() == selected, "Applied undo preserves original subset selection");
+    stack->redo();
+    drain();
+    stage->GetRootLayer()->ExportToString(&registered);
+    require(registered == preview, "Applied redo reproduces the preview exactly");
+    require(current->selectionList()->paths() == selected, "Applied redo preserves original subset selection");
+}
+
+void
 viewportTransformPivotApi()
 {
     auto* current = stageviz::session();
@@ -1035,6 +1097,7 @@ main(int argc, char** argv)
         { "viewport_components_api", viewportComponentsApi },
         { "viewport_transform_pivot_api", viewportTransformPivotApi },
         { "transform_operation_applied_api", transformOperationAppliedApi },
+        { "pivot_operation_applied_api", pivotOperationAppliedApi },
         { "settings_api", settingsApi },
         { "treewidget_selection_api", treeWidgetSelectionApi },
         { "indextree_selection_api", indexTreeSelectionApi },

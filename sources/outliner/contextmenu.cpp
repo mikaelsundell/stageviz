@@ -203,7 +203,9 @@ ContextMenu::exec(QWidget* parent, ViewContext* context, UsdStageRefPtr usdStage
                 bool resetsXformStack = false;
                 const std::vector<UsdGeomXformOp> ops = UsdGeomXformable(prim).GetOrderedXformOps(&resetsXformStack);
                 for (const UsdGeomXformOp& op : ops) {
-                    if (!op.IsInverseOp() && op.GetOpName() == TfToken("xformOp:translate:pivot")) {
+                    if (!op.IsInverseOp()
+                        && (op.GetOpName() == TfToken("xformOp:translate:pivot")
+                            || op.GetOpName() == TfToken("xformOp:transform:pivot"))) {
                         hasPivot = true;
                         break;
                     }

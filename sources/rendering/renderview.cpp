@@ -163,6 +163,18 @@ RenderView::setTransformEnabled(bool enabled)
 }
 
 bool
+RenderView::pivotEnabled() const
+{
+    return p->viewportWidget()->pivotEnabled();
+}
+
+void
+RenderView::setPivotEnabled(bool enabled)
+{
+    p->viewportWidget()->setPivotEnabled(enabled);
+}
+
+bool
 RenderView::moveEnabled() const
 {
     return p->viewportWidget()->moveEnabled();

@@ -53,6 +53,17 @@ public:
      */
     void setMode(Mode mode, bool enabled);
 
+
+    /**
+     * @brief Returns whether the gizmo edits pivot frames instead of object transforms.
+     */
+    bool pivotEnabled() const;
+
+    /**
+     * @brief Switches the existing manipulation tools to pivot-frame editing.
+     */
+    void setPivotEnabled(bool enabled);
+
     /**
      * @brief Returns whether a drag is active.
      */

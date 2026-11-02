@@ -37,12 +37,15 @@ public:
     struct Frame {
         Mode mode = Mode::None;
         bool enabled = false;
+        bool pivotEditing = false;
         bool pivotValid = false;
         bool orientationValid = false;
         GfVec3d pivot = GfVec3d(0.0);
         GfMatrix4d orientation = GfMatrix4d(1.0);
         int hoverAxis = 0;
         int activeAxis = 0;
+        double rotationStartAngle = 0.0;
+        double rotationDeltaAngle = 0.0;
     };
 
     /**
@@ -76,7 +79,7 @@ public:
     void update(const Frame& frame);
 
     /**
-     * @brief Draws the center handle overlay.
+     * @brief Draws handle overlays and active rotation feedback.
      */
     void draw(const Frame& frame, QPainter& painter);
 

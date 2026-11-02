@@ -4,6 +4,8 @@
 
 #include "console.h"
 #include <QByteArray>
+#include <QFile>
+#include <QFileInfo>
 #include <QMetaObject>
 #include <QPointer>
 #include <atomic>
@@ -154,6 +156,9 @@ public:
     QString text() const;
     QStringList lines() const;
 
+    bool setOutputFile(const QString& filename, bool append, QString& error);
+    QString outputFile() const;
+    void drainPipe();
     void readerLoop();
     void queueText(const QString& text);
     void drainPending();
@@ -170,6 +175,9 @@ public:
         std::mutex pendingMutex;
         bool drainScheduled = false;
         std::thread readerThread;
+        mutable std::mutex readMutex;
+        QScopedPointer<QFile> outputFile;
+        QString outputFilename;
         QPointer<Console> console;
     };
     Data d;
@@ -298,6 +306,9 @@ ConsolePrivate::stop()
         fd_close(d.readFd);
         d.readFd = -1;
     }
+    std::lock_guard<std::mutex> guard(d.readMutex);
+    d.outputFile.reset();
+    d.outputFilename.clear();
 }
 
 bool
@@ -322,37 +333,77 @@ ConsolePrivate::lines() const
     return text().split('\n', Qt::KeepEmptyParts);
 }
 
-void
-ConsolePrivate::readerLoop()
+bool
+ConsolePrivate::setOutputFile(const QString& filename, bool append, QString& error)
 {
+    if (!filename.isEmpty() && !d.running && !start()) {
+        error = QStringLiteral("Failed to start console capture");
+        return false;
+    }
+    std::fflush(stdout);
+    std::fflush(stderr);
+    std::lock_guard<std::mutex> guard(d.readMutex);
+    if (d.readFd >= 0)
+        drainPipe();
+    QScopedPointer<QFile> output;
+    if (!filename.isEmpty()) {
+        output.reset(new QFile(filename));
+        if (!output->open(QIODevice::WriteOnly | (append ? QIODevice::Append : QIODevice::Truncate))) {
+            error = output->errorString();
+            return false;
+        }
+    }
+    d.outputFile.swap(output);
+    d.outputFilename = filename.isEmpty() ? QString() : QFileInfo(filename).absoluteFilePath();
+    return true;
+}
+
+QString
+ConsolePrivate::outputFile() const
+{
+    std::lock_guard<std::mutex> guard(d.readMutex);
+    return d.outputFilename;
+}
+
+void
+ConsolePrivate::drainPipe()
+{
+    // The reader and destination changes serialize pipe reads. Write raw
+    // bytes here so diagnostics still reach disk while Qt's thread is busy.
     char chunk[4096];
-    auto readChunk = [&]() {
+    while (fd_wait_readable(d.readFd, 0) == WaitResult::Readable) {
 #ifdef Q_OS_WIN
         const int count = fd_read(d.readFd, chunk, unsigned(sizeof(chunk)));
 #else
         const ssize_t count = fd_read(d.readFd, chunk, sizeof(chunk));
 #endif
-        if (count > 0) {
-            queueText(QString::fromLocal8Bit(chunk, int(count)));
-            return true;
+        if (count <= 0)
+            break;
+        if (d.outputFile && (d.outputFile->write(chunk, count) != count || !d.outputFile->flush())) {
+            const QString error = d.outputFile->errorString();
+            d.outputFile.reset();
+            d.outputFilename.clear();
+            queueText(QStringLiteral("[Console] File logging stopped: %1\n").arg(error));
         }
-        return false;
-    };
+        queueText(QString::fromLocal8Bit(chunk, int(count)));
+    }
+}
 
+void
+ConsolePrivate::readerLoop()
+{
     while (d.running) {
         const WaitResult result = fd_wait_readable(d.readFd, 100);
         if (result == WaitResult::Closed)
             break;
-        if (result == WaitResult::Readable && !readChunk())
-            break;
+        if (result == WaitResult::Readable) {
+            std::lock_guard<std::mutex> guard(d.readMutex);
+            drainPipe();
+        }
     }
-
-    // Preserve anything already buffered in the pipe at shutdown without
-    // waiting for duplicated writer descriptors to close.
-    while (fd_wait_readable(d.readFd, 0) == WaitResult::Readable) {
-        if (!readChunk())
-            break;
-    }
+    // Preserve buffered output without waiting for duplicated writers to close.
+    std::lock_guard<std::mutex> guard(d.readMutex);
+    drainPipe();
 }
 
 void
@@ -436,6 +487,18 @@ QStringList
 Console::lines() const
 {
     return p->lines();
+}
+
+bool
+Console::setOutputFile(const QString& filename, bool append, QString& error)
+{
+    return p->setOutputFile(filename, append, error);
+}
+
+QString
+Console::outputFile() const
+{
+    return p->outputFile();
 }
 
 }  // namespace stageviz

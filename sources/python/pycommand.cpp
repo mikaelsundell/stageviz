@@ -5,8 +5,9 @@
 #include "pycommand.h"
 #include "application.h"
 #include "command.h"
-#include "commandtransform.h"
+#include "commandpivot.h"
 #include "commandstack.h"
+#include "commandtransform.h"
 #include "pyutils.h"
 #include "qtutils.h"
 #include "session.h"
@@ -435,6 +436,43 @@ PyCommand_setTransforms(PyObject*, PyObject* args)
     edit.before = before;
     edit.after = after;
     return runCommand(setTransforms(paths, edit));
+}
+
+static PyObject*
+PyCommand_transformPivots(PyObject*, PyObject* args)
+{
+    PyObject* pyPaths = nullptr;
+    PyObject* pyMatrix = nullptr;
+    if (!PyArg_ParseTuple(args, "OO", &pyPaths, &pyMatrix))
+        return nullptr;
+    QList<SdfPath> paths;
+    if (!parsePathListArg(pyPaths, "paths", &paths))
+        return nullptr;
+    PyObject* rows = PySequence_Fast(pyMatrix, "Expected a 4x4 world-delta matrix");
+    if (!rows)
+        return nullptr;
+    bool valid = PySequence_Fast_GET_SIZE(rows) == 4;
+    GfMatrix4d matrix(1.0);
+    for (int row = 0; valid && row < 4; ++row) {
+        PyObject* columns = PySequence_Fast(PySequence_Fast_GET_ITEM(rows, row), "Expected a matrix row");
+        if (!columns) {
+            valid = false;
+            break;
+        }
+        valid = PySequence_Fast_GET_SIZE(columns) == 4;
+        for (int col = 0; valid && col < 4; ++col) {
+            matrix[row][col] = PyFloat_AsDouble(PySequence_Fast_GET_ITEM(columns, col));
+            valid = !PyErr_Occurred();
+        }
+        Py_DECREF(columns);
+    }
+    Py_DECREF(rows);
+    if (!valid) {
+        if (!PyErr_Occurred())
+            PyErr_SetString(PyExc_ValueError, "Expected four rows of four numbers");
+        return nullptr;
+    }
+    return runCommand(transformPivots(paths, matrix));
 }
 
 static PyObject*
@@ -1437,6 +1475,8 @@ static PyMethodDef PyCommand_methods[] = {
       "Reset several USD attribute overrides in the active edit layer." },
     { "center_pivots", reinterpret_cast<PyCFunction>(PyCommand_centerPivots), METH_VARARGS,
       "Center transform pivots on prim bounds." },
+    { "transform_pivots", reinterpret_cast<PyCFunction>(PyCommand_transformPivots), METH_VARARGS,
+      "Apply a world-space delta to pivot frames while preserving geometry." },
     { "reset_pivots", reinterpret_cast<PyCFunction>(PyCommand_resetPivots), METH_VARARGS,
       "Reset Stageviz-authored pivots while preserving local transforms." },
     { "reset_transforms", reinterpret_cast<PyCFunction>(PyCommand_resetTransforms), METH_VARARGS,

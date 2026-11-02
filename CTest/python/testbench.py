@@ -157,6 +157,8 @@ def action_info(object_name):
                             QtGui.QKeySequence.SequenceFormat.PortableText
                         ),
                         "enabled": bool(action.isEnabled()),
+                        "checkable": bool(action.isCheckable()),
+                        "checked": bool(action.isChecked()),
                     }
             except RuntimeError:
                 continue

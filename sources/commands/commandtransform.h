@@ -59,6 +59,7 @@ struct PreparedTransform {
     SdfPath path;
     UsdGeomXformOp matrixOp;
     GfMatrix4d parentWorld = GfMatrix4d(1.0);
+    GfMatrix4d localPivot = GfMatrix4d(1.0);
     bool parentFollowsSelection = false;
     bool fast = false;
 };
@@ -119,7 +120,8 @@ applyTransformOperation(const UsdStageRefPtr& stage, TransformOperation& operati
  * the resulting matrix xformOps where possible.
  *
  * Normalization authors a matrix xformOp and xformOpOrder in the active edit
- * layer. Weaker composed transform opinions are left untouched, allowing the
+ * layer while preserving an active pivot pair and reset-stack behavior.
+ * Weaker composed transform opinions are left untouched, allowing the
  * same prepared path to work for root-layer and sublayer editing.
  *
  * The caller must hold the stage write lock.

@@ -3,6 +3,7 @@
 // https://github.com/mikaelsundell/stageviz
 
 #include "application.h"
+#include "console.h"
 #include "mcp/mcpserver.h"
 #include "pyapplication.h"
 #include "pycommand.h"
@@ -105,6 +106,38 @@ PyModule_isMcpServerRunning(PyObject*, PyObject*)
     return PyBool_FromLong(server->isRunning());
 }
 
+static PyObject*
+PyModule_setConsoleOutputFile(PyObject*, PyObject* args, PyObject* kwargs)
+{
+    const char* filename = nullptr;
+    int append = 1;
+    static const char* keywords[] = { "path", "append", nullptr };
+    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "z|p:setConsoleOutputFile", const_cast<char**>(keywords), &filename,
+                                     &append))
+        return nullptr;
+    Console* output = console();
+    if (!output) {
+        PyErr_SetString(PyExc_RuntimeError, "Stageviz console is unavailable.");
+        return nullptr;
+    }
+    QString error;
+    if (!output->setOutputFile(filename ? QString::fromUtf8(filename) : QString(), append != 0, error)) {
+        PyErr_SetString(PyExc_OSError, error.toUtf8().constData());
+        return nullptr;
+    }
+    Py_RETURN_NONE;
+}
+
+static PyObject*
+PyModule_consoleOutputFile(PyObject*, PyObject*)
+{
+    Console* output = console();
+    const QString filename = output ? output->outputFile() : QString();
+    if (filename.isEmpty())
+        Py_RETURN_NONE;
+    return PyUnicode_FromString(filename.toUtf8().constData());
+}
+
 static PyMethodDef Module_methods[]
     = { { "application", reinterpret_cast<PyCFunction>(PyModule_application), METH_NOARGS,
           "Get the current stageviz application wrapper" },
@@ -113,6 +146,10 @@ static PyMethodDef Module_methods[]
         { "ui", reinterpret_cast<PyCFunction>(PyModule_ui), METH_NOARGS, "Get the current stageviz UI wrapper" },
         { "selectionList", reinterpret_cast<PyCFunction>(PyModule_selectionList), METH_NOARGS,
           "Get the current stageviz selection list wrapper" },
+        { "setConsoleOutputFile", reinterpret_cast<PyCFunction>(PyModule_setConsoleOutputFile),
+          METH_VARARGS | METH_KEYWORDS, "Log captured stdout/stderr to path (append=True); pass None to stop" },
+        { "consoleOutputFile", reinterpret_cast<PyCFunction>(PyModule_consoleOutputFile), METH_NOARGS,
+          "Return the active console output filename, or None" },
         { "startMcpServer", reinterpret_cast<PyCFunction>(PyModule_startMcpServer), METH_NOARGS,
           "Start the local MCP server and return its URL" },
         { "stopMcpServer", reinterpret_cast<PyCFunction>(PyModule_stopMcpServer), METH_NOARGS,

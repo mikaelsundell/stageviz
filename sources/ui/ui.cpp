@@ -264,6 +264,7 @@ UIPrivate::updateTheme()
     d.icons[roleName(UI::IconRole::PartiallyChecked)] = ":/icons/resources/PartiallyChecked.png";
     d.icons[roleName(UI::IconRole::Payload)] = ":/icons/resources/Payload.png";
     d.icons[roleName(UI::IconRole::Pick)] = ":/icons/resources/Pick.png";
+    d.icons[roleName(UI::IconRole::Pivot)] = ":/icons/resources/Pivot.png";
     d.icons[roleName(UI::IconRole::Prim)] = ":/icons/resources/Prim.png";
     d.icons[roleName(UI::IconRole::Redo)] = ":/icons/resources/Redo.png";
     d.icons[roleName(UI::IconRole::Right)] = ":/icons/resources/Right.png";

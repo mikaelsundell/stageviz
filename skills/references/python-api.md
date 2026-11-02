@@ -16,6 +16,7 @@ This reference describes the Stageviz CPython bindings, with the coverage audit 
 
 - [API conventions](#api-conventions)
 - [MCP server control](#mcp-server-control)
+- [Console file logging](#console-file-logging)
 - [stageviz.Application](#stagevizapplication)
 - [stageviz.Session](#stagevizsession)
 - [stageviz.SelectionList](#stagevizselectionlist)
@@ -61,6 +62,30 @@ Functions in `stageviz.command` create native Stageviz `Command` objects and run
 
 `stageviz.isMcpServerRunning() -> bool`
 : Return whether the local MCP server is running.
+
+## Console file logging
+
+`stageviz.setConsoleOutputFile(path, append=True) -> None`
+: Log future captured stdout and stderr to a file. Captures native USD/Qt output
+  and normal embedded Python output, and continues displaying it in the console.
+  Starts console capture if needed, including in debug builds. Logging writes
+  from the capture thread even while the UI is busy. Previous
+  console history is not exported. Pass `append=False` to replace an existing
+  file, or `None` to stop logging. Switching or stopping drains pending native
+  output before closing the previous file. Raises `OSError` if the destination
+  cannot be opened; an existing destination remains active on failure.
+
+`stageviz.consoleOutputFile() -> str | None`
+: Return the active absolute output filename, or `None` when disabled.
+
+```python
+stageviz.setConsoleOutputFile(r"C:\temp\stageviz.log")
+# Load the stage or run the operation to diagnose.
+stageviz.setConsoleOutputFile(None)
+```
+
+Explicit Python stream redirects (including MCP's returned Python output) stay
+with their chosen stream. Native output from those scripts is still captured.
 
 ## stageviz.Application
 
@@ -680,7 +705,7 @@ stageviz.UI.AxisX
 
 #### IconRole members
 
-`BranchClosed`, `BranchOpen`, `Checked`, `Clear`, `Code`, `Collapse`, `DefaultPrim`, `Down`, `DropDown`, `Expand`, `Export`, `ExportImage`, `Follow`, `FrameAll`, `Geometry`, `Hidden`, `Left`, `List`, `Material`, `Move`, `Nested`, `New`, `Open`, `Over`, `Override`, `PartiallyChecked`, `Payload`, `Pick`, `Prim`, `Redo`, `Right`, `Rotate`, `Run`, `Scale`, `Select`, `Shaded`, `Transform`, `Undo`, `Up`, `Visible`, `Wireframe`, `BranchOpen`, `Checked`, `Clear`, `Code`, `Collapse`, `Down`, `DropDown`, `Expand`, `Export`, `ExportImage`, `Follow`, `FrameAll`, `Geometry`, `Hidden`, `Left`, `Material`, `Open`, `PartiallyChecked`, `Payload`, `Prim`, `Redo`, `Right`, `Run`, `Shaded`, `Transform`, `Undo`, `Up`, `Visible`, `Wireframe`.
+`BranchClosed`, `BranchOpen`, `Checked`, `Clear`, `Code`, `Collapse`, `DefaultPrim`, `Down`, `DropDown`, `Expand`, `Export`, `ExportImage`, `Follow`, `FrameAll`, `Geometry`, `Hidden`, `Left`, `List`, `Material`, `Move`, `Nested`, `New`, `Open`, `Over`, `Override`, `PartiallyChecked`, `Payload`, `Pick`, `Pivot`, `Prim`, `Redo`, `Right`, `Rotate`, `Run`, `Scale`, `Select`, `Shaded`, `Transform`, `Undo`, `Up`, `Visible`, `Wireframe`, `BranchOpen`, `Checked`, `Clear`, `Code`, `Collapse`, `Down`, `DropDown`, `Expand`, `Export`, `ExportImage`, `Follow`, `FrameAll`, `Geometry`, `Hidden`, `Left`, `Material`, `Open`, `PartiallyChecked`, `Payload`, `Prim`, `Redo`, `Right`, `Run`, `Shaded`, `Transform`, `Undo`, `Up`, `Visible`, `Wireframe`.
 
 #### UIScale members
 
@@ -811,3 +836,16 @@ The command binding intentionally supports only a small simple subset of `VtValu
 ### Missing enum ordinals
 
 Several C++ enums are accepted as raw integers, but the supplied wrapper sources do not expose their numeric definitions as Python enums. Do not guess them. Prefer existing values read from the object, documented constants from additional source supplied by the user, or a future binding that exposes proper Python enums.
+
+### Pivot frame editing
+
+`stageviz.command.transform_pivots(paths, delta)` applies a 4-by-4 world-space
+delta to the selected objects' pivot frames while keeping their geometry fixed.
+Subset and instance-proxy paths resolve through the same target boundary as
+object transforms. Targets are deduplicated, unselected inherited instances are
+preserved, and undo restores the original edit-layer transform property specs.
+The delta must be finite, affine, and invertible.
+
+The viewport's independent Edit Pivot toggle uses the same Move/Rotate/Scale
+gestures, with dotted axes and hollow handles. Pivot editing authors paired
+`xformOp:transform:pivot` operations and a compensated object matrix.

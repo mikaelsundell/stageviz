@@ -42,6 +42,7 @@ foreach(case IN ITEMS
     save_twice_usda
     save_twice_usdc
     save_failure
+    console_output_file_api
     sublayer_save
     save_as
     save_as_payload_anchor
@@ -93,6 +94,7 @@ foreach(case IN ITEMS
     command_composition_api
     command_move_api
     transform_operation_api
+    pivot_operation_api
     command_payload_api
 )
     add_test(NAME stageviz.${case} COMMAND $<TARGET_FILE:stageviz_regressions> ${case})
@@ -128,6 +130,7 @@ foreach(case IN ITEMS
     viewport_components_api
     viewport_transform_pivot_api
     transform_operation_applied_api
+    pivot_operation_applied_api
     settings_api
     treewidget_selection_api
     indextree_selection_api

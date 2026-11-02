@@ -20,6 +20,8 @@ namespace stageviz::command::detail {
  * @brief Snapshots edit-layer transform properties for pivot edits and undo.
  */
 struct TransformPropertyState {
+    bool hadPrimSpec = false;
+    QList<SdfPath> missingAncestors;
     SdfPath primPath;
     SdfLayerRefPtr snapshotLayer;
     QList<SdfPath> propertyPaths;
@@ -43,6 +45,13 @@ restoreTransformPropertyState(const SdfLayerHandle& editLayer, const TransformPr
  */
 bool
 authorCanonicalTransformWithPivot(const UsdPrim& prim, const GfMatrix4d& localMatrix, const GfVec3d& localPivot,
+                                  QString& error);
+
+/**
+ * @brief Authors a full paired pivot frame while preserving the local transform and stack reset.
+ */
+bool
+authorCanonicalTransformWithPivot(const UsdPrim& prim, const GfMatrix4d& localMatrix, const GfMatrix4d& localPivot,
                                   QString& error);
 
 }  // namespace stageviz::command::detail

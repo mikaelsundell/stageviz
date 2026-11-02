@@ -94,6 +94,7 @@ public:
         PartiallyChecked,
         Payload,
         Pick,
+        Pivot,
         Prim,
         Redo,
         Right,

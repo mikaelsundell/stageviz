@@ -452,7 +452,7 @@ namespace stage {
         return true;
     }
 
-    bool worldPivot(UsdStageRefPtr stage, const SdfPath& path, GfVec3d& pivot, QString& error)
+    static bool translationWorldPivot(UsdStageRefPtr stage, const SdfPath& path, GfVec3d& pivot, QString& error)
     {
         if (!stage) {
             error = "stage missing";
@@ -585,6 +585,63 @@ namespace stage {
         // This also keeps the pivot stable after the interactive path has baked
         // the transform stack into a matrix-only override.
         pivot = world.Transform(localPivot);
+        return true;
+    }
+
+    bool worldPivotFrame(UsdStageRefPtr stage, const SdfPath& path, GfMatrix4d& frame, QString& error)
+    {
+        GfMatrix4d world(1.0);
+        if (!worldTransform(stage, path, world, error))
+            return false;
+        const UsdPrim prim = stage->GetPrimAtPath(path);
+        const UsdGeomXformable xformable(prim);
+        if (!xformable) {
+            error = "Prim is not xformable";
+            return false;
+        }
+        const TfToken pivotToken("xformOp:transform:pivot");
+        const TfToken inverseToken("!invert!xformOp:transform:pivot");
+        bool paired = false;
+        for (const auto& spec : prim.GetPrimStack()) {
+            VtValue value;
+            if (!spec->GetLayer()->HasField(spec->GetPath().AppendProperty(TfToken("xformOpOrder")),
+                                            SdfFieldKeys->Default, &value)
+                || !value.IsHolding<VtTokenArray>())
+                continue;
+            const auto& order = value.UncheckedGet<VtTokenArray>();
+            const auto pivot = std::find(order.begin(), order.end(), pivotToken);
+            const auto inverse = std::find(order.begin(), order.end(), inverseToken);
+            if (pivot != order.end() && inverse != order.end() && pivot < inverse) {
+                paired = true;
+                break;
+            }
+            // A stronger active legacy pivot supersedes a weaker full frame.
+            if (std::find(order.begin(), order.end(), TfToken("xformOp:translate:pivot")) != order.end())
+                break;
+        }
+        VtTokenArray order;
+        xformable.GetXformOpOrderAttr().Get(&order);
+        const bool matrixOnly = order.size() == 1 && order.front() == TfToken("xformOp:transform");
+        GfMatrix4d local(1.0);
+        const UsdAttribute attr = prim.GetAttribute(pivotToken);
+        if ((paired || matrixOnly) && attr && attr.Get(&local)) {
+            frame = local * world;
+            return true;
+        }
+        GfVec3d pivot(0.0);
+        if (!translationWorldPivot(stage, path, pivot, error))
+            return false;
+        frame = world;
+        frame.SetTranslateOnly(pivot);
+        return true;
+    }
+
+    bool worldPivot(UsdStageRefPtr stage, const SdfPath& path, GfVec3d& pivot, QString& error)
+    {
+        GfMatrix4d frame(1.0);
+        if (!worldPivotFrame(stage, path, frame, error))
+            return false;
+        pivot = frame.ExtractTranslation();
         return true;
     }
 

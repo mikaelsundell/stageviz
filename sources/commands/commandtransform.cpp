@@ -121,7 +121,14 @@ namespace command::detail {
         }
 
         state.primPath = primPath;
-        state.snapshotLayer = SdfLayer::CreateAnonymous("stageviz_transform_snapshot.usda");
+        state.hadPrimSpec = bool(editLayer->GetPrimAtPath(primPath));
+        state.missingAncestors.clear();
+        for (SdfPath parent = primPath.GetParentPath(); parent.IsPrimPath(); parent = parent.GetParentPath()) {
+            if (!editLayer->GetPrimAtPath(parent))
+                state.missingAncestors.append(parent);
+        }
+        if (!state.snapshotLayer)
+            state.snapshotLayer = SdfLayer::CreateAnonymous("stageviz_transform_snapshot.usda");
         state.propertyPaths.clear();
 
         if (!state.snapshotLayer) {
@@ -199,8 +206,13 @@ namespace command::detail {
         }
 
         const SdfPrimSpecHandle remaining = editLayer->GetPrimAtPath(state.primPath);
-        if (remaining && remaining->IsInert())
+        if (!state.hadPrimSpec && remaining && remaining->IsInert())
             stage::removePrimSpec(editLayer, state.primPath);
+        for (const auto& parent : state.missingAncestors) {
+            const auto spec = editLayer->GetPrimAtPath(parent);
+            if (spec && spec->IsInert())
+                stage::removePrimSpec(editLayer, parent);
+        }
 
         return true;
     }
@@ -285,6 +297,51 @@ namespace command::detail {
 
         error = "failed to preserve local transform while authoring pivot";
         return false;
+    }
+
+    bool authorCanonicalTransformWithPivot(const UsdPrim& prim, const GfMatrix4d& localMatrix,
+                                           const GfMatrix4d& localPivot, QString& error)
+    {
+        const UsdGeomXformable xformable(prim);
+        const double determinant = localPivot.GetDeterminant();
+        if (!xformable || !std::isfinite(determinant) || determinant == 0.0) {
+            error = "Pivot frame must be invertible";
+            return false;
+        }
+        for (int row = 0; row < 4; ++row) {
+            for (int column = 0; column < 4; ++column) {
+                if (!std::isfinite(localPivot[row][column])) {
+                    error = "Pivot frame must be finite";
+                    return false;
+                }
+            }
+        }
+        if (std::abs(localPivot[0][3]) > 1e-10 || std::abs(localPivot[1][3]) > 1e-10
+            || std::abs(localPivot[2][3]) > 1e-10 || std::abs(localPivot[3][3] - 1.0) > 1e-10) {
+            error = "Pivot frame must be affine";
+            return false;
+        }
+        const bool reset = xformable.GetResetXformStack();
+        // USD evaluates this ordered pair as inversePivot * matrix * pivot.
+        // Compensate the middle op so authoring the frame leaves localMatrix unchanged.
+        const GfMatrix4d compensated = localPivot * localMatrix * localPivot.GetInverse();
+        const UsdAttribute pivot = prim.CreateAttribute(TfToken("xformOp:transform:pivot"), SdfValueTypeNames->Matrix4d,
+                                                        false);
+        const UsdAttribute matrix = prim.CreateAttribute(TfToken("xformOp:transform"), SdfValueTypeNames->Matrix4d,
+                                                         false);
+        if (!pivot || !matrix || !pivot.Set(localPivot) || !matrix.Set(compensated)
+            || !xformable.SetXformOpOrder({ UsdGeomXformOp(pivot), UsdGeomXformOp(matrix), UsdGeomXformOp(pivot, true) },
+                                          reset)) {
+            error = "Failed to author pivot frame";
+            return false;
+        }
+        GfMatrix4d evaluated(1.0);
+        bool evaluatedReset = false;
+        if (!xformable.GetLocalTransformation(&evaluated, &evaluatedReset) || !matrixClose(evaluated, localMatrix)) {
+            error = "Failed to preserve object transform while authoring pivot frame";
+            return false;
+        }
+        return true;
     }
 
     bool authorCanonicalMatrixTransform(const UsdPrim& prim, const GfMatrix4d& localMatrix, QString& error)
@@ -927,6 +984,8 @@ prepareTransforms(const UsdStageRefPtr& stage, const QList<SdfPath>& paths, cons
         return result;
 
     result.reserve(paths.size());
+    QList<GfMatrix4d> localPivots;
+    QList<bool> resetStacks;
 
     // Match the interactive gizmo setup exactly: establish the supplied base
     // world transforms first, then cache the resulting matrix ops and parent
@@ -944,6 +1003,8 @@ prepareTransforms(const UsdStageRefPtr& stage, const QList<SdfPath>& paths, cons
             const SdfPath& path = paths.at(i);
             const UsdPrim prim = stage->GetPrimAtPath(path);
             QString error;
+            GfMatrix4d localPivot(1.0);
+            bool resetsStack = false;
 
             if (!prim || !prim.IsValid()) {
                 error = QString("prim missing: %1").arg(qt::SdfPathToQString(path));
@@ -957,14 +1018,33 @@ prepareTransforms(const UsdStageRefPtr& stage, const QList<SdfPath>& paths, cons
                     error = QString("prim is not xformable: %1").arg(qt::SdfPathToQString(path));
                 }
                 else {
+                    resetsStack = xformable.GetResetXformStack();
+                    // Retain the active pivot pair instead of leaving orphaned
+                    // attributes behind a matrix-only order. Only the central
+                    // matrix changes during an object transform.
+                    VtTokenArray oldOrder;
+                    xformable.GetXformOpOrderAttr().Get(&oldOrder);
+                    TfToken pivotName;
+                    for (const auto& name :
+                         { TfToken("xformOp:transform:pivot"), TfToken("xformOp:translate:pivot") }) {
+                        const auto forward = std::find(oldOrder.begin(), oldOrder.end(), name);
+                        const auto inverse = std::find(oldOrder.begin(), oldOrder.end(),
+                                                       TfToken("!invert!" + name.GetString()));
+                        if (forward != oldOrder.end() && inverse != oldOrder.end() && forward < inverse) {
+                            pivotName = name;
+                            localPivot = UsdGeomXformOp(prim.GetAttribute(name)).GetOpTransform(UsdTimeCode::Default());
+                            break;
+                        }
+                    }
                     GfMatrix4d parentWorld(1.0);
                     const UsdPrim parent = prim.GetParent();
-                    if (parent && !parent.IsPseudoRoot()) {
+                    if (!resetsStack && parent && !parent.IsPseudoRoot()) {
                         UsdGeomXformCache parentCache(UsdTimeCode::Default());
                         parentWorld = parentCache.GetLocalToWorldTransform(parent);
                     }
 
-                    const GfMatrix4d local = baseMatrices.at(i) * parentWorld.GetInverse();
+                    const GfMatrix4d local = localPivot * baseMatrices.at(i) * parentWorld.GetInverse()
+                                             * localPivot.GetInverse();
 
                     UsdEditContext context(stage, stage->GetEditTarget());
 
@@ -980,7 +1060,13 @@ prepareTransforms(const UsdStageRefPtr& stage, const QList<SdfPath>& paths, cons
                     }
                     else {
                         VtTokenArray order;
+                        if (resetsStack)
+                            order.push_back(TfToken("!resetXformStack!"));
+                        if (!pivotName.IsEmpty())
+                            order.push_back(pivotName);
                         order.push_back(TfToken("xformOp:transform"));
+                        if (!pivotName.IsEmpty())
+                            order.push_back(TfToken("!invert!" + pivotName.GetString()));
 
                         const UsdAttribute orderAttr = xformable.CreateXformOpOrderAttr();
                         if (!orderAttr || !orderAttr.Set(order, UsdTimeCode::Default())) {
@@ -991,15 +1077,19 @@ prepareTransforms(const UsdStageRefPtr& stage, const QList<SdfPath>& paths, cons
                 }
             }
 
+            localPivots.append(localPivot);
+            resetStacks.append(resetsStack);
             if (!error.isEmpty() && errors)
                 errors->append(error);
         }
     }
 
     UsdGeomXformCache xformCache(UsdTimeCode::Default());
-    for (const SdfPath& path : paths) {
+    for (qsizetype i = 0; i < paths.size(); ++i) {
+        const SdfPath& path = paths.at(i);
         PreparedTransform prepared;
         prepared.path = path;
+        prepared.localPivot = localPivots.at(i);
 
         const UsdPrim prim = stage->GetPrimAtPath(path);
         if (!prim || !prim.IsValid() || prim.IsInstanceProxy() || prim.IsInPrototype()) {
@@ -1008,10 +1098,11 @@ prepareTransforms(const UsdStageRefPtr& stage, const QList<SdfPath>& paths, cons
         }
 
         const UsdPrim parent = prim.GetParent();
-        if (parent && !parent.IsPseudoRoot())
+        if (!resetStacks.at(i) && parent && !parent.IsPseudoRoot())
             prepared.parentWorld = xformCache.GetLocalToWorldTransform(parent);
 
-        for (UsdPrim ancestor = parent; ancestor && !ancestor.IsPseudoRoot(); ancestor = ancestor.GetParent()) {
+        for (UsdPrim ancestor = resetStacks.at(i) ? UsdPrim() : parent; ancestor && !ancestor.IsPseudoRoot();
+             ancestor = ancestor.GetParent()) {
             if (paths.contains(ancestor.GetPath())) {
                 prepared.parentFollowsSelection = true;
                 break;
@@ -1021,8 +1112,8 @@ prepareTransforms(const UsdStageRefPtr& stage, const QList<SdfPath>& paths, cons
         const UsdGeomXformable xformable(prim);
         bool resetsXformStack = false;
         const std::vector<UsdGeomXformOp> ops = xformable.GetOrderedXformOps(&resetsXformStack);
-        if (ops.size() == 1 && ops.front().GetOpType() == UsdGeomXformOp::TypeTransform) {
-            prepared.matrixOp = ops.front();
+        if ((ops.size() == 1 || ops.size() == 3)) {
+            prepared.matrixOp = ops.at(ops.size() == 3 ? 1 : 0);
             prepared.fast = bool(prepared.matrixOp);
         }
 
@@ -1059,7 +1150,8 @@ applyPreparedTransforms(const UsdStageRefPtr& stage, const QList<PreparedTransfo
             if (item.parentFollowsSelection)
                 parentWorld = item.parentWorld * selectionDelta;
 
-            const GfMatrix4d local = matrices.at(i) * parentWorld.GetInverse();
+            const GfMatrix4d local = item.localPivot * matrices.at(i) * parentWorld.GetInverse()
+                                     * item.localPivot.GetInverse();
             applied = item.matrixOp.Set(local, UsdTimeCode::Default());
         }
 

@@ -7810,7 +7810,10 @@ setAttributeValues(const QList<SdfPath>& attributePaths, const VtValue& value)
                                                              == TfToken("xformOp:translate:pivot")
                                                          && value.IsHolding<GfVec3d>();
 
-                                    if (isPivot) {
+                                    const bool isPivotFrame = attributePath.GetNameToken()
+                                                                  == TfToken("xformOp:transform:pivot")
+                                                              && value.IsHolding<GfMatrix4d>();
+                                    if (isPivot || isPivotFrame) {
                                         const UsdPrim prim = stage->GetPrimAtPath(attributePath.GetPrimPath());
                                         const UsdGeomXformable xformable(prim);
 
@@ -7858,8 +7861,14 @@ setAttributeValues(const QList<SdfPath>& attributePaths, const VtValue& value)
                                         continue;
                                     }
 
-                                    if (!authorCanonicalTransformWithPivot(prim, item.previousLocalTransform,
-                                                                           value.UncheckedGet<GfVec3d>(), error)) {
+                                    const bool authored
+                                        = value.IsHolding<GfMatrix4d>()
+                                              ? authorCanonicalTransformWithPivot(prim, item.previousLocalTransform,
+                                                                                  value.UncheckedGet<GfMatrix4d>(),
+                                                                                  error)
+                                              : authorCanonicalTransformWithPivot(prim, item.previousLocalTransform,
+                                                                                  value.UncheckedGet<GfVec3d>(), error);
+                                    if (!authored) {
                                         QString restoreError;
                                         restoreTransformPropertyState(editLayer, item.transformState, restoreError);
 

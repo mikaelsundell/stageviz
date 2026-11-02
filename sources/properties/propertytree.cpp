@@ -1312,7 +1312,8 @@ PropertyTreePrivate::applyComponentPreview(PropertyItem* item, double value)
     if (!item || !d.stage || d.update)
         return false;
 
-    if (item->propertyPath().GetNameToken() == TfToken("xformOp:translate:pivot"))
+    if (item->propertyPath().GetNameToken() == TfToken("xformOp:translate:pivot")
+        || item->propertyPath().GetNameToken() == TfToken("xformOp:transform:pivot"))
         return false;
 
     VtValue updated;
@@ -1404,7 +1405,8 @@ PropertyTreePrivate::installComponentEditor(PropertyItem* item, double value, bo
         }
 
         scrub->active = true;
-        scrub->live = item->propertyPath().GetNameToken() != TfToken("xformOp:translate:pivot");
+        scrub->live = item->propertyPath().GetNameToken() != TfToken("xformOp:translate:pivot")
+                      && item->propertyPath().GetNameToken() != TfToken("xformOp:transform:pivot");
         scrub->hadEditDefault = false;
         scrub->previousEditDefault = VtValue();
 

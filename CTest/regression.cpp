@@ -2,8 +2,10 @@
 // Copyright (c) 2025 - present Mikael Sundell
 
 #include "command.h"
-#include "commandtransform.h"
+#include "commandpivot.h"
 #include "commandstack.h"
+#include "commandtransform.h"
+#include "console.h"
 #include "materialmenu.h"
 #include "materialutils.h"
 #include "selectionlist.h"
@@ -22,6 +24,7 @@
 #include <QThreadPool>
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <functional>
 #include <iostream>
 #include <map>
@@ -2529,6 +2532,78 @@ commandCompositionApi()
 }
 
 void
+pivotOperationApi()
+{
+    Session session;
+    require(session.newStage(), "new pivot-frame fixture");
+    const auto stage = session.stage();
+    const auto parent = UsdGeomXform::Define(stage, SdfPath("/PivotWorld"));
+    parent.AddRotateXYZOp().Set(GfVec3f(12, 23, 8));
+    parent.AddScaleOp().Set(GfVec3f(1.2, 0.9, 1.1));
+    const auto source = UsdGeomXform::Define(stage, SdfPath("/PivotWorld/Source"));
+    const auto mesh = UsdGeomMesh::Define(stage, SdfPath("/PivotWorld/Source/Mesh"));
+    mesh.AddTranslateOp().Set(GfVec3d(2, 3, 4));
+    UsdGeomSubset::CreateGeomSubset(mesh, TfToken("A"), UsdGeomTokens->face, VtIntArray { 0 });
+    UsdGeomSubset::CreateGeomSubset(mesh, TfToken("B"), UsdGeomTokens->face, VtIntArray { 1 });
+    for (const auto& name : { "Selected", "Unselected" }) {
+        const auto instance = UsdGeomXform::Define(stage, SdfPath(std::string("/PivotWorld/") + name));
+        instance.GetPrim().GetReferences().AddInternalReference(source.GetPath());
+        instance.GetPrim().SetInstanceable(true);
+        instance.AddTranslateOp().Set(GfVec3d(7, 4, 2));
+    }
+    const QList<SdfPath> selected { mesh.GetPath().AppendChild(TfToken("A")), SdfPath("/PivotWorld/Selected/Mesh/A"),
+                                    SdfPath("/PivotWorld/Selected/Mesh/B") };
+    session.selectionList()->updatePaths(selected);
+    const auto layer = stage->GetEditTarget().GetLayer();
+    std::string original;
+    layer->ExportToString(&original);
+    const QList<GfMatrix4d> deltas { GfMatrix4d(1).SetTranslate(GfVec3d(1, -2, 3)),
+                                     GfMatrix4d(1).SetRotate(GfRotation(GfVec3d::ZAxis(), 27)),
+                                     GfMatrix4d(1).SetScale(GfVec3d(1.1, 0.8, 1.2)) };
+    for (const auto& delta : deltas) {
+        stageviz::PivotOperation operation;
+        QString error;
+        require(stageviz::beginPivotOperation(stage, selected, operation, error), "capture full pivot operation");
+        require(operation.targetCount == 2, "subset/proxy/source pivot targets deduplicate");
+        QStringList errors;
+        require(stageviz::applyPivotOperation(stage, operation, delta, &errors), "apply full pivot delta");
+        require(stageviz::applyPivotOperation(stage, operation, delta, &errors), "preview remains drag-start-relative");
+        for (qsizetype i = 0; i < operation.paths.size(); ++i) {
+            GfMatrix4d world(1.0), frame(1.0);
+            require(stageviz::stage::worldTransform(stage, operation.paths.at(i), world, error), "read fixed object");
+            require(stageviz::stage::worldPivotFrame(stage, operation.paths.at(i), frame, error),
+                    "read full pivot frame");
+            require(GfIsClose(world, operation.edit.before.at(i), 1e-6), "pivot edit leaves every object fixed");
+            require(GfIsClose(frame,
+                              i < operation.targetCount ? operation.beforeFrames.at(i) * delta
+                                                        : operation.beforeFrames.at(i),
+                              1e-6),
+                    "selected pivot frames receive one delta; unselected inherited frames stay fixed");
+        }
+        std::string preview;
+        layer->ExportToString(&preview);
+        auto command = stageviz::setPivotTransforms(operation);
+        undoCommand(command, session);
+        std::string restored;
+        layer->ExportToString(&restored);
+        require(restored == original, "pivot undo restores exact authored properties");
+        executeCommand(command, session);
+        layer->ExportToString(&restored);
+        require(restored == preview, "pivot redo restores exact preview");
+        undoCommand(command, session);
+        require(session.selectionList()->paths() == selected, "pivot commands preserve exact selected paths");
+    }
+    stageviz::PivotOperation rejected;
+    QString error;
+    require(stageviz::beginPivotOperation(stage, selected, rejected, error), "capture rejected pivot operation");
+    require(!stageviz::applyPivotOperation(stage, rejected, GfMatrix4d(1).SetScale(GfVec3d(0, 1, 1))),
+            "singular pivot deltas are rejected before authoring");
+    std::string unchanged;
+    layer->ExportToString(&unchanged);
+    require(unchanged == original, "rejected pivot operation leaves layer unchanged");
+}
+
+void
 transformOperationApi()
 {
     for (int mode = 0; mode < 3; ++mode) {
@@ -2864,10 +2939,9 @@ commandMoveApi()
         require(secondUndoLayer == beforeLayer, "setTransforms redo/undo remains exactly reversible");
     }
 
-    // A pivot authored in the same active layer must remain the gizmo pivot
-    // after prepareTransforms() replaces xformOpOrder with the matrix-only fast
-    // path. Without this regression, worldPivot() falls back to the translated
-    // matrix origin after a rotation and the gizmo jumps away/disappears.
+    // Preparing a drag must preserve the active pivot pair and object matrix.
+    // Flattening the pair can reactivate a different orphaned pivot attribute,
+    // making the gizmo jump when a centered object starts moving.
     {
         Session pivotSession;
         require(pivotSession.newStage(), "new stage for same-layer pivot transform");
@@ -2917,8 +2991,14 @@ commandMoveApi()
 
         VtTokenArray preparedOrder;
         require(xform.GetXformOpOrderAttr().Get(&preparedOrder)
-                    && preparedOrder == VtTokenArray { TfToken("xformOp:transform") },
-                "prepared same-layer pivot uses matrix-only order");
+                    && preparedOrder
+                           == VtTokenArray { TfToken("xformOp:translate:pivot"), TfToken("xformOp:transform"),
+                                             TfToken("!invert!xformOp:translate:pivot") },
+                "prepared same-layer pivot retains its active pair");
+        GfMatrix4d preparedWorld(1.0);
+        require(stageviz::stage::worldTransform(stage, path, preparedWorld, error)
+                    && GfIsClose(preparedWorld, before, 1e-6),
+                "drag preparation leaves the object unchanged");
         require(bool(stage->GetPrimAtPath(path).GetAttribute(TfToken("xformOp:translate:pivot"))),
                 "prepared same-layer pivot keeps authored pivot attribute");
 
@@ -3466,6 +3546,53 @@ commandCenterPivotUsesObjectSpace()
             "centered gizmo matches the transformed cube bounds center");
 }
 
+void
+consoleOutputFileApi()
+{
+    QTemporaryDir directory;
+    require(directory.isValid(), "temporary console directory");
+    const QString first = directory.filePath("first.log");
+    const QString second = directory.filePath("second.log");
+    const auto contents = [](const QString& path) {
+        QFile file(path);
+        require(file.open(QIODevice::ReadOnly), "open captured console output");
+        return file.readAll();
+    };
+    stageviz::Console output;
+    QString error;
+    require(output.setOutputFile(first, false, error), "start file logging");
+    require(output.isRunning(), "file logging starts native console capture");
+    std::fputs("stdout marker\n", stdout);
+    std::fputs("stderr marker\n", stderr);
+    require(!output.setOutputFile(directory.filePath("missing/log.txt"), true, error), "reject invalid destination");
+    require(output.outputFile() == first, "failed open preserves current destination");
+    std::fputs("after failed open\n", stdout);
+    require(output.setOutputFile(second, false, error), "switch output destination");
+    const QByteArray original = contents(first);
+    require(original.contains("stdout marker\n") && original.contains("stderr marker\n")
+                && original.contains("after failed open\n"),
+            "both streams are flushed to the original file");
+    std::fputs("second destination\n", stderr);
+    require(output.setOutputFile(QString(), true, error), "stop file logging and drain pending bytes");
+    require(contents(second) == QByteArray("second destination\n"), "switch does not leak prior output");
+    require(output.outputFile().isEmpty(), "no active destination after stop");
+    require(output.setOutputFile(first, true, error), "append to existing output");
+    std::fputs("appended\n", stdout);
+    require(output.setOutputFile(QString(), true, error), "flush appended output");
+    require(contents(first) == original + "appended\n", "append preserves previous bytes");
+    require(output.setOutputFile(first, false, error), "truncate output");
+    std::fputs("truncated\n", stdout);
+    require(output.setOutputFile(first, false, error), "truncate the active output file");
+    std::fputs("replacement\n", stdout);
+    require(output.setOutputFile(QString(), true, error), "flush truncated output");
+    require(contents(first) == QByteArray("replacement\n"), "truncation leaves no stale bytes");
+    std::fputs("console only\n", stdout);
+    output.stop();
+    QCoreApplication::processEvents();
+    require(output.text().contains("console only\n"), "console keeps capturing after file logging stops");
+    require(contents(first) == QByteArray("replacement\n"), "stopped file receives no further output");
+}
+
 }  // namespace
 
 int
@@ -3476,6 +3603,7 @@ main(int argc, char** argv)
         { "save_twice_usda", [] { saveTwice("usda"); } },
         { "save_twice_usdc", [] { saveTwice("usdc"); } },
         { "save_failure", saveFailure },
+        { "console_output_file_api", consoleOutputFileApi },
         { "sublayer_save", sublayerSave },
         { "save_layer_as_sublayer", saveLayerAsSublayer },
         { "save_as", saveAs },
@@ -3528,6 +3656,7 @@ main(int argc, char** argv)
         { "command_composition_api", commandCompositionApi },
         { "command_move_api", commandMoveApi },
         { "transform_operation_api", transformOperationApi },
+        { "pivot_operation_api", pivotOperationApi },
         { "command_payload_api", commandPayloadApi }
     };
     if (argc != 2 || !cases.count(argv[1])) {

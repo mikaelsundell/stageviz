@@ -100,6 +100,17 @@ public:
      * @brief Returns whether transform interaction is enabled.
      */
     bool transformEnabled() const;
+    /**
+     * @brief Returns whether the gizmo edits pivot frames instead of object transforms.
+     */
+    bool pivotEnabled() const;
+
+    /**
+     * @brief Switches the existing manipulation tools to pivot-frame editing.
+     */
+    void setPivotEnabled(bool enabled);
+
+
 
     /**
      * @brief Enables or disables the viewport transform manipulator.

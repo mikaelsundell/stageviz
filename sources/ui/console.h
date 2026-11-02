@@ -62,6 +62,26 @@ public:
      */
     QStringList lines() const;
 
+    /**
+     * @brief Writes future captured stdout/stderr to a file while retaining console display.
+     *
+     * Starts console capture if needed. Pending output is drained before
+     * switching files or stopping logging.
+     * An empty filename stops logging. A failed open keeps the existing file.
+     *
+     * @param filename Destination file, or empty to stop.
+     * @param append Appends when true, truncates when false.
+     * @param error Receives an open or capture failure.
+     *
+     * @return True when the output destination was updated.
+     */
+    bool setOutputFile(const QString& filename, bool append, QString& error);
+
+    /**
+     * @brief Returns the active output filename, or empty when file logging is disabled.
+     */
+    QString outputFile() const;
+
 Q_SIGNALS:
     /**
      * @brief Emitted when new text is captured.

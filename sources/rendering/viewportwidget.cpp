@@ -443,6 +443,10 @@ ViewportWidgetPrivate::close()
     d.visibleCapture.clear();
     d.visibleCaptureSet.clear();
     d.stage = nullptr;
+    d.cachedSceneTotals = {};
+    d.sceneTotalsDirty = true;
+    d.sceneStats = QImage();
+    d.performanceStats = QImage();
     d.bbox = GfBBox3d();
     d.selectionBBox = GfBBox3d();
     d.drag = false;
@@ -1704,6 +1708,18 @@ void
 ViewportWidget::setTransformEnabled(bool enabled)
 {
     p->d.transform->setEnabled(enabled);
+}
+
+bool
+ViewportWidget::pivotEnabled() const
+{
+    return p->d.transform->pivotEnabled();
+}
+
+void
+ViewportWidget::setPivotEnabled(bool enabled)
+{
+    p->d.transform->setPivotEnabled(enabled);
 }
 
 bool

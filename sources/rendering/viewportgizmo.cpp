@@ -15,6 +15,7 @@
 #include "viewporthost.h"
 #include "viewportwidget.h"
 #include <QPainter>
+#include <QPainterPath>
 #include <algorithm>
 #include <cmath>
 #include <pxr/base/gf/math.h>
@@ -45,6 +46,7 @@ public:
     void clearTransformGeometry();
     void updateTransformGeometry();
     void drawTransformTransform(QPainter& painter);
+    void drawRotationFeedback(QPainter& painter);
     struct Data {
         ViewportHost* host = nullptr;
         ViewportGizmo::Frame frame;
@@ -166,10 +168,8 @@ ViewportGizmoPrivate::transformRotationScreenBasis(int axis, QPointF& center, QP
     if (!d.host->projectWorldToScreen(d.frame.pivot, center))
         return false;
 
-    // Build the rotation overlay in screen space from the projected world axes.
-    // The largest projected semi-axis is normalized to the exact same screen-space
-    // size used by the Move and Scale gizmos. The other semi-axis is allowed to
-    // foreshorten naturally with the camera angle.
+    // Match the world-space radius used by the rendered rings. Normalizing
+    // the projected axes would enlarge oblique rings and overshoot the mesh.
     const double gizmoSize = ui()->gizmoSize(UI::UIScale::Medium);
     const double probeRadius = transformWorldPerPixel(d.frame.pivot) * gizmoSize;
     if (!std::isfinite(probeRadius) || probeRadius <= 0.0)
@@ -190,23 +190,17 @@ ViewportGizmoPrivate::transformRotationScreenBasis(int axis, QPointF& center, QP
     if (!std::isfinite(maxLength) || maxLength < 1e-6)
         return false;
 
-    const double scale = gizmoSize / maxLength;
-    basisA *= scale;
-    basisB *= scale;
     return true;
 }
 
 bool
 ViewportGizmoPrivate::transformRotationPoint(int axis, double angle, QPointF& screen)
 {
-    QPointF center;
-    QPointF basisA;
-    QPointF basisB;
-    if (!transformRotationScreenBasis(axis, center, basisA, basisB))
-        return false;
-
-    screen = center + basisA * std::cos(angle) + basisB * std::sin(angle);
-    return std::isfinite(screen.x()) && std::isfinite(screen.y());
+    const GfVec3d normal = transformAxisVector(axis);
+    const GfVec3d a = transformAxisVector(axis % 3 + 1);
+    const GfVec3d b = GfCross(normal, a);
+    const double radius = transformWorldPerPixel(d.frame.pivot) * ui()->gizmoSize(UI::UIScale::Medium);
+    return d.host->projectWorldToScreen(d.frame.pivot + radius * (a * std::cos(angle) + b * std::sin(angle)), screen);
 }
 
 bool
@@ -367,6 +361,10 @@ ViewportGizmoPrivate::updateTransformGeometry()
         return;
     }
     if (!d.frame.pivotValid || !d.frame.orientationValid) {
+        clearTransformGeometry();
+        return;
+    }
+    if (d.frame.pivotEditing) {
         clearTransformGeometry();
         return;
     }
@@ -579,9 +577,97 @@ ViewportGizmoPrivate::drawTransformTransform(QPainter& painter)
         centerColor = ui()->color(UI::ColorRole::Selection);
     painter.save();
     painter.setRenderHint(QPainter::Antialiasing, true);
-    painter.setPen(QPen(QColor(245, 245, 245, 220), 1.5));
-    painter.setBrush(centerColor);
+    if (d.frame.pivotEditing) {
+        const double radius = transformWorldPerPixel() * ui()->gizmoSize(UI::UIScale::Medium);
+        const UI::ColorRole roles[] = { UI::ColorRole::AxisX, UI::ColorRole::AxisY, UI::ColorRole::AxisZ };
+        for (int axis = 1; axis <= 3; ++axis) {
+            const int handle
+                = axis + (d.frame.mode == TransformMode::Rotate ? 3 : (d.frame.mode == TransformMode::Scale ? 6 : 0));
+            const QColor color = d.frame.activeAxis == handle || d.frame.hoverAxis == handle
+                                     ? ui()->color(UI::ColorRole::Selection)
+                                     : ui()->color(roles[axis - 1]);
+            painter.setPen(QPen(color, 2.0, Qt::DotLine, Qt::RoundCap));
+            painter.setBrush(Qt::NoBrush);
+            if (d.frame.mode == TransformMode::Rotate) {
+                QPainterPath path;
+                bool previous = false;
+                for (int segment = 0; segment <= 96; ++segment) {
+                    QPointF point;
+                    const bool valid = transformRotationPoint(axis, segment * GfDegreesToRadians(360.0) / 96.0, point);
+                    if (valid) {
+                        if (previous)
+                            path.lineTo(point);
+                        else
+                            path.moveTo(point);
+                    }
+                    previous = valid;
+                }
+                painter.drawPath(path);
+            }
+            else {
+                const GfVec3d direction = d.frame.mode == TransformMode::Scale ? transformScaleAxisVector(axis)
+                                                                               : transformAxisVector(axis);
+                QPointF end;
+                if (!d.host->projectWorldToScreen(d.frame.pivot + direction * radius, end))
+                    continue;
+                painter.drawLine(center, end);
+                painter.setPen(QPen(color, 1.5));
+                if (d.frame.mode == TransformMode::Scale)
+                    painter.drawRect(QRectF(end - QPointF(4, 4), QSizeF(8, 8)));
+                else
+                    painter.drawEllipse(end, 4, 4);
+            }
+        }
+    }
+    painter.setPen(QPen(ui()->color(UI::ColorRole::Text), 1.5));
+    if (d.frame.pivotEditing)
+        painter.setBrush(Qt::NoBrush);
+    else
+        painter.setBrush(centerColor);
     painter.drawEllipse(center, 5.0, 5.0);
+    painter.restore();
+}
+
+void
+ViewportGizmoPrivate::drawRotationFeedback(QPainter& painter)
+{
+    if (!d.frame.enabled || !d.frame.pivotValid || d.frame.mode != TransformMode::Rotate || d.frame.activeAxis < 4
+        || d.frame.activeAxis > 6)
+        return;
+    const int axis = d.frame.activeAxis - 3;
+    QPointF center, basisA, basisB;
+    if (!transformRotationScreenBasis(axis, center, basisA, basisB))
+        return;
+    const auto point = [&](double angle) {
+        QPointF projected = center;
+        transformRotationPoint(axis, angle, projected);
+        return projected;
+    };
+    const double start = d.frame.rotationStartAngle;
+    const double delta = d.frame.rotationDeltaAngle;
+    const QPointF initial = point(start);
+    const QPointF current = point(start + delta);
+    QPainterPath arc(initial);
+    const int segments = std::max(1, static_cast<int>(std::ceil(std::abs(GfRadiansToDegrees(delta)) / 3.0)));
+    for (int i = 1; i <= segments; ++i)
+        arc.lineTo(point(start + delta * i / segments));
+    QPainterPath sector(center);
+    sector.lineTo(initial);
+    sector.connectPath(arc);
+    sector.closeSubpath();
+
+    painter.save();
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    const QColor color = ui()->color(UI::ColorRole::Selection);
+    QColor fill = color;
+    fill.setAlpha(35);
+    painter.fillPath(sector, fill);
+    painter.setPen(QPen(color, 1.5, Qt::DashLine));
+    painter.drawLine(center, initial);
+    painter.setPen(QPen(color, 2.0));
+    painter.drawLine(center, current);
+    painter.drawPath(arc);
+
     painter.restore();
 }
 
@@ -624,6 +710,7 @@ void
 ViewportGizmo::draw(const Frame& frame, QPainter& painter)
 {
     p->d.frame = frame;
+    p->drawRotationFeedback(painter);
     p->drawTransformTransform(painter);
 }
 

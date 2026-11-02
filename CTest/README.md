@@ -93,3 +93,22 @@ case also checks exact layer restoration after a no-motion drag.
 `python/testtransformoperation.py` compares Python set_transforms and real gizmo
 gestures on the same subset/source/proxy fixture in a disposable viewer, with
 selection assertions, independent MCP checkpoints, screenshots, and undo/redo.
+
+`pivot_operation_api` covers translated, rotated, and scaled pivot frames with
+subset/proxy/source target resolution, repeated previews, fixed object geometry,
+preservation of unselected inherited frames, singular-input rejection, and exact
+layer undo/redo. `pivot_operation_applied_api` checks history registration without
+reapplying a pivot preview. `python/testpivot.py` exercises the independent toolbar
+toggle, all three center gestures, exact selection, fixed world geometry, and
+undo/redo in a disposable on-screen viewer.
+
+The pivot Python checks also cover normal Move, Rotate, and Scale drags after
+Center Pivot, including previously edited pivot frames, unchanged geometry on
+press, stable pivots through release, and exact undo/redo.
+
+`console_output_file_api` covers native stdout/stderr logging, destination
+switches, failed opens preserving the active file, append/truncate, synchronous
+stop, and continued console capture. `python/testconsole.py` checks the public
+logging bindings. `python/testscenestats.py` checks that File > Close resets the
+viewport's stats to an empty-stage image, including closing with stats hidden;
+it requires a disposable viewer. These scripts expose `run()` and do not autorun.

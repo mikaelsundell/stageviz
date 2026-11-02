@@ -191,7 +191,12 @@ class SubsetTest(_Base):
         self.check_properties(owner)
 
     def subset_selection(self, owner):
-        QtCore, _, _, _ = tb.qt()
+        QtCore, QtGui, _, _ = tb.qt()
+        selection_color = QtGui.QColor(*stageviz.ui().color(stageviz.UI.Selection)).rgb()
+        # Shading can settle between frames on unselected geometry. Compare
+        # the actual highlight pixels, not unrelated surface colors.
+        def outline(image):
+            return image.createMaskFromColor(selection_color)
         stageviz.command.select_paths([])
         tb.process_events(100)
         unselected = self.viewport().grabFramebuffer()
@@ -200,13 +205,14 @@ class SubsetTest(_Base):
         outliner.expandAll()
         tb.process_events(100)
         parent_outline = self.viewport().grabFramebuffer()
-        assert parent_outline != unselected, "the parent mesh has a visible selection outline"
+        parent_mask = outline(parent_outline)
+        assert parent_mask != outline(unselected), "the parent mesh has a visible selection outline"
         parent_rows = outliner.grab().toImage()
         subset = owner + "/Front"
         stageviz.command.select_paths([subset])
         tb.process_events(100)
         assert list(stageviz.session().paths()) == [subset], "Session retains the exact selected subset"
-        assert self.viewport().grabFramebuffer() == parent_outline, "subset selection outlines the parent mesh"
+        assert outline(self.viewport().grabFramebuffer()) == parent_mask, "subset selection outlines the parent mesh"
         assert outliner.grab().toImage() == parent_rows, "subset selection highlights the parent Outliner row"
         tree = self.tree("propertyTree")
         prim = tree.findItems("Prim", QtCore.Qt.MatchFlag.MatchExactly, 0)[0]

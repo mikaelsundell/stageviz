@@ -146,11 +146,17 @@ namespace stage {
     bool worldTransform(UsdStageRefPtr stage, const SdfPath& path, GfMatrix4d& matrix, QString& error);
 
     /**
+     * @brief Returns the authored pivot frame in world space, including orientation and scale.
+     *
+     * Legacy paired translation pivots and matrix-only preview overrides are supported.
+     */
+    bool worldPivotFrame(UsdStageRefPtr stage, const SdfPath& path, GfMatrix4d& frame, QString& error);
+
+    /**
      * @brief Resolves the manipulation pivot for an xformable prim in world space.
      *
-     * Uses the standard paired USD pivot pattern
-     * xformOp:translate:pivot / !invert!xformOp:translate:pivot when it can be
-     * interpreted unambiguously. Arbitrary transform stacks fall back to the
+     * Supports paired translation pivots and full matrix pivot frames.
+     * Arbitrary transform stacks fall back to the
      * prim's evaluated world-space origin.
      *
      * @param stage Stage containing the prim.

@@ -818,8 +818,7 @@ LayerTree::contextMenuEvent(QContextMenuEvent* event)
     }
     else if (selected == revealAction) {
         if (!QFileInfo::exists(layerFilePath)) {
-            session()->notifyStatus(Session::Notify::Status::Error,
-                                    tr("File does not exist: %1").arg(layerFilePath));
+            session()->notifyStatus(Session::Notify::Status::Error, tr("File does not exist: %1").arg(layerFilePath));
         }
         else if (!os::revealFileInFolder(layerFilePath)) {
             session()->notifyStatus(Session::Notify::Status::Warning,

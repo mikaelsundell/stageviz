@@ -182,6 +182,7 @@ addUIEnums()
                                            { "PartiallyChecked", static_cast<long>(UI::IconRole::PartiallyChecked) },
                                            { "Payload", static_cast<long>(UI::IconRole::Payload) },
                                            { "Pick", static_cast<long>(UI::IconRole::Pick) },
+                                           { "Pivot", static_cast<long>(UI::IconRole::Pivot) },
                                            { "Prim", static_cast<long>(UI::IconRole::Prim) },
                                            { "Redo", static_cast<long>(UI::IconRole::Redo) },
                                            { "Right", static_cast<long>(UI::IconRole::Right) },

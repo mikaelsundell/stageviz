@@ -348,6 +348,17 @@
                  </widget>
                 </item>
                 <item>
+                 <widget class="QToolButton" name="pivot">
+                  <property name="minimumSize">
+                   <size><width>32</width><height>32</height></size>
+                  </property>
+                  <property name="toolTip">
+                   <string>Edit pivot frames with Move, Rotate, or Scale while keeping geometry stationary.</string>
+                  </property>
+                  <property name="checkable"><bool>true</bool></property>
+                 </widget>
+                </item>
+                <item>
                  <spacer name="horizontalSpacer_3">
                   <property name="orientation">
                    <enum>Qt::Orientation::Vertical</enum>
@@ -834,6 +845,7 @@
     <addaction name="displayMove"/>
     <addaction name="displayRotate"/>
     <addaction name="displayScale"/>
+    <addaction name="displayPivot"/>
     <addaction name="separator"/>
     <addaction name="displayGrid"/>
    </widget>
@@ -1129,6 +1141,11 @@
    <property name="shortcut">
     <string>R</string>
    </property>
+  </action>
+  <action name="displayPivot">
+   <property name="checkable"><bool>true</bool></property>
+   <property name="text"><string>Edit Pivot</string></property>
+   <property name="toolTip"><string>Edit pivot frames with Move, Rotate, or Scale while keeping geometry stationary.</string></property>
   </action>
   <action name="displayFrameSelected">
    <property name="text">

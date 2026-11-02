@@ -301,6 +301,7 @@ ViewerPrivate::init()
     d.ui->displayRotate->setIcon(ui()->icon(UI::IconRole::Rotate));
     d.ui->displayRotate->setCheckable(true);
     d.ui->displayRotate->setChecked(false);
+    d.ui->displayPivot->setIcon(ui()->icon(UI::IconRole::Pivot));
     d.ui->displayScale->setIcon(ui()->icon(UI::IconRole::Scale));
     d.ui->displayScale->setCheckable(true);
     d.ui->displayScale->setChecked(false);
@@ -477,6 +478,11 @@ ViewerPrivate::init()
     connect(d.ui->displayMove, &QAction::toggled, this, &ViewerPrivate::move);
     connect(d.ui->displayRotate, &QAction::toggled, this, &ViewerPrivate::rotate);
     connect(d.ui->displayScale, &QAction::toggled, this, &ViewerPrivate::scale);
+    connect(d.ui->displayPivot, &QAction::toggled, this, [this](bool enabled) {
+        renderView()->setPivotEnabled(enabled);
+        if (enabled && !renderView()->transformEnabled())
+            d.ui->displayMove->setChecked(true);
+    });
     connect(d.ui->helpAbout, &QAction::triggered, this, &ViewerPrivate::openAbout);
     connect(d.ui->helpCheckUpdates, &QAction::triggered, this, &ViewerPrivate::checkUpdates);
     connect(d.ui->helpDocumentation, &QAction::triggered, this, &ViewerPrivate::openDocumentation);
@@ -499,6 +505,7 @@ ViewerPrivate::init()
         d.ui->move->setDefaultAction(d.ui->displayMove);
         d.ui->rotate->setDefaultAction(d.ui->displayRotate);
         d.ui->scale->setDefaultAction(d.ui->displayScale);
+        d.ui->pivot->setDefaultAction(d.ui->displayPivot);
     }
     connect(d.backgroundColorFilter.data(), &MouseEvent::pressed, this, &ViewerPrivate::backgroundColor);
     connect(session(), &Session::maskChanged, this, &ViewerPrivate::updateMask);
@@ -1164,6 +1171,7 @@ ViewerPrivate::enable(bool enable)
                                 d.ui->displayMove,
                                 d.ui->displayRotate,
                                 d.ui->displayScale,
+                                d.ui->displayPivot,
                                 d.ui->displayRenderShaded,
                                 d.ui->displayRenderWireframe,
                                 d.ui->displayRenderClay,
