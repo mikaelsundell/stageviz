@@ -5,6 +5,7 @@
 #include "viewer.h"
 #include "application.h"
 #include "command.h"
+#include "commandlight.h"
 #include "commandstack.h"
 #include "consoledialog.h"
 #include "githubclient.h"
@@ -15,6 +16,7 @@
 #include "notice.h"
 #include "os.h"
 #include "outlinerview.h"
+#include "primutils.h"
 #include "progressdialog.h"
 #include "propertyview.h"
 #include "pythondialog.h"
@@ -56,6 +58,8 @@
 #include <QVBoxLayout>
 #include <algorithm>
 #include <pxr/usd/usdGeom/modelAPI.h>
+#include <pxr/usd/usdGeom/scope.h>
+#include <pxr/usd/usdGeom/xform.h>
 #include <utility>
 
 // generated files
@@ -89,6 +93,7 @@ public:
     bool eventFilter(QObject* object, QEvent* event);
     void enable(bool enable);
     void newPrim(const TfToken& typeName);
+    void newLight(LightType type, const QString& name);
 
 public Q_SLOTS:
     void newFile();
@@ -393,6 +398,20 @@ ViewerPrivate::init()
     connect(d.ui->createCone, &QAction::triggered, this, [this]() { newPrim(TfToken("Cone")); });
     connect(d.ui->createCapsule, &QAction::triggered, this, [this]() { newPrim(TfToken("Capsule")); });
     connect(d.ui->createPlane, &QAction::triggered, this, [this]() { newPrim(TfToken("Plane")); });
+    connect(d.ui->createPointLight, &QAction::triggered, this,
+            [this]() { newLight(LightType::Point, QStringLiteral("PointLight")); });
+    connect(d.ui->createSpotLight, &QAction::triggered, this,
+            [this]() { newLight(LightType::Spot, QStringLiteral("SpotLight")); });
+    connect(d.ui->createDistantLight, &QAction::triggered, this,
+            [this]() { newLight(LightType::Distant, QStringLiteral("DistantLight")); });
+    connect(d.ui->createRectLight, &QAction::triggered, this,
+            [this]() { newLight(LightType::Rect, QStringLiteral("RectLight")); });
+    connect(d.ui->createDiskLight, &QAction::triggered, this,
+            [this]() { newLight(LightType::Disk, QStringLiteral("DiskLight")); });
+    connect(d.ui->createCylinderLight, &QAction::triggered, this,
+            [this]() { newLight(LightType::Cylinder, QStringLiteral("CylinderLight")); });
+    connect(d.ui->createDomeLight, &QAction::triggered, this,
+            [this]() { newLight(LightType::Dome, QStringLiteral("DomeLight")); });
     connect(d.ui->editCopySelected, &QAction::triggered, this, &ViewerPrivate::copySelected);
     connect(d.ui->editInstanceSelected, &QAction::triggered, this, &ViewerPrivate::instanceSelected);
     connect(d.ui->editDeleteSelected, &QAction::triggered, this, &ViewerPrivate::deleteSelected);
@@ -1146,6 +1165,13 @@ ViewerPrivate::enable(bool enable)
                                 d.ui->createCone,
                                 d.ui->createCapsule,
                                 d.ui->createPlane,
+                                d.ui->createPointLight,
+                                d.ui->createSpotLight,
+                                d.ui->createDistantLight,
+                                d.ui->createRectLight,
+                                d.ui->createDiskLight,
+                                d.ui->createCylinderLight,
+                                d.ui->createDomeLight,
                                 d.ui->editCopySelected,
                                 d.ui->editInstanceSelected,
                                 d.ui->editDeleteSelected,
@@ -2056,6 +2082,29 @@ ViewerPrivate::newPrim(const TfToken& typeName)
                                                               : newPrimPath(parentPath, name, typeName, selectCreated);
 
     session()->commandStack()->execute(new Command(std::move(command)));
+}
+
+void
+ViewerPrivate::newLight(LightType type, const QString& name)
+{
+    SdfPath parent = SdfPath::AbsoluteRootPath();
+    {
+        READ_LOCKER(locker, session()->stageLock(), "stageLock");
+        const auto paths = stage::objectPaths(session()->stageUnsafe(), session()->selectionList()->paths());
+        if (!paths.isEmpty()) {
+            parent = paths.size() == 1 ? paths.first().GetPrimPath() : paths.first().GetParentPath();
+            auto prim = session()->stageUnsafe()->GetPrimAtPath(parent);
+            if (paths.size() == 1 && prim && !prim.IsA<UsdGeomXform>() && !prim.IsA<UsdGeomScope>()) {
+                parent = parent.GetParentPath();
+                prim = session()->stageUnsafe()->GetPrimAtPath(parent);
+            }
+            while (prim && (prim.IsInstanceProxy() || prim.IsInstance())) {
+                parent = parent.GetParentPath();
+                prim = session()->stageUnsafe()->GetPrimAtPath(parent);
+            }
+        }
+    }
+    session()->commandStack()->execute(new Command(newLightPath(parent, name, type)));
 }
 
 void

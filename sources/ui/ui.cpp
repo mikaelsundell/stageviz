@@ -229,6 +229,7 @@ UIPrivate::updateTheme()
     map(UI::ColorRole::RenderAlt, QColor::fromHsl(210, 6, 25));
     map(UI::ColorRole::Selection, QColor::fromHsl(35, 240, 160));
     map(UI::ColorRole::SelectionAlt, QColor::fromHsl(55, 140, 120));
+    map(UI::ColorRole::Sweep, QColor(Qt::white));
     map(UI::ColorRole::Text, QColor::fromHsl(0, 0, 220));
     map(UI::ColorRole::TextAlt, QColor::fromHsl(0, 0, 150));
     map(UI::ColorRole::Warning, QColor::fromHsl(50, 130, 100));

@@ -43,6 +43,7 @@ foreach(case IN ITEMS
     save_twice_usdc
     save_failure
     console_output_file_api
+    viewport_color_query_api
     sublayer_save
     save_as
     save_as_payload_anchor
@@ -93,6 +94,8 @@ foreach(case IN ITEMS
     command_material_variant_api
     command_composition_api
     command_move_api
+    light_command_api
+    copy_transform_api
     transform_operation_api
     pivot_operation_api
     command_payload_api
@@ -128,6 +131,7 @@ set_target_properties(stageviz_gui_regressions PROPERTIES
 
 foreach(case IN ITEMS
     viewport_components_api
+    viewport_lights_api
     viewport_transform_pivot_api
     transform_operation_applied_api
     pivot_operation_applied_api
@@ -136,7 +140,9 @@ foreach(case IN ITEMS
     indextree_selection_api
     indextree_selection_modes_api
     ui_api
+    numeric_editor_api
     renderengine_api
+    renderengine_hdri_api
     material_browser_api
     geometry_subset_gui_api
     outliner_instance_payload_resync_api

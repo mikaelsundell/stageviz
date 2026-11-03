@@ -132,6 +132,12 @@ RenderView::captureImage()
     return p->viewportWidget()->captureImage();
 }
 
+ViewportCapture
+RenderView::captureViewport(QString& error)
+{
+    return p->viewportWidget()->captureViewport(error);
+}
+
 void
 RenderView::captureVisible()
 {

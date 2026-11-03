@@ -4,15 +4,25 @@
 
 #pragma once
 
+#include "command.h"
 #include "session.h"
 #include "stageviz.h"
 #include <QList>
 #include <QThreadPool>
+#include <functional>
 
 PXR_NAMESPACE_USING_DIRECTIVE
 
 namespace stageviz {
 namespace command {
+    /**
+     * @brief Shares prim creation, unique naming, selection and undo with schema presets.
+     *
+     * The initializer runs under the stage write lock after definition.
+     */
+    Command createPrimCommand(const SdfPath& parentPath, const QString& nameInput, const TfToken& typeName,
+                              bool selectCreated, std::function<bool(const UsdPrim&, QString&)> initialize = {});
+
 
     /**
      * @brief Formats a USD path for command progress and error messages.

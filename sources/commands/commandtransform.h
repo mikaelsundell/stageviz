@@ -186,6 +186,20 @@ Command
 setTransforms(const TransformOperation& operation);
 
 /**
+ * @brief Copies resolved objects as siblings and applies a shared world delta.
+ *
+ * Uses the same subset, instance-proxy and ancestor resolution as transforms.
+ * Originals are unchanged. Copies are selected; undo removes them and restores
+ * the exact previous selection, and redo recreates them at the moved position.
+ * Execute after restoring any interactive preview, using ExecutionMode::Execute.
+ *
+ * @param paths Exact selected USD paths.
+ * @param worldDelta World-space delta applied on top of each original transform.
+ */
+Command
+copyTransforms(const QList<SdfPath>& paths, const GfMatrix4d& worldDelta);
+
+/**
  * @brief Creates a command that centers manipulation pivots on prim bounds.
  *
  * Each selected xformable prim receives its own pivot at the center of its

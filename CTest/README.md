@@ -112,3 +112,40 @@ stop, and continued console capture. `python/testconsole.py` checks the public
 logging bindings. `python/testscenestats.py` checks that File > Close resets the
 viewport's stats to an empty-stage image, including closing with stats hidden;
 it requires a disposable viewer. These scripts expose `run()` and do not autorun.
+
+
+`viewport_color_query_api` covers hue wraparound, RGB tolerances, shaded magenta,
+visible-pixel coverage, background exclusion and grayscale rejection.
+`python/testviewportcapture.py` provides disposable MCP phases (`setup`, `colors`,
+`diagnostic`, `boundaries`, `cleanup`) for color/object alignment, native instance
+resolution, exact selection preservation, selection undo/redo, the normal-direction
+MaterialX override, masks/culling, and snapshot lifetime after stage closure.
+The script does not autorun; its `run(disposable=True)` executes all phases.
+
+- `copy_transform_api` covers world-space copying below rotated/scaled parents,
+  proxy subset deduplication, geometry and instancing through stronger transform
+  overrides, exact selection restoration, and redo.
+- `testviewport.py` exposes `copy_drag()` for Shift Move gestures, one-step
+  undo/redo, original preservation, and stationary-click behavior in a disposable viewer.
+
+- `renderengine_hdri_api` changes opacity through opaque, translucent, zero and
+  back to opaque with the dome background off/on and a separate helper pass.
+- `testviewporthdri.py` checks Preview Surface and MaterialX opacity with camera
+  lighting, HDRI lighting, combined lights, default/custom HDRI paths, background
+  toggles, and shaded/wireframe presentation in a disposable viewer. It stores
+  viewport screenshots and Qt snapshots for each fixture.
+
+- `light_command_api` covers all standard light presets, shaped spots, selection
+  restoration and redo. `viewport_lights_api` covers guide picking, sweep hits,
+  isolate masks, visibility and the absence of document authoring by helpers.
+- `testlights.py` exercises every Create action and Python light factory, click
+  and sweep selection, Move undo/redo, Qt snapshots and clean viewport capture
+  in a disposable viewer.
+
+- `numeric_editor_api` checks typing directly into a scrub-mode spin box.
+  `testnumericeditors.py` checks numeric replacement, stable row focus, repeated
+  property drags without closing the editor, undo/redo refresh and keyboard
+  commit through the real Property Editor in a disposable viewer.
+
+- `testlights.py` also isolates the default Distant light with other sources off,
+  checking visible illumination, rotation, translation independence, and undo.

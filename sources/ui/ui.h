@@ -54,6 +54,7 @@ public:
         RenderAlt,
         Selection,
         SelectionAlt,
+        Sweep,
         Text,
         TextAlt,
         Warning

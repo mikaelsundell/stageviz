@@ -80,9 +80,9 @@ public:
     void setSnap(bool enabled);
 
     /**
-     * @brief Starts a drag when a handle is hit.
+     * @brief Starts a drag when a handle is hit, optionally copying moved objects on release.
      */
-    bool beginDrag(const QPointF& pos);
+    bool beginDrag(const QPointF& pos, bool copy = false);
 
     /**
      * @brief Updates the active transform gesture.

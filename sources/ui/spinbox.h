@@ -23,8 +23,8 @@ namespace stageviz {
  * or downward decreases it. Shift enables fine adjustment and Control snaps
  * the dragged value to whole-number increments.
  *
- * The value editor is read-only during normal interaction. Double-clicking the
- * value enables direct text entry. Pressing Enter or moving focus away commits
+ * The value editor is read-only during normal interaction. Typing a number or double-clicking the
+ * value enables direct text entry, replacing the selected value. Pressing Enter or moving focus away commits
  * the value and returns the control to scrub mode. The standard spin buttons
  * remain available for step-wise adjustment.
  */
@@ -58,6 +58,16 @@ public:
      * @return Scrubbing sensitivity multiplier.
      */
     double scrubSensitivity() const;
+
+    /**
+     * @brief Returns whether the user is entering text rather than scrubbing.
+     */
+    bool isTextEditing() const;
+
+    /**
+     * @brief Returns whether a mouse scrub is in progress.
+     */
+    bool isScrubbing() const;
 
 Q_SIGNALS:
     /**
@@ -110,7 +120,13 @@ protected:
      */
     void mouseDoubleClickEvent(QMouseEvent* event) override;
 
+    /**
+     * @brief Starts direct numeric entry when typing in scrub mode.
+     */
+    void keyPressEvent(QKeyEvent* event) override;
+
 private:
+    void beginTextInput(QKeyEvent* event);
     void beginPress(QMouseEvent* event);
     bool updateScrub(QMouseEvent* event);
     bool finishPress(QMouseEvent* event);

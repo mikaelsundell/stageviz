@@ -21,6 +21,7 @@
 #include "viewcontext.h"
 #include "viewportauxiliary.h"
 #include "viewporthost.h"
+#include "viewportlights.h"
 #include "viewportselection.h"
 #include "viewporttransform.h"
 #include "viewstate.h"
@@ -44,7 +45,9 @@
 #include <QPointer>
 #include <QPolygonF>
 #include <QResizeEvent>
+#include <QScopeGuard>
 #include <QSet>
+#include <QThread>
 #include <QTimer>
 #include <algorithm>
 #include <cmath>
@@ -192,6 +195,7 @@ public:
         UsdStageRefPtr stage;
         QScopedPointer<ViewportAuxiliary> auxiliary;
         QScopedPointer<ViewportSelection> selectionTool;
+        QScopedPointer<ViewportLights> lights;
         QScopedPointer<ViewportTransform> transform;
         GfBBox3d bbox;
         QList<SdfPath> mask;
@@ -211,6 +215,7 @@ ViewportWidgetPrivate::init()
 {
     d.auxiliary.reset(new ViewportAuxiliary());
     d.selectionTool.reset(new ViewportSelection(*this));
+    d.lights.reset(new ViewportLights(*this));
     d.transform.reset(new ViewportTransform(*this));
     attach(d.glwidget);
     d.navigationTimer.setSingleShot(true);
@@ -443,6 +448,7 @@ ViewportWidgetPrivate::close()
     d.visibleCapture.clear();
     d.visibleCaptureSet.clear();
     d.stage = nullptr;
+    d.lights->invalidate();
     d.cachedSceneTotals = {};
     d.sceneTotalsDirty = true;
     d.sceneStats = QImage();
@@ -536,6 +542,8 @@ ViewportWidgetPrivate::paintOverlay(QPainter& painter)
     drawLetterbox(painter);
 
     d.selectionTool->draw(painter);
+
+    d.lights->draw(painter);
 
     d.transform->draw(painter);
 
@@ -761,10 +769,9 @@ ViewportWidgetPrivate::mousePressEvent(QMouseEvent* event)
         viewCamera()->setCameraMode(ViewCamera::Truck);
     }
     else if (event->button() == Qt::LeftButton) {
-        // Give transform handles priority over viewport navigation so Shift can
-        // be held before the initial click to enable snapping.
+        // Shift at press starts a Move copy gesture. Other tools keep Shift snapping.
         d.transform->setSnap(bool(event->modifiers() & Qt::ShiftModifier));
-        if (d.transform->beginDrag(event->position())) {
+        if (d.transform->beginDrag(event->position(), bool(event->modifiers() & Qt::ShiftModifier))) {
             d.drag = false;
             d.selectionTool->cancel();
             d.glwidget->setFocus(Qt::MouseFocusReason);
@@ -959,6 +966,7 @@ ViewportWidgetPrivate::updateStage(UsdStageRefPtr stage)
 {
     SignalGuard::Scope guard(this);
     d.stage = stage;
+    d.lights->invalidate();
     d.sceneTotalsDirty = true;
     d.cachedSceneTotals = {};
     d.selectionTool->reset();
@@ -1042,7 +1050,18 @@ ViewportWidgetPrivate::updateMask(const QList<SdfPath>& paths)
 void
 ViewportWidgetPrivate::updatePrims(const NoticeBatch& batch)
 {
-    Q_UNUSED(batch);
+    if (batch.entries.isEmpty())
+        d.lights->invalidate();
+    for (const auto& entry : batch.entries) {
+        if ((!entry.changedInfoOnly && !entry.path.IsPropertyPath())
+            || std::find(entry.changedFields.begin(), entry.changedFields.end(), TfToken("typeName"))
+                   != entry.changedFields.end()
+            || std::find(entry.changedFields.begin(), entry.changedFields.end(), TfToken("apiSchemas"))
+                   != entry.changedFields.end()) {
+            d.lights->invalidate();
+            break;
+        }
+    }
     d.sceneTotalsDirty = true;
     d.selectionTool->invalidateVisibleSelection();
     d.selectionTool->invalidateStage();
@@ -1698,6 +1717,40 @@ ViewportWidget::captureImage()
     return QOpenGLWidget::grabFramebuffer();
 }
 
+ViewportCapture
+ViewportWidget::captureViewport(QString& error)
+{
+    if (QThread::currentThread() != thread()) {
+        error = QStringLiteral("Viewport capture must run on the GUI thread");
+        return {};
+    }
+    if (!p->d.stage || !isValid()) {
+        error = QStringLiteral("No rendered USD stage is available in the viewport");
+        return {};
+    }
+    QOpenGLContext* previous = QOpenGLContext::currentContext();
+    QSurface* surface = previous ? previous->surface() : nullptr;
+    makeCurrent();
+    auto restore = qScopeGuard([&]() {
+        doneCurrent();
+        if (previous && surface)
+            previous->makeCurrent(surface);
+    });
+    if (QOpenGLContext::currentContext() != QOpenGLWidget::context()) {
+        error = QStringLiteral("Could not make the viewport GL context current");
+        return {};
+    }
+    // Synchronize camera, gate, masks, materials and display settings exactly
+    // as a regular frame before taking the clean document-only capture.
+    p->paintGL();
+    if (!p->d.stage || !p->d.renderEngine) {
+        error = QStringLiteral("The viewport stage closed during capture");
+        return {};
+    }
+    READ_LOCKER(locker, p->d.context->stageLock(), "stageLock");
+    return p->d.renderEngine->captureViewport(error);
+}
+
 bool
 ViewportWidget::transformEnabled() const
 {
@@ -1796,6 +1849,18 @@ ViewportWidget::updateStage(UsdStageRefPtr stage)
     p->updateStage(stage);
 }
 
+SdfPath
+ViewportWidget::pickLight(const QPointF& pos)
+{
+    return p->d.lights->pick(pos);
+}
+
+QList<SdfPath>
+ViewportWidget::lightPathsInRect(const QRectF& rect)
+{
+    return p->d.lights->pathsInRect(rect);
+}
+
 void
 ViewportWidget::setTimeCode(double timeCode)
 {
@@ -1803,6 +1868,7 @@ ViewportWidget::setTimeCode(double timeCode)
         return;
 
     p->d.timeCode = timeCode;
+    p->d.lights->setTimeCode(timeCode);
     p->updateRenderEngineSettings();
     update();
 }

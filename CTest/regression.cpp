@@ -2,6 +2,7 @@
 // Copyright (c) 2025 - present Mikael Sundell
 
 #include "command.h"
+#include "commandlight.h"
 #include "commandpivot.h"
 #include "commandstack.h"
 #include "commandtransform.h"
@@ -13,6 +14,7 @@
 #include "usdedit.h"
 #include "usdutils.h"
 #include "viewcamera.h"
+#include "viewportcapture.h"
 #include "viewstate.h"
 #include <QCoreApplication>
 #include <QDir>
@@ -49,6 +51,8 @@
 #include <pxr/usd/usdGeom/xform.h>
 #include <pxr/usd/usdGeom/xformCommonAPI.h>
 #include <pxr/usd/usdGeom/xformable.h>
+#include <pxr/usd/usdLux/lightAPI.h>
+#include <pxr/usd/usdLux/shapingAPI.h>
 #include <pxr/usd/usdShade/material.h>
 #include <pxr/usd/usdShade/materialBindingAPI.h>
 #include <pxr/usd/usdShade/shader.h>
@@ -3593,6 +3597,112 @@ consoleOutputFileApi()
     require(contents(first) == QByteArray("replacement\n"), "stopped file receives no further output");
 }
 
+void
+lightCommandApi()
+{
+    Session current;
+    require(current.newStage(), "new light stage");
+    UsdGeomXform::Define(current.stage(), SdfPath("/World"));
+    const stageviz::LightType types[] = { stageviz::LightType::Point,   stageviz::LightType::Spot,
+                                          stageviz::LightType::Distant, stageviz::LightType::Rect,
+                                          stageviz::LightType::Disk,    stageviz::LightType::Cylinder,
+                                          stageviz::LightType::Dome };
+    const char* schemas[] = { "SphereLight", "SphereLight",   "DistantLight", "RectLight",
+                              "DiskLight",   "CylinderLight", "DomeLight" };
+    for (int i = 0; i < 7; ++i) {
+        current.selectionList()->updatePaths({ SdfPath("/World") });
+        auto command = stageviz::newLightPath(SdfPath("/World"), "Light", types[i]);
+        for (int repeat = 0; repeat < 2; ++repeat) {
+            executeCommand(command, current);
+            const auto prim = current.stage()->GetPrimAtPath(SdfPath("/World/Light"));
+            require(prim && prim.GetTypeName() == TfToken(schemas[i]), "standard USD light schema");
+            require(bool(UsdLuxLightAPI(prim)), "new light exposes standard USD inputs");
+            if (types[i] != stageviz::LightType::Dome) {
+                bool normalize = false;
+                UsdLuxLightAPI(prim).GetNormalizeAttr().Get(&normalize);
+                require(normalize, "new lights including distant lights normalize their emitted power");
+            }
+            require(prim.HasAPI<UsdLuxShapingAPI>() == (i == 1), "spot is a shaped sphere light");
+            require(current.selectionList()->paths() == QList<SdfPath> { SdfPath("/World/Light") }, "select new light");
+            undoCommand(command, current);
+            require(!current.stage()->GetPrimAtPath(SdfPath("/World/Light")), "undo removes light");
+            require(current.selectionList()->paths() == QList<SdfPath> { SdfPath("/World") },
+                    "undo restores selection");
+        }
+    }
+}
+
+void
+copyTransformApi()
+{
+    Session current;
+    require(current.newStage(), "new copy-transform stage");
+    const auto stage = current.stage();
+    auto world = UsdGeomXform::Define(stage, SdfPath("/World"));
+    world.AddRotateXYZOp().Set(GfVec3f(15, 25, -10));
+    world.AddScaleOp().Set(GfVec3f(2, 0.5, 1.5));
+    auto source = UsdGeomXform::Define(stage, SdfPath("/World/Source"));
+    auto mesh = UsdGeomMesh::Define(stage, SdfPath("/World/Source/Body"));
+    mesh.CreatePointsAttr(VtValue(VtVec3fArray { GfVec3f(0), GfVec3f(1, 0, 0), GfVec3f(0, 1, 0) }));
+    UsdGeomSubset::CreateGeomSubset(mesh, TfToken("A"), UsdGeomTokens->face, VtIntArray { 0 });
+    UsdGeomSubset::CreateGeomSubset(mesh, TfToken("B"), UsdGeomTokens->face, VtIntArray { 1 });
+    for (const auto& name : { "One", "Two" }) {
+        auto instance = UsdGeomXform::Define(stage, SdfPath(std::string("/World/") + name));
+        instance.GetPrim().GetReferences().AddInternalReference(source.GetPath());
+        instance.GetPrim().SetInstanceable(true);
+    }
+    stage->SetEditTarget(stage->GetSessionLayer());
+    QString error;
+    const SdfPath one("/World/One"), copy("/World/One_1");
+    const auto before = GfMatrix4d(1).SetTranslate(GfVec3d(3, 4, 5));
+    require(stageviz::stage::setWorldTransform(stage, one, before, error), "author stronger transform over");
+    const QList<SdfPath> selected { SdfPath("/World/One/Body/A"), SdfPath("/World/One/Body/B") };
+    current.selectionList()->updatePaths(selected);
+    const auto delta = GfMatrix4d(1).SetTranslate(GfVec3d(0, 0, 7));
+    auto command = stageviz::copyTransforms(selected, delta);
+    for (int repeat = 0; repeat < 2; ++repeat) {
+        executeCommand(command, current);
+        require(stage->GetPrimAtPath(copy).IsInstance(), "copy retains instancing through stronger over");
+        require(stage->GetPrimAtPath(copy.AppendChild(TfToken("Body"))).IsInstanceProxy(), "copy retains geometry");
+        require(current.selectionList()->paths() == QList<SdfPath> { copy }, "one copy for multiple proxy subsets");
+        GfMatrix4d actual(1);
+        require(stageviz::stage::worldTransform(stage, copy, actual, error) && GfIsClose(actual, before * delta, 1e-6),
+                "copy receives one world delta under rotated scaled parent");
+        require(stageviz::stage::worldTransform(stage, one, actual, error) && GfIsClose(actual, before, 1e-6),
+                "original remains unchanged");
+        undoCommand(command, current);
+        require(!stage->GetPrimAtPath(copy), "undo removes copy");
+        require(current.selectionList()->paths() == selected, "undo restores exact subset paths");
+    }
+}
+
+void
+viewportColorQueryApi()
+{
+    stageviz::ViewportCapture capture;
+    capture.image = QImage(6, 1, QImage::Format_ARGB32);
+    capture.objects.size = capture.image.size();
+    capture.objects.paths = { SdfPath("/Mixed"), SdfPath("/Magenta"), SdfPath("/Gray") };
+    capture.objects.indices = { 0, 0, 0, 1, 2, -1 };
+    const QColor colors[] = { QColor(200, 0, 0),   QColor::fromHsv(359, 255, 200), QColor(0, 0, 200),
+                              QColor(160, 25, 82), QColor(150, 150, 150),          QColor(255, 0, 0) };
+    for (int x = 0; x < 6; ++x)
+        capture.image.setPixelColor(x, 0, colors[x]);
+    require(capture.pathsByHue(0, 5, 0.5, 0.05, 2, 0.6) == QList<SdfPath> { SdfPath("/Mixed") },
+            "red wraps at 360 degrees and coverage counts only visible object pixels");
+    require(capture.pathsByHue(0, 5, 0.5, 0.05, 2, 0.8).isEmpty(), "coverage rejects a small colored fraction");
+    require(capture.pathsByHue(335, 15, 0.5, 0.05, 1, 0) == QList<SdfPath> { SdfPath("/Magenta") },
+            "shaded diagnostic magenta resolves to its object");
+    require(capture.pathsByColor(QColor(200, 0, 0), 5, 1, 0) == QList<SdfPath> { SdfPath("/Mixed") },
+            "RGB query compares displayed channels");
+    require(capture.pathsByColor(QColor(255, 0, 0), 0, 1, 0).isEmpty(), "background colors never select an object");
+    require(capture.pathsByHue(0, 180, 0.2, 0.05, 1, 0).size() == 2, "gray pixels do not acquire a red hue");
+    const auto counts = capture.pixelCounts();
+    require(counts == std::vector<size_t> { 3, 1, 1 }, "background is excluded from visible pixel counts");
+    capture.objects.indices.clear();
+    require(capture.pathsByColor(QColor(200, 0, 0), 5, 1, 0).isEmpty(), "invalid snapshots fail safely");
+}
+
 }  // namespace
 
 int
@@ -3604,6 +3714,9 @@ main(int argc, char** argv)
         { "save_twice_usdc", [] { saveTwice("usdc"); } },
         { "save_failure", saveFailure },
         { "console_output_file_api", consoleOutputFileApi },
+        { "viewport_color_query_api", viewportColorQueryApi },
+        { "copy_transform_api", copyTransformApi },
+        { "light_command_api", lightCommandApi },
         { "sublayer_save", sublayerSave },
         { "save_layer_as_sublayer", saveLayerAsSublayer },
         { "save_as", saveAs },

@@ -133,6 +133,51 @@ class ViewportTest:
         self.center = (widget.width() // 2, widget.height() // 2)
         self.snapshot("swept")
 
+    def copy_drag(self):
+        """Shift-started Move copies proxy roots once and preserves originals."""
+        QtCore, _, QtTest, _ = tb.qt()
+        self.activate_mode("Move")
+        tb.process_events(100)
+        before = self.matrices()
+        selected = list(stageviz.session().paths())
+        stage = stageviz.session().stage()
+        stageviz.command.clear()
+        widget = self.viewport()
+        start = QtCore.QPoint(*self.center)
+        end = start + QtCore.QPoint(32, -12)
+        shift = QtCore.Qt.KeyboardModifier.ShiftModifier
+        QtTest.QTest.mousePress(widget, QtCore.Qt.MouseButton.LeftButton, shift, pos=start)
+        QtTest.QTest.mouseMove(widget, end, 50)
+        QtTest.QTest.mouseRelease(widget, QtCore.Qt.MouseButton.LeftButton, pos=end)
+        assert tb.wait_until(lambda: len(stageviz.session().paths()) == len(self.roots)
+                             and set(stageviz.session().paths()).isdisjoint(selected))
+        copies = list(stageviz.session().paths())
+        after = self.matrices()
+        assert all(Gf.IsClose(after[path], matrix, 1e-6) for path, matrix in before.items()), "originals restored"
+        cache = UsdGeom.XformCache()
+        delta = before[self.roots[0]].GetInverse() * cache.GetLocalToWorldTransform(stage.GetPrimAtPath(copies[0]))
+        assert not Gf.IsClose(delta, Gf.Matrix4d(1), 1e-6), "copy has a nonzero move"
+        for original, copy in zip(self.roots, copies):
+            assert stage.GetPrimAtPath(copy).IsInstance(), "instance stays instanced"
+            assert Gf.IsClose(cache.GetLocalToWorldTransform(stage.GetPrimAtPath(copy)), before[original] * delta, 1e-5)
+        self.snapshot("shift_copy")
+        stageviz.command.undo()
+        assert tb.wait_until(lambda: not any(stage.GetPrimAtPath(path) for path in copies))
+        assert list(stageviz.session().paths()) == selected
+        assert not stageviz.command.can_undo(), "copy gesture has one undo step"
+        stageviz.command.redo()
+        assert tb.wait_until(lambda: all(stage.GetPrimAtPath(path) for path in copies))
+        assert list(stageviz.session().paths()) == copies
+        stageviz.command.undo()
+        assert tb.wait_until(lambda: list(stageviz.session().paths()) == selected)
+        # A click without displacement must not create a copy or history entry.
+        stageviz.command.clear()
+        widget = self.viewport()
+        QtTest.QTest.mouseClick(widget, QtCore.Qt.MouseButton.LeftButton, shift, pos=start)
+        tb.process_events(100)
+        assert list(stageviz.session().paths()) == selected and not stageviz.command.can_undo()
+        print("PASS Shift Move copies, original transforms, instance identity, undo/redo, zero displacement")
+
     def matrices(self):
         stage = stageviz.session().stage()
         cache = UsdGeom.XformCache()

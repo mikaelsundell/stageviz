@@ -5,6 +5,7 @@
 #include "command.h"
 #include "bboxutils.h"
 #include "commandstack.h"
+#include "commandtransform.h"
 #include "commandtransformprivate.h"
 #include "commandutils.h"
 #include "materialutils.h"
@@ -20,6 +21,7 @@
 #include <cmath>
 #include <functional>
 #include <limits>
+#include <optional>
 #include <pxr/base/gf/vec2d.h>
 #include <pxr/base/gf/vec3f.h>
 #include <pxr/base/gf/vec3h.h>
@@ -62,6 +64,7 @@
 #include <pxr/usd/usdShade/materialBindingAPI.h>
 #include <pxr/usd/usdShade/shader.h>
 #include <pxr/usd/usdUtils/dependencies.h>
+#include <pxr/usd/usdUtils/flattenLayerStack.h>
 
 namespace stageviz {
 
@@ -4856,8 +4859,8 @@ deletePaths(const QList<SdfPath>& inPaths)
         });
 }
 
-Command
-copyPaths(const QList<SdfPath>& inPaths, bool selectCopies)
+static Command
+copyPathsCommand(const QList<SdfPath>& inPaths, bool selectCopies, std::optional<GfMatrix4d> worldDelta)
 {
     struct CopyState {
         struct Item {
@@ -4876,7 +4879,7 @@ copyPaths(const QList<SdfPath>& inPaths, bool selectCopies)
     auto state = std::make_shared<CopyState>();
 
     return Command(
-        [inPaths, selectCopies, state](Session* session) {
+        [inPaths, selectCopies, state, worldDelta](Session* session) {
             if (!session || inPaths.isEmpty())
                 return;
 
@@ -4885,7 +4888,7 @@ copyPaths(const QList<SdfPath>& inPaths, bool selectCopies)
 
             command::beginDeferred(session, "Copy paths", 1);
 
-            command::runWorker([session, inPaths, selectCopies, state]() {
+            command::runWorker([session, inPaths, selectCopies, state, worldDelta]() {
                 bool success = false;
                 QList<SdfPath> copiedPaths;
                 QList<SdfPath> changed;
@@ -4910,7 +4913,18 @@ copyPaths(const QList<SdfPath>& inPaths, bool selectCopies)
                             state->oldParentOrders.clear();
                             state->createdParentSpecs.clear();
 
-                            const QList<SdfPath> paths = path::minimalRootPaths(path::uniquePaths(inPaths));
+                            QList<SdfPath> paths = path::minimalRootPaths(path::uniquePaths(inPaths));
+                            TransformOperation operation;
+                            if (worldDelta) {
+                                QString error;
+                                if (!beginTransformOperation(stage, inPaths, operation, error)) {
+                                    errors.append(error);
+                                    paths.clear();
+                                }
+                                else {
+                                    paths = operation.paths.mid(0, operation.targetCount);
+                                }
+                            }
 
                             for (const SdfPath& inputPath : paths) {
                                 const SdfPath sourcePath = inputPath.IsPropertyPath() ? inputPath.GetPrimPath()
@@ -4929,8 +4943,46 @@ copyPaths(const QList<SdfPath>& inPaths, bool selectCopies)
                                 }
 
                                 const SdfPrimSpecHandle sourceSpec = primStack.front();
-                                const SdfLayerHandle sourceLayer = sourceSpec->GetLayer();
-                                const SdfPath sourceSpecPath = sourceSpec->GetPath();
+                                SdfLayerHandle sourceLayer = sourceSpec->GetLayer();
+                                SdfPath sourceSpecPath = sourceSpec->GetPath();
+                                SdfLayerRefPtr composedSource;
+                                if (worldDelta) {
+                                    // Compose only this subtree's local layer opinions. Copying
+                                    // the strongest spec alone can copy just a transform over.
+                                    // Keep references/payloads and native instances intact.
+                                    const auto root = SdfLayer::CreateAnonymous("stageviz_copy.usda");
+                                    std::vector<SdfLayerRefPtr> layers;
+                                    std::vector<std::string> identifiers;
+                                    std::vector<SdfLayerOffset> offsets;
+                                    for (const auto& layer : stage->GetLayerStack()) {
+                                        if (!layer->GetPrimAtPath(sourcePath))
+                                            continue;
+                                        const auto snapshot = SdfLayer::CreateAnonymous("stageviz_copy_source.usda");
+                                        if (sourcePath.GetParentPath().IsPrimPath())
+                                            SdfCreatePrimInLayer(snapshot, sourcePath.GetParentPath());
+                                        if (!SdfCopySpec(layer, sourcePath, snapshot, sourcePath))
+                                            continue;
+                                        UsdUtilsModifyAssetPaths(snapshot, [&](const std::string& asset) {
+                                            return UsdUtilsFlattenLayerStackResolveAssetPath(layer, asset);
+                                        });
+                                        layers.push_back(snapshot);
+                                        identifiers.push_back(snapshot->GetIdentifier());
+                                        offsets.push_back(
+                                            stage->GetEditTargetForLocalLayer(layer).GetMapFunction().GetTimeOffset());
+                                    }
+                                    root->SetSubLayerPaths(identifiers);
+                                    for (size_t i = 0; i < offsets.size(); ++i)
+                                        root->SetSubLayerOffset(offsets[i], int(i));
+                                    const auto snapshotStage = UsdStage::OpenMasked(root, UsdStagePopulationMask(),
+                                                                                    UsdStage::LoadNone);
+                                    composedSource = snapshotStage ? UsdUtilsFlattenLayerStack(snapshotStage) : nullptr;
+                                    if (!composedSource || !composedSource->GetPrimAtPath(sourcePath)) {
+                                        errors.append(QString("failed to compose copy: %1").arg(pathText(sourcePath)));
+                                        continue;
+                                    }
+                                    sourceLayer = composedSource;
+                                    sourceSpecPath = sourcePath;
+                                }
 
                                 if (!sourceLayer) {
                                     errors.append(QString("source layer missing: %1").arg(pathText(sourcePath)));
@@ -4994,6 +5046,18 @@ copyPaths(const QList<SdfPath>& inPaths, bool selectCopies)
                                                                             remapError)) {
                                         stage::removePrimSpec(editLayer, destinationPath);
                                         errors.append(remapError);
+                                        continue;
+                                    }
+                                }
+
+                                if (worldDelta) {
+                                    const qsizetype index = operation.paths.indexOf(sourcePath);
+                                    QString error;
+                                    if (!stage::setWorldTransform(stage, destinationPath,
+                                                                  operation.edit.before.at(index) * *worldDelta,
+                                                                  error)) {
+                                        stage::removePrimSpec(editLayer, destinationPath);
+                                        errors.append(error);
                                         continue;
                                     }
                                 }
@@ -5112,6 +5176,18 @@ copyPaths(const QList<SdfPath>& inPaths, bool selectCopies)
                 });
             });
         });
+}
+
+Command
+copyPaths(const QList<SdfPath>& paths, bool selectCopies)
+{
+    return copyPathsCommand(paths, selectCopies, std::nullopt);
+}
+
+Command
+copyTransforms(const QList<SdfPath>& paths, const GfMatrix4d& worldDelta)
+{
+    return copyPathsCommand(paths, true, worldDelta);
 }
 
 Command
@@ -5562,7 +5638,8 @@ namespace {
 }  // namespace
 
 Command
-newPrimPath(const SdfPath& parentPath, const QString& nameInput, const TfToken& typeName, bool selectCreated)
+command::createPrimCommand(const SdfPath& parentPath, const QString& nameInput, const TfToken& typeName,
+                           bool selectCreated, std::function<bool(const UsdPrim&, QString&)> initialize)
 {
     struct NewPrimState {
         SdfPath parentPath;
@@ -5576,7 +5653,7 @@ newPrimPath(const SdfPath& parentPath, const QString& nameInput, const TfToken& 
     auto state = std::make_shared<NewPrimState>();
 
     return Command(
-        [parentPath, nameInput, typeName, selectCreated, state](Session* session) {
+        [parentPath, nameInput, typeName, selectCreated, state, initialize](Session* session) {
             if (!session || parentPath.IsEmpty())
                 return;
 
@@ -5585,7 +5662,7 @@ newPrimPath(const SdfPath& parentPath, const QString& nameInput, const TfToken& 
 
             command::beginDeferred(session, "New prim", 1);
 
-            command::runWorker([session, parentPath, nameInput, typeName, selectCreated, state]() {
+            command::runWorker([session, parentPath, nameInput, typeName, selectCreated, state, initialize]() {
                 bool success = false;
                 QString error;
                 SdfPath newPath;
@@ -5630,7 +5707,8 @@ newPrimPath(const SdfPath& parentPath, const QString& nameInput, const TfToken& 
                                 if (!prim || !prim.IsValid()) {
                                     error = "define failed";
                                 }
-                                else if (!authorStageAxis(stage, prim, typeName, error)) {
+                                else if (!authorStageAxis(stage, prim, typeName, error)
+                                         || (initialize && !initialize(prim, error))) {
                                     stage::removePrimSpec(editLayer, newPath);
                                 }
                                 else {
@@ -5716,6 +5794,12 @@ newPrimPath(const SdfPath& parentPath, const QString& nameInput, const TfToken& 
                 });
             });
         });
+}
+
+Command
+newPrimPath(const SdfPath& parentPath, const QString& nameInput, const TfToken& typeName, bool selectCreated)
+{
+    return command::createPrimCommand(parentPath, nameInput, typeName, selectCreated);
 }
 
 Command

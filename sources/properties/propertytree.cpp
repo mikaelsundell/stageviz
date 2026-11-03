@@ -103,6 +103,9 @@ public:
     void close();
     void updateStage(UsdStageRefPtr stage);
     void updatePrims(const NoticeBatch& batch);
+    SpinBox* focusedNumericEditor() const;
+    bool refreshNumericEditor(SpinBox* spin);
+    void flushPendingRefresh();
     void updateSelection(const QList<SdfPath>& paths);
 
     template<typename T> static QString streamText(const T& value);
@@ -400,6 +403,7 @@ public:
         QPointer<ViewContext> context;
         QPointer<PropertyTree> tree;
         bool componentScrubbing = false;
+        bool pendingEditorRefresh = false;
         bool pendingMultiAttributes = false;
         bool pendingMultiRelationships = false;
         bool pendingGeometrySubsets = false;
@@ -3098,6 +3102,10 @@ PropertyTreePrivate::addMultiRelationshipsSection(const QList<UsdPrim>& prims)
 void
 PropertyTreePrivate::init()
 {
+    connect(qApp, &QApplication::focusChanged, this, [this](QWidget*, QWidget*) {
+        if (d.pendingEditorRefresh && !d.update)
+            QTimer::singleShot(0, this, [this]() { flushPendingRefresh(); });
+    });
     attach(d.tree);
 
     connect(d.tree.data(), &QTreeWidget::itemChanged, this, &PropertyTreePrivate::itemChanged);
@@ -3117,6 +3125,7 @@ PropertyTreePrivate::init()
 void
 PropertyTreePrivate::close()
 {
+    d.pendingEditorRefresh = false;
     QSignalBlocker blocker(d.tree.data());
     d.update = true;
     d.stage = nullptr;
@@ -3177,6 +3186,77 @@ PropertyTreePrivate::updateStage(UsdStageRefPtr stage)
     d.update = false;
 }
 
+SpinBox*
+PropertyTreePrivate::focusedNumericEditor() const
+{
+    for (auto* widget = QApplication::focusWidget(); widget; widget = widget->parentWidget()) {
+        if (auto* spin = qobject_cast<SpinBox*>(widget))
+            return d.tree && d.tree->isAncestorOf(spin) ? spin : nullptr;
+    }
+    return nullptr;
+}
+
+bool
+PropertyTreePrivate::refreshNumericEditor(SpinBox* spin)
+{
+    if (!spin || !d.tree)
+        return false;
+    const QPoint pos = d.tree->viewport()->mapFromGlobal(spin->mapToGlobal(spin->rect().center()));
+    auto* item = dynamic_cast<PropertyItem*>(d.tree->itemAt(pos));
+    if (!item || item->propertyPath().IsEmpty())
+        return false;
+    QList<VtValue> values;
+    if (!currentAttributeValues(item->propertyPaths(), values) || values.isEmpty())
+        return false;
+    // Keep partially typed text and live previews intact. External edits such
+    // as undo still refresh a focused editor when it is back in scrub mode.
+    if (spin->isTextEditing() || spin->isScrubbing())
+        return true;
+    for (const auto& value : values)
+        if (value != values.first())
+            return false;
+    QString text;
+    const auto& value = values.first();
+    const int kind = item->data(PropertyItem::Value, ComponentKindRole).toInt();
+    const int component = item->data(PropertyItem::Value, ComponentIndexRole).toInt();
+    if (kind == VectorComponent)
+        vectorComponentText(value, component, text);
+    else if (kind == MatrixComponent)
+        matrixComponentText(value, component, item->data(PropertyItem::Value, ComponentColumnRole).toInt(), text);
+    else if (kind == ArrayVectorComponent) {
+        VtValue element;
+        if (arrayElementValue(value, item->arrayIndex(), element))
+            vectorComponentText(element, component, text);
+    }
+    else if (item->kind() == PropertyItem::ArrayElement)
+        arrayElementText(value, item->arrayIndex(), text);
+    else if (value.IsHolding<double>())
+        text = QString::number(value.UncheckedGet<double>(), 'g', 17);
+    else if (value.IsHolding<float>())
+        text = QString::number(value.UncheckedGet<float>(), 'g', 9);
+    else
+        text = streamText(value);
+    bool valid = false;
+    const double number = text.toDouble(&valid);
+    if (!valid)
+        return false;
+    const QSignalBlocker treeBlocker(d.tree.data());
+    const QSignalBlocker spinBlocker(spin);
+    item->setText(PropertyItem::Value, text);
+    if (spin->value() != number)
+        spin->setValue(number);
+    return true;
+}
+
+void
+PropertyTreePrivate::flushPendingRefresh()
+{
+    if (!d.pendingEditorRefresh || d.componentScrubbing || focusedNumericEditor())
+        return;
+    d.pendingEditorRefresh = false;
+    updateSelection(d.paths);
+}
+
 void
 PropertyTreePrivate::updatePrims(const NoticeBatch& batch)
 {
@@ -3205,6 +3285,10 @@ PropertyTreePrivate::updatePrims(const NoticeBatch& batch)
 
     for (const NoticeEntry& entry : batch.entries) {
         if (affectsSelection(entry.path) || affectsSelection(entry.associatedPath)) {
+            if (auto* spin = focusedNumericEditor(); spin && refreshNumericEditor(spin)) {
+                d.pendingEditorRefresh = true;
+                return;
+            }
             updateSelection(d.paths);
             return;
         }
@@ -3389,6 +3473,7 @@ PropertyTreePrivate::addAttribute(PropertyItem* parent, const UsdAttribute& attr
 void
 PropertyTreePrivate::updateSelection(const QList<SdfPath>& paths)
 {
+    d.pendingEditorRefresh = false;
     auto normalizedPrimPaths = [](const QList<SdfPath>& input) {
         QList<SdfPath> result;
         result.reserve(input.size());

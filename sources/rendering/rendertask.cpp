@@ -3,10 +3,12 @@
 // https://github.com/mikaelsundell/stageviz
 
 #include "rendertask.h"
+#include <QScopeGuard>
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <limits>
+#include <map>
 #include <memory>
 #include <pxr/base/gf/vec2i.h>
 #include <pxr/base/gf/vec3i.h>
@@ -574,66 +576,7 @@ public:
                     depthBuffer->Unmap();
                 }
             }
-            refreshRprimPathCache();
-            const auto it = m_rprimPathsById.find(result.primId);
-            if (it != m_rprimPathsById.end()) {
-                result.path = it->second;
-
-                // Resolve the Hydra rprim and instance ID through the scene
-                // index origin data. The legacy scene-delegate mapping below
-                // can return the propagated prototype path for native USD
-                // instances, which is not a path in the authored stage and
-                // therefore cannot select the corresponding outliner item.
-                SdfPath delegateId;
-                SdfPath instancerId;
-                HdxPickHit hit {};
-                hit.objectId = it->second;
-                hit.instanceIndex = result.instanceId;
-                if (m_renderIndex->GetSceneDelegateAndInstancerIds(it->second, &delegateId, &instancerId)) {
-                    hit.delegateId = delegateId;
-                    hit.instancerId = instancerId;
-                    const SdfPath originPath
-                        = HdxPrimOriginInfo::FromPickHit(m_renderIndex->GetTerminalSceneIndex(), hit).GetFullPath();
-                    if (!originPath.IsEmpty())
-                        result.path = originPath;
-                }
-
-                if (result.path == it->second) {
-                    if (HdSceneDelegate* sceneDelegate = m_renderIndex->GetSceneDelegateForRprim(it->second)) {
-                        // Resolve the scene path through the vectorized
-                        // instance mapping. The deprecated single-path API
-                        // can return synthetic propagated-prototype paths.
-                        const SdfPath instancerId = sceneDelegate->GetInstancerId(it->second);
-                        if (!instancerId.IsEmpty()) {
-                            const SdfPathVector prototypes = sceneDelegate->GetInstancerPrototypes(instancerId);
-                            for (const SdfPath& prototypeId : prototypes) {
-                                const VtIntArray indices = sceneDelegate->GetInstanceIndices(instancerId, prototypeId);
-                                if (indices.empty())
-                                    continue;
-                                std::vector<int> instanceIndices(indices.begin(), indices.end());
-                                const SdfPathVector scenePaths = sceneDelegate->GetScenePrimPaths(it->second,
-                                                                                                  instanceIndices);
-                                for (size_t i = 0; i < indices.size() && i < scenePaths.size(); ++i) {
-                                    if (indices[i] == result.instanceId && !scenePaths[i].IsEmpty()) {
-                                        result.path = scenePaths[i];
-                                        break;
-                                    }
-                                }
-                                if (result.path == it->second && scenePaths.size() == 1
-                                    && !scenePaths.front().IsEmpty())
-                                    result.path = scenePaths.front();
-                                if (result.path != it->second)
-                                    break;
-                            }
-                        }
-                        // Some instancer adapters map the rprim to the instance
-                        // root. The picked rprim's leaf identifies the proxy
-                        // child represented by that render primitive.
-                        if (result.path != it->second && result.path.GetName() != it->second.GetName())
-                            result.path = result.path.AppendChild(TfToken(it->second.GetName()));
-                    }
-                }
-            }
+            result.path = resolvePath(result.primId, result.instanceId);
         }
 
         // Restore collection before the next regular scene-ID render.
@@ -904,6 +847,120 @@ public:
         return result;
     }
 
+    ViewportObjectIds captureObjects()
+    {
+        ViewportObjectIds result;
+        if (!enabled() || m_aovBuffers.size() < 2)
+            return result;
+        auto* primBuffer = m_aovBuffers[0].get();
+        auto* instanceBuffer = m_aovBuffers[1].get();
+        if (!primBuffer || !instanceBuffer || primBuffer->GetFormat() != HdFormatInt32
+            || instanceBuffer->GetFormat() != HdFormatInt32)
+            return result;
+        const int width = int(primBuffer->GetWidth());
+        const int height = int(primBuffer->GetHeight());
+        const auto* prims = static_cast<const int32_t*>(primBuffer->Map());
+        const auto* instances = static_cast<const int32_t*>(instanceBuffer->Map());
+        auto unmap = qScopeGuard([&]() {
+            if (prims)
+                primBuffer->Unmap();
+            if (instances)
+                instanceBuffer->Unmap();
+        });
+        if (prims && instances) {
+            result.size = QSize(width, height);
+            result.indices.resize(size_t(width) * height, -1);
+            std::unordered_map<uint64_t, int32_t> ids;
+            std::map<SdfPath, int32_t> pathIds;
+            for (int y = 0; y < height; ++y) {
+                for (int x = 0; x < width; ++x) {
+                    const size_t source = size_t(height - 1 - y) * width + x;
+                    const int32_t primId = prims[source];
+                    if (primId < 0)
+                        continue;
+                    const uint64_t key = (uint64_t(uint32_t(primId)) << 32) | uint32_t(instances[source]);
+                    auto it = ids.find(key);
+                    if (it == ids.end()) {
+                        const SdfPath path = resolvePath(primId, instances[source]);
+                        int32_t id = -1;
+                        if (!path.IsEmpty()) {
+                            const auto inserted = pathIds.emplace(path, int32_t(result.paths.size()));
+                            id = inserted.first->second;
+                            if (inserted.second)
+                                result.paths.append(path);
+                        }
+                        it = ids.emplace(key, id).first;
+                    }
+                    result.indices[size_t(y) * width + x] = it->second;
+                }
+            }
+        }
+        return result;
+    }
+
+    SdfPath resolvePath(int32_t primId, int32_t instanceId)
+    {
+        refreshRprimPathCache();
+        const auto it = m_rprimPathsById.find(primId);
+        if (it == m_rprimPathsById.end())
+            return {};
+        SdfPath path = it->second;
+
+        // Resolve the Hydra rprim and instance ID through the scene
+        // index origin data. The legacy scene-delegate mapping below
+        // can return the propagated prototype path for native USD
+        // instances, which is not a path in the authored stage and
+        // therefore cannot select the corresponding outliner item.
+        SdfPath delegateId;
+        SdfPath instancerId;
+        HdxPickHit hit {};
+        hit.objectId = it->second;
+        hit.instanceIndex = instanceId;
+        if (m_renderIndex->GetSceneDelegateAndInstancerIds(it->second, &delegateId, &instancerId)) {
+            hit.delegateId = delegateId;
+            hit.instancerId = instancerId;
+            const SdfPath originPath
+                = HdxPrimOriginInfo::FromPickHit(m_renderIndex->GetTerminalSceneIndex(), hit).GetFullPath();
+            if (!originPath.IsEmpty())
+                path = originPath;
+        }
+
+        if (path == it->second) {
+            if (HdSceneDelegate* sceneDelegate = m_renderIndex->GetSceneDelegateForRprim(it->second)) {
+                // Resolve the scene path through the vectorized
+                // instance mapping. The deprecated single-path API
+                // can return synthetic propagated-prototype paths.
+                const SdfPath instancerId = sceneDelegate->GetInstancerId(it->second);
+                if (!instancerId.IsEmpty()) {
+                    const SdfPathVector prototypes = sceneDelegate->GetInstancerPrototypes(instancerId);
+                    for (const SdfPath& prototypeId : prototypes) {
+                        const VtIntArray indices = sceneDelegate->GetInstanceIndices(instancerId, prototypeId);
+                        if (indices.empty())
+                            continue;
+                        std::vector<int> instanceIndices(indices.begin(), indices.end());
+                        const SdfPathVector scenePaths = sceneDelegate->GetScenePrimPaths(it->second, instanceIndices);
+                        for (size_t i = 0; i < indices.size() && i < scenePaths.size(); ++i) {
+                            if (indices[i] == instanceId && !scenePaths[i].IsEmpty()) {
+                                path = scenePaths[i];
+                                break;
+                            }
+                        }
+                        if (path == it->second && scenePaths.size() == 1 && !scenePaths.front().IsEmpty())
+                            path = scenePaths.front();
+                        if (path != it->second)
+                            break;
+                    }
+                }
+                // Some instancer adapters map the rprim to the instance
+                // root. The picked rprim's leaf identifies the proxy
+                // child represented by that render primitive.
+                if (path != it->second && path.GetName() != it->second.GetName())
+                    path = path.AppendChild(TfToken(it->second.GetName()));
+            }
+        }
+        return path;
+    }
+
     bool enabled() const { return m_settings.enabled && m_settings.size[0] > 0 && m_settings.size[1] > 0; }
 
 private:
@@ -1064,7 +1121,7 @@ private:
         state->SetBlendEnabled(false);
         // HVT's OutlinePrimIdsTask uses HdCullStyleNothing for the same reason:
         // reversed single-sided geometry must still generate an ID silhouette.
-        state->SetCullStyle(HdCullStyleNothing);
+        state->SetCullStyle(m_settings.cullStyle);
         state->SetLightingEnabled(false);
         state->SetConservativeRasterizationEnabled(false);
         state->SetMultiSampleEnabled(false);
@@ -1162,7 +1219,7 @@ bool
 RenderTaskParams::enabled() const
 {
     return ambientOcclusion.enabled || sceneIds.enabled || selectionOutline.enabled || captureGpuPick || captureVisible
-           || captureElementId;
+           || captureElementId || captureObjects;
 }
 
 bool
@@ -1179,12 +1236,13 @@ operator==(const RenderTaskParams& lhs, const RenderTaskParams& rhs)
            && a.broadAmount == b.broadAmount && a.broadRadius == b.broadRadius && a.normalBias == b.normalBias
            && a.falloff == b.falloff && a.contrast == b.contrast && a.edgeSharpness == b.edgeSharpness
            && a.blurEnabled == b.blurEnabled && a.blurRadius == b.blurRadius && a.quality == b.quality
-           && a.debugMode == b.debugMode && ia.enabled == ib.enabled && ia.roots == ib.roots
-           && ia.renderTags == ib.renderTags && ia.reprSelector == ib.reprSelector && ia.size == ib.size
-           && ia.viewport == ib.viewport && ia.viewMatrix == ib.viewMatrix && ia.projectionMatrix == ib.projectionMatrix
-           && sa.enabled == sb.enabled && sa.paths == sb.paths && sa.directPaths == sb.directPaths
-           && sa.hydraRprims == sb.hydraRprims && sa.hydraMappingResolved == sb.hydraMappingResolved
-           && sa.proxyTargets == sb.proxyTargets && sa.color == sb.color && sa.radius == sb.radius
+           && a.debugMode == b.debugMode && ia.enabled == ib.enabled && ia.cullStyle == ib.cullStyle
+           && ia.roots == ib.roots && ia.renderTags == ib.renderTags && ia.reprSelector == ib.reprSelector
+           && ia.size == ib.size && ia.viewport == ib.viewport && ia.viewMatrix == ib.viewMatrix
+           && ia.projectionMatrix == ib.projectionMatrix && sa.enabled == sb.enabled && sa.paths == sb.paths
+           && sa.directPaths == sb.directPaths && sa.hydraRprims == sb.hydraRprims
+           && sa.hydraMappingResolved == sb.hydraMappingResolved && sa.proxyTargets == sb.proxyTargets
+           && sa.color == sb.color && sa.radius == sb.radius && lhs.captureObjects == rhs.captureObjects
            && lhs.captureVisible == rhs.captureVisible && lhs.captureElementId == rhs.captureElementId
            && lhs.captureElementPixel == rhs.captureElementPixel && lhs.captureGpuPick == rhs.captureGpuPick
            && lhs.gpuPickPixel == rhs.gpuPickPixel && lhs.gpuPickExcludes == rhs.gpuPickExcludes
@@ -1239,6 +1297,14 @@ RenderTask::takeCapturedVisiblePaths()
     return paths;
 }
 
+ViewportObjectIds
+RenderTask::takeCapturedObjects()
+{
+    ViewportObjectIds result = std::move(m_capturedObjects);
+    m_capturedObjects = {};
+    return result;
+}
+
 GpuPickResult
 RenderTask::takeGpuPickResult()
 {
@@ -1273,6 +1339,7 @@ RenderTask::_Sync(HdSceneDelegate* delegate, HdTaskContext* ctx, HdDirtyBits* di
                 m_params.selectionOutline.enabled = false;
                 m_params.captureVisible = false;
                 m_params.captureElementId = false;
+                m_params.captureObjects = false;
                 m_params.captureGpuPick = false;
             }
         }
@@ -1322,6 +1389,7 @@ RenderTask::Execute(HdTaskContext* ctx)
     HgiTextureHandle scenePrimId;
     HgiTextureHandle sceneInstanceId;
     const bool needsViewportSceneIds = m_params.selectionOutline.enabled || m_params.captureElementId
+                                       || m_params.captureObjects
                                        || (m_params.captureVisible && m_params.captureProjectionMatrices.empty());
     if (m_params.sceneIds.enabled && m_sceneIdPass && needsViewportSceneIds) {
         scenePrimId = m_sceneIdPass->execute();
@@ -1460,6 +1528,9 @@ RenderTask::Execute(HdTaskContext* ctx)
     else if (m_params.captureVisible) {
         m_capturedVisiblePaths.clear();
     }
+
+    if (m_params.captureObjects)
+        m_capturedObjects = scenePrimId && m_sceneIdPass ? m_sceneIdPass->captureObjects() : ViewportObjectIds {};
 
     // Execute picking after the outline has consumed the unmodified ID image.
     if (m_params.captureGpuPick && m_sceneIdPass && m_params.sceneIds.enabled)

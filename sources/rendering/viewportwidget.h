@@ -7,6 +7,7 @@
 #include "notice.h"
 #include "selectionlist.h"
 #include "stageviz.h"
+#include "viewportcapture.h"
 #include <QOpenGLFunctions>
 #include <QOpenGLWidget>
 #include <pxr/base/tf/token.h>
@@ -36,6 +37,16 @@ class ViewContext;
 class ViewportWidget : public QOpenGLWidget, protected QOpenGLFunctions {
     Q_OBJECT
 public:
+    /**
+     * @brief Picks an editor light guide using logical viewport coordinates.
+     */
+    SdfPath pickLight(const QPointF& pos);
+
+    /**
+     * @brief Returns document light guides intersecting a logical sweep rectangle.
+     */
+    QList<SdfPath> lightPathsInRect(const QRectF& rect);
+
     /**
      * @brief Constructs the viewport widget.
      *
@@ -89,6 +100,16 @@ public:
      * @return Image containing the current OpenGL framebuffer contents.
      */
     QImage captureImage();
+
+    /**
+     * @brief Captures document colors and selectable object paths from this viewport.
+     *
+     * @param error Receives a failure reason; must be called on the GUI thread.
+     *
+     * @return Owned snapshot with top-left image coordinates.
+     */
+    ViewportCapture captureViewport(QString& error);
+
 
     /**
      * @}

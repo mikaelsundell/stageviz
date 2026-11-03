@@ -146,6 +146,7 @@ addUIEnums()
                                             { "RenderAlt", static_cast<long>(UI::ColorRole::RenderAlt) },
                                             { "Selection", static_cast<long>(UI::ColorRole::Selection) },
                                             { "SelectionAlt", static_cast<long>(UI::ColorRole::SelectionAlt) },
+                                            { "Sweep", static_cast<long>(UI::ColorRole::Sweep) },
                                             { "Text", static_cast<long>(UI::ColorRole::Text) },
                                             { "TextAlt", static_cast<long>(UI::ColorRole::TextAlt) },
                                             { "Warning", static_cast<long>(UI::ColorRole::Warning) },

@@ -4,6 +4,7 @@
 #include "application.h"
 #include "bboxutils.h"
 #include "command.h"
+#include "commandlight.h"
 #include "commandpivot.h"
 #include "commandstack.h"
 #include "commandtransform.h"
@@ -22,6 +23,7 @@
 #include "renderengine.h"
 #include "session.h"
 #include "settings.h"
+#include "spinbox.h"
 #include "treewidget.h"
 #include "ui.h"
 #include "viewcamera.h"
@@ -29,6 +31,7 @@
 #include "viewportauxiliary.h"
 #include "viewportgizmo.h"
 #include "viewporthost.h"
+#include "viewportlights.h"
 #include "viewportselection.h"
 #include "viewporttransform.h"
 #include "viewportwidget.h"
@@ -40,9 +43,12 @@
 #include <QElapsedTimer>
 #include <QImage>
 #include <QItemSelectionModel>
+#include <QKeyEvent>
+#include <QLineEdit>
 #include <QOffscreenSurface>
 #include <QOpenGLContext>
 #include <QOpenGLFramebufferObject>
+#include <QPainter>
 #include <QSet>
 #include <QSettings>
 #include <QSurfaceFormat>
@@ -67,6 +73,7 @@
 #include <pxr/usd/usdGeom/xform.h>
 #include <pxr/usd/usdShade/material.h>
 #include <pxr/usd/usdShade/materialBindingAPI.h>
+#include <pxr/usd/usdShade/shader.h>
 #include <stdexcept>
 
 PXR_NAMESPACE_USING_DIRECTIVE
@@ -266,6 +273,92 @@ renderEngineApi()
                 "viewport projects selected subset to the same whole-object outline as its parent");
         require(draw({}) != parentImage, "whole-object selection has a visible viewport outline");
         viewport.reset();
+    }
+    context.doneCurrent();
+}
+
+void
+numericEditorApi()
+{
+    stageviz::SpinBox spin;
+    spin.setLocale(QLocale::c());
+    spin.setRange(-100., 100.);
+    spin.setDecimals(2);
+    spin.setValue(42.);
+    auto* line = spin.findChild<QLineEdit*>();
+    require(line && line->isReadOnly(), "numeric editor starts in scrub mode");
+    for (const auto& key : { std::make_pair(Qt::Key_7, QString("7")), std::make_pair(Qt::Key_Period, QString(".")),
+                             std::make_pair(Qt::Key_5, QString("5")) }) {
+        QKeyEvent press(QEvent::KeyPress, key.first, Qt::NoModifier, key.second);
+        QApplication::sendEvent(line, &press);
+    }
+    require(!line->isReadOnly() && qAbs(spin.value() - 7.5) < 1e-8, "typing replaces the old scrub-mode value");
+    QKeyEvent enter(QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier);
+    QApplication::sendEvent(line, &enter);
+    require(line->isReadOnly(), "Enter returns numeric editor to scrub mode");
+}
+
+void
+renderEngineHdriApi()
+{
+    const auto stage = UsdStage::CreateInMemory();
+    const auto cube = UsdGeomCube::Define(stage, SdfPath("/Cube"));
+    const auto material = UsdShadeMaterial::Define(stage, SdfPath("/Material"));
+    auto shader = UsdShadeShader::Define(stage, SdfPath("/Material/Surface"));
+    shader.CreateIdAttr(VtValue(TfToken("UsdPreviewSurface")));
+    shader.CreateInput(TfToken("diffuseColor"), SdfValueTypeNames->Color3f).Set(GfVec3f(.8f, .02f, .01f));
+    auto opacity = shader.CreateInput(TfToken("opacity"), SdfValueTypeNames->Float);
+    material.CreateSurfaceOutput().ConnectToSource(shader.CreateOutput(TfToken("surface"), SdfValueTypeNames->Token));
+    UsdShadeMaterialBindingAPI::Apply(cube.GetPrim()).Bind(material);
+    const auto auxiliary = UsdStage::CreateInMemory();
+    UsdGeomXform::Define(auxiliary, stageviz::paths::auxiliary::display);
+
+    QSurfaceFormat format;
+    format.setDepthBufferSize(24);
+    QOpenGLContext context;
+    context.setFormat(format);
+    require(context.create(), "create HDRI viewport context");
+    QOffscreenSurface surface;
+    surface.setFormat(context.format());
+    surface.create();
+    require(context.makeCurrent(&surface), "activate HDRI viewport context");
+    {
+        stageviz::RenderEngine engine(stageviz::RenderEngine::ContextMode::Current);
+        engine.setStage(stage);
+        engine.setAuxiliaryStage(auxiliary);
+        GfCamera camera;
+        camera.SetTransform(GfMatrix4d(1).SetTranslate(GfVec3d(0, 0, 5)));
+        camera.SetPerspectiveFromAspectRatioAndFieldOfView(1., 45., GfCamera::FOVVertical);
+        camera.SetClippingRange(GfRange1f(.1f, 100.f));
+        engine.setCamera(camera);
+        engine.setSize(GfVec2i(96));
+        engine.setViewport(GfVec4d(0, 0, 96, 96));
+        stageviz::RenderEngine::Settings settings;
+        settings.defaultDomeLightEnabled = true;
+        settings.defaultCameraLightEnabled = true;
+        QOpenGLFramebufferObjectFormat fboFormat;
+        fboFormat.setAttachment(QOpenGLFramebufferObject::CombinedDepthStencil);
+        QOpenGLFramebufferObject fbo(96, 96, fboFormat);
+        for (float alpha : { 1.f, .5f, 0.f, 1.f }) {
+            opacity.Set(alpha);
+            for (bool background : { false, true }) {
+                settings.domeLightCameraVisibility = background;
+                engine.setSettings(settings);
+                require(fbo.bind() && engine.renderToCurrentFramebuffer(), "render HDRI and opacity change");
+                const QImage image = fbo.toImage();
+                int redPixels = 0;
+                for (int y = 24; y < 72; ++y) {
+                    for (int x = 24; x < 72; ++x) {
+                        const QColor color = image.pixelColor(x, y);
+                        redPixels += color.red() > 25 && color.red() > 1.5 * color.green()
+                                     && color.red() > 1.5 * color.blue();
+                    }
+                }
+                require(alpha > 0 ? redPixels > 100 : redPixels == 0,
+                        "helper presentation preserves opaque/translucent objects and zero opacity");
+            }
+        }
+        engine.reset();
     }
     context.doneCurrent();
 }
@@ -828,6 +921,66 @@ public:
 };
 
 void
+viewportLightsApi()
+{
+    auto* current = stageviz::session();
+    require(current->newStage(), "new light guide stage");
+    const auto drainWorkers = []() {
+        for (int i = 0; i < 6; ++i) {
+            QThreadPool::globalInstance()->waitForDone();
+            QCoreApplication::sendPostedEvents(nullptr, 0);
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 25);
+        }
+    };
+    const stageviz::LightType types[] = { stageviz::LightType::Point,   stageviz::LightType::Spot,
+                                          stageviz::LightType::Distant, stageviz::LightType::Rect,
+                                          stageviz::LightType::Disk,    stageviz::LightType::Cylinder,
+                                          stageviz::LightType::Dome };
+    QList<SdfPath> paths;
+    for (int i = 0; i < 7; ++i) {
+        auto command = stageviz::newLightPath(SdfPath::AbsoluteRootPath(), QString("Light%1").arg(i), types[i]);
+        command.execute(current);
+        drainWorkers();
+        const SdfPath path(std::string("/Light") + std::to_string(i));
+        paths.append(path);
+        UsdGeomXformable(current->stage()->GetPrimAtPath(path)).AddTranslateOp().Set(GfVec3d(i * 4 - 12, 0, 0));
+    }
+    ViewportTestHost host;
+    stageviz::ViewportSelection selection(host);
+    host.selection = &selection;
+    stageviz::ViewportLights guides(host);
+    std::string before, after;
+    current->stage()->GetRootLayer()->ExportToString(&before);
+    QImage image(640, 480, QImage::Format_ARGB32);
+    image.fill(Qt::black);
+    {
+        QPainter painter(&image);
+        guides.draw(painter);
+    }
+    for (int i = 0; i < paths.size(); ++i) {
+        const QPointF center(320 + (i * 4 - 12) * 10, 240);
+        require(guides.pick(center) == paths[i], "light guide pick returns its USD path");
+        require(guides.pathsInRect(QRectF(center - QPointF(1, 1), QSizeF(2, 2))).contains(paths[i]),
+                "sweep hits light guide");
+    }
+    require(guides.pathsInRect(QRectF(0, 0, 640, 480)).size() == 7, "all standard light guides visible");
+    host.mask = { paths.first() };
+    require(guides.pathsInRect(QRectF(0, 0, 640, 480)) == host.mask, "light guides respect isolate masks");
+    host.mask.clear();
+    UsdGeomImageable(current->stage()->GetPrimAtPath(paths.first())).MakeInvisible();
+    require(guides.pick(QPointF(200, 240)).IsEmpty(), "hidden light is not pickable");
+    UsdGeomImageable(current->stage()->GetPrimAtPath(paths.first())).MakeVisible();
+    current->stage()->GetRootLayer()->ExportToString(&after);
+    require(before != after, "visibility fixture changed");
+    // The guides themselves must never author helper geometry in the document.
+    before = after;
+    guides.invalidate();
+    guides.pathsInRect(QRectF(0, 0, 640, 480));
+    current->stage()->GetRootLayer()->ExportToString(&after);
+    require(before == after, "light guide operations do not author document USD");
+}
+
+void
 viewportComponentsApi()
 {
     auto* current = stageviz::session();
@@ -1095,6 +1248,7 @@ main(int argc, char** argv)
     stageviz::Application app(argc, argv);
     const std::map<std::string, std::function<void()>> cases {
         { "viewport_components_api", viewportComponentsApi },
+        { "viewport_lights_api", viewportLightsApi },
         { "viewport_transform_pivot_api", viewportTransformPivotApi },
         { "transform_operation_applied_api", transformOperationAppliedApi },
         { "pivot_operation_applied_api", pivotOperationAppliedApi },
@@ -1103,7 +1257,9 @@ main(int argc, char** argv)
         { "indextree_selection_api", indexTreeSelectionApi },
         { "indextree_selection_modes_api", indexTreeSelectionModesApi },
         { "ui_api", uiApi },
+        { "numeric_editor_api", numericEditorApi },
         { "renderengine_api", renderEngineApi },
+        { "renderengine_hdri_api", renderEngineHdriApi },
         { "material_browser_api", materialBrowserApi },
         { "geometry_subset_gui_api", geometrySubsetGuiApi },
         { "outliner_instance_payload_resync_api", outlinerInstancePayloadResyncApi },

@@ -5,6 +5,8 @@
 #include "spinbox.h"
 
 #include <QApplication>
+#include <QKeyEvent>
+#include <QKeySequence>
 #include <QLineEdit>
 #include <algorithm>
 #include <cmath>
@@ -44,6 +46,7 @@ SpinBox::eventFilter(QObject* watched, QEvent* event)
 {
     if (watched == lineEdit()) {
         switch (event->type()) {
+        case QEvent::KeyPress: beginTextInput(static_cast<QKeyEvent*>(event)); break;
         case QEvent::Enter: updateValueCursor(); break;
 
         case QEvent::Leave:
@@ -106,6 +109,39 @@ SpinBox::eventFilter(QObject* watched, QEvent* event)
         }
     }
     return QDoubleSpinBox::eventFilter(watched, event);
+}
+
+bool
+SpinBox::isTextEditing() const
+{
+    return m_editing;
+}
+
+bool
+SpinBox::isScrubbing() const
+{
+    return m_scrubbing;
+}
+
+void
+SpinBox::beginTextInput(QKeyEvent* event)
+{
+    if (!event || m_editing || m_scrubbing)
+        return;
+    const QString text = event->text();
+    const bool numeric = !(event->modifiers() & (Qt::ControlModifier | Qt::AltModifier | Qt::MetaModifier))
+                         && !text.isEmpty()
+                         && (text.front().isDigit() || QStringLiteral("+-.,").contains(text.front()));
+    if (numeric || event->key() == Qt::Key_Backspace || event->key() == Qt::Key_Delete
+        || event->matches(QKeySequence::Paste) || event->matches(QKeySequence::SelectAll))
+        beginEditing();
+}
+
+void
+SpinBox::keyPressEvent(QKeyEvent* event)
+{
+    beginTextInput(event);
+    QDoubleSpinBox::keyPressEvent(event);
 }
 
 void

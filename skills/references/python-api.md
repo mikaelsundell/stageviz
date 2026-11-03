@@ -17,6 +17,7 @@ This reference describes the Stageviz CPython bindings, with the coverage audit 
 - [API conventions](#api-conventions)
 - [MCP server control](#mcp-server-control)
 - [Console file logging](#console-file-logging)
+- [Viewport capture](#viewport-capture)
 - [stageviz.Application](#stagevizapplication)
 - [stageviz.Session](#stagevizsession)
 - [stageviz.SelectionList](#stagevizselectionlist)
@@ -86,6 +87,64 @@ stageviz.setConsoleOutputFile(None)
 
 Explicit Python stream redirects (including MCP's returned Python output) stay
 with their chosen stream. Native output from those scripts is still captured.
+
+## Viewport capture
+
+`stageviz.viewport() -> stageviz.Viewport`
+: Return weak access to the active viewport. Access and capture must run on the
+  GUI thread; use `stageviz.application().invokeLater(...)` from other threads.
+
+`viewport.capture() -> stageviz.ViewportCapture`
+: Render an owned color/object snapshot from the current camera, gate, masks,
+  material overrides, lighting and sidedness. Uses the color AOV and filled
+  surface display modes. Excludes auxiliary grid/gizmo geometry, selection
+  outlines and Qt overlays. Requires an initialized on-screen viewport and
+  Storm scene-ID support. Raises `RuntimeError` on an unavailable stage, context,
+  renderer or unsupported display mode. Capturing does not change USD, selection
+  or undo history. Snapshots survive subsequent stage/camera changes and closure.
+
+Snapshot methods:
+
+- `size() -> (width, height)`: physical/device-pixel dimensions, top-left origin.
+- `paths() -> list[str]`: unique front-most geometry paths, including actual
+  native-instance proxy paths, with no subset or prototype paths. Ordering is
+  first appearance scanning top to bottom, left to right.
+- `prims() -> list[dict]`: `path` and `visiblePixels` for each path.
+- `rgba() -> bytes`: tightly packed, top-left row-major displayed RGBA8 pixels.
+- `objectIds() -> bytes`: matching native-endian signed int32 indices into
+  `paths()`, with -1 for background. Read with `memoryview(data).cast("i")`.
+- `pathAt(x, y) -> str | None`: lookup in device pixels; outside the image raises
+  `IndexError`, background returns `None`.
+- `save(path) -> None`: save the clean captured image; failure raises `OSError`.
+- `pathsByColor(color, tolerance=30, minPixels=8, minCoverage=0.0) -> list[str]`:
+  color is an RGB integer triple in 0..255. Each channel must be within tolerance.
+- `pathsByHue(hue, tolerance=15, minSaturation=0.35, minValue=0.05,
+  minPixels=8, minCoverage=0.0) -> list[str]`: hue/tolerance use degrees, with hue
+  wrapping at 360. Saturation, value and coverage use 0..1. Hue tolerance is
+  0..180; RGB tolerance is 0..255. `minPixels` must be positive. Invalid parameters
+  raise `ValueError`.
+
+Queries scan the owned frame in C++, perform no GPU work, and never select
+anything themselves. Coverage is the fraction of an object's visible pixels
+matching the query; a whole mesh can match because one of its material regions
+has the queried color. Hidden/occluded geometry is not included. Display colors
+include lighting/color processing; they are not raw USD material input values.
+For transparent surfaces the front-most geometry owns the pixel and the sampled
+color can be a blend, so this is not a per-layer transparency analysis.
+
+```python
+frame = stageviz.viewport().capture()
+for prim in frame.prims():
+    print(prim["path"], prim["visiblePixels"])
+
+# Select small visible pink/magenta diagnostic regions, including proxy meshes.
+paths = frame.pathsByHue(335, tolerance=30, minPixels=8)
+stageviz.command.select_paths(paths)
+```
+
+Returned paths preserve object identity. Existing transform commands resolve
+proxy meshes to editable instance roots and deduplicate them as usual. The capture
+binding does not perform normal edits, create subsets, or add a dialog button.
 
 ## stageviz.Application
 
@@ -849,3 +908,35 @@ The delta must be finite, affine, and invertible.
 The viewport's independent Edit Pivot toggle uses the same Move/Rotate/Scale
 gestures, with dotted axes and hollow handles. Pivot editing authors paired
 `xformOp:transform:pivot` operations and a compensated object matrix.
+
+### Copy with a world transform
+
+`stageviz.command.copy_transforms(paths, worldDelta)` creates sibling copies at
+the original world transforms multiplied by the supplied 4x4 row-vector delta.
+Subsets and proxy children resolve through the same object boundary as move
+commands; multiple selected children copy their instance root once. Originals
+remain unchanged, copies become selected, and one undo removes the copies and
+restores the exact previous selection. Redo recreates the copies.
+
+In the viewport, hold Shift before starting a Move drag to copy on release.
+Shift pressed during an ordinary drag keeps snapping; pivot, Rotate and Scale
+drags retain their existing Shift behavior. A stationary click creates no copy.
+
+### USD lights
+
+`stageviz.command.new_light(parent_path, name, type="point")` creates a standard
+USD light and selects it. Supported types are `point`, `spot`, `distant`, `rect`,
+`disk`, `cylinder`, and `dome`. Point/Spot use `SphereLight`; Spot also applies
+`ShapingAPI`. The other types map to their corresponding UsdLux schemas. Creation
+uses the current edit layer, unique sibling names, and the normal undo/redo stack.
+
+```python
+stageviz.command.new_light("/World", "Key", type="rect")
+```
+
+The Create menu exposes the same presets. Intensity, exposure, color, shape and
+spot-cone inputs are ordinary USD properties. A Dome starts with OpenUSD's
+packaged environment texture, replaceable through `inputs:texture:file`. Viewport light guides support click
+and sweep selection; existing transform commands move and rotate the real light.
+The guides are editor overlays, visible through geometry and excluded from USD
+exports and viewport color capture. Scene lighting still follows Scene Lights.

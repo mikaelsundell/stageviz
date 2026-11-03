@@ -26,6 +26,7 @@
 #include <pxr/usd/usdGeom/imageable.h>
 #include <pxr/usd/usdGeom/metrics.h>
 #include <pxr/usd/usdGeom/xformable.h>
+#include <pxr/usd/usdLux/lightAPI.h>
 
 PXR_NAMESPACE_USING_DIRECTIVE
 
@@ -43,7 +44,7 @@ public:
     bool selectionPivot(GfVec3d& pivot);
     void setEnabled(bool enabled);
     void setMode(Mode mode, bool enabled);
-    bool beginDrag(const QPointF& pos);
+    bool beginDrag(const QPointF& pos, bool copy);
     void updateDrag(const QPointF& pos);
     void endDrag();
     void updateHover(const QPointF& pos);
@@ -63,6 +64,8 @@ public:
         ViewportGizmo::Frame frame;
         bool dragging = false;
         bool snap = false;
+        bool copyDrag = false;
+        QList<SdfPath> copySelection;
         QPointF startPosition;
         double rotationStartAngle = 0.0;
         GfVec3d startPivot = GfVec3d(0.0);
@@ -250,8 +253,17 @@ ViewportTransformPrivate::selectionPivot(GfVec3d& pivot)
 
         const GfBBox3d bbox = bboxCache.ComputeWorldBound(prim);
         const GfRange3d aligned = bbox.ComputeAlignedRange();
-        if (aligned.IsEmpty())
+        if (aligned.IsEmpty()) {
+            if (UsdLuxLightAPI(prim)) {
+                GfMatrix4d matrix(1.);
+                QString error;
+                if (stage::worldTransform(d.host->stage(), path, matrix, error)) {
+                    range.UnionWith(matrix.ExtractTranslation());
+                    hasBounds = true;
+                }
+            }
             continue;
+        }
 
         if (!hasBounds) {
             range = aligned;
@@ -325,7 +337,7 @@ ViewportTransformPrivate::setMode(Mode mode, bool enabled)
 }
 
 bool
-ViewportTransformPrivate::beginDrag(const QPointF& pos)
+ViewportTransformPrivate::beginDrag(const QPointF& pos, bool copy)
 {
     if (!d.frame.enabled)
         return false;
@@ -420,6 +432,10 @@ ViewportTransformPrivate::beginDrag(const QPointF& pos)
         return false;
     }
 
+    d.copyDrag = copy && !d.frame.pivotEditing && d.frame.mode == Mode::Move;
+    d.copySelection = d.copyDrag ? selectedVisiblePaths() : QList<SdfPath>();
+    if (d.copyDrag)
+        d.snap = false;
     d.dragging = true;
     d.gizmo->invalidate();
     d.host->widget()->update();
@@ -808,6 +824,10 @@ ViewportTransformPrivate::endDrag()
         return;
 
     const TransformOperation operation = d.operation;
+    const bool copy = d.copyDrag;
+    const QList<SdfPath> copySelection = d.copySelection;
+    d.copyDrag = false;
+    d.copySelection.clear();
     const QList<SdfPath>& paths = operation.paths;
     const XformEdit& edit = operation.edit;
     d.dragging = false;
@@ -829,7 +849,21 @@ ViewportTransformPrivate::endDrag()
         }
     }
 
-    if (changed) {
+    bool createCopies = false;
+    if (changed && copy) {
+        QStringList errors;
+        {
+            WRITE_LOCKER(locker, d.host->context()->stageLock(), "stageLock");
+            restoreTransformOperation(d.host->stage(), operation, &errors);
+        }
+        createCopies = errors.isEmpty();
+        if (!errors.isEmpty()) {
+            Q_EMIT d.host->widget()->statusMessage(errors.join('\n'));
+        }
+        d.frame.pivotValid = false;
+        d.frame.orientationValid = false;
+    }
+    else if (changed) {
         if (CommandStack* stack = d.host->context() ? d.host->context()->commandStack() : nullptr)
             stack->execute(new Command(d.frame.pivotEditing ? setPivotTransforms(d.pivotOperation)
                                                             : setTransforms(operation)),
@@ -849,6 +883,10 @@ ViewportTransformPrivate::endDrag()
     }
 
     Q_EMIT d.host->widget()->statusReady();
+    if (createCopies) {
+        if (CommandStack* stack = d.host->context()->commandStack())
+            stack->execute(new Command(copyTransforms(copySelection, edit.delta)));
+    }
     d.host->widget()->update();
 }
 
@@ -946,12 +984,12 @@ ViewportTransform::deferringUpdates() const
 void
 ViewportTransform::setSnap(bool enabled)
 {
-    p->d.snap = enabled;
+    p->d.snap = enabled && !p->d.copyDrag;
 }
 bool
-ViewportTransform::beginDrag(const QPointF& pos)
+ViewportTransform::beginDrag(const QPointF& pos, bool copy)
 {
-    return p->beginDrag(pos);
+    return p->beginDrag(pos, copy);
 }
 void
 ViewportTransform::updateDrag(const QPointF& pos)
@@ -1021,6 +1059,8 @@ ViewportTransform::close()
     p->d.frame.mode = mode;
     p->d.frame.enabled = mode != Mode::None;
     p->d.dragging = false;
+    p->d.copyDrag = false;
+    p->d.copySelection.clear();
     p->d.snap = false;
     p->d.rotationStartAngle = 0.0;
     p->d.startPivot = GfVec3d(0.0);

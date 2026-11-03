@@ -15,6 +15,7 @@
 #include <QOpenGLContext>
 #include <QOpenGLFramebufferObject>
 #include <QOpenGLFramebufferObjectFormat>
+#include <QScopeGuard>
 #include <QSurfaceFormat>
 #include <QtGui/qopengl.h>
 #include <algorithm>
@@ -1056,6 +1057,16 @@ namespace {
             return renderTask ? renderTask->takeGpuPickResult() : GpuPickResult {};
         }
 
+        ViewportObjectIds takeCapturedObjects()
+        {
+            HdRenderIndex* index = _GetRenderIndex();
+            if (!index || !index->HasTask(m_renderTaskPath))
+                return {};
+            const auto task = index->GetTask(m_renderTaskPath);
+            auto* renderTask = dynamic_cast<RenderTask*>(task.get());
+            return renderTask ? renderTask->takeCapturedObjects() : ViewportObjectIds {};
+        }
+
         int32_t takeCapturedElementId()
         {
             HdRenderIndex* renderIndex = _GetRenderIndex();
@@ -1207,6 +1218,8 @@ public:
     bool interactiveNavigation = false;
     QColor selectionColor = QColor(255, 210, 0);
     bool captureVisibleRequested = false;
+    bool captureObjectsRequested = false;
+    ViewportObjectIds capturedObjects;
     bool captureElementIdRequested = false;
     bool captureGpuPickRequested = false;
     GfVec2i gpuPickPixel = GfVec2i(-1, -1);
@@ -1543,7 +1556,11 @@ RenderEngine::Private::render()
     const GfMatrix4d projectionMatrix = frustum.ComputeProjectionMatrix();
 
     auto configureEngine = [&](ImagingGLEngine* target) {
-        target->SetRendererSetting(TfToken("domeLightCameraVisibility"), VtValue(settings.domeLightCameraVisibility));
+        // Only the document pass owns the background. A second opaque dome
+        // in the helper pass covers translucent document pixels, which do not
+        // write depth, even when their color was already presented correctly.
+        target->SetRendererSetting(TfToken("domeLightCameraVisibility"),
+                                   VtValue(target == engine.get() && settings.domeLightCameraVisibility));
         target->SetRendererAov(settings.aov);
         target->SetRenderBufferSize(size);
         // CameraUtilFraming uses image coordinates (origin at the upper left),
@@ -1643,8 +1660,8 @@ RenderEngine::Private::render()
                                                 && settings.drawMode != UsdImagingGLDrawMode::DRAW_WIREFRAME_ON_SURFACE;
     renderTaskParams.projectionMatrix = GfMatrix4f(projectionMatrix);
 
-    renderTaskParams.selectionOutline.enabled = contextMode == ContextMode::Current && !selectedPaths.empty()
-                                                && settings.aov == HdAovTokens->color;
+    renderTaskParams.selectionOutline.enabled = !captureObjectsRequested && contextMode == ContextMode::Current
+                                                && !selectedPaths.empty() && settings.aov == HdAovTokens->color;
     {
         renderTaskParams.selectionOutline.paths = selectedPaths;
         renderTaskParams.selectionOutline.directPaths = cachedDirectSelectionPaths;
@@ -1656,6 +1673,7 @@ RenderEngine::Private::render()
     renderTaskParams.selectionOutline.radius = 2;
 
     renderTaskParams.captureVisible = captureVisibleRequested;
+    renderTaskParams.captureObjects = captureObjectsRequested;
     renderTaskParams.captureElementId = captureElementIdRequested;
     renderTaskParams.captureGpuPick = captureGpuPickRequested;
     renderTaskParams.gpuPickPixel = gpuPickPixel;
@@ -1684,7 +1702,18 @@ RenderEngine::Private::render()
         }
     }
     renderTaskParams.sceneIds.enabled = renderTaskParams.selectionOutline.enabled || renderTaskParams.captureVisible
-                                        || renderTaskParams.captureElementId || renderTaskParams.captureGpuPick;
+                                        || renderTaskParams.captureElementId || renderTaskParams.captureGpuPick
+                                        || renderTaskParams.captureObjects;
+    if (captureObjectsRequested) {
+        switch (documentParams.cullStyle) {
+        case UsdImagingGLCullStyle::CULL_STYLE_BACK: renderTaskParams.sceneIds.cullStyle = HdCullStyleBack; break;
+        case UsdImagingGLCullStyle::CULL_STYLE_FRONT: renderTaskParams.sceneIds.cullStyle = HdCullStyleFront; break;
+        case UsdImagingGLCullStyle::CULL_STYLE_BACK_UNLESS_DOUBLE_SIDED:
+            renderTaskParams.sceneIds.cullStyle = HdCullStyleBackUnlessDoubleSided;
+            break;
+        default: renderTaskParams.sceneIds.cullStyle = HdCullStyleNothing; break;
+        }
+    }
     renderTaskParams.sceneIds.roots = renderPaths;
     renderTaskParams.sceneIds.renderTags = { HdRenderTagTokens->geometry };
     if (settings.showGuides)
@@ -1734,9 +1763,13 @@ RenderEngine::Private::render()
             renderTaskParams.sceneIds.enabled = false;
             renderTaskParams.selectionOutline.enabled = false;
             renderTaskParams.captureVisible = false;
+            renderTaskParams.captureObjects = false;
         }
     }
     engine->renderBatchWithRenderTask(renderPaths, documentParams, renderTaskParams);
+
+    if (captureObjectsRequested)
+        capturedObjects = engine->takeCapturedObjects();
 
     if (captureVisibleRequested) {
         capturedVisiblePaths = renderTaskParams.captureVisible ? engine->takeCapturedVisiblePaths() : SdfPathVector {};
@@ -1758,7 +1791,8 @@ RenderEngine::Private::render()
     // Render viewport support geometry after Look processing. The dedicated
     // pass keeps /Display out of document AO/depth while preserving Stageviz
     // grid and helper presentation in the final viewport.
-    if (auxiliaryEngine && auxiliary && auxiliary->GetPrimAtPath(paths::auxiliary::display)) {
+    if (!captureObjectsRequested && auxiliaryEngine && auxiliary
+        && auxiliary->GetPrimAtPath(paths::auxiliary::display)) {
         Hgi* auxiliaryHgi = auxiliaryEngine->GetHgi();
         if (!auxiliaryHgi)
             return false;
@@ -1996,6 +2030,63 @@ RenderEngine::renderToCurrentFramebuffer()
 #endif  // WIN32
 
     return p->render();
+}
+
+ViewportCapture
+RenderEngine::captureViewport(QString& error)
+{
+    ViewportCapture result;
+    if (p->contextMode != ContextMode::Current || !QOpenGLContext::currentContext() || !p->stage) {
+        error = QStringLiteral("An active viewport GL context and USD stage are required");
+        return result;
+    }
+    if (p->settings.aov != HdAovTokens->color) {
+        error = QStringLiteral("Viewport color capture requires the color AOV");
+        return result;
+    }
+    if (p->settings.drawMode == UsdImagingGLDrawMode::DRAW_WIREFRAME
+        || p->settings.drawMode == UsdImagingGLDrawMode::DRAW_WIREFRAME_ON_SURFACE
+        || p->settings.drawMode == UsdImagingGLDrawMode::DRAW_POINTS) {
+        error = QStringLiteral("Viewport color capture requires a filled surface display mode");
+        return result;
+    }
+    GLint drawFramebuffer = 0, readFramebuffer = 0;
+    glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &drawFramebuffer);
+    glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &readFramebuffer);
+    auto restore = qScopeGuard([&]() {
+        p->captureObjectsRequested = false;
+        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, GLuint(drawFramebuffer));
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, GLuint(readFramebuffer));
+    });
+    QOpenGLFramebufferObjectFormat format;
+    format.setAttachment(QOpenGLFramebufferObject::CombinedDepthStencil);
+    format.setSamples(0);
+    QOpenGLFramebufferObject framebuffer(p->size[0], p->size[1], format);
+    if (!framebuffer.isValid() || !framebuffer.bind()) {
+        error = QStringLiteral("Could not allocate viewport capture framebuffer");
+        return result;
+    }
+    p->captureObjectsRequested = true;
+    p->capturedObjects = {};
+    if (!renderToCurrentFramebuffer()) {
+        error = QStringLiteral("Viewport capture rendering failed");
+        return result;
+    }
+    result.objects = std::move(p->capturedObjects);
+    result.image = framebuffer.toImage().convertToFormat(QImage::Format_ARGB32);
+    if (result.image.isNull() || result.objects.size != result.image.size()) {
+        error = QStringLiteral("Viewport object-ID capture is unavailable for this renderer");
+        return {};
+    }
+    for (const auto& path : result.objects.paths) {
+        const auto prim = p->stage->GetPrimAtPath(path);
+        if (!prim || !prim.IsA<UsdGeomGprim>()) {
+            error = QStringLiteral("Could not resolve a captured object to USD geometry: %1")
+                        .arg(QString::fromStdString(path.GetString()));
+            return {};
+        }
+    }
+    return result;
 }
 
 QList<SdfPath>

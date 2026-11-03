@@ -241,6 +241,19 @@ public:
     bool renderToCurrentFramebuffer();
 
     /**
+     * @brief Captures document colors and object IDs using the current camera.
+     *
+     * Requires a current viewport GL context and the color AOV. Auxiliary
+     * geometry and selection overlays are excluded. The caller holds the stage
+     * read lock. The returned snapshot owns its CPU data.
+     *
+     * @param error Receives a capture failure reason.
+     *
+     * @return Owned capture, or an empty image on failure.
+     */
+    ViewportCapture captureViewport(QString& error);
+
+    /**
      * @brief Captures prims that are visible in the current viewport.
      *
      * The normal scene-ID image is included first. When @p gridSize is greater

@@ -7,6 +7,7 @@
 #include "selectionlist.h"
 #include "session.h"
 #include "stageviz.h"
+#include "viewportcapture.h"
 #include <QTreeWidget>
 #include <pxr/usd/usd/stage.h>
 
@@ -54,6 +55,16 @@ public:
      * @return Image of the rendered viewport.
      */
     QImage captureImage();
+
+    /**
+     * @brief Captures visible document colors and object paths for Python analysis.
+     *
+     * @param error Receives the failure reason.
+     *
+     * @return Owned snapshot from the active viewport.
+     */
+    ViewportCapture captureViewport(QString& error);
+
 
     /**
      * @}

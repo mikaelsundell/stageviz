@@ -4,6 +4,7 @@
 
 #pragma once
 
+#include "viewportcapture.h"
 #include "viewstate.h"
 #include <cstdint>
 #include <memory>
@@ -31,11 +32,12 @@ namespace stageviz {
  * Renders primId + depth once into dedicated non-MSAA Storm buffers.
  * The same pass feeds selection outlines and visible-prim capture, avoiding a
  * second selected-geometry render and avoiding integer MSAA resolve targets on
- * Metal. Back-face culling is disabled deliberately so reversed single-sided
- * meshes still receive a usable primId.
+ * Metal. Picking and outlines disable back-face culling so reversed meshes
+ * remain selectable; color capture matches the document culling settings.
  */
 struct SceneIdSettings {
     bool enabled = false;
+    HdCullStyle cullStyle = HdCullStyleNothing;
     SdfPathVector roots;
     TfTokenVector renderTags;
     HdReprSelector reprSelector = HdReprSelector(HdReprTokens->smoothHull);
@@ -119,6 +121,7 @@ struct RenderTaskParams {
     GfVec2i gpuPickPixel = GfVec2i(-1, -1);
     SdfPathVector gpuPickExcludes;
     bool captureVisible = false;
+    bool captureObjects = false;
     bool captureElementId = false;
     GfVec2i captureElementPixel = GfVec2i(-1, -1);
 
@@ -175,6 +178,11 @@ public:
      */
     int32_t takeCapturedElementId();
 
+    /**
+     * @brief Returns and clears the object-ID snapshot from the last capture request.
+     */
+    ViewportObjectIds takeCapturedObjects();
+
     static const TfToken& token();
 
 protected:
@@ -190,6 +198,7 @@ private:
     SdfPathVector m_capturedVisiblePaths;
     int32_t m_capturedElementId = -1;
     GpuPickResult m_gpuPickResult;
+    ViewportObjectIds m_capturedObjects;
 };
 
 }  // namespace stageviz

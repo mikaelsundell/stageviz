@@ -374,11 +374,14 @@ public:
 SdfPath
 ViewportSelectionPrivate::pickNearestPath(const QPoint& pos)
 {
+    const auto light = d.host->widget()->pickLight(pos);
+    if (!light.IsEmpty())
+        return light;
     d.host->widget()->makeCurrent();
     if (!d.host->stage() || !d.host->renderEngine())
         return {};
 #ifdef WIN32
-    d.host->widget()->context()->functions()->glDepthMask(GL_TRUE);
+    d.host->widget()->QOpenGLWidget::context()->functions()->glDepthMask(GL_TRUE);
 #endif
     const QPoint devicePos = deviceRatio(pos);
     const GfVec4d viewport = d.host->widgetViewport();
@@ -434,7 +437,7 @@ ViewportSelectionPrivate::sweepEvent(const QRect& rect, QMouseEvent* event)
         return;
 
 #ifdef WIN32
-    d.host->widget()->context()->functions()->glDepthMask(GL_TRUE);
+    d.host->widget()->QOpenGLWidget::context()->functions()->glDepthMask(GL_TRUE);
 #endif
 
     constexpr int clickTolerance = 6;
@@ -444,7 +447,13 @@ ViewportSelectionPrivate::sweepEvent(const QRect& rect, QMouseEvent* event)
     QList<SdfPath> selectedPaths;
     QList<SdfPath> selection = d.host->selectedPaths();
 
-    if (isClick) {
+    const SdfPath lightHit = isClick ? d.host->widget()->pickLight(logicalRect.center()) : SdfPath();
+    if (!lightHit.IsEmpty()) {
+        selectedPaths.append(lightHit);
+        d.lastPickPaths.clear();
+        d.lastPickIndex = -1;
+    }
+    else if (isClick) {
         constexpr int pickCycleTolerance = 6;
         const QPoint clickPosition = logicalRect.center();
 
@@ -555,6 +564,7 @@ ViewportSelectionPrivate::sweepEvent(const QRect& rect, QMouseEvent* event)
                                                }),
                                 selectedPaths.end());
         }
+        selectedPaths.append(d.host->widget()->lightPathsInRect(logicalRect));
         selectedPaths = path::uniquePaths(selectedPaths);
         d.lastPickPosition = QPoint();
         d.lastPickPaths.clear();
@@ -815,10 +825,10 @@ ViewportSelection::draw(QPainter& painter)
         return;
     painter.save();
     painter.setRenderHint(QPainter::Antialiasing, false);
-    const QColor selection = ui()->color(UI::ColorRole::Selection);
-    QColor fill = selection;
-    fill.setAlphaF(selection.alphaF() * (35.0 / 255.0));
-    painter.setPen(QPen(selection, 1));
+    const QColor sweep = ui()->color(UI::ColorRole::Sweep);
+    QColor fill = sweep;
+    fill.setAlphaF(sweep.alphaF() * (35.0 / 255.0));
+    painter.setPen(QPen(sweep, 1));
     painter.setBrush(fill);
     painter.drawRect(QRect(p->d.start, p->d.end).normalized());
     painter.restore();

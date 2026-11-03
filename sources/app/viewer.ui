@@ -1049,6 +1049,14 @@
     <addaction name="createNurbsCurves"/>
     <addaction name="createNurbsPatch"/>
     <addaction name="createPointInstancer"/>
+    <addaction name="separator"/>
+    <addaction name="createPointLight"/>
+    <addaction name="createSpotLight"/>
+    <addaction name="createDistantLight"/>
+    <addaction name="createRectLight"/>
+    <addaction name="createDiskLight"/>
+    <addaction name="createCylinderLight"/>
+    <addaction name="createDomeLight"/>
    </widget>
    <widget class="QMenu" name="menuView">
     <property name="title">
@@ -1144,7 +1152,7 @@
   </action>
   <action name="displayPivot">
    <property name="checkable"><bool>true</bool></property>
-   <property name="text"><string>Edit Pivot</string></property>
+   <property name="text"><string>Pivot</string></property>
    <property name="toolTip"><string>Edit pivot frames with Move, Rotate, or Scale while keeping geometry stationary.</string></property>
   </action>
   <action name="displayFrameSelected">
@@ -1323,6 +1331,34 @@
    <property name="text">
     <string>Cube</string>
    </property>
+  </action>
+  <action name="createPointLight">
+   <property name="text"><string>Point Light</string></property>
+   <property name="toolTip"><string>Create a USD point light</string></property>
+  </action>
+  <action name="createSpotLight">
+   <property name="text"><string>Spot Light</string></property>
+   <property name="toolTip"><string>Create a USD spot light</string></property>
+  </action>
+  <action name="createDistantLight">
+   <property name="text"><string>Distant Light</string></property>
+   <property name="toolTip"><string>Create a USD distant light</string></property>
+  </action>
+  <action name="createRectLight">
+   <property name="text"><string>Rect Light</string></property>
+   <property name="toolTip"><string>Create a USD rect light</string></property>
+  </action>
+  <action name="createDiskLight">
+   <property name="text"><string>Disk Light</string></property>
+   <property name="toolTip"><string>Create a USD disk light</string></property>
+  </action>
+  <action name="createCylinderLight">
+   <property name="text"><string>Cylinder Light</string></property>
+   <property name="toolTip"><string>Create a USD cylinder light</string></property>
+  </action>
+  <action name="createDomeLight">
+   <property name="text"><string>Dome Light</string></property>
+   <property name="toolTip"><string>Create a USD dome light</string></property>
   </action>
   <action name="createSphere">
    <property name="text">

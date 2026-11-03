@@ -5,6 +5,7 @@
 #include "pycommand.h"
 #include "application.h"
 #include "command.h"
+#include "commandlight.h"
 #include "commandpivot.h"
 #include "commandstack.h"
 #include "commandtransform.h"
@@ -476,6 +477,44 @@ PyCommand_transformPivots(PyObject*, PyObject* args)
 }
 
 static PyObject*
+PyCommand_copyTransforms(PyObject*, PyObject* args)
+{
+    PyObject* pyPaths = nullptr;
+    PyObject* pyMatrix = nullptr;
+    if (!PyArg_ParseTuple(args, "OO", &pyPaths, &pyMatrix))
+        return nullptr;
+    QList<SdfPath> paths;
+    if (!parsePathListArg(pyPaths, "paths", &paths))
+        return nullptr;
+    PyObject* rows = PySequence_Fast(pyMatrix, "Expected a 4x4 world-delta matrix");
+    if (!rows)
+        return nullptr;
+    bool valid = PySequence_Fast_GET_SIZE(rows) == 4;
+    GfMatrix4d matrix(1.0);
+    for (int row = 0; valid && row < 4; ++row) {
+        PyObject* columns = PySequence_Fast(PySequence_Fast_GET_ITEM(rows, row), "Expected a matrix row");
+        if (!columns) {
+            valid = false;
+            break;
+        }
+        valid = PySequence_Fast_GET_SIZE(columns) == 4;
+        for (int col = 0; valid && col < 4; ++col) {
+            matrix[row][col] = PyFloat_AsDouble(PySequence_Fast_GET_ITEM(columns, col));
+            valid = !PyErr_Occurred();
+        }
+        Py_DECREF(columns);
+    }
+    Py_DECREF(rows);
+    if (!valid) {
+        if (!PyErr_Occurred())
+            PyErr_SetString(PyExc_ValueError, "Expected four rows of four numbers");
+        return nullptr;
+    }
+    return runCommand(copyTransforms(paths, matrix));
+}
+
+
+static PyObject*
 PyCommand_resetTransforms(PyObject*, PyObject* args)
 {
     PyObject* pyPaths = nullptr;
@@ -748,6 +787,31 @@ PyCommand_instancePaths(PyObject*, PyObject* args)
         return nullptr;
 
     return runCommand(instancePaths(paths));
+}
+
+static PyObject*
+PyCommand_newLight(PyObject*, PyObject* args, PyObject* kwargs)
+{
+    PyObject* parentObject = nullptr;
+    const char* name = nullptr;
+    const char* kind = "point";
+    static const char* keys[] = { "parent_path", "name", "type", nullptr };
+    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "Os|s:new_light", const_cast<char**>(keys), &parentObject, &name,
+                                     &kind))
+        return nullptr;
+    SdfPath parent;
+    if (!parsePathArg(parentObject, "parent_path", &parent))
+        return nullptr;
+    const QString type = QString::fromUtf8(kind).toLower();
+    const QMap<QString, LightType> types { { "point", LightType::Point },     { "spot", LightType::Spot },
+                                           { "distant", LightType::Distant }, { "rect", LightType::Rect },
+                                           { "disk", LightType::Disk },       { "cylinder", LightType::Cylinder },
+                                           { "dome", LightType::Dome } };
+    if (!types.contains(type)) {
+        PyErr_SetString(PyExc_ValueError, "Light type must be point, spot, distant, rect, disk, cylinder or dome");
+        return nullptr;
+    }
+    return runCommand(newLightPath(parent, QString::fromUtf8(name), types.value(type)));
 }
 
 static PyObject*
@@ -1427,10 +1491,14 @@ static PyMethodDef PyCommand_methods[] = {
     { "clear_default_prim", reinterpret_cast<PyCFunction>(PyCommand_clearDefaultPrim), METH_NOARGS,
       "Clear the default prim." },
     { "delete_paths", reinterpret_cast<PyCFunction>(PyCommand_deletePaths), METH_VARARGS, "Delete paths." },
+    { "copy_transforms", reinterpret_cast<PyCFunction>(PyCommand_copyTransforms), METH_VARARGS,
+      "Copy resolved objects as siblings with a world-space delta and select the copies." },
     { "copy_paths", reinterpret_cast<PyCFunction>(PyCommand_copyPaths), METH_VARARGS,
       "Copy one or more prim paths as sibling prims." },
     { "instance_paths", reinterpret_cast<PyCFunction>(PyCommand_instancePaths), METH_VARARGS,
       "Create instanceable sibling prims referencing one or more prim paths." },
+    { "new_light", reinterpret_cast<PyCFunction>(PyCommand_newLight), METH_VARARGS | METH_KEYWORDS,
+      "Create a standard USD light: point, spot, distant, rect, disk, cylinder or dome." },
     { "new_prim", reinterpret_cast<PyCFunction>(PyCommand_newPrim), METH_VARARGS | METH_KEYWORDS,
       "Create a prim in the active edit layer. Optional keyword argument: type_name." },
     { "new_scope", reinterpret_cast<PyCFunction>(PyCommand_newScope), METH_VARARGS,
