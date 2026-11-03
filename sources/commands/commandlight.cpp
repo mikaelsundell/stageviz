@@ -3,7 +3,8 @@
 
 #include "commandlight.h"
 #include "commandutils.h"
-#include <pxr/imaging/hdx/package.h>
+#include <pxr/base/plug/plugin.h>
+#include <pxr/base/plug/registry.h>
 #include <pxr/usd/usdLux/cylinderLight.h>
 #include <pxr/usd/usdLux/diskLight.h>
 #include <pxr/usd/usdLux/distantLight.h>
@@ -63,8 +64,14 @@ newLightPath(const SdfPath& parentPath, const QString& nameInput, LightType type
                 UsdLuxCylinderLight(prim).CreateLengthAttr().Set(2.f);
                 break;
             case LightType::Dome: {
+                const auto plugin = PlugRegistry::GetInstance().GetPluginWithName("hdx");
+                const auto texture = PlugFindPluginResource(plugin, "textures/StinsonBeach.hdr");
+                if (texture.empty()) {
+                    error = QStringLiteral("Could not find the default USD dome light texture");
+                    return false;
+                }
                 UsdLuxDomeLight dome(prim);
-                dome.CreateTextureFileAttr().Set(SdfAssetPath(HdxPackageDefaultDomeLightTexture().GetString()));
+                dome.CreateTextureFileAttr().Set(SdfAssetPath(texture));
                 dome.CreateTextureFormatAttr().Set(TfToken("latlong"));
                 break;
             }

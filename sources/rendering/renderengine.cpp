@@ -15,6 +15,7 @@
 #include <QOpenGLContext>
 #include <QOpenGLFramebufferObject>
 #include <QOpenGLFramebufferObjectFormat>
+#include <QOpenGLFunctions>
 #include <QScopeGuard>
 #include <QSurfaceFormat>
 #include <QtGui/qopengl.h>
@@ -2050,13 +2051,14 @@ RenderEngine::captureViewport(QString& error)
         error = QStringLiteral("Viewport color capture requires a filled surface display mode");
         return result;
     }
+    auto* functions = QOpenGLContext::currentContext()->functions();
     GLint drawFramebuffer = 0, readFramebuffer = 0;
-    glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &drawFramebuffer);
-    glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &readFramebuffer);
+    functions->glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &drawFramebuffer);
+    functions->glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &readFramebuffer);
     auto restore = qScopeGuard([&]() {
         p->captureObjectsRequested = false;
-        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, GLuint(drawFramebuffer));
-        glBindFramebuffer(GL_READ_FRAMEBUFFER, GLuint(readFramebuffer));
+        functions->glBindFramebuffer(GL_DRAW_FRAMEBUFFER, GLuint(drawFramebuffer));
+        functions->glBindFramebuffer(GL_READ_FRAMEBUFFER, GLuint(readFramebuffer));
     });
     QOpenGLFramebufferObjectFormat format;
     format.setAttachment(QOpenGLFramebufferObject::CombinedDepthStencil);
