@@ -9,21 +9,12 @@
 #include "stageviz.h"
 #include <QList>
 #include <QThreadPool>
-#include <functional>
+#include <utility>
 
 PXR_NAMESPACE_USING_DIRECTIVE
 
 namespace stageviz {
 namespace command {
-    /**
-     * @brief Shares prim creation, unique naming, selection and undo with schema presets.
-     *
-     * The initializer runs under the stage write lock after definition.
-     */
-    Command createPrimCommand(const SdfPath& parentPath, const QString& nameInput, const TfToken& typeName,
-                              bool selectCreated, std::function<bool(const UsdPrim&, QString&)> initialize = {});
-
-
     /**
      * @brief Formats a USD path for command progress and error messages.
      */
@@ -184,6 +175,53 @@ namespace command {
      * @param completed Total completed operation count after this batch.
      */
     void queueFlushResults(Session* session, const QList<Result>& results, int completed);
+
+
+
+    /**
+     * @brief Preserves edit-layer property existence and default opinions for undo.
+     */
+    struct RootPropertyState {
+        SdfPath propertyPath;
+        bool hadSpec = false;
+        bool hadDefault = false;
+        VtValue defaultValue;
+    };
+
+    /**
+     * @brief Captures property existence and default opinions in the edit layer.
+     */
+    RootPropertyState captureRootPropertyState(const SdfLayerHandle& editLayer, const SdfPath& propertyPath);
+
+    /**
+     * @brief Restores captured property existence and default opinions.
+     */
+    bool restoreRootPropertyState(const SdfLayerHandle& editLayer, const RootPropertyState& state);
+
+    /**
+     * @brief Rejects direct authoring on read-only instance proxy prims.
+     */
+    bool validateNotInstanceProxy(const UsdStageRefPtr& stage, const SdfPath& path, QString& error);
+
+    /**
+     * @brief Preserves a complete dependency property spec for undo.
+     */
+    struct DependencyPropertyState {
+        SdfPath propertyPath;
+        SdfLayerRefPtr snapshotLayer;
+    };
+
+    /**
+     * @brief Copies an authored dependency property spec into an undo snapshot.
+     */
+    bool snapshotDependencyProperty(const SdfLayerHandle& editLayer, const SdfPath& propertyPath,
+                                    DependencyPropertyState& state, QString& error);
+
+    /**
+     * @brief Restores a dependency property spec from its undo snapshot.
+     */
+    bool restoreDependencyProperty(const SdfLayerHandle& editLayer, const DependencyPropertyState& state,
+                                   QString& error);
 
 }  // namespace command
 }  // namespace stageviz

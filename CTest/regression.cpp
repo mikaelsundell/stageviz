@@ -1,11 +1,19 @@
 // SPDX-License-Identifier: BSD-3-Clause
 // Copyright (c) 2025 - present Mikael Sundell
 
-#include "command.h"
+#include "commandcomposition.h"
+#include "commandlayer.h"
 #include "commandlight.h"
+#include "commandmaterial.h"
+#include "commandpayload.h"
 #include "commandpivot.h"
+#include "commandprim.h"
+#include "commandproperty.h"
+#include "commandselection.h"
 #include "commandstack.h"
+#include "commandstage.h"
 #include "commandtransform.h"
+#include "commandvisibility.h"
 #include "console.h"
 #include "materialmenu.h"
 #include "materialutils.h"

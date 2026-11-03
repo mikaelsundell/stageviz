@@ -90,11 +90,11 @@ with their chosen stream. Native output from those scripts is still captured.
 
 ## Viewport capture
 
-`stageviz.viewport() -> stageviz.Viewport`
-: Return weak access to the active viewport. Access and capture must run on the
+`stageviz.render() -> stageviz.Render`
+: Return weak access to the active render view. Access and capture must run on the
   GUI thread; use `stageviz.application().invokeLater(...)` from other threads.
 
-`viewport.capture() -> stageviz.ViewportCapture`
+`render.capture() -> stageviz.ViewportCapture`
 : Render an owned color/object snapshot from the current camera, gate, masks,
   material overrides, lighting and sidedness. Uses the color AOV and filled
   surface display modes. Excludes auxiliary grid/gizmo geometry, selection
@@ -102,6 +102,24 @@ with their chosen stream. Native output from those scripts is still captured.
   Storm scene-ID support. Raises `RuntimeError` on an unavailable stage, context,
   renderer or unsupported display mode. Capturing does not change USD, selection
   or undo history. Snapshots survive subsequent stage/camera changes and closure.
+
+`render.inspectPrim(path) -> dict`
+: Diagnose an existing geometry prim, including native-instance proxy geometry.
+  Reports USD visibility at default and viewport time, mesh topology and point
+  bounds, mapped Hydra Rprims, scene-index/delegate visibility, draw-item bounds,
+  camera-frustum intersection, and Storm buffer allocation metadata. Also reports
+  the viewport mask, camera, and culling debug flags. Requires the GUI thread and
+  an initialized renderer. Invalid paths raise `ValueError`; missing or
+  non-geometry prims and unavailable renderers raise `RuntimeError`.
+  Hydra data describes the last synchronization, while USD data is current.
+  This call does not render, read back GPU buffers, change selection or author USD.
+  Buffer handles and sizes do not prove that geometry was rasterized successfully.
+
+```python
+import json
+report = stageviz.render().inspectPrim("/World/Body")
+print(json.dumps(report, indent=2))
+```
 
 Snapshot methods:
 
@@ -133,7 +151,7 @@ For transparent surfaces the front-most geometry owns the pixel and the sampled
 color can be a blend, so this is not a per-layer transparency analysis.
 
 ```python
-frame = stageviz.viewport().capture()
+frame = stageviz.render().capture()
 for prim in frame.prims():
     print(prim["path"], prim["visiblePixels"])
 

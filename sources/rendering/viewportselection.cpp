@@ -5,7 +5,7 @@
 #include "viewportselection.h"
 #include "application.h"
 #include "bboxutils.h"
-#include "command.h"
+#include "commandselection.h"
 #include "qtutils.h"
 #include "renderengine.h"
 #include "session.h"

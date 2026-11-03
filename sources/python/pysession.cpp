@@ -3,8 +3,9 @@
 // https://github.com/mikaelsundell/stageviz
 
 #include "pysession.h"
-#include "command.h"
+#include "commandlayer.h"
 #include "commandstack.h"
+#include "commandstage.h"
 #include "pyselectionlist.h"
 #include "pyutils.h"
 #include "pyviewstate.h"

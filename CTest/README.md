@@ -117,9 +117,12 @@ it requires a disposable viewer. These scripts expose `run()` and do not autorun
 `viewport_color_query_api` covers hue wraparound, RGB tolerances, shaded magenta,
 visible-pixel coverage, background exclusion and grayscale rejection.
 `python/testviewportcapture.py` provides disposable MCP phases (`setup`, `colors`,
-`diagnostic`, `boundaries`, `cleanup`) for color/object alignment, native instance
+`inspect`, `diagnostic`, `boundaries`, `cleanup`) for color/object alignment, native instance
 resolution, exact selection preservation, selection undo/redo, the normal-direction
 MaterialX override, masks/culling, and snapshot lifetime after stage closure.
+The `inspect` phase checks read-only USD/Hydra reports, proxy Rprim mapping,
+visibility updates with undo/redo, default versus sampled visibility, and
+diagnostic argument boundaries.
 The script does not autorun; its `run(disposable=True)` executes all phases.
 
 - `copy_transform_api` covers world-space copying below rotated/scaled parents,

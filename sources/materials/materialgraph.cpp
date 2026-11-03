@@ -4,7 +4,7 @@
 
 #include "materialgraph.h"
 #include "application.h"
-#include "command.h"
+#include "commandmaterial.h"
 #include "commandstack.h"
 #include "materialmenu.h"
 #include "session.h"

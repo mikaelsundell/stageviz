@@ -4,7 +4,7 @@
 
 #include "layerdialog.h"
 #include "application.h"
-#include "command.h"
+#include "commandlayer.h"
 #include "commandstack.h"
 #include "layertree.h"
 #include "session.h"

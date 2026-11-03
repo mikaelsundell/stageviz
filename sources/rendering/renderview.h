@@ -8,6 +8,7 @@
 #include "session.h"
 #include "stageviz.h"
 #include "viewportcapture.h"
+#include <QJsonObject>
 #include <QTreeWidget>
 #include <pxr/usd/usd/stage.h>
 
@@ -57,14 +58,26 @@ public:
     QImage captureImage();
 
     /**
-     * @brief Captures visible document colors and object paths for Python analysis.
+     * @brief Captures document colors and selectable object paths from this viewport.
      *
-     * @param error Receives the failure reason.
+     * @param error Receives a failure reason; must be called on the GUI thread.
      *
-     * @return Owned snapshot from the active viewport.
+     * @return Owned snapshot with top-left image coordinates.
      */
     ViewportCapture captureViewport(QString& error);
 
+    /**
+     * @brief Reads current USD and last-synchronized Hydra state for one geometry prim.
+     *
+     * Does not render, read back GPU buffers, author USD, or change selection.
+     * Must run on the viewport GUI thread.
+     *
+     * @param path Exact USD geometry path, including native instance proxies.
+     * @param error Receives an unavailable-stage, renderer, or path error.
+     *
+     * @return Owned diagnostic data, or an empty object on failure.
+     */
+    QJsonObject inspectPrim(const SdfPath& path, QString& error);
 
     /**
      * @}

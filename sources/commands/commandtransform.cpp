@@ -3,6 +3,7 @@
 // https://github.com/mikaelsundell/stageviz
 
 #include "commandtransform.h"
+#include "commandprimprivate.h"
 #include "commandtransformprivate.h"
 #include "commandutils.h"
 #include "qtutils.h"
@@ -1295,5 +1296,11 @@ setTransforms(const TransformOperation& operation)
 }
 
 
+
+Command
+copyTransforms(const QList<SdfPath>& paths, const GfMatrix4d& worldDelta)
+{
+    return command::copyPathsCommand(paths, true, worldDelta);
+}
 
 }  // namespace stageviz

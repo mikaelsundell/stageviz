@@ -73,7 +73,7 @@ class LightsTest(_base["ViewportTest"]):
         # All guides are editor-only: no geometry in the document or capture.
         stage = stageviz.session().stage()
         assert not any(prim.IsA(UsdGeom.Gprim) for prim in stage.Traverse())
-        assert stageviz.viewport().capture().paths() == []
+        assert stageviz.render().capture().paths() == []
         QtCore, _, QtTest, _ = tb.qt()
         widget = self.viewport()
         center = QtCore.QPoint(widget.width()//2, widget.height()//2)
@@ -130,7 +130,7 @@ class LightsTest(_base["ViewportTest"]):
         for enabled in (False, True):
             state.setSceneLightsEnabled(enabled)
             tb.process_events(150)
-            frame = stageviz.viewport().capture()
+            frame = stageviz.render().capture()
             assert "/World/Ball" in frame.paths()
             frame.save(str(self.directory / f"scene_lights_{enabled}.png"))
             images.append(frame.rgba())
@@ -168,7 +168,7 @@ class LightsTest(_base["ViewportTest"]):
         stageviz.command.select_paths([])
         def brightness(label):
             tb.process_events(100)
-            frame = stageviz.viewport().capture()
+            frame = stageviz.render().capture()
             frame.save(str(self.directory / (label + ".png")))
             width, height = frame.size()
             rgba = frame.rgba()

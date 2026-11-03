@@ -4,7 +4,8 @@
 
 #include "propertytree.h"
 #include "application.h"
-#include "command.h"
+#include "commandproperty.h"
+#include "commandselection.h"
 #include "commandstack.h"
 #include "messagedialog.h"
 #include "notice.h"

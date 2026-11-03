@@ -4,6 +4,10 @@
 #pragma once
 
 #include "command.h"
+#include <QString>
+#include <pxr/usd/sdf/path.h>
+
+PXR_NAMESPACE_USING_DIRECTIVE
 
 namespace stageviz {
 /**

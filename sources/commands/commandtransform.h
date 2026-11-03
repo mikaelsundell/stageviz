@@ -5,7 +5,12 @@
 #pragma once
 
 #include "command.h"
+#include <QList>
+#include <QStringList>
+#include <pxr/base/gf/matrix4d.h>
 #include <pxr/usd/usdGeom/xformOp.h>
+
+PXR_NAMESPACE_USING_DIRECTIVE
 
 namespace stageviz {
 

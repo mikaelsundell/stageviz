@@ -3,9 +3,11 @@
 
 #include "application.h"
 #include "bboxutils.h"
-#include "command.h"
 #include "commandlight.h"
+#include "commandmaterial.h"
+#include "commandpayload.h"
 #include "commandpivot.h"
+#include "commandselection.h"
 #include "commandstack.h"
 #include "commandtransform.h"
 #include "indextree.h"

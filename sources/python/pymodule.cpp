@@ -7,13 +7,13 @@
 #include "mcp/mcpserver.h"
 #include "pyapplication.h"
 #include "pycommand.h"
+#include "pyrender.h"
 #include "pyrenderengine.h"
 #include "pyselectionlist.h"
 #include "pysession.h"
 #include "pyui.h"
 #include "pyutils.h"
 #include "pyviewcamera.h"
-#include "pyviewport.h"
 #include "pyviewstate.h"
 
 using namespace stageviz;
@@ -40,9 +40,9 @@ PyModule_session(PyObject*, PyObject*)
 }
 
 static PyObject*
-PyModule_viewport(PyObject*, PyObject*)
+PyModule_render(PyObject*, PyObject*)
 {
-    return createPyViewport();
+    return createPyRender();
 }
 
 static PyObject*
@@ -151,8 +151,8 @@ static PyMethodDef Module_methods[]
         { "session", reinterpret_cast<PyCFunction>(PyModule_session), METH_NOARGS,
           "Get the current stageviz session wrapper" },
         { "ui", reinterpret_cast<PyCFunction>(PyModule_ui), METH_NOARGS, "Get the current stageviz UI wrapper" },
-        { "viewport", reinterpret_cast<PyCFunction>(PyModule_viewport), METH_NOARGS,
-          "Get read-only access to the active viewport for color and object capture" },
+        { "render", reinterpret_cast<PyCFunction>(PyModule_render), METH_NOARGS,
+          "Get read-only access to the active render view for capture and diagnostics" },
         { "selectionList", reinterpret_cast<PyCFunction>(PyModule_selectionList), METH_NOARGS,
           "Get the current stageviz selection list wrapper" },
         { "setConsoleOutputFile", reinterpret_cast<PyCFunction>(PyModule_setConsoleOutputFile),
@@ -192,14 +192,14 @@ PyInit_stageviz(void)
 
     if (!initPyUIType())
         return nullptr;
-    if (!initPyViewportTypes())
+    if (!initPyRenderTypes())
         return nullptr;
 
     PyObject* module = PyModule_Create(&pyStagevizModule);
     if (!module)
         return nullptr;
 
-    if (addPyViewportTypes(module) < 0) {
+    if (addPyRenderTypes(module) < 0) {
         Py_DECREF(module);
         return nullptr;
     }

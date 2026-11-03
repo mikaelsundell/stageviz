@@ -4,9 +4,14 @@
 
 #include "viewer.h"
 #include "application.h"
-#include "command.h"
+#include "commandcomposition.h"
 #include "commandlight.h"
+#include "commandpayload.h"
+#include "commandprim.h"
+#include "commandselection.h"
 #include "commandstack.h"
+#include "commandstage.h"
+#include "commandvisibility.h"
 #include "consoledialog.h"
 #include "githubclient.h"
 #include "layerdialog.h"
@@ -3154,6 +3159,9 @@ ViewerPrivate::refreshModifiedFromLayers()
 {
     bool anyLayerModified = false;
     bool sessionLayerDirty = false;
+    // filename() takes the stage read lock itself. Re-entering that lock while
+    // a command worker is waiting to write can deadlock both threads.
+    const bool anonymousDocument = session()->filename().isEmpty();
     {
         READ_LOCKER(locker, session()->stageLock(), "stageLock");
         const UsdStageRefPtr stage = session()->stageUnsafe();
@@ -3163,9 +3171,8 @@ ViewerPrivate::refreshModifiedFromLayers()
             const SdfLayerHandle editLayer = stage->GetEditTarget().GetLayer();
             for (const SdfLayerHandle& layer : stage->GetLayerStack(false)) {
                 if (layer) {
-                    const bool anonymousRoot = layer == rootLayer && layer->IsAnonymous()
-                                               && session()->filename().isEmpty() && !d.rootChanged
-                                               && layer->GetSubLayerPaths().empty();
+                    const bool anonymousRoot = layer == rootLayer && layer->IsAnonymous() && anonymousDocument
+                                               && !d.rootChanged && layer->GetSubLayerPaths().empty();
                     if (anonymousRoot) {
                         continue;
                     }

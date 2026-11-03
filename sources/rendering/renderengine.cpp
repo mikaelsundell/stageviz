@@ -5,12 +5,14 @@
 #include "renderengine.h"
 #include "paths.h"
 #include "qtutils.h"
+#include "renderdiagnostics.h"
 #include "rendersceneindex.h"
 #include "rendertask.h"
 #include <QColorSpace>
 #include <QCoreApplication>
 #include <QDir>
 #include <QFileInfo>
+#include <QJsonArray>
 #include <QOffscreenSurface>
 #include <QOpenGLContext>
 #include <QOpenGLFramebufferObject>
@@ -887,6 +889,9 @@ namespace {
         {}
 
         ~ImagingGLEngine() { removeRenderTask(); }
+
+        HdRenderIndex* renderIndex() { return _GetRenderIndex(); }
+        const HdRprimCollection& renderCollection() const { return _renderCollection; }
 
         SceneIndices& sceneIndices() { return *m_sceneIndices; }
         const SceneIndices& sceneIndices() const { return *m_sceneIndices; }
@@ -2031,6 +2036,43 @@ RenderEngine::renderToCurrentFramebuffer()
 #endif  // WIN32
 
     return p->render();
+}
+
+QJsonObject
+RenderEngine::inspectPrim(const SdfPath& path, QString& error)
+{
+    if (!p->stage || !p->engine || !p->engine->renderIndex()) {
+        error = QStringLiteral("No synchronized viewport renderer is available");
+        return {};
+    }
+    const auto prim = p->stage->GetPrimAtPath(path);
+    if (!prim || !UsdGeomGprim(prim)) {
+        error = QStringLiteral("inspectPrim requires an existing USD geometry prim path");
+        return {};
+    }
+    SdfPathVector mapped;
+    std::vector<HydraSelectionRprim> instances;
+    p->engine->resolveSelectionRprims(p->stage, { path }, &mapped, &instances);
+    for (const auto& instance : instances) {
+        if (std::find(mapped.begin(), mapped.end(), instance.path) == mapped.end())
+            mapped.push_back(instance.path);
+    }
+    if (mapped.empty())
+        mapped.push_back(path);
+    auto result = inspectRenderPrim(p->stage, p->engine->renderIndex(), p->engine->sceneIndices().selectionInputScene,
+                                    path, mapped, p->camera, p->settings.timeCode, p->engine->renderCollection());
+    QJsonArray mask;
+    bool included = p->mask.isEmpty();
+    for (const auto& root : p->mask) {
+        mask.append(QString::fromStdString(root.GetString()));
+        included = included || path.HasPrefix(root);
+    }
+    result.insert("mask", mask);
+    result.insert("includedByMask", included);
+    result.insert("drawMode", int(p->settings.drawMode));
+    result.insert("aov", QString::fromStdString(p->settings.aov.GetString()));
+    result.insert("doubleSidedMode", int(p->settings.doubleSidedMode));
+    return result;
 }
 
 ViewportCapture

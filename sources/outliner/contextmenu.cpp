@@ -3,8 +3,14 @@
 // https://github.com/mikaelsundell/stageviz
 
 #include "contextmenu.h"
-#include "command.h"
+#include "commandcomposition.h"
+#include "commandpayload.h"
+#include "commandprim.h"
+#include "commandproperty.h"
+#include "commandselection.h"
+#include "commandstage.h"
 #include "commandtransform.h"
+#include "commandvisibility.h"
 #include "qtutils.h"
 #include "tracelocks.h"
 #include "usdutils.h"

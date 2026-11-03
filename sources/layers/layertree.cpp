@@ -4,7 +4,7 @@
 
 #include "layertree.h"
 #include "application.h"
-#include "command.h"
+#include "commandlayer.h"
 #include "commandstack.h"
 #include "layeritem.h"
 #include "mime.h"

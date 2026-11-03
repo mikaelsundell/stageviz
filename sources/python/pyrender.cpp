@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: BSD-3-Clause
 // Copyright (c) 2026 - present Mikael Sundell
 
-#include "pyviewport.h"
+#include "pyrender.h"
 #include "application.h"
 #include "renderview.h"
 #include "viewportcapture.h"
+#include <QJsonDocument>
 #include <QPointer>
 #include <QThread>
 #include <cmath>
@@ -12,13 +13,13 @@
 
 namespace stageviz::python {
 namespace {
-    struct PyViewport {
+    struct PyRender {
         PyObject_HEAD QPointer<RenderView>* view;
     };
     struct PyCapture {
         PyObject_HEAD ViewportCapture* value;
     };
-    PyTypeObject viewportType = { PyVarObject_HEAD_INIT(nullptr, 0) };
+    PyTypeObject renderType = { PyVarObject_HEAD_INIT(nullptr, 0) };
     PyTypeObject captureType = { PyVarObject_HEAD_INIT(nullptr, 0) };
 
     PyObject* pathsToPython(const QList<SdfPath>& paths)
@@ -37,7 +38,7 @@ namespace {
         return result;
     }
 
-    void viewportDealloc(PyViewport* self)
+    void renderDealloc(PyRender* self)
     {
         delete self->view;
         Py_TYPE(self)->tp_free(reinterpret_cast<PyObject*>(self));
@@ -47,7 +48,7 @@ namespace {
         delete self->value;
         Py_TYPE(self)->tp_free(reinterpret_cast<PyObject*>(self));
     }
-    PyObject* viewportCapture(PyViewport* self, PyObject*)
+    PyObject* renderCapture(PyRender* self, PyObject*)
     {
         if (!self->view || !*self->view) {
             PyErr_SetString(PyExc_RuntimeError, "The viewport has closed");
@@ -73,6 +74,47 @@ namespace {
             return PyErr_NoMemory();
         }
         return reinterpret_cast<PyObject*>(result);
+    }
+    PyObject* renderInspectPrim(PyRender* self, PyObject* args)
+    {
+        const char* value = nullptr;
+        if (!PyArg_ParseTuple(args, "s:inspectPrim", &value))
+            return nullptr;
+        if (!SdfPath::IsValidPathString(value)) {
+            PyErr_SetString(PyExc_ValueError, "Expected an absolute USD geometry prim path");
+            return nullptr;
+        }
+        const SdfPath path(value);
+        if (!path.IsAbsolutePath() || !path.IsPrimPath() || path == SdfPath::AbsoluteRootPath()) {
+            PyErr_SetString(PyExc_ValueError, "Expected an absolute USD geometry prim path");
+            return nullptr;
+        }
+        if (!self->view || !*self->view) {
+            PyErr_SetString(PyExc_RuntimeError, "The viewport has closed");
+            return nullptr;
+        }
+        if (QThread::currentThread() != self->view->data()->thread()) {
+            PyErr_SetString(PyExc_RuntimeError, "Viewport diagnostics require the application GUI thread");
+            return nullptr;
+        }
+        QString error;
+        QJsonObject report;
+        try {
+            report = self->view->data()->inspectPrim(path, error);
+        } catch (const std::bad_alloc&) {
+            return PyErr_NoMemory();
+        }
+        if (report.isEmpty()) {
+            PyErr_SetString(PyExc_RuntimeError, error.toUtf8().constData());
+            return nullptr;
+        }
+        const QByteArray data = QJsonDocument(report).toJson(QJsonDocument::Compact);
+        PyObject* json = PyImport_ImportModule("json");
+        if (!json)
+            return nullptr;
+        PyObject* result = PyObject_CallMethod(json, "loads", "s", data.constData());
+        Py_DECREF(json);
+        return result;
     }
     PyObject* captureSize(PyCapture* self, PyObject*)
     {
@@ -182,9 +224,11 @@ namespace {
             hue += 360;
         return pathsToPython(self->value->pathsByHue(hue, tolerance, saturation, value, size_t(pixels), coverage));
     }
-    PyMethodDef viewportMethods[] = { { "capture", reinterpret_cast<PyCFunction>(viewportCapture), METH_NOARGS,
-                                        "Capture visible document colors and object paths without changing selection." },
-                                      { nullptr, nullptr, 0, nullptr } };
+    PyMethodDef renderMethods[] = { { "capture", reinterpret_cast<PyCFunction>(renderCapture), METH_NOARGS,
+                                      "Capture visible document colors and object paths without changing selection." },
+                                    { "inspectPrim", reinterpret_cast<PyCFunction>(renderInspectPrim), METH_VARARGS,
+                                      "Inspect USD visibility and last-synchronized Hydra items and buffer metadata." },
+                                    { nullptr, nullptr, 0, nullptr } };
     PyMethodDef captureMethods[] = {
         { "size", reinterpret_cast<PyCFunction>(captureSize), METH_NOARGS, "Return (width, height) in device pixels." },
         { "paths", reinterpret_cast<PyCFunction>(capturePaths), METH_NOARGS, "Return unique visible USD object paths." },
@@ -204,27 +248,27 @@ namespace {
 }  // namespace
 
 bool
-initPyViewportTypes()
+initPyRenderTypes()
 {
-    viewportType.tp_name = "stageviz.Viewport";
-    viewportType.tp_basicsize = sizeof(PyViewport);
-    viewportType.tp_flags = Py_TPFLAGS_DEFAULT;
-    viewportType.tp_dealloc = reinterpret_cast<destructor>(viewportDealloc);
-    viewportType.tp_methods = viewportMethods;
-    viewportType.tp_doc = "Weak access to the active viewport; use stageviz.viewport().";
+    renderType.tp_name = "stageviz.Render";
+    renderType.tp_basicsize = sizeof(PyRender);
+    renderType.tp_flags = Py_TPFLAGS_DEFAULT;
+    renderType.tp_dealloc = reinterpret_cast<destructor>(renderDealloc);
+    renderType.tp_methods = renderMethods;
+    renderType.tp_doc = "Weak access to the active render view; use stageviz.render().";
     captureType.tp_name = "stageviz.ViewportCapture";
     captureType.tp_basicsize = sizeof(PyCapture);
     captureType.tp_flags = Py_TPFLAGS_DEFAULT;
     captureType.tp_dealloc = reinterpret_cast<destructor>(captureDealloc);
     captureType.tp_methods = captureMethods;
-    captureType.tp_doc = "Owned color and object-ID snapshot; use viewport.capture().";
-    return PyType_Ready(&viewportType) >= 0 && PyType_Ready(&captureType) >= 0;
+    captureType.tp_doc = "Owned color and object-ID snapshot; use render.capture().";
+    return PyType_Ready(&renderType) >= 0 && PyType_Ready(&captureType) >= 0;
 }
 
 int
-addPyViewportTypes(PyObject* module)
+addPyRenderTypes(PyObject* module)
 {
-    for (auto pair : { std::make_pair("Viewport", &viewportType), std::make_pair("ViewportCapture", &captureType) }) {
+    for (auto pair : { std::make_pair("Render", &renderType), std::make_pair("ViewportCapture", &captureType) }) {
         Py_INCREF(pair.second);
         if (PyModule_AddObject(module, pair.first, reinterpret_cast<PyObject*>(pair.second)) < 0) {
             Py_DECREF(pair.second);
@@ -235,7 +279,7 @@ addPyViewportTypes(PyObject* module)
 }
 
 PyObject*
-createPyViewport()
+createPyRender()
 {
     Application* app = Application::instance();
     if (!app || QThread::currentThread() != app->thread()) {
@@ -248,7 +292,7 @@ createPyViewport()
         PyErr_SetString(PyExc_RuntimeError, "No active Stageviz viewport is available");
         return nullptr;
     }
-    auto* result = reinterpret_cast<PyViewport*>(viewportType.tp_alloc(&viewportType, 0));
+    auto* result = reinterpret_cast<PyRender*>(renderType.tp_alloc(&renderType, 0));
     if (!result)
         return nullptr;
     result->view = new (std::nothrow) QPointer<RenderView>(view);

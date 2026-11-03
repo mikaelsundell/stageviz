@@ -5,7 +5,7 @@
 #include "viewportwidget.h"
 #include "application.h"
 #include "bboxutils.h"
-#include "command.h"
+#include "commandmaterial.h"
 #include "contextmenu.h"
 #include "mime.h"
 #include "notice.h"
@@ -1715,6 +1715,21 @@ QImage
 ViewportWidget::captureImage()
 {
     return QOpenGLWidget::grabFramebuffer();
+}
+
+QJsonObject
+ViewportWidget::inspectPrim(const SdfPath& path, QString& error)
+{
+    if (QThread::currentThread() != thread()) {
+        error = QStringLiteral("Viewport diagnostics must run on the GUI thread");
+        return {};
+    }
+    if (!p->d.stage || !p->d.renderEngine) {
+        error = QStringLiteral("No rendered USD stage is available in the viewport");
+        return {};
+    }
+    READ_LOCKER(locker, p->d.context->stageLock(), "stageLock");
+    return p->d.renderEngine->inspectPrim(path, error);
 }
 
 ViewportCapture

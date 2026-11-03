@@ -8,6 +8,7 @@
 #include "selectionlist.h"
 #include "stageviz.h"
 #include "viewportcapture.h"
+#include <QJsonObject>
 #include <QOpenGLFunctions>
 #include <QOpenGLWidget>
 #include <pxr/base/tf/token.h>
@@ -109,6 +110,20 @@ public:
      * @return Owned snapshot with top-left image coordinates.
      */
     ViewportCapture captureViewport(QString& error);
+
+    /**
+     * @brief Reads current USD and last-synchronized Hydra state for one geometry prim.
+     *
+     * Does not render, read back GPU buffers, author USD, or change selection.
+     * Must run on the viewport GUI thread.
+     *
+     * @param path Exact USD geometry path, including native instance proxies.
+     * @param error Receives an unavailable-stage, renderer, or path error.
+     *
+     * @return Owned diagnostic data, or an empty object on failure.
+     */
+    QJsonObject inspectPrim(const SdfPath& path, QString& error);
+
 
 
     /**

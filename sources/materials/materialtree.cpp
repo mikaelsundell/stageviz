@@ -3,9 +3,9 @@
 // https://github.com/mikaelsundell/stageviz
 
 #include "materialtree.h"
+#include "commandproperty.h"
 
 #include "application.h"
-#include "command.h"
 #include "commandstack.h"
 #include "materialmenu.h"
 #include "materialutils.h"

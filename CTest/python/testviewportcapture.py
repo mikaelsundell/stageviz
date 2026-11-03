@@ -85,7 +85,7 @@ class ViewportCaptureTest(_base["ViewportTest"]):
         session = stageviz.session()
         selected = list(session.paths())
         before = session.stage().GetRootLayer().ExportToString()
-        self.frame = stageviz.viewport().capture()
+        self.frame = stageviz.render().capture()
         assert set(self.frame.paths()) == self.expected, self.frame.paths()
         assert set(self.frame.pathsByHue(0, tolerance=20, minPixels=8)) == self.red
         assert set(self.frame.pathsByHue(240, tolerance=20, minPixels=8)) == {"/World/Front"}
@@ -142,12 +142,74 @@ class ViewportCaptureTest(_base["ViewportTest"]):
         state.setMaterialMode(2)
         state.setDoubleSidedMode(1)
         tb.process_events(200)
-        frame = stageviz.viewport().capture()
+        frame = stageviz.render().capture()
         frame.save(str(self.directory / "capture_normal_direction_clean.png"))
         assert set(frame.pathsByHue(335, tolerance=30, minPixels=8)) == self.red, frame.prims()
         assert set(frame.pathsByHue(120, tolerance=35, minPixels=8)) == {"/World/Front"}
         self.snapshot("capture_normal_direction")
         print("PASS normal-direction diagnostic magenta selects source and proxy backfaces")
+
+    def inspect(self):
+        import json
+        session = stageviz.session()
+        viewport = stageviz.render()
+        selected = list(session.paths())
+        before = session.stage().GetRootLayer().ExportToString()
+        for path in sorted(self.expected):
+            report = viewport.inspectPrim(path)
+            assert report["usd"]["points"] == 4 and report["usd"]["faces"] == 1
+            assert report["usd"]["topologyValid"] and report["usd"]["pointsFinite"]
+            assert report["usd"]["visibilityAtViewportTime"] == "inherited"
+            assert report["includedByMask"] and report["rprims"]
+            assert any(row["present"] and row["visible"] and row["delegateVisible"]
+                       and row["drawItems"] for row in report["rprims"]), report
+            (self.directory / (path.replace("/", "_") + "_hydra.json")).write_text(json.dumps(report, indent=2))
+        assert list(session.paths()) == selected
+        assert session.stage().GetRootLayer().ExportToString() == before
+        stageviz.command.hide_paths(["/World/Front"])
+        tb.process_events(100)
+        hidden = viewport.inspectPrim("/World/Front")
+        assert hidden["usd"]["visibilityAtViewportTime"] == "invisible"
+        assert all(not row["visible"] for row in hidden["rprims"] if row["present"]), hidden
+        stageviz.command.undo()
+        tb.process_events(100)
+        assert viewport.inspectPrim("/World/Front")["usd"]["visibilityAtViewportTime"] == "inherited"
+        stageviz.command.redo()
+        tb.process_events(100)
+        assert viewport.inspectPrim("/World/Front")["usd"]["visibilityAtViewportTime"] == "invisible"
+        stageviz.command.undo()
+        tb.process_events(100)
+        for path, exception in (("relative", ValueError), ("/World/Front.points", ValueError),
+                                ("/World", RuntimeError), ("/World/Missing", RuntimeError)):
+            try:
+                viewport.inspectPrim(path)
+            except exception:
+                pass
+            else:
+                raise AssertionError("inspectPrim accepted " + path)
+        self.snapshot("hydra_inspection")
+        # Build a separate fixture: default visibility can disagree with the
+        # numeric time used by the viewport even when the timeline is at zero.
+        original_file = session.filename()
+        sampled_file = self.directory / "sampled_visibility.usda"
+        session.stage().GetRootLayer().Export(str(sampled_file))
+        sampled_stage = Usd.Stage.Open(str(sampled_file))
+        UsdGeom.Imageable(sampled_stage.GetPrimAtPath("/World/Front")).GetVisibilityAttr().Set(
+            UsdGeom.Tokens.invisible, Usd.TimeCode(0))
+        sampled_stage.GetRootLayer().Save()
+        try:
+            assert session.loadFromFile(str(sampled_file))
+            tb.process_events(200)
+            report = viewport.inspectPrim("/World/Front")
+            assert report["usd"]["visibilityDefault"] == "inherited"
+            assert report["usd"]["visibilityAtViewportTime"] == "invisible"
+            assert report["usd"]["visibilityTimeSamples"] == [0]
+            assert all(not row["delegateVisible"] for row in report["rprims"] if row["present"])
+        finally:
+            assert session.loadFromFile(original_file)
+            stageviz.command.select_paths(selected)
+            tb.process_events(200)
+        print("PASS read-only USD/Hydra diagnostics, proxy mapping, visibility undo/redo and argument boundaries")
 
     def boundaries(self):
         session = stageviz.session()
@@ -156,19 +218,19 @@ class ViewportCaptureTest(_base["ViewportTest"]):
         state.setOverrideMaterial("")
         state.setDoubleSidedMode(2)
         tb.process_events(100)
-        frame = stageviz.viewport().capture()
+        frame = stageviz.render().capture()
         assert set(frame.paths()) == {"/World/Front"}, "capture honors back-face culling"
         state.setDoubleSidedMode(1)
         stageviz.command.isolate_paths(["/World/Source"])
         tb.process_events(100)
-        frame = stageviz.viewport().capture()
+        frame = stageviz.render().capture()
         assert frame.paths() == ["/World/Source/Body"], "capture honors viewport masks"
         stageviz.command.undo()
         old = self.frame.paths()
         assert session.close()
         assert self.frame.paths() == old and set(self.frame.pathsByHue(0, tolerance=20)) == self.red
         try:
-            stageviz.viewport().capture()
+            stageviz.render().capture()
         except RuntimeError:
             pass
         else:
@@ -197,6 +259,7 @@ def run(disposable=False):
     try:
         test.setup()
         test.colors()
+        test.inspect()
         test.diagnostic()
         test.boundaries()
         return True

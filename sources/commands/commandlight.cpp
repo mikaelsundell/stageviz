@@ -2,7 +2,7 @@
 // Copyright (c) 2026 - present Mikael Sundell
 
 #include "commandlight.h"
-#include "commandutils.h"
+#include "commandprimprivate.h"
 #include <pxr/base/plug/plugin.h>
 #include <pxr/base/plug/registry.h>
 #include <pxr/usd/usdLux/cylinderLight.h>

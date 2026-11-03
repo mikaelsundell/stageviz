@@ -9,6 +9,7 @@
 #include "viewstate.h"
 #include <QColor>
 #include <QImage>
+#include <QJsonObject>
 #include <QList>
 #include <QString>
 #include <memory>
@@ -252,6 +253,20 @@ public:
      * @return Owned capture, or an empty image on failure.
      */
     ViewportCapture captureViewport(QString& error);
+
+    /**
+     * @brief Reads current USD and last-synchronized Hydra state for one geometry prim.
+     *
+     * Does not render, read back GPU buffers, author USD, or change selection.
+     * Must run on the viewport GUI thread.
+     *
+     * @param path Exact USD geometry path, including native instance proxies.
+     * @param error Receives an unavailable-stage, renderer, or path error.
+     *
+     * @return Owned diagnostic data, or an empty object on failure.
+     */
+    QJsonObject inspectPrim(const SdfPath& path, QString& error);
+
 
     /**
      * @brief Captures prims that are visible in the current viewport.

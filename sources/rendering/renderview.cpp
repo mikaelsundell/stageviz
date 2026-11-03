@@ -138,6 +138,12 @@ RenderView::captureViewport(QString& error)
     return p->viewportWidget()->captureViewport(error);
 }
 
+QJsonObject
+RenderView::inspectPrim(const SdfPath& path, QString& error)
+{
+    return p->viewportWidget()->inspectPrim(path, error);
+}
+
 void
 RenderView::captureVisible()
 {

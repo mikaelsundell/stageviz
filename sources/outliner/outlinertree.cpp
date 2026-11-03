@@ -4,7 +4,10 @@
 
 #include "outlinertree.h"
 #include "application.h"
-#include "command.h"
+#include "commandpayload.h"
+#include "commandprim.h"
+#include "commandselection.h"
+#include "commandvisibility.h"
 #include "contextmenu.h"
 #include "mime.h"
 #include "primitem.h"

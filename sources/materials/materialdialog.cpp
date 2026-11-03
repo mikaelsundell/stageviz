@@ -4,7 +4,9 @@
 
 #include "materialdialog.h"
 #include "application.h"
-#include "command.h"
+#include "commandmaterial.h"
+#include "commandprim.h"
+#include "commandproperty.h"
 #include "commandstack.h"
 #include "materialbrowser.h"
 #include "materialgraph.h"
