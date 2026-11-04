@@ -460,6 +460,7 @@ namespace stage {
     QList<SdfPath> layerPayloadPaths(UsdStageRefPtr stage, const SdfLayerHandle& layer)
     {
         QList<SdfPath> result;
+        path::PathCollector resultCollector(result);
         if (!stage || !layer)
             return result;
 
@@ -468,7 +469,7 @@ namespace stage {
                 continue;
 
             if (isPayloadInLayer(stage, layer, prim.GetPath()))
-                path::appendUnique(result, prim.GetPath());
+                resultCollector.append(prim.GetPath());
         }
         return result;
     }
@@ -477,6 +478,7 @@ namespace stage {
                                             const QList<SdfPath>& paths)
     {
         QList<SdfPath> result;
+        path::PathCollector resultCollector(result);
         if (!stage || !layer || paths.isEmpty())
             return result;
 
@@ -486,7 +488,7 @@ namespace stage {
 
             while (prim && !prim.IsPseudoRoot()) {
                 if (isPayloadInLayer(stage, layer, prim.GetPath())) {
-                    path::appendUnique(result, prim.GetPath());
+                    resultCollector.append(prim.GetPath());
                     break;
                 }
                 prim = prim.GetParent();
@@ -524,6 +526,7 @@ namespace stage {
     QList<SdfPath> outermostPayloadPaths(UsdStageRefPtr stage, const QList<SdfPath>& paths)
     {
         QList<SdfPath> result;
+        path::PathCollector resultCollector(result);
 
         if (!stage || paths.isEmpty())
             return result;
@@ -540,7 +543,7 @@ namespace stage {
                 prim = prim.GetParent();
             }
 
-            path::appendUnique(result, outermostPath);
+            resultCollector.append(outermostPath);
         }
 
         return path::topLevelPaths(result);
@@ -682,19 +685,7 @@ namespace stage {
             return result;
 
         const QList<SdfPath> roots = path::topLevelPaths(paths);
-        QSet<QString> seen;
-
-        auto appendUnique = [&](const SdfPath& path) {
-            if (path.IsEmpty())
-                return;
-
-            const QString key = qt::SdfPathToQString(path);
-            if (seen.contains(key))
-                return;
-
-            seen.insert(key);
-            result.append(path);
-        };
+        path::PathCollector collector(result);
 
         for (const SdfPath& path : roots) {
             if (path.IsEmpty())
@@ -710,13 +701,13 @@ namespace stage {
             }
 
             if (!outermostPayloadPath.IsEmpty()) {
-                appendUnique(outermostPayloadPath);
+                collector.append(outermostPayloadPath);
                 continue;
             }
 
             const QList<SdfPath> descendantPayloads = stage::descendantPayloadPaths(stage, { path });
             for (const SdfPath& descendantPayload : descendantPayloads)
-                appendUnique(descendantPayload);
+                collector.append(descendantPayload);
         }
         return path::topLevelPaths(result);
     }

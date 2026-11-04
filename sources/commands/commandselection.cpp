@@ -136,8 +136,9 @@ selectInvertInPayload()
                     return;
 
                 const QList<SdfPath> domain = stage::leafPaths(stage, scopes, false);
+                const path::PathIndex selectedRoots(previousSelection);
                 for (const SdfPath& path : domain) {
-                    if (!path::isCoveredByRoots(previousSelection, path))
+                    if (!selectedRoots.covers(path))
                         invertedSelection.append(path);
                 }
             }
@@ -187,8 +188,9 @@ selectInvertInLayer()
                     return;
 
                 const QList<SdfPath> domain = stage::layerPayloadPaths(stage, editLayer);
+                const path::PathIndex selectedRoots(selectedPayloads);
                 for (const SdfPath& path : domain) {
-                    if (!path::isCoveredByRoots(selectedPayloads, path))
+                    if (!selectedRoots.covers(path))
                         invertedSelection.append(path);
                 }
             }
@@ -377,8 +379,9 @@ selectInvert()
 
                 state->previousSelection = previousSelection;
 
+                const path::PathIndex selectedRoots(previousSelection);
                 for (const SdfPath& path : domain) {
-                    if (!path::isCoveredByRoots(previousSelection, path))
+                    if (!selectedRoots.covers(path))
                         invertedSelection.append(path);
                 }
 

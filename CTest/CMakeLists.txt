@@ -78,6 +78,8 @@ foreach(case IN ITEMS
     command_merge_api
     namespace_editor_crud_api
     usd_path_utils_api
+    indexed_path_api
+    batched_transform_authoring
     usd_stage_utils_api
     usd_payload_utils_api
     material_utils_api

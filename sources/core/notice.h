@@ -76,6 +76,29 @@ struct NoticeBatch {
     QList<NoticeEntry> entries;
 };
 
+namespace notice {
+    /**
+     * @brief Reports whether every change affects only transform properties.
+     *
+     * Unknown, prim, asset, and namespace changes deliberately return false.
+     * Use this to retain topology-derived caches, never world-space bounds.
+     */
+    inline bool onlyTransformProperties(const NoticeBatch& batch)
+    {
+        if (batch.entries.isEmpty())
+            return false;
+        for (const auto& entry : batch.entries) {
+            if (!entry.path.IsPropertyPath() || !entry.associatedPath.IsEmpty() || entry.resolvedAssetPathsResynced
+                || entry.primResyncType != UsdNotice::ObjectsChanged::PrimResyncType::Invalid)
+                return false;
+            const auto& name = entry.path.GetName();
+            if (name != "xformOpOrder" && name.rfind("xformOp:", 0) != 0)
+                return false;
+        }
+        return true;
+    }
+}  // namespace notice
+
 }  // namespace stageviz
 
 // Register for Qt signal/slot usage

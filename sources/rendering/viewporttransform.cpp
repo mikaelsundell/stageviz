@@ -10,6 +10,7 @@
 #include "commandstack.h"
 #include "commandtransform.h"
 #include "primutils.h"
+#include "usdutils.h"
 #include "qtutils.h"
 #include "session.h"
 #include "tracelocks.h"
@@ -308,9 +309,13 @@ ViewportTransformPrivate::selectedVisiblePaths() const
         return paths;
 
     paths.reserve(d.host->selectedPaths().size());
+    path::PathCollector collector(paths);
+    path::PathIndex maskRoots;
+    for (const auto& mask : d.host->maskPaths())
+        maskRoots.insert(mask.IsPropertyPath() ? mask.GetPrimPath() : mask);
     for (const SdfPath& selectedPath : d.host->selectedPaths()) {
         const SdfPath path = selectedPath.IsPropertyPath() ? selectedPath.GetPrimPath() : selectedPath;
-        if (!d.host->pathMaskedIn(path))
+        if (!d.host->maskPaths().isEmpty() && !maskRoots.covers(path))
             continue;
 
         const UsdPrim prim = d.host->stage()->GetPrimAtPath(path);
@@ -321,8 +326,7 @@ ViewportTransformPrivate::selectedVisiblePaths() const
         if (imageable && imageable.ComputeVisibility() == UsdGeomTokens->invisible)
             continue;
 
-        if (!paths.contains(path))
-            paths.append(path);
+        collector.append(path);
     }
     return paths;
 }
@@ -330,8 +334,7 @@ ViewportTransformPrivate::selectedVisiblePaths() const
 QList<SdfPath>
 ViewportTransformPrivate::visibleTargetPaths() const
 {
-    const QList<SdfPath> selectedPaths = selectedVisiblePaths();
-    return stage::transformEditTargetPaths(d.host->stage(), selectedPaths);
+    return stage::transformEditTargetPaths(d.host->stage(), selectedVisiblePaths());
 }
 
 bool
@@ -339,7 +342,7 @@ ViewportTransformPrivate::selectionPivot(GfVec3d& pivot)
 {
     PerfScope perfScope("transform.selection_pivot");
     const QList<SdfPath> selectedPaths = selectedVisiblePaths();
-    const QList<SdfPath> targetPaths = visibleTargetPaths();
+    const QList<SdfPath> targetPaths = stage::transformEditTargetPaths(d.host->stage(), selectedPaths);
     d.frame.orientationValid = false;
 
     if (selectedPaths.isEmpty() || targetPaths.isEmpty())

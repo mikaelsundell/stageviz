@@ -455,26 +455,19 @@ OutlinerTreePrivate::updateOverrideCacheForNamespaceChanges(const QList<QPair<Sd
     std::sort(effectiveRemaps.begin(), effectiveRemaps.end(), [](const auto& lhs, const auto& rhs) {
         return lhs.first.GetPathElementCount() < rhs.first.GetPathElementCount();
     });
-    for (qsizetype i = effectiveRemaps.size() - 1; i >= 0; --i) {
-        for (qsizetype j = 0; j < i; ++j) {
-            if (effectiveRemaps[i].first.HasPrefix(effectiveRemaps[j].first)) {
-                effectiveRemaps.removeAt(i);
-                break;
-            }
+    QList<QPair<SdfPath, SdfPath>> minimalRemaps;
+    path::PathIndex remappedRoots;
+    QHash<SdfPath, SdfPath> remapDestinations;
+    for (const auto& remap : effectiveRemaps) {
+        if (!remappedRoots.covers(remap.first)) {
+            minimalRemaps.append(remap);
+            remappedRoots.insert(remap.first);
+            remapDestinations.insert(remap.first, remap.second);
         }
     }
-    QList<SdfPath> effectiveRemovedPaths = removedPaths;
-    std::sort(effectiveRemovedPaths.begin(), effectiveRemovedPaths.end(), [](const SdfPath& lhs, const SdfPath& rhs) {
-        return lhs.GetPathElementCount() < rhs.GetPathElementCount();
-    });
-    for (qsizetype i = effectiveRemovedPaths.size() - 1; i >= 0; --i) {
-        for (qsizetype j = 0; j < i; ++j) {
-            if (effectiveRemovedPaths[i].HasPrefix(effectiveRemovedPaths[j])) {
-                effectiveRemovedPaths.removeAt(i);
-                break;
-            }
-        }
-    }
+    effectiveRemaps = std::move(minimalRemaps);
+    const QList<SdfPath> effectiveRemovedPaths = path::minimalRootPaths(removedPaths);
+    const path::PathIndex removedRoots(effectiveRemovedPaths);
 
     QSet<SdfPath> affectedPaths;
     auto addAncestors = [&affectedPaths](SdfPath path) {
@@ -497,24 +490,14 @@ OutlinerTreePrivate::updateOverrideCacheForNamespaceChanges(const QList<QPair<Sd
         QList<SdfPath> removed;
         QList<SdfPath> added;
         for (const SdfPath& path : paths) {
-            bool isRemoved = false;
-            for (const SdfPath& removedPath : effectiveRemovedPaths) {
-                if (path == removedPath || path.HasPrefix(removedPath)) {
-                    isRemoved = true;
-                    break;
-                }
-            }
-            if (isRemoved) {
+            if (removedRoots.covers(path)) {
                 removed.append(path);
                 continue;
             }
-
-            for (const auto& remap : effectiveRemaps) {
-                if (path == remap.first || path.HasPrefix(remap.first)) {
-                    removed.append(path);
-                    added.append(path.ReplacePrefix(remap.first, remap.second));
-                    break;
-                }
+            const SdfPath source = remappedRoots.nearestAncestor(path);
+            if (!source.IsEmpty()) {
+                removed.append(path);
+                added.append(path.ReplacePrefix(source, remapDestinations.value(source)));
             }
         }
 

@@ -17,6 +17,7 @@
 #include "console.h"
 #include "materialmenu.h"
 #include "materialutils.h"
+#include "notice.h"
 #include "rendersceneindex.h"
 #include "selectionlist.h"
 #include "session.h"
@@ -50,6 +51,7 @@
 #include <pxr/usd/sdf/schema.h>
 #include <pxr/usd/sdf/types.h>
 #include <pxr/usd/usd/attribute.h>
+#include <pxr/usd/usd/editContext.h>
 #include <pxr/usd/usd/payloads.h>
 #include <pxr/usd/usd/references.h>
 #include <pxr/usd/usd/relationship.h>
@@ -182,7 +184,8 @@ saveTwice(const QString& extension)
     session.stage()->DefinePrim(SdfPath("/World/First"));
     require(session.saveToFile(path), "first save");
     require(!session.stage()->GetRootLayer()->IsAnonymous(), "first save retargets anonymous root layer");
-    require(session.stage()->GetRootLayer()->GetRealPath() == path.toStdString(),
+    require(QDir::fromNativeSeparators(QString::fromStdString(session.stage()->GetRootLayer()->GetRealPath()))
+                == QDir::fromNativeSeparators(path),
             "first save retargets root layer to destination");
     require(!session.stage()->GetRootLayer()->IsDirty(), "first save clears root dirty state");
 
@@ -1663,6 +1666,127 @@ usdPathUtilsApi()
     require(stageviz::stage::remapChildOrder(order, TfToken("B"), TfToken("X"))
                 == TfTokenVector({ TfToken("A"), TfToken("X"), TfToken("C") }),
             "remap child order token");
+}
+
+void
+indexedPathApi()
+{
+    const QList<SdfPath> roots { SdfPath("/A"), SdfPath("/A/B"), SdfPath("/C.attr"),
+                               SdfPath("Relative"), SdfPath("/Variant{model=x}"), SdfPath() };
+    const stageviz::path::PathIndex index(roots);
+    for (const auto& path : { SdfPath("/A/B/C"), SdfPath("/AB"), SdfPath("/C"), SdfPath("/C.attr"),
+                             SdfPath("Relative/Child"), SdfPath("Other"), SdfPath("/Variant{model=x}Child"),
+                             SdfPath(), SdfPath("/") }) {
+        bool covered = false;
+        for (const auto& root : roots)
+            covered = covered || (!root.IsEmpty() && path.HasPrefix(root));
+        require(index.covers(path) == covered, "indexed coverage matches USD prefix semantics");
+    }
+    require(index.nearestAncestor(SdfPath("/A/B/C")) == SdfPath("/A/B"), "nearest indexed ancestor");
+    require(index.outermostAncestor(SdfPath("/A/B/C")) == SdfPath("/A"), "outermost indexed ancestor");
+    const stageviz::path::PathRelations relations({ SdfPath("/A/B"), SdfPath("/C.attr") });
+    require(relations.intersects(SdfPath("/A")) && relations.intersects(SdfPath("/A/B/C"))
+                && !relations.intersects(SdfPath("/AB")) && !relations.intersects(SdfPath()),
+            "relation index tests both ancestors and descendants without sibling collisions");
+    const QList<SdfPath> relativeRoots { SdfPath(".."), SdfPath("../A"), SdfPath("Relative") };
+    const stageviz::path::PathIndex relativeIndex(relativeRoots);
+    for (const auto& query : { SdfPath(".."), SdfPath("../A/B"), SdfPath("../../B"), SdfPath(".") }) {
+        bool covered = false;
+        for (const auto& root : relativeRoots)
+            covered = covered || query.HasPrefix(root);
+        require(relativeIndex.covers(query) == covered, "relative parent queries terminate and preserve USD semantics");
+    }
+    require(!stageviz::path::PathIndex().covers(SdfPath("/A")), "empty index covers nothing");
+    require(stageviz::path::PathIndex({ SdfPath("/") }).covers(SdfPath("/A")), "absolute root covers prims");
+    QList<SdfPath> inputs;
+    for (int i = 0; i < 50000; ++i) {
+        const SdfPath path("/World/P" + std::to_string(i) + "/Child");
+        inputs.append(path);
+        inputs.append(path);
+    }
+    inputs.append(SdfPath("/World"));
+    require(stageviz::path::stableRootPaths(inputs) == QList<SdfPath> { SdfPath("/World") },
+            "late ancestor reduces a large duplicate selection");
+    inputs = { SdfPath("/B/Child"), SdfPath("/A"), SdfPath("/B"), SdfPath("/A"), SdfPath() };
+    require(stageviz::path::stableRootPaths(inputs) == QList<SdfPath> { SdfPath("/A"), SdfPath("/B") },
+            "stable roots retain surviving input order");
+    QList<SdfPath> output { SdfPath("/A") };
+    stageviz::path::PathCollector collector(output);
+    for (const auto& path : inputs)
+        collector.append(path);
+    require(output == QList<SdfPath> { SdfPath("/A"), SdfPath("/B/Child"), SdfPath("/B") },
+            "collector preserves initial values and insertion order");
+    stageviz::NoticeBatch batch;
+    stageviz::NoticeEntry entry;
+    entry.path = SdfPath("/A.xformOp:transform");
+    entry.changedInfoOnly = true;
+    batch.entries.append(entry);
+    require(stageviz::notice::onlyTransformProperties(batch), "transform values retain topology counts");
+    batch.entries.first().changedInfoOnly = false;
+    require(stageviz::notice::onlyTransformProperties(batch), "new transform attributes retain topology counts");
+    batch.entries.first().path = SdfPath("/A.points");
+    require(!stageviz::notice::onlyTransformProperties(batch), "geometry changes invalidate counts");
+    batch.entries.first().path = SdfPath("/A");
+    require(!stageviz::notice::onlyTransformProperties(batch), "prim changes invalidate counts");
+}
+
+void
+batchedTransformAuthoring()
+{
+    const auto source = UsdStage::CreateInMemory();
+    QList<SdfPath> paths;
+    for (int i = 0; i < 1000; ++i) {
+        const SdfPath path("/World/Assembly/P" + std::to_string(i));
+        UsdGeomCube::Define(source, path);
+        paths.append(path);
+    }
+    const auto stage = UsdStage::CreateInMemory();
+    stage->GetRootLayer()->GetSubLayerPaths().push_back(source->GetRootLayer()->GetIdentifier());
+    // An existing inert ancestor must survive; only our new Assembly over goes.
+    SdfCreatePrimInLayer(stage->GetRootLayer(), SdfPath("/World"));
+    std::string original;
+    stage->GetRootLayer()->ExportToString(&original);
+    stageviz::TransformOperation operation;
+    QString error;
+    require(stageviz::beginTransformOperation(stage, paths, operation, error), "capture composed transform targets");
+    QStringList errors;
+    const auto prepared = stageviz::prepareTransforms(stage, operation.paths, operation.edit.before, &errors);
+    require(errors.isEmpty() && prepared.size() == paths.size(), "batch creates previously absent attributes");
+    const GfMatrix4d delta = GfMatrix4d(1).SetTranslate(GfVec3d(3, 4, 5));
+    require(stageviz::applyTransformOperation(stage, operation, prepared, delta, &errors), "batch preview applies");
+    UsdGeomXformCache cache(UsdTimeCode::Default());
+    for (const auto& path : paths)
+        require(GfIsClose(cache.GetLocalToWorldTransform(stage->GetPrimAtPath(path)), delta, 1e-8),
+                "all composed targets receive preview");
+    require(stageviz::restoreTransformOperation(stage, operation, &errors), "batch undo restores opinions");
+    std::string restored;
+    stage->GetRootLayer()->ExportToString(&restored);
+    require(restored == original, "batch undo removes new ancestors and retains preexisting inert overs");
+    require(!source->GetPrimAtPath(paths.first()).GetAttribute(TfToken("xformOp:transform")),
+            "weaker geometry remains unchanged");
+
+    const auto variantStage = UsdStage::CreateInMemory();
+    const auto model = UsdGeomXform::Define(variantStage, SdfPath("/Model"));
+    auto variants = model.GetPrim().GetVariantSets().AddVariantSet("shape");
+    variants.AddVariant("test");
+    variants.SetVariantSelection("test");
+    {
+        UsdEditContext context(variants.GetVariantEditContext());
+        UsdGeomCube::Define(variantStage, SdfPath("/Model/Child"));
+    }
+    variantStage->GetRootLayer()->ExportToString(&original);
+    UsdEditContext context(variants.GetVariantEditContext());
+    require(stageviz::beginTransformOperation(variantStage, { SdfPath("/Model/Child") }, operation, error),
+            "capture mapped variant transform target");
+    const auto mapped = stageviz::prepareTransforms(variantStage, operation.paths, operation.edit.before, &errors);
+    require(errors.isEmpty() && mapped.size() == 1, "prepare mapped variant transform override");
+    require(stageviz::applyTransformOperation(variantStage, operation, mapped, delta, &errors),
+            "apply mapped variant transform");
+    require(!variantStage->GetRootLayer()->GetPrimAtPath(SdfPath("/Model/Child")),
+            "mapped transform never authors outside its variant");
+    require(stageviz::restoreTransformOperation(variantStage, operation, &errors), "restore mapped transform");
+    variantStage->GetRootLayer()->ExportToString(&restored);
+    require(restored == original, "mapped transform undo restores exact layer text");
 }
 
 void
@@ -3827,6 +3951,8 @@ main(int argc, char** argv)
         { "command_merge_api", commandMergeApi },
         { "namespace_editor_crud_api", namespaceEditorCrudApi },
         { "usd_path_utils_api", usdPathUtilsApi },
+        { "indexed_path_api", indexedPathApi },
+        { "batched_transform_authoring", batchedTransformAuthoring },
         { "usd_stage_utils_api", usdStageUtilsApi },
         { "usd_payload_utils_api", usdPayloadUtilsApi },
         { "material_utils_api", materialUtilsApi },
