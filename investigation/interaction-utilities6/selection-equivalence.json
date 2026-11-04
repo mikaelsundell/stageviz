@@ -1,0 +1,20 @@
+[
+  {
+    "phase": "sweep_cold",
+    "beforeCount": 49296,
+    "afterCount": 49296,
+    "identicalOrder": true
+  },
+  {
+    "phase": "sweep_warm",
+    "beforeCount": 49296,
+    "afterCount": 49296,
+    "identicalOrder": true
+  },
+  {
+    "phase": "invert_selection",
+    "beforeCount": 366874,
+    "afterCount": 366874,
+    "identicalOrder": true
+  }
+]

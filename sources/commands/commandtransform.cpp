@@ -1083,15 +1083,11 @@ prepareTransforms(const UsdStageRefPtr& stage, const QList<SdfPath>& paths, cons
                 return rejected();
             }
             const auto matrixPath = plan.specPath.AppendProperty(TfToken("xformOp:transform"));
-            auto matrix = editLayer->GetAttributeAtPath(matrixPath);
-            if (!matrix)
-                matrix = SdfAttributeSpec::New(primSpec, "xformOp:transform", SdfValueTypeNames->Matrix4d,
-                                               SdfVariabilityVarying, false);
+            const auto matrix = layer::ensureAttributeSpec(editLayer, matrixPath, SdfValueTypeNames->Matrix4d,
+                                                           SdfVariabilityVarying, false);
             const auto orderPath = plan.specPath.AppendProperty(TfToken("xformOpOrder"));
-            auto order = editLayer->GetAttributeAtPath(orderPath);
-            if (!order)
-                order = SdfAttributeSpec::New(primSpec, "xformOpOrder", SdfValueTypeNames->TokenArray,
-                                              SdfVariabilityUniform, false);
+            const auto order = layer::ensureAttributeSpec(editLayer, orderPath, SdfValueTypeNames->TokenArray,
+                                                          SdfVariabilityUniform, false);
             if (!matrix || !order || matrix->GetTypeName() != SdfValueTypeNames->Matrix4d) {
                 if (errors)
                     errors->append(QString("invalid transform attribute spec: %1").arg(pathText(plan.specPath)));
@@ -1208,6 +1204,7 @@ applyPreparedTransforms(const UsdStageRefPtr& stage, const QList<PreparedTransfo
 bool
 restoreTransformOperation(const UsdStageRefPtr& stage, const TransformOperation& operation, QStringList* errors)
 {
+    PerfScope perfScope("transform.restore_operation");
     QString error;
     const auto layer = currentEditLayer(stage, error);
     if (!layer || operation.paths.size() != operation.edit.beforeState.size()) {

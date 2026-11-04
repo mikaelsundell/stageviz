@@ -41,6 +41,20 @@
 namespace stageviz {
 
 namespace layer {
+    SdfAttributeSpecHandle ensureAttributeSpec(const SdfLayerHandle& layer, const SdfPath& specPath,
+                                              const SdfValueTypeName& type, SdfVariability variability, bool custom)
+    {
+        if (!layer || !layer->PermissionToEdit() || !specPath.IsPrimPropertyPath() || !type)
+            return {};
+        const auto existing = layer->GetAttributeAtPath(specPath);
+        if (existing)
+            return existing->GetTypeName() == type ? existing : SdfAttributeSpecHandle();
+        // GetPrimPath strips a trailing variant selection. A spec property's
+        // actual owner is its parent path, including that variant selection.
+        const auto prim = SdfCreatePrimInLayer(layer, specPath.GetParentPath());
+        return prim ? SdfAttributeSpec::New(prim, specPath.GetName(), type, variability, custom)
+                    : SdfAttributeSpecHandle();
+    }
     bool validatePrim(const UsdStageRefPtr& stage, const SdfLayerHandle& layer, const SdfPath& path, QString& error,
                       bool requireStrongest)
     {

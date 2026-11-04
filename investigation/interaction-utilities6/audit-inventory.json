@@ -1,0 +1,3744 @@
+{
+  "files": 209,
+  "inventory": [
+    {
+      "path": "scripts/deploywin.py",
+      "lines": 571,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/app/application.cpp",
+      "lines": 169,
+      "matches": {
+        "loops": [
+          79,
+          151
+        ],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/app/application.h",
+      "lines": 185,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/app/githubclient.cpp",
+      "lines": 165,
+      "matches": {
+        "loops": [
+          88,
+          114
+        ],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/app/githubclient.h",
+      "lines": 110,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/app/main.cpp",
+      "lines": 59,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/app/viewer.cpp",
+      "lines": 3649,
+      "matches": {
+        "loops": [
+          794,
+          987,
+          1217,
+          1263,
+          1404,
+          1454,
+          1520,
+          1594,
+          1645,
+          1690,
+          1740,
+          2106,
+          2507,
+          2519,
+          2651,
+          2677,
+          2680,
+          2683,
+          2698,
+          2703,
+          2705,
+          2707,
+          2758,
+          2794,
+          2799,
+          3026,
+          3034,
+          3053,
+          3073,
+          3079,
+          3090,
+          3106,
+          3126,
+          3132,
+          3172,
+          3208,
+          3252,
+          3438
+        ],
+        "membership": [
+          807,
+          896,
+          925,
+          940,
+          955,
+          970,
+          1275,
+          1759,
+          3477,
+          3535,
+          3568
+        ],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/app/viewer.h",
+      "lines": 112,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/commands/command.h",
+      "lines": 88,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/commands/commandcomposition.cpp",
+      "lines": 859,
+      "matches": {
+        "loops": [
+          113,
+          423,
+          460,
+          568,
+          720,
+          813
+        ],
+        "membership": [
+          70,
+          521,
+          757,
+          758,
+          820,
+          821
+        ],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/commands/commandcomposition.h",
+      "lines": 95,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/commands/commandlayer.cpp",
+      "lines": 490,
+      "matches": {
+        "loops": [
+          138,
+          205,
+          210,
+          254,
+          290,
+          313,
+          445
+        ],
+        "membership": [
+          309
+        ],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/commands/commandlayer.h",
+      "lines": 67,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/commands/commandlight.cpp",
+      "lines": 82,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/commands/commandlight.h",
+      "lines": 32,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/commands/commandmaterial.cpp",
+      "lines": 1635,
+      "matches": {
+        "loops": [
+          413,
+          433,
+          473,
+          526,
+          588,
+          805,
+          856,
+          1501,
+          1604
+        ],
+        "membership": [
+          304,
+          305,
+          357,
+          358,
+          436,
+          476,
+          552,
+          591,
+          723,
+          724,
+          766,
+          823,
+          861,
+          1024,
+          1025,
+          1068,
+          1069,
+          1174,
+          1175,
+          1233,
+          1234,
+          1546,
+          1547,
+          1611,
+          1612
+        ],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/commands/commandmaterial.h",
+      "lines": 177,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/commands/commandpayload.cpp",
+      "lines": 635,
+      "matches": {
+        "loops": [
+          34,
+          38,
+          62,
+          72,
+          116,
+          144,
+          201,
+          236,
+          310,
+          318,
+          357,
+          437,
+          517,
+          588
+        ],
+        "membership": [
+          40,
+          47,
+          67,
+          74,
+          81,
+          150,
+          202,
+          312
+        ],
+        "prefix": [
+          39,
+          73
+        ],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/commands/commandpayload.h",
+      "lines": 71,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/commands/commandpivot.cpp",
+      "lines": 192,
+      "matches": {
+        "loops": [
+          25,
+          26,
+          92,
+          132,
+          146,
+          169
+        ],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/commands/commandpivot.h",
+      "lines": 66,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/commands/commandprim.cpp",
+      "lines": 2662,
+      "matches": {
+        "loops": [
+          80,
+          89,
+          93,
+          106,
+          128,
+          144,
+          217,
+          228,
+          282,
+          307,
+          309,
+          363,
+          387,
+          398,
+          419,
+          437,
+          455,
+          458,
+          517,
+          526,
+          536,
+          641,
+          669,
+          686,
+          847,
+          859,
+          868,
+          956,
+          971,
+          1104,
+          1115,
+          1123,
+          1245,
+          1267,
+          1323,
+          1411,
+          1484,
+          1548,
+          1549,
+          1557,
+          1558,
+          1594,
+          1595,
+          1596,
+          1630,
+          1631,
+          1671,
+          1672,
+          1678,
+          1705,
+          1706,
+          1750,
+          2024,
+          2070,
+          2088,
+          2136,
+          2137,
+          2179,
+          2186,
+          2201,
+          2313,
+          2406,
+          2413,
+          2433,
+          2452,
+          2457,
+          2470,
+          2483,
+          2528,
+          2534,
+          2536,
+          2586,
+          2598,
+          2616,
+          2623
+        ],
+        "membership": [
+          218,
+          405,
+          731,
+          1006,
+          2054,
+          2346,
+          2353,
+          2389,
+          2395
+        ],
+        "prefix": [
+          81,
+          132,
+          389,
+          2026,
+          2138,
+          2326
+        ],
+        "sdf_batch": [
+          414,
+          436
+        ]
+      }
+    },
+    {
+      "path": "sources/commands/commandprim.h",
+      "lines": 206,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/commands/commandprimprivate.h",
+      "lines": 31,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/commands/commandproperty.cpp",
+      "lines": 1352,
+      "matches": {
+        "loops": [
+          109,
+          195,
+          257,
+          303,
+          316,
+          361,
+          437,
+          441,
+          479,
+          491,
+          543,
+          614,
+          686,
+          775,
+          860,
+          916,
+          987,
+          999,
+          1087,
+          1170,
+          1180,
+          1186,
+          1197,
+          1226,
+          1245,
+          1311,
+          1323
+        ],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": [
+          315,
+          360,
+          490,
+          542
+        ]
+      }
+    },
+    {
+      "path": "sources/commands/commandproperty.h",
+      "lines": 169,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/commands/commandselection.cpp",
+      "lines": 415,
+      "matches": {
+        "loops": [
+          140,
+          192,
+          299,
+          307,
+          383
+        ],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/commands/commandselection.h",
+      "lines": 111,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/commands/commandstage.cpp",
+      "lines": 335,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/commands/commandstage.h",
+      "lines": 54,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/commands/commandtransform.cpp",
+      "lines": 1350,
+      "matches": {
+        "loops": [
+          94,
+          132,
+          151,
+          180,
+          185,
+          207,
+          217,
+          228,
+          229,
+          291,
+          317,
+          318,
+          416,
+          512,
+          579,
+          667,
+          729,
+          819,
+          865,
+          879,
+          889,
+          923,
+          943,
+          950,
+          951,
+          973,
+          975,
+          1012,
+          1034,
+          1051,
+          1078,
+          1103,
+          1121,
+          1157,
+          1181,
+          1186,
+          1190,
+          1216,
+          1223,
+          1233,
+          1234,
+          1240
+        ],
+        "membership": [
+          1123
+        ],
+        "prefix": [],
+        "sdf_batch": [
+          1032,
+          1077,
+          1180,
+          1222
+        ]
+      }
+    },
+    {
+      "path": "sources/commands/commandtransform.h",
+      "lines": 279,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/commands/commandtransformprivate.h",
+      "lines": 57,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/commands/commandutils.cpp",
+      "lines": 229,
+      "matches": {
+        "loops": [
+          119
+        ],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/commands/commandutils.h",
+      "lines": 227,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/commands/commandvisibility.cpp",
+      "lines": 368,
+      "matches": {
+        "loops": [
+          42,
+          63,
+          101,
+          110,
+          115,
+          167,
+          224,
+          288,
+          345
+        ],
+        "membership": [
+          95
+        ],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/commands/commandvisibility.h",
+      "lines": 43,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/core/commandstack.cpp",
+      "lines": 215,
+      "matches": {
+        "loops": [
+          35,
+          43,
+          51,
+          197
+        ],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/core/commandstack.h",
+      "lines": 152,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/core/notice.h",
+      "lines": 106,
+      "matches": {
+        "loops": [
+          90
+        ],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/core/paths.h",
+      "lines": 46,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/core/perfscope.h",
+      "lines": 73,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/core/profile.cpp",
+      "lines": 404,
+      "matches": {
+        "loops": [
+          117,
+          147,
+          321,
+          328,
+          342,
+          363,
+          378,
+          386
+        ],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/core/profile.h",
+      "lines": 115,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/core/roles.h",
+      "lines": 48,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/core/selectionlist.cpp",
+      "lines": 153,
+      "matches": {
+        "loops": [
+          42,
+          60,
+          82,
+          95,
+          99,
+          112
+        ],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/core/selectionlist.h",
+      "lines": 138,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/core/session.cpp",
+      "lines": 2232,
+      "matches": {
+        "loops": [
+          145,
+          153,
+          160,
+          200,
+          202,
+          539,
+          588,
+          597,
+          616,
+          760,
+          817,
+          872,
+          878,
+          899,
+          903,
+          911,
+          918,
+          957,
+          1036,
+          1084,
+          1104,
+          1131,
+          1154,
+          1161,
+          1174,
+          1369,
+          1377,
+          1379,
+          1607,
+          1702,
+          1749,
+          1756,
+          1780,
+          1846,
+          1866
+        ],
+        "membership": [
+          569,
+          1078,
+          1090,
+          1096,
+          1098,
+          1109,
+          1126,
+          1151,
+          1167,
+          1176,
+          1194,
+          1196,
+          1199,
+          1201,
+          1204,
+          1211,
+          1213,
+          1220,
+          1222,
+          1224,
+          1226,
+          1228,
+          1230,
+          1232,
+          1245,
+          1259,
+          1261,
+          1263,
+          1265,
+          1269,
+          1274,
+          1279,
+          1281,
+          1290,
+          1294,
+          1297,
+          1300,
+          1302,
+          1305,
+          1308,
+          1311,
+          1320,
+          1327,
+          1338,
+          1340,
+          1343,
+          1346
+        ],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/core/session.h",
+      "lines": 617,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/core/settings.cpp",
+      "lines": 44,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/core/settings.h",
+      "lines": 54,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/core/signalguard.cpp",
+      "lines": 85,
+      "matches": {
+        "loops": [
+          46,
+          58
+        ],
+        "membership": [
+          34
+        ],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/core/signalguard.h",
+      "lines": 117,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/core/threadutils.cpp",
+      "lines": 25,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/core/threadutils.h",
+      "lines": 94,
+      "matches": {
+        "loops": [
+          66,
+          80
+        ],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/core/tracelocks.h",
+      "lines": 298,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/core/viewcamera.cpp",
+      "lines": 878,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/core/viewcamera.h",
+      "lines": 521,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/core/viewcontext.cpp",
+      "lines": 121,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/core/viewcontext.h",
+      "lines": 130,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/core/viewstate.cpp",
+      "lines": 474,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/core/viewstate.h",
+      "lines": 579,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/layers/layerdialog.cpp",
+      "lines": 245,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/layers/layerdialog.h",
+      "lines": 56,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/layers/layeritem.cpp",
+      "lines": 170,
+      "matches": {
+        "loops": [
+          146,
+          160
+        ],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/layers/layeritem.h",
+      "lines": 127,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/layers/layertree.cpp",
+      "lines": 899,
+      "matches": {
+        "loops": [
+          68,
+          164,
+          167,
+          189,
+          192,
+          202,
+          219,
+          231,
+          236,
+          240,
+          263,
+          266,
+          296,
+          307,
+          346,
+          376,
+          388,
+          395,
+          401,
+          405,
+          417,
+          420,
+          429,
+          440,
+          458,
+          536,
+          581,
+          593,
+          729,
+          750,
+          753
+        ],
+        "membership": [
+          181,
+          185,
+          215,
+          266,
+          268,
+          269,
+          390,
+          423,
+          433,
+          441,
+          471
+        ],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/layers/layertree.h",
+      "lines": 116,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/materials/materialbrowser.cpp",
+      "lines": 1637,
+      "matches": {
+        "loops": [
+          241,
+          294,
+          505,
+          555,
+          562,
+          571,
+          685,
+          708,
+          784,
+          810,
+          814,
+          818,
+          825,
+          864,
+          884,
+          924,
+          930,
+          954,
+          967,
+          989,
+          1000,
+          1009,
+          1018,
+          1050,
+          1088,
+          1092,
+          1096,
+          1111,
+          1152,
+          1162,
+          1275,
+          1576
+        ],
+        "membership": [
+          388,
+          548,
+          788,
+          789,
+          790,
+          826,
+          1001,
+          1019,
+          1288,
+          1562
+        ],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/materials/materialbrowser.h",
+      "lines": 188,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/materials/materialdialog.cpp",
+      "lines": 1976,
+      "matches": {
+        "loops": [
+          192,
+          194,
+          244,
+          246,
+          332,
+          334,
+          340,
+          569,
+          756,
+          764,
+          799,
+          850,
+          870,
+          890,
+          921,
+          949,
+          965,
+          984,
+          991,
+          999,
+          1116,
+          1135,
+          1320,
+          1369,
+          1438,
+          1547,
+          1580,
+          1602,
+          1608,
+          1631,
+          1637,
+          1658,
+          1691,
+          1718,
+          1861,
+          1899,
+          1911,
+          1931
+        ],
+        "membership": [
+          227,
+          228,
+          229,
+          1865
+        ],
+        "prefix": [
+          1244,
+          1609,
+          1638
+        ],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/materials/materialdialog.h",
+      "lines": 39,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/materials/materialgraph.cpp",
+      "lines": 1774,
+      "matches": {
+        "loops": [
+          202,
+          204,
+          464,
+          475,
+          552,
+          561,
+          571,
+          585,
+          614,
+          630,
+          656,
+          687,
+          711,
+          716,
+          726,
+          729,
+          740,
+          754,
+          779,
+          788,
+          790,
+          811,
+          820,
+          848,
+          866,
+          874,
+          890,
+          906,
+          918,
+          951,
+          980,
+          1003,
+          1014,
+          1023,
+          1035,
+          1108,
+          1174,
+          1192,
+          1263,
+          1290,
+          1307,
+          1312,
+          1316,
+          1339,
+          1355
+        ],
+        "membership": [
+          530,
+          553,
+          562,
+          573,
+          587,
+          616,
+          638,
+          641,
+          645,
+          648,
+          673,
+          676,
+          705,
+          712,
+          912,
+          913,
+          914,
+          939,
+          984,
+          995,
+          1004,
+          1024,
+          1270,
+          1295
+        ],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/materials/materialgraph.h",
+      "lines": 142,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/materials/materialitem.cpp",
+      "lines": 119,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/materials/materialitem.h",
+      "lines": 103,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/materials/materiallist.cpp",
+      "lines": 15,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/materials/materiallist.h",
+      "lines": 34,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/materials/materialmenu.cpp",
+      "lines": 549,
+      "matches": {
+        "loops": [
+          92,
+          122,
+          153,
+          160,
+          166,
+          186,
+          209,
+          216,
+          224,
+          259,
+          326,
+          366,
+          374,
+          391,
+          396,
+          435,
+          441,
+          464
+        ],
+        "membership": [
+          93,
+          125,
+          188,
+          449,
+          450,
+          451,
+          452,
+          453
+        ],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/materials/materialmenu.h",
+      "lines": 142,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/materials/materialrenderer.cpp",
+      "lines": 996,
+      "matches": {
+        "loops": [
+          214,
+          219,
+          239,
+          253,
+          256,
+          274,
+          490,
+          519,
+          537,
+          701,
+          971
+        ],
+        "membership": [],
+        "prefix": [
+          521,
+          973
+        ],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/materials/materialrenderer.h",
+      "lines": 116,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/materials/materialswatch.cpp",
+      "lines": 209,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/materials/materialswatch.h",
+      "lines": 56,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/materials/materialtree.cpp",
+      "lines": 1633,
+      "matches": {
+        "loops": [
+          242,
+          472,
+          530,
+          538,
+          562,
+          568,
+          583,
+          612,
+          790,
+          828,
+          870,
+          926,
+          954,
+          982,
+          989,
+          1012,
+          1090,
+          1102,
+          1114,
+          1148,
+          1166,
+          1198,
+          1241,
+          1278,
+          1296,
+          1299,
+          1477,
+          1494
+        ],
+        "membership": [
+          1235,
+          1242,
+          1261,
+          1281
+        ],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/materials/materialtree.h",
+      "lines": 156,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/materials/materialutils.cpp",
+      "lines": 2879,
+      "matches": {
+        "loops": [
+          90,
+          140,
+          159,
+          277,
+          467,
+          514,
+          799,
+          804,
+          824,
+          866,
+          958,
+          974,
+          1039,
+          1054,
+          1119,
+          1136,
+          1181,
+          1228,
+          1235,
+          1240,
+          1244,
+          1251,
+          1255,
+          1287,
+          1297,
+          1309,
+          1325,
+          1405,
+          1434,
+          1484,
+          1512,
+          1615,
+          1621,
+          1637,
+          1685,
+          1699,
+          1701,
+          1706,
+          1708,
+          1714,
+          1731,
+          1760,
+          1841,
+          1843,
+          1856,
+          1865,
+          1893,
+          1946,
+          1981,
+          2053,
+          2065,
+          2090,
+          2149,
+          2185,
+          2296,
+          2460,
+          2486,
+          2491,
+          2536,
+          2613,
+          2659,
+          2692,
+          2762,
+          2777,
+          2787
+        ],
+        "membership": [
+          455,
+          791,
+          858,
+          1353,
+          1406,
+          1616,
+          1686,
+          1762,
+          1795,
+          1825,
+          2000,
+          2024,
+          2026,
+          2027,
+          2613,
+          2626,
+          2628
+        ],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/materials/materialutils.h",
+      "lines": 413,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/mcp/mcpserver.cpp",
+      "lines": 582,
+      "matches": {
+        "loops": [
+          122,
+          148,
+          241,
+          395,
+          412,
+          459,
+          469,
+          501,
+          508,
+          559
+        ],
+        "membership": [
+          319
+        ],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/mcp/mcpserver.h",
+      "lines": 89,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/outliner/contextmenu.cpp",
+      "lines": 580,
+      "matches": {
+        "loops": [
+          47,
+          60,
+          72,
+          81,
+          95,
+          164,
+          172,
+          180,
+          212,
+          228,
+          252,
+          267,
+          284,
+          305,
+          311,
+          312,
+          320,
+          348
+        ],
+        "membership": [
+          61
+        ],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/outliner/contextmenu.h",
+      "lines": 48,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/outliner/indextree.cpp",
+      "lines": 436,
+      "matches": {
+        "loops": [
+          102,
+          109,
+          124,
+          125,
+          172,
+          179,
+          185,
+          212,
+          213,
+          241,
+          312,
+          321,
+          374,
+          386,
+          387,
+          409,
+          413
+        ],
+        "membership": [
+          107,
+          191,
+          198,
+          213,
+          236,
+          343,
+          345,
+          388,
+          430,
+          432
+        ],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/outliner/indextree.h",
+      "lines": 167,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/outliner/outlinertree.cpp",
+      "lines": 2758,
+      "matches": {
+        "loops": [
+          257,
+          272,
+          310,
+          312,
+          385,
+          391,
+          409,
+          428,
+          431,
+          433,
+          444,
+          461,
+          474,
+          482,
+          486,
+          492,
+          504,
+          506,
+          515,
+          518,
+          520,
+          531,
+          566,
+          576,
+          580,
+          584,
+          609,
+          613,
+          623,
+          625,
+          659,
+          673,
+          707,
+          712,
+          726,
+          751,
+          758,
+          767,
+          788,
+          814,
+          843,
+          905,
+          911,
+          942,
+          950,
+          959,
+          967,
+          1136,
+          1140,
+          1173,
+          1209,
+          1213,
+          1259,
+          1272,
+          1285,
+          1295,
+          1301,
+          1308,
+          1320,
+          1327,
+          1339,
+          1395,
+          1415,
+          1428,
+          1436,
+          1451,
+          1457,
+          1482,
+          1515,
+          1525,
+          1541,
+          1544,
+          1604,
+          1634,
+          1639,
+          1652,
+          1679,
+          1688,
+          1717,
+          1741,
+          1759,
+          1833,
+          1848,
+          2075,
+          2087,
+          2104,
+          2114,
+          2120,
+          2127,
+          2136,
+          2145,
+          2158,
+          2171,
+          2258,
+          2310,
+          2324,
+          2349,
+          2351,
+          2561,
+          2577,
+          2677,
+          2728
+        ],
+        "membership": [
+          364,
+          434,
+          521,
+          943,
+          1286,
+          1310,
+          1437,
+          1458,
+          1563,
+          1589,
+          1749,
+          1753,
+          2105,
+          2129,
+          2352,
+          2540
+        ],
+        "prefix": [
+          354,
+          1545,
+          2243,
+          2631,
+          2729
+        ],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/outliner/outlinertree.h",
+      "lines": 296,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/outliner/outlinerview.cpp",
+      "lines": 298,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/outliner/outlinerview.h",
+      "lines": 68,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/outliner/primitem.cpp",
+      "lines": 326,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/outliner/primitem.h",
+      "lines": 130,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/platform/os.h",
+      "lines": 81,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/platform/os_win.cpp",
+      "lines": 55,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/properties/propertyitem.cpp",
+      "lines": 256,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/properties/propertyitem.h",
+      "lines": 203,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/properties/propertytree.cpp",
+      "lines": 4177,
+      "matches": {
+        "loops": [
+          601,
+          707,
+          708,
+          1518,
+          1579,
+          1613,
+          1656,
+          1672,
+          1707,
+          1788,
+          1819,
+          1870,
+          1898,
+          1953,
+          2089,
+          2111,
+          2133,
+          2151,
+          2173,
+          2266,
+          2277,
+          2320,
+          2410,
+          2444,
+          2467,
+          2503,
+          2522,
+          2531,
+          2560,
+          2580,
+          2594,
+          2597,
+          2616,
+          2625,
+          2639,
+          2652,
+          2672,
+          2707,
+          2722,
+          2724,
+          2734,
+          2735,
+          2755,
+          2774,
+          2783,
+          2793,
+          2795,
+          2811,
+          2850,
+          2912,
+          2934,
+          2947,
+          2950,
+          2966,
+          2981,
+          2989,
+          3030,
+          3074,
+          3087,
+          3090,
+          3091,
+          3195,
+          3218,
+          3285,
+          3304,
+          3423,
+          3481,
+          3517,
+          3551,
+          3601,
+          3641,
+          3651,
+          3684,
+          3714,
+          3798,
+          3833,
+          3843,
+          3998,
+          4005,
+          4022,
+          4035,
+          4047,
+          4054
+        ],
+        "membership": [
+          4010,
+          4040,
+          4059
+        ],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/properties/propertytree.h",
+      "lines": 140,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/properties/propertyview.cpp",
+      "lines": 194,
+      "matches": {
+        "loops": [
+          117,
+          130,
+          140
+        ],
+        "membership": [
+          118
+        ],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/properties/propertyview.h",
+      "lines": 41,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/python/pyapplication.cpp",
+      "lines": 363,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/python/pyapplication.h",
+      "lines": 51,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/python/pycommand.cpp",
+      "lines": 1603,
+      "matches": {
+        "loops": [
+          83,
+          173,
+          407,
+          415,
+          422,
+          465,
+          472,
+          502,
+          509,
+          1080,
+          1107,
+          1126,
+          1169,
+          1215,
+          1240,
+          1357,
+          1377,
+          1396
+        ],
+        "membership": [
+          818
+        ],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/python/pycommand.h",
+      "lines": 19,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/python/pymodule.cpp",
+      "lines": 377,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/python/pymodule.h",
+      "lines": 25,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/python/pyrender.cpp",
+      "lines": 305,
+      "matches": {
+        "loops": [
+          30,
+          131,
+          271
+        ],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/python/pyrender.h",
+      "lines": 28,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/python/pyrenderengine.cpp",
+      "lines": 397,
+      "matches": {
+        "loops": [
+          315
+        ],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/python/pyrenderengine.h",
+      "lines": 46,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/python/pyselectionlist.cpp",
+      "lines": 220,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/python/pyselectionlist.h",
+      "lines": 50,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/python/pysession.cpp",
+      "lines": 828,
+      "matches": {
+        "loops": [
+          442,
+          473
+        ],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/python/pysession.h",
+      "lines": 50,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/python/pythondialog.cpp",
+      "lines": 469,
+      "matches": {
+        "loops": [
+          229
+        ],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/python/pythondialog.h",
+      "lines": 49,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/python/pythoneditor.cpp",
+      "lines": 209,
+      "matches": {
+        "loops": [
+          36,
+          52,
+          54,
+          115,
+          195
+        ],
+        "membership": [
+          138
+        ],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/python/pythoneditor.h",
+      "lines": 62,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/python/pythoninterpreter.cpp",
+      "lines": 482,
+      "matches": {
+        "loops": [
+          76,
+          110
+        ],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/python/pythoninterpreter.h",
+      "lines": 86,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/python/pythonlogedit.cpp",
+      "lines": 21,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/python/pythonlogedit.h",
+      "lines": 41,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/python/pythonshelf.cpp",
+      "lines": 411,
+      "matches": {
+        "loops": [
+          307,
+          320
+        ],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/python/pythonshelf.h",
+      "lines": 54,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/python/pyui.cpp",
+      "lines": 635,
+      "matches": {
+        "loops": [
+          48,
+          101
+        ],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/python/pyui.h",
+      "lines": 50,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/python/pyutils.cpp",
+      "lines": 404,
+      "matches": {
+        "loops": [
+          92,
+          124,
+          222,
+          249,
+          272
+        ],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/python/pyutils.h",
+      "lines": 160,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/python/pyviewcamera.cpp",
+      "lines": 882,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/python/pyviewcamera.h",
+      "lines": 50,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/python/pyviewstate.cpp",
+      "lines": 984,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/python/pyviewstate.h",
+      "lines": 49,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/python/shelflist.cpp",
+      "lines": 666,
+      "matches": {
+        "loops": [
+          242,
+          262,
+          294,
+          316
+        ],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/python/shelflist.h",
+      "lines": 113,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/python/shelfwidget.cpp",
+      "lines": 592,
+      "matches": {
+        "loops": [
+          179,
+          274,
+          403,
+          423,
+          452,
+          465
+        ],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/python/shelfwidget.h",
+      "lines": 190,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/rendering/renderdiagnostics.cpp",
+      "lines": 230,
+      "matches": {
+        "loops": [
+          33,
+          72,
+          105,
+          126,
+          132,
+          135,
+          153,
+          177,
+          181,
+          213
+        ],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/rendering/renderdiagnostics.h",
+      "lines": 29,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/rendering/renderengine.cpp",
+      "lines": 2323,
+      "matches": {
+        "loops": [
+          104,
+          219,
+          251,
+          325,
+          358,
+          367,
+          371,
+          388,
+          401,
+          459,
+          508,
+          521,
+          522,
+          537,
+          547,
+          551,
+          554,
+          561,
+          568,
+          577,
+          579,
+          599,
+          617,
+          628,
+          643,
+          652,
+          784,
+          795,
+          806,
+          817,
+          831,
+          916,
+          1014,
+          1380,
+          1412,
+          1620,
+          1633,
+          1661,
+          1698,
+          1699,
+          1977,
+          2066,
+          2076,
+          2135,
+          2164,
+          2274,
+          2295
+        ],
+        "membership": [],
+        "prefix": [
+          858,
+          2078
+        ],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/rendering/renderengine.h",
+      "lines": 364,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/rendering/rendersceneindex.cpp",
+      "lines": 421,
+      "matches": {
+        "loops": [
+          301,
+          325,
+          347,
+          351,
+          372,
+          383,
+          396,
+          405,
+          414
+        ],
+        "membership": [],
+        "prefix": [
+          62,
+          325
+        ],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/rendering/rendersceneindex.h",
+      "lines": 203,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/rendering/rendertask.cpp",
+      "lines": 1542,
+      "matches": {
+        "loops": [
+          286,
+          393,
+          634,
+          639,
+          669,
+          676,
+          712,
+          719,
+          740,
+          742,
+          746,
+          755,
+          764,
+          768,
+          772,
+          816,
+          841,
+          875,
+          876,
+          936,
+          942,
+          983,
+          1002,
+          1052,
+          1161
+        ],
+        "membership": [],
+        "prefix": [
+          690,
+          695
+        ],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/rendering/rendertask.h",
+      "lines": 204,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/rendering/renderview.cpp",
+      "lines": 237,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/rendering/renderview.h",
+      "lines": 228,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/rendering/viewportauxiliary.cpp",
+      "lines": 310,
+      "matches": {
+        "loops": [
+          77,
+          87,
+          218
+        ],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/rendering/viewportauxiliary.h",
+      "lines": 91,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/rendering/viewportcapture.cpp",
+      "lines": 66,
+      "matches": {
+        "loops": [
+          19,
+          21,
+          28,
+          39
+        ],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/rendering/viewportcapture.h",
+      "lines": 62,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/rendering/viewportgizmo.cpp",
+      "lines": 759,
+      "matches": {
+        "loops": [
+          277,
+          285,
+          399,
+          406,
+          431,
+          432,
+          436,
+          444,
+          447,
+          453,
+          454,
+          468,
+          474,
+          485,
+          486,
+          492,
+          529,
+          538,
+          585,
+          596,
+          654
+        ],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/rendering/viewportgizmo.h",
+      "lines": 115,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/rendering/viewporthost.h",
+      "lines": 123,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/rendering/viewportlights.cpp",
+      "lines": 230,
+      "matches": {
+        "loops": [
+          53,
+          60,
+          79,
+          81,
+          106,
+          113,
+          126,
+          132,
+          137,
+          172,
+          174,
+          188,
+          189,
+          209,
+          214,
+          220
+        ],
+        "membership": [
+          184,
+          210,
+          219
+        ],
+        "prefix": [
+          175
+        ],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/rendering/viewportlights.h",
+      "lines": 59,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/rendering/viewportselection.cpp",
+      "lines": 826,
+      "matches": {
+        "loops": [
+          83,
+          117,
+          131,
+          151,
+          156,
+          167,
+          174,
+          175,
+          201,
+          209,
+          221,
+          231,
+          241,
+          259,
+          270,
+          287,
+          290,
+          312,
+          317,
+          320,
+          332,
+          414,
+          428,
+          540,
+          557,
+          558,
+          583,
+          593,
+          598,
+          607,
+          646,
+          666,
+          669,
+          703,
+          715
+        ],
+        "membership": [
+          560,
+          566,
+          584
+        ],
+        "prefix": [
+          648
+        ],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/rendering/viewportselection.h",
+      "lines": 116,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/rendering/viewporttransform.cpp",
+      "lines": 1108,
+      "matches": {
+        "loops": [
+          91,
+          134,
+          139,
+          176,
+          178,
+          209,
+          250,
+          498,
+          575,
+          705,
+          708,
+          730,
+          732,
+          848
+        ],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/rendering/viewporttransform.h",
+      "lines": 141,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/rendering/viewportwidget.cpp",
+      "lines": 2005,
+      "matches": {
+        "loops": [
+          749,
+          1069,
+          1129,
+          1468,
+          1477,
+          1482,
+          1528,
+          1551,
+          1670,
+          1688
+        ],
+        "membership": [
+          1130
+        ],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/rendering/viewportwidget.h",
+      "lines": 499,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/stageviz.h",
+      "lines": 11,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/timeline/timelineslider.cpp",
+      "lines": 202,
+      "matches": {
+        "loops": [
+          114,
+          118,
+          124,
+          137
+        ],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/timeline/timelineslider.h",
+      "lines": 86,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/timeline/timelineview.cpp",
+      "lines": 200,
+      "matches": {
+        "loops": [
+          104,
+          105,
+          109,
+          145
+        ],
+        "membership": [
+          115
+        ],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/timeline/timelineview.h",
+      "lines": 45,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/ui/console.cpp",
+      "lines": 506,
+      "matches": {
+        "loops": [
+          72,
+          106,
+          123,
+          324,
+          374,
+          395
+        ],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/ui/console.h",
+      "lines": 96,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/ui/consoledialog.cpp",
+      "lines": 262,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/ui/consoledialog.h",
+      "lines": 48,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/ui/messagedialog.cpp",
+      "lines": 275,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/ui/messagedialog.h",
+      "lines": 84,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/ui/mime.h",
+      "lines": 41,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/ui/mouseevent.cpp",
+      "lines": 24,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/ui/mouseevent.h",
+      "lines": 48,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/ui/progressdialog.cpp",
+      "lines": 521,
+      "matches": {
+        "loops": [
+          121,
+          161,
+          191,
+          203,
+          219,
+          292,
+          309,
+          326,
+          337,
+          418
+        ],
+        "membership": [
+          39
+        ],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/ui/progressdialog.h",
+      "lines": 36,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/ui/progressitem.cpp",
+      "lines": 39,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/ui/progressitem.h",
+      "lines": 61,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/ui/qtutils.cpp",
+      "lines": 631,
+      "matches": {
+        "loops": [
+          93,
+          135,
+          144,
+          154,
+          171,
+          184,
+          198,
+          306,
+          308,
+          372,
+          415,
+          459,
+          467,
+          475,
+          483,
+          491,
+          515,
+          603,
+          619
+        ],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/ui/qtutils.h",
+      "lines": 479,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/ui/spinbox.cpp",
+      "lines": 307,
+      "matches": {
+        "loops": [],
+        "membership": [
+          134
+        ],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/ui/spinbox.h",
+      "lines": 145,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/ui/tabwidget.cpp",
+      "lines": 138,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/ui/tabwidget.h",
+      "lines": 84,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/ui/treeitem.cpp",
+      "lines": 53,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/ui/treeitem.h",
+      "lines": 86,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/ui/treewidget.cpp",
+      "lines": 898,
+      "matches": {
+        "loops": [
+          449,
+          453,
+          493,
+          509,
+          865
+        ],
+        "membership": [
+          103,
+          126,
+          454,
+          482,
+          563,
+          583,
+          606,
+          613,
+          616,
+          618,
+          619,
+          791
+        ],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/ui/treewidget.h",
+      "lines": 176,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/ui/ui.cpp",
+      "lines": 576,
+      "matches": {
+        "loops": [
+          119,
+          140,
+          149
+        ],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/ui/ui.h",
+      "lines": 294,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/usd/bboxutils.cpp",
+      "lines": 49,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/usd/bboxutils.h",
+      "lines": 93,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/usd/payloadutils.cpp",
+      "lines": 717,
+      "matches": {
+        "loops": [
+          65,
+          69,
+          70,
+          71,
+          221,
+          227,
+          235,
+          243,
+          248,
+          267,
+          284,
+          297,
+          322,
+          339,
+          365,
+          378,
+          385,
+          390,
+          412,
+          419,
+          449,
+          467,
+          485,
+          489,
+          507,
+          509,
+          534,
+          539,
+          575,
+          579,
+          599,
+          632,
+          647,
+          666,
+          690,
+          696,
+          709
+        ],
+        "membership": [
+          212,
+          303,
+          398,
+          514,
+          566,
+          655
+        ],
+        "prefix": [
+          669
+        ],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/usd/payloadutils.h",
+      "lines": 254,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/usd/primutils.cpp",
+      "lines": 1312,
+      "matches": {
+        "loops": [
+          76,
+          135,
+          154,
+          155,
+          178,
+          257,
+          281,
+          339,
+          359,
+          362,
+          386,
+          390,
+          409,
+          475,
+          496,
+          590,
+          809,
+          817,
+          829,
+          859,
+          865,
+          876,
+          886,
+          895,
+          913,
+          922,
+          925,
+          933,
+          938,
+          945,
+          950,
+          987,
+          1053,
+          1109,
+          1121,
+          1146,
+          1179,
+          1188,
+          1201,
+          1272,
+          1288
+        ],
+        "membership": [
+          141,
+          410,
+          850
+        ],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/usd/primutils.h",
+      "lines": 504,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/usd/usdedit.cpp",
+      "lines": 602,
+      "matches": {
+        "loops": [
+          26,
+          39,
+          42,
+          161,
+          192,
+          306,
+          338,
+          347,
+          357,
+          375,
+          387,
+          415,
+          442,
+          476,
+          545,
+          549,
+          559,
+          578,
+          581
+        ],
+        "membership": [
+          28,
+          313,
+          318,
+          349,
+          359,
+          529
+        ],
+        "prefix": [
+          503,
+          550,
+          560
+        ],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/usd/usdedit.h",
+      "lines": 155,
+      "matches": {
+        "loops": [],
+        "membership": [],
+        "prefix": [],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/usd/usdutils.cpp",
+      "lines": 512,
+      "matches": {
+        "loops": [
+          167,
+          208,
+          222,
+          240,
+          247,
+          261,
+          268,
+          284,
+          285,
+          313,
+          325,
+          338,
+          348,
+          368,
+          396,
+          406,
+          421,
+          433,
+          448
+        ],
+        "membership": [
+          296,
+          460,
+          462
+        ],
+        "prefix": [
+          244,
+          259,
+          388,
+          397,
+          407
+        ],
+        "sdf_batch": []
+      }
+    },
+    {
+      "path": "sources/usd/usdutils.h",
+      "lines": 394,
+      "matches": {
+        "loops": [],
+        "membership": [
+          351
+        ],
+        "prefix": [],
+        "sdf_batch": [
+          26
+        ]
+      }
+    }
+  ]
+}

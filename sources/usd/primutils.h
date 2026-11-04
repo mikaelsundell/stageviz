@@ -464,8 +464,9 @@ namespace stage {
     /**
      * @brief Removes a prim specification from a layer.
      *
-     * Applies a namespace edit that deletes the prim spec at @p specPath from
-     * the provided layer.
+     * Removes the owned prim spec directly. Unusual variant ownership uses
+     * the general namespace-edit fallback. This edits layer specs only and
+     * does not discover or remap external namespace dependencies.
      *
      * @param layer Layer containing the prim spec.
      * @param specPath Prim spec path to remove.

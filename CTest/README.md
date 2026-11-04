@@ -23,6 +23,17 @@ transform, pivot, property, payload, namespace, and GUI cases cover the migrated
 bulk callers. Performance comparisons belong in the external MCP benchmark;
 these correctness tests deliberately avoid wall-clock thresholds.
 
+`bbox_cache_invalidation` compares shared and Session bounds with a fresh USD
+cache immediately after mutations, before deferred Qt delivery. It covers
+transforms, inherited/reflected scale, size, visibility, and activation.
+`spec_deletion_api` checks permissions, sibling/root/variant ownership, bounded
+bulk diagnostics, and complete layer equivalence with the former namespace
+deletion implementation. `batched_attribute_authoring` checks composed custom
+attribute creation, rename/removal, time samples, metadata, and undo.
+`python/testtransformoperation.py` additionally exposes `composed_batch()` for
+public Python command, exact undo/redo, selection, screenshot, and source checks
+in an explicitly disposable viewer.
+
 The Python suites in `python/testapi.py` and `python/testui.py` run inside the
 Stageviz Python editor. They cover the embedded command API and live Outliner UI
 respectively; CTest cannot launch them because they require an initialized

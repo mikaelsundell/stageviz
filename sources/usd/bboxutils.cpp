@@ -4,11 +4,13 @@
 // https://github.com/mikaelsundell/stageviz
 
 #include "bboxutils.h"
+#include <atomic>
 #include <pxr/usd/usdGeom/imageable.h>
 
 namespace stageviz::bbox {
 namespace {
     std::mutex cacheMutex;
+    std::atomic<bool> cacheDirty { true };
     UsdGeomBBoxCache& sharedCache()
     {
         static UsdGeomBBoxCache cache(UsdTimeCode::Default(), UsdGeomImageable::GetOrderedPurposeTokens(), true);
@@ -18,7 +20,10 @@ namespace {
 
 CacheGuard::CacheGuard()
     : lock_(cacheMutex)
-{}
+{
+    if (cacheDirty.exchange(false))
+        sharedCache().Clear();
+}
 
 CacheGuard::~CacheGuard() = default;
 
@@ -33,5 +38,12 @@ clear()
 {
     std::lock_guard<std::mutex> lock(cacheMutex);
     sharedCache().Clear();
+    cacheDirty.store(false);
+}
+
+void
+invalidate()
+{
+    cacheDirty.store(true);
 }
 }  // namespace stageviz::bbox

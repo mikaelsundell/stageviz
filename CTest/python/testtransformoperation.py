@@ -128,3 +128,50 @@ class TransformOperationTest(_namespace["SubsetTest"]):
         assert self.layer_text() == original, "conflicting subset transforms are rejected before any authoring"
         assert list(stageviz.session().paths()) == self.selected
         print("PASS conflicting subset deltas leave stage and selection unchanged")
+
+    def composed_batch(self, count=128):
+        """Exercise newly authored matrix ops through the public Python API."""
+        assert self.disposable
+        stage = stageviz.session().stage()
+        root = stage.GetRootLayer()
+        self.composed_source = Usd.Stage.CreateInMemory()
+        paths = ["/Composed/Batch/P" + str(i) for i in range(count)]
+        for i, path in enumerate(paths):
+            cube = UsdGeom.Cube.Define(self.composed_source, path)
+            cube.AddTranslateOp().Set(Gf.Vec3d(i % 16, i // 16, 0))
+        source_text = self.composed_source.GetRootLayer().ExportToString()
+        # Direct USD authoring constructs this anonymous test fixture. The
+        # operation under test below goes through the public undoable command.
+        root.subLayerPaths = list(root.subLayerPaths) + [self.composed_source.GetRootLayer().identifier]
+        Sdf.CreatePrimInLayer(root, "/Composed")
+        assert stageviz.session().setEditLayer(root.identifier)
+        stageviz.command.select_paths(paths)
+        tb.process_events(80)
+        stageviz.command.clear()
+        original = root.ExportToString()
+        cache = UsdGeom.XformCache()
+        before = [cache.GetLocalToWorldTransform(stage.GetPrimAtPath(path)) for path in paths]
+        delta = Gf.Matrix4d(1).SetTranslate(Gf.Vec3d(0.3, 0.4, 0.2))
+        after = [matrix * delta for matrix in before]
+        as_rows = lambda matrix: [list(row) for row in matrix]
+        def matches(matrices):
+            cache = UsdGeom.XformCache()
+            return all(Gf.IsClose(cache.GetLocalToWorldTransform(stage.GetPrimAtPath(path)), matrix, 1e-7)
+                       for path, matrix in zip(paths, matrices))
+        stageviz.command.set_transforms(paths, list(map(as_rows, before)), list(map(as_rows, after)))
+        assert tb.wait_until(lambda: matches(after))
+        authored = root.ExportToString()
+        assert authored != original
+        assert list(stageviz.session().paths()) == paths
+        self.snapshot("composed_batch_applied")
+        stageviz.command.undo()
+        assert tb.wait_until(lambda: matches(before) and root.ExportToString() == original)
+        assert not stageviz.command.can_undo(), "bulk transform creates one undo step"
+        stageviz.command.redo()
+        assert tb.wait_until(lambda: matches(after) and root.ExportToString() == authored)
+        self.snapshot("composed_batch_redone")
+        stageviz.command.undo()
+        assert tb.wait_until(lambda: matches(before) and root.ExportToString() == original)
+        assert self.composed_source.GetRootLayer().ExportToString() == source_text
+        self.snapshot("composed_batch_restored")
+        print("PASS composed batch", count, "public command, exact undo, redo, and unchanged source")

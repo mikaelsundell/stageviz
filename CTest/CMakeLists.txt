@@ -79,6 +79,9 @@ foreach(case IN ITEMS
     namespace_editor_crud_api
     usd_path_utils_api
     indexed_path_api
+    spec_deletion_api
+    batched_attribute_authoring
+    bbox_cache_invalidation
     batched_transform_authoring
     usd_stage_utils_api
     usd_payload_utils_api

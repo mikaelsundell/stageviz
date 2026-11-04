@@ -18,6 +18,8 @@ Use `stageviz::path` in `sources/usd/usdutils.h`:
 * Existing `topLevelPaths`, `uniquePaths`, and `minimalRootPaths` delegate to the
   same primitives, retaining their different ordering/empty/duplicate contracts.
 * `removeTokens`: one removal-membership index and one pass through the order.
+* `layer::ensureAttributeSpec`: typed Sdf-only spec creation for preflighted
+  bulk authoring. It accepts mapped layer paths and never queries a USD stage.
 
 Path indexes preserve exact `SdfPath::HasPrefix` semantics. They deliberately
 do not turn property paths into prim paths. Callers normalize properties where
@@ -60,6 +62,20 @@ values and keep any generic USD fallback outside the block. Undo removes only
 new inert ancestor overs recorded before the edit. Pivot/reset-stack behavior,
 instance-root resolution, shared-source preservation, and command undo/redo
 remain covered by existing tests plus the new composed/variant regressions.
+
+The follow-up also moves schema and value queries out of property creation and
+rename change blocks. Exact property and prim deletions use their Sdf owners,
+avoiding a namespace-validation transaction per removed spec; unusual variant
+ownership retains the generic namespace fallback. Dependency remapping remains
+the caller's responsibility, as it was with the previous deletion helper.
+
+The shared bounds cache now receives synchronous invalidation from Session's
+USD notice listener, including suppressed/deferred transactions. CacheGuard
+clears stale state on its next acquisition. Gizmo bounds can therefore reuse
+valid scene bounds without waiting for Qt delivery or carrying a previous
+gesture's geometry. Native checks compare with a fresh USD cache immediately
+after changes to transforms, inherited transforms, geometry, visibility, and
+activation. Session's cached aggregate is marked dirty synchronously as well.
 
 ## Boundaries
 
