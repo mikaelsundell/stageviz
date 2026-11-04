@@ -15,6 +15,11 @@ Use `stageviz::path` in `sources/usd/usdutils.h`:
 * `PathCollector`: append-only stable duplicate suppression. The output list
   must not be changed independently while its collector exists.
 * `stableRootPaths`: unique minimal roots in surviving input order.
+* `sortedRootPaths`: sort once using USD path order, then discard adjacent
+  descendants. Used for scene counts and removal traversal where input/depth
+  order is unnecessary. This preserves the efficient original statistics
+  algorithm; the initial general-reducer migration added about 0.26 seconds to
+  warm-sweep statistics and was corrected after the live timing review.
 * Existing `topLevelPaths`, `uniquePaths`, and `minimalRootPaths` delegate to the
   same primitives, retaining their different ordering/empty/duplicate contracts.
 * `removeTokens`: one removal-membership index and one pass through the order.

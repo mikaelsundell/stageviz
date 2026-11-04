@@ -1478,7 +1478,7 @@ ViewportWidgetPrivate::updateSceneStats()
         }
         if (d.selectedTotalsDirty) {
             selected = {};
-            const QList<SdfPath> roots = path::minimalRootPaths(d.selection);
+            const QList<SdfPath> roots = path::sortedRootPaths(d.selection);
             for (const SdfPath& path : roots) {
                 UsdPrim root = d.stage->GetPrimAtPath(path);
                 if (!root)

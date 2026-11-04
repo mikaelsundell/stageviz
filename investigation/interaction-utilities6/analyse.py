@@ -11,7 +11,7 @@ baseline_names={
 rows=[]
 for directory in sorted(base.iterdir()):
     if directory.name not in baseline_names and not any(name in directory.name for name in
-            ('-indexed-loops','-direct-delete')):
+            ('-indexed-loops','-direct-delete','-sorted-roots')):
         continue
     if not (directory/'results.json').exists():
         continue

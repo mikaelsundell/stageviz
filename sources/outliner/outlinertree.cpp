@@ -466,7 +466,7 @@ OutlinerTreePrivate::updateOverrideCacheForNamespaceChanges(const QList<QPair<Sd
         }
     }
     effectiveRemaps = std::move(minimalRemaps);
-    const QList<SdfPath> effectiveRemovedPaths = path::minimalRootPaths(removedPaths);
+    const QList<SdfPath> effectiveRemovedPaths = path::sortedRootPaths(removedPaths);
     const path::PathIndex removedRoots(effectiveRemovedPaths);
 
     QSet<SdfPath> affectedPaths;

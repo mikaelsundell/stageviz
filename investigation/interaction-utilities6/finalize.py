@@ -32,7 +32,7 @@ overlay=Path(r'C:\git\3rdparty\patches\openusd')
 shutil.copytree(overlay,after/'windows-overlay',ignore=shutil.ignore_patterns('__pycache__'))
 for entry in json.loads((overlay/'manifest.json').read_text()):
     source=usd/entry['path']
-    assert hashlib.sha256(source.read_text().encode()).hexdigest()==entry['patched'],entry['path']
+    assert hashlib.sha256(source.read_text(encoding='utf-8').encode()).hexdigest()==entry['patched'],entry['path']
     copy(source,after/'usd'/entry['path'])
     if not (root/'before/usd'/entry['path']).exists():
         copy(source,root/'before/usd'/entry['path'])
@@ -48,7 +48,7 @@ for source in sorted((sdk/'lib').glob('usd_*.dll')):
 
 verified=[];partial=[]
 for directory in sorted(Path(r'C:\Temp\usdtest\performance').iterdir()):
-    if not any(name in directory.name for name in ('-indexed-loops','-direct-delete')) or not (directory/'launch.json').exists():
+    if not any(name in directory.name for name in ('-indexed-loops','-direct-delete','-sorted-roots')) or not (directory/'launch.json').exists():
         continue
     launch=json.loads((directory/'launch.json').read_text())
     for dataset in launch['datasets']:
@@ -83,6 +83,15 @@ for directory in sorted(Path(r'C:\Temp\usdtest\performance').iterdir()):
 (root/'partial-checkpoint-verification.json').write_text(json.dumps(partial,indent=2))
 for directory in Path(r'C:\Temp\usdtest').glob('interaction6-python-*'):
     shutil.copytree(directory,root/'python-tests'/directory.name,dirs_exist_ok=True)
+    cleanup=directory/'cleanup-python.json'
+    if cleanup.exists():
+        result=json.loads(cleanup.read_text())
+        for block in result.get('result',{}).get('content',[]):
+            for line in block.get('text','').splitlines():
+                if line.startswith('SNAPSHOTS '):
+                    artifacts=Path(line[len('SNAPSHOTS '):])
+                    if artifacts.is_dir():
+                        shutil.copytree(artifacts,root/'python-tests'/directory.name/'artifacts',dirs_exist_ok=True)
 for source in (app/'build.Release').glob('interaction-*.log'):
     copy(source,root/'logs'/source.name)
 for name in ('report.md','audit.md','measurements.json','measurements.csv'):
