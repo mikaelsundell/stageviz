@@ -14,6 +14,15 @@ Coverage also includes repeated ASCII and Crate saves, failure recovery, Save As
 asset rebasing, namespace load rules, merge asset-path anchoring, and selected
 export of session-layer opinions.
 
+`indexed_path_api` checks indexed namespace coverage and intersection, stable
+root reduction, duplicate collection, relative parent paths, and a 100,000-entry
+selection. `batched_transform_authoring` checks 1,000 composed objects without
+existing transform attributes, mapped variant edit targets, and exact undo
+restoration while retaining pre-existing inert ancestor specs. Existing
+transform, pivot, property, payload, namespace, and GUI cases cover the migrated
+bulk callers. Performance comparisons belong in the external MCP benchmark;
+these correctness tests deliberately avoid wall-clock thresholds.
+
 The Python suites in `python/testapi.py` and `python/testui.py` run inside the
 Stageviz Python editor. They cover the embedded command API and live Outliner UI
 respectively; CTest cannot launch them because they require an initialized

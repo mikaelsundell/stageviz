@@ -7,6 +7,7 @@
 #include "stageviz.h"
 #include <QList>
 #include <QMap>
+#include <unordered_set>
 #include <pxr/usd/usd/prim.h>
 #include <pxr/usd/usd/stage.h>
 
@@ -100,6 +101,96 @@ namespace identifier {
 }  // namespace identifier
 
 namespace path {
+
+    /**
+     * @brief Indexes exact paths and ancestor coverage for repeated queries.
+     *
+     * Build once outside a bulk loop. Queries take time proportional to path
+     * depth, independent of the number of roots. Paths retain their exact USD
+     * namespace semantics; property paths are not implicitly converted to prims.
+     * Empty roots are ignored and an empty index covers nothing.
+     */
+    class PathIndex {
+    public:
+        /**
+         * @brief Builds an index without retaining references to the input list.
+         */
+        explicit PathIndex(const QList<SdfPath>& paths = {});
+        /**
+         * @brief Inserts a nonempty path and reports whether it was new.
+         */
+        bool insert(const SdfPath& path);
+        /**
+         * @brief Tests exact membership without normalizing property paths.
+         */
+        bool contains(const SdfPath& path) const;
+        /**
+         * @brief Tests whether an indexed path is a prefix of the supplied path.
+         */
+        bool covers(const SdfPath& path) const;
+        /**
+         * @brief Returns the closest indexed prefix, or an empty path.
+         */
+        SdfPath nearestAncestor(const SdfPath& path) const;
+        /**
+         * @brief Returns the shallowest indexed prefix, or an empty path.
+         */
+        SdfPath outermostAncestor(const SdfPath& path) const;
+
+    private:
+        std::unordered_set<SdfPath, SdfPath::Hash> paths;
+    };
+
+    /**
+     * @brief Indexes overlap in both directions for selection and notice filtering.
+     *
+     * Adds an index of prefixes to PathIndex for repeated descendant queries.
+     * Construct once per bulk operation, using exact USD path semantics.
+     */
+    class PathRelations {
+    public:
+        /**
+         * @brief Builds the root and prefix indexes from nonempty input paths.
+         */
+        explicit PathRelations(const QList<SdfPath>& paths);
+        /**
+         * @brief Tests equality, ancestry, or descendancy against indexed paths.
+         */
+        bool intersects(const SdfPath& path) const;
+
+    private:
+        PathIndex roots;
+        PathIndex prefixes;
+    };
+
+    /**
+     * @brief Returns unique nonempty roots in their original input order.
+     *
+     * Removes strict descendants even when their ancestor occurs later in the
+     * input. Unlike minimalRootPaths, this does not sort the result.
+     */
+    QList<SdfPath> stableRootPaths(const QList<SdfPath>& paths);
+
+    /**
+     * @brief Collects unique nonempty paths in insertion order without rescanning.
+     *
+     * The output must not be modified independently while this collector exists.
+     */
+    class PathCollector {
+    public:
+        /**
+         * @brief Indexes existing output values before appending new paths.
+         */
+        explicit PathCollector(QList<SdfPath>& output);
+        /**
+         * @brief Appends a nonempty path only on its first occurrence.
+         */
+        void append(const SdfPath& path);
+
+    private:
+        QList<SdfPath>& output;
+        PathIndex index;
+    };
     /**
      * @brief Filters a list of prim paths to only top-most paths.
      *

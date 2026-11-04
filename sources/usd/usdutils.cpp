@@ -202,63 +202,117 @@ namespace identifier {
 
 namespace path {
 
-    using PathSet = std::unordered_set<SdfPath, SdfPath::Hash>;
-
-    // Returns true if the path or one of its ancestors is in roots.
-    static bool isCoveredBySet(const PathSet& roots, const SdfPath& path)
+    PathIndex::PathIndex(const QList<SdfPath>& input)
     {
-        if (path.IsEmpty())
-            return false;
+        paths.reserve(static_cast<size_t>(input.size()));
+        for (const auto& path : input)
+            insert(path);
+    }
 
-        SdfPath current = path;
+    bool PathIndex::insert(const SdfPath& path)
+    {
+        return !path.IsEmpty() && paths.insert(path).second;
+    }
 
-        while (!current.IsEmpty()) {
-            if (roots.find(current) != roots.end())
-                return true;
+    bool PathIndex::contains(const SdfPath& path) const
+    {
+        return paths.find(path) != paths.end();
+    }
 
+    SdfPath PathIndex::nearestAncestor(const SdfPath& path) const
+    {
+        if (!path.IsAbsolutePath()) {
+            const auto prefixes = path.GetPrefixes();
+            for (auto it = prefixes.rbegin(); it != prefixes.rend(); ++it) {
+                if (contains(*it))
+                    return *it;
+            }
+            return path.HasPrefix(SdfPath::ReflexiveRelativePath()) && contains(SdfPath::ReflexiveRelativePath())
+                       ? SdfPath::ReflexiveRelativePath() : SdfPath();
+        }
+        for (SdfPath current = path; !current.IsEmpty(); current = current.GetParentPath()) {
+            if (contains(current))
+                return current;
             if (current == SdfPath::AbsoluteRootPath() || current == SdfPath::ReflexiveRelativePath())
                 break;
-
-            current = current.GetParentPath();
         }
+        return {};
+    }
 
-        return false;
+    SdfPath PathIndex::outermostAncestor(const SdfPath& path) const
+    {
+        if (!path.IsAbsolutePath()) {
+            if (path.HasPrefix(SdfPath::ReflexiveRelativePath()) && contains(SdfPath::ReflexiveRelativePath()))
+                return SdfPath::ReflexiveRelativePath();
+            for (const auto& prefix : path.GetPrefixes()) {
+                if (contains(prefix))
+                    return prefix;
+            }
+            return {};
+        }
+        SdfPath result;
+        for (SdfPath current = path; !current.IsEmpty(); current = current.GetParentPath()) {
+            if (contains(current))
+                result = current;
+            if (current == SdfPath::AbsoluteRootPath() || current == SdfPath::ReflexiveRelativePath())
+                break;
+        }
+        return result;
+    }
+
+    bool PathIndex::covers(const SdfPath& path) const
+    {
+        return !nearestAncestor(path).IsEmpty();
+    }
+
+    PathRelations::PathRelations(const QList<SdfPath>& paths) : roots(paths)
+    {
+        for (const auto& path : paths) {
+            for (const auto& prefix : path.GetPrefixes())
+                prefixes.insert(prefix);
+            if (path.IsAbsolutePath())
+                prefixes.insert(SdfPath::AbsoluteRootPath());
+            else if (!path.IsEmpty())
+                prefixes.insert(SdfPath::ReflexiveRelativePath());
+        }
+    }
+
+    bool PathRelations::intersects(const SdfPath& path) const
+    {
+        return !path.IsEmpty() && (prefixes.contains(path) || roots.covers(path));
+    }
+
+    PathCollector::PathCollector(QList<SdfPath>& output) : output(output), index(output) {}
+
+    void PathCollector::append(const SdfPath& path)
+    {
+        if (index.insert(path))
+            output.append(path);
+    }
+
+    QList<SdfPath> stableRootPaths(const QList<SdfPath>& paths)
+    {
+        const PathIndex roots(paths);
+        QList<SdfPath> result;
+        result.reserve(paths.size());
+        PathCollector collector(result);
+        for (const auto& path : paths) {
+            if (!path.IsEmpty() && roots.outermostAncestor(path) == path)
+                collector.append(path);
+        }
+        return result;
     }
 
     QList<SdfPath> topLevelPaths(const QList<SdfPath>& paths)
     {
-        PathSet allPaths;
-        allPaths.reserve(static_cast<size_t>(paths.size()));
-
-        for (const SdfPath& path : paths)
-            allPaths.insert(path);
-
+        const PathIndex roots(paths);
         QList<SdfPath> result;
         result.reserve(paths.size());
-
-        for (const SdfPath& path : paths) {
-            bool isChild = false;
-
-            if (!path.IsEmpty()) {
-                SdfPath parent = path.GetParentPath();
-
-                while (!parent.IsEmpty()) {
-                    if (allPaths.find(parent) != allPaths.end()) {
-                        isChild = true;
-                        break;
-                    }
-
-                    if (parent == SdfPath::AbsoluteRootPath() || parent == SdfPath::ReflexiveRelativePath())
-                        break;
-
-                    parent = parent.GetParentPath();
-                }
-            }
-
-            if (!isChild)
+        for (const auto& path : paths) {
+            // This legacy helper intentionally retains duplicates and empties.
+            if (path.IsEmpty() || roots.outermostAncestor(path) == path)
                 result.append(path);
         }
-
         return result;
     }
 
@@ -266,15 +320,9 @@ namespace path {
     {
         QList<SdfPath> result;
         result.reserve(paths.size());
-
-        PathSet seen;
-        seen.reserve(static_cast<size_t>(paths.size()));
-
-        for (const SdfPath& path : paths) {
-            if (!path.IsEmpty() && seen.insert(path).second)
-                result.append(path);
-        }
-
+        PathCollector collector(result);
+        for (const auto& path : paths)
+            collector.append(path);
         return result;
     }
 
@@ -298,14 +346,13 @@ namespace path {
             return a.GetString() < b.GetString();
         });
 
-        PathSet accepted;
-        accepted.reserve(static_cast<size_t>(sorted.size()));
+        PathIndex accepted;
 
         QList<SdfPath> result;
         result.reserve(sorted.size());
 
         for (const SdfPath& path : sorted) {
-            if (isCoveredBySet(accepted, path))
+            if (accepted.covers(path))
                 continue;
 
             accepted.insert(path);
@@ -355,8 +402,7 @@ namespace path {
         if (paths.isEmpty() || removedPaths.isEmpty())
             return paths;
 
-        PathSet removedRoots;
-        removedRoots.reserve(static_cast<size_t>(removedPaths.size()));
+        PathIndex removedRoots;
 
         for (const SdfPath& removedPath : removedPaths) {
             if (removedPath.IsEmpty())
@@ -373,7 +419,7 @@ namespace path {
         for (const SdfPath& inputPath : paths) {
             const SdfPath primPath = inputPath.IsPropertyPath() ? inputPath.GetPrimPath() : inputPath;
 
-            if (!isCoveredBySet(removedRoots, primPath))
+            if (!removedRoots.covers(primPath))
                 result.append(inputPath);
         }
 
@@ -405,9 +451,10 @@ namespace path {
 
     TfTokenVector removeTokens(TfTokenVector order, const TfTokenVector& tokens)
     {
-        for (const TfToken& token : tokens) {
-            order.erase(std::remove(order.begin(), order.end(), token), order.end());
-        }
+        const std::unordered_set<TfToken, TfToken::HashFunctor> removed(tokens.begin(), tokens.end());
+        order.erase(std::remove_if(order.begin(), order.end(), [&](const TfToken& token) {
+            return removed.find(token) != removed.end();
+        }), order.end());
 
         return order;
     }

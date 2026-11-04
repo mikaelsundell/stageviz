@@ -86,6 +86,7 @@ resetDependencies(const QList<SdfPath>& propertyPaths)
 
             command::runWorker([session, paths, states]() {
                 QList<SdfPath> affected;
+                path::PathCollector affectedCollector(affected);
                 QStringList errors;
 
                 {
@@ -144,7 +145,7 @@ resetDependencies(const QList<SdfPath>& propertyPaths)
                                     continue;
 
                                 states->append(state);
-                                path::appendUnique(affected, propertyPath.GetPrimPath());
+                                affectedCollector.append(propertyPath.GetPrimPath());
                             }
                         }
                     }
@@ -173,6 +174,7 @@ resetDependencies(const QList<SdfPath>& propertyPaths)
 
             command::runWorker([session, states]() {
                 QList<SdfPath> restored;
+                path::PathCollector restoredCollector(restored);
                 QStringList errors;
 
                 {
@@ -193,7 +195,7 @@ resetDependencies(const QList<SdfPath>& propertyPaths)
                             for (const DependencyPropertyState& state : *states) {
                                 QString error;
                                 if (restoreDependencyProperty(editLayer, state, error))
-                                    path::appendUnique(restored, state.propertyPath.GetPrimPath());
+                                    restoredCollector.append(state.propertyPath.GetPrimPath());
                                 else
                                     errors.append(error);
                             }
@@ -240,6 +242,7 @@ attributeSpecBatch(const QList<SdfPath>& paths, const TfToken& name, const SdfVa
                                    static_cast<int>(paths.size()));
             command::runWorker([session, paths, name, type, custom, removing, state]() {
                 QList<SdfPath> affected;
+                path::PathCollector affectedCollector(affected);
                 QStringList errors;
                 {
                     WRITE_LOCKER(locker, session->stageLock(), "stageLock");
@@ -320,7 +323,7 @@ attributeSpecBatch(const QList<SdfPath>& paths, const TfToken& name, const SdfVa
                                 }
                             }
                             if (ok)
-                                path::appendUnique(affected, item.path.GetPrimPath());
+                                affectedCollector.append(item.path.GetPrimPath());
                             else
                                 errors.append(QString("Attribute operation failed: %1").arg(pathText(item.path)));
                         }
@@ -342,6 +345,7 @@ attributeSpecBatch(const QList<SdfPath>& paths, const TfToken& name, const SdfVa
             command::beginDeferred(session, "Undo attribute operation", static_cast<int>(state->items.size()));
             command::runWorker([session, state]() {
                 QList<SdfPath> affected;
+                path::PathCollector affectedCollector(affected);
                 QStringList errors;
                 {
                     WRITE_LOCKER(locker, session->stageLock(), "stageLock");
@@ -364,7 +368,7 @@ attributeSpecBatch(const QList<SdfPath>& paths, const TfToken& name, const SdfVa
                                     continue;
                                 }
                             }
-                            path::appendUnique(affected, item.path.GetPrimPath());
+                            affectedCollector.append(item.path.GetPrimPath());
                         }
                     }
                 }
@@ -412,6 +416,7 @@ renameAttributes(const QList<SdfPath>& attributePaths, const TfToken& newName)
             command::beginDeferred(session, "Rename attributes", static_cast<int>(attributePaths.size()));
             command::runWorker([session, attributePaths, newName, state]() {
                 QList<SdfPath> affected;
+                path::PathCollector affectedCollector(affected);
                 QStringList errors;
                 {
                     WRITE_LOCKER(locker, session->stageLock(), "stageLock");
@@ -488,7 +493,7 @@ renameAttributes(const QList<SdfPath>& attributePaths, const TfToken& newName)
                                 if (source.Get(&value))
                                     target.Set(value);
                             }
-                            path::appendUnique(affected, item.oldPath.GetPrimPath());
+                            affectedCollector.append(item.oldPath.GetPrimPath());
                         }
                     }
                 }
@@ -509,6 +514,7 @@ renameAttributes(const QList<SdfPath>& attributePaths, const TfToken& newName)
             command::beginDeferred(session, "Undo rename attributes", static_cast<int>(state->items.size()));
             command::runWorker([session, state]() {
                 QList<SdfPath> affected;
+                path::PathCollector affectedCollector(affected);
                 QStringList errors;
                 {
                     WRITE_LOCKER(locker, session->stageLock(), "stageLock");
@@ -526,7 +532,7 @@ renameAttributes(const QList<SdfPath>& attributePaths, const TfToken& newName)
                             }
                             if (!removePropertySpec(layer, item.newPath))
                                 errors.append(QString("Cannot remove %1").arg(pathText(item.newPath)));
-                            path::appendUnique(affected, item.oldPath.GetPrimPath());
+                            affectedCollector.append(item.oldPath.GetPrimPath());
                         }
                     }
                 }
@@ -569,6 +575,7 @@ setAttributeValues(const QList<SdfPath>& attributePaths, const VtValue& value)
 
             command::runWorker([session, paths, value, state]() {
                 QList<SdfPath> affected;
+                path::PathCollector affectedCollector(affected);
                 QStringList errors;
 
                 {
@@ -692,7 +699,7 @@ setAttributeValues(const QList<SdfPath>& attributePaths, const VtValue& value)
                                         continue;
                                     }
 
-                                    path::appendUnique(affected, item.attributePath.GetPrimPath());
+                                    affectedCollector.append(item.attributePath.GetPrimPath());
                                     continue;
                                 }
 
@@ -707,7 +714,7 @@ setAttributeValues(const QList<SdfPath>& attributePaths, const VtValue& value)
                                     continue;
                                 }
 
-                                path::appendUnique(affected, item.attributePath.GetPrimPath());
+                                affectedCollector.append(item.attributePath.GetPrimPath());
                             }
                         }
                     }
@@ -732,6 +739,7 @@ setAttributeValues(const QList<SdfPath>& attributePaths, const VtValue& value)
 
             command::runWorker([session, state]() {
                 QList<SdfPath> affected;
+                path::PathCollector affectedCollector(affected);
                 QStringList errors;
 
                 {
@@ -760,7 +768,7 @@ setAttributeValues(const QList<SdfPath>& attributePaths, const VtValue& value)
                                         continue;
                                     }
 
-                                    path::appendUnique(affected, item.attributePath.GetPrimPath());
+                                    affectedCollector.append(item.attributePath.GetPrimPath());
                                     continue;
                                 }
 
@@ -770,7 +778,7 @@ setAttributeValues(const QList<SdfPath>& attributePaths, const VtValue& value)
                                 else
                                     editLayer->EraseField(item.attributePath, SdfFieldKeys->Default);
 
-                                path::appendUnique(affected, item.attributePath.GetPrimPath());
+                                affectedCollector.append(item.attributePath.GetPrimPath());
                             }
                         }
                     }
@@ -814,6 +822,7 @@ resetAttributeValues(const QList<SdfPath>& attributePaths)
 
             command::runWorker([session, paths, state]() {
                 QList<SdfPath> affected;
+                path::PathCollector affectedCollector(affected);
                 QStringList errors;
 
                 {
@@ -845,7 +854,7 @@ resetAttributeValues(const QList<SdfPath>& attributePaths)
 
                                 state->states.append(captureRootPropertyState(editLayer, attributePath));
                                 editLayer->EraseField(attributePath, SdfFieldKeys->Default);
-                                path::appendUnique(affected, attributePath.GetPrimPath());
+                                affectedCollector.append(attributePath.GetPrimPath());
                             }
                         }
                     }
@@ -871,6 +880,7 @@ resetAttributeValues(const QList<SdfPath>& attributePaths)
 
             command::runWorker([session, state]() {
                 QList<SdfPath> affected;
+                path::PathCollector affectedCollector(affected);
                 QStringList errors;
 
                 {
@@ -895,7 +905,7 @@ resetAttributeValues(const QList<SdfPath>& attributePaths)
                                     continue;
                                 }
 
-                                path::appendUnique(affected, rootState.propertyPath.GetPrimPath());
+                                affectedCollector.append(rootState.propertyPath.GetPrimPath());
                             }
                         }
                     }
@@ -939,6 +949,7 @@ resetAttributeOverrides(const QList<SdfPath>& attributePaths)
 
             command::runWorker([session, paths, state]() {
                 QList<SdfPath> affected;
+                path::PathCollector affectedCollector(affected);
                 QStringList errors;
 
                 {
@@ -1014,7 +1025,7 @@ resetAttributeOverrides(const QList<SdfPath>& attributePaths)
                                     stage::removePrimSpec(editLayer, primPath);
 
                                 state->items.append(item);
-                                path::appendUnique(affected, primPath);
+                                affectedCollector.append(primPath);
                             }
                         }
                     }
@@ -1040,6 +1051,7 @@ resetAttributeOverrides(const QList<SdfPath>& attributePaths)
 
             command::runWorker([session, state]() {
                 QList<SdfPath> affected;
+                path::PathCollector affectedCollector(affected);
                 QStringList errors;
 
                 {
@@ -1068,7 +1080,7 @@ resetAttributeOverrides(const QList<SdfPath>& attributePaths)
                                     continue;
                                 }
 
-                                path::appendUnique(affected, item.primPath);
+                                affectedCollector.append(item.primPath);
                             }
                         }
                     }
@@ -1118,6 +1130,7 @@ resetOverrides(const QList<SdfPath>& paths)
 
             command::runWorker([session, paths, state]() {
                 QList<SdfPath> affected;
+                path::PathCollector affectedCollector(affected);
                 QStringList errors;
 
                 {
@@ -1138,6 +1151,7 @@ resetOverrides(const QList<SdfPath>& paths)
                             state->items.clear();
 
                             QList<SdfPath> primPaths;
+                            path::PathCollector primPathsCollector(primPaths);
                             for (const SdfPath& inputPath : path::minimalRootPaths(path::uniquePaths(paths))) {
                                 const SdfPath primPath = inputPath.IsPropertyPath() ? inputPath.GetPrimPath()
                                                                                     : inputPath;
@@ -1147,10 +1161,10 @@ resetOverrides(const QList<SdfPath>& paths)
                                     continue;
                                 }
 
-                                path::appendUnique(primPaths, primPath);
+                                primPathsCollector.append(primPath);
                                 for (const UsdPrim& descendant : prim.GetAllDescendants()) {
                                     if (descendant && descendant.IsValid() && !descendant.IsInstanceProxy())
-                                        path::appendUnique(primPaths, descendant.GetPath());
+                                        primPathsCollector.append(descendant.GetPath());
                                 }
                             }
 
@@ -1236,7 +1250,7 @@ resetOverrides(const QList<SdfPath>& paths)
                                 }
 
                                 state->items.append(item);
-                                path::appendUnique(affected, primPath);
+                                affectedCollector.append(primPath);
                             }
                         }
                     }
@@ -1261,6 +1275,7 @@ resetOverrides(const QList<SdfPath>& paths)
 
             command::runWorker([session, state]() {
                 QList<SdfPath> restored;
+                path::PathCollector restoredCollector(restored);
                 QStringList errors;
 
                 {
@@ -1300,7 +1315,7 @@ resetOverrides(const QList<SdfPath>& paths)
                                 }
 
                                 if (restoredItem)
-                                    path::appendUnique(restored, item.path);
+                                    restoredCollector.append(item.path);
                             }
                         }
                     }

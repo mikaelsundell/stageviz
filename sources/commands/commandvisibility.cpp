@@ -207,6 +207,7 @@ showPaths(const QList<SdfPath>& paths, bool recursive)
             command::runWorker([session, state]() {
                 bool success = true;
                 QList<SdfPath> restoredPaths;
+                path::PathCollector restoredPathsCollector(restoredPaths);
                 QString error;
 
                 {
@@ -227,7 +228,7 @@ showPaths(const QList<SdfPath>& paths, bool recursive)
                                             .arg(pathText(rootState.propertyPath.GetPrimPath()));
                                 break;
                             }
-                            path::appendUnique(restoredPaths, rootState.propertyPath.GetPrimPath());
+                            restoredPathsCollector.append(rootState.propertyPath.GetPrimPath());
                         }
                     }
                 }
@@ -327,6 +328,7 @@ hidePaths(const QList<SdfPath>& paths, bool recursive)
             command::runWorker([session, state]() {
                 bool success = true;
                 QList<SdfPath> restoredPaths;
+                path::PathCollector restoredPathsCollector(restoredPaths);
                 QString error;
 
                 {
@@ -347,7 +349,7 @@ hidePaths(const QList<SdfPath>& paths, bool recursive)
                                             .arg(pathText(rootState.propertyPath.GetPrimPath()));
                                 break;
                             }
-                            path::appendUnique(restoredPaths, rootState.propertyPath.GetPrimPath());
+                            restoredPathsCollector.append(rootState.propertyPath.GetPrimPath());
                         }
                     }
                 }

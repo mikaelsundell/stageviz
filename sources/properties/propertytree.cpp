@@ -4,6 +4,7 @@
 
 #include "propertytree.h"
 #include "perfscope.h"
+#include "usdutils.h"
 #include "application.h"
 #include "commandproperty.h"
 #include "commandselection.h"
@@ -3271,18 +3272,14 @@ PropertyTreePrivate::updatePrims(const NoticeBatch& batch)
     if (d.paths.isEmpty() || batch.entries.isEmpty())
         return;
 
+    const path::PathRelations selectionRelations(d.paths);
     auto affectsSelection = [&](const SdfPath& inputPath) {
         if (inputPath.IsEmpty())
             return false;
 
         const SdfPath entryPath = inputPath.IsPropertyPath() ? inputPath.GetPrimPath() : inputPath;
 
-        for (const SdfPath& selectedPath : d.paths) {
-            if (selectedPath == entryPath || selectedPath.HasPrefix(entryPath) || entryPath.HasPrefix(selectedPath))
-                return true;
-        }
-
-        return false;
+        return selectionRelations.intersects(entryPath);
     };
 
     for (const NoticeEntry& entry : batch.entries) {
@@ -3995,6 +3992,7 @@ PropertyTree::contextMenuEvent(QContextMenuEvent* event)
 
     QMap<QString, SdfValueTypeName> candidates;
     QList<SdfPath> primPaths;
+    path::PathCollector primCollector(primPaths);
     if (p->d.stage) {
         READ_LOCKER(locker, p->d.context ? p->d.context->stageLock() : session()->stageLock(), "stageLock");
         for (const SdfPath& selected : p->d.paths) {
@@ -4002,8 +4000,7 @@ PropertyTree::contextMenuEvent(QContextMenuEvent* event)
             const UsdPrim prim = p->d.stage->GetPrimAtPath(primPath);
             if (!prim || prim.IsInstanceProxy())
                 continue;
-            if (!primPaths.contains(primPath))
-                primPaths.append(primPath);
+            primCollector.append(primPath);
             const UsdPrimDefinition& definition = prim.GetPrimDefinition();
             for (const TfToken& name : definition.GetPropertyNames()) {
                 const auto declared = definition.GetAttributeDefinition(name);

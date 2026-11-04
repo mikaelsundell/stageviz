@@ -204,6 +204,7 @@ namespace {
                                                              QList<SdfPath>& affected, QStringList& errors)
     {
         QList<DependencyPropertyState> states;
+        path::PathCollector affectedCollector(affected);
         if (!stage || !editLayer || removedRoots.isEmpty())
             return states;
 
@@ -300,7 +301,7 @@ namespace {
                 filterField(propertyPath, SdfFieldKeys->ConnectionPaths, changed);
                 if (changed) {
                     states.append(state);
-                    path::appendUnique(affected, propertyPath.GetPrimPath());
+                    affectedCollector.append(propertyPath.GetPrimPath());
                 }
             };
             for (const UsdRelationship& relationship : prim.GetRelationships())
@@ -338,6 +339,7 @@ deletePaths(const QList<SdfPath>& inPaths)
             command::runWorker([session, inPaths, state]() {
                 bool success = false;
                 QList<SdfPath> changed;
+                path::PathCollector changedCollector(changed);
                 QList<SdfPath> removedPaths;
                 QString error;
 
@@ -493,6 +495,7 @@ deletePaths(const QList<SdfPath>& inPaths)
             command::runWorker([session, state]() {
                 bool success = false;
                 QList<SdfPath> changed;
+                path::PathCollector changedCollector(changed);
                 QString error;
 
                 {
@@ -598,7 +601,9 @@ command::copyPathsCommand(const QList<SdfPath>& inPaths, bool selectCopies, std:
             command::runWorker([session, inPaths, selectCopies, state, worldDelta]() {
                 bool success = false;
                 QList<SdfPath> copiedPaths;
+                path::PathCollector copiedPathsCollector(copiedPaths);
                 QList<SdfPath> changed;
+                path::PathCollector changedCollector(changed);
                 QStringList errors;
 
                 {
@@ -783,10 +788,10 @@ command::copyPathsCommand(const QList<SdfPath>& inPaths, bool selectCopies, std:
                                     stage::restoreChildOrder(stage, parentPath, order);
                                 }
 
-                                path::appendUnique(copiedPaths, destinationPath);
-                                path::appendUnique(changed, sourcePath);
-                                path::appendUnique(changed, destinationPath);
-                                path::appendUnique(changed, parentPath);
+                                copiedPathsCollector.append(destinationPath);
+                                changedCollector.append(sourcePath);
+                                changedCollector.append(destinationPath);
+                                changedCollector.append(parentPath);
                             }
 
                             success = !state->items.isEmpty();
@@ -819,6 +824,7 @@ command::copyPathsCommand(const QList<SdfPath>& inPaths, bool selectCopies, std:
             command::runWorker([session, state]() {
                 bool success = true;
                 QList<SdfPath> changed;
+                path::PathCollector changedCollector(changed);
                 QStringList errors;
 
                 {
@@ -846,8 +852,8 @@ command::copyPathsCommand(const QList<SdfPath>& inPaths, bool selectCopies, std:
                                     continue;
                                 }
 
-                                path::appendUnique(changed, it->destinationPath);
-                                path::appendUnique(changed, it->parentPath);
+                                changedCollector.append(it->destinationPath);
+                                changedCollector.append(it->parentPath);
                             }
 
                             for (auto it = state->oldParentOrders.cbegin(); it != state->oldParentOrders.cend(); ++it)
@@ -921,7 +927,9 @@ instancePaths(const QList<SdfPath>& inPaths)
             command::runWorker([session, inPaths, state]() {
                 bool success = false;
                 QList<SdfPath> instancePaths;
+                path::PathCollector instancePathsCollector(instancePaths);
                 QList<SdfPath> changed;
+                path::PathCollector changedCollector(changed);
                 QStringList errors;
 
                 {
@@ -1042,10 +1050,10 @@ instancePaths(const QList<SdfPath>& inPaths)
                                     stage::restoreChildOrder(stage, parentPath, order);
                                 }
 
-                                path::appendUnique(instancePaths, destinationPath);
-                                path::appendUnique(changed, sourcePath);
-                                path::appendUnique(changed, destinationPath);
-                                path::appendUnique(changed, parentPath);
+                                instancePathsCollector.append(destinationPath);
+                                changedCollector.append(sourcePath);
+                                changedCollector.append(destinationPath);
+                                changedCollector.append(parentPath);
                             }
 
                             success = !state->items.isEmpty();
@@ -1075,6 +1083,7 @@ instancePaths(const QList<SdfPath>& inPaths)
             command::runWorker([session, state]() {
                 bool success = true;
                 QList<SdfPath> changed;
+                path::PathCollector changedCollector(changed);
                 QStringList errors;
 
                 {
@@ -1099,8 +1108,8 @@ instancePaths(const QList<SdfPath>& inPaths)
                                         QString("failed to remove instance: %1").arg(pathText(it->destinationPath)));
                                     continue;
                                 }
-                                path::appendUnique(changed, it->destinationPath);
-                                path::appendUnique(changed, it->parentPath);
+                                changedCollector.append(it->destinationPath);
+                                changedCollector.append(it->parentPath);
                             }
 
                             for (auto it = state->oldParentOrders.cbegin(); it != state->oldParentOrders.cend(); ++it)
@@ -1205,6 +1214,7 @@ namespace {
                     QString error;
                     SdfPath newPath;
                     QList<SdfPath> changed;
+                    path::PathCollector changedCollector(changed);
 
                     {
                         WRITE_LOCKER(locker, session->stageLock(), "stageLock");
@@ -1247,8 +1257,8 @@ namespace {
                                         order.push_back(newPath.GetNameToken());
                                         stage::restoreChildOrder(stage, parentPath, order);
 
-                                        path::appendUnique(changed, parentPath);
-                                        path::appendUnique(changed, newPath);
+                                        changedCollector.append(parentPath);
+                                        changedCollector.append(newPath);
                                     }
                                     else {
                                         stage::removePrimSpec(editLayer, newPath);
@@ -1288,6 +1298,7 @@ namespace {
                     bool success = false;
                     QString error;
                     QList<SdfPath> changed;
+                    path::PathCollector changedCollector(changed);
 
                     {
                         WRITE_LOCKER(locker, session->stageLock(), "stageLock");
@@ -1316,7 +1327,7 @@ namespace {
                                         stage::removePrimSpec(editLayer, *it);
                                 }
 
-                                path::appendUnique(changed, state->createdPath);
+                                changedCollector.append(state->createdPath);
                                 success = true;
                             }
                         }
@@ -1369,6 +1380,7 @@ command::createPrimCommand(const SdfPath& parentPath, const QString& nameInput, 
                 QString error;
                 SdfPath newPath;
                 QList<SdfPath> changed;
+                path::PathCollector changedCollector(changed);
 
                 {
                     WRITE_LOCKER(locker, session->stageLock(), "stageLock");
@@ -1418,7 +1430,7 @@ command::createPrimCommand(const SdfPath& parentPath, const QString& nameInput, 
                                     order.push_back(newPath.GetNameToken());
                                     stage::restoreChildOrder(stage, parentPath, order);
 
-                                    path::appendUnique(changed, newPath);
+                                    changedCollector.append(newPath);
                                     success = true;
                                 }
                             }
@@ -1447,6 +1459,7 @@ command::createPrimCommand(const SdfPath& parentPath, const QString& nameInput, 
                 bool success = false;
                 QString error;
                 QList<SdfPath> changed;
+                path::PathCollector changedCollector(changed);
 
                 {
                     WRITE_LOCKER(locker, session->stageLock(), "stageLock");
@@ -1475,8 +1488,8 @@ command::createPrimCommand(const SdfPath& parentPath, const QString& nameInput, 
                                     stage::removePrimSpec(editLayer, *it);
                             }
 
-                            path::appendUnique(changed, state->parentPath);
-                            path::appendUnique(changed, state->createdPath);
+                            changedCollector.append(state->parentPath);
+                            changedCollector.append(state->createdPath);
                             success = true;
                         }
                     }
@@ -1959,6 +1972,7 @@ newXformPath(const SdfPath& parentPath, const QString& nameInput, bool selectCre
                 SdfPath newPath;
                 QList<SdfPath> movePaths;
                 QList<SdfPath> changed;
+                path::PathCollector changedCollector(changed);
 
                 {
                     WRITE_LOCKER(locker, session->stageLock(), "stageLock");
@@ -2068,13 +2082,13 @@ newXformPath(const SdfPath& parentPath, const QString& nameInput, bool selectCre
                                     }
 
                                     if (movedSelection && error.isEmpty()) {
-                                        path::appendUnique(changed, parentPath);
-                                        path::appendUnique(changed, newPath);
+                                        changedCollector.append(parentPath);
+                                        changedCollector.append(newPath);
 
                                         for (const MoveItem& item : state->movedItems) {
-                                            path::appendUnique(changed, item.oldParentPath);
-                                            path::appendUnique(changed, item.oldPath);
-                                            path::appendUnique(changed, item.newPath);
+                                            changedCollector.append(item.oldParentPath);
+                                            changedCollector.append(item.oldPath);
+                                            changedCollector.append(item.newPath);
                                         }
 
                                         created = true;
@@ -2143,6 +2157,7 @@ newXformPath(const SdfPath& parentPath, const QString& nameInput, bool selectCre
                 bool restored = false;
                 QString error;
                 QList<SdfPath> changed;
+                path::PathCollector changedCollector(changed);
 
                 {
                     WRITE_LOCKER(locker, session->stageLock(), "stageLock");
@@ -2180,13 +2195,13 @@ newXformPath(const SdfPath& parentPath, const QString& nameInput, bool selectCre
                             }
 
                             if (restored) {
-                                path::appendUnique(changed, state->parentPath);
-                                path::appendUnique(changed, state->createdPath);
+                                changedCollector.append(state->parentPath);
+                                changedCollector.append(state->createdPath);
 
                                 for (const MoveItem& item : state->movedItems) {
-                                    path::appendUnique(changed, item.oldParentPath);
-                                    path::appendUnique(changed, item.oldPath);
-                                    path::appendUnique(changed, item.newPath);
+                                    changedCollector.append(item.oldParentPath);
+                                    changedCollector.append(item.oldPath);
+                                    changedCollector.append(item.newPath);
                                 }
                             }
                         }
@@ -2258,6 +2273,7 @@ movePath(const QList<SdfPath>& paths, const SdfPath& newParentPath, int insertIn
                 bool noop = false;
                 QString error;
                 QList<SdfPath> changed;
+                path::PathCollector changedCollector(changed);
 
                 {
                     WRITE_LOCKER(locker, session->stageLock(), "stageLock");
@@ -2548,6 +2564,7 @@ movePath(const QList<SdfPath>& paths, const SdfPath& newParentPath, int insertIn
                 bool restored = false;
                 QString error;
                 QList<SdfPath> changed;
+                path::PathCollector changedCollector(changed);
 
                 {
                     WRITE_LOCKER(locker, session->stageLock(), "stageLock");

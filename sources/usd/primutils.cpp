@@ -382,37 +382,20 @@ namespace stage {
         QList<SdfPath> targets;
         targets.reserve(paths.size());
 
-        const auto sources = transformInstanceSources(stage);
+        QList<SdfPath> sourcePaths;
+        for (const auto& source : transformInstanceSources(stage))
+            sourcePaths.append(source.first);
+        const path::PathIndex sourceRoots(sourcePaths);
+        path::PathCollector collector(targets);
         for (const SdfPath& path : objectPaths(stage, paths)) {
             SdfPath targetPath = transformProxyTargetPath(stage, path);
-            for (const auto& source : sources) {
-                if (targetPath.HasPrefix(source.first))
-                    targetPath = source.first;
-            }
-            if (targetPath.IsEmpty() || targets.contains(targetPath))
-                continue;
-
-            if (!minimalRoots) {
-                targets.append(targetPath);
-                continue;
-            }
-
-            bool coveredByAncestor = false;
-            for (const SdfPath& existingPath : targets) {
-                if (targetPath.HasPrefix(existingPath)) {
-                    coveredByAncestor = true;
-                    break;
-                }
-            }
-            if (coveredByAncestor)
-                continue;
-
-            for (qsizetype i = targets.size() - 1; i >= 0; --i) {
-                if (targets.at(i).HasPrefix(targetPath))
-                    targets.removeAt(i);
-            }
-            targets.append(targetPath);
+            const SdfPath source = sourceRoots.outermostAncestor(targetPath);
+            if (!source.IsEmpty())
+                targetPath = source;
+            collector.append(targetPath);
         }
+        if (minimalRoots)
+            return path::stableRootPaths(targets);
 
         return targets;
     }
@@ -421,14 +404,11 @@ namespace stage {
     {
         PerfScope perfScope("transform.preservation_paths");
         QList<SdfPath> preserved;
+        const path::PathIndex selected(targets);
+        path::PathCollector collector(preserved);
         for (const auto& source : transformInstanceSources(stage)) {
-            if (!targets.contains(source.first))
-                continue;
-            bool selected = false;
-            for (const SdfPath& target : targets)
-                selected = selected || source.second.HasPrefix(target);
-            if (!selected && !preserved.contains(source.second))
-                preserved.append(source.second);
+            if (selected.contains(source.first) && !selected.covers(source.second))
+                collector.append(source.second);
         }
         return preserved;
     }
@@ -1125,6 +1105,7 @@ namespace stage {
         if (!stage)
             return paths;
 
+        const path::PathIndex maskRoots(mask);
         for (const UsdPrim& prim : stage->Traverse()) {
             if (!prim || !prim.IsValid() || prim.IsA<UsdGeomSubset>())
                 continue;
@@ -1133,7 +1114,7 @@ namespace stage {
             if (path.IsEmpty() || path == SdfPath::AbsoluteRootPath())
                 continue;
 
-            if (!path::isWithinRoots(mask, path))
+            if (!mask.isEmpty() && !maskRoots.covers(path))
                 continue;
 
             bool hasTraversableChild = false;
@@ -1141,7 +1122,7 @@ namespace stage {
                 if (!child || !child.IsValid() || child.IsA<UsdGeomSubset>())
                     continue;
 
-                if (!childMustBeWithinMask || path::isWithinRoots(mask, child.GetPath())) {
+                if (!childMustBeWithinMask || mask.isEmpty() || maskRoots.covers(child.GetPath())) {
                     hasTraversableChild = true;
                     break;
                 }

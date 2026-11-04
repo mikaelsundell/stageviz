@@ -13,9 +13,12 @@
 #include <algorithm>
 #include <cmath>
 #include <memory>
+#include <unordered_map>
 #include <pxr/base/gf/vec3f.h>
 #include <pxr/base/gf/vec3h.h>
 #include <pxr/usd/sdf/changeBlock.h>
+#include <pxr/usd/sdf/attributeSpec.h>
+#include <pxr/usd/sdf/primSpec.h>
 #include <pxr/usd/sdf/copyUtils.h>
 #include <pxr/usd/sdf/schema.h>
 #include <pxr/usd/usd/editContext.h>
@@ -47,8 +50,9 @@ namespace command::detail {
             return false;
         }
 
-        const SdfPath orderPath = primPath.AppendProperty(TfToken("xformOpOrder"));
-        const SdfPath matrixPath = primPath.AppendProperty(TfToken("xformOp:transform"));
+        const SdfPath specPath = state.specPath.IsEmpty() ? primPath : state.specPath;
+        const SdfPath orderPath = specPath.AppendProperty(TfToken("xformOpOrder"));
+        const SdfPath matrixPath = specPath.AppendProperty(TfToken("xformOp:transform"));
 
         if (state.hadXformOpOrderSpec) {
             if (state.hadXformOpOrderDefault)
@@ -73,9 +77,9 @@ namespace command::detail {
         }
 
         if (!state.hadPrimSpec) {
-            const SdfPrimSpecHandle primSpec = editLayer->GetPrimAtPath(primPath);
+            const SdfPrimSpecHandle primSpec = editLayer->GetPrimAtPath(specPath);
             if (primSpec && primSpec->IsInert())
-                stage::removePrimSpec(editLayer, primPath);
+                stage::removePrimSpec(editLayer, specPath);
         }
 
         return true;
@@ -389,6 +393,7 @@ resetTransforms(const QList<SdfPath>& paths)
 
             command::runWorker([session, unique, state]() {
                 QList<SdfPath> affected;
+                path::PathCollector affectedCollector(affected);
                 QStringList errors;
 
                 {
@@ -460,7 +465,7 @@ resetTransforms(const QList<SdfPath>& paths)
                                 }
 
                                 state->items.append(item);
-                                path::appendUnique(affected, primPath);
+                                affectedCollector.append(primPath);
                             }
                         }
                     }
@@ -486,6 +491,7 @@ resetTransforms(const QList<SdfPath>& paths)
 
             command::runWorker([session, state]() {
                 QList<SdfPath> restored;
+                path::PathCollector restoredCollector(restored);
                 QStringList errors;
 
                 {
@@ -506,7 +512,7 @@ resetTransforms(const QList<SdfPath>& paths)
                             for (const TransformPropertyState& item : state->items) {
                                 QString error;
                                 if (restoreTransformPropertyState(editLayer, item, error))
-                                    path::appendUnique(restored, item.primPath);
+                                    restoredCollector.append(item.primPath);
                                 else
                                     errors.append(error);
                             }
@@ -547,6 +553,7 @@ centerPivots(const QList<SdfPath>& paths)
 
             command::runWorker([session, unique, state]() {
                 QList<SdfPath> affected;
+                path::PathCollector affectedCollector(affected);
                 QStringList errors;
 
                 {
@@ -614,7 +621,7 @@ centerPivots(const QList<SdfPath>& paths)
                                 }
 
                                 state->items.append(item);
-                                path::appendUnique(affected, primPath);
+                                affectedCollector.append(primPath);
                             }
                         }
                     }
@@ -639,6 +646,7 @@ centerPivots(const QList<SdfPath>& paths)
 
             command::runWorker([session, state]() {
                 QList<SdfPath> restored;
+                path::PathCollector restoredCollector(restored);
                 QStringList errors;
 
                 {
@@ -659,7 +667,7 @@ centerPivots(const QList<SdfPath>& paths)
                             for (const TransformPropertyState& item : state->items) {
                                 QString error;
                                 if (restoreTransformPropertyState(editLayer, item, error))
-                                    path::appendUnique(restored, item.primPath);
+                                    restoredCollector.append(item.primPath);
                                 else
                                     errors.append(error);
                             }
@@ -698,6 +706,7 @@ resetPivots(const QList<SdfPath>& paths)
 
             command::runWorker([session, unique, state]() {
                 QList<SdfPath> affected;
+                path::PathCollector affectedCollector(affected);
                 QStringList errors;
 
                 {
@@ -764,7 +773,7 @@ resetPivots(const QList<SdfPath>& paths)
                                 }
 
                                 state->items.append(item);
-                                path::appendUnique(affected, primPath);
+                                affectedCollector.append(primPath);
                             }
                         }
                     }
@@ -789,6 +798,7 @@ resetPivots(const QList<SdfPath>& paths)
 
             command::runWorker([session, state]() {
                 QList<SdfPath> restored;
+                path::PathCollector restoredCollector(restored);
                 QStringList errors;
 
                 {
@@ -809,7 +819,7 @@ resetPivots(const QList<SdfPath>& paths)
                             for (const TransformPropertyState& item : state->items) {
                                 QString error;
                                 if (restoreTransformPropertyState(editLayer, item, error))
-                                    path::appendUnique(restored, item.primPath);
+                                    restoredCollector.append(item.primPath);
                                 else
                                     errors.append(error);
                             }
@@ -850,6 +860,7 @@ beginTransformOperation(const UsdStageRefPtr& stage, const QList<SdfPath>& selec
 
     TransformOperation resolved;
     resolved.paths = stage::transformEditTargetPaths(stage, selection, minimalRoots);
+    const path::PathIndex targetRoots(resolved.paths);
     // Every input must resolve before any matrix/order override is authored.
     for (const SdfPath& selected : selection) {
         const SdfPath primPath = selected.IsPropertyPath() ? selected.GetPrimPath() : selected;
@@ -857,26 +868,31 @@ beginTransformOperation(const UsdStageRefPtr& stage, const QList<SdfPath>& selec
             error = QString("prim missing: %1").arg(pathText(selected));
             return false;
         }
-        bool covered = false;
-        for (const SdfPath& target : resolved.paths)
-            covered = covered || primPath.HasPrefix(target);
-        if (!covered) {
+        if (!targetRoots.covers(primPath)) {
             error = QString("no editable transform target: %1").arg(pathText(selected));
             return false;
         }
     }
     resolved.targetCount = resolved.paths.size();
     resolved.paths.append(stage::transformPreservationPaths(stage, resolved.paths));
+    UsdGeomXformCache worldCache(UsdTimeCode::Default());
     for (const SdfPath& path : resolved.paths) {
-        GfMatrix4d world(1.0);
-        if (!stage::worldTransform(stage, path, world, error))
-            return false;
+        const GfMatrix4d world = worldCache.GetLocalToWorldTransform(stage->GetPrimAtPath(path));
         resolved.edit.before.append(world);
 
         XformState state;
-        state.hadPrimSpec = bool(layer->GetPrimAtPath(path));
-        const SdfPath orderPath = path.AppendProperty(TfToken("xformOpOrder"));
-        const SdfPath matrixPath = path.AppendProperty(TfToken("xformOp:transform"));
+        state.specPath = stage->GetEditTarget().MapToSpecPath(path);
+        if (state.specPath.IsEmpty()) {
+            error = QString("unmappable transform target: %1").arg(pathText(path));
+            return false;
+        }
+        for (SdfPath ancestor = state.specPath.GetParentPath(); ancestor.IsPrimPath(); ancestor = ancestor.GetParentPath()) {
+            if (!layer->GetPrimAtPath(ancestor))
+                state.missingAncestors.append(ancestor);
+        }
+        state.hadPrimSpec = bool(layer->GetPrimAtPath(state.specPath));
+        const SdfPath orderPath = state.specPath.AppendProperty(TfToken("xformOpOrder"));
+        const SdfPath matrixPath = state.specPath.AppendProperty(TfToken("xformOp:transform"));
         state.hadXformOpOrderSpec = bool(layer->GetPropertyAtPath(orderPath));
         state.hadXformOpOrderDefault = layer->HasField(orderPath, SdfFieldKeys->Default);
         if (state.hadXformOpOrderDefault)
@@ -951,15 +967,15 @@ resolveTransformInput(const UsdStageRefPtr& stage, const QList<SdfPath>& paths, 
 
     QList<bool> assigned(operation.targetCount, false);
     QList<GfMatrix4d> targetDeltas(operation.targetCount, GfMatrix4d(1));
+    const path::PathIndex targetRoots(operation.paths.mid(0, operation.targetCount));
+    std::unordered_map<SdfPath, qsizetype, SdfPath::Hash> targetIndices;
+    targetIndices.reserve(static_cast<size_t>(operation.targetCount));
+    for (qsizetype i = 0; i < operation.targetCount; ++i)
+        targetIndices.emplace(operation.paths.at(i), i);
     for (qsizetype i = 0; i < paths.size(); ++i) {
         const SdfPath selected = paths.at(i).IsPropertyPath() ? paths.at(i).GetPrimPath() : paths.at(i);
-        qsizetype best = -1;
-        for (qsizetype j = 0; j < operation.targetCount; ++j) {
-            if (selected.HasPrefix(operation.paths.at(j))
-                && (best < 0
-                    || operation.paths.at(j).GetPathElementCount() > operation.paths.at(best).GetPathElementCount()))
-                best = j;
-        }
+        const auto target = targetIndices.find(targetRoots.nearestAncestor(selected));
+        const qsizetype best = target == targetIndices.end() ? -1 : target->second;
         if (best < 0) {
             error = QString("no resolved transform target: %1").arg(pathText(selected));
             return false;
@@ -988,111 +1004,112 @@ prepareTransforms(const UsdStageRefPtr& stage, const QList<SdfPath>& paths, cons
         return result;
 
     result.reserve(paths.size());
+    // Keep one invalid record per input on rejection, as callers use the shape
+    // to report individual targets. Preflight still performs no authoring.
+    const auto rejected = [&]() {
+        QList<PreparedTransform> invalid;
+        invalid.reserve(paths.size());
+        for (const auto& path : paths) {
+            PreparedTransform item;
+            item.path = path;
+            invalid.append(item);
+        }
+        return invalid;
+    };
     QList<GfMatrix4d> localPivots;
     QList<bool> resetStacks;
+    struct Plan {
+        SdfPath specPath;
+        GfMatrix4d local;
+        VtTokenArray order;
+    };
+    QList<Plan> plans;
+    plans.reserve(paths.size());
+    const UsdEditTarget editTarget = stage->GetEditTarget();
+    const SdfLayerHandle editLayer = editTarget.GetLayer();
+    UsdGeomXformCache parentCache(UsdTimeCode::Default());
 
-    // Match the interactive gizmo setup exactly: establish the supplied base
-    // world transforms first, then cache the resulting matrix ops and parent
-    // transforms for repeated updates.
-    //
-    // Do not use stage::setWorldTransform() for this normalization. That path
-    // canonicalizes the composed xform stack with MakeMatrixXform(), which can
-    // fail when xformOpOrder is authored only in a weaker layer. The gizmo must
-    // instead author a stronger matrix/order override in the active edit layer
-    // without modifying the weaker transform opinions.
+    // USD queries must finish before opening SdfChangeBlock: composition and
+    // attribute handles are stale until the block's changes have been delivered.
+    for (qsizetype i = 0; i < paths.size(); ++i) {
+        const auto& path = paths.at(i);
+        const UsdPrim prim = stage->GetPrimAtPath(path);
+        const UsdGeomXformable xformable(prim);
+        Plan plan;
+        plan.specPath = editTarget.MapToSpecPath(path);
+        if (!editLayer || !editLayer->PermissionToEdit() || plan.specPath.IsEmpty()
+            || !prim || prim.IsInstanceProxy() || prim.IsInPrototype() || !xformable) {
+            if (errors)
+                errors->append(QString("invalid transform authoring target: %1").arg(pathText(path)));
+            return rejected();
+        }
+        GfMatrix4d localPivot(1.0);
+        const bool resetsStack = xformable.GetResetXformStack();
+        VtTokenArray oldOrder;
+        xformable.GetXformOpOrderAttr().Get(&oldOrder);
+        TfToken pivotName;
+        for (const auto& name : { TfToken("xformOp:transform:pivot"), TfToken("xformOp:translate:pivot") }) {
+            const auto forward = std::find(oldOrder.begin(), oldOrder.end(), name);
+            const auto inverse = std::find(oldOrder.begin(), oldOrder.end(), TfToken("!invert!" + name.GetString()));
+            if (forward != oldOrder.end() && inverse != oldOrder.end() && forward < inverse) {
+                pivotName = name;
+                localPivot = UsdGeomXformOp(prim.GetAttribute(name)).GetOpTransform(UsdTimeCode::Default());
+                break;
+            }
+        }
+        GfMatrix4d parentWorld(1.0);
+        const UsdPrim parent = prim.GetParent();
+        if (!resetsStack && parent && !parent.IsPseudoRoot())
+            parentWorld = parentCache.GetLocalToWorldTransform(parent);
+        plan.local = localPivot * baseMatrices.at(i) * parentWorld.GetInverse() * localPivot.GetInverse();
+        if (resetsStack)
+            plan.order.push_back(TfToken("!resetXformStack!"));
+        if (!pivotName.IsEmpty())
+            plan.order.push_back(pivotName);
+        plan.order.push_back(TfToken("xformOp:transform"));
+        if (!pivotName.IsEmpty())
+            plan.order.push_back(TfToken("!invert!" + pivotName.GetString()));
+        plans.append(plan);
+        localPivots.append(localPivot);
+        resetStacks.append(resetsStack);
+    }
     {
         SdfChangeBlock changeBlock;
-
-        for (qsizetype i = 0; i < paths.size(); ++i) {
-            const SdfPath& path = paths.at(i);
-            const UsdPrim prim = stage->GetPrimAtPath(path);
-            QString error;
-            GfMatrix4d localPivot(1.0);
-            bool resetsStack = false;
-
-            if (!prim || !prim.IsValid()) {
-                error = QString("prim missing: %1").arg(qt::SdfPathToQString(path));
+        for (const auto& plan : plans) {
+            const auto primSpec = SdfCreatePrimInLayer(editLayer, plan.specPath);
+            if (!primSpec) {
+                if (errors)
+                    errors->append(QString("failed to create transform spec: %1").arg(pathText(plan.specPath)));
+                return rejected();
             }
-            else if (prim.IsInstanceProxy() || prim.IsInPrototype()) {
-                error = QString("transform requires an instance root: %1").arg(qt::SdfPathToQString(path));
+            const auto matrixPath = plan.specPath.AppendProperty(TfToken("xformOp:transform"));
+            auto matrix = editLayer->GetAttributeAtPath(matrixPath);
+            if (!matrix)
+                matrix = SdfAttributeSpec::New(primSpec, "xformOp:transform", SdfValueTypeNames->Matrix4d,
+                                               SdfVariabilityVarying, false);
+            const auto orderPath = plan.specPath.AppendProperty(TfToken("xformOpOrder"));
+            auto order = editLayer->GetAttributeAtPath(orderPath);
+            if (!order)
+                order = SdfAttributeSpec::New(primSpec, "xformOpOrder", SdfValueTypeNames->TokenArray,
+                                              SdfVariabilityUniform, false);
+            if (!matrix || !order || matrix->GetTypeName() != SdfValueTypeNames->Matrix4d) {
+                if (errors)
+                    errors->append(QString("invalid transform attribute spec: %1").arg(pathText(plan.specPath)));
+                return rejected();
             }
-            else {
-                UsdGeomXformable xformable(prim);
-                if (!xformable) {
-                    error = QString("prim is not xformable: %1").arg(qt::SdfPathToQString(path));
-                }
-                else {
-                    resetsStack = xformable.GetResetXformStack();
-                    // Retain the active pivot pair instead of leaving orphaned
-                    // attributes behind a matrix-only order. Only the central
-                    // matrix changes during an object transform.
-                    VtTokenArray oldOrder;
-                    xformable.GetXformOpOrderAttr().Get(&oldOrder);
-                    TfToken pivotName;
-                    for (const auto& name :
-                         { TfToken("xformOp:transform:pivot"), TfToken("xformOp:translate:pivot") }) {
-                        const auto forward = std::find(oldOrder.begin(), oldOrder.end(), name);
-                        const auto inverse = std::find(oldOrder.begin(), oldOrder.end(),
-                                                       TfToken("!invert!" + name.GetString()));
-                        if (forward != oldOrder.end() && inverse != oldOrder.end() && forward < inverse) {
-                            pivotName = name;
-                            localPivot = UsdGeomXformOp(prim.GetAttribute(name)).GetOpTransform(UsdTimeCode::Default());
-                            break;
-                        }
-                    }
-                    GfMatrix4d parentWorld(1.0);
-                    const UsdPrim parent = prim.GetParent();
-                    if (!resetsStack && parent && !parent.IsPseudoRoot()) {
-                        UsdGeomXformCache parentCache(UsdTimeCode::Default());
-                        parentWorld = parentCache.GetLocalToWorldTransform(parent);
-                    }
-
-                    const GfMatrix4d local = localPivot * baseMatrices.at(i) * parentWorld.GetInverse()
-                                             * localPivot.GetInverse();
-
-                    UsdEditContext context(stage, stage->GetEditTarget());
-
-                    UsdAttribute matrixAttr = prim.CreateAttribute(TfToken("xformOp:transform"),
-                                                                   SdfValueTypeNames->Matrix4d, false,
-                                                                   SdfVariabilityVarying);
-                    if (!matrixAttr || matrixAttr.GetTypeName() != SdfValueTypeNames->Matrix4d) {
-                        error
-                            = QString("failed to create matrix transform override: %1").arg(qt::SdfPathToQString(path));
-                    }
-                    else if (!matrixAttr.Set(local, UsdTimeCode::Default())) {
-                        error = QString("failed to set matrix transform override: %1").arg(qt::SdfPathToQString(path));
-                    }
-                    else {
-                        VtTokenArray order;
-                        if (resetsStack)
-                            order.push_back(TfToken("!resetXformStack!"));
-                        if (!pivotName.IsEmpty())
-                            order.push_back(pivotName);
-                        order.push_back(TfToken("xformOp:transform"));
-                        if (!pivotName.IsEmpty())
-                            order.push_back(TfToken("!invert!" + pivotName.GetString()));
-
-                        const UsdAttribute orderAttr = xformable.CreateXformOpOrderAttr();
-                        if (!orderAttr || !orderAttr.Set(order, UsdTimeCode::Default())) {
-                            error
-                                = QString("failed to set transform order override: %1").arg(qt::SdfPathToQString(path));
-                        }
-                    }
-                }
-            }
-
-            localPivots.append(localPivot);
-            resetStacks.append(resetsStack);
-            if (!error.isEmpty() && errors)
-                errors->append(error);
+            matrix->SetDefaultValue(VtValue(plan.local));
+            order->SetDefaultValue(VtValue(plan.order));
         }
     }
+    const path::PathIndex selectedRoots(paths);
 
     UsdGeomXformCache xformCache(UsdTimeCode::Default());
     for (qsizetype i = 0; i < paths.size(); ++i) {
         const SdfPath& path = paths.at(i);
         PreparedTransform prepared;
         prepared.path = path;
+        prepared.editLayer = editLayer;
+        prepared.matrixSpecPath = plans.at(i).specPath.AppendProperty(TfToken("xformOp:transform"));
         prepared.localPivot = localPivots.at(i);
 
         const UsdPrim prim = stage->GetPrimAtPath(path);
@@ -1107,7 +1124,7 @@ prepareTransforms(const UsdStageRefPtr& stage, const QList<SdfPath>& paths, cons
 
         for (UsdPrim ancestor = resetStacks.at(i) ? UsdPrim() : parent; ancestor && !ancestor.IsPseudoRoot();
              ancestor = ancestor.GetParent()) {
-            if (paths.contains(ancestor.GetPath())) {
+            if (selectedRoots.contains(ancestor.GetPath())) {
                 prepared.parentFollowsSelection = true;
                 break;
             }
@@ -1137,40 +1154,52 @@ applyPreparedTransforms(const UsdStageRefPtr& stage, const QList<PreparedTransfo
         return false;
 
     bool success = true;
-    SdfChangeBlock changeBlock;
-
+    struct Update { SdfLayerHandle layer; SdfPath specPath; GfMatrix4d local; SdfPath path; };
+    QList<Update> updates;
+    QList<qsizetype> fallback;
+    const UsdEditTarget editTarget = stage->GetEditTarget();
     for (qsizetype i = 0; i < prepared.size(); ++i) {
-        const PreparedTransform& item = prepared.at(i);
+        const auto& item = prepared.at(i);
         const UsdPrim prim = stage->GetPrimAtPath(item.path);
         if (!prim || prim.IsInstanceProxy() || prim.IsInPrototype()) {
             if (errors)
-                errors->append(QString("invalid transform authoring target: %1").arg(qt::SdfPathToQString(item.path)));
+                errors->append(QString("invalid transform authoring target: %1").arg(pathText(item.path)));
             success = false;
             continue;
         }
-        bool applied = false;
-
-        if (item.fast && (!item.parentFollowsSelection || hasSelectionDelta)) {
-            GfMatrix4d parentWorld = item.parentWorld;
-            if (item.parentFollowsSelection)
-                parentWorld = item.parentWorld * selectionDelta;
-
-            const GfMatrix4d local = item.localPivot * matrices.at(i) * parentWorld.GetInverse()
-                                     * item.localPivot.GetInverse();
-            applied = item.matrixOp.Set(local, UsdTimeCode::Default());
+        if (item.fast && item.editLayer && item.editLayer == editTarget.GetLayer()
+            && item.matrixSpecPath == editTarget.MapToSpecPath(item.path).AppendProperty(TfToken("xformOp:transform"))
+            && item.editLayer->PermissionToEdit() && item.editLayer->GetAttributeAtPath(item.matrixSpecPath)
+            && (!item.parentFollowsSelection || hasSelectionDelta)) {
+            const GfMatrix4d parentWorld = item.parentFollowsSelection
+                                              ? item.parentWorld * selectionDelta : item.parentWorld;
+            updates.append({ item.editLayer, item.matrixSpecPath,
+                             item.localPivot * matrices.at(i) * parentWorld.GetInverse() * item.localPivot.GetInverse(),
+                             item.path });
         }
-
-        if (!applied) {
-            QString error;
-            applied = stage::setWorldTransform(stage, item.path, matrices.at(i), error);
-            if (!applied && errors) {
-                errors->append(error.isEmpty() ? QString("failed: %1").arg(qt::SdfPathToQString(item.path)) : error);
-            }
+        else
+            fallback.append(i);
+    }
+    {
+        SdfChangeBlock changeBlock;
+        for (const auto& update : updates)
+            update.layer->SetField(update.specPath, SdfFieldKeys->Default, VtValue(update.local));
+    }
+    QList<SdfPath> ignored;
+    path::PathCollector collector(changed ? *changed : ignored);
+    for (const auto& update : updates)
+        collector.append(update.path);
+    // The generic USD path may read composed transforms. Keep it outside the
+    // Sdf batch so it observes all prior changes, including selected parents.
+    for (qsizetype i : fallback) {
+        QString error;
+        if (stage::setWorldTransform(stage, prepared.at(i).path, matrices.at(i), error))
+            collector.append(prepared.at(i).path);
+        else {
+            success = false;
+            if (errors)
+                errors->append(error);
         }
-
-        if (applied && changed)
-            path::appendUnique(*changed, item.path);
-        success = applied && success;
     }
 
     return success;
@@ -1201,6 +1230,20 @@ restoreTransformOperation(const UsdStageRefPtr& stage, const TransformOperation&
             if (errors)
                 errors->append(error);
         }
+    }
+    QList<SdfPath> ancestors;
+    path::PathCollector collector(ancestors);
+    for (const auto& state : operation.edit.beforeState) {
+        for (const auto& ancestor : state.missingAncestors)
+            collector.append(ancestor);
+    }
+    std::sort(ancestors.begin(), ancestors.end(), [](const SdfPath& a, const SdfPath& b) {
+        return a.GetPathElementCount() > b.GetPathElementCount();
+    });
+    for (const auto& ancestor : ancestors) {
+        const auto spec = layer->GetPrimAtPath(ancestor);
+        if (spec && spec->IsInert())
+            stage::removePrimSpec(layer, ancestor);
     }
     return success;
 }

@@ -31,6 +31,8 @@ namespace stageviz {
  * no edit-layer transform opinion existed before the drag.
  */
 struct XformState {
+    SdfPath specPath;
+    QList<SdfPath> missingAncestors;
     bool hadPrimSpec = false;
     bool hadXformOpOrderSpec = false;
     bool hadXformOpOrderDefault = false;
@@ -62,6 +64,8 @@ struct XformEdit {
  */
 struct PreparedTransform {
     SdfPath path;
+    SdfLayerHandle editLayer;
+    SdfPath matrixSpecPath;
     UsdGeomXformOp matrixOp;
     GfMatrix4d parentWorld = GfMatrix4d(1.0);
     GfMatrix4d localPivot = GfMatrix4d(1.0);
