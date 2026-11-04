@@ -146,6 +146,7 @@ class TransformOperationTest(_namespace["SubsetTest"]):
         Sdf.CreatePrimInLayer(root, "/Composed")
         assert stageviz.session().setEditLayer(root.identifier)
         stageviz.command.select_paths(paths)
+        tb.trigger_action("displayFrameAll")
         tb.process_events(80)
         stageviz.command.clear()
         original = root.ExportToString()

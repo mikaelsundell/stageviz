@@ -1710,9 +1710,25 @@ indexedPathApi()
     inputs.append(SdfPath("/World"));
     require(stageviz::path::stableRootPaths(inputs) == QList<SdfPath> { SdfPath("/World") },
             "late ancestor reduces a large duplicate selection");
+    require(stageviz::path::sortedRootPaths(inputs) == QList<SdfPath> { SdfPath("/World") },
+            "sorted roots reduce a large duplicate selection");
     inputs = { SdfPath("/B/Child"), SdfPath("/A"), SdfPath("/B"), SdfPath("/A"), SdfPath() };
     require(stageviz::path::stableRootPaths(inputs) == QList<SdfPath> { SdfPath("/A"), SdfPath("/B") },
             "stable roots retain surviving input order");
+    const QList<SdfPath> mixed { SdfPath("/Z"), SdfPath("/A/Child"), SdfPath("/A"), SdfPath("/A.attr"),
+                                SdfPath("Relative/Child"), SdfPath("Relative"), SdfPath("../A"), SdfPath(".."),
+                                SdfPath("/Var{v=x}Child"), SdfPath("/Var{v=x}"), SdfPath("/A"), SdfPath() };
+    QList<SdfPath> expected;
+    for (const auto& candidate : stageviz::path::uniquePaths(mixed)) {
+        bool child = false;
+        for (const auto& root : mixed)
+            child = child || (candidate != root && candidate.HasPrefix(root));
+        if (!child)
+            expected.append(candidate);
+    }
+    std::sort(expected.begin(), expected.end());
+    require(stageviz::path::sortedRootPaths(mixed) == expected,
+            "sorted roots match prefix semantics for properties, variants, relative parents, duplicates and empties");
     QList<SdfPath> output { SdfPath("/A") };
     stageviz::path::PathCollector collector(output);
     for (const auto& path : inputs)

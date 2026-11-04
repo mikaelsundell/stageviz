@@ -191,6 +191,15 @@ namespace path {
     QList<SdfPath> stableRootPaths(const QList<SdfPath>& paths);
 
     /**
+     * @brief Returns unique nonempty roots in USD namespace sort order.
+     *
+     * Sorts once and filters adjacent descendants without an ancestor hash walk
+     * per path. Prefer this for bulk traversal when input/depth order is not
+     * required. SdfPath ordering keeps every subtree contiguous.
+     */
+    QList<SdfPath> sortedRootPaths(const QList<SdfPath>& paths);
+
+    /**
      * @brief Collects unique nonempty paths in insertion order without rescanning.
      *
      * The output must not be modified independently while this collector exists.
