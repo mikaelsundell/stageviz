@@ -31,7 +31,10 @@ namespace command {
     SdfLayerHandle currentEditLayer(const UsdStageRefPtr& stage, QString& error);
 
     /**
-     * @brief Joins command errors into a multiline message.
+     * @brief Joins command errors into a bounded multiline notification.
+     *
+     * Large batches retain a representative prefix and an omitted-error count
+     * rather than placing every failed path into the UI's status message.
      */
     QString summarizeErrors(const QStringList& errors);
 

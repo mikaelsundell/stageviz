@@ -2,6 +2,7 @@
 // Copyright (c) 2025 - present Mikael Sundell
 
 #include "commandcomposition.h"
+#include "bboxutils.h"
 #include "commandlayer.h"
 #include "commandlight.h"
 #include "commandmaterial.h"
@@ -13,6 +14,7 @@
 #include "commandstack.h"
 #include "commandstage.h"
 #include "commandtransform.h"
+#include "commandutils.h"
 #include "commandvisibility.h"
 #include "console.h"
 #include "materialmenu.h"
@@ -48,6 +50,7 @@
 #include <pxr/imaging/hd/tokens.h>
 #include <pxr/usd/sdf/assetPath.h>
 #include <pxr/usd/sdf/layer.h>
+#include <pxr/usd/sdf/namespaceEdit.h>
 #include <pxr/usd/sdf/schema.h>
 #include <pxr/usd/sdf/types.h>
 #include <pxr/usd/usd/attribute.h>
@@ -1724,6 +1727,14 @@ indexedPathApi()
     require(stageviz::notice::onlyTransformProperties(batch), "transform values retain topology counts");
     batch.entries.first().changedInfoOnly = false;
     require(stageviz::notice::onlyTransformProperties(batch), "new transform attributes retain topology counts");
+    stageviz::NoticeEntry stackRefresh;
+    stackRefresh.path = SdfPath("/A");
+    stackRefresh.changedInfoOnly = true;
+    batch.entries.append(stackRefresh);
+    require(stageviz::notice::onlyTransformProperties(batch), "stronger transform over stack refresh retains counts");
+    batch.entries.last().changedFields = { TfToken("typeName") };
+    require(!stageviz::notice::onlyTransformProperties(batch), "named prim fields remain conservative");
+    batch.entries.removeLast();
     batch.entries.first().path = SdfPath("/A.points");
     require(!stageviz::notice::onlyTransformProperties(batch), "geometry changes invalidate counts");
     batch.entries.first().path = SdfPath("/A");
@@ -1776,17 +1787,192 @@ batchedTransformAuthoring()
     }
     variantStage->GetRootLayer()->ExportToString(&original);
     UsdEditContext context(variants.GetVariantEditContext());
-    require(stageviz::beginTransformOperation(variantStage, { SdfPath("/Model/Child") }, operation, error),
-            "capture mapped variant transform target");
-    const auto mapped = stageviz::prepareTransforms(variantStage, operation.paths, operation.edit.before, &errors);
-    require(errors.isEmpty() && mapped.size() == 1, "prepare mapped variant transform override");
-    require(stageviz::applyTransformOperation(variantStage, operation, mapped, delta, &errors),
-            "apply mapped variant transform");
-    require(!variantStage->GetRootLayer()->GetPrimAtPath(SdfPath("/Model/Child")),
-            "mapped transform never authors outside its variant");
-    require(stageviz::restoreTransformOperation(variantStage, operation, &errors), "restore mapped transform");
-    variantStage->GetRootLayer()->ExportToString(&restored);
-    require(restored == original, "mapped transform undo restores exact layer text");
+    for (const auto& target : { SdfPath("/Model/Child"), SdfPath("/Model") }) {
+        require(stageviz::beginTransformOperation(variantStage, { target }, operation, error),
+                "capture mapped variant transform target");
+        const auto mapped = stageviz::prepareTransforms(variantStage, operation.paths, operation.edit.before, &errors);
+        require(errors.isEmpty() && mapped.size() == 1, "prepare mapped variant transform override");
+        require(stageviz::applyTransformOperation(variantStage, operation, mapped, delta, &errors),
+                "apply mapped variant transform");
+        require(bool(variantStage->GetRootLayer()->GetAttributeAtPath(
+                    variantStage->GetEditTarget().MapToSpecPath(target).AppendProperty(TfToken("xformOp:transform")))),
+                "transform attribute belongs to the mapped variant owner");
+        require(!variantStage->GetRootLayer()->GetAttributeAtPath(SdfPath("/Model.xformOp:transform")),
+                "variant-root transform does not escape into the model's nonvariant spec");
+        require(!variantStage->GetRootLayer()->GetPrimAtPath(SdfPath("/Model/Child")),
+                "mapped transform never authors outside its variant");
+        require(stageviz::restoreTransformOperation(variantStage, operation, &errors), "restore mapped transform");
+        variantStage->GetRootLayer()->ExportToString(&restored);
+        require(restored == original, "mapped transform undo restores exact layer text");
+    }
+}
+
+void
+bboxCacheInvalidation()
+{
+    Session session;
+    require(session.newStage(), "new bounds cache stage");
+    const auto stage = session.stage();
+    UsdGeomXform::Define(stage, SdfPath("/World/Parent"));
+    const auto cube = UsdGeomCube::Define(stage, SdfPath("/World/Parent/Cube"));
+    const auto matches = [](const GfBBox3d& actual, const GfBBox3d& expected) {
+        const auto a = actual.ComputeAlignedRange(), b = expected.ComputeAlignedRange();
+        return a.IsEmpty() == b.IsEmpty()
+               && (a.IsEmpty() || (GfIsClose(a.GetMin(), b.GetMin(), 1e-8) && GfIsClose(a.GetMax(), b.GetMax(), 1e-8)));
+    };
+    const auto check = [&](const UsdPrim& prim) {
+        UsdGeomBBoxCache reference(UsdTimeCode::Default(), UsdGeomImageable::GetOrderedPurposeTokens(), true);
+        GfBBox3d actual;
+        {
+            QReadLocker lock(session.stageLock());
+            stageviz::bbox::CacheGuard cache;
+            actual = cache.ComputeWorldBound(prim);
+        }
+        require(matches(actual, reference.ComputeWorldBound(prim)), "shared bounds match a fresh USD cache");
+        require(matches(session.boundingBox(), reference.ComputeWorldBound(stage->GetPseudoRoot())),
+                "session aggregate notices mutations before deferred Qt delivery");
+    };
+    check(cube.GetPrim());
+    const auto translate = cube.AddTranslateOp();
+    translate.Set(GfVec3d(10, 20, 30));
+    check(cube.GetPrim()); // No event processing: the Qt notice batch is still pending.
+    UsdGeomXformable(stage->GetPrimAtPath(SdfPath("/World/Parent"))).AddScaleOp().Set(GfVec3f(-2, 3, 4));
+    check(cube.GetPrim());
+    cube.GetSizeAttr().Set(7.0);
+    check(cube.GetPrim());
+    cube.GetVisibilityAttr().Set(UsdGeomTokens->invisible);
+    check(stage->GetPseudoRoot());
+    cube.GetVisibilityAttr().Set(UsdGeomTokens->inherited);
+    check(stage->GetPseudoRoot());
+    translate.Set(GfVec3d(-3, 4, 5));
+    check(cube.GetPrim());
+    cube.GetPrim().SetActive(false);
+    check(stage->GetPseudoRoot());
+    cube.GetPrim().SetActive(true);
+    check(stage->GetPseudoRoot());
+}
+
+void
+batchedAttributeAuthoring()
+{
+    Session session;
+    require(session.newStage(), "new composed attribute stage");
+    const auto source = UsdStage::CreateInMemory();
+    QList<SdfPath> paths, properties;
+    for (int i = 0; i < 256; ++i) {
+        const SdfPath path("/Assembly/P" + std::to_string(i));
+        UsdGeomCube::Define(source, path);
+        paths.append(path);
+        properties.append(path.AppendProperty(TfToken("custom:batch")));
+    }
+    const auto stage = session.stage();
+    stage->GetRootLayer()->GetSubLayerPaths().push_back(source->GetRootLayer()->GetIdentifier());
+    auto add = stageviz::addAttributes(paths, TfToken("custom:batch"), SdfValueTypeNames->Float, true);
+    executeCommand(add, session);
+    for (const auto& property : properties) {
+        float value = -1;
+        const auto attr = stage->GetAttributeAtPath(property);
+        require(attr && attr.Get(&value) && value == 0.0f, "composed batch attribute created with default");
+    }
+    const auto first = stage->GetAttributeAtPath(properties.first());
+    first.Set(3.0f, UsdTimeCode(1));
+    first.SetDocumentation("retained batch metadata");
+    std::string original, restored;
+    stage->GetRootLayer()->ExportToString(&original);
+    auto rename = stageviz::renameAttributes(properties, TfToken("custom:renamed"));
+    executeCommand(rename, session);
+    for (const auto& path : paths) {
+        require(!stage->GetAttributeAtPath(path.AppendProperty(TfToken("custom:batch")))
+                    && stage->GetAttributeAtPath(path.AppendProperty(TfToken("custom:renamed"))),
+                "all composed custom attributes renamed");
+    }
+    float sample = 0;
+    const auto renamed = stage->GetAttributeAtPath(paths.first().AppendProperty(TfToken("custom:renamed")));
+    require(renamed.Get(&sample, UsdTimeCode(1)) && sample == 3.0f
+                && renamed.GetDocumentation() == "retained batch metadata", "rename retains time samples and metadata");
+    undoCommand(rename, session);
+    stage->GetRootLayer()->ExportToString(&restored);
+    require(restored == original, "batch rename undo restores exact authored specs");
+    auto remove = stageviz::removeAttributes(properties);
+    executeCommand(remove, session);
+    for (const auto& property : properties)
+        require(!stage->GetAttributeAtPath(property), "batch custom attributes removed");
+    undoCommand(remove, session);
+    stage->GetRootLayer()->ExportToString(&restored);
+    require(restored == original, "batch removal undo restores exact authored specs");
+    undoCommand(add, session);
+    for (const auto& property : properties) {
+        require(!stage->GetAttributeAtPath(property), "batch creation undo removes new attributes");
+        require(!source->GetAttributeAtPath(property), "batch operations never author into weaker source");
+    }
+}
+
+void
+specDeletionApi()
+{
+    require(stageviz::command::summarizeErrors({ "first", "second" }) == "first\nsecond",
+            "small error summaries retain their complete diagnostics");
+    QStringList errors;
+    for (int i = 0; i < 10000; ++i)
+        errors.append(QString("failed path %1").arg(i));
+    const auto summary = stageviz::command::summarizeErrors(errors);
+    require(summary.startsWith("failed path 0\n") && summary.contains("additional errors omitted")
+                && summary.size() < 1024, "bulk error notifications retain a bounded sample and omission count");
+    const auto stage = UsdStage::CreateInMemory();
+    const auto layer = stage->GetRootLayer();
+    auto keep = UsdGeomCube::Define(stage, SdfPath("/Root/Keep"));
+    auto remove = UsdGeomCube::Define(stage, SdfPath("/Root/Remove"));
+    const auto attr = keep.GetPrim().CreateAttribute(TfToken("custom:test"), SdfValueTypeNames->Float, true);
+    attr.Set(2.0f);
+    const auto relationship = keep.GetPrim().CreateRelationship(TfToken("custom:target"));
+    relationship.AddTarget(remove.GetPath());
+    const auto input = keep.GetPrim().CreateAttribute(TfToken("custom:input"), SdfValueTypeNames->Float, true);
+    input.SetConnections({ SdfPath("/Root/Remove.outputs:value") });
+    layer->GetPrimAtPath(SdfPath("/Root"))->SetNameChildrenOrder({ TfToken("Remove"), TfToken("Keep") });
+    layer->SetRootPrimOrder({ TfToken("Root") });
+    // Preserve the previous helper's complete Sdf-layer semantics, including
+    // connection/target fields and explicit child/root order metadata.
+    for (const auto& path : { attr.GetPath(), relationship.GetPath(), remove.GetPath(), SdfPath("/Root") }) {
+        const auto reference = SdfLayer::CreateAnonymous("namespace_delete_reference.usda");
+        const auto direct = SdfLayer::CreateAnonymous("direct_delete.usda");
+        reference->TransferContent(layer);
+        direct->TransferContent(layer);
+        SdfBatchNamespaceEdit edits;
+        edits.Add(path, SdfPath::EmptyPath());
+        require(reference->CanApply(edits) && reference->Apply(edits), "reference namespace deletion succeeds");
+        require(path.IsPropertyPath() ? stageviz::command::removePropertySpec(direct, path)
+                                      : stageviz::stage::removePrimSpec(direct, path), "direct spec deletion succeeds");
+        std::string expected, actual;
+        reference->ExportToString(&expected);
+        direct->ExportToString(&actual);
+        require(actual == expected, "direct deletion preserves the previous complete layer result");
+    }
+    require(stageviz::command::removePropertySpec(layer, attr.GetPath()), "delete exact attribute spec");
+    require(!layer->GetPropertyAtPath(attr.GetPath()) && layer->GetPropertyAtPath(relationship.GetPath()),
+            "attribute deletion preserves unrelated relationship");
+    require(stageviz::command::removePropertySpec(layer, attr.GetPath()), "absent property deletion is a no-op");
+    layer->SetPermissionToEdit(false);
+    require(!stageviz::command::removePropertySpec(layer, relationship.GetPath()), "readonly property deletion rejected");
+    require(!stageviz::stage::removePrimSpec(layer, remove.GetPath()), "readonly prim deletion rejected");
+    layer->SetPermissionToEdit(true);
+    require(stageviz::command::removePropertySpec(layer, relationship.GetPath()), "delete exact relationship spec");
+    require(stageviz::stage::removePrimSpec(layer, remove.GetPath()) && stage->GetPrimAtPath(keep.GetPath()),
+            "nested prim deletion preserves siblings");
+    require(stageviz::stage::removePrimSpec(layer, SdfPath("/Root")) && !stage->GetPrimAtPath(keep.GetPath()),
+            "root prim deletion removes its subtree");
+    const auto model = UsdGeomXform::Define(stage, SdfPath("/Model"));
+    auto variants = model.GetPrim().GetVariantSets().AddVariantSet("shape");
+    variants.AddVariant("test");
+    variants.SetVariantSelection("test");
+    {
+        UsdEditContext context(variants.GetVariantEditContext());
+        UsdGeomCube::Define(stage, SdfPath("/Model/Child"));
+        const auto specPath = stage->GetEditTarget().MapToSpecPath(SdfPath("/Model/Child"));
+        require(stageviz::stage::removePrimSpec(layer, specPath), "delete variant-owned child spec");
+        require(!stage->GetPrimAtPath(SdfPath("/Model/Child")), "variant child deletion composed");
+    }
+    require(stage->GetPrimAtPath(SdfPath("/Model")) && variants.HasAuthoredVariantSelection(),
+            "variant child deletion preserves model and variant selection");
 }
 
 void
@@ -3952,6 +4138,9 @@ main(int argc, char** argv)
         { "namespace_editor_crud_api", namespaceEditorCrudApi },
         { "usd_path_utils_api", usdPathUtilsApi },
         { "indexed_path_api", indexedPathApi },
+        { "spec_deletion_api", specDeletionApi },
+        { "batched_attribute_authoring", batchedAttributeAuthoring },
+        { "bbox_cache_invalidation", bboxCacheInvalidation },
         { "batched_transform_authoring", batchedTransformAuthoring },
         { "usd_stage_utils_api", usdStageUtilsApi },
         { "usd_payload_utils_api", usdPayloadUtilsApi },

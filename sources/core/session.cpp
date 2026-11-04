@@ -93,6 +93,7 @@ public:
         explicit StageWatcher(SessionPrivate* parent) { d.parent = parent; }
         void init()
         {
+            bbox::invalidate();
             if (d.objectsKey.IsValid())
                 TfNotice::Revoke(d.objectsKey);
             if (d.layerMutingKey.IsValid())
@@ -128,6 +129,10 @@ public:
         }
         void objectsChanged(const UsdNotice::ObjectsChanged& notice, const UsdStageWeakPtr& sender)
         {
+            // Invalidate synchronously, before deferred Qt delivery and even
+            // while notifications are suppressed during a stage transaction.
+            bbox::invalidate();
+            d.parent->d.bboxDirty.store(true);
             if (d.suppress.load())
                 return;
 
@@ -1714,9 +1719,8 @@ SessionPrivate::boundingBox()
     if (!d.bboxDirty.load())
         return d.bbox;
 
-    // Stage mutations invalidate the shared USD bbox cache. Clear it before
-    // acquiring CacheGuard; clear() takes the same cache mutex.
-    bbox::clear();
+    // StageWatcher invalidates synchronously on USD changes. CacheGuard clears
+    // only stale entries, retaining valid bounds already computed by a caller.
     if (d.mask.isEmpty()) {
         bbox::CacheGuard cache;
         d.bbox = cache.ComputeWorldBound(d.stage->GetPseudoRoot());

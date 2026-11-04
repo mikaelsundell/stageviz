@@ -80,4 +80,14 @@ private:
 void
 clear();
 
+/**
+ * @brief Marks shared bounds stale without taking the cache mutex.
+ *
+ * Call synchronously from USD change notices, including during deferred UI
+ * updates. The next CacheGuard clears stale entries before exposing the cache.
+ * This may be called while the stage write lock is held.
+ */
+void
+invalidate();
+
 }  // namespace stageviz::bbox

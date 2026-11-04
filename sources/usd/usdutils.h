@@ -8,6 +8,7 @@
 #include <QList>
 #include <QMap>
 #include <unordered_set>
+#include <pxr/usd/sdf/attributeSpec.h>
 #include <pxr/usd/usd/prim.h>
 #include <pxr/usd/usd/stage.h>
 
@@ -16,6 +17,24 @@ PXR_NAMESPACE_USING_DIRECTIVE
 namespace stageviz {
 
 namespace layer {
+
+    /**
+     * @brief Returns or creates a typed attribute spec using only Sdf APIs.
+     *
+     * Pass an already mapped edit-layer property path. Existing specs retain
+     * their metadata; an incompatible existing type is rejected. Safe inside
+     * SdfChangeBlock when the caller holds the stage write lock.
+     *
+     * @param layer Writable destination layer.
+     * @param specPath Property path in the layer's namespace.
+     * @param type Required attribute type.
+     * @param variability Variability for a newly created spec.
+     * @param custom Custom flag for a newly created spec.
+     *
+     * @return Attribute spec, or an empty handle on rejection.
+     */
+    SdfAttributeSpecHandle ensureAttributeSpec(const SdfLayerHandle& layer, const SdfPath& specPath,
+                                              const SdfValueTypeName& type, SdfVariability variability, bool custom);
 
     /**
      * @brief Validates that a prim is authored in a specific layer.

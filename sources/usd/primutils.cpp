@@ -1210,9 +1210,18 @@ namespace stage {
         if (!layer || specPath.IsEmpty() || specPath == SdfPath::AbsoluteRootPath())
             return false;
 
-        if (!layer->GetPrimAtPath(specPath))
+        const auto spec = layer->GetPrimAtPath(specPath);
+        if (!spec || !layer->PermissionToEdit())
             return false;
 
+        if (specPath.IsRootPrimPath()) {
+            layer->RemoveRootPrim(spec);
+            return !layer->GetPrimAtPath(specPath);
+        }
+        if (const auto parent = spec->GetNameParent())
+            return parent->RemoveNameChild(spec);
+
+        // Retain the general namespace path for unusual variant ownership.
         SdfBatchNamespaceEdit edits;
         edits.Add(specPath, SdfPath::EmptyPath());
 

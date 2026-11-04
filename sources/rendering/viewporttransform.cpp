@@ -5,6 +5,7 @@
 #include "perfscope.h"
 #include "viewporttransform.h"
 #include "application.h"
+#include "bboxutils.h"
 #include "command.h"
 #include "commandpivot.h"
 #include "commandstack.h"
