@@ -17,6 +17,7 @@
 #include "console.h"
 #include "materialmenu.h"
 #include "materialutils.h"
+#include "rendersceneindex.h"
 #include "selectionlist.h"
 #include "session.h"
 #include "usdedit.h"
@@ -42,6 +43,8 @@
 #include <pxr/base/gf/range3d.h>
 #include <pxr/base/gf/rotation.h>
 #include <pxr/base/tf/errorMark.h>
+#include <pxr/imaging/hd/retainedSceneIndex.h>
+#include <pxr/imaging/hd/tokens.h>
 #include <pxr/usd/sdf/assetPath.h>
 #include <pxr/usd/sdf/layer.h>
 #include <pxr/usd/sdf/schema.h>
@@ -566,6 +569,70 @@ reparentBatch()
     stage->GetRootLayer()->ExportToString(&after);
     require(before == after, "failed multi-move restores all layers");
 }
+void renderSceneIndexRemoval()
+{
+    struct Observer final : HdSceneIndexObserver {
+        std::set<SdfPath> dirtied;
+        std::set<SdfPath> added;
+        void PrimsAdded(const HdSceneIndexBase&, const AddedPrimEntries& entries) override
+        { for (const auto& entry : entries) added.insert(entry.primPath); }
+        void PrimsRemoved(const HdSceneIndexBase&, const RemovedPrimEntries&) override {}
+        void PrimsDirtied(const HdSceneIndexBase&, const DirtiedPrimEntries& entries) override
+        { for (const auto& entry : entries) dirtied.insert(entry.primPath); }
+        void PrimsRenamed(const HdSceneIndexBase&, const RenamedPrimEntries&) override {}
+    } observer;
+    const auto input = HdRetainedSceneIndex::New();
+    input->AddPrims({
+        { SdfPath("/A/Mesh"), HdPrimTypeTokens->mesh, nullptr },
+        { SdfPath("/A/Mesh/Subset"), HdPrimTypeTokens->geomSubset, nullptr },
+        { SdfPath("/A/Nested/Mesh"), HdPrimTypeTokens->mesh, nullptr },
+        { SdfPath("/AA/Mesh"), HdPrimTypeTokens->mesh, nullptr },
+        { SdfPath("/B/Mesh"), HdPrimTypeTokens->mesh, nullptr },
+        { SdfPath("/B/Mesh/Subset"), HdPrimTypeTokens->geomSubset, nullptr },
+        { SdfPath("/B/Sphere"), HdPrimTypeTokens->sphere, nullptr }
+    });
+    const auto filter = stageviz::RenderSceneIndex::New(input);
+    filter->AddObserver(HdSceneIndexObserverPtr(&observer));
+    input->RemovePrims({ { SdfPath("/A") }, { SdfPath("/Missing") } });
+    filter->setDoubleSidedOverrideEnabled(true);
+    require(observer.dirtied == std::set<SdfPath> { SdfPath("/AA/Mesh"), SdfPath("/B/Mesh") },
+            "subtree removal preserves similarly named siblings and other branches");
+    observer.dirtied.clear(); observer.added.clear();
+    filter->setSceneMaterialsEnabled(false);
+    require(observer.added == std::set<SdfPath> { SdfPath("/B/Mesh/Subset") },
+            "removed subsets are absent from material override notifications");
+    require(observer.dirtied == std::set<SdfPath> { SdfPath("/AA/Mesh"), SdfPath("/B/Mesh"), SdfPath("/B/Sphere") },
+            "removed geometry is absent from material override notifications");
+    input->RemovePrims({ { SdfPath("/AA/Mesh") }, { SdfPath("/B/Mesh") } });
+    observer.dirtied.clear();
+    filter->setDoubleSidedOverride(true);
+    require(observer.dirtied.empty(), "individual mesh removals clear cached targets");
+    input->AddPrims({ { SdfPath("/A/Readded"), HdPrimTypeTokens->mesh, nullptr } });
+    observer.dirtied.clear();
+    filter->setDoubleSidedOverride(false);
+    require(observer.dirtied == std::set<SdfPath> { SdfPath("/A/Readded") }, "readded targets are indexed");
+    input->RemovePrims({ { SdfPath::AbsoluteRootPath() } });
+    observer.dirtied.clear(); observer.added.clear();
+    filter->setSceneMaterialsEnabled(true);
+    require(observer.dirtied.empty() && observer.added.empty(), "root removal clears every target set");
+    HdRetainedSceneIndex::AddedPrimEntries batch;
+    HdSceneIndexObserver::RemovedPrimEntries removals;
+    for (int index = 0; index < 5000; ++index) {
+        const SdfPath removed("/Batch/M" + std::to_string(index));
+        batch.push_back({ removed, HdPrimTypeTokens->mesh, nullptr });
+        batch.push_back({ SdfPath("/Batch2/M" + std::to_string(index)), HdPrimTypeTokens->mesh, nullptr });
+        removals.push_back({ removed });
+    }
+    input->AddPrims(batch);
+    input->RemovePrims(removals);
+    observer.dirtied.clear();
+    filter->setDoubleSidedOverride(true);
+    require(observer.dirtied.size() == 5000, "large sibling removal batches retain only surviving meshes");
+    for (const SdfPath& path : observer.dirtied)
+        require(path.HasPrefix(SdfPath("/Batch2")), "similarly named branches survive large batches");
+    filter->RemoveObserver(HdSceneIndexObserverPtr(&observer));
+}
+
 }  // namespace
 
 namespace {
@@ -3718,6 +3785,7 @@ main(int argc, char** argv)
 {
     QCoreApplication app(argc, argv);
     const std::map<std::string, std::function<void()>> cases {
+        { "render_scene_index_removal", renderSceneIndexRemoval },
         { "save_twice_usda", [] { saveTwice("usda"); } },
         { "save_twice_usdc", [] { saveTwice("usdc"); } },
         { "save_failure", saveFailure },

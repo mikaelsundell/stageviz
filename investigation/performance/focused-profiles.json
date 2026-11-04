@@ -1,0 +1,9 @@
+{
+  "profiles": [
+    {"name": "index-fixed64", "stagingMiB": 64, "view": {"phases": ["empty", "add_front", "add_axle", "hide_front_roots", "undo_visibility", "mute_front_1", "unmute_front_1"]}},
+    {"name": "index-fixed16", "stagingMiB": 16, "view": {"phases": ["empty", "add_front", "add_axle"]}},
+    {"name": "index-fixed256", "stagingMiB": 256, "view": {"phases": ["empty", "add_front", "add_axle"]}},
+    {"name": "statistics-off64", "stagingMiB": 64, "view": {"short": true, "sceneStats": false}},
+    {"name": "materials-off64", "stagingMiB": 64, "view": {"short": true, "materials": false}}
+  ]
+}

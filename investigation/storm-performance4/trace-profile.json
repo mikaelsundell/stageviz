@@ -1,0 +1,7 @@
+{
+  "profiles":[
+    {"name":"storm-eager-trace-mute","stagingMiB":64,
+     "env":{"HDST_TOPOLOGY_GC_BUDGET_US":"0"},
+     "view":{"phases":["empty","add_front","add_axle","mute_front_1"],"traceOperation":"mute_front_1"}}
+  ]
+}

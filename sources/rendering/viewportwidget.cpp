@@ -2,6 +2,7 @@
 // Copyright (c) 2025 - present Mikael Sundell
 // https://github.com/mikaelsundell/stageviz
 
+#include "perfscope.h"
 #include "viewportwidget.h"
 #include "application.h"
 #include "bboxutils.h"
@@ -481,6 +482,7 @@ ViewportWidgetPrivate::close()
 void
 ViewportWidgetPrivate::paintGL()
 {
+    PerfScope perfScope("viewport.paint");
     QElapsedTimer timer;
     timer.start();
     if (!d.renderEngine || !d.renderEngine->isInitialized())
@@ -523,6 +525,10 @@ ViewportWidgetPrivate::paintGL()
         return;
 
     d.gpuPerformanceMs = gpuTimer.nsecsElapsed() / 1e6;
+    const bool converged = d.renderEngine->isConverged();
+    d.glwidget->setProperty("renderConverged", converged);
+    if (!converged)
+        d.glwidget->update();
     d.count++;
 
     Q_EMIT d.glwidget->renderReady(timer.elapsed());
@@ -1159,6 +1165,7 @@ ViewportWidgetPrivate::updateCamera(const GfCamera& camera)
 void
 ViewportWidgetPrivate::updateSelection(const QList<SdfPath>& paths)
 {
+    PerfScope perfScope("ui.viewport_selection");
     {
         SignalGuard::Scope guard(this);
         d.selection = paths;
@@ -1407,6 +1414,7 @@ ViewportWidgetPrivate::drawBorder(QPainter& painter)
 void
 ViewportWidgetPrivate::updateSceneStats()
 {
+    PerfScope perfScope("ui.scene_statistics");
     auto accumulate = [&](const UsdPrim& prim, ViewportSceneCounts& s) {
         if (!prim.IsActive() || !prim.IsLoaded())
             return;

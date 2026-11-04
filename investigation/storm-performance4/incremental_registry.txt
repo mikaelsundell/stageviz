@@ -1,0 +1,75 @@
+    /// Cursor owned by the caller. Registration may occur between steps, but
+    /// collection/Invalidate must not run concurrently. Request another pass
+    /// when resources become unused after an earlier portion was visited.
+    struct GarbageCollectionCursor {
+        typename InstanceType::Dictionary::iterator next;
+        bool active = false;
+        bool rescan = false;
+        void RequestRescan() { if (active) rescan = true; }
+    };
+
+    struct GarbageCollectionStep {
+        size_t visited = 0;
+        size_t reclaimed = 0;
+        size_t remaining = 0;
+        bool pending = false;
+        double eraseNs = 0;
+        double destroyNs = 0;
+        double elapsedNs = 0;
+    };
+
+    /// Collect in the same exclusive phase as GarbageCollect(). A zero budget
+    /// or visit limit is unlimited. The time budget is soft: one indivisible
+    /// erase/destructor can exceed it. Cursor contains no owning references.
+    GarbageCollectionStep GarbageCollectStep(
+        GarbageCollectionCursor *cursor, size_t maxVisits,
+        std::chrono::microseconds budget)
+    {
+        using Clock = std::chrono::steady_clock;
+        const auto begin = Clock::now();
+        const auto ns = [](auto duration) {
+            return std::chrono::duration<double, std::nano>(duration).count();
+        };
+        GarbageCollectionStep result;
+        if (!cursor->active) {
+            cursor->next = _dictionary.begin();
+            cursor->active = true;
+            cursor->rescan = false;
+        }
+        while (true) {
+            if (cursor->next == _dictionary.end()) {
+                if (cursor->rescan) {
+                    cursor->next = _dictionary.begin();
+                    cursor->rescan = false;
+                    if (cursor->next != _dictionary.end())
+                        continue;
+                }
+                cursor->active = false;
+                break;
+            }
+            auto it = cursor->next;
+            ++result.visited;
+            if (_IsUnique(it->second.value)) {
+                // Keep the value alive through node erasure, then measure its
+                // destruction separately. No resource is copied or destroyed
+                // on a worker thread and no live value is reclaimed.
+                VALUE retired = std::move(it->second.value);
+                const auto eraseBegin = Clock::now();
+                cursor->next = _dictionary.unsafe_erase(it);
+                const auto destroyBegin = Clock::now();
+                result.eraseNs += ns(destroyBegin - eraseBegin);
+                retired.reset();
+                result.destroyNs += ns(Clock::now() - destroyBegin);
+                ++result.reclaimed;
+            } else {
+                ++cursor->next;
+            }
+            if ((maxVisits && result.visited >= maxVisits) ||
+                (budget.count() > 0 && Clock::now() - begin >= budget))
+                break;
+        }
+        result.pending = cursor->active;
+        result.remaining = _dictionary.size();
+        result.elapsedNs = ns(Clock::now() - begin);
+        return result;
+    }

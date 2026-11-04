@@ -1,0 +1,18 @@
+{
+  "profiles": [
+    {
+      "stagingMiB": 64,
+      "env": {
+        "HDST_TOPOLOGY_GC_BUDGET_US": "0"
+      },
+      "name": "volvo-cpu-transform-1000",
+      "view": {
+        "layers": [
+          "\\\\shared-fs2\\clients\\volvobuses\\assets\\received\\261009_chassis_updates\\B13R_4x2_6x2_Rear_I-pump\\LHD\\assembly\\LHD_Front.usd"
+        ],
+        "cpuTransform": true,
+        "seedCount": 1000
+      }
+    }
+  ]
+}

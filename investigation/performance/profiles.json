@@ -1,0 +1,12 @@
+{
+  "profiles": [
+    {"name": "baseline64", "stagingMiB": 64, "view": {"short": true}},
+    {"name": "staging16", "stagingMiB": 16, "view": {"short": true}},
+    {"name": "staging256", "stagingMiB": 256, "view": {"short": true}},
+    {"name": "baseline64-repeat", "stagingMiB": 64, "view": {"short": true}},
+    {"name": "culling-off", "stagingMiB": 64, "env": {"HD_ENABLE_GPU_FRUSTUM_CULLING": "0"}},
+    {"name": "materials-off", "stagingMiB": 64, "view": {"materials": false}},
+    {"name": "layer-editor-closed", "stagingMiB": 64, "view": {"layerEditor": false}},
+    {"name": "scene-statistics-off", "stagingMiB": 64, "view": {"sceneStats": false}}
+  ]
+}

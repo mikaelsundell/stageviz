@@ -1,0 +1,18 @@
+{
+  "profiles": [
+    {
+      "stagingMiB": 64,
+      "env": {
+        "HDST_TOPOLOGY_GC_BUDGET_US": "0"
+      },
+      "name": "selection-cpu-fixture",
+      "view": {
+        "layers": [
+          "C:\\Temp\\usdtest\\selection5-fixture\\grid.usda"
+        ],
+        "cpuOnly": true,
+        "seedCount": 10
+      }
+    }
+  ]
+}

@@ -260,6 +260,15 @@ public:
     bool renderToCurrentFramebuffer();
 
     /**
+     * @brief Returns whether rendering and renderer maintenance have settled.
+     *
+     * A false result requests another frame, including bounded Storm cleanup.
+     *
+     * @return True when both document and auxiliary rendering are converged.
+     */
+    bool isConverged() const;
+
+    /**
      * @brief Captures document colors and object IDs using the current camera.
      *
      * Requires a current viewport GL context and the color AOV. Auxiliary

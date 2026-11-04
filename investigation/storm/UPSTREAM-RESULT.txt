@@ -1,0 +1,47 @@
+Upstream upload-allocation backport test, 2026-11-03
+
+Result: does NOT resolve this dataset's large-transfer failure.
+
+Backported the OpenGL-relevant hunks of upstream commit
+2a27479b97b30f610088d561c5a59ea180c7457d:
+https://github.com/PixarAnimationStudios/OpenUSD/commit/2a27479b97b30f610088d561c5a59ea180c7457d
+
+Changes: add HgiBufferUsageUpload, mark Storm staging buffers with it, and use
+GL_DYNAMIC_COPY instead of GL_STATIC_DRAW for upload allocations in HgiGL.
+The Vulkan backend is disabled in this build, so its backend changes were
+not included. Build completed successfully. Existing diagnostics were retained.
+
+run06-upstream used normal staging and GPU frustum culling. Both
+STORM_TRACE_BYPASS_STAGING and STORM_TRACE_UPLOAD_CHUNK_MB were unset.
+The same saved all-visible wrapper and expected target geometry were used.
+Deployment DLL hashes and launch environment are recorded in the run folder.
+
+Observed trace:
+  staging capacity: 11,501,307,132 bytes
+  one CPU-to-GPU upload: 4,495,916,560 bytes
+  target CPU indices/points/normals: exact matches to evaluated USD
+  target staging offsets: 1,587,857,812 / 1,588,538,520 / 1,589,139,492
+  after CPU-to-GPU upload: all three target ranges read back as all zeros
+  GL error at those checkpoints: 0
+
+The process exited before a completed frame-all screenshot or post-load
+verification could be captured. Windows Application event 1000 records:
+  faulting process: Stageviz.exe, PID 27124
+  faulting module: nvoglv64.dll, version 32.0.16.1060
+  exception: 0xc0000005
+  fault offset: 0x0000000000b9e497
+See run06-upstream/crash-events.json and upload-trace.txt.
+
+This rules out this allocation-hint backport ALONE as a working fix on this
+machine and dataset. It does not establish the behavior of a full newer USD
+release, all machines, or other drivers, and does not identify the internal
+driver cause. The exact bulk-transfer threshold remains unmeasured.
+
+The tested DLLs and exact patch are preserved under upstream-upload/tested-dlls
+and upstream-upload/backport.patch. Source files still contain the experimental
+backport for review; prior source copies are under upstream-upload/pre-source.
+The deployed Stageviz DLLs were restored from upstream-upload/pre-dlls to the
+known-working diagnostic build. The original dataset was never saved.
+The restored process uses STORM_TRACE_BYPASS_STAGING=1; its evidence is in
+run07-restored-direct. No production Stageviz sources or settings were changed
+to enable the upstream patch by default. No broad CTest suite was run.

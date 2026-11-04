@@ -3,6 +3,7 @@
 // https://github.com/mikaelsundell/stageviz
 
 #include "propertytree.h"
+#include "perfscope.h"
 #include "application.h"
 #include "commandproperty.h"
 #include "commandselection.h"
@@ -3474,6 +3475,7 @@ PropertyTreePrivate::addAttribute(PropertyItem* parent, const UsdAttribute& attr
 void
 PropertyTreePrivate::updateSelection(const QList<SdfPath>& paths)
 {
+    PerfScope perfScope("ui.property_selection");
     d.pendingEditorRefresh = false;
     auto normalizedPrimPaths = [](const QList<SdfPath>& input) {
         QList<SdfPath> result;

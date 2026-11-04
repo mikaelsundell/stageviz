@@ -1,0 +1,6 @@
+cmake_minimum_required(VERSION 3.20)
+project(storm_copy_probe LANGUAGES CXX)
+set(CMAKE_CXX_STANDARD 17)
+find_package(Qt6 REQUIRED COMPONENTS Gui OpenGL)
+add_executable(storm_copy_probe probe.cpp)
+target_link_libraries(storm_copy_probe PRIVATE Qt6::Gui Qt6::OpenGL)

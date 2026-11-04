@@ -2,6 +2,7 @@
 // Copyright (c) 2025 - present Mikael Sundell
 // https://github.com/mikaelsundell/stageviz
 
+#include "perfscope.h"
 #include "commandtransform.h"
 #include "commandprimprivate.h"
 #include "commandtransformprivate.h"
@@ -838,6 +839,7 @@ bool
 beginTransformOperation(const UsdStageRefPtr& stage, const QList<SdfPath>& selection, TransformOperation& operation,
                         QString& error, bool minimalRoots)
 {
+    PerfScope perfScope("transform.capture_operation");
     operation = TransformOperation();
     const SdfLayerHandle layer = currentEditLayer(stage, error);
     if (!layer || selection.isEmpty()) {
@@ -980,6 +982,7 @@ QList<PreparedTransform>
 prepareTransforms(const UsdStageRefPtr& stage, const QList<SdfPath>& paths, const QList<GfMatrix4d>& baseMatrices,
                   QStringList* errors)
 {
+    PerfScope perfScope("transform.prepare_authoring");
     QList<PreparedTransform> result;
     if (!stage || paths.isEmpty() || paths.size() != baseMatrices.size())
         return result;
@@ -1129,6 +1132,7 @@ applyPreparedTransforms(const UsdStageRefPtr& stage, const QList<PreparedTransfo
                         const QList<GfMatrix4d>& matrices, const GfMatrix4d& selectionDelta, bool hasSelectionDelta,
                         QStringList* errors, QList<SdfPath>* changed)
 {
+    PerfScope perfScope("transform.apply_prepared");
     if (!stage || prepared.size() != matrices.size())
         return false;
 

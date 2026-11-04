@@ -3,6 +3,7 @@
 // https://github.com/mikaelsundell/stageviz
 
 #include "rendersceneindex.h"
+#include "perfscope.h"
 #include "paths.h"
 #include <QtGlobal>
 #include <pxr/imaging/hd/containerDataSourceEditor.h>
@@ -316,12 +317,14 @@ void
 RenderSceneIndex::unindexSubtree(const SdfPath& root)
 {
     auto eraseSubtree = [&root](std::set<SdfPath>& paths) {
-        for (auto it = paths.begin(); it != paths.end();) {
-            if (it->HasPrefix(root))
-                it = paths.erase(it);
-            else
-                ++it;
-        }
+        // SdfPath ordering keeps descendants contiguous after their root.
+        // Avoid scanning every cached prim for each removal notice: muting
+        // a large layer can send hundreds of thousands of sibling removals.
+        auto first = paths.lower_bound(root);
+        auto last = first;
+        while (last != paths.end() && last->HasPrefix(root))
+            ++last;
+        paths.erase(first, last);
     };
     eraseSubtree(gprimPaths);
     eraseSubtree(geomSubsetPaths);
@@ -375,15 +378,20 @@ RenderSceneIndex::dirtyDoubleSided()
 void
 RenderSceneIndex::_PrimsAdded(const HdSceneIndexBase& sender, const HdSceneIndexObserver::AddedPrimEntries& entries)
 {
+    PerfScope perfScope("scene_index.added");
     Q_UNUSED(sender);
     for (const auto& entry : entries)
-        indexSubtree(entry.primPath);
+        // Added notices enumerate individual prims, unlike hierarchical
+        // removal notices. Walking each subtree repeatedly reindexes the
+        // same descendants when a batch includes their ancestors as well.
+        indexPrim(entry.primPath);
     _SendPrimsAdded(entries);
 }
 
 void
 RenderSceneIndex::_PrimsRemoved(const HdSceneIndexBase& sender, const HdSceneIndexObserver::RemovedPrimEntries& entries)
 {
+    PerfScope perfScope("scene_index.removed");
     Q_UNUSED(sender);
     for (const auto& entry : entries)
         unindexSubtree(entry.primPath);

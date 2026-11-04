@@ -1,0 +1,82 @@
+OpenUSD 25.11 bounded staging for Windows Release builds
+
+Production behavior
+
+Storm staging capacity is capped at 64 MiB by default, rather than sizing a
+temporary allocation to the scene's entire pending upload data. When a batch
+fills, queued staging copies are flushed and submitted with completion before
+the CPU bytes or UMA staging slot are reused. This protects queued CPU pointers
+and GPU copy source lifetimes. The existing direct path for large individual
+sources is retained, but individual direct calls are also bounded to the limit.
+Underestimated staging sizes grow only within the bound, instead of losing data.
+
+HDST_MAX_STAGING_BUFFER_SIZE optionally configures the byte limit (1..1 GiB).
+The default is 67108864. Invalid values warn and fall back to 64 MiB. No setting
+is necessary to enable the fix. The staged path remains active.
+
+All previous experimental per-prim tracing, staging bypass, chunk-upload switch,
+and the unsuccessful upstream GL_DYNAMIC_COPY backport were removed from the
+production source/build. Historical diagnostic DLLs remain in the investigation
+backups. Old STORM_TRACE_* variables have no effect in the production build.
+
+USD source files changed from the original 25.11 archive
+
+  pxr/imaging/hdSt/stagingBuffer.cpp
+      Bounded allocation, batch rollover/submission, bounded direct calls.
+  pxr/imaging/hdSt/stagingBuffer.h
+      Updated public API documentation; no class layout or API changes.
+  pxr/imaging/hdSt/testenv/testHdStStagingBatches.cpp (new)
+      Native GPU readback regression for rollover, offsets, guard bytes,
+      oversized direct sources, empty flush, zero estimate and buffer reuse.
+  pxr/imaging/hdSt/CMakeLists.txt
+      Registers testHdStStagingBatches with a 4 KiB staging budget.
+
+No production changes remain in hgi/enums.h, hgiGL/buffer.cpp, hgiGL/ops.cpp,
+or hdSt/indirectDrawBatch.cpp relative to the original archive.
+
+Future Windows builds
+
+  C:\git\3rdparty\patches\openusd\
+      apply.py, record_install.py, manifest.json, bounded-staging.patch,
+      build-win-integration.patch, and files/ overlay.
+  C:\git\3rdparty\build_win.py
+      Applies the version-locked overlay after extraction and before CMake;
+      refreshes the installed binary provenance manifest after installation.
+
+The overlay is idempotent and validates normalized source hashes. It refuses
+unknown local changes or a different USD source revision. It was checked
+against the pristine files inside OpenUSD-25.11.zip, applied twice successfully,
+and verified to reject an unrelated local edit without overwriting it.
+Thus CLEAN builds from the archive retain the fix. A new USD version requires
+review/rebasing the patch and updating the hashes, not blindly reusing the overlay.
+
+Build/install location
+
+  Source: C:\git\3rdparty\packages\OpenUSD-25.11
+  Build:  source\build\vc143\x86_amd64\Release
+  Install: C:\git\3rdparty\build\win\vc143\x86_amd64\Release
+
+Full configured Release build and cmake --install completed successfully.
+USD DLLs and import libraries are installed under Release\lib (not Release\bin).
+Use the installed Release tree as the dependency source for future Stageviz
+builds/distribution; do not copy DLLs from historical diagnostic run directories.
+The Release provenance manifest lists installed binary hashes.
+
+Verification
+
+Native GPU readback tests passed at 4 KiB and the default 64 MiB; invalid zero
+budget safely fell back to 64 MiB and passed. Tests run on the installed Release
+DLLs. The standalone harness uses matching MaterialX compile definitions to
+match the USD class layout. The first harness attempt lacked that definition
+and failed; it was corrected before the tests above.
+
+The native test is registered in USD's test configuration for future test-enabled
+builds. The current dependency build has PXR_BUILD_TESTS=FALSE, so the same
+regression source was built separately and run directly. The broad USD/Stageviz
+test suites, Debug build, UMA, Metal and Vulkan have not been qualified here.
+Batch rollover deliberately waits for completion; performance has not been
+benchmarked. This favors safe buffer reuse for the local fix.
+
+Live full-scene validation and distribution hashes are recorded alongside this
+report under C:\Temp\usdtest\storm-investigation\bounded-staging and its
+run08-bounded / subsequent run folders. Original TEMP_asm.usd is never saved.

@@ -1,0 +1,121 @@
+Storm missing geometry: investigation results, 2026-11-03
+
+Confirmed finding
+
+The missing pillar is associated with incorrect GPU geometry data in the
+original staging-upload path. USD visibility and CPU draw-item state alone do
+not explain the all-visible failure. Bypassing staging restored the assembled
+vehicle and made the target's points, triangle indices and face-varying normals
+byte-identical to evaluated USD data.
+
+Environment
+
+Stageviz: C:\cadio-tools\Stageviz\Stageviz_0.4.19_261103_Release\Stageviz.exe
+Dataset: C:\Temp\usdtest\TEMP_asm.usd, 4,528,963,819 bytes.
+OpenUSD: supplied 25.11 archive; no Git revision metadata was supplied.
+MSVC 19.44, Visual Studio 2022, x64, Release, shared libraries, OpenGL enabled.
+GPU actually tested: NVIDIA GeForce RTX 2080 SUPER, 8,192 MiB, driver 610.60.
+This differs from the A6000/552.86 environment in the supplied notes.
+Standalone probe context: OpenGL 4.5.0 NVIDIA 610.60.
+The original build's hdSt DLL SHA256 exactly matched the shipped DLL before
+instrumentation. See manifest.json and per-run deploy/launch JSON for hashes.
+
+Controlled stage
+
+run01\visible-wrapper.usda sublayers the original dataset by absolute path.
+All visibility edits were authored using Stageviz's undoable show_paths command
+into this disposable wrapper. Normalization checked all 38,349 meshes visible
+at time 0. Original dataset content was not saved, flattened or cleaned.
+Frame-all used session.boundingBox() and the public camera.frame() API, the
+same calls used by ViewerPrivate::frameAll. Scene materials were disabled and
+ViewState DoubleSided mode was 1. The exact target path is in each launch.json.
+
+Observed comparisons
+
+run01, normal staging and GPU culling:
+  Original pillar visibility was invisible: zero instances were correct.
+  After normalization, CPU command had indexCount=1974, instanceCount=1.
+  GPU culling changed instanceCount to 0. Target points and normals matched
+  USD, but all 1,974 GPU topology indices were zero. Isolation remained blank.
+
+run02-nocull, fresh process, HD_ENABLE_GPU_FRUSTUM_CULLING=0 from startup:
+  Final CPU/GPU command had indexCount=1974, instanceCount=1.
+  Target points, indices and normals in the final buffers were all zero.
+  The isolated viewport remained blank despite USD/Hydra visibility and
+  CPU camera-frustum intersection being true.
+  Staging capacity was 11,501,307,132 bytes; actual bulk upload 4,495,916,560.
+  CPU source data matched expected points/indices/normals when staged.
+  Staging-buffer readbacks matched expected data at offsets 3,893,442,960
+  (indices), 3,893,729,980 (points), and 3,894,998,100 (normals).
+  Immediately after the staging-to-final GL copies, corresponding destination
+  readbacks were zero. No GL errors were recorded at these checkpoints.
+  In upload-trace.txt the label 'before-gpu-copy-source' is historical: both
+  source and destination checks execute AFTER glCopyNamedBufferSubData.
+
+run03-direct, fresh process, STORM_TRACE_BYPASS_STAGING=1, normal culling:
+  Frame-all showed the assembled vehicle instead of scattered parts.
+  Target's 331 points, 1,974 indices and 1,974 normals matched USD byte for byte.
+  Triangle indices ranged 0..330. Steady submitted instanceCount was 1.
+  The target produced a visible silhouette in isolation.
+
+Reduced reproduction, independent of USD and Stageviz
+
+probe/probe.cpp uses Qt only to create a GL context.
+Sparse writes/copies around 2/4 GiB offsets all passed, including an 11.5 GB
+allocation. Thus this is not evidence for a generic GL offset limit.
+With one 4,495,916,560-byte CPU upload, the source readback matched the marker
+but a small GPU copy to another buffer did not. Both named and bound copies
+failed without GL errors. Uploading the IDENTICAL data in 256 MiB calls made
+the subsequent copy pass. See copy-probe-chunks.log.
+This reproduces the transfer inconsistency without scene composition,
+materials, Hydra culling, shaders or a large mesh count.
+
+run04-chunks, full stage, normal staging/culling, 256 MiB upload calls:
+  This experiment did not complete. Windows Application events record a
+  nvoglv64.dll 32.0.16.1060 failure, exception 0xc0000409, offset 0x10cbb2d.
+  See run04-chunks\crash-events.json. Chunked upload is NOT validated as a
+  full-scene workaround and is not enabled by run-patched.ps1.
+
+run05-direct, second fresh staging-bypass process, normal culling:
+  Repeated the assembled-vehicle frame-all result. All three target GPU arrays
+  matched evaluated USD byte for byte at different aggregate-buffer offsets
+  from run03. Steady instanceCount was 1. Independent checks found 63,530
+  prims, 38,349 meshes, zero invisible meshes, and both wrapper and original
+  layers clean. This process is left running on the disposable wrapper with
+  MCP and staging bypass enabled. Original dataset mtime remains 2026-11-02.
+
+Interpretation and limits
+
+The evidence isolates an observable large-buffer transfer failure on the
+tested OpenGL stack. A source glGetNamedBufferSubData readback matching CPU
+data does not prove that GPU copy/draw consumers see identical storage.
+The internal driver mechanism and exact upload-size threshold remain unknown.
+Changing prim packing order changes target offsets between loads; interaction
+with the failing transfer path is a plausible explanation for varying missing
+subsets, not a proven scheduling race. No Storm face-count limit is established.
+No claim is made about other NVIDIA drivers, the A6000, or every mesh rendering
+correctly: the target is byte-verified and frame-all is visually compared.
+Readbacks synchronize GL and can change timing. Direct upload changes the
+transfer schedule and memory footprint; it is a diagnostic workaround, not an
+optimized production fix. GPU memory pressure remains relevant on this 8 GB GPU.
+
+Artifacts and next steps
+
+openusd-storm-diagnostics.patch contains the opt-in instrumentation and A/B
+controls. bounded-uploads-only.patch isolates the reduced-probe experiment,
+NOT a recommended full-scene fix. patched-dlls contains the built hdSt/HgiGL
+DLLs, original-dlls contains backups. scripts contains the external MCP
+controller, embedded scripts, launcher and standalone probe source.
+MCP inventories were confirmed using tools/list. Read-only stage/prim tools
+were used independently of the embedded USD/Qt assertions.
+Build logs, per-target binary dumps, comparisons, Qt snapshots, and screenshots
+are retained per run. No Stageviz production code was changed or committed.
+The Stageviz CTest suite and a formal OpenUSD regression suite were not run;
+verification consists of focused DLL builds, the standalone GL reproduction,
+and live MCP/USD/Qt/readback comparisons.
+
+For a production remedy, investigate bounded staging allocations/flushes to
+avoid both giant transfers and their memory footprint; validate against the
+reduced probe and the full scene before enabling by default. Direct upload
+is the currently verified diagnostic fallback. Re-test on the original A6000
+and another driver to determine how broadly this failure applies.

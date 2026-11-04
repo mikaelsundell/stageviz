@@ -1,0 +1,7 @@
+{
+  "profiles": [
+    {"name":"storm-eager-instrumented","stagingMiB":64,"env":{"HDST_TOPOLOGY_GC_BUDGET_US":"0"},"view":{"phases":["empty","add_front","add_axle","mute_front_1","settle_after_mute","unmute_front_1","settle_after_unmute"]}},
+    {"name":"storm-budget20ms","stagingMiB":64,"env":{"HDST_TOPOLOGY_GC_BUDGET_US":"20000"},"view":{"phases":["empty","add_front","add_axle","mute_front_1","settle_after_mute","unmute_front_1","settle_after_unmute"]}},
+    {"name":"storm-budget20ms-quick-toggle","stagingMiB":64,"env":{"HDST_TOPOLOGY_GC_BUDGET_US":"20000"},"view":{"phases":["empty","add_front","add_axle","mute_front_1","unmute_front_1","settle_after_unmute"]}}
+  ]
+}

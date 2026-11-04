@@ -2,6 +2,7 @@
 // Copyright (c) 2025 - present Mikael Sundell
 // https://github.com/mikaelsundell/stageviz
 
+#include "perfscope.h"
 #include "viewportselection.h"
 #include "application.h"
 #include "bboxutils.h"
@@ -192,6 +193,7 @@ public:
         }
         void build(const UsdStageRefPtr& stage)
         {
+            PerfScope perfScope("selection.bvh_build");
             clear();
             if (!stage)
                 return;
@@ -247,6 +249,7 @@ public:
         }
         std::vector<const Entry*> query(const GfFrustum& frustum) const
         {
+            PerfScope perfScope("selection.bvh_query");
             if (nodes_.empty() || !frustum.Intersects(GfBBox3d(nodes_[0].bounds))) {
                 return {};
             }
@@ -432,6 +435,7 @@ ViewportSelectionPrivate::pickNearestPath(const QPoint& pos)
 void
 ViewportSelectionPrivate::sweepEvent(const QRect& rect, QMouseEvent* event)
 {
+    PerfScope perfScope("selection.sweep");
     d.host->widget()->makeCurrent();
     if (!d.host->stage() || !d.host->renderEngine())
         return;

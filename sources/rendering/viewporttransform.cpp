@@ -2,6 +2,7 @@
 // Copyright (c) 2025 - present Mikael Sundell
 // https://github.com/mikaelsundell/stageviz
 
+#include "perfscope.h"
 #include "viewporttransform.h"
 #include "application.h"
 #include "command.h"
@@ -18,6 +19,7 @@
 #include "viewporthost.h"
 #include "viewportwidget.h"
 #include <QStringList>
+#include <QVariant>
 #include <algorithm>
 #include <cmath>
 #include <pxr/base/gf/math.h>
@@ -63,6 +65,7 @@ public:
     QList<SdfPath> selectedVisiblePaths() const;
     QList<SdfPath> visibleTargetPaths() const;
     ViewportGizmo::Frame dragFrame() const;
+    void publishFrameProperties();
 
     struct Data {
         ViewportHost* host = nullptr;
@@ -299,6 +302,7 @@ ViewportTransformPrivate::referenceOrientation(const QList<SdfPath>& targetPaths
 QList<SdfPath>
 ViewportTransformPrivate::selectedVisiblePaths() const
 {
+    PerfScope perfScope("transform.visible_selection");
     QList<SdfPath> paths;
     if (!d.host->stage())
         return paths;
@@ -333,6 +337,7 @@ ViewportTransformPrivate::visibleTargetPaths() const
 bool
 ViewportTransformPrivate::selectionPivot(GfVec3d& pivot)
 {
+    PerfScope perfScope("transform.selection_pivot");
     const QList<SdfPath> selectedPaths = selectedVisiblePaths();
     const QList<SdfPath> targetPaths = visibleTargetPaths();
     d.frame.orientationValid = false;
@@ -448,6 +453,7 @@ ViewportTransformPrivate::setMode(Mode mode, bool enabled)
 bool
 ViewportTransformPrivate::beginDrag(const QPointF& pos, bool copy)
 {
+    PerfScope perfScope("transform.begin_drag");
     if (!d.frame.enabled)
         return false;
     const int handle = hitTest(pos);
@@ -558,6 +564,7 @@ ViewportTransformPrivate::beginDrag(const QPointF& pos, bool copy)
 void
 ViewportTransformPrivate::updateDrag(const QPointF& pos)
 {
+    PerfScope perfScope("transform.update_drag");
     if (!d.dragging || d.frame.activeAxis == 0 || d.operation.edit.before.isEmpty())
         return;
 
@@ -932,6 +939,7 @@ ViewportTransformPrivate::updateDrag(const QPointF& pos)
 void
 ViewportTransformPrivate::endDrag()
 {
+    PerfScope perfScope("transform.end_drag");
     if (!d.dragging)
         return;
 
@@ -1037,7 +1045,20 @@ ViewportTransformPrivate::prepareFrame()
         d.frame.pivot = pivot;
         d.frame.pivotValid = true;
     }
+    publishFrameProperties();
     return true;
+}
+
+void
+ViewportTransformPrivate::publishFrameProperties()
+{
+    if (!qEnvironmentVariableIsSet("STAGEVIZ_PERF_LOG"))
+        return;
+    QPointF screen;
+    const bool projected = d.frame.pivotValid && d.host->projectWorldToScreen(d.frame.pivot, screen);
+    d.host->widget()->setProperty("transformPivotValid", projected);
+    d.host->widget()->setProperty("transformPivotScreen", screen);
+    d.host->widget()->setProperty("transformMode", static_cast<int>(d.frame.mode));
 }
 
 ViewportTransform::ViewportTransform(ViewportHost& host)
@@ -1397,7 +1418,13 @@ bool
 ViewportTransform::beginDrag(const QPointF& pos, bool copy)
 {
     finishNumericEdit();
-    return p->beginDrag(pos, copy);
+    const bool started = p->beginDrag(pos, copy);
+    if (qEnvironmentVariableIsSet("STAGEVIZ_PERF_LOG")) {
+        p->d.host->widget()->setProperty("transformDragging", p->d.dragging);
+        p->d.host->widget()->setProperty("transformActiveAxis", p->d.frame.activeAxis);
+        p->d.host->widget()->setProperty("transformTargetCount", p->d.operation.targetCount);
+    }
+    return started;
 }
 void
 ViewportTransform::updateDrag(const QPointF& pos)
@@ -1408,6 +1435,8 @@ void
 ViewportTransform::endDrag()
 {
     p->endDrag();
+    if (qEnvironmentVariableIsSet("STAGEVIZ_PERF_LOG"))
+        p->d.host->widget()->setProperty("transformDragging", p->d.dragging);
 }
 void
 ViewportTransform::updateHover(const QPointF& pos)
@@ -1446,7 +1475,10 @@ ViewportTransform::selectionChanged(bool empty)
 void
 ViewportTransform::updateGeometry()
 {
+    PerfScope perfScope("transform.update_geometry");
     if (!p->prepareFrame()) {
+        if (qEnvironmentVariableIsSet("STAGEVIZ_PERF_LOG"))
+            p->d.host->widget()->setProperty("transformPivotValid", false);
         p->d.gizmo->clear();
         return;
     }
