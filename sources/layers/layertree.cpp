@@ -2,6 +2,7 @@
 // Copyright (c) 2026 - present Mikael Sundell
 // https://github.com/mikaelsundell/stageviz
 
+#include "perfscope.h"
 #include "layertree.h"
 #include "application.h"
 #include "commandlayer.h"
@@ -552,6 +553,7 @@ LayerTree::~LayerTree() = default;
 void
 LayerTree::refresh()
 {
+    PerfScope perfScope("ui.layer_tree_refresh");
     p->refresh();
 }
 

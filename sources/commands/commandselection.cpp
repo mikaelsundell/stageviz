@@ -2,6 +2,7 @@
 // Copyright (c) 2025 - present Mikael Sundell
 // https://github.com/mikaelsundell/stageviz
 
+#include "perfscope.h"
 #include "commandselection.h"
 #include "commandutils.h"
 #include "selectionlist.h"
@@ -356,6 +357,7 @@ selectInvert()
             session->beginProgressBlock("Invert selection", 1);
 
             command::runWorker([session, state]() {
+                PerfScope perfScope("selection.invert_worker");
                 QList<SdfPath> invertedSelection;
                 QList<SdfPath> previousSelection;
                 QList<SdfPath> domain;
@@ -367,7 +369,10 @@ selectInvert()
                     previousSelection = session->selectionList()->paths();
                     mask = session->mask();
 
-                    domain = stage::leafPaths(stage, mask, false);
+                    {
+                        PerfScope domainScope("selection.invert_domain");
+                        domain = stage::leafPaths(stage, mask, false);
+                    }
                 }
 
                 state->previousSelection = previousSelection;

@@ -2,8 +2,11 @@
 // Copyright (c) 2025 - present Mikael Sundell
 
 #include "application.h"
+#include <fstream>
+#include <QTreeWidgetItemIterator>
 #include "bboxutils.h"
 #include "commandlight.h"
+#include "commandlayer.h"
 #include "commandmaterial.h"
 #include "commandpayload.h"
 #include "commandpivot.h"
@@ -206,6 +209,7 @@ renderEngineApi()
     camera.SetClippingRange(GfRange1f(0.1f, 1000.0f));
 
     stageviz::RenderEngine engine(stageviz::RenderEngine::ContextMode::Offscreen);
+    require(engine.isConverged(), "an uninitialized renderer has no pending maintenance");
     engine.setStage(stage);
     engine.setAuxiliaryStage(auxiliary);
     engine.setCamera(camera);
@@ -1479,6 +1483,75 @@ viewportGizmoDefaultFrameApi()
             "transform gizmo defaults to the object reference frame");
 }
 
+void outlinerLayerMuteApi()
+{
+    QTemporaryDir dir;
+    require(dir.isValid(), "temporary layer-mute directory");
+    const QString layerPath = dir.filePath("front.usda");
+    const auto front = UsdStage::CreateNew(layerPath.toStdString());
+    for (int i = 0; i < 20; ++i)
+        front->DefinePrim(SdfPath("/World/Delete" + std::to_string(i)), TfToken("Xform"));
+    require(front->GetRootLayer()->Save(), "save front fixture");
+    const QString rootPath = dir.filePath("root.usda");
+    const auto root = UsdStage::CreateNew(rootPath.toStdString());
+    root->DefinePrim(SdfPath("/World/Keep"), TfToken("Xform"));
+    for (int i = 0; i < 500; ++i)
+        root->DefinePrim(SdfPath("/World/Keep/Child" + std::to_string(i)), TfToken("Xform"));
+    root->GetRootLayer()->SetSubLayerPaths({ layerPath.toStdString() });
+    require(root->GetRootLayer()->Save(), "save root fixture");
+    auto* session = stageviz::session();
+    stageviz::OutlinerView view;
+    require(session->loadFromFile(rootPath, stageviz::Session::None), "load layer-mute fixture");
+    auto* tree = view.findChild<stageviz::OutlinerTree*>("outlinerTree");
+    require(tree, "find mute-test Outliner");
+    const auto drain = []() {
+        for (int i = 0; i < 6; ++i) {
+            QThreadPool::globalInstance()->waitForDone();
+            QCoreApplication::sendPostedEvents(nullptr, 0);
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+        }
+    };
+    const auto find = [&](const QString& path) {
+        QTreeWidgetItemIterator iterator(tree);
+        while (*iterator) {
+            if ((*iterator)->data(0, stageviz::PrimItem::Path).toString() == path)
+                return *iterator;
+            ++iterator;
+        }
+        return static_cast<QTreeWidgetItem*>(nullptr);
+    };
+    drain();
+    auto* keep = find("/World/Keep");
+    require(keep && find("/World/Delete0"), "initial front and surviving rows exist");
+    keep->setExpanded(true);
+    session->commandStack()->execute(new stageviz::Command(stageviz::setLayerMuted(layerPath, true)));
+    drain();
+    require(session->stage()->IsLayerMuted(layerPath.toStdString()) && !find("/World/Delete0"),
+            "mute removes the front rows");
+    require(find("/World/Keep") == keep && keep->isExpanded() && keep->childCount() == 500,
+            "mute preserves surviving row identity, expansion and children");
+    // Exercise the ordinary mixed delete path rather than the large,
+    // delete-only fast path, including already absent Qt rows.
+    stageviz::NoticeBatch mixed;
+    for (int i = 0; i < 20; ++i) {
+        stageviz::NoticeEntry entry;
+        entry.path = SdfPath("/World/Delete" + std::to_string(i));
+        entry.primResyncType = UsdNotice::ObjectsChanged::PrimResyncType::Delete;
+        mixed.entries.append(entry);
+    }
+    stageviz::NoticeEntry info;
+    info.path = SdfPath("/World/Keep.visibility"); info.changedInfoOnly = true;
+    mixed.entries.append(info);
+    tree->updatePrims(mixed);
+    require(find("/World/Keep") == keep && keep->childCount() == 500, "mixed deletes preserve surviving hierarchy");
+    session->commandStack()->undo(); drain();
+    require(!session->stage()->IsLayerMuted(layerPath.toStdString()) && find("/World/Delete19"),
+            "undo restores composed prims and Qt rows");
+    session->commandStack()->redo(); drain();
+    require(session->stage()->IsLayerMuted(layerPath.toStdString()) && !find("/World/Delete19"),
+            "redo removes composed prims and Qt rows");
+}
+
 }  // namespace
 
 int
@@ -1486,6 +1559,7 @@ main(int argc, char** argv)
 {
     stageviz::Application app(argc, argv);
     const std::map<std::string, std::function<void()>> cases {
+        { "outliner_layer_mute_api", outlinerLayerMuteApi },
         { "viewport_components_api", viewportComponentsApi },
         { "viewport_lights_api", viewportLightsApi },
         { "viewport_transform_pivot_api", viewportTransformPivotApi },
@@ -1516,6 +1590,9 @@ main(int argc, char** argv)
     try {
         cases.at(argv[1])();
     } catch (const std::exception& error) {
+        const QString log = qEnvironmentVariable("STAGEVIZ_TEST_FAILURE_LOG");
+        if (!log.isEmpty())
+            std::ofstream(log.toStdString(), std::ios::app) << argv[1] << ": " << error.what() << '\n';
         std::cerr << argv[1] << ": " << error.what() << '\n';
         return 1;
     } catch (...) {

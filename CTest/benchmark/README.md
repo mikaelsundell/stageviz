@@ -1,5 +1,27 @@
 # Stageviz performance benchmarks
 
+## Two-layer Storm investigation
+
+`benchmark_storm_layers.py` runs the two supplied Volvo assembly sublayers in an
+anonymous stage. Use the external Windows controller
+`investigation/performance/run.py`; it starts a disposable deployed Release app,
+checks MCP tools, and records independent stage/selection oracles at checkpoints.
+The embedded script uses public commands and never saves the source layers.
+It starts once so native undo retains muted layers throughout the workflow.
+
+Set `HDST_MAX_STAGING_BUFFER_SIZE` before app startup to choose bounded USD
+staging bytes. `STAGEVIZ_PERF_LOG` enables optional native CPU wall-time scopes.
+The controller handles these per run; `--settings` accepts the example profile
+JSON for staging sizes, materials, scene statistics, culling, and layer-editor
+state. Restart between profiles. `--trace` is a separate diagnostic run with USD
+Trace overhead. `view.short=true` selects empty/add/add/mute/unmute only.
+
+End-to-end time waits for session updates and three subsequent viewport presents;
+add operations include an explicitly timed frame-all. Native scopes are inclusive
+CPU wall times, not GPU hardware queries. Metadata, screenshots, Qt snapshots,
+and external MCP checks occur after each measured span. OS/network/shader caches
+are not cleared, so fresh processes are not cold-cache measurements.
+
 These scripts are manual performance tools, not CTest cases. They load a
 generated USDA fixture into the active session and replace its current stage.
 Run them only in a disposable Stageviz process without unsaved user work.
@@ -36,6 +58,12 @@ fixture size (5,000 prims). `benchmark_hide_delete.py` also accepts
 - `benchmark_outliner_parent_commands.py`: rename, move, and delete a parent
   with a large expanded Outliner subtree; checks both USD and Qt row counts.
 - `benchmark_hide_delete.py`: focused hide or delete run for a large selection.
+- `benchmark_selection_transform.py`: real-data cold/warm sweep, invert/undo,
+  Move tool activation, separate drag press/moves/release, undo/redo and cleanup.
+  The external controller and profiles are in `investigation/selection-performance5`.
+  Full sweep/render timing requires a valid OpenGL viewport. CPU-only profiles
+  label rendering unavailable and use deterministic path selections. They do
+  not measure visible gizmo appearance or rendered drag responsiveness.
 
 The tests must use MCP for live app operation and capture screenshots through
 the viewer widget. Do not add these scripts to the automatic CTest suite.

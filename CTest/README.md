@@ -186,3 +186,14 @@ a shared world delta; interactive Rotate checks a common rotation about each tar
 pivot and verifies that mesh descendants inherit their owner's delta once.
 The shared-source fixture tracks internal-reference and instance roots for
 these per-object rotation assertions.
+
+## Render scene index removal
+
+`stageviz.render_scene_index_removal` checks cached mesh, geometry, and subset
+targets after subtree, missing-path, leaf, and root removals, including similarly
+named siblings and readded geometry. It exercises presentation notifications
+without creating an OpenGL context.
+
+`stageviz.gui.outliner_layer_mute_api` checks mute, undo and redo against USD
+composition and Qt rows, preserves surviving row identity/expansion, and exercises
+mixed deletion/info notices below the bulk-delete threshold.

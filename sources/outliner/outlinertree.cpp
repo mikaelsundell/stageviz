@@ -2,6 +2,7 @@
 // Copyright (c) 2025 - present Mikael Sundell
 // https://github.com/mikaelsundell/stageviz
 
+#include "perfscope.h"
 #include "outlinertree.h"
 #include "application.h"
 #include "commandpayload.h"
@@ -1819,10 +1820,25 @@ OutlinerTreePrivate::updatePrims(const NoticeBatch& batch)
         }
 
         switch (entry.primResyncType) {
-        case UsdNotice::ObjectsChanged::PrimResyncType::Delete:
-            invalidatePrim(entry.path);
+        case UsdNotice::ObjectsChanged::PrimResyncType::Delete: {
+            bool absent = false;
+            {
+                READ_LOCKER(locker, d.context->stageLock(), "stageLock");
+                absent = d.stage && !d.stage->GetPrimAtPath(entry.path);
+            }
+            // Each deleted sibling used to recursively invalidate every
+            // surviving sibling through invalidatePrim. Reconcile their
+            // shared parent's direct children once, as the bulk-delete path
+            // already does. Keep conservative handling for a reused path.
+            if (absent) {
+                if (PrimItem* item = itemFromPath(entry.path))
+                    deleteItem(item);
+            }
+            else
+                invalidatePrim(entry.path);
             refreshParentBranchOnce(entry.path);
             break;
+        }
 
         case UsdNotice::ObjectsChanged::PrimResyncType::UnchangedPrimStack:
             updatePrim(entry.path);
@@ -2310,6 +2326,7 @@ OutlinerTreePrivate::refreshParentBranch(const SdfPath& path)
 void
 OutlinerTreePrivate::updateSelection(const QList<SdfPath>& paths)
 {
+    PerfScope perfScope("ui.outliner_selection");
     SignalGuard::Scope guard(this);
     QSet<PrimItem*> targetItems;
     targetItems.reserve(paths.size());

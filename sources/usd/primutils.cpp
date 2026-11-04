@@ -2,6 +2,7 @@
 // Copyright (c) 2025 - present Mikael Sundell
 // https://github.com/mikaelsundell/stageviz
 
+#include "perfscope.h"
 #include "primutils.h"
 #include "bboxutils.h"
 #include "payloadutils.h"
@@ -127,6 +128,7 @@ namespace snapshot {
 namespace stage {
     QList<SdfPath> objectPaths(UsdStageRefPtr stage, const QList<SdfPath>& paths)
     {
+        PerfScope perfScope("transform.object_paths");
         QList<SdfPath> result;
         QSet<SdfPath> seen;
         result.reserve(paths.size());
@@ -349,6 +351,7 @@ namespace stage {
     // and instance proxies. Transform the reference root, not its shared contents.
     static QList<QPair<SdfPath, SdfPath>> transformInstanceSources(UsdStageRefPtr stage)
     {
+        PerfScope perfScope("transform.instance_sources");
         QList<QPair<SdfPath, SdfPath>> sources;
         if (!stage)
             return sources;
@@ -375,6 +378,7 @@ namespace stage {
 
     QList<SdfPath> transformEditTargetPaths(UsdStageRefPtr stage, const QList<SdfPath>& paths, bool minimalRoots)
     {
+        PerfScope perfScope("transform.resolve_targets");
         QList<SdfPath> targets;
         targets.reserve(paths.size());
 
@@ -415,6 +419,7 @@ namespace stage {
 
     QList<SdfPath> transformPreservationPaths(UsdStageRefPtr stage, const QList<SdfPath>& targets)
     {
+        PerfScope perfScope("transform.preservation_paths");
         QList<SdfPath> preserved;
         for (const auto& source : transformInstanceSources(stage)) {
             if (!targets.contains(source.first))

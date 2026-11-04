@@ -2,6 +2,7 @@
 // Copyright (c) 2025 - present Mikael Sundell
 // https://github.com/mikaelsundell/stageviz
 
+#include "perfscope.h"
 #include "commandlayer.h"
 #include "commandutils.h"
 #include "qtutils.h"
@@ -34,6 +35,7 @@ addSublayer(const QString& filename)
 
     return Command(
         [filename, state](Session* session) {
+            PerfScope perfScope("command.add_sublayer");
             if (!session || filename.isEmpty())
                 return;
 
@@ -269,6 +271,7 @@ setLayerMuted(const QString& layerIdentifier, bool muted)
     auto state = std::make_shared<LayerMuteState>();
 
     auto applyMuteState = [layerIdentifier, state](Session* session, bool muted) {
+        PerfScope perfScope("command.layer_mute");
         if (!session || layerIdentifier.isEmpty())
             return false;
 
@@ -312,12 +315,12 @@ setLayerMuted(const QString& layerIdentifier, bool muted)
                 };
                 retainSubtree(layer);
             }
-            stage->MuteLayer(identifier);
+            { PerfScope usdScope("usd.mute_layer"); stage->MuteLayer(identifier); }
         }
         else {
             if (!currentlyMuted || (stage->GetRootLayer() && stage->GetRootLayer()->GetIdentifier() == identifier))
                 return false;
-            stage->UnmuteLayer(identifier);
+            { PerfScope usdScope("usd.unmute_layer"); stage->UnmuteLayer(identifier); }
         }
         return stage->IsLayerMuted(identifier) == muted;
     };

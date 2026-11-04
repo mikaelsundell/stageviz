@@ -2,6 +2,7 @@
 // Copyright (c) 2025 - present Mikael Sundell
 // https://github.com/mikaelsundell/stageviz
 
+#include "perfscope.h"
 #include "session.h"
 #include "bboxutils.h"
 #include "commandstack.h"
@@ -286,6 +287,7 @@ SessionPrivate::init()
 void
 SessionPrivate::initStage()
 {
+    PerfScope perfScope("session.init_stage");
     UsdStageRefPtr stage;
     const GfBBox3d bbox = boundingBox();
     Session::StageUp up = Session::StageUp::Z;
@@ -410,6 +412,7 @@ SessionPrivate::newStage(Session::LoadPolicy policy)
 bool
 SessionPrivate::loadFromFile(const QString& filename, Session::LoadPolicy policy)
 {
+    PerfScope perfScope("session.load_file");
     const QString absFilename = QFileInfo(filename).absoluteFilePath();
     const std::string identifier = QStringToString(absFilename);
     close();
@@ -1702,6 +1705,7 @@ SessionPrivate::syncStageMetadata(const NoticeBatch& batch)
 GfBBox3d
 SessionPrivate::boundingBox()
 {
+    PerfScope perfScope("session.bounding_box");
     WRITE_LOCKER(locker, &d.stageLock, "stageLock");
 
     if (!d.stage)
@@ -1792,6 +1796,7 @@ SessionPrivate::needsBoundingBoxUpdate(const NoticeBatch& batch) const
 void
 SessionPrivate::updatePrims(const NoticeBatch& batch)
 {
+    PerfScope perfScope("session.update_prims");
     if (batch.entries.isEmpty())
         return;
 
@@ -1817,6 +1822,7 @@ SessionPrivate::updatePrims(const NoticeBatch& batch)
 void
 SessionPrivate::flushPrims()
 {
+    PerfScope perfScope("session.flush_prims");
     if (d.stageWatcher) {
         const NoticeBatch watcherBatch = d.stageWatcher->takePending();
         if (!watcherBatch.entries.isEmpty())
@@ -1877,6 +1883,7 @@ SessionPrivate::flushPrims()
 void
 SessionPrivate::updateStage()
 {
+    PerfScope perfScope("session.publish_stage");
     UsdStageRefPtr stage;
     Session::LoadPolicy loadPolicy;
     Session::StageStatus stageStatus;
