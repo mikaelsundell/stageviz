@@ -64,9 +64,11 @@ try:
     result=oracle('composed-batch',('/Composed/Batch/P0','/Composed/Batch/P127'))
     selection=json.loads(result['stageviz_get_selection']['result']['content'][0]['text'])
     assert selection==['/Composed/Batch/P'+str(i) for i in range(128)]
+    python('stageviz._interactionTest.mapped_attributes()','mapped-attributes')
+    oracle('mapped-attributes',('/MappedProperties','/MappedProperties/Child'))
     python(f"print('SNAPSHOTS',stageviz._interactionTest.directory); stageviz._interactionTest.cleanup()",'cleanup')
     oracle('cleanup')
-    (directory/'passed.json').write_text(json.dumps(dict(passed=True,checks=['Move','Rotate','Scale','conflicts','composed128']),indent=2))
+    (directory/'passed.json').write_text(json.dumps(dict(passed=True,checks=['Move','Rotate','Scale','conflicts','composed128','mapped_attributes']),indent=2))
     print('PASS Python public transform regressions:',directory,flush=True)
 finally:
     if process.poll() is None:

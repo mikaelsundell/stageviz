@@ -221,10 +221,12 @@ namespace {
     struct AttributeSpecBatchState {
         struct Item {
             SdfPath path;
+            SdfPath specPath;
             SdfLayerRefPtr snapshot;
             bool hadSpec = false;
         };
         QList<Item> items;
+        SdfLayerRefPtr snapshot;
         bool captured = false;
     };
 }  // namespace
@@ -258,6 +260,11 @@ attributeSpecBatch(const QList<SdfPath>& paths, const TfToken& name, const SdfVa
                                 const SdfPath propPath = removing ? path : path.AppendProperty(name);
                                 if (!propPath.IsPropertyPath())
                                     continue;
+                                const SdfPath specPath = stage->GetEditTarget().MapToSpecPath(propPath);
+                                if (specPath.IsEmpty()) {
+                                    errors.append(QString("Cannot map attribute: %1").arg(pathText(propPath)));
+                                    continue;
+                                }
                                 const UsdPrim prim = stage->GetPrimAtPath(propPath.GetPrimPath());
                                 if (!prim || prim.IsInstanceProxy())
                                     continue;
@@ -270,14 +277,14 @@ attributeSpecBatch(const QList<SdfPath>& paths, const TfToken& name, const SdfVa
                                             QString("Cannot remove built-in attribute %1").arg(pathText(propPath)));
                                         continue;
                                     }
-                                    if (!layer->GetPropertyAtPath(propPath)) {
+                                    if (!layer->GetPropertyAtPath(specPath)) {
                                         errors.append(QString("Attribute is not authored in the current edit layer: %1")
                                                           .arg(pathText(propPath)));
                                         continue;
                                     }
                                 }
                                 else {
-                                    if (layer->GetPropertyAtPath(propPath))
+                                    if (layer->GetPropertyAtPath(specPath))
                                         continue;
                                     if (!custom && (!attr || attr.GetTypeName() != type))
                                         continue;
@@ -286,18 +293,21 @@ attributeSpecBatch(const QList<SdfPath>& paths, const TfToken& name, const SdfVa
                                 }
                                 AttributeSpecBatchState::Item item;
                                 item.path = propPath;
-                                item.hadSpec = bool(layer->GetPropertyAtPath(propPath));
+                                item.specPath = specPath;
+                                item.hadSpec = bool(layer->GetPropertyAtPath(specPath));
                                 if (item.hadSpec) {
-                                    item.snapshot = SdfLayer::CreateAnonymous("stageviz_attribute_snapshot.usda");
-                                    SdfCreatePrimInLayer(item.snapshot, propPath.GetPrimPath());
-                                    if (!SdfCopySpec(layer, propPath, item.snapshot, propPath))
+                                    if (!state->snapshot)
+                                        state->snapshot = SdfLayer::CreateAnonymous("stageviz_attribute_snapshot.usda");
+                                    item.snapshot = state->snapshot;
+                                    SdfCreatePrimInLayer(item.snapshot, specPath.GetParentPath());
+                                    if (!SdfCopySpec(layer, specPath, item.snapshot, specPath))
                                         continue;
                                 }
                                 state->items.append(item);
                             }
                             state->captured = true;
                         }
-                        struct Plan { SdfPath path; SdfVariability variability; };
+                        struct Plan { SdfPath path, specPath; SdfVariability variability; };
                         QList<Plan> plans;
                         // USD validation and schema discovery precede Sdf edits.
                         for (const auto& item : state->items) {
@@ -309,16 +319,16 @@ attributeSpecBatch(const QList<SdfPath>& paths, const TfToken& name, const SdfVa
                                 continue;
                             }
                             const auto attr = prim.GetAttribute(item.path.GetNameToken());
-                            plans.append({ item.path, attr ? attr.GetVariability() : SdfVariabilityVarying });
+                            plans.append({ item.path, item.specPath, attr ? attr.GetVariability() : SdfVariabilityVarying });
                         }
                         const VtValue fallback = type ? type.GetDefaultValue() : VtValue();
                         SdfChangeBlock block;
                         for (const auto& plan : plans) {
                             bool ok = false;
                             if (removing)
-                                ok = removePropertySpec(layer, plan.path);
+                                ok = removePropertySpec(layer, plan.specPath);
                             else {
-                                const auto created = layer::ensureAttributeSpec(layer, plan.path, type,
+                                const auto created = layer::ensureAttributeSpec(layer, plan.specPath, type,
                                                                                 plan.variability, custom);
                                 ok = bool(created);
                                 if (ok && !fallback.IsEmpty())
@@ -359,13 +369,13 @@ attributeSpecBatch(const QList<SdfPath>& paths, const TfToken& name, const SdfVa
                     else {
                         SdfChangeBlock block;
                         for (const auto& item : state->items) {
-                            if (!removePropertySpec(layer, item.path)) {
+                            if (!removePropertySpec(layer, item.specPath)) {
                                 errors.append(QString("Failed to clear %1").arg(pathText(item.path)));
                                 continue;
                             }
                             if (item.hadSpec) {
-                                SdfCreatePrimInLayer(layer, item.path.GetPrimPath());
-                                if (!SdfCopySpec(item.snapshot, item.path, layer, item.path)) {
+                                SdfCreatePrimInLayer(layer, item.specPath.GetParentPath());
+                                if (!SdfCopySpec(item.snapshot, item.specPath, layer, item.specPath)) {
                                     errors.append(QString("Failed to restore %1").arg(pathText(item.path)));
                                     continue;
                                 }
@@ -405,6 +415,7 @@ renameAttributes(const QList<SdfPath>& attributePaths, const TfToken& newName)
         struct Item {
             SdfPath oldPath;
             SdfPath newPath;
+            SdfPath oldSpecPath, newSpecPath;
             bool removeOriginal = false;
         };
         QList<Item> items;
@@ -458,18 +469,24 @@ renameAttributes(const QList<SdfPath>& attributePaths, const TfToken& newName)
                                 const UsdAttribute attr = stage->GetAttributeAtPath(oldPath);
                                 if (!attr)
                                     continue;
-                                if (!layer->GetPropertyAtPath(oldPath)) {
+                                const SdfPath oldSpecPath = stage->GetEditTarget().MapToSpecPath(oldPath);
+                                const SdfPath newPath = oldPath.GetPrimPath().AppendProperty(newName);
+                                const SdfPath newSpecPath = stage->GetEditTarget().MapToSpecPath(newPath);
+                                if (oldSpecPath.IsEmpty() || newSpecPath.IsEmpty()) {
+                                    errors.append(QString("Cannot map attribute: %1").arg(pathText(oldPath)));
+                                    continue;
+                                }
+                                if (!layer->GetPropertyAtPath(oldSpecPath)) {
                                     errors.append(QString("Attribute is not authored in the current edit layer: %1")
                                                       .arg(pathText(oldPath)));
                                     continue;
                                 }
-                                const SdfPath newPath = oldPath.GetPrimPath().AppendProperty(newName);
-                                state->items.append({ oldPath, newPath, true });
+                                state->items.append({ oldPath, newPath, oldSpecPath, newSpecPath, true });
                             }
                             state->captured = true;
                         }
                         struct Plan {
-                            SdfPath oldPath, newPath;
+                            SdfPath oldPath, newPath, oldSpecPath, newSpecPath;
                             SdfValueTypeName type;
                             SdfVariability variability;
                             VtValue value;
@@ -477,31 +494,33 @@ renameAttributes(const QList<SdfPath>& attributePaths, const TfToken& newName)
                         };
                         QList<Plan> plans;
                         for (const auto& item : state->items) {
-                            if (layer->GetPropertyAtPath(item.newPath))
+                            if (layer->GetPropertyAtPath(item.newSpecPath))
                                 continue;
                             const auto source = stage->GetAttributeAtPath(item.oldPath);
                             if (!source)
                                 continue;
                             VtValue value;
-                            source.Get(&value);
-                            plans.append({ item.oldPath, item.newPath, source.GetTypeName(), source.GetVariability(),
+                            if (!item.removeOriginal)
+                                source.Get(&value);
+                            plans.append({ item.oldPath, item.newPath, item.oldSpecPath, item.newSpecPath,
+                                           source.GetTypeName(), source.GetVariability(),
                                            value, item.removeOriginal });
                         }
                         SdfChangeBlock block;
                         for (const auto& plan : plans) {
-                            if (plan.removeOriginal && layer->GetPropertyAtPath(plan.oldPath)) {
-                                if (!SdfCopySpec(layer, plan.oldPath, layer, plan.newPath)) {
+                            if (plan.removeOriginal && layer->GetPropertyAtPath(plan.oldSpecPath)) {
+                                if (!SdfCopySpec(layer, plan.oldSpecPath, layer, plan.newSpecPath)) {
                                     errors.append(QString("Cannot copy %1").arg(pathText(plan.oldPath)));
                                     continue;
                                 }
-                                layer->SetField(plan.newPath, SdfFieldKeys->Custom, VtValue(true));
-                                if (!removePropertySpec(layer, plan.oldPath)) {
+                                layer->SetField(plan.newSpecPath, SdfFieldKeys->Custom, VtValue(true));
+                                if (!removePropertySpec(layer, plan.oldSpecPath)) {
                                     errors.append(QString("Cannot remove %1").arg(pathText(plan.oldPath)));
                                     continue;
                                 }
                             }
                             else {
-                                const auto target = layer::ensureAttributeSpec(layer, plan.newPath, plan.type,
+                                const auto target = layer::ensureAttributeSpec(layer, plan.newSpecPath, plan.type,
                                                                                plan.variability, true);
                                 if (!target || (!plan.value.IsEmpty() && !target->SetDefaultValue(plan.value))) {
                                     errors.append(QString("Cannot rename %1").arg(pathText(plan.oldPath)));
@@ -542,10 +561,10 @@ renameAttributes(const QList<SdfPath>& attributePaths, const TfToken& newName)
                         SdfChangeBlock block;
                         for (const auto& item : state->items) {
                             if (item.removeOriginal) {
-                                if (!SdfCopySpec(layer, item.newPath, layer, item.oldPath))
+                                if (!SdfCopySpec(layer, item.newSpecPath, layer, item.oldSpecPath))
                                     errors.append(QString("Cannot restore %1").arg(pathText(item.oldPath)));
                             }
-                            if (!removePropertySpec(layer, item.newPath))
+                            if (!removePropertySpec(layer, item.newSpecPath))
                                 errors.append(QString("Cannot remove %1").arg(pathText(item.newPath)));
                             affectedCollector.append(item.oldPath.GetPrimPath());
                         }

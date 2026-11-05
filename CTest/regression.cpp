@@ -1921,6 +1921,51 @@ batchedAttributeAuthoring()
         require(!stage->GetAttributeAtPath(property), "batch creation undo removes new attributes");
         require(!source->GetAttributeAtPath(property), "batch operations never author into weaker source");
     }
+
+    Session mappedSession;
+    require(mappedSession.newStage(), "new mapped attribute stage");
+    const auto mappedStage = mappedSession.stage();
+    const auto model = UsdGeomXform::Define(mappedStage, SdfPath("/Model"));
+    auto variants = model.GetPrim().GetVariantSets().AddVariantSet("shape");
+    variants.AddVariant("test");
+    variants.SetVariantSelection("test");
+    UsdEditContext context(variants.GetVariantEditContext());
+    UsdGeomCube::Define(mappedStage, SdfPath("/Model/Child"));
+    const auto mappedLayer = mappedStage->GetRootLayer();
+    std::string mappedOriginal, mappedAdded, mappedRestored;
+    mappedLayer->ExportToString(&mappedOriginal);
+    const QList<SdfPath> mappedPaths { SdfPath("/Model"), SdfPath("/Model/Child") };
+    const QList<SdfPath> mappedProperties { SdfPath("/Model.custom:mapped"), SdfPath("/Model/Child.custom:mapped") };
+    auto mappedAdd = stageviz::addAttributes(mappedPaths, TfToken("custom:mapped"), SdfValueTypeNames->Float, true);
+    executeCommand(mappedAdd, mappedSession);
+    for (const auto& path : mappedProperties) {
+        require(bool(mappedStage->GetAttributeAtPath(path)), "mapped attribute composes at scene path");
+        require(mappedLayer->GetPropertyAtPath(mappedStage->GetEditTarget().MapToSpecPath(path))
+                    && !mappedLayer->GetPropertyAtPath(path), "mapped attribute stays inside variant namespace");
+    }
+    mappedLayer->ExportToString(&mappedAdded);
+    auto mappedRename = stageviz::renameAttributes(mappedProperties, TfToken("custom:renamed"));
+    executeCommand(mappedRename, mappedSession);
+    for (const auto& path : mappedPaths)
+        require(bool(mappedStage->GetAttributeAtPath(path.AppendProperty(TfToken("custom:renamed")))),
+                "mapped attribute rename composes");
+    undoCommand(mappedRename, mappedSession);
+    mappedLayer->ExportToString(&mappedRestored);
+    require(mappedRestored == mappedAdded, "mapped rename undo restores exact layer text");
+    auto mappedRemove = stageviz::removeAttributes(mappedProperties);
+    executeCommand(mappedRemove, mappedSession);
+    for (const auto& path : mappedProperties)
+        require(!mappedStage->GetAttributeAtPath(path), "mapped attribute removal composes");
+    undoCommand(mappedRemove, mappedSession);
+    mappedLayer->ExportToString(&mappedRestored);
+    require(mappedRestored == mappedAdded, "mapped removal snapshots restore the variant owner");
+    undoCommand(mappedAdd, mappedSession);
+    mappedLayer->ExportToString(&mappedRestored);
+    require(mappedRestored == mappedOriginal, "mapped attribute creation undo restores exact layer text");
+    executeCommand(mappedAdd, mappedSession);
+    undoCommand(mappedAdd, mappedSession);
+    mappedLayer->ExportToString(&mappedRestored);
+    require(mappedRestored == mappedOriginal, "mapped attribute creation redo stays in its captured namespace");
 }
 
 void

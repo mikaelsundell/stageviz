@@ -292,8 +292,8 @@ namespace path {
     /**
      * @brief Checks whether a path is affected by the current isolation mask.
      *
-     * Property paths are normalized to their owning prim paths before
-     * comparison. The function returns true if the path is equal to, or a
+     * Paths use exact USD namespace prefix comparison; property paths are not
+     * implicitly projected to prims. Returns true if the path is equal to, or a
      * descendant of, any path in the isolation mask. An empty mask matches all
      * paths.
      *
@@ -307,8 +307,8 @@ namespace path {
     /**
      * @brief Checks whether a path is affected by the current selection.
      *
-     * Property paths are normalized to their owning prim paths before
-     * comparison. The function returns true if the path is equal to, or a
+     * Paths use exact USD namespace prefix comparison; property paths are not
+     * implicitly projected to prims. Returns true if the path is equal to, or a
      * descendant of, any selected path.
      *
      * @param selection Current selection.
@@ -356,6 +356,9 @@ namespace path {
 
     /**
      * @brief Appends a path if it is not already present in the list.
+     *
+     * Single-item convenience. For bulk accumulation, construct PathCollector
+     * once outside the loop instead of repeatedly scanning the output list.
      */
     void appendUnique(QList<SdfPath>& paths, const SdfPath& path);
 

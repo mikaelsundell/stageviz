@@ -73,6 +73,10 @@ rename change blocks. Exact property and prim deletions use their Sdf owners,
 avoiding a namespace-validation transaction per removed spec; unusual variant
 ownership retains the generic namespace fallback. Dependency remapping remains
 the caller's responsibility, as it was with the previous deletion helper.
+Property batches retain separate scene and mapped spec paths for capture,
+authoring, snapshots and undo. One anonymous snapshot layer serves the whole
+attribute batch. Root/child variant cases verify that attributes never escape
+their variant namespace and that removal/rename restore exact original specs.
 
 The shared bounds cache now receives synchronous invalidation from Session's
 USD notice listener, including suppressed/deferred transactions. CacheGuard
