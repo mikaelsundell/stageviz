@@ -18,13 +18,19 @@ def copy(source,target):
     target.parent.mkdir(parents=True,exist_ok=True)
     shutil.copy2(source,target)
     records.append(dict(source=str(source),archive=str(target.relative_to(root)),sha256=sha(source)))
-paths=subprocess.check_output(['git','diff','f991278','--name-only'],cwd=app,text=True).splitlines()
+iteration_paths=subprocess.check_output(['git','diff','f991278','--name-only'],cwd=app,text=True).splitlines()
+# Carry the earlier fixes forward too, rather than requiring an old patch pack
+# to reconstruct the current source from the last pre-investigation commit.
+paths=subprocess.check_output(['git','diff','2ccb0cb','--name-only'],cwd=app,text=True).splitlines()
+(after/'iteration-changed-files.txt').write_text('\n'.join(iteration_paths)+'\n',encoding='utf-8')
+(after/'all-stageviz-changed-files.txt').write_text('\n'.join(paths)+'\n',encoding='utf-8')
 for relative in paths:
     if (app/relative).is_file():
         copy(app/relative,after/'stageviz'/relative)
 shutil.copytree(app/'investigation/interaction-utilities6',after/'stageviz/investigation/interaction-utilities6',dirs_exist_ok=True,
                 ignore=shutil.ignore_patterns('__pycache__'))
 (after/'changes.patch').write_bytes(subprocess.check_output(['git','diff','f991278','--binary'],cwd=app))
+(after/'all-stageviz-fixes.patch').write_bytes(subprocess.check_output(['git','diff','2ccb0cb','--binary'],cwd=app))
 (after/'git-log.txt').write_bytes(subprocess.check_output(['git','log','-4','--format=fuller'],cwd=app))
 (after/'git-status.txt').write_bytes(subprocess.check_output(['git','status','--short'],cwd=app))
 

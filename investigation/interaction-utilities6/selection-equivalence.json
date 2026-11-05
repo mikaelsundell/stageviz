@@ -1,17 +1,71 @@
 [
   {
+    "beforeRun": "20261104T213829Z-00-64MiB-volvo-sweep-move-baseline",
+    "afterRun": "20261104T224137Z-00-64MiB-volvo-indexed-loops",
     "phase": "sweep_cold",
     "beforeCount": 49296,
     "afterCount": 49296,
     "identicalOrder": true
   },
   {
+    "beforeRun": "20261104T213829Z-00-64MiB-volvo-sweep-move-baseline",
+    "afterRun": "20261104T224137Z-00-64MiB-volvo-indexed-loops",
     "phase": "sweep_warm",
     "beforeCount": 49296,
     "afterCount": 49296,
     "identicalOrder": true
   },
   {
+    "beforeRun": "20261104T213829Z-00-64MiB-volvo-sweep-move-baseline",
+    "afterRun": "20261104T224137Z-00-64MiB-volvo-indexed-loops",
+    "phase": "invert_selection",
+    "beforeCount": 366874,
+    "afterCount": 366874,
+    "identicalOrder": true
+  },
+  {
+    "beforeRun": "20261104T213829Z-00-64MiB-volvo-sweep-move-baseline",
+    "afterRun": "20261104T231920Z-01-64MiB-volvo-direct-delete",
+    "phase": "sweep_cold",
+    "beforeCount": 49296,
+    "afterCount": 49296,
+    "identicalOrder": true
+  },
+  {
+    "beforeRun": "20261104T213829Z-00-64MiB-volvo-sweep-move-baseline",
+    "afterRun": "20261104T231920Z-01-64MiB-volvo-direct-delete",
+    "phase": "sweep_warm",
+    "beforeCount": 49296,
+    "afterCount": 49296,
+    "identicalOrder": true
+  },
+  {
+    "beforeRun": "20261104T213829Z-00-64MiB-volvo-sweep-move-baseline",
+    "afterRun": "20261104T231920Z-01-64MiB-volvo-direct-delete",
+    "phase": "invert_selection",
+    "beforeCount": 366874,
+    "afterCount": 366874,
+    "identicalOrder": true
+  },
+  {
+    "beforeRun": "20261104T213829Z-00-64MiB-volvo-sweep-move-baseline",
+    "afterRun": "20261104T234149Z-01-64MiB-volvo-sorted-roots",
+    "phase": "sweep_cold",
+    "beforeCount": 49296,
+    "afterCount": 49296,
+    "identicalOrder": true
+  },
+  {
+    "beforeRun": "20261104T213829Z-00-64MiB-volvo-sweep-move-baseline",
+    "afterRun": "20261104T234149Z-01-64MiB-volvo-sorted-roots",
+    "phase": "sweep_warm",
+    "beforeCount": 49296,
+    "afterCount": 49296,
+    "identicalOrder": true
+  },
+  {
+    "beforeRun": "20261104T213829Z-00-64MiB-volvo-sweep-move-baseline",
+    "afterRun": "20261104T234149Z-01-64MiB-volvo-sorted-roots",
     "phase": "invert_selection",
     "beforeCount": 366874,
     "afterCount": 366874,

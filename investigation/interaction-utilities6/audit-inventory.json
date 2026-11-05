@@ -490,44 +490,44 @@
     },
     {
       "path": "sources/commands/commandproperty.cpp",
-      "lines": 1352,
+      "lines": 1371,
       "matches": {
         "loops": [
           109,
           195,
-          257,
-          303,
-          316,
-          361,
-          437,
-          441,
-          479,
-          491,
-          543,
-          614,
-          686,
-          775,
-          860,
-          916,
-          987,
-          999,
-          1087,
-          1170,
-          1180,
-          1186,
-          1197,
-          1226,
+          259,
+          313,
+          326,
+          371,
+          448,
+          452,
+          496,
+          510,
+          562,
+          633,
+          705,
+          794,
+          879,
+          935,
+          1006,
+          1018,
+          1106,
+          1189,
+          1199,
+          1205,
+          1216,
           1245,
-          1311,
-          1323
+          1264,
+          1330,
+          1342
         ],
         "membership": [],
         "prefix": [],
         "sdf_batch": [
-          315,
-          360,
-          490,
-          542
+          325,
+          370,
+          509,
+          561
         ]
       }
     },
@@ -669,10 +669,10 @@
     },
     {
       "path": "sources/commands/commandutils.cpp",
-      "lines": 229,
+      "lines": 240,
       "matches": {
         "loops": [
-          119
+          130
         ],
         "membership": [],
         "prefix": [],
@@ -681,7 +681,7 @@
     },
     {
       "path": "sources/commands/commandutils.h",
-      "lines": 227,
+      "lines": 230,
       "matches": {
         "loops": [],
         "membership": [],
@@ -748,10 +748,10 @@
     },
     {
       "path": "sources/core/notice.h",
-      "lines": 106,
+      "lines": 114,
       "matches": {
         "loops": [
-          90
+          93
         ],
         "membership": [],
         "prefix": [],
@@ -3688,7 +3688,7 @@
     },
     {
       "path": "sources/usd/usdutils.cpp",
-      "lines": 512,
+      "lines": 526,
       "matches": {
         "loops": [
           167,
@@ -3701,38 +3701,40 @@
           284,
           285,
           313,
-          325,
-          338,
-          348,
-          368,
-          396,
-          406,
-          421,
-          433,
-          448
+          326,
+          339,
+          352,
+          362,
+          382,
+          410,
+          420,
+          435,
+          447,
+          462
         ],
         "membership": [
           296,
-          460,
-          462
+          474,
+          476
         ],
         "prefix": [
           244,
           259,
-          388,
-          397,
-          407
+          327,
+          402,
+          411,
+          421
         ],
         "sdf_batch": []
       }
     },
     {
       "path": "sources/usd/usdutils.h",
-      "lines": 394,
+      "lines": 406,
       "matches": {
         "loops": [],
         "membership": [
-          351
+          363
         ],
         "prefix": [],
         "sdf_batch": [
