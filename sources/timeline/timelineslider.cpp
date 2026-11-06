@@ -84,14 +84,12 @@ TimelineSlider::paintEvent(QPaintEvent* event)
         const double frameLeft = sliderMin + (value() - min) * pixelsPerFrame + markerInset;
         const double markerWidth = std::max(0.0, pixelsPerFrame - 2.0 * markerInset);
 
-        painter.setRenderHint(QPainter::Antialiasing, true);
         painter.setPen(Qt::NoPen);
-        QColor frameColor = app()->ui()->color(UI::ColorRole::Handle);
+        QColor frameColor = app()->ui()->color(UI::ColorRole::ItemAlt);
         frameColor.setAlphaF(1.0);
         painter.setBrush(frameColor);
         if (isEnabled())
-            painter.drawRoundedRect(QRectF(frameLeft, 3, markerWidth, height() - 6), 4, 4);
-        painter.setRenderHint(QPainter::Antialiasing, false);
+            painter.drawRect(QRectF(frameLeft, 0, markerWidth, baseline));
 
         painter.setPen(QPen(outline, 1));
         painter.drawLine(sliderMin, baseline, sliderMax, baseline);
@@ -125,6 +123,10 @@ TimelineSlider::paintEvent(QPaintEvent* event)
             const int x = static_cast<int>(std::round(sliderMin + (tick - min) * pixelsPerFrame));
             painter.drawLine(x, baseline - 12, x, baseline);
         }
+
+        painter.setPen(QPen(outline, 1));
+        painter.setBrush(Qt::NoBrush);
+        painter.drawRect(rect().adjusted(0, 0, -1, -1));
     }
     else {
         painter.setPen(QPen(outline, 1));

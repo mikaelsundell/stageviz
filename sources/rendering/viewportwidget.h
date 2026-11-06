@@ -8,6 +8,7 @@
 #include "selectionlist.h"
 #include "stageviz.h"
 #include "viewportcapture.h"
+#include "viewportgizmo.h"
 #include <QJsonObject>
 #include <QOpenGLFunctions>
 #include <QOpenGLWidget>
@@ -144,6 +145,10 @@ public:
      */
     bool transformEnabled() const;
     /**
+     * @brief Returns whether the current selection has a visible transform handle.
+     */
+    bool transformHandleAvailable();
+    /**
      * @brief Returns whether the gizmo edits pivot frames instead of object transforms.
      */
     bool pivotEnabled() const;
@@ -153,7 +158,37 @@ public:
      */
     void setPivotEnabled(bool enabled);
 
+    /**
+     * @brief Returns the active transform coordinate frame.
+     */
+    ViewportGizmo::ReferenceFrame transformReferenceFrame() const;
 
+    /**
+     * @brief Sets the transform coordinate frame.
+     */
+    void setTransformReferenceFrame(ViewportGizmo::ReferenceFrame frame);
+
+    /**
+     * @brief Applies numeric values using the active transform tool.
+     *
+     * Translation uses stage units, rotation uses degrees, and scale uses factors.
+     */
+    bool applyNumericTransform(const GfVec3d& values, QString& error);
+
+    /**
+     * @brief Starts a live numeric transform edit.
+     */
+    bool beginNumericTransform(QString& error);
+
+    /**
+     * @brief Updates the live numeric transform preview.
+     */
+    bool updateNumericTransform(const GfVec3d& values, QString& error);
+
+    /**
+     * @brief Commits the live numeric transform edit.
+     */
+    void finishNumericTransform();
 
     /**
      * @brief Enables or disables the transform manipulator.
@@ -338,6 +373,21 @@ public:
      */
 
 Q_SIGNALS:
+    /**
+     * @brief Forwarded when the active transform tool or reference frame changes.
+     */
+    void transformStateChanged();
+
+    /**
+     * @brief Emitted when the active selection changes.
+     */
+    void transformSelectionChanged();
+
+    /**
+     * @brief Forwards the current gizmo delta to the numeric transform fields.
+     */
+    void transformInputValuesChanged(const GfVec3d& values);
+
     /**
      * @brief Emitted when a viewport frame has finished rendering.
      *

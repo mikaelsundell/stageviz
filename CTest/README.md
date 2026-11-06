@@ -50,8 +50,8 @@ manipulation uses fresh selection bounds even when the shared session bounds
 cache still contains the previous transforms.
 
 `python/testviewport.py` runs against a disposable on-screen viewer. It sweeps
-multiple instance proxies, drags Move/Rotate/Scale center handles, verifies a
-shared world delta on the owning instances and their proxies, and checks undo
+multiple instance proxies, drags Move/Rotate/Scale center handles, verifies
+owner deltas on instances and their proxies, and checks undo
 and redo for each gesture. It captures viewer screenshots and plain Qt snapshots.
 By default the test refuses to replace a stage with unsaved work and restores
 the original file afterward. Set `_VIEWPORT_DISPOSABLE=True` only when launching
@@ -148,7 +148,41 @@ The script does not autorun; its `run(disposable=True)` executes all phases.
 - `numeric_editor_api` checks typing directly into a scrub-mode spin box.
   `testnumericeditors.py` checks numeric replacement, stable row focus, repeated
   property drags without closing the editor, undo/redo refresh and keyboard
-  commit through the real Property Editor in a disposable viewer.
+  commit through the real Property Editor in a disposable viewer. It also checks
+  gizmo-panel visibility across selection changes and non-accumulating numeric
+  Move/Scale previews.
 
 - `testlights.py` also isolates the default Distant light with other sources off,
   checking visible illumination, rotation, translation independence, and undo.
+
+`viewport_transform_hierarchy_sync_api` checks absolute local numeric rotation,
+translation and scale under rotated, non-uniformly scaled parents, rotation
+in World/Object/Parent handle frames, live ring values, Applied registration,
+and undo/redo equivalence. `python/testhierarchytransforms.py` drives real Qt
+numeric fields, scrub release and all three rotation rings on World and Cube, checks panel/USD agreement
+before and after release and undo/redo, and records viewer images and QObject
+snapshots. Run it only in a disposable process, using its setup(), numeric(path),
+and drag(path) entry points from an external MCP controller; read-only MCP
+stage/prim/selection calls can bracket each action without resetting history
+inside the action. Numeric fields display absolute local TRS; handle reference
+frames affect interactive drag axes.
+
+The hierarchy transform regression also compares the panel and authored matrices
+against an independent `UsdGeomXformOp::TypeRotateXYZ` operation, including the
+(-60, 56, 70) comparison case and values on both sides of Y=90 degrees. Compound
+world-Z snapping uses the same XYZ convention and preserves the X/Y components
+through preview, Applied registration and undo/redo.
+
+Corner-axis sizing is centralized in `UI::axisSize` / `setAxisSize`, with 36/72/144
+logical-pixel defaults. `ui_api` covers sizing notifications and invalid values;
+`viewport_components_api` checks scaled images and hit targets at standard and
+high DPI, including an odd logical size. `python/testaxissize.py` checks the
+embedded API, immediate live repaint and the visible indicator footprint while
+preserving the current USD stage and restoring the UI size.
+
+Viewport gesture scripts frame the rendered active-object handle rather than
+assuming it lies at the combined selection bounds center. Interactive Move and Scale check
+a shared world delta; interactive Rotate checks a common rotation about each target's own
+pivot and verifies that mesh descendants inherit their owner's delta once.
+The shared-source fixture tracks internal-reference and instance roots for
+these per-object rotation assertions.

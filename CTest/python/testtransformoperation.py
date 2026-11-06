@@ -47,14 +47,22 @@ class TransformOperationTest(_namespace["SubsetTest"]):
         actual = self.worlds()
         return all(Gf.IsClose(actual[path], matrix, 1e-6) for path, matrix in expected.items())
 
-    def finish_action(self, before, original, label, expected_delta=None):
+    def finish_action(self, before, original, label, expected_delta=None, individual_rotation=False):
         after = self.worlds()
         delta = before[self.owners[0]].GetInverse() * after[self.owners[0]]
         assert not Gf.IsClose(delta, Gf.Matrix4d(1), 1e-6), label + " changes geometry"
         if expected_delta is not None:
             assert Gf.IsClose(delta, expected_delta, 1e-6), label + " applies requested world delta"
         for owner in self.owners:
-            assert Gf.IsClose(after[owner], before[owner] * delta, 1e-6), owner + " receives the delta exactly once"
+            if individual_rotation:
+                assert Gf.IsClose(after[owner].ExtractTranslation(), before[owner].ExtractTranslation(), 1e-6), (
+                    owner + ' keeps its own rotation pivot')
+                owner_delta = before[owner].GetInverse() * after[owner]
+                for row in range(3):
+                    for col in range(3):
+                        assert abs(owner_delta[row][col] - delta[row][col]) < 1e-6
+            else:
+                assert Gf.IsClose(after[owner], before[owner] * delta, 1e-6), owner + " receives the delta exactly once"
         assert Gf.IsClose(after[self.observed[-1]], before[self.observed[-1]], 1e-6), "unselected instance stays fixed"
         assert list(stageviz.session().paths()) == self.selected, "Session keeps exact subset paths"
         assert not stageviz.session().stage().GetPrimAtPath(self.owners[0]).GetAttribute("xformOp:transform"), (
@@ -95,15 +103,8 @@ class TransformOperationTest(_namespace["SubsetTest"]):
         QtCore, _, QtTest, _ = tb.qt()
         stageviz.command.select_paths(self.selected)
         tb.process_events(80)
-        bounds = Gf.Range3d()
-        cache = UsdGeom.BBoxCache(Usd.TimeCode.Default(), [UsdGeom.Tokens.default_])
-        for owner in self.owners:
-            bounds.UnionWith(cache.ComputeWorldBound(stageviz.session().stage().GetPrimAtPath(owner)).ComputeAlignedRange())
-        camera = stageviz.session().viewState().camera()
-        camera.frame((tuple(bounds.GetMin()), tuple(bounds.GetMax())))
-        camera.distance(1.6)
         self.activate_mode(mode)
-        tb.process_events(100)
+        self.frame_handle()
         before = self.worlds()
         original = self.layer_text()
         stageviz.command.clear()
@@ -114,7 +115,7 @@ class TransformOperationTest(_namespace["SubsetTest"]):
         QtTest.QTest.mouseMove(widget, end, 50)
         QtTest.QTest.mouseRelease(widget, QtCore.Qt.MouseButton.LeftButton, pos=end)
         tb.process_events(180)
-        self.finish_action(before, original, "gizmo_" + mode.lower())
+        self.finish_action(before, original, "gizmo_" + mode.lower(), individual_rotation=mode == "Rotate")
 
     def conflicts(self):
         original = self.layer_text()

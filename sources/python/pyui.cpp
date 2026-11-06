@@ -389,6 +389,30 @@ PyUI_setGizmoSize(PyUIObject* self, PyObject* args)
 }
 
 static PyObject*
+PyUI_axisSize(PyUIObject* self, PyObject* args)
+{
+    if (!checkUI(self->ui))
+        return nullptr;
+    long scale = 0;
+    if (!PyArg_ParseTuple(args, "l", &scale))
+        return nullptr;
+    return PyLong_FromLong(self->ui->axisSize(static_cast<UI::UIScale>(scale)));
+}
+
+static PyObject*
+PyUI_setAxisSize(PyUIObject* self, PyObject* args)
+{
+    if (!checkUI(self->ui))
+        return nullptr;
+    long scale = 0;
+    long size = 0;
+    if (!PyArg_ParseTuple(args, "ll", &scale, &size))
+        return nullptr;
+    self->ui->setAxisSize(static_cast<UI::UIScale>(scale), static_cast<int>(size));
+    Py_RETURN_NONE;
+}
+
+static PyObject*
 PyUI_transformMoveSnap(PyUIObject* self, PyObject*)
 {
     if (!checkUI(self->ui))
@@ -558,6 +582,10 @@ static PyMethodDef PyUI_methods[] = {
     { "setIconSize", reinterpret_cast<PyCFunction>(PyUI_setIconSize), METH_VARARGS, "Set icon size for a UI scale" },
     { "gizmoSize", reinterpret_cast<PyCFunction>(PyUI_gizmoSize), METH_VARARGS, "Get gizmo size for a UI scale" },
     { "setGizmoSize", reinterpret_cast<PyCFunction>(PyUI_setGizmoSize), METH_VARARGS, "Set gizmo size for a UI scale" },
+    { "axisSize", reinterpret_cast<PyCFunction>(PyUI_axisSize), METH_VARARGS,
+      "Get corner-axis image size for a UI scale" },
+    { "setAxisSize", reinterpret_cast<PyCFunction>(PyUI_setAxisSize), METH_VARARGS,
+      "Set corner-axis image size for a UI scale" },
     { "transformMoveSnap", reinterpret_cast<PyCFunction>(PyUI_transformMoveSnap), METH_NOARGS,
       "Get transform move snapping increment" },
     { "setTransformMoveSnap", reinterpret_cast<PyCFunction>(PyUI_setTransformMoveSnap), METH_VARARGS,

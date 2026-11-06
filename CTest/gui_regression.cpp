@@ -64,6 +64,7 @@
 #include <pxr/base/gf/camera.h>
 #include <pxr/base/gf/matrix4d.h>
 #include <pxr/base/gf/range1f.h>
+#include <pxr/base/gf/rotation.h>
 #include <pxr/base/gf/vec3d.h>
 #include <pxr/usd/usd/payloads.h>
 #include <pxr/usd/usd/prim.h>
@@ -149,6 +150,18 @@ uiApi()
     require(ui.gizmoSize(stageviz::UI::Small) == 24 && ui.gizmoSize(stageviz::UI::Medium) == 48
                 && ui.gizmoSize(stageviz::UI::Large) == 96,
             "UI gizmo size roundtrip");
+
+    require(ui.axisSize(stageviz::UI::Small) == 36 && ui.axisSize(stageviz::UI::Medium) == 72
+                && ui.axisSize(stageviz::UI::Large) == 144,
+            "UI corner-axis size defaults preserve the existing medium size");
+    int axisSizeChanges = 0;
+    QObject::connect(&ui, &stageviz::UI::axisSizeChanged, &ui, [&](stageviz::UI::UIScale) { ++axisSizeChanges; });
+    ui.setAxisSize(stageviz::UI::Medium, 96);
+    ui.setAxisSize(stageviz::UI::Medium, 96);
+    ui.setAxisSize(stageviz::UI::Medium, 0);
+    ui.setAxisSize(stageviz::UI::Medium, -1);
+    require(ui.axisSize(stageviz::UI::Medium) == 96 && axisSizeChanges == 1,
+            "axis size signals real changes and rejects non-positive sizes");
 
     const QString originalIcon = ui.iconPath(stageviz::UI::Open);
     require(!originalIcon.isEmpty(), "ui exposes icon resource path");
@@ -1031,8 +1044,35 @@ viewportComponentsApi()
     require(!host.auxiliary->GetPrimAtPath(stageviz::paths::auxiliary::grid),
             "disabling the grid removes auxiliary geometry");
     auxiliary.updateAxis(host.viewCamera()->camera(), true, 2.0);
-    require(auxiliary.axisImage().size() == QSize(192, 192) && auxiliary.axisImage().devicePixelRatio() == 2.0,
+    require(auxiliary.axisImage().size() == QSize(144, 144) && auxiliary.axisImage().devicePixelRatio() == 2.0,
             "camera-axis image preserves logical size on high-DPI displays");
+    const GfMatrix4d axisView = host.viewCamera()->camera().GetFrustum().ComputeViewMatrix();
+    const GfVec3d zDirection = axisView.TransformDir(GfVec3d::ZAxis());
+    require(auxiliary.hitTestAxis(QPointF(36.0 + zDirection[0] * 22.0, 36.0 - zDirection[1] * 22.0),
+                                  host.viewCamera()->camera())
+                == 2,
+            "camera-axis bubble hit testing follows the resized axis image");
+
+    const int originalAxisSize = stageviz::ui()->axisSize(stageviz::UI::Medium);
+    const GfCamera axisCamera;
+    for (int size : { 36, 72, 144, 85 }) {
+        stageviz::ui()->setAxisSize(stageviz::UI::Medium, size);
+        for (qreal dpr : { 1.0, 2.0 }) {
+            auxiliary.updateAxis(axisCamera, true, dpr);
+            require(auxiliary.axisImage().size() == QSize(qRound(size * dpr), qRound(size * dpr))
+                        && auxiliary.axisImage().devicePixelRatio() == dpr,
+                    "UI axis size determines logical image extent independently of DPI");
+            const qreal center = size / 2.0;
+            const qreal radius = size * (11.0 / 36.0);
+            const qreal hitRadius = size / 6.0;
+            require(auxiliary.hitTestAxis(QPointF(center + radius, center), axisCamera) == 0,
+                    "axis hit testing follows scaled X bubble");
+            require(auxiliary.hitTestAxis(QPointF(center + radius + hitRadius * .9, center), axisCamera) == 0
+                        && auxiliary.hitTestAxis(QPointF(center + radius + hitRadius + 1, center), axisCamera) == -1,
+                    "axis hit padding scales with the drawn bubble");
+        }
+    }
+    stageviz::ui()->setAxisSize(stageviz::UI::Medium, originalAxisSize);
 
     stageviz::ViewportGizmo gizmo(host);
     stageviz::ViewportGizmo::Frame frame;
@@ -1228,18 +1268,215 @@ viewportTransformPivotApi()
     host.selection = &selection;
     host.selected = { leftPath, rightPath };
     stageviz::ViewportTransform transform(host);
+    transform.setReferenceFrame(stageviz::ViewportTransform::ReferenceFrame::World);
     transform.setMode(stageviz::ViewportTransform::Mode::Rotate, true);
-    // The fresh midpoint (10, 0, 0) projects to (420, 240) through the host.
-    // Cached bounds would put the center at (320, 240) and miss this handle.
+    // The active (last selected) object is freshly at (12, 0, 0),
+    // projecting to (440, 240). Its stale cached bounds still place it at 2.
     std::string beforeNoMotion;
     current->stage()->GetRootLayer()->ExportToString(&beforeNoMotion);
-    require(transform.beginDrag(QPointF(420, 240)), "rotation uses fresh composed selection bounds for its pivot");
+    require(transform.beginDrag(QPointF(440, 240)), "rotation uses the fresh active object pivot");
     require(transform.dragging(), "fresh pivot starts the rotation gesture");
     transform.endDrag();
     require(!transform.dragging() && !transform.deferringUpdates(), "ending the gesture restores session updates");
     std::string afterNoMotion;
     current->stage()->GetRootLayer()->ExportToString(&afterNoMotion);
     require(afterNoMotion == beforeNoMotion, "zero-motion drag restores temporary transform normalization");
+}
+
+void
+viewportTransformIndividualRotationApi()
+{
+    auto* current = stageviz::session();
+    require(current->newStage(), "new stage for individual rotation regression");
+    const SdfPath leftPath("/Left");
+    const SdfPath rightPath("/Right");
+    const auto left = UsdGeomCube::Define(current->stage(), leftPath);
+    const auto right = UsdGeomCube::Define(current->stage(), rightPath);
+    left.AddTranslateOp().Set(GfVec3d(-2.0, 0.0, 0.0));
+    right.AddTranslateOp().Set(GfVec3d(2.0, 0.0, 0.0));
+
+    ViewportTestHost host;
+    stageviz::ViewportSelection selection(host);
+    host.selection = &selection;
+    host.selected = { leftPath, rightPath };
+    stageviz::ViewportTransform transform(host);
+    transform.setReferenceFrame(stageviz::ViewportTransform::ReferenceFrame::World);
+    transform.setMode(stageviz::ViewportTransform::Mode::Rotate, true);
+
+    QString error;
+    require(transform.applyNumeric(GfVec3d(0.0, 0.0, 90.0), error), "numeric rotation applies to each selected object");
+
+    GfMatrix4d leftAfter(1.0);
+    GfMatrix4d rightAfter(1.0);
+    bool resetsStack = false;
+    require(UsdGeomXformable(left.GetPrim()).GetLocalTransformation(&leftAfter, &resetsStack),
+            "read left object transform after rotation");
+    require(UsdGeomXformable(right.GetPrim()).GetLocalTransformation(&rightAfter, &resetsStack),
+            "read right object transform after rotation");
+    require(std::abs(leftAfter.ExtractTranslation()[0] + 2.0) < 1e-6
+                && std::abs(rightAfter.ExtractTranslation()[0] - 2.0) < 1e-6,
+            "each object keeps its own position instead of orbiting the lead object");
+    require(std::abs(leftAfter[0][1]) > 0.9 && std::abs(rightAfter[0][1]) > 0.9,
+            "each object receives the rotation delta independently");
+}
+
+void
+viewportTransformHierarchySyncApi()
+{
+    auto* current = stageviz::session();
+    require(current->newStage(), "new hierarchy sync stage");
+    const auto parent = UsdGeomXform::Define(current->stage(), SdfPath("/World"));
+    parent.AddRotateXYZOp().Set(GfVec3f(17, 31, -12));
+    parent.AddScaleOp().Set(GfVec3f(1.4, .8, 1.1));
+    const auto child = UsdGeomCube::Define(current->stage(), SdfPath("/World/Cube"));
+    child.AddRotateXYZOp().Set(GfVec3f(13, -21, 9));
+    ViewportTestHost host;
+    stageviz::ViewportSelection selection(host);
+    host.selection = &selection;
+    host.selected = { child.GetPath() };
+    stageviz::ViewportTransform transform(host);
+    GfVec3d shown(0.0);
+    QObject::connect(&host.viewport, &stageviz::ViewportWidget::transformInputValuesChanged,
+                     [&shown](const GfVec3d& value) { shown = value; });
+    transform.setMode(stageviz::ViewportTransform::Mode::Rotate, true);
+    const auto local = [&]() {
+        GfMatrix4d matrix(1.0);
+        bool reset = false;
+        UsdGeomXformable(child.GetPrim()).GetLocalTransformation(&matrix, &reset);
+        return matrix;
+    };
+    require(GfIsClose(shown, GfVec3d(13, -21, 9), 1e-6),
+            "panel displays authored USD rotateXYZ angles under rotated scaled parent");
+    const auto expectedStage = UsdStage::CreateInMemory();
+    const auto expectedOp
+        = UsdGeomXform::Define(expectedStage, SdfPath("/Expected")).AddRotateXYZOp(UsdGeomXformOp::PrecisionDouble);
+    const auto eulerMatrix = [&](const GfVec3d& angles) {
+        expectedOp.Set(angles);
+        return expectedOp.GetOpTransform(UsdTimeCode::Default());
+    };
+    const auto drain = []() {
+        for (int i = 0; i < 6; ++i) {
+            QThreadPool::globalInstance()->waitForDone();
+            QCoreApplication::sendPostedEvents(nullptr, 0);
+            QCoreApplication::processEvents();
+        }
+    };
+    auto* stack = current->commandStack();
+    for (const auto frame :
+         { stageviz::ViewportTransform::ReferenceFrame::World, stageviz::ViewportTransform::ReferenceFrame::Object,
+           stageviz::ViewportTransform::ReferenceFrame::Parent }) {
+        transform.setReferenceFrame(frame);
+        transform.selectionChanged(false);
+        for (const auto& requested : { GfVec3d(-60, 56, 70), GfVec3d(24, 89.99, -33), GfVec3d(24, 90.01, -33) }) {
+            const auto before = local();
+            stack->clear();
+            QString error;
+            require(transform.beginNumericEdit(error) && transform.updateNumericEdit(requested, error),
+                    "absolute numeric rotation previews under a rotated scaled parent");
+            const auto preview = local();
+            require(GfIsClose(preview, eulerMatrix(requested), 1e-6),
+                    "numeric values reproduce the displayed local Euler convention in every handle frame");
+            transform.finishNumericEdit();
+            drain();
+            require(GfIsClose(local(), preview, 1e-6) && GfIsClose(shown, requested, 1e-6),
+                    "Applied commit preserves preview and numeric values");
+            stack->undo();
+            drain();
+            transform.invalidate();
+            require(GfIsClose(local(), before, 1e-6) && GfIsClose(eulerMatrix(shown), before, 1e-6),
+                    "undo restores both the local transform and displayed values");
+            stack->redo();
+            drain();
+            transform.invalidate();
+            require(GfIsClose(local(), preview, 1e-6) && GfIsClose(shown, requested, 1e-6),
+                    "redo reproduces the preview and displayed values");
+            stack->undo();
+            drain();
+        }
+    }
+    for (const auto mode : { stageviz::ViewportTransform::Mode::Move, stageviz::ViewportTransform::Mode::Scale }) {
+        transform.setMode(mode, true);
+        transform.selectionChanged(false);
+        stack->clear();
+        const auto before = local();
+        QString error;
+        const GfVec3d requested = mode == stageviz::ViewportTransform::Mode::Move ? GfVec3d(3, -2, 5)
+                                                                                  : GfVec3d(1.5, .7, 2);
+        require(transform.updateNumericEdit(requested, error), "local numeric move/scale previews in hierarchy");
+        const auto preview = local();
+        transform.finishNumericEdit();
+        drain();
+        require(GfIsClose(shown, requested, 1e-6) && GfIsClose(local(), preview, 1e-6),
+                "move/scale commit retains absolute local values under rotated scaled parent");
+        stack->undo();
+        drain();
+        require(GfIsClose(local(), before, 1e-6), "numeric move/scale undo restores hierarchy");
+        stack->redo();
+        drain();
+        require(GfIsClose(local(), preview, 1e-6), "numeric move/scale redo reproduces preview");
+        stack->undo();
+        drain();
+    }
+    transform.setMode(stageviz::ViewportTransform::Mode::Rotate, true);
+    // World Z ring: this test host projects the XY plane at ten pixels/unit.
+    transform.setReferenceFrame(stageviz::ViewportTransform::ReferenceFrame::World);
+    transform.invalidate();
+    stack->clear();
+    const auto before = local();
+    stageviz::ViewportGizmo probe(host);
+    const double radius = probe.worldPerPixel(GfVec3d(0)) * stageviz::ui()->gizmoSize(stageviz::UI::UIScale::Medium)
+                          * 10;
+    require(transform.beginDrag(QPointF(320 + radius * .8, 240 - radius * .6)), "begin hierarchy rotation ring drag");
+    transform.updateDrag(QPointF(320 + radius * .6, 240 - radius * .8));
+    const auto preview = local();
+    const auto displayedPreview = shown;
+    require(preview != before && displayedPreview != GfVec3d(0), "drag updates USD and absolute panel values");
+    transform.endDrag();
+    drain();
+    require(GfIsClose(local(), preview, 1e-6) && GfIsClose(shown, displayedPreview, 1e-6),
+            "ring release does not jump from a delta to absolute numeric values");
+    stack->undo();
+    drain();
+    require(GfIsClose(local(), before, 1e-6), "ring drag undo restores hierarchy");
+    stack->redo();
+    drain();
+    require(GfIsClose(local(), preview, 1e-6), "ring drag redo exactly reproduces preview");
+
+    // An absolute world-Z snap must preserve the other XYZ components.
+    parent.GetRotateXYZOp().Set(GfVec3f(0));
+    parent.GetScaleOp().Set(GfVec3f(1));
+    UsdGeomXformable(child.GetPrim()).MakeMatrixXform().Set(eulerMatrix(GfVec3d(-60, 56, 70)));
+    drain();
+    transform.selectionChanged(false);
+    stack->clear();
+    require(transform.beginDrag(QPointF(320 + radius * .8, 240 - radius * .6)), "begin compound XYZ snap drag");
+    transform.setSnap(true);
+    transform.updateDrag(QPointF(320 + radius * .6, 240 - radius * .8));
+    const auto snapped = local();
+    const auto snappedValues = shown;
+    require(std::abs(shown[0] + 60) < 1e-6 && std::abs(shown[1] - 56) < 1e-6,
+            "world Z ring preserves compound XYZ X and Y values");
+    const double snap = stageviz::ui()->transformRotateSnap();
+    require(std::abs(shown[2] / snap - std::round(shown[2] / snap)) < 1e-6,
+            "rotation snapping uses the panel XYZ convention");
+    transform.endDrag();
+    drain();
+    require(GfIsClose(shown, snappedValues, 1e-6) && GfIsClose(local(), snapped, 1e-6),
+            "snapped XYZ values survive Applied registration");
+    stack->undo();
+    drain();
+    require(GfIsClose(local(), eulerMatrix(GfVec3d(-60, 56, 70)), 1e-6), "snapped XYZ undo restores baseline");
+    stack->redo();
+    drain();
+    require(GfIsClose(local(), snapped, 1e-6), "snapped XYZ redo reproduces preview");
+}
+
+void
+viewportGizmoDefaultFrameApi()
+{
+    const stageviz::ViewportGizmo::Frame frame;
+    require(frame.referenceFrame == stageviz::ViewportGizmo::ReferenceFrame::Object,
+            "transform gizmo defaults to the object reference frame");
 }
 
 }  // namespace
@@ -1252,6 +1489,9 @@ main(int argc, char** argv)
         { "viewport_components_api", viewportComponentsApi },
         { "viewport_lights_api", viewportLightsApi },
         { "viewport_transform_pivot_api", viewportTransformPivotApi },
+        { "viewport_transform_hierarchy_sync_api", viewportTransformHierarchySyncApi },
+        { "viewport_transform_individual_rotation_api", viewportTransformIndividualRotationApi },
+        { "viewport_gizmo_default_frame_api", viewportGizmoDefaultFrameApi },
         { "transform_operation_applied_api", transformOperationAppliedApi },
         { "pivot_operation_applied_api", pivotOperationAppliedApi },
         { "settings_api", settingsApi },

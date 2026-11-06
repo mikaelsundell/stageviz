@@ -12,6 +12,7 @@
 #include <cerrno>
 #include <cstdio>
 #include <deque>
+#include <memory>
 #include <mutex>
 #include <thread>
 #include <utility>
@@ -148,21 +149,18 @@ class ConsolePrivate : public QObject {
 public:
     ConsolePrivate();
     ~ConsolePrivate();
-
     void init();
     bool start();
     void stop();
     bool isRunning() const;
     QString text() const;
     QStringList lines() const;
-
     bool setOutputFile(const QString& filename, bool append, QString& error);
     QString outputFile() const;
     void drainPipe();
     void readerLoop();
     void queueText(const QString& text);
     void drainPending();
-
     struct Data {
         fd_t readFd = -1;
         fd_t writeFd = -1;
@@ -176,7 +174,7 @@ public:
         bool drainScheduled = false;
         std::thread readerThread;
         mutable std::mutex readMutex;
-        QScopedPointer<QFile> outputFile;
+        std::unique_ptr<QFile> outputFile;
         QString outputFilename;
         QPointer<Console> console;
     };
@@ -345,15 +343,15 @@ ConsolePrivate::setOutputFile(const QString& filename, bool append, QString& err
     std::lock_guard<std::mutex> guard(d.readMutex);
     if (d.readFd >= 0)
         drainPipe();
-    QScopedPointer<QFile> output;
+    std::unique_ptr<QFile> output;
     if (!filename.isEmpty()) {
-        output.reset(new QFile(filename));
+        output = std::make_unique<QFile>(filename);
         if (!output->open(QIODevice::WriteOnly | (append ? QIODevice::Append : QIODevice::Truncate))) {
             error = output->errorString();
             return false;
         }
     }
-    d.outputFile.swap(output);
+    d.outputFile = std::move(output);
     d.outputFilename = filename.isEmpty() ? QString() : QFileInfo(filename).absoluteFilePath();
     return true;
 }

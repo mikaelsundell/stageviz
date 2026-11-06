@@ -7,6 +7,7 @@
 #include "stageviz.h"
 #include "viewportgizmo.h"
 #include <QScopedPointer>
+#include <QString>
 
 namespace stageviz {
 
@@ -24,6 +25,11 @@ public:
     using Mode = ViewportGizmo::Mode;
 
     /**
+     * @brief Uses the same reference-frame choices as the transform handle.
+     */
+    using ReferenceFrame = ViewportGizmo::ReferenceFrame;
+
+    /**
      * @brief Constructs the transform tool for the host.
      */
     explicit ViewportTransform(ViewportHost& host);
@@ -39,6 +45,11 @@ public:
     bool enabled() const;
 
     /**
+     * @brief Returns whether a transform handle can be presented for the current selection.
+     */
+    bool hasActiveHandle();
+
+    /**
      * @brief Returns the active manipulation mode.
      */
     Mode mode() const;
@@ -52,6 +63,43 @@ public:
      * @brief Enables or disables a manipulation mode.
      */
     void setMode(Mode mode, bool enabled);
+
+    /**
+     * @brief Returns the active coordinate frame.
+     */
+    ReferenceFrame referenceFrame() const;
+
+    /**
+     * @brief Sets the coordinate frame used by the transform handle.
+     */
+    void setReferenceFrame(ReferenceFrame frame);
+
+    /**
+     * @brief Applies a relative transform in the handle reference frame through an undoable command.
+     *
+     * Translation values are stage units, rotation values are degrees, and scale values are factors.
+     */
+    bool applyNumeric(const GfVec3d& values, QString& error);
+
+    /**
+     * @brief Starts a live numeric transform edit.
+     */
+    bool beginNumericEdit(QString& error);
+
+    /**
+     * @brief Updates a live numeric transform preview using absolute local values.
+     *
+     * Rotation angles use the USD rotateXYZ convention.
+     *
+     * @param values Absolute local translation in stage units, rotation in degrees, or scale.
+     * @param error Receives a failure reason.
+     */
+    bool updateNumericEdit(const GfVec3d& values, QString& error);
+
+    /**
+     * @brief Commits a live numeric transform edit as one undoable command.
+     */
+    void finishNumericEdit();
 
 
     /**

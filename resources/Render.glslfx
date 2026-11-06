@@ -273,38 +273,39 @@ main(void)
 // instance selections use sparse (primId, instanceId) pairs so other copies of
 // the same prototype are not outlined. Geometry subsets remain material data.
 
-bool
-isSelectedPrimId(int primId)
+int
+selectedPrimRole(int primId)
 {
     if (primId < 0 || primId >= uSelectedMaskCapacity)
-        return false;
+        return 0;
     if (uSelectedMaskSize.x <= 0 || uSelectedMaskSize.y <= 0)
-        return false;
+        return 0;
 
     int x = primId % uSelectedMaskSize.x;
     int y = primId / uSelectedMaskSize.x;
     if (y >= uSelectedMaskSize.y)
-        return false;
+        return 0;
 
-    return HgiTexelFetch_selectedIdMaskIn(ivec2(x, y)).x != 0;
+    return HgiTexelFetch_selectedIdMaskIn(ivec2(x, y)).x;
 }
 
 int
 selectedInstancePairValue(int pairIndex, int component)
 {
-    int texelIndex = pairIndex * 2 + component;
+    int texelIndex = pairIndex * 3 + component;
     int x = texelIndex % uSelectedInstanceMaskSize.x;
     int y = texelIndex / uSelectedInstanceMaskSize.x;
     return HgiTexelFetch_selectedInstanceMaskIn(ivec2(x, y)).x;
 }
 
-bool
-isSelectedPrimInstance(int primId, int instanceId)
+int
+selectedPrimInstanceRole(int primId, int instanceId)
 {
-    if (isSelectedPrimId(primId))
-        return true;
+    const int primRole = selectedPrimRole(primId);
+    if (primRole > 0)
+        return primRole;
     if (primId < 0 || instanceId < 0 || uSelectedInstancePairCount <= 0)
-        return false;
+        return 0;
 
     // The CPU sorts pairs lexicographically. Binary search keeps the cost
     // bounded even when selecting an instance with a large prototype subtree.
@@ -322,9 +323,21 @@ isSelectedPrimInstance(int primId, int instanceId)
             high = middle;
     }
 
-    return low < uSelectedInstancePairCount
-           && selectedInstancePairValue(low, 0) == primId
-           && selectedInstancePairValue(low, 1) == instanceId;
+    if (low < uSelectedInstancePairCount && selectedInstancePairValue(low, 0) == primId
+        && selectedInstancePairValue(low, 1) == instanceId)
+        return selectedInstancePairValue(low, 2);
+    return 0;
+}
+
+int
+visibleSelectionRole(ivec2 location)
+{
+    if (any(lessThan(location, ivec2(0))) || any(greaterThanEqual(location, uScreenSize)))
+        return 0;
+
+    int primId = HgiTexelFetch_scenePrimIdIn(location).x;
+    int instanceId = HgiTexelFetch_sceneInstanceIdIn(location).x;
+    return selectedPrimInstanceRole(primId, instanceId);
 }
 
 bool
@@ -333,9 +346,28 @@ visibleSelectedPixel(ivec2 location)
     if (any(lessThan(location, ivec2(0))) || any(greaterThanEqual(location, uScreenSize)))
         return false;
 
-    int primId = HgiTexelFetch_scenePrimIdIn(location).x;
-    int instanceId = HgiTexelFetch_sceneInstanceIdIn(location).x;
-    return isSelectedPrimInstance(primId, instanceId);
+    return visibleSelectionRole(location) > 0;
+}
+
+int
+outlineRole(ivec2 location)
+{
+    int role = visibleSelectionRole(location);
+    if (role > 0)
+        return role;
+
+    for (int y = -4; y <= 4; ++y) {
+        for (int x = -4; x <= 4; ++x) {
+            if (abs(x) > uRadius || abs(y) > uRadius)
+                continue;
+            role = visibleSelectionRole(location + ivec2(x, y));
+            if (role == 2)
+                return role;
+            if (role == 1)
+                return role;
+        }
+    }
+    return 0;
 }
 
 float
@@ -379,7 +411,8 @@ main(void)
         return;
     }
 
-    float alpha = clamp(uSelectionColor.a * coverage, 0.0, 1.0);
-    vec3 rgb = mix(color.rgb, uSelectionColor.rgb, alpha);
+    vec4 outlineColor = outlineRole(location) == 2 ? uSelectionColor : uSecondarySelectionColor;
+    float alpha = clamp(outlineColor.a * coverage, 0.0, 1.0);
+    vec3 rgb = mix(color.rgb, outlineColor.rgb, alpha);
     hd_FragColor = vec4(rgb, color.a);
 }

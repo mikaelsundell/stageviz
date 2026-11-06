@@ -103,12 +103,117 @@ class NumericEditorTest(_base["ViewportTest"]):
         self.snapshot("numeric_entry_complete")
         print("PASS numeric replacement, row focus, repeated scrub editor lifetime, undo/redo and keyboard commit")
 
+    def exercise_gizmo_panel(self):
+        QtCore, _, QtTest, QtWidgets = tb.qt()
+        root = tb.viewer()
+        stageviz.command.new_prim("/World", "TestSphere", type_name="Sphere")
+        path = "/World/TestSphere"
+        assert tb.wait_until(lambda: bool(stageviz.session().stage().GetPrimAtPath(path)))
+        self.activate_mode("Move")
+        tb.process_events(100)
+
+        panel = tb.find_widget("panelWidget", QtWidgets.QStackedWidget, root)
+        frame = tb.find_widget("frame", QtWidgets.QFrame, root)
+        fields = [tb.find_widget("value" + axis, QtWidgets.QDoubleSpinBox, root) for axis in "XYZ"]
+        assert panel.currentIndex() == 1 and frame.isVisible(), "selected object shows Move panel"
+
+        fields[0].setValue(5.0)
+        tb.process_events(75)
+        matrix = lambda: stageviz.session().stage().GetPrimAtPath(path).GetAttribute("xformOp:transform").Get()
+        assert abs(matrix()[3][0] - 5.0) < 1e-6, "numeric Move authors its preview"
+        fields[0].setValue(8.0)
+        tb.process_events(75)
+        assert abs(matrix()[3][0] - 8.0) < 1e-6, "successive numeric values replace the preview"
+        assert not frame.isHidden(), "gizmo panel remains visible while editing values"
+        self.snapshot("gizmo_move_numeric")
+
+        # Exercise the viewport's normal click-to-deselect path as well as the
+        # command API; this is where a stale operation page used to linger.
+        viewport = self.viewport()
+        QtTest.QTest.mouseClick(viewport, QtCore.Qt.MouseButton.LeftButton, pos=QtCore.QPoint(4, 4))
+        assert tb.wait_until(lambda: not stageviz.session().paths())
+        assert panel.currentIndex() == 0 and not frame.isVisible(), (
+            f"deselect hides the gizmo panel (page={panel.currentIndex()}, visible={frame.isVisible()})")
+        assert [field.value() for field in fields] == [0.0, 0.0, 0.0], "deselect resets Move values"
+
+        stageviz.command.select_paths([path])
+        tb.process_events(75)
+        self.activate_mode("Scale")
+        tb.process_events(75)
+        assert panel.currentIndex() == 1 and frame.isVisible(), "selected object shows Scale panel"
+        assert [field.value() for field in fields] == [1.0, 1.0, 1.0], "Scale starts at neutral factors"
+        fields[0].setValue(2.0)
+        tb.process_events(75)
+        fields[0].setValue(3.0)
+        tb.process_events(75)
+        scaled = matrix()
+        assert abs(scaled[0][0] - 3.0) < 1e-6, "successive numeric Scale values replace the preview"
+        assert abs(scaled[3][0] - 8.0) < 1e-6, "Scale preserves the translated pivot"
+        stageviz.command.select_paths([])
+        tb.process_events(75)
+        assert panel.currentIndex() == 0 and not frame.isVisible(), "deselect hides Scale panel"
+        assert [field.value() for field in fields] == [1.0, 1.0, 1.0], "deselect resets Scale values"
+        self.snapshot("gizmo_scale_deselected")
+
+        # Switching selection must refresh the numeric baseline before a
+        # multi-object edit. Otherwise a stale value from the prior object is
+        # treated as the lead object's starting TRS and the delta jumps.
+        self.activate_mode("Move")
+        stageviz.command.select_paths([path])
+        tb.process_events(75)
+        fields[0].setValue(8.0)
+        tb.process_events(75)
+
+        second_path = "/World/SecondSphere"
+        stageviz.command.new_prim("/World", "SecondSphere", type_name="Sphere")
+        assert tb.wait_until(lambda: list(stageviz.session().paths()) == [second_path])
+        assert tb.wait_until(lambda: abs(fields[0].value()) < 1e-6), (
+            "new selection refreshes the panel from the new object's transform")
+
+        stageviz.command.select_paths([path, second_path])
+        tb.process_events(75)
+        assert list(stageviz.session().paths()) == [path, second_path]
+        assert abs(fields[0].value()) < 1e-6, "multi-selection panel shows the most recently selected object's X value"
+        fields[0].setValue(1.0)
+        tb.process_events(75)
+        assert abs(matrix()[3][0] - 9.0) < 1e-6, "numeric delta moves the first selected sphere by one unit"
+        second_matrix = lambda: stageviz.session().stage().GetPrimAtPath(second_path).GetAttribute(
+            "xformOp:transform").Get()
+        assert abs(second_matrix()[3][0] - 1.0) < 1e-6, "numeric delta moves the active sphere by one unit"
+        self.snapshot("gizmo_multiselection_numeric")
+
+        # Match the Outliner workflow: select World, then add a sibling prim.
+        # The clicked Cube row must become the active selection even though Qt
+        # reports selected rows in visual tree order.
+        cube_path = "/Cube"
+        stageviz.command.new_prim("/", "Cube", type_name="Cube")
+        assert tb.wait_until(lambda: list(stageviz.session().paths()) == [cube_path])
+        fields[0].setValue(17.0)
+        tb.process_events(75)
+        tree = tb.find_widget("outlinerTree", QtWidgets.QTreeWidget, root)
+        world_item = tree.findItems("World", QtCore.Qt.MatchFlag.MatchExactly | QtCore.Qt.MatchFlag.MatchRecursive, 0)[0]
+        cube_item = tree.findItems("Cube", QtCore.Qt.MatchFlag.MatchExactly | QtCore.Qt.MatchFlag.MatchRecursive, 0)[0]
+        QtTest.QTest.mouseClick(tree.viewport(), QtCore.Qt.MouseButton.LeftButton,
+                                pos=tree.visualItemRect(world_item).center())
+        tb.process_events(75)
+        QtTest.QTest.mouseClick(tree.viewport(), QtCore.Qt.MouseButton.LeftButton,
+                                QtCore.Qt.KeyboardModifier.ControlModifier,
+                                tree.visualItemRect(cube_item).center())
+        tb.process_events(75)
+        assert list(stageviz.session().paths()) == ["/World", cube_path], (
+            "the Outliner keeps its current selected row last")
+        assert tree.currentItem() is cube_item, "the clicked Cube row is the current Outliner item"
+        assert abs(fields[0].value() - 17.0) < 1e-6, "the active Cube supplies the panel TRS values"
+        self.snapshot("gizmo_outliner_active_prim")
+        print("PASS gizmo panel selection refresh, numeric multi-selection delta, Move/Scale and deselection")
+
 
 def run(disposable=False):
     test = NumericEditorTest(disposable=disposable)
     try:
         test.setup()
         test.exercise()
+        test.exercise_gizmo_panel()
     finally:
         test.cleanup()
     return str(test.directory)

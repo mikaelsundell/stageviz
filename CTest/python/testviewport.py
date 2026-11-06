@@ -133,11 +133,29 @@ class ViewportTest:
         self.center = (widget.width() // 2, widget.height() // 2)
         self.snapshot("swept")
 
+    def frame_handle(self):
+        """Center the camera on the actual handle, independently of selection bounds."""
+        def handle_ready():
+            # Qt may defer the first GL paint after a fixture reload. Observe
+            # the completed render instead of relying on a fixed short delay.
+            self.viewport().repaint()
+            return bool(stageviz.session().auxiliary().GetPrimAtPath('/Display/Transform'))
+        assert tb.wait_until(handle_ready, timeout=5), 'selected object has rendered gizmo geometry'
+        handle = stageviz.session().auxiliary().GetPrimAtPath('/Display/Transform')
+        pivot = UsdGeom.XformCache().GetLocalToWorldTransform(handle).ExtractTranslation()
+        camera = stageviz.session().viewState().camera()
+        camera.frame((tuple(pivot - Gf.Vec3d(4)), tuple(pivot + Gf.Vec3d(4))))
+        camera.distance(1.6)
+        tb.process_events(100)
+        widget = self.viewport()
+        self.center = (widget.width() // 2, widget.height() // 2)
+        return pivot
+
     def copy_drag(self):
         """Shift-started Move copies proxy roots once and preserves originals."""
         QtCore, _, QtTest, _ = tb.qt()
         self.activate_mode("Move")
-        tb.process_events(100)
+        self.frame_handle()
         before = self.matrices()
         selected = list(stageviz.session().paths())
         stage = stageviz.session().stage()
@@ -188,14 +206,8 @@ class ViewportTest:
         QtCore, _, QtTest, _ = tb.qt()
         assert mode in ("Move", "Rotate", "Scale")
         self.activate_mode(mode)
-        tb.process_events(100)
+        pivot = self.frame_handle()
         before = self.matrices()
-        stage = stageviz.session().stage()
-        cache = UsdGeom.BBoxCache(Usd.TimeCode.Default(), [UsdGeom.Tokens.default_])
-        bounds = Gf.Range3d()
-        for path in self.proxies:
-            bounds.UnionWith(cache.ComputeWorldBound(stage.GetPrimAtPath(path)).ComputeAlignedRange())
-        pivot = bounds.GetMidpoint()
         command = stageviz.command
         # MCP clears undo history on entry. Exercise gesture/undo/redo together.
         command.clear()
@@ -211,7 +223,17 @@ class ViewportTest:
         delta = before[self.roots[0]].GetInverse() * after[self.roots[0]]
         assert not Gf.IsClose(delta, Gf.Matrix4d(1), 1e-6), mode + " gesture changes the stage"
         for path in self.roots + self.proxies:
-            assert Gf.IsClose(after[path], before[path] * delta, 1e-5), path + " receives the shared world delta once"
+            owner = next(root for root in self.roots if path == root or path.startswith(root + '/'))
+            owner_delta = before[owner].GetInverse() * after[owner] if mode == 'Rotate' else delta
+            assert Gf.IsClose(after[path], before[path] * owner_delta, 1e-5), path + " receives its owner delta once"
+        if mode == 'Rotate':
+            for root in self.roots:
+                assert Gf.IsClose(after[root].ExtractTranslation(), before[root].ExtractTranslation(), 1e-5), (
+                    root + ' rotates about its own origin')
+                owner_delta = before[root].GetInverse() * after[root]
+                for row in range(3):
+                    for col in range(3):
+                        assert abs(owner_delta[row][col] - delta[row][col]) < 1e-5
         if mode == "Move":
             for row in range(3):
                 for col in range(3):
@@ -223,8 +245,8 @@ class ViewportTest:
                         * Gf.Matrix4d(1).SetTranslate(pivot))
             assert Gf.IsClose(delta, expected, 1e-5), "uniform scaling uses one world delta about the shared pivot"
         else:
-            assert Gf.IsClose(delta.Transform(pivot), pivot, 1e-5), (
-                "rotation preserves the shared pivot: " + repr((pivot, delta.Transform(pivot))))
+            assert Gf.IsClose(delta.Transform(before[self.roots[0]].ExtractTranslation()),
+                              before[self.roots[0]].ExtractTranslation(), 1e-5), 'rotation preserves the owner pivot'
             for row in range(3):
                 assert abs(Gf.Vec3d(*(delta[row][col] for col in range(3))).GetLength() - 1) < 1e-5
         assert command.can_undo(), "completed gesture registers an undoable command"
@@ -239,7 +261,7 @@ class ViewportTest:
         assert tb.wait_until(lambda: matches(after))
         assert set(stageviz.session().paths()) == set(self.proxies), "transform preserves proxy selection"
         self.snapshot(mode.lower())
-        print("PASS viewport", mode, "shared delta, proxy targeting, undo and redo")
+        print("PASS viewport", mode, "owner deltas, proxy targeting, undo and redo")
 
     def cleanup(self):
         if self.original_filename is None:
