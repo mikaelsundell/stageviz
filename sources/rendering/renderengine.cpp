@@ -3,11 +3,13 @@
 // https://github.com/mikaelsundell/stageviz
 
 #include "renderengine.h"
+#include "application.h"
 #include "paths.h"
 #include "qtutils.h"
 #include "renderdiagnostics.h"
 #include "rendersceneindex.h"
 #include "rendertask.h"
+#include "ui.h"
 #include <QColorSpace>
 #include <QCoreApplication>
 #include <QDir>
@@ -1211,18 +1213,25 @@ public:
     UsdStageRefPtr auxiliary;
     GfCamera camera;
     GfVec2i size = GfVec2i(512, 512);
+    double devicePixelRatio = 1.0;
     GfVec4d viewport = GfVec4d(0.0);
     QList<SdfPath> mask;
     QList<SdfPath> selected;
     SdfPathVector cachedSelectedPaths;
     SdfPathVector cachedDirectSelectionPaths;
+    SdfPathVector cachedLeadSelectionPaths;
+    SdfPathVector cachedLeadDirectSelectionPaths;
     std::vector<HydraSelectionRprim> cachedSelectedHydraRprims;
+    std::vector<HydraSelectionRprim> cachedLeadHydraRprims;
     bool cachedHydraSelectionResolved = false;
+    bool cachedLeadHydraSelectionResolved = false;
     std::vector<SelectionProxyTarget> cachedSelectedProxyTargets;
+    std::vector<SelectionProxyTarget> cachedLeadProxyTargets;
     bool selectionCacheValid = false;
     uint64_t cachedSelectionMappingGeneration = 0;
     bool interactiveNavigation = false;
-    QColor selectionColor = QColor(255, 210, 0);
+    QColor selectionColor = ui()->color(UI::ColorRole::Selection);
+    QColor secondarySelectionColor = ui()->color(UI::ColorRole::SelectionAlt);
     bool captureVisibleRequested = false;
     bool captureObjectsRequested = false;
     ViewportObjectIds capturedObjects;
@@ -1300,8 +1309,8 @@ RenderEngine::Private::initialize()
         return false;
     }
 
-    // Auxiliary display content remains a separate presentation pass.
-    // Selection is handled by the Stageviz RenderTask as a screen-space outline.
+    // Transform handles remain a separate final presentation pass. Selection
+    // is handled by the Stageviz RenderTask as a screen-space outline.
     // Offscreen rendering intentionally omits viewport-only auxiliary content.
     if (contextMode == ContextMode::Current) {
         UsdImagingGLEngine::Parameters overlayParams = documentParams;
@@ -1611,6 +1620,11 @@ RenderEngine::Private::render()
         cachedSelectedPaths.clear();
         cachedSelectedPaths.reserve(selected.size());
         cachedSelectedProxyTargets.clear();
+        cachedLeadSelectionPaths.clear();
+        cachedLeadDirectSelectionPaths.clear();
+        cachedLeadHydraRprims.clear();
+        cachedLeadProxyTargets.clear();
+        cachedLeadHydraSelectionResolved = false;
         std::unordered_set<SdfPath, SdfPath::Hash> viewportPaths;
         viewportPaths.reserve(selected.size());
 
@@ -1644,6 +1658,19 @@ RenderEngine::Private::render()
                                        && engine->resolveSelectionRprims(stage, cachedSelectedPaths,
                                                                          &cachedDirectSelectionPaths,
                                                                          &cachedSelectedHydraRprims);
+        if (!cachedSelectedPaths.empty()) {
+            // The most recently selected path is the active object. Keep its
+            // outline in the primary selection color, matching the Outliner
+            // current item and the gizmo's lead transform target.
+            cachedLeadSelectionPaths.push_back(cachedSelectedPaths.back());
+            for (const SelectionProxyTarget& target : cachedSelectedProxyTargets) {
+                if (target.proxyPath == cachedLeadSelectionPaths.front())
+                    cachedLeadProxyTargets.push_back(target);
+            }
+            cachedLeadHydraSelectionResolved = engine->resolveSelectionRprims(stage, cachedLeadSelectionPaths,
+                                                                              &cachedLeadDirectSelectionPaths,
+                                                                              &cachedLeadHydraRprims);
+        }
         cachedSelectionMappingGeneration = engine->selectionMappingGeneration();
         selectionCacheValid = true;
     }
@@ -1658,7 +1685,6 @@ RenderEngine::Private::render()
         for (const SdfPath& path : mask)
             renderPaths.push_back(path);
     }
-
     RenderTaskParams renderTaskParams;
     renderTaskParams.ambientOcclusion = settings.ambientOcclusion;
     renderTaskParams.ambientOcclusion.enabled = settings.ambientOcclusion.enabled && !interactiveNavigation
@@ -1670,13 +1696,20 @@ RenderEngine::Private::render()
                                                 && !selectedPaths.empty() && settings.aov == HdAovTokens->color;
     {
         renderTaskParams.selectionOutline.paths = selectedPaths;
+        renderTaskParams.selectionOutline.leadPaths = cachedLeadSelectionPaths;
         renderTaskParams.selectionOutline.directPaths = cachedDirectSelectionPaths;
+        renderTaskParams.selectionOutline.leadDirectPaths = cachedLeadDirectSelectionPaths;
         renderTaskParams.selectionOutline.hydraRprims = cachedSelectedHydraRprims;
+        renderTaskParams.selectionOutline.leadHydraRprims = cachedLeadHydraRprims;
         renderTaskParams.selectionOutline.hydraMappingResolved = cachedHydraSelectionResolved;
+        renderTaskParams.selectionOutline.leadHydraMappingResolved = cachedLeadHydraSelectionResolved;
         renderTaskParams.selectionOutline.proxyTargets = cachedSelectedProxyTargets;
+        renderTaskParams.selectionOutline.leadProxyTargets = cachedLeadProxyTargets;
     }
     renderTaskParams.selectionOutline.color = qt::QColorToGfVec4f(selectionColor);
-    renderTaskParams.selectionOutline.radius = 2;
+    renderTaskParams.selectionOutline.secondaryColor = qt::QColorToGfVec4f(secondarySelectionColor);
+    renderTaskParams.selectionOutline.radius = static_cast<unsigned int>(
+        std::clamp(std::lround(devicePixelRatio), 1l, 4l));
 
     renderTaskParams.captureVisible = captureVisibleRequested;
     renderTaskParams.captureObjects = captureObjectsRequested;
@@ -1926,6 +1959,13 @@ RenderEngine::setSize(const GfVec2i& size)
     p->size = size;
 }
 
+void
+RenderEngine::setDevicePixelRatio(double ratio)
+{
+    if (std::isfinite(ratio) && ratio > 0.0)
+        p->devicePixelRatio = ratio;
+}
+
 const GfVec2i&
 RenderEngine::size() const
 {
@@ -2000,6 +2040,12 @@ void
 RenderEngine::setSelectionColor(const QColor& color)
 {
     p->selectionColor = color;
+}
+
+void
+RenderEngine::setSecondarySelectionColor(const QColor& color)
+{
+    p->secondarySelectionColor = color;
 }
 
 bool

@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2026 - present Mikael Sundell
 
-"""Verify one world delta for a sweep containing shared sources and proxies.
+"""Verify owner deltas for a sweep containing shared sources and proxies.
 
 Run only in a disposable viewer, with _SHARED_VIEWPORT_FILE identifying a saved
 USD fixture. The input file is never saved. External MCP controllers can call
@@ -41,7 +41,18 @@ class SharedSourceViewportTest(_base["ViewportTest"]):
         assert any(stage.GetPrimAtPath(path).IsInstanceProxy() for path in self.proxies)
         sources = [path for path in self.proxies if not stage.GetPrimAtPath(path).IsInstanceProxy()]
         assert sources, "fixture contains ordinary source geometry as well as proxies"
-        self.roots = [sources[0]]
+        # This workflow exercises internal-reference sources and their instance
+        # roots. Track roots as well as mesh descendants for per-object rotation.
+        instances = [prim for prim in stage.Traverse() if prim.IsInstance()]
+        roots = []
+        for prim in instances:
+            references = prim.GetMetadata('references')
+            for ref in references.GetAddedOrExplicitItems() if references else []:
+                if not ref.assetPath and ref.primPath and str(ref.primPath) not in roots:
+                    roots.append(str(ref.primPath))
+            if str(prim.GetPath()) not in roots:
+                roots.append(str(prim.GetPath()))
+        self.roots = roots or [sources[0]]
         stageviz.command.select_paths([])
         session.viewState().camera().setAspectRatioLocked(False)
         self.activate_mode("Select")

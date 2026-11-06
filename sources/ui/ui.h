@@ -199,6 +199,16 @@ public:
     void setGizmoSize(UIScale scale, int size);
 
     /**
+     * @brief Returns the corner-axis image size in logical pixels for a scale.
+     */
+    int axisSize(UIScale scale) const;
+
+    /**
+     * @brief Sets the corner-axis image size in logical pixels for a scale.
+     */
+    void setAxisSize(UIScale scale, int size);
+
+    /**
      * @brief Returns transform move snapping increment in stage units.
      */
     double transformMoveSnap() const;
@@ -285,6 +295,12 @@ Q_SIGNALS:
      * @brief Emitted when a color role changes.
      */
     void colorChanged(ColorRole role);
+
+    /**
+     * @brief Emitted when the corner-axis size changes for a scale.
+     */
+    void axisSizeChanged(UIScale scale);
+
 
 private:
     Q_DISABLE_COPY_MOVE(UI)

@@ -195,6 +195,25 @@ That makes Stageviz a particularly nice companion for AI-assisted pipeline work:
 
 ---
 
+## How Stageviz is developed
+
+Stageviz mixes manual coding, design work and agent-assisted development in a short loop: **prototype, test, evaluate and refine**. A developer can sketch an interaction, write the difficult part by hand, ask an agent to explore an implementation, then revise the design together after trying it in the application. The work can move between manual and agent coding throughout a feature.
+
+Human judgment guides the goals, architecture and feel of the tools. Agents help investigate unfamiliar code, build prototypes, carry changes through related APIs, write tests and run checks. Both work within the same codebase conventions, and both kinds of changes need review and evidence that they behave as intended.
+
+The practical workflow is:
+
+1. **Prototype a concrete goal.** Start with a small, reviewable change and a clear example of the behavior it should enable.
+2. **Test the behavior.** Exercise the UI and Python API, check the composed USD state, and verify undo/redo where edits are involved. Add repeatable regression coverage for important behavior.
+3. **Evaluate the result.** Try real workflows and representative data. Use screenshots, state inspection, timings and MCP-driven checks to understand what works and what still needs attention.
+4. **Refine the design.** Adjust the interaction, simplify the implementation and rerun the relevant checks before keeping the change.
+
+The aim is to reach useful, well-understood results faster through shorter feedback loops. A prototype gives us something to discuss, tests make assumptions visible, and hands-on use tells us whether the feature actually solves the problem.
+
+See the [development conventions](AGENTS.md) and [regression test guide](CTest/README.md) for the details used by developers and agents alike.
+
+---
+
 ## A few things Stageviz likes doing
 
 ### Composition

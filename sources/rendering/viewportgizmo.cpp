@@ -33,42 +33,42 @@ namespace stageviz {
 
 class ViewportGizmoPrivate {
 public:
-    using TransformMode = ViewportGizmo::Mode;
-    QPointF transformAxisDirection(int axis);
-    GfVec3d transformAxisVector(int axis);
-    GfVec3d transformScaleAxisVector(int axis);
-    double transformWorldPerPixel();
-    double transformWorldPerPixel(const GfVec3d& pivot);
-    bool transformRotationScreenBasis(int axis, QPointF& center, QPointF& basisA, QPointF& basisB);
-    bool transformRotationPoint(int axis, double angle, QPointF& screen);
-    bool transformRotationAngle(int axis, const QPointF& pos, double& angle, double* distance);
-    int hitTestTransform(const QPointF& pos);
-    void clearTransformGeometry();
-    void updateTransformGeometry();
-    void drawTransformTransform(QPainter& painter);
+    using Mode = ViewportGizmo::Mode;
+    QPointF axisDirection(int axis);
+    GfVec3d axisVector(int axis);
+    GfVec3d scaleAxisVector(int axis);
+    double worldPerPixel();
+    double worldPerPixel(const GfVec3d& pivot);
+    bool rotationScreenBasis(int axis, QPointF& center, QPointF& basisA, QPointF& basisB);
+    bool rotationPoint(int axis, double angle, QPointF& screen);
+    bool rotationAngle(int axis, const QPointF& pos, double& angle, double* distance);
+    int hitTest(const QPointF& pos);
+    void clearGeometry();
+    void updateGeometry();
+    void draw(QPainter& painter);
     void drawRotationFeedback(QPainter& painter);
+
     struct Data {
         ViewportHost* host = nullptr;
         ViewportGizmo::Frame frame;
-        bool transformGeometryValid = false;
-        bool transformGeometryVisible = false;
-        bool transformMeshesBuilt = false;
-        GfVec3d transformGeometryPivot = GfVec3d(0.0);
-        GfMatrix4d transformGeometryOrientation = GfMatrix4d(1.0);
-        double transformGeometryRadius = 0.0;
-        TransformMode transformGeometryMode = TransformMode::None;
-        int transformGeometryHover = -1;
-        int transformGeometryActive = -1;
+        bool geometryValid = false;
+        bool geometryVisible = false;
+        bool meshesBuilt = false;
+        GfVec3d geometryPivot = GfVec3d(0.0);
+        GfMatrix4d geometryOrientation = GfMatrix4d(1.0);
+        double geometryRadius = 0.0;
+        Mode geometryMode = Mode::None;
+        int geometryHover = -1;
+        int geometryActive = -1;
     };
     Data d;
 };
 
 QPointF
-ViewportGizmoPrivate::transformAxisDirection(int axis)
+ViewportGizmoPrivate::axisDirection(int axis)
 {
     const GfMatrix4d view = d.host->viewCamera()->camera().GetFrustum().ComputeViewMatrix();
-    const GfVec3d worldAxis = d.frame.mode == TransformMode::Scale ? transformScaleAxisVector(axis)
-                                                                   : transformAxisVector(axis);
+    const GfVec3d worldAxis = d.frame.mode == Mode::Scale ? scaleAxisVector(axis) : axisVector(axis);
     if (worldAxis.GetLengthSq() < 1e-12)
         return {};
 
@@ -82,39 +82,41 @@ ViewportGizmoPrivate::transformAxisDirection(int axis)
 }
 
 GfVec3d
-ViewportGizmoPrivate::transformAxisVector(int axis)
+ViewportGizmoPrivate::axisVector(int axis)
 {
     const int component = ((axis - 1) % 3) + 1;
+    GfVec3d direction(0.0);
     if (component == 1)
-        return GfVec3d::XAxis();
-    if (component == 2)
-        return GfVec3d::YAxis();
-    if (component == 3)
-        return GfVec3d::ZAxis();
-    return GfVec3d(0.0);
+        direction = GfVec3d::XAxis();
+    else if (component == 2)
+        direction = GfVec3d::YAxis();
+    else if (component == 3)
+        direction = GfVec3d::ZAxis();
+    else
+        return direction;
+    if (d.frame.orientationValid)
+        direction = d.frame.orientation.TransformDir(direction);
+    return direction.GetLengthSq() > 1e-12 ? direction.GetNormalized() : GfVec3d(0.0);
 }
 
 GfVec3d
-ViewportGizmoPrivate::transformScaleAxisVector(int axis)
+ViewportGizmoPrivate::scaleAxisVector(int axis)
 {
-    GfVec3d direction = transformAxisVector(axis);
+    GfVec3d direction = axisVector(axis);
     if (direction.GetLengthSq() < 1e-12 || !d.frame.orientationValid)
         return direction;
 
-    direction = d.frame.orientation.TransformDir(direction);
-    if (direction.GetLengthSq() < 1e-12)
-        return GfVec3d(0.0);
-    return direction.GetNormalized();
+    return direction;
 }
 
 double
-ViewportGizmoPrivate::transformWorldPerPixel()
+ViewportGizmoPrivate::worldPerPixel()
 {
-    return transformWorldPerPixel(d.frame.pivot);
+    return worldPerPixel(d.frame.pivot);
 }
 
 double
-ViewportGizmoPrivate::transformWorldPerPixel(const GfVec3d& pivot)
+ViewportGizmoPrivate::worldPerPixel(const GfVec3d& pivot)
 {
     if (!d.host->viewCamera())
         return 0.0;
@@ -144,26 +146,18 @@ ViewportGizmoPrivate::transformWorldPerPixel(const GfVec3d& pivot)
 }
 
 bool
-ViewportGizmoPrivate::transformRotationScreenBasis(int axis, QPointF& center, QPointF& basisA, QPointF& basisB)
+ViewportGizmoPrivate::rotationScreenBasis(int axis, QPointF& center, QPointF& basisA, QPointF& basisB)
 {
-    const GfVec3d normal = transformAxisVector(axis);
+    const GfVec3d normal = axisVector(axis);
     if (normal.GetLengthSq() < 1e-12)
         return false;
 
-    GfVec3d worldA;
-    GfVec3d worldB;
-    if (normal == GfVec3d::XAxis()) {
-        worldA = GfVec3d::YAxis();
-        worldB = GfVec3d::ZAxis();
-    }
-    else if (normal == GfVec3d::YAxis()) {
-        worldA = GfVec3d::ZAxis();
-        worldB = GfVec3d::XAxis();
-    }
-    else {
-        worldA = GfVec3d::XAxis();
-        worldB = GfVec3d::YAxis();
-    }
+    const GfVec3d worldA = axisVector(axis % 3 + 1);
+    // The ring mesh is built from a local right-handed basis and then the
+    // complete object frame is applied. Transform its local B axis directly:
+    // recomputing B with a world-space cross product reverses it for reflected
+    // transform hierarchies.
+    const GfVec3d worldB = axisVector((axis + 1) % 3 + 1);
 
     if (!d.host->projectWorldToScreen(d.frame.pivot, center))
         return false;
@@ -171,7 +165,7 @@ ViewportGizmoPrivate::transformRotationScreenBasis(int axis, QPointF& center, QP
     // Match the world-space radius used by the rendered rings. Normalizing
     // the projected axes would enlarge oblique rings and overshoot the mesh.
     const double gizmoSize = ui()->gizmoSize(UI::UIScale::Medium);
-    const double probeRadius = transformWorldPerPixel(d.frame.pivot) * gizmoSize;
+    const double probeRadius = worldPerPixel(d.frame.pivot) * gizmoSize;
     if (!std::isfinite(probeRadius) || probeRadius <= 0.0)
         return false;
 
@@ -194,28 +188,27 @@ ViewportGizmoPrivate::transformRotationScreenBasis(int axis, QPointF& center, QP
 }
 
 bool
-ViewportGizmoPrivate::transformRotationPoint(int axis, double angle, QPointF& screen)
+ViewportGizmoPrivate::rotationPoint(int axis, double angle, QPointF& screen)
 {
-    const GfVec3d normal = transformAxisVector(axis);
-    const GfVec3d a = transformAxisVector(axis % 3 + 1);
-    const GfVec3d b = GfCross(normal, a);
-    const double radius = transformWorldPerPixel(d.frame.pivot) * ui()->gizmoSize(UI::UIScale::Medium);
+    const GfVec3d a = axisVector(axis % 3 + 1);
+    const GfVec3d b = axisVector((axis + 1) % 3 + 1);
+    const double radius = worldPerPixel(d.frame.pivot) * ui()->gizmoSize(UI::UIScale::Medium);
     return d.host->projectWorldToScreen(d.frame.pivot + radius * (a * std::cos(angle) + b * std::sin(angle)), screen);
 }
 
 bool
-ViewportGizmoPrivate::transformRotationAngle(int axis, const QPointF& pos, double& angle, double* distance)
+ViewportGizmoPrivate::rotationAngle(int axis, const QPointF& pos, double& angle, double* distance)
 {
     QPointF center;
     QPointF basisA;
     QPointF basisB;
-    if (!transformRotationScreenBasis(axis, center, basisA, basisB))
+    if (!rotationScreenBasis(axis, center, basisA, basisB))
         return false;
 
-    // Solve mouse = center + basisA*cos(a) + basisB*sin(a) in screen space.
-    // The old sampled-ring implementation only resolved 96 positions (3.75 deg
-    // steps), which masked the intended 1-degree Shift snapping. This continuous
-    // solution gives the rotation drag full precision before snapping is applied.
+    // Use the projected basis to get a close initial angle. Perspective
+    // projection makes an oblique circle a conic rather than an affine ellipse,
+    // so refine against the actual projected ring to keep the feedback aligned
+    // for deep or complex transform hierarchies.
     const QPointF delta = pos - center;
     const double determinant = basisA.x() * basisB.y() - basisA.y() * basisB.x();
     if (std::abs(determinant) < 1e-8)
@@ -228,8 +221,34 @@ ViewportGizmoPrivate::transformRotationAngle(int axis, const QPointF& pos, doubl
 
     angle = std::atan2(sinComponent, cosComponent);
 
+    constexpr double epsilon = 1e-3;
+    for (int iteration = 0; iteration < 8; ++iteration) {
+        QPointF projected, projectedBefore, projectedAfter;
+        if (!rotationPoint(axis, angle, projected) || !rotationPoint(axis, angle - epsilon, projectedBefore)
+            || !rotationPoint(axis, angle + epsilon, projectedAfter))
+            return false;
+
+        const QPointF firstDerivative = (projectedAfter - projectedBefore) / (2.0 * epsilon);
+        const QPointF secondDerivative = (projectedAfter - 2.0 * projected + projectedBefore) / (epsilon * epsilon);
+        const QPointF residual = projected - pos;
+        const double gradient = QPointF::dotProduct(residual, firstDerivative);
+        const double curvature = QPointF::dotProduct(firstDerivative, firstDerivative)
+                                 + QPointF::dotProduct(residual, secondDerivative);
+        if (!std::isfinite(gradient) || !std::isfinite(curvature) || std::abs(curvature) < 1e-10)
+            break;
+
+        // Bound each Newton step so a poor local curvature estimate cannot
+        // jump to a distant part of the ring.
+        const double step = std::clamp(gradient / curvature, -0.5, 0.5);
+        angle -= step;
+        if (std::abs(step) < 1e-7)
+            break;
+    }
+
     if (distance) {
-        const QPointF nearest = center + basisA * std::cos(angle) + basisB * std::sin(angle);
+        QPointF nearest;
+        if (!rotationPoint(axis, angle, nearest))
+            return false;
         *distance = std::hypot(pos.x() - nearest.x(), pos.y() - nearest.y());
     }
 
@@ -237,9 +256,9 @@ ViewportGizmoPrivate::transformRotationAngle(int axis, const QPointF& pos, doubl
 }
 
 int
-ViewportGizmoPrivate::hitTestTransform(const QPointF& pos)
+ViewportGizmoPrivate::hitTest(const QPointF& pos)
 {
-    if (!d.frame.enabled || d.frame.mode == TransformMode::None || !d.host->context())
+    if (!d.frame.enabled || d.frame.mode == Mode::None || !d.host->context())
         return 0;
 
     if (!d.frame.pivotValid || !d.frame.orientationValid)
@@ -258,15 +277,15 @@ ViewportGizmoPrivate::hitTestTransform(const QPointF& pos)
     // 12    = uniform scale
     constexpr double centerHitRadius = 8.0;
     if (std::hypot(pos.x() - center.x(), pos.y() - center.y()) <= centerHitRadius) {
-        if (d.frame.mode == TransformMode::Move)
+        if (d.frame.mode == Mode::Move)
             return 11;
-        if (d.frame.mode == TransformMode::Rotate)
+        if (d.frame.mode == Mode::Rotate)
             return 10;
-        if (d.frame.mode == TransformMode::Scale)
+        if (d.frame.mode == Mode::Scale)
             return 12;
     }
 
-    const double radius = transformWorldPerPixel(d.frame.pivot) * ui()->gizmoSize(UI::UIScale::Medium);
+    const double radius = worldPerPixel(d.frame.pivot) * ui()->gizmoSize(UI::UIScale::Medium);
     if (!std::isfinite(radius) || radius <= 0.0)
         return 0;
     constexpr double hitWidth = 8.0;
@@ -274,11 +293,10 @@ ViewportGizmoPrivate::hitTestTransform(const QPointF& pos)
     int bestHandle = 0;
     double bestDistance = hitWidth;
     for (int axis = 1; axis <= 3; ++axis) {
-        const GfVec3d normal = d.frame.mode == TransformMode::Scale ? transformScaleAxisVector(axis)
-                                                                    : transformAxisVector(axis);
-        if (d.frame.mode == TransformMode::Rotate) {
-            const GfVec3d a = axis == 1 ? GfVec3d::YAxis() : (axis == 2 ? GfVec3d::ZAxis() : GfVec3d::XAxis());
-            const GfVec3d b = GfCross(normal, a);
+        const GfVec3d normal = d.frame.mode == Mode::Scale ? scaleAxisVector(axis) : axisVector(axis);
+        if (d.frame.mode == Mode::Rotate) {
+            const GfVec3d a = axisVector(axis % 3 + 1);
+            const GfVec3d b = axisVector((axis + 1) % 3 + 1);
             QPointF previous;
             bool previousValid = false;
             for (int i = 0; i <= 96; ++i) {
@@ -308,7 +326,7 @@ ViewportGizmoPrivate::hitTestTransform(const QPointF& pos)
         QPointF end;
         if (!d.host->projectWorldToScreen(d.frame.pivot + normal * radius, end))
             continue;
-        if (d.frame.mode == TransformMode::Scale) {
+        if (d.frame.mode == Mode::Scale) {
             const double distance = std::hypot(pos.x() - end.x(), pos.y() - end.y());
             if (distance < bestDistance) {
                 bestDistance = distance;
@@ -333,10 +351,10 @@ ViewportGizmoPrivate::hitTestTransform(const QPointF& pos)
 }
 
 void
-ViewportGizmoPrivate::clearTransformGeometry()
+ViewportGizmoPrivate::clearGeometry()
 {
-    if (!d.host->auxiliaryStage() || !d.transformMeshesBuilt || !d.transformGeometryVisible) {
-        d.transformGeometryValid = false;
+    if (!d.host->auxiliaryStage() || !d.meshesBuilt || !d.geometryVisible) {
+        d.geometryValid = false;
         return;
     }
     // Preserve the Hydra mesh resources when the gizmo is switched off.
@@ -344,39 +362,38 @@ ViewportGizmoPrivate::clearTransformGeometry()
     UsdGeomImageable imageable(d.host->auxiliaryStage()->GetPrimAtPath(paths::auxiliary::transform));
     if (imageable)
         imageable.MakeInvisible();
-    d.transformGeometryValid = false;
-    d.transformGeometryVisible = false;
+    d.geometryValid = false;
+    d.geometryVisible = false;
     if (d.host->renderEngine())
         d.host->renderEngine()->refreshAuxiliaryStage();
 }
 
 void
-ViewportGizmoPrivate::updateTransformGeometry()
+ViewportGizmoPrivate::updateGeometry()
 {
     const double fullCircle = GfDegreesToRadians(360.0);
     if (!d.host->auxiliaryStage())
         return;
-    if (!d.frame.enabled || d.frame.mode == TransformMode::None || !d.host->stage() || !d.host->context()) {
-        clearTransformGeometry();
+    if (!d.frame.enabled || d.frame.mode == Mode::None || !d.host->stage() || !d.host->context()) {
+        clearGeometry();
         return;
     }
     if (!d.frame.pivotValid || !d.frame.orientationValid) {
-        clearTransformGeometry();
+        clearGeometry();
         return;
     }
     if (d.frame.pivotEditing) {
-        clearTransformGeometry();
+        clearGeometry();
         return;
     }
-    const double radius = transformWorldPerPixel(d.frame.pivot) * ui()->gizmoSize(UI::UIScale::Medium);
+    const double radius = worldPerPixel(d.frame.pivot) * ui()->gizmoSize(UI::UIScale::Medium);
     if (!std::isfinite(radius) || radius <= 1e-10) {
-        clearTransformGeometry();
+        clearGeometry();
         return;
     }
-    if (d.transformGeometryValid && d.transformGeometryPivot == d.frame.pivot
-        && d.transformGeometryOrientation == d.frame.orientation
-        && std::abs(d.transformGeometryRadius - radius) <= radius * 1e-5 && d.transformGeometryMode == d.frame.mode
-        && d.transformGeometryHover == d.frame.hoverAxis && d.transformGeometryActive == d.frame.activeAxis)
+    if (d.geometryValid && d.geometryPivot == d.frame.pivot && d.geometryOrientation == d.frame.orientation
+        && std::abs(d.geometryRadius - radius) <= radius * 1e-5 && d.geometryMode == d.frame.mode
+        && d.geometryHover == d.frame.hoverAxis && d.geometryActive == d.frame.activeAxis)
         return;
 
     const SdfPath root = paths::auxiliary::transform;
@@ -388,22 +405,20 @@ ViewportGizmoPrivate::updateTransformGeometry()
     constexpr int ringSegments = 96;
     {
         WRITE_LOCKER(locker, session()->auxiliaryLock(), "auxiliaryLock");
-        if (!d.transformMeshesBuilt) {
+        if (!d.meshesBuilt) {
             UsdGeomScope::Define(d.host->auxiliaryStage(), paths::auxiliary::display);
             UsdGeomScope::Define(d.host->auxiliaryStage(), paths::auxiliary::materials);
             UsdGeomXform::Define(d.host->auxiliaryStage(), root);
             // Build all three modes in local unit coordinates once. Hydra keeps
             // the meshes across mode switches and pivot/zoom updates.
-            for (const auto mode : { TransformMode::Move, TransformMode::Rotate, TransformMode::Scale }) {
-                const char* modeName = mode == TransformMode::Move
-                                           ? "Move"
-                                           : (mode == TransformMode::Rotate ? "Rotate" : "Scale");
+            for (const auto mode : { Mode::Move, Mode::Rotate, Mode::Scale }) {
+                const char* modeName = mode == Mode::Move ? "Move" : (mode == Mode::Rotate ? "Rotate" : "Scale");
                 const SdfPath modePath = root.AppendChild(TfToken(modeName));
                 UsdGeomXform::Define(d.host->auxiliaryStage(), modePath);
                 constexpr double radius = 1.0;
                 for (int axis = 1; axis <= 3; ++axis) {
-                    const GfVec3d normal = transformAxisVector(axis);
-                    const GfVec3d a = axis == 1 ? GfVec3d::YAxis() : (axis == 2 ? GfVec3d::ZAxis() : GfVec3d::XAxis());
+                    const GfVec3d normal = ViewportGizmo::axisVector(axis);
+                    const GfVec3d a = ViewportGizmo::axisVector(axis % 3 + 1);
                     const GfVec3d b = GfCross(normal, a);
                     VtVec3fArray points;
                     VtIntArray counts;
@@ -436,7 +451,7 @@ ViewportGizmoPrivate::updateTransformGeometry()
                             face(base + j, base + next, base + segments + next, base + segments + j);
                         }
                     };
-                    if (mode == TransformMode::Rotate) {
+                    if (mode == Mode::Rotate) {
                         const double ringRadius = radius;
                         const double tubeRadius = radius * 0.018;
                         for (int i = 0; i < ringSegments; ++i) {
@@ -458,9 +473,9 @@ ViewportGizmoPrivate::updateTransformGeometry()
                     else {
                         // Scale shafts terminate at the near face of the endpoint cube.
                         // Move shafts extend into the cone so there is no visible gap.
-                        const double shaftEnd = mode == TransformMode::Scale ? 0.925 : 0.82;
+                        const double shaftEnd = mode == Mode::Scale ? 0.925 : 0.82;
                         tube(GfVec3d(0.0), normal * (radius * shaftEnd), radius * 0.023, sides);
-                        if (mode == TransformMode::Move) {
+                        if (mode == Mode::Move) {
                             const int base = static_cast<int>(points.size());
                             const GfVec3d bottom = normal * (radius * 0.77);
                             for (int j = 0; j < sides; ++j) {
@@ -498,21 +513,20 @@ ViewportGizmoPrivate::updateTransformGeometry()
                     mesh.CreateFaceVertexIndicesAttr(VtValue(indices));
                     mesh.CreateDoubleSidedAttr(VtValue(true));
                     const GfVec3f color = colors[axis];
-                    const SdfPath materialPath = paths::auxiliary::materials.AppendChild(TfToken(
-                        (mode == TransformMode::Move ? "Move" : (mode == TransformMode::Rotate ? "Rotate" : "Scale"))
-                        + std::string(axis == 1 ? "X" : (axis == 2 ? "Y" : "Z"))));
+                    const SdfPath materialPath = paths::auxiliary::materials.AppendChild(
+                        TfToken((mode == Mode::Move ? "Move" : (mode == Mode::Rotate ? "Rotate" : "Scale"))
+                                + std::string(axis == 1 ? "X" : (axis == 2 ? "Y" : "Z"))));
                     ViewportAuxiliary::authorGridMaterial(d.host->auxiliaryStage(), materialPath, color);
                     UsdShadeMaterialBindingAPI::Apply(mesh.GetPrim())
                         .Bind(UsdShadeMaterial(d.host->auxiliaryStage()->GetPrimAtPath(materialPath)));
                 }
             }
-            d.transformMeshesBuilt = true;
+            d.meshesBuilt = true;
         }
         UsdGeomXform gizmo(d.host->auxiliaryStage()->GetPrimAtPath(root));
         GfMatrix4d matrix(1.0);
         matrix.SetScale(radius);
-        if (d.frame.mode == TransformMode::Scale)
-            matrix *= d.frame.orientation;
+        matrix *= d.frame.orientation;
         matrix.SetTranslateOnly(d.frame.pivot);
         // Only the parent transform changes with camera distance or selection.
         UsdGeomXformOp matrixOp;
@@ -524,9 +538,8 @@ ViewportGizmoPrivate::updateTransformGeometry()
             matrixOp = gizmo.MakeMatrixXform();
         matrixOp.Set(matrix);
         gizmo.MakeVisible();
-        for (const auto mode : { TransformMode::Move, TransformMode::Rotate, TransformMode::Scale }) {
-            const char* modeName = mode == TransformMode::Move ? "Move"
-                                                               : (mode == TransformMode::Rotate ? "Rotate" : "Scale");
+        for (const auto mode : { Mode::Move, Mode::Rotate, Mode::Scale }) {
+            const char* modeName = mode == Mode::Move ? "Move" : (mode == Mode::Rotate ? "Rotate" : "Scale");
             UsdGeomImageable modePrim(d.host->auxiliaryStage()->GetPrimAtPath(root.AppendChild(TfToken(modeName))));
             if (mode == d.frame.mode)
                 modePrim.MakeVisible();
@@ -534,66 +547,62 @@ ViewportGizmoPrivate::updateTransformGeometry()
                 modePrim.MakeInvisible();
         }
         for (int axis = 1; axis <= 3; ++axis) {
-            const int handle
-                = axis + (d.frame.mode == TransformMode::Rotate ? 3 : (d.frame.mode == TransformMode::Scale ? 6 : 0));
+            const int handle = axis + (d.frame.mode == Mode::Rotate ? 3 : (d.frame.mode == Mode::Scale ? 6 : 0));
             const GfVec3f color = (d.frame.hoverAxis == handle || d.frame.activeAxis == handle) ? highlight
                                                                                                 : colors[axis];
-            const char* modeName = d.frame.mode == TransformMode::Move
-                                       ? "Move"
-                                       : (d.frame.mode == TransformMode::Rotate ? "Rotate" : "Scale");
+            const char* modeName = d.frame.mode == Mode::Move ? "Move"
+                                                              : (d.frame.mode == Mode::Rotate ? "Rotate" : "Scale");
             const std::string name = std::string(modeName) + (axis == 1 ? "X" : (axis == 2 ? "Y" : "Z"));
             ViewportAuxiliary::authorGridMaterial(d.host->auxiliaryStage(),
                                                   paths::auxiliary::materials.AppendChild(TfToken(name)), color);
         }
     }
-    d.transformGeometryValid = true;
-    d.transformGeometryVisible = true;
-    d.transformGeometryPivot = d.frame.pivot;
-    d.transformGeometryOrientation = d.frame.orientation;
-    d.transformGeometryRadius = radius;
-    d.transformGeometryMode = d.frame.mode;
-    d.transformGeometryHover = d.frame.hoverAxis;
-    d.transformGeometryActive = d.frame.activeAxis;
+    d.geometryValid = true;
+    d.geometryVisible = true;
+    d.geometryPivot = d.frame.pivot;
+    d.geometryOrientation = d.frame.orientation;
+    d.geometryRadius = radius;
+    d.geometryMode = d.frame.mode;
+    d.geometryHover = d.frame.hoverAxis;
+    d.geometryActive = d.frame.activeAxis;
     if (d.host->renderEngine())
         d.host->renderEngine()->refreshAuxiliaryStage();
 }
 
 void
-ViewportGizmoPrivate::drawTransformTransform(QPainter& painter)
+ViewportGizmoPrivate::draw(QPainter& painter)
 {
     // The axis geometry is rendered by Hydra. Keep only the center control
     // in the QPainter overlay, so it stays readable and clickable.
-    if (!d.frame.enabled || d.frame.mode == TransformMode::None || !d.host->context())
+    if (!d.frame.enabled || d.frame.mode == Mode::None || !d.host->context())
         return;
     if (!d.frame.pivotValid)
         return;
     QPointF center;
     if (!d.host->projectWorldToScreen(d.frame.pivot, center))
         return;
-    const int centerHandle = d.frame.mode == TransformMode::Move ? 11
-                                                                 : (d.frame.mode == TransformMode::Rotate ? 10 : 12);
+    const int centerHandle = d.frame.mode == Mode::Move ? 11 : (d.frame.mode == Mode::Rotate ? 10 : 12);
     QColor centerColor(35, 35, 35, 220);
     if (d.frame.hoverAxis == centerHandle || d.frame.activeAxis == centerHandle)
         centerColor = ui()->color(UI::ColorRole::Selection);
     painter.save();
     painter.setRenderHint(QPainter::Antialiasing, true);
     if (d.frame.pivotEditing) {
-        const double radius = transformWorldPerPixel() * ui()->gizmoSize(UI::UIScale::Medium);
+        const double radius = worldPerPixel() * ui()->gizmoSize(UI::UIScale::Medium);
         const UI::ColorRole roles[] = { UI::ColorRole::AxisX, UI::ColorRole::AxisY, UI::ColorRole::AxisZ };
         for (int axis = 1; axis <= 3; ++axis) {
-            const int handle
-                = axis + (d.frame.mode == TransformMode::Rotate ? 3 : (d.frame.mode == TransformMode::Scale ? 6 : 0));
+            const int handle = axis + (d.frame.mode == Mode::Rotate ? 3 : (d.frame.mode == Mode::Scale ? 6 : 0));
             const QColor color = d.frame.activeAxis == handle || d.frame.hoverAxis == handle
                                      ? ui()->color(UI::ColorRole::Selection)
                                      : ui()->color(roles[axis - 1]);
             painter.setPen(QPen(color, 2.0, Qt::DotLine, Qt::RoundCap));
             painter.setBrush(Qt::NoBrush);
-            if (d.frame.mode == TransformMode::Rotate) {
+            if (d.frame.mode == Mode::Rotate) {
                 QPainterPath path;
                 bool previous = false;
                 for (int segment = 0; segment <= 96; ++segment) {
                     QPointF point;
-                    const bool valid = transformRotationPoint(axis, segment * GfDegreesToRadians(360.0) / 96.0, point);
+                    const bool valid = rotationPoint(axis, segment * GfDegreesToRadians(360.0) / 96.0, point);
                     if (valid) {
                         if (previous)
                             path.lineTo(point);
@@ -605,14 +614,13 @@ ViewportGizmoPrivate::drawTransformTransform(QPainter& painter)
                 painter.drawPath(path);
             }
             else {
-                const GfVec3d direction = d.frame.mode == TransformMode::Scale ? transformScaleAxisVector(axis)
-                                                                               : transformAxisVector(axis);
+                const GfVec3d direction = d.frame.mode == Mode::Scale ? scaleAxisVector(axis) : axisVector(axis);
                 QPointF end;
                 if (!d.host->projectWorldToScreen(d.frame.pivot + direction * radius, end))
                     continue;
                 painter.drawLine(center, end);
                 painter.setPen(QPen(color, 1.5));
-                if (d.frame.mode == TransformMode::Scale)
+                if (d.frame.mode == Mode::Scale)
                     painter.drawRect(QRectF(end - QPointF(4, 4), QSizeF(8, 8)));
                 else
                     painter.drawEllipse(end, 4, 4);
@@ -631,16 +639,25 @@ ViewportGizmoPrivate::drawTransformTransform(QPainter& painter)
 void
 ViewportGizmoPrivate::drawRotationFeedback(QPainter& painter)
 {
-    if (!d.frame.enabled || !d.frame.pivotValid || d.frame.mode != TransformMode::Rotate || d.frame.activeAxis < 4
+    if (!d.frame.enabled || !d.frame.pivotValid || d.frame.mode != Mode::Rotate || d.frame.activeAxis < 4
         || d.frame.activeAxis > 6)
         return;
+    const ViewportGizmo::Frame liveFrame = d.frame;
+    if (d.frame.rotationStartOrientationValid) {
+        // Keep the solid start ray fixed while the dashed ray follows the
+        // cursor angle in the coordinate frame captured when dragging began.
+        d.frame.orientation = d.frame.rotationStartOrientation;
+        d.frame.orientationValid = true;
+    }
     const int axis = d.frame.activeAxis - 3;
     QPointF center, basisA, basisB;
-    if (!transformRotationScreenBasis(axis, center, basisA, basisB))
+    if (!rotationScreenBasis(axis, center, basisA, basisB)) {
+        d.frame = liveFrame;
         return;
+    }
     const auto point = [&](double angle) {
         QPointF projected = center;
-        transformRotationPoint(axis, angle, projected);
+        rotationPoint(axis, angle, projected);
         return projected;
     };
     const double start = d.frame.rotationStartAngle;
@@ -662,13 +679,14 @@ ViewportGizmoPrivate::drawRotationFeedback(QPainter& painter)
     QColor fill = color;
     fill.setAlpha(35);
     painter.fillPath(sector, fill);
-    painter.setPen(QPen(color, 1.5, Qt::DashLine));
-    painter.drawLine(center, initial);
     painter.setPen(QPen(color, 2.0));
+    painter.drawLine(center, initial);
+    painter.setPen(QPen(color, 1.5, Qt::DashLine));
     painter.drawLine(center, current);
     painter.drawPath(arc);
 
     painter.restore();
+    d.frame = liveFrame;
 }
 
 ViewportGizmo::ViewportGizmo(ViewportHost& host)
@@ -682,28 +700,28 @@ ViewportGizmo::~ViewportGizmo() = default;
 void
 ViewportGizmo::invalidate()
 {
-    p->d.transformGeometryValid = false;
+    p->d.geometryValid = false;
 }
 
 void
 ViewportGizmo::reset()
 {
-    p->d.transformMeshesBuilt = false;
-    p->d.transformGeometryVisible = false;
+    p->d.meshesBuilt = false;
+    p->d.geometryVisible = false;
     invalidate();
 }
 
 void
 ViewportGizmo::clear()
 {
-    p->clearTransformGeometry();
+    p->clearGeometry();
 }
 
 void
 ViewportGizmo::update(const Frame& frame)
 {
     p->d.frame = frame;
-    p->updateTransformGeometry();
+    p->updateGeometry();
 }
 
 void
@@ -711,34 +729,34 @@ ViewportGizmo::draw(const Frame& frame, QPainter& painter)
 {
     p->d.frame = frame;
     p->drawRotationFeedback(painter);
-    p->drawTransformTransform(painter);
+    p->draw(painter);
 }
 
 int
 ViewportGizmo::hitTest(const Frame& frame, const QPointF& pos)
 {
     p->d.frame = frame;
-    return p->hitTestTransform(pos);
+    return p->hitTest(pos);
 }
 
 QPointF
 ViewportGizmo::axisDirection(const Frame& frame, int axis)
 {
     p->d.frame = frame;
-    return p->transformAxisDirection(axis);
+    return p->axisDirection(axis);
 }
 
 bool
 ViewportGizmo::rotationAngle(const Frame& frame, int axis, const QPointF& pos, double& angle)
 {
     p->d.frame = frame;
-    return p->transformRotationAngle(axis, pos, angle, nullptr);
+    return p->rotationAngle(axis, pos, angle, nullptr);
 }
 
 double
 ViewportGizmo::worldPerPixel(const GfVec3d& pivot)
 {
-    return p->transformWorldPerPixel(pivot);
+    return p->worldPerPixel(pivot);
 }
 
 GfVec3d

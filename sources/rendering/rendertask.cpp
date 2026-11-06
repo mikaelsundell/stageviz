@@ -96,6 +96,7 @@ namespace {
 
     struct SelectionConstants {
         GfVec4f color = GfVec4f(1.0f);
+        GfVec4f secondaryColor = GfVec4f(1.0f);
         GfVec2i screenSize = GfVec2i(1);
         GfVec2i selectedMaskSize = GfVec2i(1);
         GfVec2i selectedInstanceMaskSize = GfVec2i(1);
@@ -186,6 +187,7 @@ namespace {
         desc.textures.push_back(textureDesc("selectedInstanceMaskIn", 4, HgiFormatInt32));
 
         HgiShaderFunctionAddConstantParam(&desc, "uSelectionColor", "vec4");
+        HgiShaderFunctionAddConstantParam(&desc, "uSecondarySelectionColor", "vec4");
         HgiShaderFunctionAddConstantParam(&desc, "uScreenSize", "ivec2");
         HgiShaderFunctionAddConstantParam(&desc, "uSelectedMaskSize", "ivec2");
         HgiShaderFunctionAddConstantParam(&desc, "uSelectedInstanceMaskSize", "ivec2");
@@ -255,6 +257,7 @@ public:
         selectedMaskSize = GfVec2i(0);
         selectedMaskCapacity = 0;
         selectedIds.clear();
+        selectedLeadIds.clear();
     }
 
     void destroySelectedInstanceMask()
@@ -263,29 +266,33 @@ public:
             hgi->DestroyTexture(&selectedInstanceMask);
         selectedInstanceMaskSize = GfVec2i(0);
         selectedInstancePairs.clear();
+        selectedLeadInstancePairs.clear();
         selectedInstancePairCount = 0;
     }
 
-    bool ensureSelectedInstanceMask(const std::vector<std::pair<int32_t, int32_t>>& pairs)
+    bool ensureSelectedInstanceMask(const std::vector<std::pair<int32_t, int32_t>>& pairs,
+                                    const std::vector<std::pair<int32_t, int32_t>>& leadPairs)
     {
         if (!hgi)
             return false;
-        if (selectedInstanceMask && selectedInstancePairs == pairs)
+        if (selectedInstanceMask && selectedInstancePairs == pairs && selectedLeadInstancePairs == leadPairs)
             return true;
 
         destroySelectedInstanceMask();
 
-        // Store sparse (rprim ID, Hydra instance ID) selections as adjacent
-        // texels. Pack the pairs across rows so large selections stay within
-        // the device's maximum 2D texture height.
+        // Store sparse (rprim ID, Hydra instance ID, role) selections as
+        // adjacent texels. Role 2 marks the lead; role 1 marks other selected
+        // objects. Pack triples across rows to stay within the texture limit.
         std::vector<int32_t> texels;
         if (pairs.empty())
-            texels = { 0, 0 };
+            texels = { 0, 0, 0 };
         else {
-            texels.reserve(pairs.size() * 2);
+            texels.reserve(pairs.size() * 3);
             for (const auto& pair : pairs) {
                 texels.push_back(pair.first);
                 texels.push_back(pair.second);
+                const int32_t role = std::binary_search(leadPairs.begin(), leadPairs.end(), pair) ? 2 : 1;
+                texels.push_back(role);
             }
         }
 
@@ -311,6 +318,7 @@ public:
         }
 
         selectedInstancePairs = pairs;
+        selectedLeadInstancePairs = leadPairs;
         selectedInstancePairCount = static_cast<int>(pairs.size());
         return true;
     }
@@ -348,12 +356,12 @@ public:
         return true;
     }
 
-    bool ensureSelectedMask(const std::vector<int32_t>& ids)
+    bool ensureSelectedMask(const std::vector<int32_t>& ids, const std::vector<int32_t>& leadIds)
     {
         if (!hgi)
             return false;
 
-        if (selectedIdMask && selectedIds == ids)
+        if (selectedIdMask && selectedIds == ids && selectedLeadIds == leadIds)
             return true;
 
         destroySelectedMask();
@@ -376,6 +384,7 @@ public:
             selectedMaskSize = GfVec2i(1);
             selectedMaskCapacity = 0;
             selectedIds.clear();
+            selectedLeadIds = leadIds;
             return static_cast<bool>(selectedIdMask);
         }
 
@@ -392,7 +401,7 @@ public:
         std::vector<int32_t> mask(static_cast<size_t>(selectedMaskSize[0]) * selectedMaskSize[1], 0);
         for (const int32_t id : ids) {
             if (id >= 0 && id < selectedMaskCapacity)
-                mask[static_cast<size_t>(id)] = 1;
+                mask[static_cast<size_t>(id)] = std::binary_search(leadIds.begin(), leadIds.end(), id) ? 2 : 1;
         }
 
         HgiTextureDesc desc;
@@ -414,6 +423,7 @@ public:
         }
 
         selectedIds = ids;
+        selectedLeadIds = leadIds;
         return true;
     }
 
@@ -472,11 +482,13 @@ public:
     GfVec2i selectedMaskSize = GfVec2i(0);
     int selectedMaskCapacity = 0;
     std::vector<int32_t> selectedIds;
+    std::vector<int32_t> selectedLeadIds;
 
     HgiTextureHandle selectedInstanceMask;
     GfVec2i selectedInstanceMaskSize = GfVec2i(0);
     int selectedInstancePairCount = 0;
     std::vector<std::pair<int32_t, int32_t>> selectedInstancePairs;
+    std::vector<std::pair<int32_t, int32_t>> selectedLeadInstancePairs;
 
 
     TfToken aoShaderPath;
@@ -615,20 +627,30 @@ public:
                                                 const std::vector<SelectionProxyTarget>& proxyTargets,
                                                 const std::vector<HydraSelectionRprim>& hydraRprims,
                                                 bool hydraMappingResolved,
-                                                std::vector<std::pair<int32_t, int32_t>>* selectedInstances)
+                                                std::vector<std::pair<int32_t, int32_t>>* selectedInstances,
+                                                bool leadSelection = false)
     {
+        auto& cachedPaths = leadSelection ? m_leadSelectedPaths : m_selectedPaths;
+        auto& cachedDirectPaths = leadSelection ? m_leadSelectedDirectPaths : m_selectedDirectPaths;
+        auto& cachedProxyTargets = leadSelection ? m_leadSelectedProxyTargets : m_selectedProxyTargets;
+        auto& cachedHydraRprims = leadSelection ? m_leadSelectedHydraRprims : m_selectedHydraRprims;
+        bool& cachedHydraMappingResolved = leadSelection ? m_leadHydraMappingResolved : m_hydraMappingResolved;
+        auto& cachedInstancePairs = leadSelection ? m_leadSelectedInstancePairs : m_selectedInstancePairs;
+        auto& cachedIds = leadSelection ? m_leadSelectedPrimIds : m_selectedPrimIds;
+        unsigned& cachedRprimIndexVersion = leadSelection ? m_leadSelectedRprimIndexVersion
+                                                          : m_selectedRprimIndexVersion;
         if (selectedInstances)
             selectedInstances->clear();
         if (!m_renderIndex || paths.empty()) {
-            m_selectedPaths.clear();
-            m_selectedDirectPaths.clear();
-            m_selectedProxyTargets.clear();
-            m_selectedHydraRprims.clear();
-            m_hydraMappingResolved = false;
-            m_selectedInstancePairs.clear();
-            m_selectedPrimIds.clear();
-            m_selectedRprimIndexVersion = std::numeric_limits<unsigned>::max();
-            return m_selectedPrimIds;
+            cachedPaths.clear();
+            cachedDirectPaths.clear();
+            cachedProxyTargets.clear();
+            cachedHydraRprims.clear();
+            cachedHydraMappingResolved = false;
+            cachedInstancePairs.clear();
+            cachedIds.clear();
+            cachedRprimIndexVersion = std::numeric_limits<unsigned>::max();
+            return cachedIds;
         }
 
         for (SdfPath& path : paths) {
@@ -643,12 +665,12 @@ public:
         SdfPath::RemoveDescendentPaths(&directPaths);
 
         const unsigned rprimIndexVersion = m_renderIndex->GetChangeTracker().GetRprimIndexVersion();
-        if (paths == m_selectedPaths && directPaths == m_selectedDirectPaths && proxyTargets == m_selectedProxyTargets
-            && hydraRprims == m_selectedHydraRprims && hydraMappingResolved == m_hydraMappingResolved
-            && rprimIndexVersion == m_selectedRprimIndexVersion) {
+        if (paths == cachedPaths && directPaths == cachedDirectPaths && proxyTargets == cachedProxyTargets
+            && hydraRprims == cachedHydraRprims && hydraMappingResolved == cachedHydraMappingResolved
+            && rprimIndexVersion == cachedRprimIndexVersion) {
             if (selectedInstances)
-                *selectedInstances = m_selectedInstancePairs;
-            return m_selectedPrimIds;
+                *selectedInstances = cachedInstancePairs;
+            return cachedIds;
         }
 
         std::vector<int32_t> ids;
@@ -776,17 +798,17 @@ public:
         std::sort(ids.begin(), ids.end());
         std::sort(instancePairs.begin(), instancePairs.end());
         instancePairs.erase(std::unique(instancePairs.begin(), instancePairs.end()), instancePairs.end());
-        m_selectedPaths = paths;
-        m_selectedDirectPaths = directPaths;
-        m_selectedProxyTargets = proxyTargets;
-        m_selectedHydraRprims = hydraRprims;
-        m_hydraMappingResolved = hydraMappingResolved;
-        m_selectedInstancePairs = std::move(instancePairs);
-        m_selectedPrimIds = ids;
-        m_selectedRprimIndexVersion = rprimIndexVersion;
+        cachedPaths = paths;
+        cachedDirectPaths = directPaths;
+        cachedProxyTargets = proxyTargets;
+        cachedHydraRprims = hydraRprims;
+        cachedHydraMappingResolved = hydraMappingResolved;
+        cachedInstancePairs = std::move(instancePairs);
+        cachedIds = ids;
+        cachedRprimIndexVersion = rprimIndexVersion;
         if (selectedInstances)
-            *selectedInstances = m_selectedInstancePairs;
-        return m_selectedPrimIds;
+            *selectedInstances = cachedInstancePairs;
+        return cachedIds;
     }
 
 
@@ -1210,6 +1232,15 @@ private:
     std::vector<std::pair<int32_t, int32_t>> m_selectedInstancePairs;
     unsigned m_selectedRprimIndexVersion = std::numeric_limits<unsigned>::max();
 
+    SdfPathVector m_leadSelectedPaths;
+    SdfPathVector m_leadSelectedDirectPaths;
+    std::vector<SelectionProxyTarget> m_leadSelectedProxyTargets;
+    std::vector<HydraSelectionRprim> m_leadSelectedHydraRprims;
+    bool m_leadHydraMappingResolved = false;
+    std::vector<int32_t> m_leadSelectedPrimIds;
+    std::vector<std::pair<int32_t, int32_t>> m_leadSelectedInstancePairs;
+    unsigned m_leadSelectedRprimIndexVersion = std::numeric_limits<unsigned>::max();
+
 
     std::unordered_map<int32_t, SdfPath> m_rprimPathsById;
     unsigned m_rprimPathCacheVersion = std::numeric_limits<unsigned>::max();
@@ -1240,12 +1271,16 @@ operator==(const RenderTaskParams& lhs, const RenderTaskParams& rhs)
            && ia.roots == ib.roots && ia.renderTags == ib.renderTags && ia.reprSelector == ib.reprSelector
            && ia.size == ib.size && ia.viewport == ib.viewport && ia.viewMatrix == ib.viewMatrix
            && ia.projectionMatrix == ib.projectionMatrix && sa.enabled == sb.enabled && sa.paths == sb.paths
-           && sa.directPaths == sb.directPaths && sa.hydraRprims == sb.hydraRprims
-           && sa.hydraMappingResolved == sb.hydraMappingResolved && sa.proxyTargets == sb.proxyTargets
-           && sa.color == sb.color && sa.radius == sb.radius && lhs.captureObjects == rhs.captureObjects
-           && lhs.captureVisible == rhs.captureVisible && lhs.captureElementId == rhs.captureElementId
-           && lhs.captureElementPixel == rhs.captureElementPixel && lhs.captureGpuPick == rhs.captureGpuPick
-           && lhs.gpuPickPixel == rhs.gpuPickPixel && lhs.gpuPickExcludes == rhs.gpuPickExcludes
+           && sa.leadPaths == sb.leadPaths && sa.directPaths == sb.directPaths
+           && sa.leadDirectPaths == sb.leadDirectPaths && sa.hydraRprims == sb.hydraRprims
+           && sa.leadHydraRprims == sb.leadHydraRprims && sa.hydraMappingResolved == sb.hydraMappingResolved
+           && sa.leadHydraMappingResolved == sb.leadHydraMappingResolved && sa.proxyTargets == sb.proxyTargets
+           && sa.leadProxyTargets == sb.leadProxyTargets && sa.color == sb.color
+           && sa.secondaryColor == sb.secondaryColor && sa.radius == sb.radius
+           && lhs.captureObjects == rhs.captureObjects && lhs.captureVisible == rhs.captureVisible
+           && lhs.captureElementId == rhs.captureElementId && lhs.captureElementPixel == rhs.captureElementPixel
+           && lhs.captureGpuPick == rhs.captureGpuPick && lhs.gpuPickPixel == rhs.gpuPickPixel
+           && lhs.gpuPickExcludes == rhs.gpuPickExcludes
            && lhs.captureProjectionMatrices == rhs.captureProjectionMatrices && lhs.nearClip == rhs.nearClip
            && lhs.farClip == rhs.farClip && lhs.orthographic == rhs.orthographic
            && lhs.projectionMatrix == rhs.projectionMatrix && lhs.shaderPath == rhs.shaderPath
@@ -1371,12 +1406,17 @@ RenderTask::Prepare(HdTaskContext* ctx, HdRenderIndex* renderIndex)
                                              m_params.selectionOutline.proxyTargets,
                                              m_params.selectionOutline.hydraRprims,
                                              m_params.selectionOutline.hydraMappingResolved, &selectedInstances);
-        m_shader->ensureSelectedMask(ids);
-        m_shader->ensureSelectedInstanceMask(selectedInstances);
+        std::vector<std::pair<int32_t, int32_t>> leadSelectedInstances;
+        const std::vector<int32_t>& leadIds = m_sceneIdPass->selectedPrimIds(
+            m_params.selectionOutline.leadPaths, m_params.selectionOutline.leadDirectPaths,
+            m_params.selectionOutline.leadProxyTargets, m_params.selectionOutline.leadHydraRprims,
+            m_params.selectionOutline.leadHydraMappingResolved, &leadSelectedInstances, true);
+        m_shader->ensureSelectedMask(ids, leadIds);
+        m_shader->ensureSelectedInstanceMask(selectedInstances, leadSelectedInstances);
     }
     else if (m_shader) {
-        m_shader->ensureSelectedMask({});
-        m_shader->ensureSelectedInstanceMask({});
+        m_shader->ensureSelectedMask({}, {});
+        m_shader->ensureSelectedInstanceMask({}, {});
     }
 }
 
@@ -1497,6 +1537,7 @@ RenderTask::Execute(HdTaskContext* ctx)
                     && outputColor != inputColor) {
                     SelectionConstants constants;
                     constants.color = m_params.selectionOutline.color;
+                    constants.secondaryColor = m_params.selectionOutline.secondaryColor;
                     constants.screenSize = screenSize;
                     constants.selectedMaskSize = m_shader->selectedMaskSize;
                     constants.selectedInstanceMaskSize = m_shader->selectedInstanceMaskSize;
@@ -1504,7 +1545,6 @@ RenderTask::Execute(HdTaskContext* ctx)
                     constants.selectedInstancePairCount = m_shader->selectedInstancePairCount;
                     constants.radius = static_cast<int>(
                         std::clamp(m_params.selectionOutline.radius, 1u, kMaxSelectionRadius));
-
                     m_shader->selection.BindTextures({ inputColor, scenePrimId, sceneInstanceId,
                                                        m_shader->selectedIdMask, m_shader->selectedInstanceMask });
                     m_shader->selection.SetShaderConstants(sizeof(constants), &constants);

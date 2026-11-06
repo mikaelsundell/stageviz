@@ -6,13 +6,13 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>1200</width>
+    <width>1000</width>
     <height>800</height>
    </rect>
   </property>
   <property name="minimumSize">
    <size>
-    <width>800</width>
+    <width>1000</width>
     <height>600</height>
    </size>
   </property>
@@ -74,7 +74,7 @@
           </property>
           <property name="minimumSize">
            <size>
-            <width>280</width>
+            <width>240</width>
             <height>0</height>
            </size>
           </property>
@@ -350,12 +350,17 @@
                 <item>
                  <widget class="QToolButton" name="pivot">
                   <property name="minimumSize">
-                   <size><width>32</width><height>32</height></size>
+                   <size>
+                    <width>32</width>
+                    <height>32</height>
+                   </size>
                   </property>
                   <property name="toolTip">
                    <string>Edit pivot frames with Move, Rotate, or Scale while keeping geometry stationary.</string>
                   </property>
-                  <property name="checkable"><bool>true</bool></property>
+                  <property name="checkable">
+                   <bool>true</bool>
+                  </property>
                  </widget>
                 </item>
                 <item>
@@ -507,6 +512,12 @@
                    <verstretch>0</verstretch>
                   </sizepolicy>
                  </property>
+                 <property name="minimumSize">
+                  <size>
+                   <width>0</width>
+                   <height>0</height>
+                  </size>
+                 </property>
                  <layout class="QVBoxLayout" name="verticalLayout_2">
                   <property name="spacing">
                    <number>2</number>
@@ -525,31 +536,6 @@
                   </property>
                   <item>
                    <widget class="stageviz::RenderView" name="renderView" native="true"/>
-                  </item>
-                  <item>
-                   <widget class="QWidget" name="timelineWidget" native="true">
-                    <property name="sizePolicy">
-                     <sizepolicy hsizetype="Preferred" vsizetype="Fixed">
-                      <horstretch>0</horstretch>
-                      <verstretch>0</verstretch>
-                     </sizepolicy>
-                    </property>
-                    <property name="minimumSize">
-                     <size>
-                      <width>0</width>
-                      <height>32</height>
-                     </size>
-                    </property>
-                    <property name="maximumSize">
-                     <size>
-                      <width>16777215</width>
-                      <height>32</height>
-                     </size>
-                    </property>
-                    <property name="DockWidget" stdset="0">
-                     <bool>true</bool>
-                    </property>
-                   </widget>
                   </item>
                  </layout>
                 </widget>
@@ -763,7 +749,7 @@
           </property>
           <property name="minimumSize">
            <size>
-            <width>280</width>
+            <width>240</width>
             <height>0</height>
            </size>
           </property>
@@ -796,7 +782,7 @@
     <rect>
      <x>0</x>
      <y>0</y>
-     <width>1200</width>
+     <width>1000</width>
      <height>21</height>
     </rect>
    </property>
@@ -1151,9 +1137,15 @@
    </property>
   </action>
   <action name="displayPivot">
-   <property name="checkable"><bool>true</bool></property>
-   <property name="text"><string>Pivot</string></property>
-   <property name="toolTip"><string>Edit pivot frames with Move, Rotate, or Scale while keeping geometry stationary.</string></property>
+   <property name="checkable">
+    <bool>true</bool>
+   </property>
+   <property name="text">
+    <string>Pivot</string>
+   </property>
+   <property name="toolTip">
+    <string>Edit pivot frames with Move, Rotate, or Scale while keeping geometry stationary.</string>
+   </property>
   </action>
   <action name="displayFrameSelected">
    <property name="text">
@@ -1333,32 +1325,60 @@
    </property>
   </action>
   <action name="createPointLight">
-   <property name="text"><string>Point Light</string></property>
-   <property name="toolTip"><string>Create a USD point light</string></property>
+   <property name="text">
+    <string>Point Light</string>
+   </property>
+   <property name="toolTip">
+    <string>Create a USD point light</string>
+   </property>
   </action>
   <action name="createSpotLight">
-   <property name="text"><string>Spot Light</string></property>
-   <property name="toolTip"><string>Create a USD spot light</string></property>
+   <property name="text">
+    <string>Spot Light</string>
+   </property>
+   <property name="toolTip">
+    <string>Create a USD spot light</string>
+   </property>
   </action>
   <action name="createDistantLight">
-   <property name="text"><string>Distant Light</string></property>
-   <property name="toolTip"><string>Create a USD distant light</string></property>
+   <property name="text">
+    <string>Distant Light</string>
+   </property>
+   <property name="toolTip">
+    <string>Create a USD distant light</string>
+   </property>
   </action>
   <action name="createRectLight">
-   <property name="text"><string>Rect Light</string></property>
-   <property name="toolTip"><string>Create a USD rect light</string></property>
+   <property name="text">
+    <string>Rect Light</string>
+   </property>
+   <property name="toolTip">
+    <string>Create a USD rect light</string>
+   </property>
   </action>
   <action name="createDiskLight">
-   <property name="text"><string>Disk Light</string></property>
-   <property name="toolTip"><string>Create a USD disk light</string></property>
+   <property name="text">
+    <string>Disk Light</string>
+   </property>
+   <property name="toolTip">
+    <string>Create a USD disk light</string>
+   </property>
   </action>
   <action name="createCylinderLight">
-   <property name="text"><string>Cylinder Light</string></property>
-   <property name="toolTip"><string>Create a USD cylinder light</string></property>
+   <property name="text">
+    <string>Cylinder Light</string>
+   </property>
+   <property name="toolTip">
+    <string>Create a USD cylinder light</string>
+   </property>
   </action>
   <action name="createDomeLight">
-   <property name="text"><string>Dome Light</string></property>
-   <property name="toolTip"><string>Create a USD dome light</string></property>
+   <property name="text">
+    <string>Dome Light</string>
+   </property>
+   <property name="toolTip">
+    <string>Create a USD dome light</string>
+   </property>
   </action>
   <action name="createSphere">
    <property name="text">

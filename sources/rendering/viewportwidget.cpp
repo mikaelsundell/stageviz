@@ -272,6 +272,7 @@ ViewportWidgetPrivate::initGL()
 
     d.renderEngine->setSelected(cachedVisibleSelection());
     d.renderEngine->setSelectionColor(ui()->color(UI::ColorRole::Selection));
+    d.renderEngine->setSecondarySelectionColor(ui()->color(UI::ColorRole::SelectionAlt));
     updateRenderEngineSettings();
 
     if (!d.renderEngine->initialize()) {
@@ -407,6 +408,12 @@ ViewportWidgetPrivate::initContext()
             d.performanceStats = QImage();
         updateOverlay();
     });
+    connect(ui(), &UI::axisSizeChanged, this, [this](UI::UIScale scale) {
+        if (scale == UI::UIScale::Medium && viewState()->cameraAxisEnabled()) {
+            updateAxis();
+            updateOverlay();
+        }
+    });
     connect(viewState(), &ViewState::cameraAxisEnabledChanged, this, [this](bool enabled) {
         if (enabled)
             updateAxis();
@@ -491,12 +498,14 @@ ViewportWidgetPrivate::paintGL()
     d.renderEngine->setCamera(viewCamera()->camera());
     d.renderEngine->setInteractiveNavigation(d.navigating);
     d.renderEngine->setSize(widgetSize());
+    d.renderEngine->setDevicePixelRatio(d.glwidget->devicePixelRatioF());
     d.renderEngine->setViewport(renderViewport());
     d.renderEngine->setMask(d.mask);
 
 
     d.renderEngine->setSelected(cachedVisibleSelection());
     d.renderEngine->setSelectionColor(ui()->color(UI::ColorRole::Selection));
+    d.renderEngine->setSecondarySelectionColor(ui()->color(UI::ColorRole::SelectionAlt));
     updateRenderEngineSettings();
 
     QElapsedTimer gpuTimer;
@@ -557,7 +566,7 @@ ViewportWidgetPrivate::paintOverlay(QPainter& painter)
     }
 
     if (viewState() && viewState()->cameraAxisEnabled()) {
-        const int margin = 8;
+        const int margin = qRound(ui()->axisSize(UI::UIScale::Medium) / 9.0);
         const int axisHeight = qRound(d.auxiliary->axisImage().height() / d.auxiliary->axisImage().devicePixelRatio());
         painter.drawImage(QPoint(margin, d.glwidget->height() - margin - axisHeight), d.auxiliary->axisImage());
     }
@@ -723,42 +732,30 @@ ViewportWidgetPrivate::mousePressEvent(QMouseEvent* event)
 
     if (event->button() == Qt::LeftButton && viewState() && viewState()->cameraAxisEnabled()
         && !d.auxiliary->axisImage().isNull()) {
-        const int margin = 8;
+        const int margin = qRound(ui()->axisSize(UI::UIScale::Medium) / 9.0);
         const int axisHeight = qRound(d.auxiliary->axisImage().height() / d.auxiliary->axisImage().devicePixelRatio());
         const QPointF local = event->position() - QPointF(margin, d.glwidget->height() - margin - axisHeight);
-        const GfMatrix4d viewMatrix = viewCamera()->camera().GetFrustum().ComputeViewMatrix();
-        const GfVec3d directions[3] = { viewMatrix.TransformDir(GfVec3d(1, 0, 0)),
-                                        viewMatrix.TransformDir(GfVec3d(0, 1, 0)),
-                                        viewMatrix.TransformDir(GfVec3d(0, 0, 1)) };
-        // Draw order is farthest first; check nearest first for overlapping bubbles.
-        int order[3] = { 0, 1, 2 };
-        std::sort(std::begin(order), std::end(order),
-                  [&](int a, int b) { return directions[a][2] < directions[b][2]; });
-        for (int i = 2; i >= 0; --i) {
-            const int axis = order[i];
-            const QPointF bubble(48.0 + directions[axis][0] * 30.0, 48.0 - directions[axis][1] * 30.0);
-            const QPointF delta = local - bubble;
-            if (delta.x() * delta.x() + delta.y() * delta.y() <= 100.0) {
-                d.drag = false;
-                d.selectionTool->cancel();
-                d.mousepos = event->pos();
-                // Use the shared camera directly; the stage-up convention is
-                // already represented by ViewCamera::cameraUp().
-                ViewCamera* camera = viewCamera();
-                if (camera) {
-                    const bool zUp = camera->cameraUp() == ViewCamera::Z;
-                    ViewCamera::CameraView view;
-                    switch (axis) {
-                    case 0: view = ViewCamera::SideView; break;
-                    case 1: view = zUp ? ViewCamera::FrontView : ViewCamera::TopView; break;
-                    case 2: view = zUp ? ViewCamera::TopView : ViewCamera::FrontView; break;
-                    default: return;
-                    }
-                    camera->setCameraView(view);
+        const int axis = d.auxiliary->hitTestAxis(local, viewCamera()->camera());
+        if (axis >= 0) {
+            d.drag = false;
+            d.selectionTool->cancel();
+            d.mousepos = event->pos();
+            // Use the shared camera directly; the stage-up convention is
+            // already represented by ViewCamera::cameraUp().
+            ViewCamera* camera = viewCamera();
+            if (camera) {
+                const bool zUp = camera->cameraUp() == ViewCamera::Z;
+                ViewCamera::CameraView view;
+                switch (axis) {
+                case 0: view = ViewCamera::SideView; break;
+                case 1: view = zUp ? ViewCamera::FrontView : ViewCamera::TopView; break;
+                case 2: view = zUp ? ViewCamera::TopView : ViewCamera::FrontView; break;
+                default: return;
                 }
-                event->accept();
-                return;
+                camera->setCameraView(view);
             }
+            event->accept();
+            return;
         }
     }
 
@@ -1065,14 +1062,16 @@ ViewportWidgetPrivate::updatePrims(const NoticeBatch& batch)
     d.sceneTotalsDirty = true;
     d.selectionTool->invalidateVisibleSelection();
     d.selectionTool->invalidateStage();
-    SignalGuard::Scope guard(this);
-    if (d.renderEngine)
-        d.renderEngine->invalidateSelectionCache();
+    {
+        SignalGuard::Scope guard(this);
+        if (d.renderEngine)
+            d.renderEngine->invalidateSelectionCache();
+    }
 
     // A transform changed outside the active gizmo operation (for example Undo
     // or Redo), so the cached manipulation pivot may no longer match the stage.
-    // Keep it stable while flushing this gizmo's own deferred notices; otherwise
-    // rotate/scale would recompute the pivot from a new world-space bound and jump.
+    // Keep it stable while flushing this gizmo's own deferred notices to avoid
+    // recomputing the lead object's pivot midway through an interactive edit.
     const bool invalidatePivot = !d.transform->dragging() && !d.transform->deferringUpdates();
     if (invalidatePivot) {
         d.transform->invalidate();
@@ -1160,11 +1159,17 @@ ViewportWidgetPrivate::updateCamera(const GfCamera& camera)
 void
 ViewportWidgetPrivate::updateSelection(const QList<SdfPath>& paths)
 {
-    SignalGuard::Scope guard(this);
-    d.selection = paths;
-    d.selectionTool->invalidateVisibleSelection();
-
+    {
+        SignalGuard::Scope guard(this);
+        d.selection = paths;
+        d.selectionTool->invalidateVisibleSelection();
+    }
+    // The guard blocks signals on the GL widget. Notify the transform after
+    // it has been released so the gizmo panel receives the refreshed TRS for
+    // the new selection as well as the selection-state notifications below.
     d.transform->selectionChanged(paths.isEmpty());
+    Q_EMIT d.glwidget->transformStateChanged();
+    Q_EMIT d.glwidget->transformSelectionChanged();
 
     if (d.renderEngine) {
         const QList<SdfPath>& visible = cachedVisibleSelection();
@@ -1772,10 +1777,17 @@ ViewportWidget::transformEnabled() const
     return p->d.transform->enabled();
 }
 
+bool
+ViewportWidget::transformHandleAvailable()
+{
+    return p->d.transform->hasActiveHandle();
+}
+
 void
 ViewportWidget::setTransformEnabled(bool enabled)
 {
     p->d.transform->setEnabled(enabled);
+    Q_EMIT transformStateChanged();
 }
 
 bool
@@ -1788,6 +1800,44 @@ void
 ViewportWidget::setPivotEnabled(bool enabled)
 {
     p->d.transform->setPivotEnabled(enabled);
+    Q_EMIT transformStateChanged();
+}
+
+ViewportGizmo::ReferenceFrame
+ViewportWidget::transformReferenceFrame() const
+{
+    return p->d.transform->referenceFrame();
+}
+
+void
+ViewportWidget::setTransformReferenceFrame(ViewportGizmo::ReferenceFrame frame)
+{
+    p->d.transform->setReferenceFrame(frame);
+    Q_EMIT transformStateChanged();
+}
+
+bool
+ViewportWidget::applyNumericTransform(const GfVec3d& values, QString& error)
+{
+    return p->d.transform->applyNumeric(values, error);
+}
+
+bool
+ViewportWidget::beginNumericTransform(QString& error)
+{
+    return p->d.transform->beginNumericEdit(error);
+}
+
+bool
+ViewportWidget::updateNumericTransform(const GfVec3d& values, QString& error)
+{
+    return p->d.transform->updateNumericEdit(values, error);
+}
+
+void
+ViewportWidget::finishNumericTransform()
+{
+    p->d.transform->finishNumericEdit();
 }
 
 bool
@@ -1800,6 +1850,7 @@ void
 ViewportWidget::setMoveEnabled(bool enabled)
 {
     p->d.transform->setMode(ViewportTransform::Mode::Move, enabled);
+    Q_EMIT transformStateChanged();
 }
 
 bool
@@ -1812,6 +1863,7 @@ void
 ViewportWidget::setRotateEnabled(bool enabled)
 {
     p->d.transform->setMode(ViewportTransform::Mode::Rotate, enabled);
+    Q_EMIT transformStateChanged();
 }
 
 bool
@@ -1824,6 +1876,7 @@ void
 ViewportWidget::setScaleEnabled(bool enabled)
 {
     p->d.transform->setMode(ViewportTransform::Mode::Scale, enabled);
+    Q_EMIT transformStateChanged();
 }
 
 void

@@ -168,6 +168,16 @@ public:
     void setSize(const GfVec2i& size);
 
     /**
+     * @brief Sets the viewport device pixel ratio.
+     *
+     * This keeps screen-space effects at a consistent size in logical pixels
+     * across displays with different framebuffer scales.
+     *
+     * @param ratio Device pixels per logical pixel.
+     */
+    void setDevicePixelRatio(double ratio);
+
+    /**
      * @brief Returns the render resolution in device pixels.
      */
     const GfVec2i& size() const;
@@ -228,9 +238,17 @@ public:
 
     /**
      * @brief Sets the screen-space selection outline color.
+     *
      * @param color Selection color.
      */
     void setSelectionColor(const QColor& color);
+
+    /**
+     * @brief Sets the secondary screen-space selection outline color.
+     *
+     * @param color Secondary selection color.
+     */
+    void setSecondarySelectionColor(const QColor& color);
 
     /**
      * @brief Renders into the framebuffer of the current OpenGL context.

@@ -174,6 +174,13 @@ public:
     void setScaleEnabled(bool enabled);
 
     /**
+     * @brief Shows or hides the panel below the viewport.
+     *
+     * @param visible True to show the panel.
+     */
+    void setPanelVisible(bool visible);
+
+    /**
      * @brief Sets the USD time code evaluated by the viewport.
      */
     void setTimeCode(double timeCode);

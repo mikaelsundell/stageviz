@@ -4,7 +4,11 @@
 
 #include "renderview.h"
 #include "application.h"
+#include "gizmowidget.h"
 #include "notice.h"
+#include "selectionlist.h"
+#include "timelinewidget.h"
+#include "ui.h"
 #include "viewcontext.h"
 #include <QPointer>
 #include <pxr/usd/usdGeom/tokens.h>
@@ -33,6 +37,7 @@ public:
         QScopedPointer<ViewContext> context;
         QScopedPointer<Ui_RenderView> ui;
         QPointer<RenderView> view;
+        QPointer<GizmoWidget> gizmoWidget;
     };
     Data d;
 };
@@ -48,17 +53,33 @@ RenderViewPrivate::init()
     d.context->setSelectionList(session()->selectionList());
     d.context->setViewState(session()->viewState());
     viewportWidget()->setContext(d.context.data());
+    d.gizmoWidget = new GizmoWidget(viewportWidget(), d.view.data());
+    d.ui->gizmoWidgetLayout->addWidget(d.gizmoWidget);
+    TimelineWidget* timelineWidget = new TimelineWidget(d.view.data());
+    timelineWidget->setObjectName("timelineControls");
+    timelineWidget->setAttribute(Qt::WA_DeleteOnClose, false);
+    d.ui->timelineControlsLayout->addWidget(timelineWidget);
+
     // connect
     connect(viewportWidget(), &ViewportWidget::captureReady, d.view, &RenderView::captureReady);
     connect(viewportWidget(), &ViewportWidget::renderReady, d.view, &RenderView::renderReady);
     connect(viewportWidget(), &ViewportWidget::statusMessage, d.view, &RenderView::statusMessage);
     connect(viewportWidget(), &ViewportWidget::statusReady, d.view, &RenderView::statusReady);
+    connect(timelineWidget, &TimelineWidget::timeCodeChanged, d.view, &RenderView::setTimeCode);
+    connect(d.gizmoWidget, &GizmoWidget::activeChanged, d.ui->panelWidget,
+            [stack = d.ui->panelWidget](bool active) { stack->setCurrentIndex(active ? 1 : 0); });
+    connect(session()->selectionList(), &SelectionList::selectionChanged, d.ui->panelWidget,
+            [stack = d.ui->panelWidget, viewport = viewportWidget()](const QList<SdfPath>& paths) {
+                stack->setCurrentIndex(!paths.isEmpty() && viewport->transformHandleAvailable() ? 1 : 0);
+            });
+    connect(d.gizmoWidget, &GizmoWidget::statusMessage, d.view, &RenderView::statusMessage);
     connect(session(), &Session::boundingBoxChanged, this, &RenderViewPrivate::updateBoundingBox);
     connect(session(), &Session::maskChanged, this, &RenderViewPrivate::updateMask);
     connect(session(), &Session::primsChanged, this, &RenderViewPrivate::updatePrims);
     connect(session(), &Session::redrawRequested, viewportWidget(), QOverload<>::of(&QWidget::update));
     connect(session(), &Session::stageChanged, this, &RenderViewPrivate::updateStage);
     connect(session(), &Session::stageUpChanged, this, &RenderViewPrivate::updateStageUp);
+    d.ui->panelWidget->setCurrentIndex(d.gizmoWidget->isActive() ? 1 : 0);
 }
 
 ViewportWidget*
@@ -100,6 +121,8 @@ RenderViewPrivate::updateStage(UsdStageRefPtr stage, Session::LoadPolicy policy,
     else {
         viewportWidget()->close();
     }
+    if (d.gizmoWidget)
+        d.gizmoWidget->refresh();
 }
 
 void
@@ -220,6 +243,12 @@ void
 RenderView::setScaleEnabled(bool enabled)
 {
     p->viewportWidget()->setScaleEnabled(enabled);
+}
+
+void
+RenderView::setPanelVisible(bool visible)
+{
+    p->d.ui->panelWidget->setVisible(visible);
 }
 
 void

@@ -10,27 +10,27 @@
 
 namespace stageviz {
 
-class TimelineViewPrivate;
+class TimelineWidgetPrivate;
 
 /**
- * @class TimelineView
+ * @class TimelineWidget
  * @brief Timeline controls for scrubbing and playing stage animation.
  *
  * Displays the stage time range and sampled frames, and lets users scrub
  * or play the current stage time.
  */
-class TimelineView : public QWidget {
+class TimelineWidget : public QWidget {
     Q_OBJECT
 public:
     /**
-     * @brief Constructs the timeline view.
+     * @brief Constructs the timeline widget.
      */
-    explicit TimelineView(QWidget* parent = nullptr);
+    explicit TimelineWidget(QWidget* parent = nullptr);
 
     /**
-     * @brief Destroys the timeline view.
+     * @brief Destroys the timeline widget.
      */
-    ~TimelineView() override;
+    ~TimelineWidget() override;
 
 Q_SIGNALS:
     /**
@@ -39,7 +39,7 @@ Q_SIGNALS:
     void timeCodeChanged(double timeCode);
 
 private:
-    QScopedPointer<TimelineViewPrivate> p;
+    QScopedPointer<TimelineWidgetPrivate> p;
 };
 
 }  // namespace stageviz

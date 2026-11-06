@@ -489,9 +489,7 @@ ViewportSelectionPrivate::sweepEvent(const QRect& rect, QMouseEvent* event)
 
             if (!hitPath.IsEmpty() && d.host->pathMaskedIn(hitPath)) {
                 d.lastPickPaths.append(hitPath);
-
                 d.lastPickIndex = static_cast<int>(d.lastPickPaths.size()) - 1;
-
                 d.lastPickPosition = clickPosition;
 
                 selectedPaths.append(hitPath);
