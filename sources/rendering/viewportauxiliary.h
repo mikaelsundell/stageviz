@@ -6,6 +6,7 @@
 
 #include "stageviz.h"
 #include <QImage>
+#include <QPointF>
 #include <QScopedPointer>
 #include <pxr/base/gf/camera.h>
 #include <pxr/base/gf/vec3d.h>
@@ -73,6 +74,15 @@ public:
      * @brief Updates the camera-axis image.
      */
     void updateAxis(const GfCamera& camera, bool hasStage, qreal devicePixelRatio);
+
+    /**
+     * @brief Returns the camera-axis index at a point in the axis image.
+     *
+     * @param position Point in logical axis-image coordinates.
+     * @param camera Camera used to orient the displayed axes.
+     * @return X, Y, or Z axis index, or -1 when no axis bubble is hit.
+     */
+    int hitTestAxis(const QPointF& position, const GfCamera& camera) const;
 
     /**
      * @brief Returns the current camera-axis image.

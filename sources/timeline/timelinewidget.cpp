@@ -2,8 +2,9 @@
 // Copyright (c) 2025 - present Mikael Sundell
 // https://github.com/mikaelsundell/stageviz
 
-#include "timelineview.h"
+#include "timelinewidget.h"
 #include "application.h"
+#include "responsewidget.h"
 #include "session.h"
 #include "tracelocks.h"
 #include <QPointer>
@@ -22,13 +23,13 @@
 PXR_NAMESPACE_USING_DIRECTIVE
 
 // generated files
-#include "ui_timelineview.h"
+#include "ui_timelinewidget.h"
 
 namespace stageviz {
 
-class TimelineViewPrivate : public QObject {
+class TimelineWidgetPrivate : public QObject {
 public:
-    TimelineViewPrivate();
+    TimelineWidgetPrivate();
     void init();
     void updateStage(UsdStageRefPtr stage, Session::StageStatus status);
     void setFrame(int frame);
@@ -39,33 +40,34 @@ public:
         int maximum = 0;
         double framesPerSecond = 24.0;
         QTimer timer;
-        QScopedPointer<Ui_TimelineView> ui;
-        QPointer<TimelineView> view;
+        QScopedPointer<Ui_TimelineWidget> ui;
+        QPointer<TimelineWidget> view;
     };
     Data d;
 };
 
-TimelineViewPrivate::TimelineViewPrivate() = default;
+TimelineWidgetPrivate::TimelineWidgetPrivate() = default;
 
 void
-TimelineViewPrivate::init()
+TimelineWidgetPrivate::init()
 {
-    d.ui.reset(new Ui_TimelineView());
+    d.ui.reset(new Ui_TimelineWidget());
     d.ui->setupUi(d.view.data());
-    d.ui->timelineSlider->setTimelineMode(true);
+    auto* responseWidget = new ResponseWidget(d.view.data());
+    responseWidget->addGroup(640, { d.ui->play, d.ui->frame, d.ui->range });
+    d.ui->slider->setTimelineMode(true);
     d.timer.setInterval(1000 / 24);
 
     connect(session(), &Session::stageChanged, this,
             [this](UsdStageRefPtr stage, Session::LoadPolicy, Session::StageStatus status) {
                 updateStage(stage, status);
             });
-    connect(d.ui->timelineSlider, &QSlider::valueChanged, this, &TimelineViewPrivate::setFrame);
-    connect(d.ui->timelineFrame, &QSpinBox::valueChanged, this, &TimelineViewPrivate::setFrame);
-    connect(d.ui->timelinePlay, &QToolButton::toggled, this, &TimelineViewPrivate::togglePlayback);
+    connect(d.ui->slider, &QSlider::valueChanged, this, &TimelineWidgetPrivate::setFrame);
+    connect(d.ui->frame, &QSpinBox::valueChanged, this, &TimelineWidgetPrivate::setFrame);
+    connect(d.ui->play, &QToolButton::toggled, this, &TimelineWidgetPrivate::togglePlayback);
     connect(&d.timer, &QTimer::timeout, this, [this]() {
-        const int nextFrame = d.ui->timelineSlider->value() >= d.maximum ? d.minimum
-                                                                         : d.ui->timelineSlider->value() + 1;
-        d.ui->timelineSlider->setValue(nextFrame);
+        const int nextFrame = d.ui->slider->value() >= d.maximum ? d.minimum : d.ui->slider->value() + 1;
+        d.ui->slider->setValue(nextFrame);
     });
 
     QTimer::singleShot(0, d.view, [this]() {
@@ -75,13 +77,13 @@ TimelineViewPrivate::init()
 }
 
 void
-TimelineViewPrivate::updateStage(UsdStageRefPtr stage, Session::StageStatus status)
+TimelineWidgetPrivate::updateStage(UsdStageRefPtr stage, Session::StageStatus status)
 {
     d.timer.stop();
     {
-        const QSignalBlocker blocker(d.ui->timelinePlay);
-        d.ui->timelinePlay->setChecked(false);
-        d.ui->timelinePlay->setText(tr("Play"));
+        const QSignalBlocker blocker(d.ui->play);
+        d.ui->play->setChecked(false);
+        d.ui->play->setText(tr("Play"));
     }
 
     double start = 0.0;
@@ -138,7 +140,7 @@ TimelineViewPrivate::updateStage(UsdStageRefPtr stage, Session::StageStatus stat
     if (d.maximum < d.minimum)
         d.maximum = d.minimum;
 
-    d.ui->timelineSlider->setRange(d.minimum, d.maximum);
+    d.ui->slider->setRange(d.minimum, d.maximum);
     QList<int> tickValues = keyframes;
     if (tickValues.isEmpty() && d.maximum > d.minimum) {
         const int step = std::max(1, (d.maximum - d.minimum + 9) / 10);
@@ -146,55 +148,55 @@ TimelineViewPrivate::updateStage(UsdStageRefPtr stage, Session::StageStatus stat
             tickValues.append(frame);
         tickValues.append(d.maximum);
     }
-    d.ui->timelineSlider->setTickValues(tickValues);
-    d.ui->timelineFrame->setRange(d.minimum, d.maximum);
-    d.ui->timelineRange->setText(QStringLiteral("%1 – %2").arg(d.minimum).arg(d.maximum));
+    d.ui->slider->setTickValues(tickValues);
+    d.ui->frame->setRange(d.minimum, d.maximum);
+    d.ui->range->setText(QStringLiteral("%1 – %2").arg(d.minimum).arg(d.maximum));
     const bool hasTimeline = status == Session::StageStatus::Loaded && stage
                              && (d.maximum > d.minimum || !keyframes.isEmpty());
-    d.ui->timelinePlay->setEnabled(hasTimeline);
-    d.ui->timelineFrame->setEnabled(hasTimeline);
-    d.ui->timelineSlider->setEnabled(hasTimeline);
+    d.ui->play->setEnabled(hasTimeline);
+    d.ui->frame->setEnabled(hasTimeline);
+    d.ui->slider->setEnabled(hasTimeline);
     d.view->setEnabled(true);
     setFrame(d.minimum);
 }
 
 void
-TimelineViewPrivate::setFrame(int frame)
+TimelineWidgetPrivate::setFrame(int frame)
 {
     const int current = std::clamp(frame, d.minimum, d.maximum);
     {
-        const QSignalBlocker sliderBlocker(d.ui->timelineSlider);
-        const QSignalBlocker frameBlocker(d.ui->timelineFrame);
-        d.ui->timelineSlider->setValue(current);
-        d.ui->timelineFrame->setValue(current);
+        const QSignalBlocker sliderBlocker(d.ui->slider);
+        const QSignalBlocker frameBlocker(d.ui->frame);
+        d.ui->slider->setValue(current);
+        d.ui->frame->setValue(current);
     }
     Q_EMIT d.view->timeCodeChanged(current);
 }
 
 void
-TimelineViewPrivate::togglePlayback(bool playing)
+TimelineWidgetPrivate::togglePlayback(bool playing)
 {
     if (playing && d.maximum > d.minimum) {
-        d.ui->timelinePlay->setText(tr("Pause"));
+        d.ui->play->setText(tr("Pause"));
         d.timer.setInterval(std::max(1, static_cast<int>(std::round(1000.0 / d.framesPerSecond))));
         d.timer.start();
     }
     else {
         d.timer.stop();
-        d.ui->timelinePlay->setChecked(false);
-        d.ui->timelinePlay->setText(tr("Play"));
+        d.ui->play->setChecked(false);
+        d.ui->play->setText(tr("Play"));
     }
 }
 
-TimelineView::TimelineView(QWidget* parent)
+TimelineWidget::TimelineWidget(QWidget* parent)
     : QWidget(parent)
-    , p(new TimelineViewPrivate())
+    , p(new TimelineWidgetPrivate())
 {
     setAttribute(Qt::WA_StyledBackground, true);
     p->d.view = this;
     p->init();
 }
 
-TimelineView::~TimelineView() = default;
+TimelineWidget::~TimelineWidget() = default;
 
 }  // namespace stageviz

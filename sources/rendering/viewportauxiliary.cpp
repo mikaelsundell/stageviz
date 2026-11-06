@@ -29,6 +29,8 @@ namespace stageviz {
 
 class ViewportAuxiliaryPrivate {
 public:
+    QPointF axisBubblePosition(const GfVec3d& direction) const;
+    int hitTestAxis(const QPointF& position, const GfCamera& camera) const;
     void updateGrid(ViewState* state);
     void ensureMaterials();
     void authorStandardSurface(const SdfPath& materialPath, const GfVec3f& baseColor, float metalness, float roughness,
@@ -42,6 +44,15 @@ public:
     };
     Data d;
 };
+
+QPointF
+ViewportAuxiliaryPrivate::axisBubblePosition(const GfVec3d& direction) const
+{
+    const qreal size = ui()->axisSize(UI::UIScale::Medium);
+    const qreal center = size / 2.0;
+    const qreal radius = size * (11.0 / 36.0);
+    return QPointF(center + direction[0] * radius, center - direction[1] * radius);
+}
 
 void
 ViewportAuxiliaryPrivate::updateGrid(ViewState* state)
@@ -177,15 +188,10 @@ ViewportAuxiliaryPrivate::updateAxis(const GfCamera& camera, bool hasStage, qrea
     const GfVec3d xCam = viewMatrix.TransformDir(GfVec3d(1.0, 0.0, 0.0));
     const GfVec3d yCam = viewMatrix.TransformDir(GfVec3d(0.0, 1.0, 0.0));
     const GfVec3d zCam = viewMatrix.TransformDir(GfVec3d(0.0, 0.0, 1.0));
-    const int margin = 18;
-    const int radius = 30;
-    const int bubbleRadius = 10;
-    const int width = margin + radius * 2 + margin;
-    const int height = margin + radius * 2 + margin;
-    const QPoint center(margin + radius, margin + radius);
-    auto toPoint = [&](const GfVec3d& dir) -> QPoint {
-        return QPoint(qRound(center.x() + dir[0] * radius), qRound(center.y() - dir[1] * radius));
-    };
+    const int size = ui()->axisSize(UI::UIScale::Medium);
+    const QPointF center(size / 2.0, size / 2.0);
+    const qreal bubbleRadius = size / 9.0;
+    const qreal shadowOffset = size / 72.0;
     struct AxisLine {
         QString label;
         QColor color;
@@ -199,7 +205,7 @@ ViewportAuxiliaryPrivate::updateAxis(const GfCamera& camera, bool hasStage, qrea
     const qreal opacity = hasStage ? 1.0 : 0.35;
     const qreal dpr = devicePixelRatio;
 
-    d.axis = QImage(qRound(width * dpr), qRound(height * dpr), QImage::Format_ARGB32_Premultiplied);
+    d.axis = QImage(qRound(size * dpr), qRound(size * dpr), QImage::Format_ARGB32_Premultiplied);
     d.axis.setDevicePixelRatio(dpr);
     d.axis.fill(Qt::transparent);
     QPainter painter(&d.axis);
@@ -207,29 +213,55 @@ ViewportAuxiliaryPrivate::updateAxis(const GfCamera& camera, bool hasStage, qrea
     painter.setRenderHint(QPainter::Antialiasing, true);
     painter.setRenderHint(QPainter::TextAntialiasing, true);
     QFont font = app()->font();
-    font.setPixelSize(ui()->fontSize(UI::UIScale::Small));
+    font.setPixelSize(std::max(1, qRound(ui()->fontSize(UI::UIScale::Small) * size / 72.0)));
     font.setBold(true);
     painter.setFont(font);
     QFontMetrics fm(font);
     painter.setPen(Qt::NoPen);
     painter.setBrush(QColor(0, 0, 0, 20));
-    painter.drawEllipse(center, radius - 10, radius - 10);
+    painter.drawEllipse(center, size / 6.0, size / 6.0);
 
     for (const AxisLine& axis : axes) {
-        const QPoint end = toPoint(axis.dir);
-        painter.setPen(QPen(axis.color, 2.0, Qt::SolidLine, Qt::RoundCap));
+        const QPointF end = axisBubblePosition(axis.dir);
+        painter.setPen(QPen(axis.color, size / 36.0, Qt::SolidLine, Qt::RoundCap));
         painter.drawLine(center, end);
         painter.setPen(Qt::NoPen);
         painter.setBrush(axis.color);
         painter.drawEllipse(end, bubbleRadius, bubbleRadius);
         const int textWidth = fm.horizontalAdvance(axis.label);
-        const int textX = end.x() - textWidth / 2;
-        const int textY = end.y() + (fm.ascent() - fm.descent()) / 2;
+        const qreal textX = end.x() - textWidth / 2.0;
+        const qreal textY = end.y() + (fm.ascent() - fm.descent()) / 2.0;
         painter.setPen(QColor(0, 0, 0, 160));
-        painter.drawText(textX + 1, textY + 1, axis.label);
+        painter.drawText(QPointF(textX + shadowOffset, textY + shadowOffset), axis.label);
         painter.setPen(Qt::white);
-        painter.drawText(textX, textY, axis.label);
+        painter.drawText(QPointF(textX, textY), axis.label);
     }
+}
+
+int
+ViewportAuxiliaryPrivate::hitTestAxis(const QPointF& position, const GfCamera& camera) const
+{
+    const GfMatrix4d viewMatrix = camera.GetFrustum().ComputeViewMatrix();
+    const GfVec3d directions[3] = { viewMatrix.TransformDir(GfVec3d(1, 0, 0)),
+                                    viewMatrix.TransformDir(GfVec3d(0, 1, 0)),
+                                    viewMatrix.TransformDir(GfVec3d(0, 0, 1)) };
+    int order[3] = { 0, 1, 2 };
+    std::sort(std::begin(order), std::end(order), [&](int a, int b) { return directions[a][2] < directions[b][2]; });
+
+    const qreal hitRadius = ui()->axisSize(UI::UIScale::Medium) / 6.0;
+    for (int i = 2; i >= 0; --i) {
+        const int axis = order[i];
+        const QPointF delta = position - axisBubblePosition(directions[axis]);
+        if (delta.x() * delta.x() + delta.y() * delta.y() <= hitRadius * hitRadius)
+            return axis;
+    }
+    return -1;
+}
+
+int
+ViewportAuxiliary::hitTestAxis(const QPointF& position, const GfCamera& camera) const
+{
+    return p->hitTestAxis(position, camera);
 }
 
 void

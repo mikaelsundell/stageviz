@@ -133,6 +133,9 @@ foreach(case IN ITEMS
     viewport_components_api
     viewport_lights_api
     viewport_transform_pivot_api
+    viewport_transform_hierarchy_sync_api
+    viewport_transform_individual_rotation_api
+    viewport_gizmo_default_frame_api
     transform_operation_applied_api
     pivot_operation_applied_api
     settings_api

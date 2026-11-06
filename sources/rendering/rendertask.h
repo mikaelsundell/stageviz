@@ -94,15 +94,21 @@ struct HydraSelectionRprim {
 struct SelectionOutlineSettings {
     bool enabled = false;
     SdfPathVector paths;
+    SdfPathVector leadPaths;
     // Ordinary leaf geometry can use direct render-index lookup. Hierarchy,
     // native instance and proxy paths are resolved by the Hydra mapper.
     SdfPathVector directPaths;
+    SdfPathVector leadDirectPaths;
     // Rprim paths produced by Stageviz's USD-to-Hydra selection mapper.
     // When resolved, these already account for native instance prototypes.
     std::vector<HydraSelectionRprim> hydraRprims;
+    std::vector<HydraSelectionRprim> leadHydraRprims;
     bool hydraMappingResolved = false;
+    bool leadHydraMappingResolved = false;
     std::vector<SelectionProxyTarget> proxyTargets;
+    std::vector<SelectionProxyTarget> leadProxyTargets;
     GfVec4f color = GfVec4f(1.0f, 0.82f, 0.0f, 1.0f);
+    GfVec4f secondaryColor = GfVec4f(220.0f / 255.0f, 220.0f / 255.0f, 220.0f / 255.0f, 1.0f);
     unsigned int radius = 3;
 };
 

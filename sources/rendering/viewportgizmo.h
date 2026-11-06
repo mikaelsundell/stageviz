@@ -32,12 +32,18 @@ public:
     enum class Mode { None, Move, Rotate, Scale };
 
     /**
+     * @brief Identifies the coordinate frame used by transform handles.
+     */
+    enum class ReferenceFrame { World, Object, Parent, Camera };
+
+    /**
      * @brief Describes the manipulation frame and active visual handles.
      */
     struct Frame {
         Mode mode = Mode::None;
         bool enabled = false;
         bool pivotEditing = false;
+        ReferenceFrame referenceFrame = ReferenceFrame::Object;
         bool pivotValid = false;
         bool orientationValid = false;
         GfVec3d pivot = GfVec3d(0.0);
@@ -46,6 +52,8 @@ public:
         int activeAxis = 0;
         double rotationStartAngle = 0.0;
         double rotationDeltaAngle = 0.0;
+        bool rotationStartOrientationValid = false;
+        GfMatrix4d rotationStartOrientation = GfMatrix4d(1.0);
     };
 
     /**

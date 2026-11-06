@@ -33,6 +33,7 @@ public:
     QString iconPath(UI::IconRole role) const;
     int iconSize(UI::UIScale scale) const;
     int gizmoSize(UI::UIScale scale) const;
+    int axisSize(UI::UIScale scale) const;
     QString roleName(UI::ColorRole role) const;
     QString roleName(UI::IconRole role) const;
     QString roleName(UI::UIScale scale) const;
@@ -56,6 +57,7 @@ public:
         QHash<QString, int> fontSizes;
         QHash<QString, int> iconSizes;
         QHash<QString, int> gizmoSizes;
+        QHash<QString, int> axisSizes;
         double transformMoveSnap = 1.0;
         double transformRotateSnap = 1.0;
         double transformScaleSnap = 1.0;
@@ -228,7 +230,7 @@ UIPrivate::updateTheme()
     map(UI::ColorRole::Render, QColor::fromHsl(0, 0, 40));
     map(UI::ColorRole::RenderAlt, QColor::fromHsl(210, 6, 25));
     map(UI::ColorRole::Selection, QColor::fromHsl(35, 240, 160));
-    map(UI::ColorRole::SelectionAlt, QColor::fromHsl(55, 140, 120));
+    map(UI::ColorRole::SelectionAlt, QColor::fromHsl(0, 0, 220));
     map(UI::ColorRole::Sweep, QColor(Qt::white));
     map(UI::ColorRole::Text, QColor::fromHsl(0, 0, 220));
     map(UI::ColorRole::TextAlt, QColor::fromHsl(0, 0, 150));
@@ -298,6 +300,10 @@ UIPrivate::updateTheme()
     d.gizmoSizes[roleName(UI::UIScale::Small)] = 32;
     d.gizmoSizes[roleName(UI::UIScale::Medium)] = 64;
     d.gizmoSizes[roleName(UI::UIScale::Large)] = 128;
+
+    d.axisSizes[roleName(UI::UIScale::Small)] = 36;
+    d.axisSizes[roleName(UI::UIScale::Medium)] = 72;
+    d.axisSizes[roleName(UI::UIScale::Large)] = 144;
 }
 
 QColorSpace
@@ -366,6 +372,12 @@ int
 UIPrivate::gizmoSize(UI::UIScale scale) const
 {
     return d.gizmoSizes.value(roleName(scale), -1);
+}
+
+int
+UIPrivate::axisSize(UI::UIScale scale) const
+{
+    return d.axisSizes.value(roleName(scale), -1);
 }
 
 QString
@@ -497,6 +509,26 @@ UI::setGizmoSize(UIScale scale, int size)
         return;
 
     p->d.gizmoSizes[key] = size;
+}
+
+int
+UI::axisSize(UIScale scale) const
+{
+    return p->axisSize(scale);
+}
+
+void
+UI::setAxisSize(UIScale scale, int size)
+{
+    if (size <= 0)
+        return;
+
+    const QString key = p->roleName(scale);
+    if (p->d.axisSizes.value(key) == size)
+        return;
+
+    p->d.axisSizes[key] = size;
+    Q_EMIT axisSizeChanged(scale);
 }
 
 double

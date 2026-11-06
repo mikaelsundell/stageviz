@@ -32,7 +32,6 @@
 #include "session.h"
 #include "settings.h"
 #include "signalguard.h"
-#include "timelineview.h"
 #include "tracelocks.h"
 #include "ui.h"
 #include "usdutils.h"
@@ -247,7 +246,6 @@ public:
         QScopedPointer<Ui_Viewer> ui;
         QPointer<Viewer> viewer;
         QPointer<OutlinerView> outlinerView;
-        QPointer<TimelineView> timelineView;
         QPointer<PropertyView> propertyView;
         QPointer<PythonShelf> pythonShelf;
         QPointer<ProgressDialog> progressDialog;
@@ -283,7 +281,6 @@ ViewerPrivate::init()
     d.ui->fileRevealInFolder->setEnabled(false);
     attach(d.ui->displayIsolate);
     initDocks();
-    connect(d.timelineView, &TimelineView::timeCodeChanged, renderView(), &RenderView::setTimeCode);
     ViewState* viewState = session()->viewState();
     const QColor backgroundColor(settings()->value("backgroundColor", ui()->color(UI::ColorRole::Render)).toString());
     viewState->setBackgroundColor(backgroundColor);
@@ -684,11 +681,6 @@ ViewerPrivate::initDocks()
     d.propertyView->setObjectName("propertyView");
     d.propertyView->setAttribute(Qt::WA_DeleteOnClose, false);
     addPanelView(d.ui->propertyWidget, d.propertyView, QMargins(0, 0, 0, 0));
-
-    d.timelineView = new TimelineView(d.ui->timelineWidget);
-    d.timelineView->setObjectName("timelineView");
-    d.timelineView->setAttribute(Qt::WA_DeleteOnClose, false);
-    addPanelView(d.ui->timelineWidget, d.timelineView, QMargins(0, 0, 0, 0));
 
     d.pythonShelf = new PythonShelf(d.ui->pythonShelfWidget);
     d.pythonShelf->setObjectName("pythonShelf");
@@ -2355,7 +2347,6 @@ ViewerPrivate::togglePanels()
         const int total = std::max(1, d.ui->splitter->width());
         d.ui->splitter->setSizes({ 0, total, 0 });
         d.panelsHidden = true;
-        d.ui->timelineWidget->hide();
     }
     else {
         QList<int> sizes = d.panelSplitterSizes;
@@ -2368,7 +2359,6 @@ ViewerPrivate::togglePanels()
 
         d.ui->splitter->setSizes(sizes);
         d.panelsHidden = false;
-        d.ui->timelineWidget->show();
     }
 
     renderView()->setFocus();

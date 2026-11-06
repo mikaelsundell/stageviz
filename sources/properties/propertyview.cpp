@@ -62,7 +62,7 @@ PropertyViewPrivate::init()
     d.ui->propertyTree->setHeaderLabels(QStringList() << "Name"
                                                       << "Value");
     d.ui->propertyTree->setContext(d.context.data());
-    d.ui->propertyTree->setColumnWidth(0, 200);
+    d.ui->propertyTree->setColumnWidth(0, 160);
     d.ui->propertyTree->header()->setSectionResizeMode(1, QHeaderView::Stretch);
 
     d.ui->clear->setIcon(ui()->icon(UI::IconRole::Clear));

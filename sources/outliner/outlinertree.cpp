@@ -987,6 +987,19 @@ OutlinerTreePrivate::itemSelectionChanged()
             paths.append(SdfPath(QStringToString(pathString)));
     }
 
+    // QTreeWidget::selectedItems() returns visual tree order, which loses
+    // the order in which a multi-selection was made. Preserve the current
+    // selected row as the active (most recently selected) prim by moving it
+    // to the end of the semantic selection list.
+    if (auto* currentItem = dynamic_cast<PrimItem*>(d.tree->currentItem())) {
+        const SdfPath currentPath = currentItem->path();
+        const auto current = std::find(paths.begin(), paths.end(), currentPath);
+        if (current != paths.end() && current != paths.end() - 1) {
+            paths.erase(current);
+            paths.append(currentPath);
+        }
+    }
+
     SelectionList* list = selectionList();
     if (!list)
         return;

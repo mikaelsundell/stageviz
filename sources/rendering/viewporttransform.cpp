@@ -22,11 +22,9 @@
 #include <cmath>
 #include <pxr/base/gf/math.h>
 #include <pxr/base/gf/rotation.h>
-#include <pxr/usd/usdGeom/bboxCache.h>
 #include <pxr/usd/usdGeom/imageable.h>
 #include <pxr/usd/usdGeom/metrics.h>
 #include <pxr/usd/usdGeom/xformable.h>
-#include <pxr/usd/usdLux/lightAPI.h>
 
 PXR_NAMESPACE_USING_DIRECTIVE
 
@@ -39,24 +37,32 @@ public:
     static GfMatrix4d frameWithoutScale(const GfMatrix4d& matrix);
     static GfMatrix4d frameWithoutScale(const UsdPrim& prim);
     static GfVec3d eulerWithoutScale(const GfMatrix4d& matrix);
-    QList<SdfPath> selectedVisiblePaths() const;
-    QList<SdfPath> visibleTargetPaths() const;
+    static GfVec3d eulerNearestTo(const GfMatrix4d& matrix, const GfVec3d& reference);
+    static bool applyIndividualRotation(const UsdStageRefPtr& stage, TransformOperation& operation,
+                                        const QList<PreparedTransform>& prepared, const GfMatrix4d& rotation,
+                                        QStringList* errors);
     bool selectionPivot(GfVec3d& pivot);
+    GfMatrix4d absoluteNumericDelta(const GfVec3d& values) const;
+    GfMatrix4d numericDelta(const GfVec3d& values, const GfMatrix4d& orientation, const GfVec3d& pivot) const;
+    bool prepareFrame();
+    int hitTest(const QPointF& pos);
+    double worldPerPixel(const GfVec3d& pivot);
+    GfVec3d axisVector(int axis);
+    QPointF axisDirection(int axis);
+    bool rotationAngle(int axis, const QPointF& pos, double& angle);
+
     void setEnabled(bool enabled);
     void setMode(Mode mode, bool enabled);
     bool beginDrag(const QPointF& pos, bool copy);
     void updateDrag(const QPointF& pos);
     void endDrag();
     void updateHover(const QPointF& pos);
-    bool prepareFrame();
-    int hitTest(const QPointF& pos) { return prepareFrame() ? d.gizmo->hitTest(d.frame, pos) : 0; }
-    double worldPerPixel(const GfVec3d& pivot) { return d.gizmo->worldPerPixel(pivot); }
-    GfVec3d axisVector(int axis) { return ViewportGizmo::axisVector(axis); }
-    QPointF axisDirection(int axis) { return d.gizmo->axisDirection(d.frame, axis); }
-    bool rotationAngle(int axis, const QPointF& pos, double& angle)
-    {
-        return d.gizmo->rotationAngle(d.frame, axis, pos, angle);
-    }
+    void updateInputValues();
+
+    GfMatrix4d referenceOrientation(const QList<SdfPath>& targetPaths) const;
+    QList<SdfPath> selectedVisiblePaths() const;
+    QList<SdfPath> visibleTargetPaths() const;
+    ViewportGizmo::Frame dragFrame() const;
 
     struct Data {
         ViewportHost* host = nullptr;
@@ -72,6 +78,12 @@ public:
         double metersPerUnit = 1.0;
         TransformOperation operation;
         PivotOperation pivotOperation;
+        bool numericEditing = false;
+        TransformOperation numericOperation;
+        QList<PreparedTransform> numericPrepared;
+        GfVec3d numericPivot = GfVec3d(0.0);
+        GfVec3d inputValues = GfVec3d(0.0);
+        GfVec3d numericStartValues = GfVec3d(0.0);
         GfMatrix4d startOrientation = GfMatrix4d(1.0);
         QList<PreparedTransform> prepared;
         bool defersPrimsUpdate = false;
@@ -79,6 +91,87 @@ public:
     };
     Data d;
 };
+
+bool
+ViewportTransformPrivate::applyIndividualRotation(const UsdStageRefPtr& stage, TransformOperation& operation,
+                                                  const QList<PreparedTransform>& prepared, const GfMatrix4d& rotation,
+                                                  QStringList* errors)
+{
+    if (!stage || operation.targetCount <= 0 || operation.targetCount > operation.paths.size()
+        || operation.edit.before.size() != operation.paths.size() || prepared.size() != operation.paths.size()) {
+        if (errors)
+            errors->append(QStringLiteral("Invalid individual rotation operation"));
+        return false;
+    }
+
+    QList<GfMatrix4d> after = operation.edit.before;
+    for (qsizetype i = 0; i < operation.targetCount; ++i) {
+        // Use the original cached world transform and local pivot so the
+        // pivot stays fixed across every live preview update.
+        const GfMatrix4d pivotFrame = prepared.at(i).localPivot * operation.edit.before.at(i);
+        const GfVec3d pivot = pivotFrame.ExtractTranslation();
+        GfMatrix4d toOrigin(1.0);
+        GfMatrix4d fromOrigin(1.0);
+        toOrigin.SetTranslate(-pivot);
+        fromOrigin.SetTranslate(pivot);
+        const GfMatrix4d delta = toOrigin * rotation * fromOrigin;
+        after[i] = operation.edit.before.at(i) * delta;
+    }
+
+    operation.edit.after = after;
+    operation.edit.delta = GfMatrix4d(1.0);
+    operation.edit.hasDelta = false;
+    return applyPreparedTransforms(stage, prepared, after, GfMatrix4d(1.0), false, errors);
+}
+
+ViewportGizmo::Frame
+ViewportTransformPrivate::dragFrame() const
+{
+    ViewportGizmo::Frame frame = d.frame;
+    if (d.dragging && d.frame.activeAxis >= 4 && d.frame.activeAxis <= 6) {
+        // Object mode refreshes the displayed orientation from the
+        // rotated prim during a live preview. Keep the interaction basis
+        // fixed at mouse-down so that refresh cannot feed back into the
+        // angle and axis calculation for the same drag.
+        frame.orientation = d.startOrientation;
+        frame.orientationValid = true;
+    }
+    return frame;
+}
+
+int
+ViewportTransformPrivate::hitTest(const QPointF& pos)
+{
+    return prepareFrame() ? d.gizmo->hitTest(d.frame, pos) : 0;
+}
+
+double
+ViewportTransformPrivate::worldPerPixel(const GfVec3d& pivot)
+{
+    return d.gizmo->worldPerPixel(pivot);
+}
+
+GfVec3d
+ViewportTransformPrivate::axisVector(int axis)
+{
+    GfVec3d direction = ViewportGizmo::axisVector(axis);
+    const ViewportGizmo::Frame frame = dragFrame();
+    if (frame.orientationValid)
+        direction = frame.orientation.TransformDir(direction);
+    return direction.GetLengthSq() > 1e-12 ? direction.GetNormalized() : GfVec3d(0.0);
+}
+
+QPointF
+ViewportTransformPrivate::axisDirection(int axis)
+{
+    return d.gizmo->axisDirection(d.frame, axis);
+}
+
+bool
+ViewportTransformPrivate::rotationAngle(int axis, const QPointF& pos, double& angle)
+{
+    return d.gizmo->rotationAngle(dragFrame(), axis, pos, angle);
+}
 
 GfRotation
 ViewportTransformPrivate::rotationWithoutScale(const GfMatrix4d& matrix)
@@ -136,14 +229,14 @@ ViewportTransformPrivate::frameWithoutScale(const UsdPrim& prim)
             const UsdGeomXformOp::Type type = op.GetOpType();
             const bool isRotation = type >= UsdGeomXformOp::TypeRotateX && type <= UsdGeomXformOp::TypeOrient;
             if (isRotation) {
-                localFrame *= op.GetOpTransform(UsdTimeCode::Default());
+                localFrame = op.GetOpTransform(UsdTimeCode::Default()) * localFrame;
             }
             else if (type == UsdGeomXformOp::TypeTransform) {
-                localFrame *= frameWithoutScale(op.GetOpTransform(UsdTimeCode::Default()));
+                localFrame = frameWithoutScale(op.GetOpTransform(UsdTimeCode::Default())) * localFrame;
             }
         }
 
-        frame = localFrame * frame;
+        frame *= localFrame;
         if (resetsXformStack)
             break;
     }
@@ -155,7 +248,52 @@ ViewportTransformPrivate::frameWithoutScale(const UsdPrim& prim)
 GfVec3d
 ViewportTransformPrivate::eulerWithoutScale(const GfMatrix4d& matrix)
 {
-    return rotationWithoutScale(matrix).Decompose(GfVec3d::XAxis(), GfVec3d::YAxis(), GfVec3d::ZAxis());
+    // Gf decomposes in the reverse of USD's row-vector composition order.
+    // Reverse both the requested axes and returned components for rotateXYZ.
+    const GfVec3d zyx = rotationWithoutScale(matrix).Decompose(GfVec3d::ZAxis(), GfVec3d::YAxis(), GfVec3d::XAxis());
+    return GfVec3d(zyx[2], zyx[1], zyx[0]);
+}
+
+GfVec3d
+ViewportTransformPrivate::eulerNearestTo(const GfMatrix4d& matrix, const GfVec3d& reference)
+{
+    const GfVec3d primary = eulerWithoutScale(matrix);
+    GfVec3d alternate(primary[0] + 180.0, 180.0 - primary[1], primary[2] + 180.0);
+    GfVec3d nearestPrimary = primary;
+    GfVec3d nearestAlternate = alternate;
+    double primaryDistance = 0.0;
+    double alternateDistance = 0.0;
+    for (int axis = 0; axis < 3; ++axis) {
+        nearestPrimary[axis] += 360.0 * std::round((reference[axis] - nearestPrimary[axis]) / 360.0);
+        nearestAlternate[axis] += 360.0 * std::round((reference[axis] - nearestAlternate[axis]) / 360.0);
+        primaryDistance += std::pow(nearestPrimary[axis] - reference[axis], 2.0);
+        alternateDistance += std::pow(nearestAlternate[axis] - reference[axis], 2.0);
+    }
+    return alternateDistance < primaryDistance ? nearestAlternate : nearestPrimary;
+}
+
+GfMatrix4d
+ViewportTransformPrivate::referenceOrientation(const QList<SdfPath>& targetPaths) const
+{
+    switch (d.frame.referenceFrame) {
+    case ViewportGizmo::ReferenceFrame::World: return GfMatrix4d(1.0);
+    case ViewportGizmo::ReferenceFrame::Camera: return frameWithoutScale(d.host->viewCamera()->camera().GetTransform());
+    case ViewportGizmo::ReferenceFrame::Parent:
+        if (targetPaths.size() == 1 && d.host->stage()) {
+            const UsdPrim prim = d.host->stage()->GetPrimAtPath(targetPaths.first());
+            const UsdPrim parent = prim ? prim.GetParent() : UsdPrim();
+            GfMatrix4d parentWorld(1.0);
+            QString error;
+            if (parent && stage::worldTransform(d.host->stage(), parent.GetPath(), parentWorld, error))
+                return frameWithoutScale(parentWorld);
+        }
+        return GfMatrix4d(1.0);
+    case ViewportGizmo::ReferenceFrame::Object:
+        if (targetPaths.size() == 1 && d.host->stage())
+            return frameWithoutScale(d.host->stage()->GetPrimAtPath(targetPaths.first()));
+        return GfMatrix4d(1.0);
+    }
+    return GfMatrix4d(1.0);
 }
 
 QList<SdfPath>
@@ -214,86 +352,56 @@ ViewportTransformPrivate::selectionPivot(GfVec3d& pivot)
                 d.frame.orientation = frameWithoutScale(frame);
         }
         pivot /= static_cast<double>(targetPaths.size());
-        if (targetPaths.size() != 1)
-            d.frame.orientation = GfMatrix4d(1.0);
+        d.frame.orientation = referenceOrientation(targetPaths);
         d.frame.orientationValid = true;
         return true;
     }
 
-    if (selectedPaths.size() == 1 && selectedPaths.first() == targetPaths.first()) {
-        const SdfPath& path = targetPaths.first();
+    // Use the most recently selected transform target as the lead object.
+    // This keeps the gizmo anchored to the active object whose TRS is shown
+    // in the panel, while transform operations still apply their delta to
+    // every target.
+    const SdfPath& path = targetPaths.last();
+    GfMatrix4d frame(1.0);
+    QString error;
+    if (!stage::worldPivotFrame(d.host->stage(), path, frame, error))
+        return false;
+    pivot = frame.ExtractTranslation();
+    d.frame.orientation = referenceOrientation({ path });
+    d.frame.orientationValid = true;
+    return true;
+}
 
-        GfMatrix4d matrix(1.0);
-        QString error;
-        if (!stage::worldTransform(d.host->stage(), path, matrix, error))
-            return false;
-
-        pivot = matrix.ExtractTranslation();
-        d.frame.orientation = frameWithoutScale(d.host->stage()->GetPrimAtPath(path));
-        d.frame.orientationValid = true;
-
-        QString pivotError;
-        stage::worldPivot(d.host->stage(), path, pivot, pivotError);
-        return true;
-    }
-
-    // The session's shared bounds cache is cleared lazily when the complete
-    // stage bound is requested. A transform-only notice can invalidate this
-    // pivot before that happens, so compute the selection frame from fresh
-    // composed bounds rather than reusing a previous gesture's cached values.
-    UsdGeomBBoxCache bboxCache(UsdTimeCode::Default(), UsdGeomImageable::GetOrderedPurposeTokens(), true);
-
-    GfRange3d range;
-    bool hasBounds = false;
-
-    for (const SdfPath& path : stage::objectPaths(d.host->stage(), selectedPaths)) {
-        const UsdPrim prim = d.host->stage()->GetPrimAtPath(path);
-        if (!prim)
-            continue;
-
-        const GfBBox3d bbox = bboxCache.ComputeWorldBound(prim);
-        const GfRange3d aligned = bbox.ComputeAlignedRange();
-        if (aligned.IsEmpty()) {
-            if (UsdLuxLightAPI(prim)) {
-                GfMatrix4d matrix(1.);
-                QString error;
-                if (stage::worldTransform(d.host->stage(), path, matrix, error)) {
-                    range.UnionWith(matrix.ExtractTranslation());
-                    hasBounds = true;
+void
+ViewportTransformPrivate::updateInputValues()
+{
+    GfVec3d values = d.frame.mode == Mode::Scale ? GfVec3d(1.0) : GfVec3d(0.0);
+    if (d.host->stage() && d.host->context() && !d.frame.pivotEditing) {
+        READ_LOCKER(locker, d.host->context()->stageLock(), "stageLock");
+        const QList<SdfPath> targets = visibleTargetPaths();
+        if (!targets.isEmpty() && d.host->stage()) {
+            const UsdPrim prim = d.host->stage()->GetPrimAtPath(targets.last());
+            const UsdGeomXformable xformable(prim);
+            GfMatrix4d localTransform(1.0);
+            bool resetsXformStack = false;
+            if (xformable
+                && xformable.GetLocalTransformation(&localTransform, &resetsXformStack, UsdTimeCode::Default())) {
+                if (d.frame.mode == Mode::Move) {
+                    values = localTransform.ExtractTranslation();
+                }
+                else if (d.frame.mode == Mode::Rotate) {
+                    values = eulerNearestTo(localTransform, d.inputValues);
+                }
+                else if (d.frame.mode == Mode::Scale) {
+                    GfMatrix4d rotation(1.0), shear(1.0), perspective(1.0);
+                    GfVec3d translation(0.0);
+                    localTransform.Factor(&rotation, &values, &shear, &translation, &perspective);
                 }
             }
-            continue;
-        }
-
-        if (!hasBounds) {
-            range = aligned;
-            hasBounds = true;
-        }
-        else {
-            range.UnionWith(aligned);
         }
     }
-
-    if (!hasBounds)
-        return false;
-
-    pivot = range.GetMidpoint();
-    // A proxy child can be manipulated through its owning instance. Keep the
-    // gizmo aligned to that instance when it is the sole transform target;
-    // otherwise a multi-selection uses the world-space group frame.
-    if (targetPaths.size() == 1) {
-        GfMatrix4d matrix(1.0);
-        QString error;
-        if (stage::worldTransform(d.host->stage(), targetPaths.first(), matrix, error)) {
-            d.frame.orientation = frameWithoutScale(d.host->stage()->GetPrimAtPath(targetPaths.first()));
-            d.frame.orientationValid = true;
-        }
-    }
-    if (!d.frame.orientationValid) {
-        d.frame.orientation = GfMatrix4d(1.0);
-        d.frame.orientationValid = true;
-    }
-    return true;
+    d.inputValues = values;
+    Q_EMIT d.host->widget()->transformInputValuesChanged(values);
 }
 
 void
@@ -328,6 +436,7 @@ ViewportTransformPrivate::setMode(Mode mode, bool enabled)
     d.snap = false;
     d.frame.hoverAxis = 0;
     d.frame.activeAxis = 0;
+    updateInputValues();
 
     // The gizmo axes are Hydra geometry, not part of the QPainter overlay.
     // Repaint the GL viewport so paintGL() rebuilds them immediately when
@@ -388,12 +497,15 @@ ViewportTransformPrivate::beginDrag(const QPointF& pos, bool copy)
     d.rotationStartAngle = 0.0;
     d.frame.rotationStartAngle = 0.0;
     d.frame.rotationDeltaAngle = 0.0;
+    d.frame.rotationStartOrientationValid = false;
     if (handle >= 4 && handle <= 6) {
         double angle = 0.0;
         if (!rotationAngle(handle - 3, pos, angle))
             return false;
         d.rotationStartAngle = angle;
         d.frame.rotationStartAngle = angle;
+        d.frame.rotationStartOrientation = d.startOrientation;
+        d.frame.rotationStartOrientationValid = true;
     }
 
     d.previousPrimsUpdate = session()->primsUpdate();
@@ -437,6 +549,7 @@ ViewportTransformPrivate::beginDrag(const QPointF& pos, bool copy)
     if (d.copyDrag)
         d.snap = false;
     d.dragging = true;
+    Q_EMIT d.host->widget()->transformInputValuesChanged(d.inputValues);
     d.gizmo->invalidate();
     d.host->widget()->update();
     return true;
@@ -450,20 +563,7 @@ ViewportTransformPrivate::updateDrag(const QPointF& pos)
 
     d.operation.edit.after = d.operation.edit.before;
     GfMatrix4d dragDelta(1.0);
-    QString message;
-
-    auto axisName = [](int axis) -> QString {
-        switch (axis) {
-        case 1: return QStringLiteral("X");
-        case 2: return QStringLiteral("Y");
-        case 3: return QStringLiteral("Z");
-        default: return QStringLiteral("?");
-        }
-    };
-
-    auto signedNumber = [](double value, int precision) {
-        return QStringLiteral("%1%2").arg(value >= 0.0 ? QStringLiteral("+") : QString()).arg(value, 0, 'f', precision);
-    };
+    GfVec3d inputValues = d.frame.mode == Mode::Scale ? GfVec3d(1.0) : GfVec3d(0.0);
 
     auto snapValue = [](double value, double unit) { return std::round(value / unit) * unit; };
 
@@ -485,8 +585,7 @@ ViewportTransformPrivate::updateDrag(const QPointF& pos)
         // the incremental mouse-delta matrix.
         const GfMatrix4d& before = d.operation.edit.before.first();
         const GfMatrix4d candidate = before * inputDelta;
-        const GfRotation candidateRotation = rotationWithoutScale(candidate);
-        GfVec3d angles = candidateRotation.Decompose(GfVec3d::XAxis(), GfVec3d::YAxis(), GfVec3d::ZAxis());
+        GfVec3d angles = eulerWithoutScale(candidate);
 
         if (snapAxis >= 1 && snapAxis <= 3) {
             angles[snapAxis - 1] = snapValue(angles[snapAxis - 1], ui()->transformRotateSnap());
@@ -503,13 +602,8 @@ ViewportTransformPrivate::updateDrag(const QPointF& pos)
         rotateX.SetRotate(GfRotation(GfVec3d::XAxis(), angles[0]));
         rotateY.SetRotate(GfRotation(GfVec3d::YAxis(), angles[1]));
         rotateZ.SetRotate(GfRotation(GfVec3d::ZAxis(), angles[2]));
-        // GfRotation::Decompose(X, Y, Z) decomposes the matrix using the
-        // opposite matrix-composition order from UsdGeom rotateXYZ.  To rebuild
-        // the exact orientation represented by those decomposed angles we must
-        // compose Z * Y * X here.  Using X * Y * Z only appears correct when
-        // one/two components are near zero; with free rotation or an already
-        // compound orientation it produces a completely different rotation.
-        const GfMatrix4d snappedRotation = rotateZ * rotateY * rotateX;
+        // Use the same USD rotateXYZ convention as the numeric panel.
+        const GfMatrix4d snappedRotation = rotateX * rotateY * rotateZ;
 
         // Build ONE rotation delta from the drag-start orientation directly to
         // the desired snapped orientation.  The previous implementation first
@@ -575,10 +669,7 @@ ViewportTransformPrivate::updateDrag(const QPointF& pos)
         }
 
         dragDelta.SetTranslate(translation);
-        const GfVec3d translationMm = translation * (d.metersPerUnit * 1000.0);
-        message = QStringLiteral("Translate  X %1 mm  Y %2 mm  Z %3 mm")
-                      .arg(signedNumber(translationMm[0], 3), signedNumber(translationMm[1], 3),
-                           signedNumber(translationMm[2], 3));
+        inputValues = d.startOrientation.GetInverse().TransformDir(translation);
 
         d.frame.pivot = d.startPivot + translation;
     }
@@ -610,11 +701,10 @@ ViewportTransformPrivate::updateDrag(const QPointF& pos)
 
         dragDelta = snappedRotationDelta(delta, 0);
 
-        const GfMatrix4d snappedCandidate = d.operation.edit.before.first() * dragDelta;
-        const GfVec3d xyz = eulerWithoutScale(snappedCandidate);
-
-        message = QStringLiteral("Rotate  X %1°  Y %2°  Z %3°")
-                      .arg(signedNumber(xyz[0], 2), signedNumber(xyz[1], 2), signedNumber(xyz[2], 2));
+        GfMatrix4d dragRotation(1.0);
+        dragRotation.SetRotate(rotationWithoutScale(dragDelta));
+        const GfMatrix4d referenceRotation = d.startOrientation.GetInverse() * dragRotation * d.startOrientation;
+        inputValues = eulerWithoutScale(referenceRotation);
 
         d.frame.pivot = d.startPivot;
     }
@@ -651,7 +741,7 @@ ViewportTransformPrivate::updateDrag(const QPointF& pos)
         fromOrigin.SetTranslate(d.startPivot);
         const GfMatrix4d delta = toOrigin * scaleMatrix * fromOrigin;
         dragDelta = delta;
-        message = QStringLiteral("Scale XYZ  %1x").arg(factor, 0, 'f', 3);
+        inputValues = GfVec3d(factor);
 
         d.frame.pivot = d.startPivot;
     }
@@ -686,8 +776,7 @@ ViewportTransformPrivate::updateDrag(const QPointF& pos)
         }
         const GfVec3d delta = axis * distance;
         dragDelta.SetTranslate(delta);
-        const double distanceMm = distance * d.metersPerUnit * 1000.0;
-        message = QStringLiteral("Translate %1  %2 mm").arg(axisName(d.frame.activeAxis), signedNumber(distanceMm, 3));
+        inputValues[d.frame.activeAxis - 1] = distance;
         d.frame.pivot = d.startPivot + delta;
     }
     else if (d.frame.activeAxis >= 4 && d.frame.activeAxis <= 6) {
@@ -712,14 +801,15 @@ ViewportTransformPrivate::updateDrag(const QPointF& pos)
         GfMatrix4d rotation(1.0);
         GfMatrix4d fromOrigin(1.0);
         toOrigin.SetTranslate(-d.startPivot);
-        rotation.SetRotate(GfRotation(axis, degrees));
+        const GfVec3d basisA = axisVector(axisIndex % 3 + 1);
+        const GfVec3d basisB = axisVector((axisIndex + 1) % 3 + 1);
+        const double frameHandedness = GfDot(GfCross(axis, basisA), basisB) < 0.0 ? -1.0 : 1.0;
+        rotation.SetRotate(GfRotation(axis, degrees * frameHandedness));
         fromOrigin.SetTranslate(d.startPivot);
         const GfMatrix4d delta = toOrigin * rotation * fromOrigin;
         dragDelta = snappedRotationDelta(delta, axisIndex);
         // Measure the applied rotation in the selected ring's plane. Use
         // the authored delta so the overlay also follows Shift snapping.
-        const GfVec3d basisA = axisVector(axisIndex % 3 + 1);
-        const GfVec3d basisB = axisVector((axisIndex + 1) % 3 + 1);
         const GfVec3d startDirection = basisA * std::cos(d.rotationStartAngle)
                                        + basisB * std::sin(d.rotationStartAngle);
         const GfVec3d direction = dragDelta.TransformDir(startDirection);
@@ -730,7 +820,7 @@ ViewportTransformPrivate::updateDrag(const QPointF& pos)
             appliedAngle += fullTurn;
         d.frame.rotationDeltaAngle = appliedAngle;
         const double displayedDelta = GfRadiansToDegrees(appliedAngle);
-        message = QStringLiteral("Rotate %1  %2°").arg(axisName(axisIndex), signedNumber(displayedDelta, 2));
+        inputValues[axisIndex - 1] = displayedDelta;
         d.frame.pivot = d.startPivot;
     }
     else if (d.frame.activeAxis >= 7 && d.frame.activeAxis <= 9) {
@@ -766,7 +856,7 @@ ViewportTransformPrivate::updateDrag(const QPointF& pos)
         const GfMatrix4d orientedScale = d.startOrientation.GetInverse() * scaleMatrix * d.startOrientation;
         const GfMatrix4d delta = toOrigin * orientedScale * fromOrigin;
         dragDelta = delta;
-        message = QStringLiteral("Scale %1  %2x").arg(axisName(axisIndex)).arg(factor, 0, 'f', 3);
+        inputValues[axisIndex - 1] = factor;
         d.frame.pivot = d.startPivot;
     }
     {
@@ -775,10 +865,18 @@ ViewportTransformPrivate::updateDrag(const QPointF& pos)
             return;
 
         QStringList errors;
-        const bool applied = d.frame.pivotEditing
-                                 ? applyPivotOperation(d.host->stage(), d.pivotOperation, dragDelta, &errors)
-                                 : applyTransformOperation(d.host->stage(), d.operation, d.prepared, dragDelta,
-                                                           &errors);
+        bool applied = false;
+        if (d.frame.pivotEditing) {
+            applied = applyPivotOperation(d.host->stage(), d.pivotOperation, dragDelta, &errors);
+        }
+        else if (d.frame.mode == Mode::Rotate) {
+            GfMatrix4d rotation(1.0);
+            rotation.SetRotate(rotationWithoutScale(dragDelta));
+            applied = applyIndividualRotation(d.host->stage(), d.operation, d.prepared, rotation, &errors);
+        }
+        else {
+            applied = applyTransformOperation(d.host->stage(), d.operation, d.prepared, dragDelta, &errors);
+        }
         if (!applied) {
             Q_EMIT d.host->widget()->statusMessage(errors.join('\n'));
             return;
@@ -787,15 +885,27 @@ ViewportTransformPrivate::updateDrag(const QPointF& pos)
         if (d.frame.pivotEditing) {
             d.operation.edit.after = d.pivotOperation.afterFrames;
             d.frame.pivot = dragDelta.Transform(d.startPivot);
-            d.frame.orientation = frameWithoutScale(d.startOrientation * dragDelta);
+            d.frame.orientation = referenceOrientation(d.operation.paths);
+            d.frame.orientationValid = true;
+        }
+        else if (d.frame.mode == Mode::Rotate && d.frame.activeAxis >= 4 && d.frame.activeAxis <= 6
+                 && d.frame.referenceFrame == ViewportGizmo::ReferenceFrame::Object) {
+            // Build the live Object frame from the same drag-start orientation
+            // and preview delta used to author the prim. This keeps the rings
+            // tracking the object even when its composed transform hierarchy
+            // cannot be reliably re-read during the live preview.
+            GfMatrix4d previewRotation(1.0);
+            previewRotation.SetRotate(rotationWithoutScale(dragDelta));
+            d.frame.orientation = frameWithoutScale(d.startOrientation * previewRotation);
             d.frame.orientationValid = true;
         }
         else if (d.operation.targetCount == 1) {
-            d.frame.orientation = frameWithoutScale(d.host->stage()->GetPrimAtPath(d.operation.paths.first()));
+            d.frame.orientation = referenceOrientation({ d.operation.paths.first() });
             d.frame.orientationValid = true;
         }
         else {
-            d.frame.orientation = GfMatrix4d(1.0);
+            d.frame.orientation = d.operation.paths.isEmpty() ? GfMatrix4d(1.0)
+                                                              : referenceOrientation({ d.operation.paths.first() });
             d.frame.orientationValid = true;
         }
 
@@ -811,8 +921,10 @@ ViewportTransformPrivate::updateDrag(const QPointF& pos)
                 d.frame.pivot = authoredPivot;
         }
     }
-    if (!message.isEmpty())
-        Q_EMIT d.host->widget()->statusMessage(d.frame.pivotEditing ? QStringLiteral("Pivot: ") + message : message);
+    if (d.frame.pivotEditing)
+        Q_EMIT d.host->widget()->transformInputValuesChanged(inputValues);
+    else
+        updateInputValues();
 
     d.host->widget()->update();
 }
@@ -834,6 +946,7 @@ ViewportTransformPrivate::endDrag()
     d.snap = false;
     d.frame.activeAxis = 0;
     d.frame.hoverAxis = 0;
+    d.frame.rotationStartOrientationValid = false;
     d.gizmo->invalidate();
     d.operation = TransformOperation();
     d.prepared.clear();
@@ -887,6 +1000,7 @@ ViewportTransformPrivate::endDrag()
         if (CommandStack* stack = d.host->context()->commandStack())
             stack->execute(new Command(copyTransforms(copySelection, edit.delta)));
     }
+    updateInputValues();
     d.host->widget()->update();
 }
 
@@ -938,6 +1052,14 @@ ViewportTransform::enabled() const
 {
     return p->d.frame.enabled;
 }
+
+bool
+ViewportTransform::hasActiveHandle()
+{
+    if (!p->d.frame.enabled || p->d.frame.pivotEditing)
+        return false;
+    return p->prepareFrame();
+}
 ViewportTransform::Mode
 ViewportTransform::mode() const
 {
@@ -946,13 +1068,297 @@ ViewportTransform::mode() const
 void
 ViewportTransform::setEnabled(bool enabled)
 {
+    finishNumericEdit();
     p->setEnabled(enabled);
 }
 void
 ViewportTransform::setMode(Mode mode, bool enabled)
 {
+    finishNumericEdit();
     p->setMode(mode, enabled);
 }
+
+ViewportTransform::ReferenceFrame
+ViewportTransform::referenceFrame() const
+{
+    return p->d.frame.referenceFrame;
+}
+
+void
+ViewportTransform::setReferenceFrame(ReferenceFrame frame)
+{
+    if (p->d.frame.referenceFrame == frame)
+        return;
+    finishNumericEdit();
+    if (p->d.dragging)
+        p->endDrag();
+    p->d.frame.referenceFrame = frame;
+    p->d.frame.pivotValid = false;
+    p->d.frame.orientationValid = false;
+    p->d.gizmo->invalidate();
+    p->d.host->widget()->update();
+}
+
+bool
+ViewportTransform::applyNumeric(const GfVec3d& values, QString& error)
+{
+    if (!p->d.frame.enabled || p->d.frame.mode == Mode::None || p->d.frame.pivotEditing) {
+        error = QStringLiteral("Numeric transforms require an active object transform tool");
+        return false;
+    }
+    if (!p->prepareFrame() || !p->d.host->context() || !p->d.host->stage()) {
+        error = QStringLiteral("No transformable selection");
+        return false;
+    }
+    CommandStack* stack = p->d.host->context()->commandStack();
+    if (!stack) {
+        error = QStringLiteral("No command stack is available for numeric transforms");
+        return false;
+    }
+
+    TransformOperation operation;
+    QList<PreparedTransform> prepared;
+    const GfMatrix4d orientation = p->d.frame.orientation;
+    const GfVec3d pivot = p->d.frame.pivot;
+    const GfMatrix4d delta = p->numericDelta(values, orientation, pivot);
+
+    QStringList errors;
+    {
+        WRITE_LOCKER(locker, p->d.host->context()->stageLock(), "stageLock");
+        if (!p->d.host->stage()
+            || !beginTransformOperation(p->d.host->stage(), p->selectedVisiblePaths(), operation, error))
+            return false;
+        prepared = prepareTransforms(p->d.host->stage(), operation.paths, operation.edit.before, &errors);
+        if (errors.isEmpty()) {
+            bool applied = false;
+            if (p->d.frame.mode == Mode::Rotate) {
+                GfMatrix4d rotation(1.0);
+                rotation.SetRotate(ViewportTransformPrivate::rotationWithoutScale(delta));
+                applied = p->applyIndividualRotation(p->d.host->stage(), operation, prepared, rotation, &errors);
+            }
+            else {
+                applied = applyTransformOperation(p->d.host->stage(), operation, prepared, delta, &errors);
+            }
+            if (!applied && errors.isEmpty())
+                errors.append(QStringLiteral("Could not apply numeric transform"));
+        }
+        if (!errors.isEmpty())
+            restoreTransformOperation(p->d.host->stage(), operation, &errors);
+    }
+    if (!errors.isEmpty()) {
+        error = errors.join('\n');
+        return false;
+    }
+    stack->execute(new Command(setTransforms(operation)), CommandStack::ExecutionMode::Applied);
+    p->d.frame.pivotValid = false;
+    p->d.frame.orientationValid = false;
+    p->d.gizmo->invalidate();
+    p->updateInputValues();
+    p->d.host->widget()->update();
+    return true;
+}
+
+GfMatrix4d
+ViewportTransformPrivate::numericDelta(const GfVec3d& values, const GfMatrix4d& orientation, const GfVec3d& pivot) const
+{
+    GfMatrix4d delta(1.0);
+    if (d.frame.mode == Mode::Move) {
+        delta.SetTranslate(orientation.TransformDir(values));
+    }
+    else if (d.frame.mode == Mode::Rotate) {
+        GfMatrix4d rotationX(1.0), rotationY(1.0), rotationZ(1.0);
+        GfVec3d axes[] = { orientation.TransformDir(GfVec3d::XAxis()), orientation.TransformDir(GfVec3d::YAxis()),
+                           orientation.TransformDir(GfVec3d::ZAxis()) };
+        rotationX.SetRotate(GfRotation(axes[0], values[0]));
+        rotationY.SetRotate(GfRotation(axes[1], values[1]));
+        rotationZ.SetRotate(GfRotation(axes[2], values[2]));
+        const GfMatrix4d rotation = rotationX * rotationY * rotationZ;
+        GfMatrix4d toOrigin(1.0), fromOrigin(1.0);
+        toOrigin.SetTranslate(-pivot);
+        fromOrigin.SetTranslate(pivot);
+        delta = toOrigin * rotation * fromOrigin;
+    }
+    else if (d.frame.mode == Mode::Scale) {
+        GfMatrix4d scale(1.0), toOrigin(1.0), fromOrigin(1.0);
+        scale.SetScale(values);
+        const GfMatrix4d orientedScale = orientation.GetInverse() * scale * orientation;
+        toOrigin.SetTranslate(-pivot);
+        fromOrigin.SetTranslate(pivot);
+        delta = toOrigin * orientedScale * fromOrigin;
+    }
+    return delta;
+}
+
+GfMatrix4d
+ViewportTransformPrivate::absoluteNumericDelta(const GfVec3d& values) const
+{
+    // The panel displays absolute local TRS. Convert its correction through
+    // the lead object's parent, independently of the handle reference frame.
+    const int lead = d.numericOperation.targetCount - 1;
+    GfMatrix4d parent = d.numericPrepared.at(lead).parentWorld;
+    const GfMatrix4d local = d.numericOperation.edit.before.at(lead) * parent.GetInverse();
+    parent.SetTranslateOnly(GfVec3d(0.0));
+    GfMatrix4d correction(1.0);
+    if (d.frame.mode == Mode::Move) {
+        correction.SetTranslate(values - d.numericStartValues);
+        return parent.GetInverse() * correction * parent;
+    }
+    GfMatrix4d beforeRotation(1.0);
+    beforeRotation.SetRotate(rotationWithoutScale(local));
+    if (d.frame.mode == Mode::Rotate) {
+        GfMatrix4d x(1.0), y(1.0), z(1.0);
+        x.SetRotate(GfRotation(GfVec3d::XAxis(), values[0]));
+        y.SetRotate(GfRotation(GfVec3d::YAxis(), values[1]));
+        z.SetRotate(GfRotation(GfVec3d::ZAxis(), values[2]));
+        // Match UsdGeom rotateXYZ and the panel decomposition.
+        correction = beforeRotation.GetInverse() * x * y * z;
+    }
+    else {
+        GfVec3d ratios(1.0);
+        for (int axis = 0; axis < 3; ++axis) {
+            const double start = d.numericStartValues[axis];
+            ratios[axis] = std::abs(start) > 1e-12 ? values[axis] / start : values[axis];
+        }
+        correction.SetScale(ratios);
+        correction = beforeRotation.GetInverse() * correction * beforeRotation;
+    }
+    correction = parent.GetInverse() * correction * parent;
+    GfMatrix4d toOrigin(1.0), fromOrigin(1.0);
+    toOrigin.SetTranslate(-d.numericPivot);
+    fromOrigin.SetTranslate(d.numericPivot);
+    return toOrigin * correction * fromOrigin;
+}
+
+bool
+ViewportTransform::beginNumericEdit(QString& error)
+{
+    if (p->d.numericEditing)
+        return true;
+    if (p->d.dragging || !p->d.frame.enabled || p->d.frame.mode == Mode::None || p->d.frame.pivotEditing) {
+        error = QStringLiteral("Numeric transforms require an active object transform tool");
+        return false;
+    }
+    if (!p->prepareFrame() || !p->d.host->context() || !p->d.host->stage()) {
+        error = QStringLiteral("No transformable selection");
+        return false;
+    }
+    if (!p->d.host->context()->commandStack()) {
+        error = QStringLiteral("No command stack is available for numeric transforms");
+        return false;
+    }
+
+    p->d.previousPrimsUpdate = session()->primsUpdate();
+    if (p->d.previousPrimsUpdate != Session::PrimsUpdate::Deferred) {
+        session()->setPrimsUpdate(Session::PrimsUpdate::Deferred);
+        p->d.defersPrimsUpdate = true;
+    }
+    p->d.numericPivot = p->d.frame.pivot;
+    p->d.numericStartValues = p->d.inputValues;
+    QStringList errors;
+    bool captured = false;
+    {
+        WRITE_LOCKER(locker, p->d.host->context()->stageLock(), "stageLock");
+        captured = p->d.host->stage()
+                   && beginTransformOperation(p->d.host->stage(), p->selectedVisiblePaths(), p->d.numericOperation,
+                                              error);
+        if (captured)
+            p->d.numericPrepared = prepareTransforms(p->d.host->stage(), p->d.numericOperation.paths,
+                                                     p->d.numericOperation.edit.before, &errors);
+    }
+    if (!captured) {
+        if (p->d.defersPrimsUpdate) {
+            session()->setPrimsUpdate(p->d.previousPrimsUpdate);
+            p->d.defersPrimsUpdate = false;
+        }
+        if (error.isEmpty())
+            error = QStringLiteral("No transformable selection");
+        return false;
+    }
+    if (!errors.isEmpty()) {
+        p->d.numericOperation = TransformOperation();
+        p->d.numericPrepared.clear();
+        if (p->d.defersPrimsUpdate) {
+            session()->setPrimsUpdate(p->d.previousPrimsUpdate);
+            p->d.defersPrimsUpdate = false;
+        }
+        error = errors.join('\n');
+        return false;
+    }
+    p->d.numericEditing = true;
+    return true;
+}
+
+bool
+ViewportTransform::updateNumericEdit(const GfVec3d& values, QString& error)
+{
+    if (!p->d.numericEditing && !beginNumericEdit(error))
+        return false;
+    p->d.numericOperation.edit.after = p->d.numericOperation.edit.before;
+    const GfMatrix4d delta = p->absoluteNumericDelta(values);
+    QStringList errors;
+    {
+        WRITE_LOCKER(locker, p->d.host->context()->stageLock(), "stageLock");
+        if (!p->d.host->stage()) {
+            errors.append(QStringLiteral("The stage closed during a numeric transform"));
+        }
+        else if (p->d.frame.mode == Mode::Rotate
+                     ? !p->applyIndividualRotation(p->d.host->stage(), p->d.numericOperation, p->d.numericPrepared,
+                                                   GfMatrix4d(delta).SetTranslateOnly(GfVec3d(0.0)), &errors)
+                     : !applyTransformOperation(p->d.host->stage(), p->d.numericOperation, p->d.numericPrepared, delta,
+                                                &errors)) {
+            restoreTransformOperation(p->d.host->stage(), p->d.numericOperation, &errors);
+        }
+    }
+    if (!errors.isEmpty()) {
+        error = errors.join('\n');
+        return false;
+    }
+    // Retain the Euler branch explicitly entered by the user when the
+    // committed matrix has more than one equivalent XYZ representation.
+    p->d.inputValues = values;
+    p->d.frame.pivotValid = false;
+    p->d.frame.orientationValid = false;
+    p->d.gizmo->invalidate();
+    p->d.host->widget()->update();
+    p->d.host->updateOverlay();
+    return true;
+}
+
+void
+ViewportTransform::finishNumericEdit()
+{
+    if (!p->d.numericEditing)
+        return;
+    const TransformOperation operation = p->d.numericOperation;
+    p->d.numericEditing = false;
+    p->d.numericOperation = TransformOperation();
+    p->d.numericPrepared.clear();
+    bool changed = false;
+    for (qsizetype i = 0; i < operation.edit.before.size() && i < operation.edit.after.size(); ++i) {
+        if (operation.edit.before.at(i) != operation.edit.after.at(i)) {
+            changed = true;
+            break;
+        }
+    }
+    if (changed) {
+        if (CommandStack* stack = p->d.host->context()->commandStack())
+            stack->execute(new Command(setTransforms(operation)), CommandStack::ExecutionMode::Applied);
+    }
+    else {
+        WRITE_LOCKER(locker, p->d.host->context()->stageLock(), "stageLock");
+        restoreTransformOperation(p->d.host->stage(), operation);
+    }
+    if (p->d.defersPrimsUpdate) {
+        session()->setPrimsUpdate(p->d.previousPrimsUpdate);
+        p->d.defersPrimsUpdate = false;
+    }
+    p->d.frame.pivotValid = false;
+    p->d.frame.orientationValid = false;
+    p->d.gizmo->invalidate();
+    p->updateInputValues();
+    p->d.host->widget()->update();
+}
+
 bool
 ViewportTransform::pivotEnabled() const
 {
@@ -964,6 +1370,7 @@ ViewportTransform::setPivotEnabled(bool enabled)
 {
     if (p->d.frame.pivotEditing == enabled)
         return;
+    finishNumericEdit();
     if (p->d.dragging)
         p->endDrag();
     p->d.frame.pivotEditing = enabled;
@@ -989,6 +1396,7 @@ ViewportTransform::setSnap(bool enabled)
 bool
 ViewportTransform::beginDrag(const QPointF& pos, bool copy)
 {
+    finishNumericEdit();
     return p->beginDrag(pos, copy);
 }
 void
@@ -1012,6 +1420,8 @@ ViewportTransform::invalidate()
     p->d.frame.pivotValid = false;
     p->d.frame.orientationValid = false;
     p->d.gizmo->invalidate();
+    if (!p->d.dragging && !p->d.numericEditing)
+        p->updateInputValues();
 }
 void
 ViewportTransform::clearHover()
@@ -1024,12 +1434,14 @@ ViewportTransform::selectionChanged(bool empty)
 {
     if (dragging())
         return;
+    finishNumericEdit();
     invalidate();
     if (empty) {
         p->d.frame.hoverAxis = 0;
         p->d.frame.activeAxis = 0;
         p->d.gizmo->clear();
     }
+    p->updateInputValues();
 }
 void
 ViewportTransform::updateGeometry()
