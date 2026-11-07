@@ -1,45 +1,108 @@
-# Python binding coverage audit
+# Python binding boundaries
 
-Scope: the types registered in `pymodule.cpp`, their corresponding C++ public interfaces, and the `stageviz.command` module. This audit compares declarations and binding registrations; method presence does not establish full type or runtime parity.
+The [API reference](python-api.md) documents what Python can call in this checkout.
+The native C++ headers are not a second Python API: a public C++ method, signal,
+constructor or overload is callable from Python only when explicitly wrapped.
+This document records deliberate boundaries rather than claiming C++ parity.
 
-## Coverage after this audit
+## Public surfaces
 
-| C++ interface | Python coverage | Remaining differences |
+| Surface | Python access | Boundary |
 | --- | --- | --- |
-| Session | All public operation/accessor names are represented, including file operations, edit layers, progress, auxiliary stage, and prim-update policy. | Locks and `commandStack()` return pointer integers, not usable Python wrappers. Signals are not exposed. |
-| SelectionList | All nine public operations/accessors are bound. | Paths use strings; Qt signals are not exposed. |
-| ViewState | All public operations/accessors are bound. | Colors and paths use Python tuples/strings; Qt signals are not exposed. Enum constants were added at module level. |
-| ViewCamera | All public operation names are bound after adding `frame()`. | Constructors wrap the current session camera instead of creating independent cameras. `camera()` returns an opaque capsule rather than `pxr.Gf.Camera`. Bounding-box tuples cannot preserve an oriented box's transform. Signals are not exposed. |
-| UI | Color, icon paths/sizes, gizmo sizes, fonts, transform snap increments, stylesheet, color-space and refresh methods are bound. | `icon()` returning a QPixmap is missing. Python color-space conversion is narrower than arbitrary QColorSpace objects. Signals are not exposed. |
-| Application | Window, session and UI accessors are bound; Python-specific `show()` and `invokeLater()` helpers also exist. | `console()`, `pythonInterpreter()`, `settings()` and static `instance()` have no corresponding methods. Construction and `stageviz.application()` provide access to the singleton. Signals and inherited QApplication APIs are not generally wrapped. |
-| Command factories | Every public factory has a Python entry point after adding `set_transforms()`. | XformState snapshots are captured internally and are not accepted as Python arguments. Attribute values support only bool/int/float/string and numeric sequences of length 2–4, rather than all VtValue types. Commands execute immediately through the current session instead of returning Command objects. |
-| CommandStack | Undo, redo, clear and all three availability queries are accessible through `stageviz.command`. | No CommandStack type or generic `run(Command*)` binding; no signals. |
-| RenderEngine | Offscreen construction, stage/size setters, camera-by-path, selected rendering settings, image-file rendering, AOV names and Hgi API name. | Substantial partial coverage; see below. |
+| Module | Application/session/UI/selection/viewport factories, MCP controls and console logging | Embedded module, not a standalone pip package. Injected editor objects are not portable module globals. |
+| Application | Main window, session, UI, queued callable and widget display | No `console()`, `pythonInterpreter()`, `settings()` or `instance()` methods, inherited QApplication interface, or native signals. Use `stageviz.application()` for the singleton. |
+| Session | Stage lifecycle, exports, per-layer saves/copies, companion state, edit target, progress, selection, view state, masks and update policy | No independent Python session construction, native signal binding, Python lock object or CommandStack object. File operations return bool. Composition edits use command functions, not removed Session merge methods. |
+| SelectionList | Nine operations/accessors; paths are strings | Direct changes do not create history; signals are not exposed. |
+| ViewState | Background/grid, lighting, materials, overlays, display quality and all AO settings | Colors use float RGBA in 0..1. No native signals; state controls the viewport rather than a separately created renderer. |
+| ViewCamera | Current camera navigation, projection, view presets, lens/gate settings and framing | No independent camera creation. Native `cameraView()` getter is not exposed. `camera()` returns an opaque capsule, not `pxr.Gf.Camera`. Bounds use min/max tuples without an oriented-box transform. |
+| UI | Integer colors, nested enums, icon paths/sizes, axis/gizmo sizes, fonts, snap increments, stylesheet, color space and refresh | No QPixmap-returning `icon()`. Use Qt QIcon with `iconPath()`. Color-space conversion accepts named aliases rather than arbitrary QColorSpace objects. Signals are not exposed. |
+| command | Undo/redo/history queries plus selection, composition/layers, metadata, creation, namespace, properties, transforms/pivots and material connection commands | Python functions dispatch commands and return None; they do not return Command objects or generic transactions. Some commands finish asynchronously. Supported attribute values are a limited subset of VtValue. |
+| Render / ViewportCapture | Weak active-viewport access, prim diagnostics and owned color/object-ID snapshots | No public constructors. Capture requires an initialized supported viewport/graphics context. Diagnostics and color queries do not replace the full Hydra API. |
+| RenderEngine | Owned offscreen renderer, stage/size/camera setters, selected settings, file rendering, AOV/Hgi queries | Partial native interface; see below. |
+
+Module integer constants cover the documented enum inputs; UI additionally
+exposes nested IntEnum classes and member aliases. Constants alias native enum
+values; code should use their names instead of maintaining its own ordinals.
+
+## Native command factories without direct Python equivalents
+
+The Python command surface is useful but is not every native factory/overload:
+
+- `newMaterial(MaterialType)` creates built-in network presets natively. Python
+  `new_material(parent_path, name)` calls the separate `newMaterialPath` factory
+  and creates a UsdPreviewSurface material; it does not accept MaterialType.
+- `newShaderNode`, `newMaterialXNode` and `deleteShaderNode` have no direct bindings.
+  Python exposes node creation **connected to an existing input** through
+  `connect_shader_node` and `connect_materialx_node`, and generic `delete_paths`
+  subject to its native namespace rules.
+- Native `TransformOperation`, `XformEdit`, `PivotOperation` and snapshot-based
+  overloads are not Python types. `set_transforms(paths, before, after)` accepts
+  world-matrix pairs and captures native state internally; `transform_pivots`
+  accepts a world delta. Native operation construction/apply/restore helpers and
+  `setPivotTransforms(PivotOperation)` are not direct Python calls.
+- There is no Python Command/CommandStack type, generic `run(Command*)`, command
+  grouping/context manager, or native command-stack signal interface. Access
+  history through `stageviz.command`; `Session.commandStack()` is a pointer integer.
+- `set_attribute_value(s)` accepts bool/int/float/string and numeric tuple/list
+  vectors of length 2–4. It does not convert arbitrary USD arrays, matrices,
+  tokens, asset paths, quaternions, dictionaries or Gf objects. It authors defaults,
+  not time samples. Native target-type validation remains in effect.
+
+Use direct OpenUSD only when needed, and describe those edits as untracked.
+If a workflow needs undoable unsupported authoring, add a designed native command
+and binding rather than inventing an automatic Python undo wrapper.
 
 ## RenderEngine gaps
 
-The wrapper remains an offscreen rendering interface rather than a one-to-one binding. Missing native methods are:
+Python is an offscreen file-output interface, not a one-to-one native binding.
+Native APIs not exposed through that wrapper include:
 
-- Lifecycle: `initialize`, `reset`, `isInitialized` (initialization currently happens implicitly).
+- Lifecycle: `initialize`, `reset`, `isInitialized`; Python initializes implicitly.
 - State getters: `stage`, `camera`, `size`, `viewport`, `settings`.
 - Auxiliary stage: `setAuxiliaryStage`, `auxiliaryStage`, `refreshAuxiliaryStage`.
-- Viewport and settings: `setViewport`, full `setSettings`.
+- Viewport and full settings: `setViewport`, `setSettings`.
 - Selection: `setMask`, `setSelected`, `setSelectionBBoxes`, `setSelectionColor`.
-- Rendering/picking: `renderToCurrentFramebuffer`, QImage-returning `renderImage`, both `testIntersection` overloads.
+- Framebuffer/QImage rendering and picking: `renderToCurrentFramebuffer`,
+  `renderImage`, `testIntersection` overloads.
 - Diagnostics: `renderStats`, `isColorCorrectionCapable`.
 
-The existing `set_camera` accepts a USD camera prim path, whereas native `setCamera` accepts GfCamera. `render(filename)` writes an image file instead of returning QImage. Most Settings fields, including dome lighting, material override, draw mode, sidedness, complexity, purposes and selection-related controls, have no Python setters.
+`set_camera(path)` copies a USD camera at default time instead of accepting
+GfCamera. `render(filename)` writes a file instead of returning QImage. Most
+Settings fields, including dome lighting, override materials, sidedness,
+complexity, purposes and selection controls, have no Python setters. ViewState
+changes do not configure this independent renderer.
 
-The stage conversion bug was fixed: `set_stage()` now retains the supplied USD stage instead of opening another stage from its root layer and losing session-specific composition state.
+`set_stage()` retains the supplied actual Usd.Stage, including its session layer,
+load rules, mask and muted layers. It does not reopen a root layer. Capture from
+`stageviz.render()` is a different API for the currently displayed scene.
 
-## Deferred prim-update behavior
+## Update delivery and ownership
 
-The current `Session` C++ interface exposes `primsUpdate()` and `setPrimsUpdate()`, but not `flushPrimsUpdates()`. `Immediate = 0` and `Deferred = 1` are defined in `session.h`. Changing the policy back to `Immediate` flushes pending notices automatically in `session.cpp`. The Python binding exposes the two policy accessors and does not need a separate flush function. Large direct USD edit batches should restore the previous policy in `finally`; ordinary commands should rely on native Stageviz update handling.
+`stage()`/`auxiliary()` obtain a stage through normal locked access, but the
+returned USD object's later operations are not protected by a Python lock.
+`stageUnsafe()`/`auxiliaryUnsafe()` assume native locking by the caller;
+`stageLock()`/`auxiliaryLock()` expose addresses, not usable context managers.
+Do not author concurrently with command workers.
 
-## UI enum registration
+Commands can return before worker completion. Wait for each deferred operation
+and its Session completion callback before dependent commands, USD reads, saves,
+stage replacement or undo/redo. The [guide](python-start.md#let-commands-finish-before-the-next-step)
+contains a self-contained controlled-script pattern; embedded regressions use
+`testbench.wait_for_commands()`. This is not a global thread-pool drain.
 
-The `pyui.cpp` binding registers the native `UI` enum members and the `UI` wrapper methods. This is a static source audit; it does not validate icon resources or runtime behavior.
+For large **direct USD** batches, save `primsUpdate()`, set `PrimsDeferred`, and
+restore the original policy in `finally`. Returning to `PrimsImmediate` flushes
+notices. There is no public `flushPrimsUpdates()` method. Do not use this manual
+batch policy around ordinary commands; they manage their own update delivery.
 
-## Compatibility and follow-up
+## Maintaining the contract
 
-Existing method names and opaque return forms were retained. Expanding Qt object, signal, renderer and USD value conversions requires explicit API design and runtime validation; this audit does not claim those gaps are closed. New constants are aliases of the corresponding C++ enum values rather than separately maintained ordinals.
+Run `python3 CTest/check_python_documentation.py` after editing bindings or the
+reference. It checks public names by surface, argument counts, keyword support,
+module constants and UI enum membership. It also compiles Python documentation
+blocks for syntax. It does not establish runtime type conversion, graphics
+availability, resource validity, native behavior or complete C++ parity.
+
+Keep API prose, [agent instructions](../SKILL.md), the [start guide](python-start.md)
+and this boundary document consistent. Behavior changes still need focused
+native/GUI and embedded Python regressions as described in [Qt testing](python-qt-testing.md).

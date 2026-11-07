@@ -1,5 +1,15 @@
 # Native regression tests
 
+The standalone `stageviz.python_documentation` case compares the reference with
+the CPython registrations by owning surface, argument count and keyword names,
+checks the keyword-support table, all module constants and UI enum members, and
+compiles Python documentation blocks. It also checks local links in `skills/`.
+`stageviz.python_documentation_guard` exercises detection of removed/renamed
+APIs, argument/keyword drift, constant/enum drift and invalid Python syntax.
+Run them without a build using `python3 CTest/check_python_documentation.py` and
+`python3 CTest/test_python_documentation.py`. These checks do not initialize USD,
+Qt or the viewer, and do not replace behavior regressions or graphics checks.
+
 This directory registers native C++ regression tests through CTest. Enable
 them with `BUILD_TESTING=ON` in a configured Stageviz development build. The
 native executable uses a separate `QCoreApplication`; the GUI executable uses
