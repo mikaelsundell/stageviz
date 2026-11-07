@@ -9,7 +9,7 @@
 
 namespace stageviz::python {
 /**
- * @brief Initializes the read-only render view and owned capture Python types.
+ * @brief Initializes viewport access and owned capture Python types.
  */
 bool
 initPyRenderTypes();

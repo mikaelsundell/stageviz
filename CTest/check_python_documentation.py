@@ -149,7 +149,7 @@ def check(root=ROOT):
     keyword_block = reference.split("| Surface | Callables accepting keywords |", 1)[1].split("\n\n", 1)[0]
     documented_keywords = set()
     owners = {"Module": "stageviz", "Session": "stageviz.Session", "command": "stageviz.command",
-              "UI": "stageviz.UI", "ViewportCapture": "stageviz.ViewportCapture"}
+              "UI": "stageviz.UI", "Render": "stageviz.Render", "ViewportCapture": "stageviz.ViewportCapture"}
     for row in keyword_block.splitlines():
         cells = row.split("|")
         if len(cells) > 2 and cells[1].strip() in owners:

@@ -91,10 +91,17 @@ public:
      */
 
     /**
-     * @brief Captures visible prim paths from the current view.
+     * @brief Scans visible prim paths with the viewport's tiled visibility pass.
      *
-     * Runs a visibility query for the current camera and viewport and adds
-     * the resulting prim paths to the internal captured set.
+     * @param accumulate Add results to the shared menu collection when true;
+     *                   otherwise leave the collection unchanged.
+     *
+     * @return Accumulated paths, or only the current scan when accumulate is false.
+     */
+    QList<SdfPath> capturePaths(bool accumulate = true);
+
+    /**
+     * @brief Adds a scan to the visible collection through capturePaths().
      */
     void captureVisible();
 

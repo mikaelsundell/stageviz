@@ -52,6 +52,10 @@ class ViewportCaptureTest(_base["ViewportTest"]):
             return mesh
 
         plane("/World/Front", -2, False, (0.02, 0.02, 0.9))
+        occluded = plane("/World/Occluded", -2, False, (0.02, 0.02, 0.9))
+        occluded.GetOrderedXformOps()[0].Set(Gf.Vec3d(-2, 0, -1))
+        occluded.AddScaleOp().Set(Gf.Vec3f(0.1))
+        plane("/World/Offscreen", 100, False, (0.02, 0.02, 0.9))
         source = UsdGeom.Xform.Define(stage, "/World/Source")
         source.AddTranslateOp().Set(Gf.Vec3d(0))
         body = plane("/World/Source/Body", 0, True, (0.9, 0.02, 0.02))
@@ -68,7 +72,15 @@ class ViewportCaptureTest(_base["ViewportTest"]):
         state.setSceneMaterialsEnabled(True)
         state.setDoubleSidedMode(1)
         state.setGridEnabled(True)
-        camera = state.camera()
+        self.frame_fixture()
+        self.activate_mode("Move")
+        stageviz.command.select_paths(["/World/Instance/Body/Face"])
+        tb.process_events(200)
+        self.snapshot("capture_fixture")
+
+    def frame_fixture(self):
+        """Use the same front view after stage loads reset the camera."""
+        camera = stageviz.session().viewState().camera()
         camera.setCameraUp(1)
         camera.setAxisYaw(0)
         camera.setAxisPitch(0)
@@ -76,10 +88,6 @@ class ViewportCaptureTest(_base["ViewportTest"]):
         camera.setAspectRatioLocked(False)
         camera.frame(((-3, -1, -0.1), (3, 1, 0.1)))
         camera.distance(1.6)
-        self.activate_mode("Move")
-        stageviz.command.select_paths(["/World/Instance/Body/Face"])
-        tb.process_events(200)
-        self.snapshot("capture_fixture")
 
     def colors(self):
         session = stageviz.session()
@@ -114,6 +122,105 @@ class ViewportCaptureTest(_base["ViewportTest"]):
         assert set(session.paths()) == self.red
         print("PASS viewport colors, native instance paths, buffers, read-only capture, selection undo/redo")
 
+    def visible_paths(self):
+        """Menu and Python use one tiled scan and one accumulated collection."""
+        session = stageviz.session()
+        viewport = stageviz.render()
+        selected = list(session.paths())
+        mask = list(session.mask())
+        camera = session.viewState().camera()
+        roll = camera.axisRoll()
+        before = session.stage().GetRootLayer().ExportToString()
+        history = (stageviz.command.can_undo(), stageviz.command.can_redo(), stageviz.command.can_clear())
+
+        def action(name):
+            # Resolve the live action each time; stage changes can rebuild UI.
+            info = tb.action_info(name)
+            assert info is not None and info["enabled"], name
+            assert tb.trigger_action(name), name
+
+        try:
+            viewport.clearVisibleCapture()
+            viewport.clearVisibleCapture()  # Idempotent.
+            assert viewport.visibleCapturePaths() == []
+            scan = viewport.capturePaths(accumulate=False)
+            assert set(scan) == self.expected, scan
+            assert viewport.visibleCapturePaths() == [], "one-shot scan does not accumulate"
+
+            # No processEvents between mask setters and capture: both menu and
+            # Python must synchronize the latest view before scanning.
+            session.setMask(["/World/Front"])
+            assert viewport.capturePaths() == ["/World/Front"]
+            session.setMask(["/World/Source"])
+            scan = viewport.capturePaths(False)
+            assert scan == ["/World/Source/Body"], scan
+            assert viewport.visibleCapturePaths() == ["/World/Front"]
+            action("editSelectVisibleCapture")
+            assert set(viewport.visibleCapturePaths()) == {"/World/Front", "/World/Source/Body"}
+
+            session.setMask([])
+            assert set(viewport.capturePaths(accumulate=True)) == self.expected
+            captured = viewport.visibleCapturePaths()
+            assert viewport.capturePaths() == captured, "repeat scans preserve order without duplicates"
+            copied = viewport.visibleCapturePaths()
+            copied.clear()
+            assert viewport.visibleCapturePaths() == captured, "returned list owns its data"
+            assert set(stageviz.render().capture().paths()) == self.expected
+            assert viewport.visibleCapturePaths() == captured, "image capture leaves collection unchanged"
+
+            # Turn around without pumping events: the smaller rear plane is
+            # genuinely occluded from the original view, but visible from behind.
+            camera.setAxisRoll(roll + 180)
+            rear = viewport.capturePaths(accumulate=False)
+            assert "/World/Occluded" in rear and "/World/Offscreen" not in rear, rear
+            assert viewport.visibleCapturePaths() == captured
+            assert set(viewport.capturePaths()) == self.expected | {"/World/Occluded"}
+            camera.setAxisRoll(roll)
+            viewport.clearVisibleCapture()
+            assert set(viewport.capturePaths()) == self.expected
+
+            assert session.paths() == selected
+            assert session.stage().GetRootLayer().ExportToString() == before
+            assert history == (stageviz.command.can_undo(), stageviz.command.can_redo(), stageviz.command.can_clear())
+            self.snapshot("visible_paths_collected")
+
+            action("editSelectVisibleSelect")
+            assert tb.wait_for_commands()
+            assert set(session.paths()) == self.expected
+            stageviz.command.undo()
+            assert tb.wait_for_commands() and session.paths() == selected
+            stageviz.command.redo()
+            assert tb.wait_for_commands() and set(session.paths()) == self.expected
+            action("editSelectVisibleClear")
+            assert viewport.visibleCapturePaths() == []
+            assert set(session.paths()) == self.expected, "clearing captures leaves selection unchanged"
+            self.snapshot("visible_paths_selected_and_cleared")
+
+            # A wrapper acquired on the GUI thread must still reject use by a
+            # worker rather than touching Qt/GL off-thread. No Qt processing is
+            # required by these immediately rejected calls.
+            import threading
+            rejected = []
+
+            def worker():
+                for method in (viewport.capturePaths, viewport.visibleCapturePaths, viewport.clearVisibleCapture):
+                    try:
+                        method()
+                    except RuntimeError:
+                        rejected.append(True)
+
+            thread = threading.Thread(target=worker)
+            thread.start()
+            thread.join(2)
+            assert not thread.is_alive() and len(rejected) == 3, "all collection APIs require the GUI thread"
+        finally:
+            camera.setAxisRoll(roll)
+            session.setMask(mask)
+            viewport.clearVisibleCapture()
+            stageviz.command.select_paths(selected)
+            assert tb.wait_for_commands()
+        print("PASS shared tiled path scans, one-shot/accumulation, menu parity, selection undo/redo and thread guards")
+
     def diagnostic(self):
         # Same facing-ratio MaterialX graph as the normal-direction dialog.
         stage = stageviz.session().auxiliary()
@@ -145,7 +252,8 @@ class ViewportCaptureTest(_base["ViewportTest"]):
         frame = stageviz.render().capture()
         frame.save(str(self.directory / "capture_normal_direction_clean.png"))
         assert set(frame.pathsByHue(335, tolerance=30, minPixels=8)) == self.red, frame.prims()
-        assert set(frame.pathsByHue(120, tolerance=35, minPixels=8)) == {"/World/Front"}
+        green = set(frame.pathsByHue(120, tolerance=35, minPixels=8))
+        assert green == {"/World/Front"}, green
         self.snapshot("capture_normal_direction")
         print("PASS normal-direction diagnostic magenta selects source and proxy backfaces")
 
@@ -207,8 +315,10 @@ class ViewportCaptureTest(_base["ViewportTest"]):
             assert all(not row["delegateVisible"] for row in report["rprims"] if row["present"])
         finally:
             assert session.loadFromFile(original_file)
+            self.frame_fixture()
             stageviz.command.select_paths(selected)
             tb.process_events(200)
+            assert set(viewport.capture().paths()) == self.expected, "reload restores the occluding front view"
         print("PASS read-only USD/Hydra diagnostics, proxy mapping, visibility undo/redo and argument boundaries")
 
     def boundaries(self):
@@ -228,6 +338,9 @@ class ViewportCaptureTest(_base["ViewportTest"]):
         stageviz.command.undo()
         old = self.frame.paths()
         assert session.close()
+        assert stageviz.render().visibleCapturePaths() == [], "closing the stage resets menu captures"
+        assert stageviz.render().capturePaths() == [], "no rendered stage yields an empty path scan"
+        stageviz.render().clearVisibleCapture()
         assert self.frame.paths() == old and set(self.frame.pathsByHue(0, tolerance=20)) == self.red
         try:
             stageviz.render().capture()
@@ -259,6 +372,7 @@ def run(disposable=False):
     try:
         test.setup()
         test.colors()
+        test.visible_paths()
         test.inspect()
         test.diagnostic()
         test.boundaries()

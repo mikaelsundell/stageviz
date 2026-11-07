@@ -48,6 +48,49 @@ namespace {
         delete self->value;
         Py_TYPE(self)->tp_free(reinterpret_cast<PyObject*>(self));
     }
+    RenderView* checkedView(PyRender* self)
+    {
+        if (!self->view || !*self->view) {
+            PyErr_SetString(PyExc_RuntimeError, "The viewport has closed");
+            return nullptr;
+        }
+        RenderView* view = self->view->data();
+        if (QThread::currentThread() != view->thread()) {
+            PyErr_SetString(PyExc_RuntimeError, "Viewport access requires the application GUI thread");
+            return nullptr;
+        }
+        return view;
+    }
+    PyObject* renderCapturePaths(PyRender* self, PyObject* args, PyObject* kwargs)
+    {
+        int accumulate = 1;
+        static const char* keys[] = { "accumulate", nullptr };
+        if (!PyArg_ParseTupleAndKeywords(args, kwargs, "|p:capturePaths", const_cast<char**>(keys), &accumulate))
+            return nullptr;
+        RenderView* view = checkedView(self);
+        if (!view)
+            return nullptr;
+        try {
+            return pathsToPython(view->capturePaths(accumulate != 0));
+        } catch (const std::bad_alloc&) {
+            return PyErr_NoMemory();
+        }
+    }
+    PyObject* renderVisibleCapturePaths(PyRender* self, PyObject*)
+    {
+        RenderView* view = checkedView(self);
+        if (!view)
+            return nullptr;
+        return pathsToPython(view->visibleCapturePaths());
+    }
+    PyObject* renderClearVisibleCapture(PyRender* self, PyObject*)
+    {
+        RenderView* view = checkedView(self);
+        if (!view)
+            return nullptr;
+        view->clearVisibleCapture();
+        Py_RETURN_NONE;
+    }
     PyObject* renderCapture(PyRender* self, PyObject*)
     {
         if (!self->view || !*self->view) {
@@ -226,6 +269,13 @@ namespace {
     }
     PyMethodDef renderMethods[] = { { "capture", reinterpret_cast<PyCFunction>(renderCapture), METH_NOARGS,
                                       "Capture visible document colors and object paths without changing selection." },
+                                    { "capturePaths", reinterpret_cast<PyCFunction>(renderCapturePaths),
+                                      METH_VARARGS | METH_KEYWORDS,
+                                      "Scan visible paths with the menu's tiled pass; accumulate=True shares its collection." },
+                                    { "visibleCapturePaths", reinterpret_cast<PyCFunction>(renderVisibleCapturePaths),
+                                      METH_NOARGS, "Return a copy of the menu's accumulated visible path collection." },
+                                    { "clearVisibleCapture", reinterpret_cast<PyCFunction>(renderClearVisibleCapture),
+                                      METH_NOARGS, "Clear the shared visible path collection without changing selection." },
                                     { "inspectPrim", reinterpret_cast<PyCFunction>(renderInspectPrim), METH_VARARGS,
                                       "Inspect USD visibility and last-synchronized Hydra items and buffer metadata." },
                                     { nullptr, nullptr, 0, nullptr } };
@@ -255,7 +305,7 @@ initPyRenderTypes()
     renderType.tp_flags = Py_TPFLAGS_DEFAULT;
     renderType.tp_dealloc = reinterpret_cast<destructor>(renderDealloc);
     renderType.tp_methods = renderMethods;
-    renderType.tp_doc = "Weak access to the active render view; use stageviz.render().";
+    renderType.tp_doc = "Viewport capture, diagnostics and visible path collection; use stageviz.render().";
     captureType.tp_name = "stageviz.ViewportCapture";
     captureType.tp_basicsize = sizeof(PyCapture);
     captureType.tp_flags = Py_TPFLAGS_DEFAULT;

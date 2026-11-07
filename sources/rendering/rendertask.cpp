@@ -820,7 +820,7 @@ public:
         if (!enabled() || m_aovBuffers.empty() || !m_aovBuffers[0] || !m_renderIndex)
             return result;
 
-        std::unordered_set<int32_t> visibleIds;
+        std::unordered_set<uint64_t> visibleIds;
         visibleIds.reserve(512);
 
         // Include the normal viewport ID image when it was already needed for
@@ -854,18 +854,19 @@ public:
         if (visibleIds.empty())
             return result;
 
-        // Build the primId -> rprim path table only when Hydra changes its
-        // rprim index. Repeated captures then pay only the ID-buffer readbacks
-        // and set lookups, not a full render-index walk.
+        // Use the same origin/instance resolution as color-object snapshots.
+        // Prim IDs alone identify propagated prototypes, not the visible USD
+        // instance proxy. Resolve each distinct prim/instance pair only once.
         refreshRprimPathCache();
 
         result.reserve(visibleIds.size());
-        for (const int32_t id : visibleIds) {
-            const auto it = m_rprimPathsById.find(id);
-            if (it != m_rprimPathsById.end())
-                result.push_back(it->second);
+        for (const uint64_t id : visibleIds) {
+            const SdfPath path = resolvePath(int32_t(id >> 32), int32_t(uint32_t(id)));
+            if (!path.IsEmpty())
+                result.push_back(path);
         }
         std::sort(result.begin(), result.end());
+        result.erase(std::unique(result.begin(), result.end()), result.end());
         return result;
     }
 
@@ -986,27 +987,35 @@ public:
     bool enabled() const { return m_settings.enabled && m_settings.size[0] > 0 && m_settings.size[1] > 0; }
 
 private:
-    void appendVisibleIds(std::unordered_set<int32_t>& visibleIds)
+    void appendVisibleIds(std::unordered_set<uint64_t>& visibleIds)
     {
-        if (m_aovBuffers.empty() || !m_aovBuffers[0])
+        if (m_aovBuffers.size() < 2 || !m_aovBuffers[0] || !m_aovBuffers[1])
             return;
 
         HdStRenderBuffer* primIdBuffer = m_aovBuffers[0].get();
+        HdStRenderBuffer* instanceIdBuffer = m_aovBuffers[1].get();
         const int width = static_cast<int>(primIdBuffer->GetWidth());
         const int height = static_cast<int>(primIdBuffer->GetHeight());
-        if (width <= 0 || height <= 0 || primIdBuffer->GetFormat() != HdFormatInt32)
+        if (width <= 0 || height <= 0 || primIdBuffer->GetFormat() != HdFormatInt32
+            || instanceIdBuffer->GetFormat() != HdFormatInt32)
             return;
 
         const auto* pixels = static_cast<const int32_t*>(primIdBuffer->Map());
-        if (!pixels)
+        const auto* instances = static_cast<const int32_t*>(instanceIdBuffer->Map());
+        auto unmap = qScopeGuard([&]() {
+            if (pixels)
+                primIdBuffer->Unmap();
+            if (instances)
+                instanceIdBuffer->Unmap();
+        });
+        if (!pixels || !instances)
             return;
 
         const size_t pixelCount = static_cast<size_t>(width) * static_cast<size_t>(height);
         for (size_t i = 0; i < pixelCount; ++i) {
             if (pixels[i] >= 0)
-                visibleIds.insert(pixels[i]);
+                visibleIds.insert((uint64_t(uint32_t(pixels[i])) << 32) | uint32_t(instances[i]));
         }
-        primIdBuffer->Unmap();
     }
 
     void refreshRprimPathCache()

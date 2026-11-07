@@ -276,10 +276,20 @@ public:
      */
 
     /**
-     * @brief Captures visible prim paths from the current view.
+     * @brief Scans visible prim paths after synchronizing the current view.
      *
-     * Runs visibility queries for the current camera and viewport and adds
-     * the resulting prim paths to the internal captured set.
+     * Uses the shared 4-by-4 tiled scene-ID scan. Must run on the GUI thread
+     * with a rendered stage. The previous GL context is restored afterward.
+     *
+     * @param accumulate Add results to the shared menu collection when true;
+     *                   otherwise leave the collection unchanged.
+     *
+     * @return Accumulated paths, or the current scan; empty if no view is available.
+     */
+    QList<SdfPath> capturePaths(bool accumulate = true);
+
+    /**
+     * @brief Adds a scan to the visible collection through capturePaths().
      */
     void captureVisible();
 

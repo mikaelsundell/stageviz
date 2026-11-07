@@ -107,7 +107,7 @@ public:
     void updateBoundingBox(const GfBBox3d& bbox);
     void updateMask(const QList<SdfPath>& paths);
     void updatePrims(const NoticeBatch& batch);
-    void captureVisible();
+    QList<SdfPath> capturePaths(bool accumulate);
     void clearVisibleCapture();
 
 public Q_SLOTS:
@@ -1101,15 +1101,14 @@ ViewportWidgetPrivate::updatePrims(const NoticeBatch& batch)
     d.glwidget->update();
 }
 
-void
-ViewportWidgetPrivate::captureVisible()
+QList<SdfPath>
+ViewportWidgetPrivate::capturePaths(bool accumulate)
 {
     QElapsedTimer timer;
     timer.start();
 
-    d.glwidget->makeCurrent();
     if (!d.stage || !d.renderEngine)
-        return;
+        return {};
 
 #ifdef WIN32
     glDepthMask(GL_TRUE);
@@ -1125,11 +1124,13 @@ ViewportWidgetPrivate::captureVisible()
     }
 
     bool changed = false;
-    for (const SdfPath& path : captured) {
-        if (!d.visibleCaptureSet.contains(path)) {
-            d.visibleCaptureSet.insert(path);
-            d.visibleCapture.append(path);
-            changed = true;
+    if (accumulate) {
+        for (const SdfPath& path : captured) {
+            if (!d.visibleCaptureSet.contains(path)) {
+                d.visibleCaptureSet.insert(path);
+                d.visibleCapture.append(path);
+                changed = true;
+            }
         }
     }
 
@@ -1140,6 +1141,7 @@ ViewportWidgetPrivate::captureVisible()
         d.glwidget->update();
 
     Q_EMIT d.glwidget->captureReady(timer.elapsed());
+    return accumulate ? d.visibleCapture : captured;
 }
 
 void
@@ -1905,10 +1907,33 @@ ViewportWidget::rendererAovs() const
     return p->d.renderEngine->rendererAovs();
 }
 
+QList<SdfPath>
+ViewportWidget::capturePaths(bool accumulate)
+{
+    if (QThread::currentThread() != thread() || !p->d.stage || !isValid())
+        return {};
+
+    QOpenGLContext* previous = QOpenGLContext::currentContext();
+    QSurface* surface = previous ? previous->surface() : nullptr;
+    makeCurrent();
+    auto restore = qScopeGuard([&]() {
+        doneCurrent();
+        if (previous && surface)
+            previous->makeCurrent(surface);
+    });
+    if (QOpenGLContext::currentContext() != QOpenGLWidget::context())
+        return {};
+
+    // Menu and Python captures synchronize the same camera, mask and display
+    // settings before scanning, including immediately after Python setters.
+    p->paintGL();
+    return p->capturePaths(accumulate);
+}
+
 void
 ViewportWidget::captureVisible()
 {
-    p->captureVisible();
+    capturePaths();
 }
 
 void

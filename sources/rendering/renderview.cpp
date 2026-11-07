@@ -167,10 +167,16 @@ RenderView::inspectPrim(const SdfPath& path, QString& error)
     return p->viewportWidget()->inspectPrim(path, error);
 }
 
+QList<SdfPath>
+RenderView::capturePaths(bool accumulate)
+{
+    return p->viewportWidget()->capturePaths(accumulate);
+}
+
 void
 RenderView::captureVisible()
 {
-    p->viewportWidget()->captureVisible();
+    capturePaths();
 }
 
 void

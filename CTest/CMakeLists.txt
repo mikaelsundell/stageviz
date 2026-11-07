@@ -157,6 +157,7 @@ set_target_properties(stageviz_gui_regressions PROPERTIES
 
 foreach(case IN ITEMS
     viewport_components_api
+    viewport_capture_paths_api
     outliner_layer_mute_api
     viewport_lights_api
     viewport_transform_pivot_api
