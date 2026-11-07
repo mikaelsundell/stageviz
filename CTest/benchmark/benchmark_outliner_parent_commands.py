@@ -68,14 +68,14 @@ def _outliner_row_count():
 
 
 def _outliner_tree(QtWidgets):
-    viewer = testbench.viewer()
-    if viewer is None:
-        return None
-    try:
-        return next((widget for widget in viewer.findChildren(QtWidgets.QTreeWidget)
-                     if widget.objectName() == "outlinerTree"), None)
-    except RuntimeError:
-        return None
+    for widget in QtWidgets.QApplication.allWidgets():
+        try:
+            if (isinstance(widget, QtWidgets.QTreeWidget)
+                    and widget.objectName() == "outlinerTree" and widget.isVisible()):
+                return widget
+        except RuntimeError:
+            continue
+    return None
 
 
 def _capture_screenshot(name):

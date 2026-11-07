@@ -405,6 +405,7 @@ setVariantSelection(const QList<SdfPath>& paths, const QString& setName, const Q
                 pending.reserve(16);
 
                 QList<SdfPath> changed;
+                path::PathCollector collector(changed);
                 changed.reserve(uniquePaths.size());
 
                 {
@@ -518,7 +519,7 @@ setVariantSelection(const QList<SdfPath>& paths, const QString& setName, const Q
                                         }
 
                                         if (success)
-                                            path::appendUnique(changed, primPath);
+                                            collector.append(primPath);
                                     }
                                 }
                             }

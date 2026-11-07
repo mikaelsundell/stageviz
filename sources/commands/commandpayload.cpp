@@ -24,12 +24,11 @@ namespace payload {
 
 namespace {
 
-
-
     QList<SdfPath> remapPayloadAffectedPaths(const QList<SdfPath>& paths, const QList<SdfPath>& payloadPaths)
     {
         QList<SdfPath> result;
         result.reserve(paths.size());
+        path::PathCollector collector(result);
 
         for (const SdfPath& inputPath : paths) {
             const SdfPath primPath = inputPath.IsPropertyPath() ? inputPath.GetPrimPath() : inputPath;
@@ -37,14 +36,14 @@ namespace {
 
             for (const SdfPath& payloadPath : payloadPaths) {
                 if (primPath == payloadPath || primPath.HasPrefix(payloadPath)) {
-                    path::appendUnique(result, payloadPath);
+                    collector.append(payloadPath);
                     remapped = true;
                     break;
                 }
             }
 
             if (!remapped)
-                path::appendUnique(result, inputPath);
+                collector.append(inputPath);
         }
 
         return result;
@@ -58,27 +57,28 @@ namespace {
 
         QList<SdfPath> result;
         result.reserve(paths.size());
+        path::PathCollector collector(result);
 
         for (const SdfPath& inputPath : paths) {
             const SdfPath primPath = inputPath.IsPropertyPath() ? inputPath.GetPrimPath() : inputPath;
             const UsdPrim prim = stage->GetPrimAtPath(primPath);
 
             if (prim && prim.IsValid()) {
-                path::appendUnique(result, inputPath);
+                collector.append(inputPath);
                 continue;
             }
 
             bool remapped = false;
             for (const SdfPath& payloadPath : payloadPaths) {
                 if (primPath.HasPrefix(payloadPath)) {
-                    path::appendUnique(result, payloadPath);
+                    collector.append(payloadPath);
                     remapped = true;
                     break;
                 }
             }
 
             if (!remapped)
-                path::appendUnique(result, inputPath);
+                collector.append(inputPath);
         }
 
         return result;
@@ -198,8 +198,9 @@ loadPayloads(const QList<SdfPath>& paths, const QString& variantSet, const QStri
 
                 QList<SdfPath> loadedPaths;
                 loadedPaths.reserve(payloadStates.size());
+                path::PathCollector loadedCollector(loadedPaths);
                 for (const payload::PayloadState& payloadState : payloadStates)
-                    path::appendUnique(loadedPaths, payloadState.path);
+                    loadedCollector.append(payloadState.path);
 
                 QList<SdfPath> selection = state->previousSelection;
                 QList<SdfPath> mask = state->previousMask;
@@ -307,9 +308,10 @@ loadNeighborPayloads(const QList<SdfPath>& paths)
                         targets = payload::neighboringPaths(stage, paths);
 
                         const QList<SdfPath> sourcePaths = stage::outermostPayloadPaths(stage, paths);
+                        path::PathCollector collector(targets);
                         for (const SdfPath& sourcePath : sourcePaths) {
                             if (!stage::isLoaded(stage, sourcePath))
-                                path::appendUnique(targets, sourcePath);
+                                collector.append(sourcePath);
                         }
 
                         QList<SdfPath> unloadedTargets;

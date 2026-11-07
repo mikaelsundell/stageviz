@@ -6,6 +6,7 @@
 #include "application.h"
 #include "bboxutils.h"
 #include "commandselection.h"
+#include "perfscope.h"
 #include "qtutils.h"
 #include "renderengine.h"
 #include "session.h"
@@ -45,7 +46,6 @@ public:
     void sweepEvent(const QRect& rect, QMouseEvent* event);
     bool isPathMaskedIn(const SdfPath& path) const;
     const QList<SdfPath>& cachedVisibleSelection();
-    bool isSelectionVisible(const SdfPath& path) const;
     bool pickMaskedIntersection(const UsdImagingGLEngine::PickParams& pickParams, const GfFrustum& pickFrustum,
                                 UsdImagingGLEngine::IntersectionResultVector* results);
     QPoint deviceRatio(QPoint value) const
@@ -192,6 +192,7 @@ public:
         }
         void build(const UsdStageRefPtr& stage)
         {
+            PerfScope perfScope("selection.bvh_build");
             clear();
             if (!stage)
                 return;
@@ -247,6 +248,7 @@ public:
         }
         std::vector<const Entry*> query(const GfFrustum& frustum) const
         {
+            PerfScope perfScope("selection.bvh_query");
             if (nodes_.empty() || !frustum.Intersects(GfBBox3d(nodes_[0].bounds))) {
                 return {};
             }
@@ -432,6 +434,7 @@ ViewportSelectionPrivate::pickNearestPath(const QPoint& pos)
 void
 ViewportSelectionPrivate::sweepEvent(const QRect& rect, QMouseEvent* event)
 {
+    PerfScope perfScope("selection.sweep");
     d.host->widget()->makeCurrent();
     if (!d.host->stage() || !d.host->renderEngine())
         return;
@@ -657,32 +660,18 @@ ViewportSelectionPrivate::cachedVisibleSelection()
             d.visibleSelectionCache = d.host->selectedPaths();
         }
         else {
+            QList<SdfPath> mask;
+            for (const auto& path : d.host->maskPaths())
+                mask.append(path.IsPropertyPath() ? path.GetPrimPath() : path);
+            const path::PathRelations maskRelations(mask);
             for (const SdfPath& path : d.host->selectedPaths()) {
-                if (isSelectionVisible(path))
+                if (maskRelations.intersects(path.IsPropertyPath() ? path.GetPrimPath() : path))
                     d.visibleSelectionCache.append(path);
             }
         }
         d.visibleSelectionDirty = false;
     }
     return d.visibleSelectionCache;
-}
-
-bool
-ViewportSelectionPrivate::isSelectionVisible(const SdfPath& path) const
-{
-    if (path.IsEmpty())
-        return false;
-
-    if (d.host->maskPaths().isEmpty())
-        return true;
-
-    const SdfPath primPath = path.IsPropertyPath() ? path.GetPrimPath() : path;
-    for (const SdfPath& maskedPath : d.host->maskPaths()) {
-        const SdfPath maskedPrimPath = maskedPath.IsPropertyPath() ? maskedPath.GetPrimPath() : maskedPath;
-        if (primPath == maskedPrimPath || primPath.HasPrefix(maskedPrimPath) || maskedPrimPath.HasPrefix(primPath))
-            return true;
-    }
-    return false;
 }
 
 bool

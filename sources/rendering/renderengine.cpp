@@ -5,6 +5,7 @@
 #include "renderengine.h"
 #include "application.h"
 #include "paths.h"
+#include "perfscope.h"
 #include "qtutils.h"
 #include "renderdiagnostics.h"
 #include "rendersceneindex.h"
@@ -1367,6 +1368,7 @@ RenderEngine::Private::reset()
                 return;
             }
 
+            auxiliaryEngine.reset();
             engine.reset();
         }
 
@@ -1551,6 +1553,7 @@ RenderEngine::Private::updateLighting()
 bool
 RenderEngine::Private::render()
 {
+    PerfScope perfScope("hydra.render_cpu");
     if (!stage || size[0] <= 0 || size[1] <= 0)
         return false;
 
@@ -1617,6 +1620,7 @@ RenderEngine::Private::render()
     // Hydra hierarchy and instance topology that the render tasks will consume.
     const uint64_t mappingGeneration = engine->selectionMappingGeneration();
     if (!selectionCacheValid || cachedSelectionMappingGeneration != mappingGeneration) {
+        PerfScope perfScope("selection.hydra_mapping");
         cachedSelectedPaths.clear();
         cachedSelectedPaths.reserve(selected.size());
         cachedSelectedProxyTargets.clear();
@@ -2082,6 +2086,12 @@ RenderEngine::renderToCurrentFramebuffer()
 #endif  // WIN32
 
     return p->render();
+}
+
+bool
+RenderEngine::isConverged() const
+{
+    return (!p->engine || p->engine->IsConverged()) && (!p->auxiliaryEngine || p->auxiliaryEngine->IsConverged());
 }
 
 QJsonObject

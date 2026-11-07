@@ -4,7 +4,8 @@
 """Hierarchy drag/numeric/Applied/undo regression for a disposable viewer.
 
 Load with runpy; construct HierarchyTransformTest(disposable=True), then call
-setup(), numeric('/World'), numeric('/World/Cube'), drag(path), and cleanup().
+setup(), numeric('/World'), numeric('/World/Cube'), selection_refresh(),
+drag(path), and cleanup().
 External MCP controllers can inspect the stage between calls. No embedded MCP
 requests are made, and each call checks undo/redo before returning.
 """
@@ -103,6 +104,35 @@ class HierarchyTransformTest(_base['ViewportTest']):
         test.QTest.keyClick(line, core.Qt.Key.Key_Return)
         tb.process_events(80)
         self.history(path, before, preview, Gf.Vec3d(*requested), 'numeric_' + path.rsplit('/', 1)[-1])
+
+    def selection_refresh(self):
+        core, _, test, widgets = tb.qt()
+        self.activate_mode('Rotate')
+        stageviz.command.select_paths(['/World'])
+        tb.process_events(100)
+        stageviz.command.clear()
+        stageviz.command.select_paths(['/World/Cube'])
+        assert tb.wait_until(lambda: Gf.IsClose(self.values(), self.angles('/World/Cube'), .015))
+        stageviz.command.undo()
+        assert tb.wait_until(lambda: list(stageviz.session().paths()) == ['/World'])
+        self.check_panel('/World')
+        stageviz.command.redo()
+        assert tb.wait_until(lambda: list(stageviz.session().paths()) == ['/World/Cube'])
+        self.check_panel('/World/Cube')
+        # Select while the tool is disabled, then check that reactivation reads
+        # the current lead object rather than retaining the hidden panel values.
+        button = tb.find_widget('rotate', widgets.QToolButton, self.root)
+        self.activate_mode('Select')
+        assert not button.isChecked()
+        stageviz.command.select_paths(['/World'])
+        tb.process_events(100)
+        self.activate_mode('Rotate')
+        self.check_panel('/World')
+        stageviz.command.select_paths([])
+        assert tb.wait_until(lambda: Gf.IsClose(self.values(), Gf.Vec3d(0), .015))
+        stageviz.command.select_paths(['/World/Cube'])
+        assert tb.wait_until(lambda: Gf.IsClose(self.values(), self.angles('/World/Cube'), .015))
+        self.snapshot('selection_refresh')
 
     def xyz_convention(self):
         core, _, test, widgets = tb.qt()

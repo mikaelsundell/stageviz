@@ -5,6 +5,7 @@
 #include "session.h"
 #include "bboxutils.h"
 #include "commandstack.h"
+#include "perfscope.h"
 #include "qtutils.h"
 #include "selectionlist.h"
 #include "tracelocks.h"
@@ -92,6 +93,7 @@ public:
         explicit StageWatcher(SessionPrivate* parent) { d.parent = parent; }
         void init()
         {
+            bbox::invalidate();
             if (d.objectsKey.IsValid())
                 TfNotice::Revoke(d.objectsKey);
             if (d.layerMutingKey.IsValid())
@@ -127,6 +129,10 @@ public:
         }
         void objectsChanged(const UsdNotice::ObjectsChanged& notice, const UsdStageWeakPtr& sender)
         {
+            // Invalidate synchronously, before deferred Qt delivery and even
+            // while notifications are suppressed during a stage transaction.
+            bbox::invalidate();
+            d.parent->d.bboxDirty.store(true);
             if (d.suppress.load())
                 return;
 
@@ -286,6 +292,7 @@ SessionPrivate::init()
 void
 SessionPrivate::initStage()
 {
+    PerfScope perfScope("session.init_stage");
     UsdStageRefPtr stage;
     const GfBBox3d bbox = boundingBox();
     Session::StageUp up = Session::StageUp::Z;
@@ -410,6 +417,7 @@ SessionPrivate::newStage(Session::LoadPolicy policy)
 bool
 SessionPrivate::loadFromFile(const QString& filename, Session::LoadPolicy policy)
 {
+    PerfScope perfScope("session.load_file");
     const QString absFilename = QFileInfo(filename).absoluteFilePath();
     const std::string identifier = QStringToString(absFilename);
     close();
@@ -1559,7 +1567,6 @@ SessionPrivate::reload()
     if (filename.isEmpty())
         return false;
 
-    close();
     return loadFromFile(filename, loadPolicy);
 }
 
@@ -1702,6 +1709,7 @@ SessionPrivate::syncStageMetadata(const NoticeBatch& batch)
 GfBBox3d
 SessionPrivate::boundingBox()
 {
+    PerfScope perfScope("session.bounding_box");
     WRITE_LOCKER(locker, &d.stageLock, "stageLock");
 
     if (!d.stage)
@@ -1710,9 +1718,8 @@ SessionPrivate::boundingBox()
     if (!d.bboxDirty.load())
         return d.bbox;
 
-    // Stage mutations invalidate the shared USD bbox cache. Clear it before
-    // acquiring CacheGuard; clear() takes the same cache mutex.
-    bbox::clear();
+    // StageWatcher invalidates synchronously on USD changes. CacheGuard clears
+    // only stale entries, retaining valid bounds already computed by a caller.
     if (d.mask.isEmpty()) {
         bbox::CacheGuard cache;
         d.bbox = cache.ComputeWorldBound(d.stage->GetPseudoRoot());
@@ -1732,8 +1739,7 @@ SessionPrivate::boundingBox(const QList<SdfPath>& paths)
     if (!d.stage || paths.isEmpty())
         return GfBBox3d();
 
-    UsdGeomBBoxCache bboxCache(UsdTimeCode::Default(),
-                               { UsdGeomTokens->default_, UsdGeomTokens->proxy, UsdGeomTokens->render }, true);
+    bbox::CacheGuard bboxCache(bbox::CacheGuard::Purposes::Geometry);
 
     GfRange3d worldRange;
     std::unordered_set<SdfPath, SdfPath::Hash> visited;
@@ -1792,6 +1798,7 @@ SessionPrivate::needsBoundingBoxUpdate(const NoticeBatch& batch) const
 void
 SessionPrivate::updatePrims(const NoticeBatch& batch)
 {
+    PerfScope perfScope("session.update_prims");
     if (batch.entries.isEmpty())
         return;
 
@@ -1817,6 +1824,7 @@ SessionPrivate::updatePrims(const NoticeBatch& batch)
 void
 SessionPrivate::flushPrims()
 {
+    PerfScope perfScope("session.flush_prims");
     if (d.stageWatcher) {
         const NoticeBatch watcherBatch = d.stageWatcher->takePending();
         if (!watcherBatch.entries.isEmpty())
@@ -1831,7 +1839,7 @@ SessionPrivate::flushPrims()
     }
     else {
         batch.entries.reserve(d.pendingNotices.entries.size());
-        QHash<QString, qsizetype> infoOnlyIndexByPath;
+        QHash<SdfPath, qsizetype> infoOnlyIndexByPath;
 
         for (const NoticeEntry& entry : d.pendingNotices.entries) {
             const bool mergeOnly = entry.changedInfoOnly && !entry.path.IsEmpty() && entry.associatedPath.IsEmpty()
@@ -1844,10 +1852,9 @@ SessionPrivate::flushPrims()
                 continue;
             }
 
-            const QString key = qt::SdfPathToQString(entry.path);
-            const auto existing = infoOnlyIndexByPath.constFind(key);
+            const auto existing = infoOnlyIndexByPath.constFind(entry.path);
             if (existing == infoOnlyIndexByPath.cend()) {
-                infoOnlyIndexByPath.insert(key, batch.entries.size());
+                infoOnlyIndexByPath.insert(entry.path, batch.entries.size());
                 batch.entries.append(entry);
                 continue;
             }
@@ -1877,6 +1884,7 @@ SessionPrivate::flushPrims()
 void
 SessionPrivate::updateStage()
 {
+    PerfScope perfScope("session.publish_stage");
     UsdStageRefPtr stage;
     Session::LoadPolicy loadPolicy;
     Session::StageStatus stageStatus;

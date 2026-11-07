@@ -4,6 +4,7 @@
 
 #include "commandlayer.h"
 #include "commandutils.h"
+#include "perfscope.h"
 #include "qtutils.h"
 #include "tracelocks.h"
 #include "usdutils.h"
@@ -34,6 +35,7 @@ addSublayer(const QString& filename)
 
     return Command(
         [filename, state](Session* session) {
+            PerfScope perfScope("command.add_sublayer");
             if (!session || filename.isEmpty())
                 return;
 
@@ -133,14 +135,16 @@ reorderSublayers(const QString& parentIdentifier, const QString& sourceIdentifie
                     std::vector<std::string> paths = parent->GetSubLayerPaths();
                     std::vector<std::string> sourcePaths;
                     std::vector<std::string> targetPaths;
+                    const std::string sourceId = sourceIdentifier.toStdString();
+                    const std::string targetId = targetIdentifier.toStdString();
                     for (const std::string& path : paths) {
                         const SdfLayerHandle child = SdfLayer::FindRelativeToLayer(parent, path);
                         if (!child)
                             continue;
-                        const std::string identifier = child->GetIdentifier();
-                        if (identifier == sourceIdentifier.toStdString())
+                        const std::string& identifier = child->GetIdentifier();
+                        if (identifier == sourceId)
                             sourcePaths.push_back(path);
-                        if (identifier == targetIdentifier.toStdString())
+                        if (identifier == targetId)
                             targetPaths.push_back(path);
                     }
 
@@ -269,6 +273,7 @@ setLayerMuted(const QString& layerIdentifier, bool muted)
     auto state = std::make_shared<LayerMuteState>();
 
     auto applyMuteState = [layerIdentifier, state](Session* session, bool muted) {
+        PerfScope perfScope("command.layer_mute");
         if (!session || layerIdentifier.isEmpty())
             return false;
 
@@ -312,12 +317,18 @@ setLayerMuted(const QString& layerIdentifier, bool muted)
                 };
                 retainSubtree(layer);
             }
-            stage->MuteLayer(identifier);
+            {
+                PerfScope usdScope("usd.mute_layer");
+                stage->MuteLayer(identifier);
+            }
         }
         else {
             if (!currentlyMuted || (stage->GetRootLayer() && stage->GetRootLayer()->GetIdentifier() == identifier))
                 return false;
-            stage->UnmuteLayer(identifier);
+            {
+                PerfScope usdScope("usd.unmute_layer");
+                stage->UnmuteLayer(identifier);
+            }
         }
         return stage->IsLayerMuted(identifier) == muted;
     };

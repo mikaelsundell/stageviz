@@ -4,6 +4,7 @@
 
 #include "commandselection.h"
 #include "commandutils.h"
+#include "perfscope.h"
 #include "selectionlist.h"
 #include "tracelocks.h"
 #include "usdutils.h"
@@ -135,8 +136,9 @@ selectInvertInPayload()
                     return;
 
                 const QList<SdfPath> domain = stage::leafPaths(stage, scopes, false);
+                const path::PathIndex selectedRoots(previousSelection);
                 for (const SdfPath& path : domain) {
-                    if (!path::isCoveredByRoots(previousSelection, path))
+                    if (!selectedRoots.covers(path))
                         invertedSelection.append(path);
                 }
             }
@@ -186,8 +188,9 @@ selectInvertInLayer()
                     return;
 
                 const QList<SdfPath> domain = stage::layerPayloadPaths(stage, editLayer);
+                const path::PathIndex selectedRoots(selectedPayloads);
                 for (const SdfPath& path : domain) {
-                    if (!path::isCoveredByRoots(selectedPayloads, path))
+                    if (!selectedRoots.covers(path))
                         invertedSelection.append(path);
                 }
             }
@@ -356,6 +359,7 @@ selectInvert()
             session->beginProgressBlock("Invert selection", 1);
 
             command::runWorker([session, state]() {
+                PerfScope perfScope("selection.invert_worker");
                 QList<SdfPath> invertedSelection;
                 QList<SdfPath> previousSelection;
                 QList<SdfPath> domain;
@@ -367,13 +371,17 @@ selectInvert()
                     previousSelection = session->selectionList()->paths();
                     mask = session->mask();
 
-                    domain = stage::leafPaths(stage, mask, false);
+                    {
+                        PerfScope domainScope("selection.invert_domain");
+                        domain = stage::leafPaths(stage, mask, false);
+                    }
                 }
 
                 state->previousSelection = previousSelection;
 
+                const path::PathIndex selectedRoots(previousSelection);
                 for (const SdfPath& path : domain) {
-                    if (!path::isCoveredByRoots(previousSelection, path))
+                    if (!selectedRoots.covers(path))
                         invertedSelection.append(path);
                 }
 

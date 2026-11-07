@@ -9,6 +9,7 @@
 #include "layeritem.h"
 #include "mime.h"
 #include "os.h"
+#include "perfscope.h"
 #include "selectionlist.h"
 #include "session.h"
 #include "tracelocks.h"
@@ -552,6 +553,7 @@ LayerTree::~LayerTree() = default;
 void
 LayerTree::refresh()
 {
+    PerfScope perfScope("ui.layer_tree_refresh");
     p->refresh();
 }
 

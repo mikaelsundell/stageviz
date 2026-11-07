@@ -39,6 +39,10 @@ set_target_properties(stageviz_regressions PROPERTIES
 )
 
 foreach(case IN ITEMS
+    perf_scope_unset
+    perf_scope_empty
+    perf_scope_enabled
+    render_scene_index_removal
     save_twice_usda
     save_twice_usdc
     save_failure
@@ -77,6 +81,13 @@ foreach(case IN ITEMS
     command_merge_api
     namespace_editor_crud_api
     usd_path_utils_api
+    transform_instance_targets
+    indexed_path_api
+    qt_path_hash_api
+    spec_deletion_api
+    batched_attribute_authoring
+    bbox_cache_invalidation
+    batched_transform_authoring
     usd_stage_utils_api
     usd_payload_utils_api
     material_utils_api
@@ -131,11 +142,13 @@ set_target_properties(stageviz_gui_regressions PROPERTIES
 
 foreach(case IN ITEMS
     viewport_components_api
+    outliner_layer_mute_api
     viewport_lights_api
     viewport_transform_pivot_api
     viewport_transform_hierarchy_sync_api
     viewport_transform_individual_rotation_api
     viewport_gizmo_default_frame_api
+    viewport_transform_selection_refresh_api
     transform_operation_applied_api
     pivot_operation_applied_api
     settings_api

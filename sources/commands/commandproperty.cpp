@@ -86,6 +86,7 @@ resetDependencies(const QList<SdfPath>& propertyPaths)
 
             command::runWorker([session, paths, states]() {
                 QList<SdfPath> affected;
+                path::PathCollector affectedCollector(affected);
                 QStringList errors;
 
                 {
@@ -144,7 +145,7 @@ resetDependencies(const QList<SdfPath>& propertyPaths)
                                     continue;
 
                                 states->append(state);
-                                path::appendUnique(affected, propertyPath.GetPrimPath());
+                                affectedCollector.append(propertyPath.GetPrimPath());
                             }
                         }
                     }
@@ -173,6 +174,7 @@ resetDependencies(const QList<SdfPath>& propertyPaths)
 
             command::runWorker([session, states]() {
                 QList<SdfPath> restored;
+                path::PathCollector restoredCollector(restored);
                 QStringList errors;
 
                 {
@@ -193,7 +195,7 @@ resetDependencies(const QList<SdfPath>& propertyPaths)
                             for (const DependencyPropertyState& state : *states) {
                                 QString error;
                                 if (restoreDependencyProperty(editLayer, state, error))
-                                    path::appendUnique(restored, state.propertyPath.GetPrimPath());
+                                    restoredCollector.append(state.propertyPath.GetPrimPath());
                                 else
                                     errors.append(error);
                             }
@@ -219,10 +221,12 @@ namespace {
     struct AttributeSpecBatchState {
         struct Item {
             SdfPath path;
+            SdfPath specPath;
             SdfLayerRefPtr snapshot;
             bool hadSpec = false;
         };
         QList<Item> items;
+        SdfLayerRefPtr snapshot;
         bool captured = false;
     };
 }  // namespace
@@ -240,6 +244,7 @@ attributeSpecBatch(const QList<SdfPath>& paths, const TfToken& name, const SdfVa
                                    static_cast<int>(paths.size()));
             command::runWorker([session, paths, name, type, custom, removing, state]() {
                 QList<SdfPath> affected;
+                path::PathCollector affectedCollector(affected);
                 QStringList errors;
                 {
                     WRITE_LOCKER(locker, session->stageLock(), "stageLock");
@@ -255,6 +260,11 @@ attributeSpecBatch(const QList<SdfPath>& paths, const TfToken& name, const SdfVa
                                 const SdfPath propPath = removing ? path : path.AppendProperty(name);
                                 if (!propPath.IsPropertyPath())
                                     continue;
+                                const SdfPath specPath = stage->GetEditTarget().MapToSpecPath(propPath);
+                                if (specPath.IsEmpty()) {
+                                    errors.append(QString("Cannot map attribute: %1").arg(pathText(propPath)));
+                                    continue;
+                                }
                                 const UsdPrim prim = stage->GetPrimAtPath(propPath.GetPrimPath());
                                 if (!prim || prim.IsInstanceProxy())
                                     continue;
@@ -267,14 +277,14 @@ attributeSpecBatch(const QList<SdfPath>& paths, const TfToken& name, const SdfVa
                                             QString("Cannot remove built-in attribute %1").arg(pathText(propPath)));
                                         continue;
                                     }
-                                    if (!layer->GetPropertyAtPath(propPath)) {
+                                    if (!layer->GetPropertyAtPath(specPath)) {
                                         errors.append(QString("Attribute is not authored in the current edit layer: %1")
                                                           .arg(pathText(propPath)));
                                         continue;
                                     }
                                 }
                                 else {
-                                    if (layer->GetPropertyAtPath(propPath))
+                                    if (layer->GetPropertyAtPath(specPath))
                                         continue;
                                     if (!custom && (!attr || attr.GetTypeName() != type))
                                         continue;
@@ -283,46 +293,55 @@ attributeSpecBatch(const QList<SdfPath>& paths, const TfToken& name, const SdfVa
                                 }
                                 AttributeSpecBatchState::Item item;
                                 item.path = propPath;
-                                item.hadSpec = bool(layer->GetPropertyAtPath(propPath));
+                                item.specPath = specPath;
+                                item.hadSpec = bool(layer->GetPropertyAtPath(specPath));
                                 if (item.hadSpec) {
-                                    item.snapshot = SdfLayer::CreateAnonymous("stageviz_attribute_snapshot.usda");
-                                    SdfCreatePrimInLayer(item.snapshot, propPath.GetPrimPath());
-                                    if (!SdfCopySpec(layer, propPath, item.snapshot, propPath))
+                                    if (!state->snapshot)
+                                        state->snapshot = SdfLayer::CreateAnonymous("stageviz_attribute_snapshot.usda");
+                                    item.snapshot = state->snapshot;
+                                    SdfCreatePrimInLayer(item.snapshot, specPath.GetParentPath());
+                                    if (!SdfCopySpec(layer, specPath, item.snapshot, specPath))
                                         continue;
                                 }
                                 state->items.append(item);
                             }
                             state->captured = true;
                         }
-                        SdfChangeBlock block;
+                        struct Plan {
+                            SdfPath path, specPath;
+                            SdfVariability variability;
+                        };
+                        QList<Plan> plans;
+                        // USD validation and schema discovery precede Sdf edits.
                         for (const auto& item : state->items) {
-                            const UsdPrim prim = stage->GetPrimAtPath(item.path.GetPrimPath());
+                            const auto prim = stage->GetPrimAtPath(item.path.GetPrimPath());
                             if (!prim)
                                 continue;
-                            bool ok = false;
-                            if (removing) {
-                                if (prim.GetPrimDefinition().GetAttributeDefinition(item.path.GetNameToken())) {
-                                    errors.append(
-                                        QString("Cannot remove built-in attribute %1").arg(pathText(item.path)));
-                                    continue;
-                                }
-                                ok = removePropertySpec(layer, item.path);
+                            if (removing && prim.GetPrimDefinition().GetAttributeDefinition(item.path.GetNameToken())) {
+                                errors.append(QString("Cannot remove built-in attribute %1").arg(pathText(item.path)));
+                                continue;
                             }
+                            const auto attr = prim.GetAttribute(item.path.GetNameToken());
+                            plans.append(
+                                { item.path, item.specPath, attr ? attr.GetVariability() : SdfVariabilityVarying });
+                        }
+                        const VtValue fallback = type ? type.GetDefaultValue() : VtValue();
+                        SdfChangeBlock block;
+                        for (const auto& plan : plans) {
+                            bool ok = false;
+                            if (removing)
+                                ok = removePropertySpec(layer, plan.specPath);
                             else {
-                                const UsdAttribute created = prim.CreateAttribute(name, type, custom);
+                                const auto created = layer::ensureAttributeSpec(layer, plan.specPath, type,
+                                                                                plan.variability, custom);
                                 ok = bool(created);
-                                // Author a default for new custom attributes so the row is
-                                // immediately visible and its value can be edited.
-                                if (ok) {
-                                    const VtValue fallback = type.GetDefaultValue();
-                                    if (!fallback.IsEmpty())
-                                        ok = created.Set(fallback);
-                                }
+                                if (ok && !fallback.IsEmpty())
+                                    ok = created->SetDefaultValue(fallback);
                             }
                             if (ok)
-                                path::appendUnique(affected, item.path.GetPrimPath());
+                                affectedCollector.append(plan.path.GetPrimPath());
                             else
-                                errors.append(QString("Attribute operation failed: %1").arg(pathText(item.path)));
+                                errors.append(QString("Attribute operation failed: %1").arg(pathText(plan.path)));
                         }
                     }
                 }
@@ -342,6 +361,7 @@ attributeSpecBatch(const QList<SdfPath>& paths, const TfToken& name, const SdfVa
             command::beginDeferred(session, "Undo attribute operation", static_cast<int>(state->items.size()));
             command::runWorker([session, state]() {
                 QList<SdfPath> affected;
+                path::PathCollector affectedCollector(affected);
                 QStringList errors;
                 {
                     WRITE_LOCKER(locker, session->stageLock(), "stageLock");
@@ -353,18 +373,18 @@ attributeSpecBatch(const QList<SdfPath>& paths, const TfToken& name, const SdfVa
                     else {
                         SdfChangeBlock block;
                         for (const auto& item : state->items) {
-                            if (!removePropertySpec(layer, item.path)) {
+                            if (!removePropertySpec(layer, item.specPath)) {
                                 errors.append(QString("Failed to clear %1").arg(pathText(item.path)));
                                 continue;
                             }
                             if (item.hadSpec) {
-                                SdfCreatePrimInLayer(layer, item.path.GetPrimPath());
-                                if (!SdfCopySpec(item.snapshot, item.path, layer, item.path)) {
+                                SdfCreatePrimInLayer(layer, item.specPath.GetParentPath());
+                                if (!SdfCopySpec(item.snapshot, item.specPath, layer, item.specPath)) {
                                     errors.append(QString("Failed to restore %1").arg(pathText(item.path)));
                                     continue;
                                 }
                             }
-                            path::appendUnique(affected, item.path.GetPrimPath());
+                            affectedCollector.append(item.path.GetPrimPath());
                         }
                     }
                 }
@@ -399,6 +419,7 @@ renameAttributes(const QList<SdfPath>& attributePaths, const TfToken& newName)
         struct Item {
             SdfPath oldPath;
             SdfPath newPath;
+            SdfPath oldSpecPath, newSpecPath;
             bool removeOriginal = false;
         };
         QList<Item> items;
@@ -412,6 +433,7 @@ renameAttributes(const QList<SdfPath>& attributePaths, const TfToken& newName)
             command::beginDeferred(session, "Rename attributes", static_cast<int>(attributePaths.size()));
             command::runWorker([session, attributePaths, newName, state]() {
                 QList<SdfPath> affected;
+                path::PathCollector affectedCollector(affected);
                 QStringList errors;
                 {
                     WRITE_LOCKER(locker, session->stageLock(), "stageLock");
@@ -451,44 +473,64 @@ renameAttributes(const QList<SdfPath>& attributePaths, const TfToken& newName)
                                 const UsdAttribute attr = stage->GetAttributeAtPath(oldPath);
                                 if (!attr)
                                     continue;
-                                if (!layer->GetPropertyAtPath(oldPath)) {
+                                const SdfPath oldSpecPath = stage->GetEditTarget().MapToSpecPath(oldPath);
+                                const SdfPath newPath = oldPath.GetPrimPath().AppendProperty(newName);
+                                const SdfPath newSpecPath = stage->GetEditTarget().MapToSpecPath(newPath);
+                                if (oldSpecPath.IsEmpty() || newSpecPath.IsEmpty()) {
+                                    errors.append(QString("Cannot map attribute: %1").arg(pathText(oldPath)));
+                                    continue;
+                                }
+                                if (!layer->GetPropertyAtPath(oldSpecPath)) {
                                     errors.append(QString("Attribute is not authored in the current edit layer: %1")
                                                       .arg(pathText(oldPath)));
                                     continue;
                                 }
-                                const SdfPath newPath = oldPath.GetPrimPath().AppendProperty(newName);
-                                state->items.append({ oldPath, newPath, true });
+                                state->items.append({ oldPath, newPath, oldSpecPath, newSpecPath, true });
                             }
                             state->captured = true;
                         }
-                        SdfChangeBlock block;
+                        struct Plan {
+                            SdfPath oldPath, newPath, oldSpecPath, newSpecPath;
+                            SdfValueTypeName type;
+                            SdfVariability variability;
+                            VtValue value;
+                            bool removeOriginal;
+                        };
+                        QList<Plan> plans;
                         for (const auto& item : state->items) {
-                            if (layer->GetPropertyAtPath(item.newPath))
+                            if (layer->GetPropertyAtPath(item.newSpecPath))
                                 continue;
-                            const UsdAttribute source = stage->GetAttributeAtPath(item.oldPath);
+                            const auto source = stage->GetAttributeAtPath(item.oldPath);
                             if (!source)
                                 continue;
-                            const UsdPrim prim = stage->GetPrimAtPath(item.oldPath.GetPrimPath());
-                            const UsdAttribute target = prim.CreateAttribute(newName, source.GetTypeName(), true);
-                            if (!target) {
-                                errors.append(QString("Cannot rename %1").arg(pathText(item.oldPath)));
-                                continue;
-                            }
-                            // Copy the composed default; retain other authored spec fields for custom attributes.
-                            if (item.removeOriginal && layer->GetPropertyAtPath(item.oldPath)) {
-                                if (!SdfCopySpec(layer, item.oldPath, layer, item.newPath)) {
-                                    errors.append(QString("Cannot copy %1").arg(pathText(item.oldPath)));
+                            VtValue value;
+                            if (!item.removeOriginal)
+                                source.Get(&value);
+                            plans.append({ item.oldPath, item.newPath, item.oldSpecPath, item.newSpecPath,
+                                           source.GetTypeName(), source.GetVariability(), value, item.removeOriginal });
+                        }
+                        SdfChangeBlock block;
+                        for (const auto& plan : plans) {
+                            if (plan.removeOriginal && layer->GetPropertyAtPath(plan.oldSpecPath)) {
+                                if (!SdfCopySpec(layer, plan.oldSpecPath, layer, plan.newSpecPath)) {
+                                    errors.append(QString("Cannot copy %1").arg(pathText(plan.oldPath)));
                                     continue;
                                 }
-                                layer->SetField(item.newPath, SdfFieldKeys->Custom, VtValue(true));
-                                removePropertySpec(layer, item.oldPath);
+                                layer->SetField(plan.newSpecPath, SdfFieldKeys->Custom, VtValue(true));
+                                if (!removePropertySpec(layer, plan.oldSpecPath)) {
+                                    errors.append(QString("Cannot remove %1").arg(pathText(plan.oldPath)));
+                                    continue;
+                                }
                             }
                             else {
-                                VtValue value;
-                                if (source.Get(&value))
-                                    target.Set(value);
+                                const auto target = layer::ensureAttributeSpec(layer, plan.newSpecPath, plan.type,
+                                                                               plan.variability, true);
+                                if (!target || (!plan.value.IsEmpty() && !target->SetDefaultValue(plan.value))) {
+                                    errors.append(QString("Cannot rename %1").arg(pathText(plan.oldPath)));
+                                    continue;
+                                }
                             }
-                            path::appendUnique(affected, item.oldPath.GetPrimPath());
+                            affectedCollector.append(plan.oldPath.GetPrimPath());
                         }
                     }
                 }
@@ -509,6 +551,7 @@ renameAttributes(const QList<SdfPath>& attributePaths, const TfToken& newName)
             command::beginDeferred(session, "Undo rename attributes", static_cast<int>(state->items.size()));
             command::runWorker([session, state]() {
                 QList<SdfPath> affected;
+                path::PathCollector affectedCollector(affected);
                 QStringList errors;
                 {
                     WRITE_LOCKER(locker, session->stageLock(), "stageLock");
@@ -521,12 +564,12 @@ renameAttributes(const QList<SdfPath>& attributePaths, const TfToken& newName)
                         SdfChangeBlock block;
                         for (const auto& item : state->items) {
                             if (item.removeOriginal) {
-                                if (!SdfCopySpec(layer, item.newPath, layer, item.oldPath))
+                                if (!SdfCopySpec(layer, item.newSpecPath, layer, item.oldSpecPath))
                                     errors.append(QString("Cannot restore %1").arg(pathText(item.oldPath)));
                             }
-                            if (!removePropertySpec(layer, item.newPath))
+                            if (!removePropertySpec(layer, item.newSpecPath))
                                 errors.append(QString("Cannot remove %1").arg(pathText(item.newPath)));
-                            path::appendUnique(affected, item.oldPath.GetPrimPath());
+                            affectedCollector.append(item.oldPath.GetPrimPath());
                         }
                     }
                 }
@@ -569,6 +612,7 @@ setAttributeValues(const QList<SdfPath>& attributePaths, const VtValue& value)
 
             command::runWorker([session, paths, value, state]() {
                 QList<SdfPath> affected;
+                path::PathCollector affectedCollector(affected);
                 QStringList errors;
 
                 {
@@ -692,7 +736,7 @@ setAttributeValues(const QList<SdfPath>& attributePaths, const VtValue& value)
                                         continue;
                                     }
 
-                                    path::appendUnique(affected, item.attributePath.GetPrimPath());
+                                    affectedCollector.append(item.attributePath.GetPrimPath());
                                     continue;
                                 }
 
@@ -707,7 +751,7 @@ setAttributeValues(const QList<SdfPath>& attributePaths, const VtValue& value)
                                     continue;
                                 }
 
-                                path::appendUnique(affected, item.attributePath.GetPrimPath());
+                                affectedCollector.append(item.attributePath.GetPrimPath());
                             }
                         }
                     }
@@ -732,6 +776,7 @@ setAttributeValues(const QList<SdfPath>& attributePaths, const VtValue& value)
 
             command::runWorker([session, state]() {
                 QList<SdfPath> affected;
+                path::PathCollector affectedCollector(affected);
                 QStringList errors;
 
                 {
@@ -760,7 +805,7 @@ setAttributeValues(const QList<SdfPath>& attributePaths, const VtValue& value)
                                         continue;
                                     }
 
-                                    path::appendUnique(affected, item.attributePath.GetPrimPath());
+                                    affectedCollector.append(item.attributePath.GetPrimPath());
                                     continue;
                                 }
 
@@ -770,7 +815,7 @@ setAttributeValues(const QList<SdfPath>& attributePaths, const VtValue& value)
                                 else
                                     editLayer->EraseField(item.attributePath, SdfFieldKeys->Default);
 
-                                path::appendUnique(affected, item.attributePath.GetPrimPath());
+                                affectedCollector.append(item.attributePath.GetPrimPath());
                             }
                         }
                     }
@@ -814,6 +859,7 @@ resetAttributeValues(const QList<SdfPath>& attributePaths)
 
             command::runWorker([session, paths, state]() {
                 QList<SdfPath> affected;
+                path::PathCollector affectedCollector(affected);
                 QStringList errors;
 
                 {
@@ -845,7 +891,7 @@ resetAttributeValues(const QList<SdfPath>& attributePaths)
 
                                 state->states.append(captureRootPropertyState(editLayer, attributePath));
                                 editLayer->EraseField(attributePath, SdfFieldKeys->Default);
-                                path::appendUnique(affected, attributePath.GetPrimPath());
+                                affectedCollector.append(attributePath.GetPrimPath());
                             }
                         }
                     }
@@ -871,6 +917,7 @@ resetAttributeValues(const QList<SdfPath>& attributePaths)
 
             command::runWorker([session, state]() {
                 QList<SdfPath> affected;
+                path::PathCollector affectedCollector(affected);
                 QStringList errors;
 
                 {
@@ -895,7 +942,7 @@ resetAttributeValues(const QList<SdfPath>& attributePaths)
                                     continue;
                                 }
 
-                                path::appendUnique(affected, rootState.propertyPath.GetPrimPath());
+                                affectedCollector.append(rootState.propertyPath.GetPrimPath());
                             }
                         }
                     }
@@ -939,6 +986,7 @@ resetAttributeOverrides(const QList<SdfPath>& attributePaths)
 
             command::runWorker([session, paths, state]() {
                 QList<SdfPath> affected;
+                path::PathCollector affectedCollector(affected);
                 QStringList errors;
 
                 {
@@ -1014,7 +1062,7 @@ resetAttributeOverrides(const QList<SdfPath>& attributePaths)
                                     stage::removePrimSpec(editLayer, primPath);
 
                                 state->items.append(item);
-                                path::appendUnique(affected, primPath);
+                                affectedCollector.append(primPath);
                             }
                         }
                     }
@@ -1040,6 +1088,7 @@ resetAttributeOverrides(const QList<SdfPath>& attributePaths)
 
             command::runWorker([session, state]() {
                 QList<SdfPath> affected;
+                path::PathCollector affectedCollector(affected);
                 QStringList errors;
 
                 {
@@ -1068,7 +1117,7 @@ resetAttributeOverrides(const QList<SdfPath>& attributePaths)
                                     continue;
                                 }
 
-                                path::appendUnique(affected, item.primPath);
+                                affectedCollector.append(item.primPath);
                             }
                         }
                     }
@@ -1118,6 +1167,7 @@ resetOverrides(const QList<SdfPath>& paths)
 
             command::runWorker([session, paths, state]() {
                 QList<SdfPath> affected;
+                path::PathCollector affectedCollector(affected);
                 QStringList errors;
 
                 {
@@ -1138,6 +1188,7 @@ resetOverrides(const QList<SdfPath>& paths)
                             state->items.clear();
 
                             QList<SdfPath> primPaths;
+                            path::PathCollector primPathsCollector(primPaths);
                             for (const SdfPath& inputPath : path::minimalRootPaths(path::uniquePaths(paths))) {
                                 const SdfPath primPath = inputPath.IsPropertyPath() ? inputPath.GetPrimPath()
                                                                                     : inputPath;
@@ -1147,10 +1198,10 @@ resetOverrides(const QList<SdfPath>& paths)
                                     continue;
                                 }
 
-                                path::appendUnique(primPaths, primPath);
+                                primPathsCollector.append(primPath);
                                 for (const UsdPrim& descendant : prim.GetAllDescendants()) {
                                     if (descendant && descendant.IsValid() && !descendant.IsInstanceProxy())
-                                        path::appendUnique(primPaths, descendant.GetPath());
+                                        primPathsCollector.append(descendant.GetPath());
                                 }
                             }
 
@@ -1236,7 +1287,7 @@ resetOverrides(const QList<SdfPath>& paths)
                                 }
 
                                 state->items.append(item);
-                                path::appendUnique(affected, primPath);
+                                affectedCollector.append(primPath);
                             }
                         }
                     }
@@ -1261,6 +1312,7 @@ resetOverrides(const QList<SdfPath>& paths)
 
             command::runWorker([session, state]() {
                 QList<SdfPath> restored;
+                path::PathCollector restoredCollector(restored);
                 QStringList errors;
 
                 {
@@ -1300,7 +1352,7 @@ resetOverrides(const QList<SdfPath>& paths)
                                 }
 
                                 if (restoredItem)
-                                    path::appendUnique(restored, item.path);
+                                    restoredCollector.append(item.path);
                             }
                         }
                     }

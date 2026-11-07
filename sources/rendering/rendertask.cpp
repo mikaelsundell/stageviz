@@ -739,7 +739,7 @@ public:
             const std::string prototypeRootMarker = "/" + target.prototypeRootPath.GetName() + "/";
             const std::string prototypeMarker = "/UsdNiPrototype/";
             for (const SdfPath& rprimPath : m_renderIndex->GetRprimIds()) {
-                const std::string hydraPath = rprimPath.GetString();
+                const std::string& hydraPath = rprimPath.GetString();
                 const size_t rootPosition = hydraPath.find(prototypeRootMarker);
                 if (rootPosition == std::string::npos)
                     continue;

@@ -6,6 +6,7 @@
 #include "application.h"
 #include "notice.h"
 #include "outlinertree.h"
+#include "perfscope.h"
 #include "primitem.h"
 #include "signalguard.h"
 #include "ui.h"
@@ -191,6 +192,7 @@ OutlinerViewPrivate::maskChanged(const QList<SdfPath>& paths)
 void
 OutlinerViewPrivate::primsChanged(const NoticeBatch& batch)
 {
+    PerfScope perfScope("ui.outliner_prims");
     outlinerTree()->updatePrims(batch);
 
     const SelectionList* list = d.context->selectionList();
@@ -219,6 +221,7 @@ OutlinerViewPrivate::selectionChanged(const QList<SdfPath>& paths)
 void
 OutlinerViewPrivate::stageChanged(UsdStageRefPtr stage, Session::LoadPolicy policy, Session::StageStatus status)
 {
+    PerfScope perfScope("ui.outliner_stage");
     const bool loaded = (status == Session::StageStatus::Loaded);
 
     d.ui->filter->setEnabled(loaded);

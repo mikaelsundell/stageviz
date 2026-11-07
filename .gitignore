@@ -3,5 +3,7 @@
 build
 build.*
 deploy.*
+investigation*
 stageviz_*
 plugin*
+**/__pycache__/

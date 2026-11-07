@@ -7,6 +7,7 @@
 #include <QMetaObject>
 #include <pxr/usd/sdf/copyUtils.h>
 #include <pxr/usd/sdf/namespaceEdit.h>
+#include <pxr/usd/sdf/primSpec.h>
 #include <pxr/usd/sdf/schema.h>
 
 namespace stageviz {
@@ -34,15 +35,37 @@ namespace command {
         return layer;
     }
 
-    QString summarizeErrors(const QStringList& errors) { return errors.join('\n'); }
+    QString summarizeErrors(const QStringList& errors)
+    {
+        // A failed bulk edit can contain tens of thousands of paths. Keep UI
+        // notifications useful without constructing and painting megabytes of
+        // repeated diagnostics on the application thread.
+        constexpr qsizetype limit = 32;
+        if (errors.size() <= limit)
+            return errors.join('\n');
+        QStringList summary = errors.mid(0, limit);
+        summary.append(QString("%1 additional errors omitted").arg(errors.size() - limit));
+        return summary.join('\n');
+    }
 
     bool removePropertySpec(const SdfLayerHandle& layer, const SdfPath& propertyPath)
     {
         if (!layer || propertyPath.IsEmpty() || !propertyPath.IsPropertyPath())
             return false;
-        if (!layer->GetPropertyAtPath(propertyPath))
+        const auto property = layer->GetPropertyAtPath(propertyPath);
+        if (!property)
             return true;
-
+        if (!layer->PermissionToEdit())
+            return false;
+        // This is an exact spec deletion, not a namespace move. Avoid building
+        // and validating a layer-wide namespace transaction for every property
+        // during large undo/restore operations.
+        const auto owner = TfDynamic_cast<SdfPrimSpecHandle>(property->GetOwner());
+        if (owner) {
+            owner->RemoveProperty(property);
+            return !layer->GetPropertyAtPath(propertyPath);
+        }
+        // Relational attribute specs can have a non-prim owner.
         SdfBatchNamespaceEdit edits;
         edits.Add(propertyPath, SdfPath::EmptyPath());
         return layer->CanApply(edits) && layer->Apply(edits);

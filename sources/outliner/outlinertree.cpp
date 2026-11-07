@@ -10,6 +10,7 @@
 #include "commandvisibility.h"
 #include "contextmenu.h"
 #include "mime.h"
+#include "perfscope.h"
 #include "primitem.h"
 #include "qtutils.h"
 #include "selectionlist.h"
@@ -85,6 +86,7 @@ public:
     void refreshParentBranch(const SdfPath& path);
     PrimItem* addItem(PrimItem* parent, const SdfPath& parentPath);
     void addChildren(PrimItem* parent, const SdfPath& parentPath);
+    QHash<SdfPath, PrimItem*> indexedChildren(PrimItem* parent) const;
     void indexItem(PrimItem* item);
     void unindexSubtree(PrimItem* item);
     void deleteItem(PrimItem* item);
@@ -173,7 +175,7 @@ public:
         QList<SdfPath> maskPaths;
         QSet<SdfPath> directOverridePaths;
         QSet<SdfPath> descendantOverridePaths;
-        QHash<QString, PrimItem*> itemByPath;
+        QHash<SdfPath, PrimItem*> itemByPath;
         UsdStageRefPtr stage;
         QPointer<ViewContext> context;
         QPointer<OutlinerTree> tree;
@@ -454,26 +456,19 @@ OutlinerTreePrivate::updateOverrideCacheForNamespaceChanges(const QList<QPair<Sd
     std::sort(effectiveRemaps.begin(), effectiveRemaps.end(), [](const auto& lhs, const auto& rhs) {
         return lhs.first.GetPathElementCount() < rhs.first.GetPathElementCount();
     });
-    for (qsizetype i = effectiveRemaps.size() - 1; i >= 0; --i) {
-        for (qsizetype j = 0; j < i; ++j) {
-            if (effectiveRemaps[i].first.HasPrefix(effectiveRemaps[j].first)) {
-                effectiveRemaps.removeAt(i);
-                break;
-            }
+    QList<QPair<SdfPath, SdfPath>> minimalRemaps;
+    path::PathIndex remappedRoots;
+    QHash<SdfPath, SdfPath> remapDestinations;
+    for (const auto& remap : effectiveRemaps) {
+        if (!remappedRoots.covers(remap.first)) {
+            minimalRemaps.append(remap);
+            remappedRoots.insert(remap.first);
+            remapDestinations.insert(remap.first, remap.second);
         }
     }
-    QList<SdfPath> effectiveRemovedPaths = removedPaths;
-    std::sort(effectiveRemovedPaths.begin(), effectiveRemovedPaths.end(), [](const SdfPath& lhs, const SdfPath& rhs) {
-        return lhs.GetPathElementCount() < rhs.GetPathElementCount();
-    });
-    for (qsizetype i = effectiveRemovedPaths.size() - 1; i >= 0; --i) {
-        for (qsizetype j = 0; j < i; ++j) {
-            if (effectiveRemovedPaths[i].HasPrefix(effectiveRemovedPaths[j])) {
-                effectiveRemovedPaths.removeAt(i);
-                break;
-            }
-        }
-    }
+    effectiveRemaps = std::move(minimalRemaps);
+    const QList<SdfPath> effectiveRemovedPaths = path::sortedRootPaths(removedPaths);
+    const path::PathIndex removedRoots(effectiveRemovedPaths);
 
     QSet<SdfPath> affectedPaths;
     auto addAncestors = [&affectedPaths](SdfPath path) {
@@ -496,24 +491,14 @@ OutlinerTreePrivate::updateOverrideCacheForNamespaceChanges(const QList<QPair<Sd
         QList<SdfPath> removed;
         QList<SdfPath> added;
         for (const SdfPath& path : paths) {
-            bool isRemoved = false;
-            for (const SdfPath& removedPath : effectiveRemovedPaths) {
-                if (path == removedPath || path.HasPrefix(removedPath)) {
-                    isRemoved = true;
-                    break;
-                }
-            }
-            if (isRemoved) {
+            if (removedRoots.covers(path)) {
                 removed.append(path);
                 continue;
             }
-
-            for (const auto& remap : effectiveRemaps) {
-                if (path == remap.first || path.HasPrefix(remap.first)) {
-                    removed.append(path);
-                    added.append(path.ReplacePrefix(remap.first, remap.second));
-                    break;
-                }
+            const SdfPath source = remappedRoots.nearestAncestor(path);
+            if (!source.IsEmpty()) {
+                removed.append(path);
+                added.append(path.ReplacePrefix(source, remapDestinations.value(source)));
             }
         }
 
@@ -704,6 +689,7 @@ OutlinerTreePrivate::reveal(const SdfPath& path)
 void
 OutlinerTreePrivate::expandDepth(int targetDepth, const SdfPath& path)
 {
+    PerfScope perfScope("ui.outliner_expand_depth");
     if (d.tree->topLevelItemCount() == 0)
         return;
 
@@ -808,6 +794,19 @@ OutlinerTreePrivate::depth(const SdfPath& path) const
     return depthValue;
 }
 
+QHash<SdfPath, PrimItem*>
+OutlinerTreePrivate::indexedChildren(PrimItem* parent) const
+{
+    QHash<SdfPath, PrimItem*> result;
+    result.reserve(parent->childCount());
+    for (int i = 0; i < parent->childCount(); ++i) {
+        auto* child = static_cast<PrimItem*>(parent->child(i));
+        if (child)
+            result.insert(child->path(), child);
+    }
+    return result;
+}
+
 void
 OutlinerTreePrivate::indexItem(PrimItem* item)
 {
@@ -818,7 +817,7 @@ OutlinerTreePrivate::indexItem(PrimItem* item)
     if (path.IsEmpty())
         return;
 
-    d.itemByPath.insert(qt::SdfPathToQString(path), item);
+    d.itemByPath.insert(path, item);
 }
 
 void
@@ -834,8 +833,7 @@ OutlinerTreePrivate::unindexSubtree(PrimItem* item)
     if (path.IsEmpty())
         return;
 
-    const QString key = qt::SdfPathToQString(path);
-    auto it = d.itemByPath.find(key);
+    auto it = d.itemByPath.find(path);
     if (it != d.itemByPath.end() && it.value() == item)
         d.itemByPath.erase(it);
 }
@@ -953,6 +951,7 @@ OutlinerTreePrivate::toggleVisible(PrimItem* item)
 void
 OutlinerTreePrivate::updateFilter()
 {
+    PerfScope perfScope("ui.outliner_filter");
     std::function<bool(QTreeWidgetItem*)> matchFilter = [&](QTreeWidgetItem* item) -> bool {
         bool matches = false;
         for (int col = 0; col < d.tree->columnCount(); ++col) {
@@ -1278,7 +1277,7 @@ OutlinerTreePrivate::syncDirectChildrenOnly(PrimItem* parentItem, const UsdPrim&
     }
 
     QList<SdfPath> ordered;
-    QSet<QString> stageSet;
+    QSet<SdfPath> stageSet;
 
     {
         READ_LOCKER(locker, d.context->stageLock(), "stageLock");
@@ -1291,19 +1290,11 @@ OutlinerTreePrivate::syncDirectChildrenOnly(PrimItem* parentItem, const UsdPrim&
                 continue;
             const SdfPath childPath = childPrim.GetPath();
             ordered.append(childPath);
-            stageSet.insert(qt::SdfPathToQString(childPath));
+            stageSet.insert(childPath);
         }
     }
 
-    QHash<QString, PrimItem*> existing;
-    existing.reserve(parentItem->childCount());
-
-    for (int i = 0; i < parentItem->childCount(); ++i) {
-        auto* child = static_cast<PrimItem*>(parentItem->child(i));
-        if (!child)
-            continue;
-        existing.insert(child->data(0, PrimItem::Path).toString(), child);
-    }
+    QHash<SdfPath, PrimItem*> existing = indexedChildren(parentItem);
 
     QList<PrimItem*> staleItems;
     {
@@ -1315,8 +1306,7 @@ OutlinerTreePrivate::syncDirectChildrenOnly(PrimItem* parentItem, const UsdPrim&
             if (stageSet.contains(it.key()))
                 continue;
 
-            const SdfPath existingPath(QStringToString(it.key()));
-            if (!d.stage->GetPrimAtPath(existingPath))
+            if (!d.stage->GetPrimAtPath(it.key()))
                 staleItems.append(it.value());
         }
     }
@@ -1324,38 +1314,20 @@ OutlinerTreePrivate::syncDirectChildrenOnly(PrimItem* parentItem, const UsdPrim&
     for (PrimItem* item : staleItems)
         deleteItem(item);
 
-    existing.clear();
-    existing.reserve(parentItem->childCount());
-
-    for (int i = 0; i < parentItem->childCount(); ++i) {
-        auto* child = static_cast<PrimItem*>(parentItem->child(i));
-        if (!child)
-            continue;
-        existing.insert(child->data(0, PrimItem::Path).toString(), child);
-    }
+    existing = indexedChildren(parentItem);
 
     for (const SdfPath& childPath : ordered) {
-        const QString key = qt::SdfPathToQString(childPath);
-        if (!existing.contains(key)) {
+        if (!existing.contains(childPath)) {
             PrimItem* item = addItem(parentItem, childPath);
             if (item)
                 item->invalidate();
         }
     }
 
-    existing.clear();
-    existing.reserve(parentItem->childCount());
-
-    for (int i = 0; i < parentItem->childCount(); ++i) {
-        auto* child = static_cast<PrimItem*>(parentItem->child(i));
-        if (!child)
-            continue;
-        existing.insert(child->data(0, PrimItem::Path).toString(), child);
-    }
+    existing = indexedChildren(parentItem);
 
     for (int i = 0; i < ordered.size(); ++i) {
-        const QString key = qt::SdfPathToQString(ordered[i]);
-        PrimItem* childItem = existing.value(key, nullptr);
+        PrimItem* childItem = existing.value(ordered[i], nullptr);
         if (!childItem)
             continue;
 
@@ -1372,11 +1344,9 @@ OutlinerTreePrivate::syncDirectChildrenOnly(PrimItem* parentItem, const UsdPrim&
 
         childItem->invalidate();
 
-        const QString childPathString = childItem->data(0, PrimItem::Path).toString();
-        if (childPathString.isEmpty())
+        const SdfPath childPath = childItem->path();
+        if (childPath.IsEmpty())
             continue;
-
-        const SdfPath childPath(QStringToString(childPathString));
 
         bool isPayload = false;
         bool isLoaded = false;
@@ -1819,10 +1789,25 @@ OutlinerTreePrivate::updatePrims(const NoticeBatch& batch)
         }
 
         switch (entry.primResyncType) {
-        case UsdNotice::ObjectsChanged::PrimResyncType::Delete:
-            invalidatePrim(entry.path);
+        case UsdNotice::ObjectsChanged::PrimResyncType::Delete: {
+            bool absent = false;
+            {
+                READ_LOCKER(locker, d.context->stageLock(), "stageLock");
+                absent = d.stage && !d.stage->GetPrimAtPath(entry.path);
+            }
+            // Each deleted sibling used to recursively invalidate every
+            // surviving sibling through invalidatePrim. Reconcile their
+            // shared parent's direct children once, as the bulk-delete path
+            // already does. Keep conservative handling for a reused path.
+            if (absent) {
+                if (PrimItem* item = itemFromPath(entry.path))
+                    deleteItem(item);
+            }
+            else
+                invalidatePrim(entry.path);
             refreshParentBranchOnce(entry.path);
             break;
+        }
 
         case UsdNotice::ObjectsChanged::PrimResyncType::UnchangedPrimStack:
             updatePrim(entry.path);
@@ -2083,18 +2068,10 @@ OutlinerTreePrivate::invalidateChildren(PrimItem* parentItem, const UsdPrim& pri
         return;
     }
 
-    QHash<QString, PrimItem*> existing;
-    existing.reserve(parentItem->childCount());
-
-    for (int i = 0; i < parentItem->childCount(); ++i) {
-        auto* child = static_cast<PrimItem*>(parentItem->child(i));
-        if (!child)
-            continue;
-        existing.insert(child->data(0, PrimItem::Path).toString(), child);
-    }
+    QHash<SdfPath, PrimItem*> existing = indexedChildren(parentItem);
 
     QList<SdfPath> ordered;
-    QSet<QString> stageSet;
+    QSet<SdfPath> stageSet;
 
     {
         READ_LOCKER(locker, d.context->stageLock(), "stageLock");
@@ -2103,9 +2080,8 @@ OutlinerTreePrivate::invalidateChildren(PrimItem* parentItem, const UsdPrim& pri
             if (childPrim.IsA<UsdGeomSubset>())
                 continue;
             const SdfPath childPath = childPrim.GetPath();
-            const QString key = qt::StringToQString(childPath.GetString());
             ordered.append(childPath);
-            stageSet.insert(key);
+            stageSet.insert(childPath);
         }
     }
 
@@ -2119,8 +2095,7 @@ OutlinerTreePrivate::invalidateChildren(PrimItem* parentItem, const UsdPrim& pri
             if (stageSet.contains(it.key()))
                 continue;
 
-            const SdfPath existingPath(QStringToString(it.key()));
-            if (!d.stage->GetPrimAtPath(existingPath))
+            if (!d.stage->GetPrimAtPath(it.key()))
                 staleItems.append(it.value());
         }
     }
@@ -2128,38 +2103,20 @@ OutlinerTreePrivate::invalidateChildren(PrimItem* parentItem, const UsdPrim& pri
     for (PrimItem* item : staleItems)
         deleteItem(item);
 
-    existing.clear();
-    existing.reserve(parentItem->childCount());
-
-    for (int i = 0; i < parentItem->childCount(); ++i) {
-        auto* child = static_cast<PrimItem*>(parentItem->child(i));
-        if (!child)
-            continue;
-        existing.insert(child->data(0, PrimItem::Path).toString(), child);
-    }
+    existing = indexedChildren(parentItem);
 
     for (const SdfPath& childPath : ordered) {
-        const QString key = qt::StringToQString(childPath.GetString());
-        if (!existing.contains(key))
+        if (!existing.contains(childPath))
             addItem(parentItem, childPath);
     }
 
-    existing.clear();
-    existing.reserve(parentItem->childCount());
-
-    for (int i = 0; i < parentItem->childCount(); ++i) {
-        auto* child = static_cast<PrimItem*>(parentItem->child(i));
-        if (!child)
-            continue;
-        existing.insert(child->data(0, PrimItem::Path).toString(), child);
-    }
+    existing = indexedChildren(parentItem);
 
     bool orderMatches = (parentItem->childCount() == ordered.size());
     if (orderMatches) {
         for (int i = 0; i < ordered.size(); ++i) {
             auto* child = static_cast<PrimItem*>(parentItem->child(i));
-            const SdfPath treePath = child ? SdfPath(QStringToString(child->data(0, PrimItem::Path).toString()))
-                                           : SdfPath();
+            const SdfPath treePath = child ? child->path() : SdfPath();
 
             if (!child || treePath != ordered[i]) {
                 orderMatches = false;
@@ -2170,8 +2127,7 @@ OutlinerTreePrivate::invalidateChildren(PrimItem* parentItem, const UsdPrim& pri
 
     if (!orderMatches) {
         for (int i = 0; i < ordered.size(); ++i) {
-            const QString key = qt::StringToQString(ordered[i].GetString());
-            PrimItem* childItem = existing.value(key, nullptr);
+            PrimItem* childItem = existing.value(ordered[i], nullptr);
             if (!childItem)
                 continue;
 
@@ -2187,11 +2143,9 @@ OutlinerTreePrivate::invalidateChildren(PrimItem* parentItem, const UsdPrim& pri
         if (!childItem)
             continue;
 
-        const QString childPathString = childItem->data(0, PrimItem::Path).toString();
-        if (childPathString.isEmpty())
+        const SdfPath childPath = childItem->path();
+        if (childPath.IsEmpty())
             continue;
-
-        const SdfPath childPath(QStringToString(childPathString));
 
         UsdPrim childPrim;
         {
@@ -2256,15 +2210,12 @@ OutlinerTreePrivate::remapSubtreePaths(const SdfPath& fromPath, const SdfPath& t
         const SdfPath oldItemPath = item->path();
         if (!oldItemPath.IsEmpty() && (oldItemPath == fromPath || oldItemPath.HasPrefix(fromPath))) {
             const SdfPath newItemPath = oldItemPath.ReplacePrefix(fromPath, toPath);
-            const QString oldKey = qt::SdfPathToQString(oldItemPath);
-            const QString newKey = qt::SdfPathToQString(newItemPath);
-
-            auto oldIt = d.itemByPath.find(oldKey);
+            auto oldIt = d.itemByPath.find(oldItemPath);
             if (oldIt != d.itemByPath.end() && oldIt.value() == item)
                 d.itemByPath.erase(oldIt);
 
             item->setPath(newItemPath);
-            d.itemByPath.insert(newKey, item);
+            d.itemByPath.insert(newItemPath, item);
         }
 
         item->invalidate();
@@ -2310,6 +2261,7 @@ OutlinerTreePrivate::refreshParentBranch(const SdfPath& path)
 void
 OutlinerTreePrivate::updateSelection(const QList<SdfPath>& paths)
 {
+    PerfScope perfScope("ui.outliner_selection");
     SignalGuard::Scope guard(this);
     QSet<PrimItem*> targetItems;
     targetItems.reserve(paths.size());
@@ -2387,7 +2339,7 @@ OutlinerTreePrivate::itemFromPath(const SdfPath& path) const
     if (path.IsEmpty())
         return nullptr;
 
-    return d.itemByPath.value(qt::SdfPathToQString(path), nullptr);
+    return d.itemByPath.value(path, nullptr);
 }
 
 OutlinerTree::OutlinerTree(QWidget* parent)

@@ -56,8 +56,9 @@ namespace {
         if (maskPaths.isEmpty() || selectedPaths.isEmpty())
             return false;
 
+        const path::PathIndex mask(maskPaths);
         for (const SdfPath& selectedPath : selectedPaths) {
-            if (!maskPaths.contains(selectedPath))
+            if (!mask.contains(selectedPath))
                 return false;
         }
         return true;
@@ -306,10 +307,10 @@ ContextMenu::exec(QWidget* parent, ViewContext* context, UsdStageRefPtr usdStage
             QMenu* setMenu = variantMenu->addMenu(setName);
 
             QList<SdfPath> setTargetPaths;
+            path::PathCollector targetCollector(setTargetPaths);
             for (auto valueIt = setIt.value().cbegin(); valueIt != setIt.value().cend(); ++valueIt) {
                 for (const SdfPath& targetPath : valueIt.value()) {
-                    if (!setTargetPaths.contains(targetPath))
-                        setTargetPaths.append(targetPath);
+                    targetCollector.append(targetPath);
                 }
             }
 

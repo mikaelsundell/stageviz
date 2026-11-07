@@ -128,3 +128,92 @@ class TransformOperationTest(_namespace["SubsetTest"]):
         assert self.layer_text() == original, "conflicting subset transforms are rejected before any authoring"
         assert list(stageviz.session().paths()) == self.selected
         print("PASS conflicting subset deltas leave stage and selection unchanged")
+
+    def composed_batch(self, count=128):
+        """Exercise newly authored matrix ops through the public Python API."""
+        assert self.disposable
+        stage = stageviz.session().stage()
+        root = stage.GetRootLayer()
+        self.composed_source = Usd.Stage.CreateInMemory()
+        paths = ["/Composed/Batch/P" + str(i) for i in range(count)]
+        for i, path in enumerate(paths):
+            cube = UsdGeom.Cube.Define(self.composed_source, path)
+            cube.GetSizeAttr().Set(0.6)
+            cube.AddTranslateOp().Set(Gf.Vec3d(i % 16, i // 16, 0))
+        source_text = self.composed_source.GetRootLayer().ExportToString()
+        # Direct USD authoring constructs this anonymous test fixture. The
+        # operation under test below goes through the public undoable command.
+        root.subLayerPaths = list(root.subLayerPaths) + [self.composed_source.GetRootLayer().identifier]
+        Sdf.CreatePrimInLayer(root, "/Composed")
+        assert stageviz.session().setEditLayer(root.identifier)
+        stageviz.command.select_paths(paths)
+        tb.trigger_action("displayFrameAll")
+        tb.process_events(80)
+        stageviz.command.clear()
+        original = root.ExportToString()
+        cache = UsdGeom.XformCache()
+        before = [cache.GetLocalToWorldTransform(stage.GetPrimAtPath(path)) for path in paths]
+        delta = Gf.Matrix4d(1).SetTranslate(Gf.Vec3d(0.3, 0.4, 0.2))
+        after = [matrix * delta for matrix in before]
+        as_rows = lambda matrix: [list(row) for row in matrix]
+        def matches(matrices):
+            cache = UsdGeom.XformCache()
+            return all(Gf.IsClose(cache.GetLocalToWorldTransform(stage.GetPrimAtPath(path)), matrix, 1e-7)
+                       for path, matrix in zip(paths, matrices))
+        stageviz.command.set_transforms(paths, list(map(as_rows, before)), list(map(as_rows, after)))
+        assert tb.wait_until(lambda: matches(after))
+        authored = root.ExportToString()
+        assert authored != original
+        assert list(stageviz.session().paths()) == paths
+        self.snapshot("composed_batch_applied")
+        stageviz.command.undo()
+        assert tb.wait_until(lambda: matches(before) and root.ExportToString() == original)
+        assert not stageviz.command.can_undo(), "bulk transform creates one undo step"
+        stageviz.command.redo()
+        assert tb.wait_until(lambda: matches(after) and root.ExportToString() == authored)
+        self.snapshot("composed_batch_redone")
+        stageviz.command.undo()
+        assert tb.wait_until(lambda: matches(before) and root.ExportToString() == original)
+        assert self.composed_source.GetRootLayer().ExportToString() == source_text
+        self.snapshot("composed_batch_restored")
+        print("PASS composed batch", count, "public command, exact undo, redo, and unchanged source")
+
+    def mapped_attributes(self):
+        """Check public property batches at variant-root and variant-child targets."""
+        assert self.disposable
+        stage = stageviz.session().stage()
+        root = stage.GetRootLayer()
+        model = UsdGeom.Xform.Define(stage, "/MappedProperties")
+        variants = model.GetPrim().GetVariantSets().AddVariantSet("edit")
+        variants.AddVariant("test")
+        variants.SetVariantSelection("test")
+        paths = ["/MappedProperties", "/MappedProperties/Child"]
+        properties = [path + ".custom:mapped" for path in paths]
+        with variants.GetVariantEditContext():
+            UsdGeom.Cube.Define(stage, paths[1]).GetSizeAttr().Set(0.6)
+            stageviz.command.clear()
+            original = root.ExportToString()
+            stageviz.command.add_attributes(paths, "custom:mapped", "float", True)
+            for path in properties:
+                assert stage.GetAttributeAtPath(path)
+                assert root.GetPropertyAtPath(stage.GetEditTarget().MapToSpecPath(path))
+                assert not root.GetPropertyAtPath(path), "attribute must stay inside its variant"
+            stage.GetAttributeAtPath(properties[0]).Set(3.5, Usd.TimeCode(1))
+            added = root.ExportToString()
+            stageviz.command.rename_attributes(properties, "custom:renamed")
+            assert all(stage.GetAttributeAtPath(path + ".custom:renamed") for path in paths)
+            stageviz.command.undo()
+            assert tb.wait_until(lambda: root.ExportToString() == added)
+            stageviz.command.remove_attributes(properties)
+            assert not any(stage.GetAttributeAtPath(path) for path in properties)
+            stageviz.command.undo()
+            assert tb.wait_until(lambda: root.ExportToString() == added)
+            stageviz.command.undo()
+            assert tb.wait_until(lambda: root.ExportToString() == original)
+            assert not stageviz.command.can_undo()
+            stageviz.command.redo()
+            assert all(stage.GetAttributeAtPath(path) for path in properties)
+            stageviz.command.undo()
+            assert tb.wait_until(lambda: root.ExportToString() == original)
+            self.snapshot("mapped_attributes_restored")
+        print("PASS mapped attributes: root and child capture, add, rename, remove, undo and redo")

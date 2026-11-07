@@ -3,6 +3,7 @@
 // https://github.com/mikaelsundell/stageviz
 
 #include "usdedit.h"
+#include "perfscope.h"
 #include "qtutils.h"
 #include "usdutils.h"
 #include <QSet>
@@ -145,6 +146,7 @@ namespace edit {
 
     bool NamespaceEditor::removePrims(const QList<SdfPath>& paths, QString& error)
     {
+        PerfScope perfScope("usd.namespace_remove");
         changes_.clear();
 
         if (!stage_ || !editTarget_.GetLayer()) {
@@ -197,6 +199,7 @@ namespace edit {
 
     bool NamespaceEditor::renamePrim(const SdfPath& from, const SdfPath& to, QString& error)
     {
+        PerfScope perfScope("usd.namespace_rename");
         changes_.clear();
 
         if (!stage_ || !editTarget_.GetLayer()) {
@@ -288,6 +291,7 @@ namespace edit {
 
     bool NamespaceEditor::reparentPrims(const QList<QPair<SdfPath, SdfPath>>& moves, QString& error)
     {
+        PerfScope perfScope("usd.namespace_reparent");
         changes_.clear();
 
         if (!stage_ || !editTarget_.GetLayer()) {

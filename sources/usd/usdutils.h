@@ -7,14 +7,34 @@
 #include "stageviz.h"
 #include <QList>
 #include <QMap>
+#include <pxr/usd/sdf/attributeSpec.h>
 #include <pxr/usd/usd/prim.h>
 #include <pxr/usd/usd/stage.h>
+#include <unordered_set>
 
 PXR_NAMESPACE_USING_DIRECTIVE
 
 namespace stageviz {
 
 namespace layer {
+
+    /**
+     * @brief Returns or creates a typed attribute spec using only Sdf APIs.
+     *
+     * Pass an already mapped edit-layer property path. Existing specs retain
+     * their metadata; an incompatible existing type is rejected. Safe inside
+     * SdfChangeBlock when the caller holds the stage write lock.
+     *
+     * @param layer Writable destination layer.
+     * @param specPath Property path in the layer's namespace.
+     * @param type Required attribute type.
+     * @param variability Variability for a newly created spec.
+     * @param custom Custom flag for a newly created spec.
+     *
+     * @return Attribute spec, or an empty handle on rejection.
+     */
+    SdfAttributeSpecHandle ensureAttributeSpec(const SdfLayerHandle& layer, const SdfPath& specPath,
+                                               const SdfValueTypeName& type, SdfVariability variability, bool custom);
 
     /**
      * @brief Validates that a prim is authored in a specific layer.
@@ -99,7 +119,118 @@ namespace identifier {
 
 }  // namespace identifier
 
+/**
+ * @brief Shares native USD path collection and namespace query operations.
+ *
+ * Keep SdfPath keys in internal sets and maps; convert to text at presentation,
+ * serialization, and generic Qt item-role boundaries. Use PathCollector for
+ * stable unique nonempty output and PathIndex for repeated membership or ancestor
+ * queries. These helpers preserve exact paths, including property paths.
+ * Choose root filtering by its ordering contract: stableRootPaths preserves input
+ * order, sortedRootPaths uses USD namespace order, and minimalRootPaths uses depth
+ * followed by lexical text order. These orders are not interchangeable.
+ */
 namespace path {
+
+    /**
+     * @brief Indexes exact paths and ancestor coverage for repeated queries.
+     *
+     * Build once outside a bulk loop. Queries take time proportional to path
+     * depth, independent of the number of roots. Paths retain their exact USD
+     * namespace semantics; property paths are not implicitly converted to prims.
+     * Empty roots are ignored and an empty index covers nothing.
+     */
+    class PathIndex {
+    public:
+        /**
+         * @brief Builds an index without retaining references to the input list.
+         */
+        explicit PathIndex(const QList<SdfPath>& paths = {});
+        /**
+         * @brief Inserts a nonempty path and reports whether it was new.
+         */
+        bool insert(const SdfPath& path);
+        /**
+         * @brief Tests exact membership without normalizing property paths.
+         */
+        bool contains(const SdfPath& path) const;
+        /**
+         * @brief Tests whether an indexed path is a prefix of the supplied path.
+         */
+        bool covers(const SdfPath& path) const;
+        /**
+         * @brief Returns the closest indexed prefix, or an empty path.
+         */
+        SdfPath nearestAncestor(const SdfPath& path) const;
+        /**
+         * @brief Returns the shallowest indexed prefix, or an empty path.
+         */
+        SdfPath outermostAncestor(const SdfPath& path) const;
+
+    private:
+        std::unordered_set<SdfPath, SdfPath::Hash> paths;
+    };
+
+    /**
+     * @brief Indexes overlap in both directions for selection and notice filtering.
+     *
+     * Adds an index of prefixes to PathIndex for repeated descendant queries.
+     * Construct once per bulk operation, using exact USD path semantics.
+     */
+    class PathRelations {
+    public:
+        /**
+         * @brief Builds the root and prefix indexes from nonempty input paths.
+         */
+        explicit PathRelations(const QList<SdfPath>& paths);
+        /**
+         * @brief Tests equality, ancestry, or descendancy against indexed paths.
+         */
+        bool intersects(const SdfPath& path) const;
+
+    private:
+        PathIndex roots;
+        PathIndex prefixes;
+    };
+
+    /**
+     * @brief Returns unique nonempty roots in their original input order.
+     *
+     * Removes strict descendants even when their ancestor occurs later in the
+     * input. Unlike minimalRootPaths, this does not sort the result.
+     */
+    QList<SdfPath> stableRootPaths(const QList<SdfPath>& paths);
+
+    /**
+     * @brief Returns unique nonempty roots in USD namespace sort order.
+     *
+     * Sorts once and filters adjacent descendants without an ancestor hash walk
+     * per path. Prefer this for bulk traversal when input/depth order is not
+     * required. SdfPath ordering keeps every subtree contiguous.
+     */
+    QList<SdfPath> sortedRootPaths(const QList<SdfPath>& paths);
+
+    /**
+     * @brief Collects unique nonempty paths in insertion order without rescanning.
+     *
+     * Do not modify the output independently between append calls. After the last
+     * append, the output can be consumed or replaced without using this collector again.
+     */
+    class PathCollector {
+    public:
+        /**
+         * @brief Indexes existing output values before appending new paths.
+         */
+        explicit PathCollector(QList<SdfPath>& output);
+        /**
+         * @brief Appends a nonempty path only on its first occurrence.
+         */
+        void append(const SdfPath& path);
+
+    private:
+        QList<SdfPath>& output;
+        PathIndex index;
+    };
     /**
      * @brief Filters a list of prim paths to only top-most paths.
      *
@@ -173,8 +304,8 @@ namespace path {
     /**
      * @brief Checks whether a path is affected by the current isolation mask.
      *
-     * Property paths are normalized to their owning prim paths before
-     * comparison. The function returns true if the path is equal to, or a
+     * Paths use exact USD namespace prefix comparison; property paths are not
+     * implicitly projected to prims. Returns true if the path is equal to, or a
      * descendant of, any path in the isolation mask. An empty mask matches all
      * paths.
      *
@@ -188,8 +319,8 @@ namespace path {
     /**
      * @brief Checks whether a path is affected by the current selection.
      *
-     * Property paths are normalized to their owning prim paths before
-     * comparison. The function returns true if the path is equal to, or a
+     * Paths use exact USD namespace prefix comparison; property paths are not
+     * implicitly projected to prims. Returns true if the path is equal to, or a
      * descendant of, any selected path.
      *
      * @param selection Current selection.
@@ -237,6 +368,9 @@ namespace path {
 
     /**
      * @brief Appends a path if it is not already present in the list.
+     *
+     * Single-item convenience. For bulk accumulation, construct PathCollector
+     * once outside the loop instead of repeatedly scanning the output list.
      */
     void appendUnique(QList<SdfPath>& paths, const SdfPath& path);
 

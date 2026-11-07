@@ -76,6 +76,37 @@ struct NoticeBatch {
     QList<NoticeEntry> entries;
 };
 
+namespace notice {
+    /**
+     * @brief Reports whether a batch contains only transforms and prim-stack refreshes.
+     *
+     * Stronger over specs can produce info-only prim notices without changed
+     * fields. Accept those only alongside transform-property changes. Prim
+     * resyncs, named prim fields, assets, and other properties remain conservative.
+     * Use this to retain topology-derived caches, never world-space bounds.
+     */
+    inline bool onlyTransformProperties(const NoticeBatch& batch)
+    {
+        if (batch.entries.isEmpty())
+            return false;
+        bool hasTransform = false;
+        for (const auto& entry : batch.entries) {
+            if (!entry.associatedPath.IsEmpty() || entry.resolvedAssetPathsResynced
+                || entry.primResyncType != UsdNotice::ObjectsChanged::PrimResyncType::Invalid)
+                return false;
+            if (entry.path.IsPrimPath() && entry.changedInfoOnly && entry.changedFields.empty())
+                continue;
+            if (!entry.path.IsPropertyPath())
+                return false;
+            const auto& name = entry.path.GetName();
+            if (name != "xformOpOrder" && name.rfind("xformOp:", 0) != 0)
+                return false;
+            hasTransform = true;
+        }
+        return hasTransform;
+    }
+}  // namespace notice
+
 }  // namespace stageviz
 
 // Register for Qt signal/slot usage

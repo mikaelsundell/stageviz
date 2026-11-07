@@ -11,12 +11,14 @@
 #include "notice.h"
 #include "os.h"
 #include "paths.h"
+#include "perfscope.h"
 #include "qtutils.h"
 #include "renderengine.h"
 #include "session.h"
 #include "signalguard.h"
 #include "tracelocks.h"
 #include "ui.h"
+#include "usdutils.h"
 #include "viewcamera.h"
 #include "viewcontext.h"
 #include "viewportauxiliary.h"
@@ -164,6 +166,7 @@ public:
     void syncSelection(const QList<SdfPath>& paths) override
     {
         d.selection = paths;
+        d.selectedTotalsDirty = true;
         d.selectionTool->invalidateVisibleSelection();
     }
     const QList<SdfPath>& cachedVisibleSelection() { return d.selectionTool->visiblePaths(); }
@@ -188,6 +191,8 @@ public:
         QPoint mousepos;
         QTimer navigationTimer;
         ViewportSceneCounts cachedSceneTotals;
+        ViewportSceneCounts cachedSelectedTotals;
+        bool selectedTotalsDirty = true;
         bool sceneTotalsDirty = true;
         QImage sceneStats;
         QImage performanceStats;
@@ -457,6 +462,8 @@ ViewportWidgetPrivate::close()
     d.stage = nullptr;
     d.lights->invalidate();
     d.cachedSceneTotals = {};
+    d.cachedSelectedTotals = {};
+    d.selectedTotalsDirty = true;
     d.sceneTotalsDirty = true;
     d.sceneStats = QImage();
     d.performanceStats = QImage();
@@ -481,6 +488,7 @@ ViewportWidgetPrivate::close()
 void
 ViewportWidgetPrivate::paintGL()
 {
+    PerfScope perfScope("viewport.paint");
     QElapsedTimer timer;
     timer.start();
     if (!d.renderEngine || !d.renderEngine->isInitialized())
@@ -523,6 +531,10 @@ ViewportWidgetPrivate::paintGL()
         return;
 
     d.gpuPerformanceMs = gpuTimer.nsecsElapsed() / 1e6;
+    const bool converged = d.renderEngine->isConverged();
+    d.glwidget->setProperty("renderConverged", converged);
+    if (!converged)
+        d.glwidget->update();
     d.count++;
 
     Q_EMIT d.glwidget->renderReady(timer.elapsed());
@@ -966,6 +978,8 @@ ViewportWidgetPrivate::updateStage(UsdStageRefPtr stage)
     d.lights->invalidate();
     d.sceneTotalsDirty = true;
     d.cachedSceneTotals = {};
+    d.cachedSelectedTotals = {};
+    d.selectedTotalsDirty = true;
     d.selectionTool->reset();
     d.selectionTool->invalidateVisibleSelection();
     d.transform->invalidate();
@@ -1059,7 +1073,11 @@ ViewportWidgetPrivate::updatePrims(const NoticeBatch& batch)
             break;
         }
     }
-    d.sceneTotalsDirty = true;
+    // Counts depend on topology/composition, not the transform stack. Preserve
+    // totals for ordinary drag updates; any unknown change remains conservative.
+    const bool countsChanged = !notice::onlyTransformProperties(batch);
+    d.sceneTotalsDirty = d.sceneTotalsDirty || countsChanged;
+    d.selectedTotalsDirty = d.selectedTotalsDirty || countsChanged;
     d.selectionTool->invalidateVisibleSelection();
     d.selectionTool->invalidateStage();
     {
@@ -1159,9 +1177,11 @@ ViewportWidgetPrivate::updateCamera(const GfCamera& camera)
 void
 ViewportWidgetPrivate::updateSelection(const QList<SdfPath>& paths)
 {
+    PerfScope perfScope("ui.viewport_selection");
     {
         SignalGuard::Scope guard(this);
         d.selection = paths;
+        d.selectedTotalsDirty = true;
         d.selectionTool->invalidateVisibleSelection();
     }
     // The guard blocks signals on the GL widget. Notify the transform after
@@ -1407,6 +1427,7 @@ ViewportWidgetPrivate::drawBorder(QPainter& painter)
 void
 ViewportWidgetPrivate::updateSceneStats()
 {
+    PerfScope perfScope("ui.scene_statistics");
     auto accumulate = [&](const UsdPrim& prim, ViewportSceneCounts& s) {
         if (!prim.IsActive() || !prim.IsLoaded())
             return;
@@ -1444,19 +1465,7 @@ ViewportWidgetPrivate::updateSceneStats()
         if (prim.IsInstanceable())
             s.instances++;
     };
-    auto filterRootPaths = [](const QList<SdfPath>& paths) {
-        std::vector<SdfPath> sorted(paths.begin(), paths.end());
-        std::sort(sorted.begin(), sorted.end());
-        sorted.erase(std::unique(sorted.begin(), sorted.end()), sorted.end());
-        QList<SdfPath> result;
-        for (const SdfPath& path : sorted) {
-            if (!result.isEmpty() && path.HasPrefix(result.last()))
-                continue;
-            result.append(path);
-        }
-        return result;
-    };
-    ViewportSceneCounts selected;
+    ViewportSceneCounts selected = d.cachedSelectedTotals;
     if (d.stage) {
         READ_LOCKER(locker, d.context->stageLock(), "stageLock");
         if (d.sceneTotalsDirty) {
@@ -1467,8 +1476,9 @@ ViewportWidgetPrivate::updateSceneStats()
             d.cachedSceneTotals = totals;
             d.sceneTotalsDirty = false;
         }
-        if (!d.selection.isEmpty()) {
-            const QList<SdfPath> roots = filterRootPaths(d.selection);
+        if (d.selectedTotalsDirty) {
+            selected = {};
+            const QList<SdfPath> roots = path::sortedRootPaths(d.selection);
             for (const SdfPath& path : roots) {
                 UsdPrim root = d.stage->GetPrimAtPath(path);
                 if (!root)
@@ -1480,6 +1490,8 @@ ViewportWidgetPrivate::updateSceneStats()
             }
         }
     }
+    d.cachedSelectedTotals = selected;
+    d.selectedTotalsDirty = false;
     const ViewportSceneCounts& total = d.cachedSceneTotals;
     QLocale locale = QLocale::system();
     auto fmt = [&](size_t v) { return locale.toString((qlonglong)v); };

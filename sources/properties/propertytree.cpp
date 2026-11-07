@@ -9,6 +9,7 @@
 #include "commandstack.h"
 #include "messagedialog.h"
 #include "notice.h"
+#include "perfscope.h"
 #include "propertyitem.h"
 #include "qtutils.h"
 #include "selectionlist.h"
@@ -17,6 +18,7 @@
 #include "threadutils.h"
 #include "tracelocks.h"
 #include "ui.h"
+#include "usdutils.h"
 #include "viewcontext.h"
 #include <QApplication>
 #include <QClipboard>
@@ -2308,6 +2310,7 @@ PropertyTreePrivate::addPrimSection(const UsdPrim& prim)
 void
 PropertyTreePrivate::addMultiPrimSection(const QList<UsdPrim>& prims)
 {
+    PerfScope perfScope("ui.property_summary");
     if (prims.isEmpty())
         return;
 
@@ -2696,6 +2699,7 @@ PropertyTreePrivate::populateMultiAttributesSection(const QList<UsdPrim>& prims)
 void
 PropertyTreePrivate::addMultiAttributesSection(const QList<UsdPrim>& prims)
 {
+    PerfScope perfScope("ui.property_attribute_discovery");
     if (prims.isEmpty())
         return;
 
@@ -3078,6 +3082,7 @@ PropertyTreePrivate::populateMultiRelationshipsSection(const QList<UsdPrim>& pri
 void
 PropertyTreePrivate::addMultiRelationshipsSection(const QList<UsdPrim>& prims)
 {
+    PerfScope perfScope("ui.property_relationship_discovery");
     if (prims.isEmpty())
         return;
 
@@ -3261,6 +3266,7 @@ PropertyTreePrivate::flushPendingRefresh()
 void
 PropertyTreePrivate::updatePrims(const NoticeBatch& batch)
 {
+    PerfScope perfScope("ui.property_prims");
     // Live component scrubbing authors directly to USD so the viewport and other
     // consumers update continuously. Rebuilding this tree from those notices
     // would destroy the editor underneath the active mouse drag.
@@ -3270,18 +3276,14 @@ PropertyTreePrivate::updatePrims(const NoticeBatch& batch)
     if (d.paths.isEmpty() || batch.entries.isEmpty())
         return;
 
+    const path::PathRelations selectionRelations(d.paths);
     auto affectsSelection = [&](const SdfPath& inputPath) {
         if (inputPath.IsEmpty())
             return false;
 
         const SdfPath entryPath = inputPath.IsPropertyPath() ? inputPath.GetPrimPath() : inputPath;
 
-        for (const SdfPath& selectedPath : d.paths) {
-            if (selectedPath == entryPath || selectedPath.HasPrefix(entryPath) || entryPath.HasPrefix(selectedPath))
-                return true;
-        }
-
-        return false;
+        return selectionRelations.intersects(entryPath);
     };
 
     for (const NoticeEntry& entry : batch.entries) {
@@ -3474,6 +3476,7 @@ PropertyTreePrivate::addAttribute(PropertyItem* parent, const UsdAttribute& attr
 void
 PropertyTreePrivate::updateSelection(const QList<SdfPath>& paths)
 {
+    PerfScope perfScope("ui.property_selection");
     d.pendingEditorRefresh = false;
     auto normalizedPrimPaths = [](const QList<SdfPath>& input) {
         QList<SdfPath> result;
@@ -3486,8 +3489,8 @@ PropertyTreePrivate::updateSelection(const QList<SdfPath>& paths)
         return result;
     };
 
-    const bool sameSelection = !d.paths.isEmpty() && !paths.isEmpty()
-                               && normalizedPrimPaths(d.paths) == normalizedPrimPaths(paths);
+    const bool sameSelection = !d.paths.isEmpty() && d.paths.size() == paths.size()
+                               && (d.paths == paths || normalizedPrimPaths(d.paths) == normalizedPrimPaths(paths));
     const TreeState treeState = sameSelection ? captureTreeState() : TreeState();
 
     // Expansion state is shared across selections, including expanded
@@ -3993,6 +3996,7 @@ PropertyTree::contextMenuEvent(QContextMenuEvent* event)
 
     QMap<QString, SdfValueTypeName> candidates;
     QList<SdfPath> primPaths;
+    path::PathCollector primCollector(primPaths);
     if (p->d.stage) {
         READ_LOCKER(locker, p->d.context ? p->d.context->stageLock() : session()->stageLock(), "stageLock");
         for (const SdfPath& selected : p->d.paths) {
@@ -4000,8 +4004,7 @@ PropertyTree::contextMenuEvent(QContextMenuEvent* event)
             const UsdPrim prim = p->d.stage->GetPrimAtPath(primPath);
             if (!prim || prim.IsInstanceProxy())
                 continue;
-            if (!primPaths.contains(primPath))
-                primPaths.append(primPath);
+            primCollector.append(primPath);
             const UsdPrimDefinition& definition = prim.GetPrimDefinition();
             for (const TfToken& name : definition.GetPropertyNames()) {
                 const auto declared = definition.GetAttributeDefinition(name);

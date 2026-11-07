@@ -30,12 +30,21 @@ namespace stageviz::bbox {
 class CacheGuard {
 public:
     /**
+     * @brief Selects the purposes included in cached bounds.
+     *
+     * All includes guide geometry. Geometry includes default, proxy, and render.
+     */
+    enum class Purposes { All, Geometry };
+
+    /**
          * @brief Acquires exclusive access to the shared bounding box cache.
          *
          * Blocks until the internal cache mutex becomes available.
          * The caller must already hold the appropriate stage lock.
+         *
+         * @param purposes Purposes included in bounds evaluation.
          */
-    CacheGuard();
+    explicit CacheGuard(Purposes purposes = Purposes::All);
 
     /**
          * @brief Releases exclusive access to the shared bounding box cache.
@@ -79,5 +88,15 @@ private:
      */
 void
 clear();
+
+/**
+ * @brief Marks shared bounds stale without taking the cache mutex.
+ *
+ * Call synchronously from USD change notices, including during deferred UI
+ * updates. The next CacheGuard clears stale entries before exposing the cache.
+ * This may be called while the stage write lock is held.
+ */
+void
+invalidate();
 
 }  // namespace stageviz::bbox

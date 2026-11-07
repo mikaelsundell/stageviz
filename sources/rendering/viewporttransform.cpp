@@ -4,20 +4,24 @@
 
 #include "viewporttransform.h"
 #include "application.h"
+#include "bboxutils.h"
 #include "command.h"
 #include "commandpivot.h"
 #include "commandstack.h"
 #include "commandtransform.h"
+#include "perfscope.h"
 #include "primutils.h"
 #include "qtutils.h"
 #include "session.h"
 #include "tracelocks.h"
 #include "ui.h"
+#include "usdutils.h"
 #include "viewcamera.h"
 #include "viewcontext.h"
 #include "viewporthost.h"
 #include "viewportwidget.h"
 #include <QStringList>
+#include <QVariant>
 #include <algorithm>
 #include <cmath>
 #include <pxr/base/gf/math.h>
@@ -63,6 +67,7 @@ public:
     QList<SdfPath> selectedVisiblePaths() const;
     QList<SdfPath> visibleTargetPaths() const;
     ViewportGizmo::Frame dragFrame() const;
+    void publishFrameProperties();
 
     struct Data {
         ViewportHost* host = nullptr;
@@ -299,14 +304,19 @@ ViewportTransformPrivate::referenceOrientation(const QList<SdfPath>& targetPaths
 QList<SdfPath>
 ViewportTransformPrivate::selectedVisiblePaths() const
 {
+    PerfScope perfScope("transform.visible_selection");
     QList<SdfPath> paths;
     if (!d.host->stage())
         return paths;
 
     paths.reserve(d.host->selectedPaths().size());
+    path::PathCollector collector(paths);
+    path::PathIndex maskRoots;
+    for (const auto& mask : d.host->maskPaths())
+        maskRoots.insert(mask.IsPropertyPath() ? mask.GetPrimPath() : mask);
     for (const SdfPath& selectedPath : d.host->selectedPaths()) {
         const SdfPath path = selectedPath.IsPropertyPath() ? selectedPath.GetPrimPath() : selectedPath;
-        if (!d.host->pathMaskedIn(path))
+        if (!d.host->maskPaths().isEmpty() && !maskRoots.covers(path))
             continue;
 
         const UsdPrim prim = d.host->stage()->GetPrimAtPath(path);
@@ -317,8 +327,7 @@ ViewportTransformPrivate::selectedVisiblePaths() const
         if (imageable && imageable.ComputeVisibility() == UsdGeomTokens->invisible)
             continue;
 
-        if (!paths.contains(path))
-            paths.append(path);
+        collector.append(path);
     }
     return paths;
 }
@@ -326,15 +335,15 @@ ViewportTransformPrivate::selectedVisiblePaths() const
 QList<SdfPath>
 ViewportTransformPrivate::visibleTargetPaths() const
 {
-    const QList<SdfPath> selectedPaths = selectedVisiblePaths();
-    return stage::transformEditTargetPaths(d.host->stage(), selectedPaths);
+    return stage::transformEditTargetPaths(d.host->stage(), selectedVisiblePaths());
 }
 
 bool
 ViewportTransformPrivate::selectionPivot(GfVec3d& pivot)
 {
+    PerfScope perfScope("transform.selection_pivot");
     const QList<SdfPath> selectedPaths = selectedVisiblePaths();
-    const QList<SdfPath> targetPaths = visibleTargetPaths();
+    const QList<SdfPath> targetPaths = stage::transformEditTargetPaths(d.host->stage(), selectedPaths);
     d.frame.orientationValid = false;
 
     if (selectedPaths.isEmpty() || targetPaths.isEmpty())
@@ -375,8 +384,11 @@ ViewportTransformPrivate::selectionPivot(GfVec3d& pivot)
 void
 ViewportTransformPrivate::updateInputValues()
 {
+    PerfScope perfScope("transform.input_values");
     GfVec3d values = d.frame.mode == Mode::Scale ? GfVec3d(1.0) : GfVec3d(0.0);
-    if (d.host->stage() && d.host->context() && !d.frame.pivotEditing) {
+    // Hidden numeric fields do not need transform targets. Activating a tool
+    // refreshes them from the current selection in setMode().
+    if (d.frame.mode != Mode::None && d.host->stage() && d.host->context() && !d.frame.pivotEditing) {
         READ_LOCKER(locker, d.host->context()->stageLock(), "stageLock");
         const QList<SdfPath> targets = visibleTargetPaths();
         if (!targets.isEmpty() && d.host->stage()) {
@@ -448,6 +460,7 @@ ViewportTransformPrivate::setMode(Mode mode, bool enabled)
 bool
 ViewportTransformPrivate::beginDrag(const QPointF& pos, bool copy)
 {
+    PerfScope perfScope("transform.begin_drag");
     if (!d.frame.enabled)
         return false;
     const int handle = hitTest(pos);
@@ -558,6 +571,7 @@ ViewportTransformPrivate::beginDrag(const QPointF& pos, bool copy)
 void
 ViewportTransformPrivate::updateDrag(const QPointF& pos)
 {
+    PerfScope perfScope("transform.update_drag");
     if (!d.dragging || d.frame.activeAxis == 0 || d.operation.edit.before.isEmpty())
         return;
 
@@ -932,6 +946,7 @@ ViewportTransformPrivate::updateDrag(const QPointF& pos)
 void
 ViewportTransformPrivate::endDrag()
 {
+    PerfScope perfScope("transform.end_drag");
     if (!d.dragging)
         return;
 
@@ -1037,7 +1052,19 @@ ViewportTransformPrivate::prepareFrame()
         d.frame.pivot = pivot;
         d.frame.pivotValid = true;
     }
+    publishFrameProperties();
     return true;
+}
+
+void
+ViewportTransformPrivate::publishFrameProperties()
+{
+    if (!PerfScope::enabled())
+        return;
+    QPointF screen;
+    const bool projected = d.frame.pivotValid && d.host->projectWorldToScreen(d.frame.pivot, screen);
+    d.host->widget()->setProperty("transformPivotValid", projected);
+    d.host->widget()->setProperty("transformPivotScreen", screen);
 }
 
 ViewportTransform::ViewportTransform(ViewportHost& host)
@@ -1397,7 +1424,13 @@ bool
 ViewportTransform::beginDrag(const QPointF& pos, bool copy)
 {
     finishNumericEdit();
-    return p->beginDrag(pos, copy);
+    const bool started = p->beginDrag(pos, copy);
+    if (PerfScope::enabled()) {
+        p->d.host->widget()->setProperty("transformDragging", p->d.dragging);
+        p->d.host->widget()->setProperty("transformActiveAxis", p->d.frame.activeAxis);
+        p->d.host->widget()->setProperty("transformTargetCount", p->d.operation.targetCount);
+    }
+    return started;
 }
 void
 ViewportTransform::updateDrag(const QPointF& pos)
@@ -1408,6 +1441,8 @@ void
 ViewportTransform::endDrag()
 {
     p->endDrag();
+    if (PerfScope::enabled())
+        p->d.host->widget()->setProperty("transformDragging", p->d.dragging);
 }
 void
 ViewportTransform::updateHover(const QPointF& pos)
@@ -1441,12 +1476,14 @@ ViewportTransform::selectionChanged(bool empty)
         p->d.frame.activeAxis = 0;
         p->d.gizmo->clear();
     }
-    p->updateInputValues();
+    // invalidate() has already refreshed the numeric fields for this selection.
 }
 void
 ViewportTransform::updateGeometry()
 {
     if (!p->prepareFrame()) {
+        if (PerfScope::enabled())
+            p->d.host->widget()->setProperty("transformPivotValid", false);
         p->d.gizmo->clear();
         return;
     }
