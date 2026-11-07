@@ -21,6 +21,7 @@
 #include "notice.h"
 #include "os.h"
 #include "outlinerview.h"
+#include "perfscope.h"
 #include "primutils.h"
 #include "progressdialog.h"
 #include "propertyview.h"
@@ -2627,6 +2628,7 @@ ViewerPrivate::backgroundColor()
 void
 ViewerPrivate::updateSelection(const QList<SdfPath>& paths)
 {
+    PerfScope perfScope("ui.selection_actions");
     const bool hasSelection = !paths.isEmpty();
     d.ui->editSelectInvert->setEnabled(hasSelection);
     d.ui->editCopySelected->setEnabled(hasSelection);
@@ -2638,7 +2640,8 @@ ViewerPrivate::updateSelection(const QList<SdfPath>& paths)
 
         const UsdStageRefPtr stage = session()->stageUnsafe();
         if (stage) {
-            for (const SdfPath& selectedPath : path::minimalRootPaths(paths)) {
+            // Eligibility depends on root coverage, not depth/lexical ordering.
+            for (const SdfPath& selectedPath : path::stableRootPaths(paths)) {
                 const SdfPath primPath = selectedPath.IsPropertyPath() ? selectedPath.GetPrimPath() : selectedPath;
                 if (!stage::canUseAsNativeInstanceRoot(stage->GetPrimAtPath(primPath))) {
                     canInstance = false;

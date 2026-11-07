@@ -2,7 +2,6 @@
 // Copyright (c) 2026 - present Mikael Sundell
 // https://github.com/mikaelsundell/stageviz
 
-#include "perfscope.h"
 #include "layertree.h"
 #include "application.h"
 #include "commandlayer.h"
@@ -10,6 +9,7 @@
 #include "layeritem.h"
 #include "mime.h"
 #include "os.h"
+#include "perfscope.h"
 #include "selectionlist.h"
 #include "session.h"
 #include "tracelocks.h"

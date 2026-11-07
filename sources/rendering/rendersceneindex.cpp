@@ -3,8 +3,8 @@
 // https://github.com/mikaelsundell/stageviz
 
 #include "rendersceneindex.h"
-#include "perfscope.h"
 #include "paths.h"
+#include "perfscope.h"
 #include <QtGlobal>
 #include <pxr/imaging/hd/containerDataSourceEditor.h>
 #include <pxr/imaging/hd/dataSource.h>

@@ -2,10 +2,10 @@
 // Copyright (c) 2025 - present Mikael Sundell
 // https://github.com/mikaelsundell/stageviz
 
-#include "perfscope.h"
 #include "renderengine.h"
 #include "application.h"
 #include "paths.h"
+#include "perfscope.h"
 #include "qtutils.h"
 #include "renderdiagnostics.h"
 #include "rendersceneindex.h"
@@ -1368,6 +1368,7 @@ RenderEngine::Private::reset()
                 return;
             }
 
+            auxiliaryEngine.reset();
             engine.reset();
         }
 
@@ -2090,8 +2091,7 @@ RenderEngine::renderToCurrentFramebuffer()
 bool
 RenderEngine::isConverged() const
 {
-    return (!p->engine || p->engine->IsConverged())
-           && (!p->auxiliaryEngine || p->auxiliaryEngine->IsConverged());
+    return (!p->engine || p->engine->IsConverged()) && (!p->auxiliaryEngine || p->auxiliaryEngine->IsConverged());
 }
 
 QJsonObject

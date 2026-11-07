@@ -3,6 +3,7 @@
 // https://github.com/mikaelsundell/stageviz
 
 #include "materialbrowser.h"
+#include "perfscope.h"
 #include "application.h"
 #include "commandmaterial.h"
 #include "commandprim.h"
@@ -12,10 +13,12 @@
 #include "messagedialog.h"
 #include "mime.h"
 #include "primutils.h"
+#include "qtutils.h"
 #include "selectionlist.h"
 #include "settings.h"
 #include "tracelocks.h"
 #include "ui.h"
+#include "usdutils.h"
 #include <QAbstractItemView>
 #include <QAction>
 #include <QActionGroup>
@@ -527,7 +530,7 @@ MaterialBrowserPrivate::assignMaterial(const MaterialEntry& material)
         return;
 
     QList<SdfPath> paths;
-    QSet<QString> seen;
+    path::PathCollector collector(paths);
 
     {
         READ_LOCKER(locker, session()->stageLock(), "stageLock");
@@ -542,14 +545,7 @@ MaterialBrowserPrivate::assignMaterial(const MaterialEntry& material)
             if (!prim.IsA<UsdGeomGprim>())
                 return;
 
-            const SdfPath path = prim.GetPath();
-            const QString key = QString::fromStdString(path.GetString());
-
-            if (seen.contains(key))
-                return;
-
-            seen.insert(key);
-            paths.append(path);
+            collector.append(prim.GetPath());
         };
 
         for (const SdfPath& selectedPath : selectedPaths) {
@@ -920,15 +916,16 @@ MaterialBrowser::~MaterialBrowser() = default;
 void
 MaterialBrowser::setEntries(const QList<MaterialEntry>& entries)
 {
-    QSet<QString> selectedPaths;
+    PerfScope perfScope("ui.material_entries");
+    QSet<SdfPath> selectedPaths;
     for (const MaterialEntry& entry : selectedEntries())
-        selectedPaths.insert(QString::fromStdString(entry.materialPath.GetString()));
+        selectedPaths.insert(entry.materialPath);
 
-    QHash<QString, MaterialEntry> oldEntries;
-    QHash<QString, QImage> oldImages;
-    QHash<QString, bool> oldValid;
+    QHash<SdfPath, MaterialEntry> oldEntries;
+    QHash<SdfPath, QImage> oldImages;
+    QHash<SdfPath, bool> oldValid;
     for (int row = 0; row < p->d.entries.size(); ++row) {
-        const QString path = QString::fromStdString(p->d.entries[row].materialPath.GetString());
+        const SdfPath& path = p->d.entries[row].materialPath;
         oldEntries.insert(path, p->d.entries[row]);
         oldImages.insert(path, p->d.swatches.value(row));
         oldValid.insert(path, p->d.swatchValid.value(row, false));
@@ -966,7 +963,7 @@ MaterialBrowser::setEntries(const QList<MaterialEntry>& entries)
 
     for (int row = 0; row < orderedEntries.size(); ++row) {
         const MaterialEntry& entry = orderedEntries[row];
-        const QString path = QString::fromStdString(entry.materialPath.GetString());
+        const SdfPath& path = entry.materialPath;
         const auto oldEntryIt = oldEntries.constFind(path);
         const auto imageIt = oldImages.constFind(path);
 
@@ -998,7 +995,7 @@ MaterialBrowser::setEntries(const QList<MaterialEntry>& entries)
         bool sameStructure = orderedEntries.size() == oldImages.size();
         if (sameStructure) {
             for (int row = 0; row < orderedEntries.size(); ++row) {
-                if (!oldImages.contains(QString::fromStdString(orderedEntries[row].materialPath.GetString()))) {
+                if (!oldImages.contains(orderedEntries[row].materialPath)) {
                     sameStructure = false;
                     break;
                 }
@@ -1016,8 +1013,7 @@ MaterialBrowser::setEntries(const QList<MaterialEntry>& entries)
 
     p->d.syncingSelection = true;
     for (int row = 0; row < orderedEntries.size(); ++row) {
-        const bool selected = selectedPaths.contains(
-            QString::fromStdString(orderedEntries[row].materialPath.GetString()));
+        const bool selected = selectedPaths.contains(orderedEntries[row].materialPath);
 
         if (QListWidgetItem* item = p->d.ui->icons->item(row))
             item->setSelected(selected);

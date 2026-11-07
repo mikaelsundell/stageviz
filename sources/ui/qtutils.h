@@ -259,12 +259,13 @@ using namespace stageviz::qt;
  * @brief Qt hash function for SdfPath.
  *
  * Allows SdfPath to be used as a key in Qt hash containers
- * such as QHash and QSet.
+ * such as QHash and QSet. Uses the native USD hash and Qt seed
+ * mixing without converting paths to strings.
  */
 inline size_t
 qHash(const SdfPath& path, size_t seed = 0)
 {
-    return ::qHash(StringToQString(path.GetString()), seed);
+    return ::qHash(path.GetHash(), seed);
 }
 
 PXR_NAMESPACE_CLOSE_SCOPE

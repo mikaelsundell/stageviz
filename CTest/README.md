@@ -25,7 +25,17 @@ these correctness tests deliberately avoid wall-clock thresholds.
 
 `bbox_cache_invalidation` compares shared and Session bounds with a fresh USD
 cache immediately after mutations, before deferred Qt delivery. It covers
-transforms, inherited/reflected scale, size, visibility, and activation.
+transforms, inherited/reflected scale, size, visibility, and activation. It also
+compares cold and warm selection bounds with the previous descendant-traversal
+policy, including overlapping selections, guide/render purpose changes, reset
+transform stacks, and replacement stages with identical paths. Selection bounds
+reuse the shared cache with a purpose filter so they continue to exclude guide
+geometry. Purpose changes do not invalidate USD's per-purpose cache entries.
+`session_file_api` verifies reload publishes one closed/loaded transition pair.
+`transform_instance_targets` checks ordinary geometry, point-instancer sources,
+bare instanceable prims, native internal/external references and proxies, and
+source-target updates after activation and payload loading changes. The shared
+resolver can skip a whole-stage instance scan when USD has no native prototypes.
 `spec_deletion_api` checks permissions, sibling/root/variant ownership, bounded
 bulk diagnostics, and complete layer equivalence with the former namespace
 deletion implementation. `batched_attribute_authoring` checks composed custom
@@ -217,3 +227,30 @@ without creating an OpenGL context.
 `stageviz.gui.outliner_layer_mute_api` checks mute, undo and redo against USD
 composition and Qt rows, preserves surviving row identity/expansion, and exercises
 mixed deletion/info notices below the bulk-delete threshold.
+
+`viewport_transform_selection_refresh_api` checks one numeric-value notification per
+selection change, lead-object reordering, deselection, tool reactivation, and stage
+invalidation without changing selection. `testhierarchytransforms.py` also checks
+selection undo/redo and selecting while the transform tool is disabled before
+reactivating it in a live viewer.
+
+`qt_path_hash_api` checks seeded Qt hashing and QHash/QSet lookup/removal for
+50,000 USD prim paths plus empty, relative, property, variant and relationship
+target paths. It protects the native SdfPath hash integration from key loss or
+inconsistent hashing after reparse and container rehashing.
+
+`benchmark/pipeline/README.md` describes the external disposable-app Python
+correctness runner and large-data Outliner/property/render workflow. Namespace
+edits cover inline rename, native tree drop handlers, undo/redo, world-pose
+preservation, rendered path validity and restoration without saving source data.
+
+Path collection conventions are documented in [docs/path-collections.md](../docs/path-collections.md).
+`selection_list_semantics` checks identical and duplicate updates with empty paths
+and order changes, including notification counts. `material_browser_api` checks
+that reordered, removed, and appended entries retain selection and swatches by
+USD path. These complement `qt_path_hash_api` and `indexed_path_api` native key
+and collection coverage.
+
+Native performance logging regressions cover unset, empty and enabled startup
+settings, a cached destination, nested JSONL events and append behavior. See
+[performance logging](../docs/performance-logging.md) for developer usage.

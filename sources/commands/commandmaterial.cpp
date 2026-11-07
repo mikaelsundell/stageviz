@@ -392,6 +392,7 @@ bindMaterial(const QList<SdfPath>& inPaths, const SdfPath& materialPath)
 
             command::runWorker([session, paths, materialPath, states]() {
                 QList<SdfPath> changed;
+                path::PathCollector collector(changed);
                 QStringList errors;
 
                 {
@@ -433,7 +434,7 @@ bindMaterial(const QList<SdfPath>& inPaths, const SdfPath& materialPath)
                             for (const MaterialBindingState& state : *states) {
                                 QString error;
                                 if (applyDirectMaterialBinding(stage, state.primPath, materialPath, error))
-                                    path::appendUnique(changed, state.primPath);
+                                    collector.append(state.primPath);
                                 else
                                     errors.append(error);
                             }
@@ -460,6 +461,7 @@ bindMaterial(const QList<SdfPath>& inPaths, const SdfPath& materialPath)
 
             command::runWorker([session, states]() {
                 QList<SdfPath> changed;
+                path::PathCollector collector(changed);
                 QStringList errors;
 
                 {
@@ -473,7 +475,7 @@ bindMaterial(const QList<SdfPath>& inPaths, const SdfPath& materialPath)
                         for (const MaterialBindingState& state : *states) {
                             QString error;
                             if (restoreDirectMaterialBinding(stage, state, error))
-                                path::appendUnique(changed, state.primPath);
+                                collector.append(state.primPath);
                             else
                                 errors.append(error);
                         }
@@ -507,6 +509,7 @@ disconnectShaderInputs(const QList<SdfPath>& inputPaths)
             command::beginDeferred(session, "Disconnect shader inputs", static_cast<int>(paths.size()));
             command::runWorker([session, paths, states]() {
                 QList<SdfPath> changed;
+                path::PathCollector collector(changed);
                 QStringList errors;
                 {
                     WRITE_LOCKER(locker, session->stageLock(), "stageLock");
@@ -549,7 +552,7 @@ disconnectShaderInputs(const QList<SdfPath>& inputPaths)
                                 }
 
                                 states->append(state);
-                                path::appendUnique(changed, propertyPath.GetPrimPath());
+                                collector.append(propertyPath.GetPrimPath());
                             }
                         }
                     }
@@ -575,6 +578,7 @@ disconnectShaderInputs(const QList<SdfPath>& inputPaths)
             command::beginDeferred(session, "Undo disconnect shader inputs", static_cast<int>(states->size()));
             command::runWorker([session, states]() {
                 QList<SdfPath> changed;
+                path::PathCollector collector(changed);
                 QStringList errors;
                 {
                     WRITE_LOCKER(locker, session->stageLock(), "stageLock");
@@ -588,7 +592,7 @@ disconnectShaderInputs(const QList<SdfPath>& inputPaths)
                         for (const ShaderInputPropertyState& state : *states) {
                             QString error;
                             if (restoreShaderInputProperty(editLayer, state, error))
-                                path::appendUnique(changed, state.propertyPath.GetPrimPath());
+                                collector.append(state.propertyPath.GetPrimPath());
                             else
                                 errors.append(error);
                         }
@@ -791,6 +795,7 @@ resetShaderInputs(const QList<SdfPath>& inputPaths)
             command::beginDeferred(session, "Reset shader inputs", static_cast<int>(paths.size()));
             command::runWorker([session, paths, states]() {
                 QList<SdfPath> changed;
+                path::PathCollector collector(changed);
                 QStringList errors;
                 {
                     WRITE_LOCKER(locker, session->stageLock(), "stageLock");
@@ -820,7 +825,7 @@ resetShaderInputs(const QList<SdfPath>& inputPaths)
                                 continue;
                             }
                             states->append(state);
-                            path::appendUnique(changed, propertyPath.GetPrimPath());
+                            collector.append(propertyPath.GetPrimPath());
                         }
                     }
                 }
@@ -843,6 +848,7 @@ resetShaderInputs(const QList<SdfPath>& inputPaths)
             command::beginDeferred(session, "Undo reset shader inputs", static_cast<int>(states->size()));
             command::runWorker([session, states]() {
                 QList<SdfPath> changed;
+                path::PathCollector collector(changed);
                 QStringList errors;
                 {
                     WRITE_LOCKER(locker, session->stageLock(), "stageLock");
@@ -858,7 +864,7 @@ resetShaderInputs(const QList<SdfPath>& inputPaths)
                             if (!validateNotInstanceProxy(stage, state.propertyPath, error))
                                 errors.append(error);
                             else if (restoreShaderInputProperty(editLayer, state, error))
-                                path::appendUnique(changed, state.propertyPath.GetPrimPath());
+                                collector.append(state.propertyPath.GetPrimPath());
                             else
                                 errors.append(error);
                         }

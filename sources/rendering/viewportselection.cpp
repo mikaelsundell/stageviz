@@ -2,11 +2,11 @@
 // Copyright (c) 2025 - present Mikael Sundell
 // https://github.com/mikaelsundell/stageviz
 
-#include "perfscope.h"
 #include "viewportselection.h"
 #include "application.h"
 #include "bboxutils.h"
 #include "commandselection.h"
+#include "perfscope.h"
 #include "qtutils.h"
 #include "renderengine.h"
 #include "session.h"

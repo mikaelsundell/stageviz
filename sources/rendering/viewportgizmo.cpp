@@ -2,7 +2,6 @@
 // Copyright (c) 2025 - present Mikael Sundell
 // https://github.com/mikaelsundell/stageviz
 
-#include "perfscope.h"
 #include "viewportgizmo.h"
 #include "application.h"
 #include "paths.h"
@@ -372,7 +371,6 @@ ViewportGizmoPrivate::clearGeometry()
 void
 ViewportGizmoPrivate::updateGeometry()
 {
-    PerfScope perfScope("transform.gizmo_geometry");
     const double fullCircle = GfDegreesToRadians(360.0);
     if (!d.host->auxiliaryStage())
         return;

@@ -3,6 +3,7 @@
 // https://github.com/mikaelsundell/stageviz
 
 #include "materialdialog.h"
+#include "perfscope.h"
 #include "application.h"
 #include "commandmaterial.h"
 #include "commandprim.h"
@@ -15,6 +16,7 @@
 #include "materialutils.h"
 #include "mime.h"
 #include "notice.h"
+#include "qtutils.h"
 #include "selectionlist.h"
 #include "session.h"
 #include "settings.h"
@@ -678,6 +680,7 @@ MaterialDialogPrivate::showNewMaterialMenu(QWidget* anchor, const QPoint& global
 void
 MaterialDialogPrivate::refresh()
 {
+    PerfScope perfScope("ui.material_refresh");
     QList<MaterialEntry> entries;
     {
         READ_LOCKER(locker, session()->stageLock(), "stageLock");
@@ -1850,7 +1853,7 @@ MaterialDialogPrivate::applyToSelection()
         return;
 
     QList<SdfPath> paths;
-    QSet<QString> seen;
+    path::PathCollector collector(paths);
 
     {
         READ_LOCKER(locker, session()->stageLock(), "stageLock");
@@ -1860,17 +1863,15 @@ MaterialDialogPrivate::applyToSelection()
 
         for (const SdfPath& selectedPath : selectedPaths) {
             const SdfPath primPath = selectedPath.IsPropertyPath() ? selectedPath.GetPrimPath() : selectedPath;
-            const QString key = QString::fromStdString(primPath.GetString());
 
-            if (primPath.IsEmpty() || primPath == SdfPath::AbsoluteRootPath() || seen.contains(key))
+            if (primPath.IsEmpty() || primPath == SdfPath::AbsoluteRootPath())
                 continue;
 
             const UsdPrim prim = stage->GetPrimAtPath(primPath);
             if (!prim || !prim.IsValid())
                 continue;
 
-            seen.insert(key);
-            paths.append(primPath);
+            collector.append(primPath);
         }
     }
 
@@ -1887,7 +1888,7 @@ MaterialDialogPrivate::selectFromStage()
         return;
     }
 
-    QSet<QString> materialPaths;
+    QSet<SdfPath> materialPaths;
     {
         READ_LOCKER(locker, session()->stageLock(), "stageLock");
         const UsdStageRefPtr stage = session()->stageUnsafe();
@@ -1903,13 +1904,13 @@ MaterialDialogPrivate::selectFromStage()
 
             const UsdShadeMaterial bound = UsdShadeMaterialBindingAPI(prim).ComputeBoundMaterial();
             if (bound)
-                materialPaths.insert(QString::fromStdString(bound.GetPath().GetString()));
+                materialPaths.insert(bound.GetPath());
         }
     }
 
     QList<int> rows;
-    for (const QString& path : materialPaths) {
-        const int row = d.ui->browserWidget->rowForMaterialPath(SdfPath(path.toStdString()));
+    for (const SdfPath& path : materialPaths) {
+        const int row = d.ui->browserWidget->rowForMaterialPath(path);
         if (row >= 0)
             rows.append(row);
     }

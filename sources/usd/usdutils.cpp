@@ -42,7 +42,7 @@ namespace stageviz {
 
 namespace layer {
     SdfAttributeSpecHandle ensureAttributeSpec(const SdfLayerHandle& layer, const SdfPath& specPath,
-                                              const SdfValueTypeName& type, SdfVariability variability, bool custom)
+                                               const SdfValueTypeName& type, SdfVariability variability, bool custom)
     {
         if (!layer || !layer->PermissionToEdit() || !specPath.IsPrimPropertyPath() || !type)
             return {};
@@ -223,15 +223,9 @@ namespace path {
             insert(path);
     }
 
-    bool PathIndex::insert(const SdfPath& path)
-    {
-        return !path.IsEmpty() && paths.insert(path).second;
-    }
+    bool PathIndex::insert(const SdfPath& path) { return !path.IsEmpty() && paths.insert(path).second; }
 
-    bool PathIndex::contains(const SdfPath& path) const
-    {
-        return paths.find(path) != paths.end();
-    }
+    bool PathIndex::contains(const SdfPath& path) const { return paths.find(path) != paths.end(); }
 
     SdfPath PathIndex::nearestAncestor(const SdfPath& path) const
     {
@@ -242,7 +236,8 @@ namespace path {
                     return *it;
             }
             return path.HasPrefix(SdfPath::ReflexiveRelativePath()) && contains(SdfPath::ReflexiveRelativePath())
-                       ? SdfPath::ReflexiveRelativePath() : SdfPath();
+                       ? SdfPath::ReflexiveRelativePath()
+                       : SdfPath();
         }
         for (SdfPath current = path; !current.IsEmpty(); current = current.GetParentPath()) {
             if (contains(current))
@@ -274,12 +269,10 @@ namespace path {
         return result;
     }
 
-    bool PathIndex::covers(const SdfPath& path) const
-    {
-        return !nearestAncestor(path).IsEmpty();
-    }
+    bool PathIndex::covers(const SdfPath& path) const { return !nearestAncestor(path).IsEmpty(); }
 
-    PathRelations::PathRelations(const QList<SdfPath>& paths) : roots(paths)
+    PathRelations::PathRelations(const QList<SdfPath>& paths)
+        : roots(paths)
     {
         for (const auto& path : paths) {
             for (const auto& prefix : path.GetPrefixes())
@@ -296,7 +289,10 @@ namespace path {
         return !path.IsEmpty() && (prefixes.contains(path) || roots.covers(path));
     }
 
-    PathCollector::PathCollector(QList<SdfPath>& output) : output(output), index(output) {}
+    PathCollector::PathCollector(QList<SdfPath>& output)
+        : output(output)
+        , index(output)
+    {}
 
     void PathCollector::append(const SdfPath& path)
     {
@@ -480,9 +476,9 @@ namespace path {
     TfTokenVector removeTokens(TfTokenVector order, const TfTokenVector& tokens)
     {
         const std::unordered_set<TfToken, TfToken::HashFunctor> removed(tokens.begin(), tokens.end());
-        order.erase(std::remove_if(order.begin(), order.end(), [&](const TfToken& token) {
-            return removed.find(token) != removed.end();
-        }), order.end());
+        order.erase(std::remove_if(order.begin(), order.end(),
+                                   [&](const TfToken& token) { return removed.find(token) != removed.end(); }),
+                    order.end());
 
         return order;
     }

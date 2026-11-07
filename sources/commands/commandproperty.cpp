@@ -307,7 +307,10 @@ attributeSpecBatch(const QList<SdfPath>& paths, const TfToken& name, const SdfVa
                             }
                             state->captured = true;
                         }
-                        struct Plan { SdfPath path, specPath; SdfVariability variability; };
+                        struct Plan {
+                            SdfPath path, specPath;
+                            SdfVariability variability;
+                        };
                         QList<Plan> plans;
                         // USD validation and schema discovery precede Sdf edits.
                         for (const auto& item : state->items) {
@@ -319,7 +322,8 @@ attributeSpecBatch(const QList<SdfPath>& paths, const TfToken& name, const SdfVa
                                 continue;
                             }
                             const auto attr = prim.GetAttribute(item.path.GetNameToken());
-                            plans.append({ item.path, item.specPath, attr ? attr.GetVariability() : SdfVariabilityVarying });
+                            plans.append(
+                                { item.path, item.specPath, attr ? attr.GetVariability() : SdfVariabilityVarying });
                         }
                         const VtValue fallback = type ? type.GetDefaultValue() : VtValue();
                         SdfChangeBlock block;
@@ -503,8 +507,7 @@ renameAttributes(const QList<SdfPath>& attributePaths, const TfToken& newName)
                             if (!item.removeOriginal)
                                 source.Get(&value);
                             plans.append({ item.oldPath, item.newPath, item.oldSpecPath, item.newSpecPath,
-                                           source.GetTypeName(), source.GetVariability(),
-                                           value, item.removeOriginal });
+                                           source.GetTypeName(), source.GetVariability(), value, item.removeOriginal });
                         }
                         SdfChangeBlock block;
                         for (const auto& plan : plans) {

@@ -2,8 +2,6 @@
 // Copyright (c) 2025 - present Mikael Sundell
 // https://github.com/mikaelsundell/stageviz
 
-#include "perfscope.h"
-#include "usdutils.h"
 #include "viewportwidget.h"
 #include "application.h"
 #include "bboxutils.h"
@@ -13,12 +11,14 @@
 #include "notice.h"
 #include "os.h"
 #include "paths.h"
+#include "perfscope.h"
 #include "qtutils.h"
 #include "renderengine.h"
 #include "session.h"
 #include "signalguard.h"
 #include "tracelocks.h"
 #include "ui.h"
+#include "usdutils.h"
 #include "viewcamera.h"
 #include "viewcontext.h"
 #include "viewportauxiliary.h"

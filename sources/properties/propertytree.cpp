@@ -3,14 +3,13 @@
 // https://github.com/mikaelsundell/stageviz
 
 #include "propertytree.h"
-#include "perfscope.h"
-#include "usdutils.h"
 #include "application.h"
 #include "commandproperty.h"
 #include "commandselection.h"
 #include "commandstack.h"
 #include "messagedialog.h"
 #include "notice.h"
+#include "perfscope.h"
 #include "propertyitem.h"
 #include "qtutils.h"
 #include "selectionlist.h"
@@ -19,6 +18,7 @@
 #include "threadutils.h"
 #include "tracelocks.h"
 #include "ui.h"
+#include "usdutils.h"
 #include "viewcontext.h"
 #include <QApplication>
 #include <QClipboard>
@@ -2310,6 +2310,7 @@ PropertyTreePrivate::addPrimSection(const UsdPrim& prim)
 void
 PropertyTreePrivate::addMultiPrimSection(const QList<UsdPrim>& prims)
 {
+    PerfScope perfScope("ui.property_summary");
     if (prims.isEmpty())
         return;
 
@@ -2698,6 +2699,7 @@ PropertyTreePrivate::populateMultiAttributesSection(const QList<UsdPrim>& prims)
 void
 PropertyTreePrivate::addMultiAttributesSection(const QList<UsdPrim>& prims)
 {
+    PerfScope perfScope("ui.property_attribute_discovery");
     if (prims.isEmpty())
         return;
 
@@ -3080,6 +3082,7 @@ PropertyTreePrivate::populateMultiRelationshipsSection(const QList<UsdPrim>& pri
 void
 PropertyTreePrivate::addMultiRelationshipsSection(const QList<UsdPrim>& prims)
 {
+    PerfScope perfScope("ui.property_relationship_discovery");
     if (prims.isEmpty())
         return;
 
@@ -3263,6 +3266,7 @@ PropertyTreePrivate::flushPendingRefresh()
 void
 PropertyTreePrivate::updatePrims(const NoticeBatch& batch)
 {
+    PerfScope perfScope("ui.property_prims");
     // Live component scrubbing authors directly to USD so the viewport and other
     // consumers update continuously. Rebuilding this tree from those notices
     // would destroy the editor underneath the active mouse drag.
@@ -3485,8 +3489,8 @@ PropertyTreePrivate::updateSelection(const QList<SdfPath>& paths)
         return result;
     };
 
-    const bool sameSelection = !d.paths.isEmpty() && !paths.isEmpty()
-                               && normalizedPrimPaths(d.paths) == normalizedPrimPaths(paths);
+    const bool sameSelection = !d.paths.isEmpty() && d.paths.size() == paths.size()
+                               && (d.paths == paths || normalizedPrimPaths(d.paths) == normalizedPrimPaths(paths));
     const TreeState treeState = sameSelection ? captureTreeState() : TreeState();
 
     // Expansion state is shared across selections, including expanded

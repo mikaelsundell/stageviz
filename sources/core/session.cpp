@@ -2,10 +2,10 @@
 // Copyright (c) 2025 - present Mikael Sundell
 // https://github.com/mikaelsundell/stageviz
 
-#include "perfscope.h"
 #include "session.h"
 #include "bboxutils.h"
 #include "commandstack.h"
+#include "perfscope.h"
 #include "qtutils.h"
 #include "selectionlist.h"
 #include "tracelocks.h"
@@ -1567,7 +1567,6 @@ SessionPrivate::reload()
     if (filename.isEmpty())
         return false;
 
-    close();
     return loadFromFile(filename, loadPolicy);
 }
 
@@ -1740,8 +1739,7 @@ SessionPrivate::boundingBox(const QList<SdfPath>& paths)
     if (!d.stage || paths.isEmpty())
         return GfBBox3d();
 
-    UsdGeomBBoxCache bboxCache(UsdTimeCode::Default(),
-                               { UsdGeomTokens->default_, UsdGeomTokens->proxy, UsdGeomTokens->render }, true);
+    bbox::CacheGuard bboxCache(bbox::CacheGuard::Purposes::Geometry);
 
     GfRange3d worldRange;
     std::unordered_set<SdfPath, SdfPath::Hash> visited;
@@ -1841,7 +1839,7 @@ SessionPrivate::flushPrims()
     }
     else {
         batch.entries.reserve(d.pendingNotices.entries.size());
-        QHash<QString, qsizetype> infoOnlyIndexByPath;
+        QHash<SdfPath, qsizetype> infoOnlyIndexByPath;
 
         for (const NoticeEntry& entry : d.pendingNotices.entries) {
             const bool mergeOnly = entry.changedInfoOnly && !entry.path.IsEmpty() && entry.associatedPath.IsEmpty()
@@ -1854,10 +1852,9 @@ SessionPrivate::flushPrims()
                 continue;
             }
 
-            const QString key = qt::SdfPathToQString(entry.path);
-            const auto existing = infoOnlyIndexByPath.constFind(key);
+            const auto existing = infoOnlyIndexByPath.constFind(entry.path);
             if (existing == infoOnlyIndexByPath.cend()) {
-                infoOnlyIndexByPath.insert(key, batch.entries.size());
+                infoOnlyIndexByPath.insert(entry.path, batch.entries.size());
                 batch.entries.append(entry);
                 continue;
             }

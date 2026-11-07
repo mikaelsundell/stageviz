@@ -359,6 +359,10 @@ Additional dependencies are provided through the Stageviz third-party build envi
 Stageviz can host a local MCP server for tools that inspect or operate on the
 active session. See the [MCP server setup guide](docs/MCP.md).
 
+For developer performance investigations, see the
+[native performance logging guide](docs/performance-logging.md) and
+[MCP benchmarks](CTest/benchmark/README.md).
+
 ---
 
 ## Web resources

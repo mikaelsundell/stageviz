@@ -2,7 +2,6 @@
 // Copyright (c) 2025 - present Mikael Sundell
 // https://github.com/mikaelsundell/stageviz
 
-#include "perfscope.h"
 #include "viewporttransform.h"
 #include "application.h"
 #include "bboxutils.h"
@@ -10,12 +9,13 @@
 #include "commandpivot.h"
 #include "commandstack.h"
 #include "commandtransform.h"
+#include "perfscope.h"
 #include "primutils.h"
-#include "usdutils.h"
 #include "qtutils.h"
 #include "session.h"
 #include "tracelocks.h"
 #include "ui.h"
+#include "usdutils.h"
 #include "viewcamera.h"
 #include "viewcontext.h"
 #include "viewporthost.h"
@@ -384,8 +384,11 @@ ViewportTransformPrivate::selectionPivot(GfVec3d& pivot)
 void
 ViewportTransformPrivate::updateInputValues()
 {
+    PerfScope perfScope("transform.input_values");
     GfVec3d values = d.frame.mode == Mode::Scale ? GfVec3d(1.0) : GfVec3d(0.0);
-    if (d.host->stage() && d.host->context() && !d.frame.pivotEditing) {
+    // Hidden numeric fields do not need transform targets. Activating a tool
+    // refreshes them from the current selection in setMode().
+    if (d.frame.mode != Mode::None && d.host->stage() && d.host->context() && !d.frame.pivotEditing) {
         READ_LOCKER(locker, d.host->context()->stageLock(), "stageLock");
         const QList<SdfPath> targets = visibleTargetPaths();
         if (!targets.isEmpty() && d.host->stage()) {
@@ -1056,13 +1059,12 @@ ViewportTransformPrivate::prepareFrame()
 void
 ViewportTransformPrivate::publishFrameProperties()
 {
-    if (!qEnvironmentVariableIsSet("STAGEVIZ_PERF_LOG"))
+    if (!PerfScope::enabled())
         return;
     QPointF screen;
     const bool projected = d.frame.pivotValid && d.host->projectWorldToScreen(d.frame.pivot, screen);
     d.host->widget()->setProperty("transformPivotValid", projected);
     d.host->widget()->setProperty("transformPivotScreen", screen);
-    d.host->widget()->setProperty("transformMode", static_cast<int>(d.frame.mode));
 }
 
 ViewportTransform::ViewportTransform(ViewportHost& host)
@@ -1423,7 +1425,7 @@ ViewportTransform::beginDrag(const QPointF& pos, bool copy)
 {
     finishNumericEdit();
     const bool started = p->beginDrag(pos, copy);
-    if (qEnvironmentVariableIsSet("STAGEVIZ_PERF_LOG")) {
+    if (PerfScope::enabled()) {
         p->d.host->widget()->setProperty("transformDragging", p->d.dragging);
         p->d.host->widget()->setProperty("transformActiveAxis", p->d.frame.activeAxis);
         p->d.host->widget()->setProperty("transformTargetCount", p->d.operation.targetCount);
@@ -1439,7 +1441,7 @@ void
 ViewportTransform::endDrag()
 {
     p->endDrag();
-    if (qEnvironmentVariableIsSet("STAGEVIZ_PERF_LOG"))
+    if (PerfScope::enabled())
         p->d.host->widget()->setProperty("transformDragging", p->d.dragging);
 }
 void
@@ -1474,14 +1476,13 @@ ViewportTransform::selectionChanged(bool empty)
         p->d.frame.activeAxis = 0;
         p->d.gizmo->clear();
     }
-    p->updateInputValues();
+    // invalidate() has already refreshed the numeric fields for this selection.
 }
 void
 ViewportTransform::updateGeometry()
 {
-    PerfScope perfScope("transform.update_geometry");
     if (!p->prepareFrame()) {
-        if (qEnvironmentVariableIsSet("STAGEVIZ_PERF_LOG"))
+        if (PerfScope::enabled())
             p->d.host->widget()->setProperty("transformPivotValid", false);
         p->d.gizmo->clear();
         return;

@@ -503,18 +503,14 @@ namespace stage {
         if (!stage || paths.isEmpty())
             return result;
 
-        QSet<QString> seen;
+        path::PathCollector collector(result);
         for (const SdfPath& path : paths) {
             UsdPrim prim = stage->GetPrimAtPath(path);
             while (prim) {
                 const SdfPath primPath = prim.GetPath();
 
                 if (isPayload(stage, primPath)) {
-                    const QString key = qt::SdfPathToQString(primPath);
-                    if (!seen.contains(key)) {
-                        seen.insert(key);
-                        result.append(primPath);
-                    }
+                    collector.append(primPath);
                     break;
                 }
                 prim = prim.GetParent();
@@ -555,18 +551,14 @@ namespace stage {
         if (!stage || paths.isEmpty())
             return result;
 
-        QSet<QString> seen;
+        path::PathCollector collector(result);
         std::function<void(const UsdPrim&)> collect = [&](const UsdPrim& prim) {
             if (!prim)
                 return;
 
             const SdfPath primPath = prim.GetPath();
-            const QString key = qt::SdfPathToQString(primPath);
-
-            if (isPayload(stage, primPath) && !seen.contains(key)) {
-                seen.insert(key);
-                result.append(primPath);
-            }
+            if (isPayload(stage, primPath))
+                collector.append(primPath);
 
             // Payloads authored below an instanceable source prim are visible
             // through each composed instance as instance proxies. Include
@@ -643,19 +635,15 @@ namespace stage {
         if (!stage || paths.isEmpty())
             return result;
 
-        QSet<QString> seen;
+        path::PathCollector collector(result);
         for (const SdfPath& path : paths) {
             const UsdPrim prim = stage->GetPrimAtPath(path);
             if (!prim)
                 continue;
 
             const SdfPath primPath = prim.GetPath();
-            const QString key = qt::SdfPathToQString(primPath);
-
-            if (isPayload(stage, primPath) && !seen.contains(key)) {
-                seen.insert(key);
-                result.append(primPath);
-            }
+            if (isPayload(stage, primPath))
+                collector.append(primPath);
         }
         return result;
     }
