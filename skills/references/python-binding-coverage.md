@@ -17,7 +17,7 @@ This document records deliberate boundaries rather than claiming C++ parity.
 | ViewCamera | Current camera navigation, projection, view presets, lens/gate settings and framing | No independent camera creation. Native `cameraView()` getter is not exposed. `camera()` returns an opaque capsule, not `pxr.Gf.Camera`. Bounds use min/max tuples without an oriented-box transform. |
 | UI | Integer colors, nested enums, icon paths/sizes, axis/gizmo sizes, fonts, snap increments, stylesheet, color space and refresh | No QPixmap-returning `icon()`. Use Qt QIcon with `iconPath()`. Color-space conversion accepts named aliases rather than arbitrary QColorSpace objects. Signals are not exposed. |
 | command | Undo/redo/history queries plus selection, composition/layers, metadata, creation, namespace, properties, transforms/pivots and material connection commands | Python functions dispatch commands and return None; they do not return Command objects or generic transactions. Some commands finish asynchronously. Supported attribute values are a limited subset of VtValue. |
-| Render / ViewportCapture | Weak active-viewport access, prim diagnostics and owned color/object-ID snapshots | No public constructors. Capture requires an initialized supported viewport/graphics context. Diagnostics and color queries do not replace the full Hydra API. |
+| Render / ViewportCapture | Weak active-viewport access, prim diagnostics, owned color/object-ID snapshots, and the menu's tiled visible-path scan/collection | No public constructors. `capturePaths(accumulate=True)` shares the menu collection; False is a fresh scan without collection changes. Image snapshots use a separate viewport-resolution scan. Capture requires an initialized supported viewport/graphics context. |
 | RenderEngine | Owned offscreen renderer, stage/size/camera setters, selected settings, file rendering, AOV/Hgi queries | Partial native interface; see below. |
 
 Module integer constants cover the documented enum inputs; UI additionally
@@ -75,6 +75,11 @@ changes do not configure this independent renderer.
 `set_stage()` retains the supplied actual Usd.Stage, including its session layer,
 load rules, mask and muted layers. It does not reopen a root layer. Capture from
 `stageviz.render()` is a different API for the currently displayed scene.
+
+The current viewport root-mask filtering can produce no captured paths when
+isolating only a native-instance root. This existing limitation affects both
+image-snapshot path extraction and tiled path scans; it is separate from resolving
+visible instance IDs to selectable USD proxy paths in the unmasked view.
 
 ## Update delivery and ownership
 

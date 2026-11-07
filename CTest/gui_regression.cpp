@@ -24,6 +24,7 @@
 #include "propertytree.h"
 #include "propertyview.h"
 #include "renderengine.h"
+#include "renderview.h"
 #include "session.h"
 #include "settings.h"
 #include "spinbox.h"
@@ -1236,6 +1237,72 @@ viewportComponentsApi()
 }
 
 void
+viewportCapturePathsApi()
+{
+    auto* current = stageviz::session();
+    stageviz::RenderView view;
+    view.resize(640, 480);
+    view.show();
+    require(current->newStage(), "create visible path capture stage");
+    const auto stage = current->stage();
+    const auto source = UsdGeomXform::Define(stage, SdfPath("/World/Left"));
+    source.AddTranslateOp().Set(GfVec3d(-2, 0, 0));
+    UsdGeomCube::Define(stage, SdfPath("/World/Left/Body")).CreateSizeAttr(VtValue(1.0));
+    const auto instance = UsdGeomXform::Define(stage, SdfPath("/World/Right"));
+    instance.GetPrim().GetReferences().AddInternalReference(source.GetPath());
+    instance.GetPrim().SetInstanceable(true);
+    instance.GetPrim().GetAttribute(TfToken("xformOp:translate")).Set(GfVec3d(2, 0, 0));
+    auto* camera = current->viewState()->camera();
+    camera->setCameraUp(stageviz::ViewCamera::CameraUp::Y);
+    camera->setAxisYaw(0);
+    camera->setAxisPitch(0);
+    camera->setAxisRoll(0);
+    camera->frame(GfBBox3d(GfRange3d(GfVec3d(-3, -1, -1), GfVec3d(3, 1, 1))));
+    auto* viewport = view.findChild<stageviz::ViewportWidget*>();
+    require(viewport, "render view owns the capture viewport");
+    QElapsedTimer timer;
+    timer.start();
+    while (!viewport->isValid() && timer.elapsed() < 10000) {
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 25);
+        QThread::msleep(5);
+    }
+    require(viewport->isValid(), "initialize on-screen capture viewport");
+    int ready = 0;
+    QObject::connect(&view, &stageviz::RenderView::captureReady, &view, [&ready](qint64) { ++ready; });
+    std::string before;
+    stage->GetRootLayer()->ExportToString(&before);
+    const bool canUndo = current->commandStack()->canUndo();
+
+    const SdfPath left("/World/Left/Body"), right("/World/Right/Body");
+    QOpenGLContext* previousContext = QOpenGLContext::currentContext();
+    const auto scan = view.capturePaths(false);
+    require(QOpenGLContext::currentContext() == previousContext, "capture restores the caller's GL context");
+    require(scan.size() == 2 && scan.contains(left) && scan.contains(right), "tiled scan resolves source and instance proxy");
+    require(view.visibleCapturePaths().isEmpty(), "fresh scan leaves menu collection empty");
+    current->setMask({ left });
+    require(view.capturePaths() == QList<SdfPath> { left }, "capture immediately synchronizes the left mask");
+    current->setMask({});
+    const auto unmasked = view.capturePaths(false);
+    require(unmasked.size() == 2 && unmasked.contains(left) && unmasked.contains(right),
+            "fresh scan immediately synchronizes the cleared mask, including instance proxies");
+    require(view.visibleCapturePaths() == QList<SdfPath> { left }, "fresh scan preserves earlier collection");
+    view.captureVisible(); // Existing native callers delegate to the same implementation.
+    require(view.visibleCapturePaths() == QList<SdfPath> { left, right }, "legacy capture shares ordered collection");
+    require(view.capturePaths() == QList<SdfPath> { left, right }, "repeated capture suppresses duplicates");
+    require(ready == 5, "both native entry points publish the capture completion signal");
+    view.clearVisibleCapture();
+    view.clearVisibleCapture();
+    require(view.visibleCapturePaths().isEmpty(), "clearing the collection is idempotent");
+    require(current->selectionList()->paths().isEmpty(), "path captures leave selection unchanged");
+    require(current->commandStack()->canUndo() == canUndo, "path captures do not create command history");
+    std::string after;
+    stage->GetRootLayer()->ExportToString(&after);
+    require(after == before, "path captures do not author USD");
+    require(current->close(), "close captured stage");
+    require(view.visibleCapturePaths().isEmpty() && view.capturePaths().isEmpty(), "closed stage has no captures");
+}
+
+void
 transformOperationAppliedApi()
 {
     auto* current = stageviz::session();
@@ -1721,6 +1788,7 @@ main(int argc, char** argv)
     const std::map<std::string, std::function<void()>> cases {
         { "outliner_layer_mute_api", outlinerLayerMuteApi },
         { "viewport_components_api", viewportComponentsApi },
+        { "viewport_capture_paths_api", viewportCapturePathsApi },
         { "viewport_lights_api", viewportLightsApi },
         { "viewport_transform_pivot_api", viewportTransformPivotApi },
         { "viewport_transform_hierarchy_sync_api", viewportTransformHierarchySyncApi },

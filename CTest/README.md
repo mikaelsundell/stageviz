@@ -166,10 +166,21 @@ it requires a disposable viewer. These scripts expose `run()` and do not autorun
 
 `viewport_color_query_api` covers hue wraparound, RGB tolerances, shaded magenta,
 visible-pixel coverage, background exclusion and grayscale rejection.
+`viewport_capture_paths_api` exercises the shared native RenderView scan in a
+real GL viewport: native-instance proxy resolution, masks applied immediately before capture, fresh versus
+accumulating paths, legacy entry-point parity, duplicate suppression, completion
+signals, clearing, stage closure, and unchanged selection/USD/history.
 `python/testviewportcapture.py` provides disposable MCP phases (`setup`, `colors`,
-`inspect`, `diagnostic`, `boundaries`, `cleanup`) for color/object alignment, native instance
+`visible_paths`, `inspect`, `diagnostic`, `boundaries`, `cleanup`) for color/object alignment, native instance
 resolution, exact selection preservation, selection undo/redo, the normal-direction
 MaterialX override, masks/culling, and snapshot lifetime after stage closure.
+The `visible_paths` phase checks the shared menu/Python tiled scan, accumulating
+and one-shot modes, immediate mask/camera synchronization, collection across
+opposite camera views, copied path lists, duplicate
+suppression, menu selection undo/redo, unchanged USD/history during capture and
+GUI-thread guards. Occluded and offscreen geometry are excluded. Qt snapshots and viewer images cover collection and selection
+checkpoints. These tests require a disposable on-screen viewer with scene-ID
+support; they do not run in the headless aggregate suite.
 The `inspect` phase checks read-only USD/Hydra reports, proxy Rprim mapping,
 visibility updates with undo/redo, default versus sampled visibility, and
 diagnostic argument boundaries.

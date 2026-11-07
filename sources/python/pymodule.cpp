@@ -152,7 +152,7 @@ static PyMethodDef Module_methods[]
           "Get the current stageviz session wrapper" },
         { "ui", reinterpret_cast<PyCFunction>(PyModule_ui), METH_NOARGS, "Get the current stageviz UI wrapper" },
         { "render", reinterpret_cast<PyCFunction>(PyModule_render), METH_NOARGS,
-          "Get read-only access to the active render view for capture and diagnostics" },
+          "Get the active render view for capture, visible path collection and diagnostics" },
         { "selectionList", reinterpret_cast<PyCFunction>(PyModule_selectionList), METH_NOARGS,
           "Get the current stageviz selection list wrapper" },
         { "setConsoleOutputFile", reinterpret_cast<PyCFunction>(PyModule_setConsoleOutputFile),

@@ -27,7 +27,7 @@ Do not replace these references with assumptions from the C++ API or from other 
 2. Do not infer Python methods from similarly named C++ methods.
 3. Preserve exact API casing:
    - `stageviz.command` uses snake_case.
-   - `Session`, `SelectionList`, `ViewState`, `ViewCamera`, `Application`, and `UI` use the camelCase methods documented in the bindings.
+   - `Session`, `SelectionList`, `ViewState`, `ViewCamera`, `Application`, `UI`, `Render` and `ViewportCapture` use the camelCase methods documented in the bindings.
    - `RenderEngine` uses snake_case.
 4. Prefer `stageviz.command` for user-edit operations that should participate in Stageviz undo/redo.
 5. Use `Session`, `SelectionList`, `ViewState`, and `ViewCamera` for querying state and direct runtime/view control.
@@ -41,6 +41,12 @@ Do not replace these references with assumptions from the C++ API or from other 
 13. Commands can finish asynchronously. Wait for each command's Session completion before dependent edits, queries, undo/redo or saves; use the guide's controlled-script pattern or `testbench.wait_for_commands()` in tests. Interactive tools should use timer continuations and prevent overlapping edits. Do not add manual Deferred policy around command calls.
 14. Starting a Python execution clears existing native history. Perform programmatic command/undo/redo checks in one execution. Direct USD writes remain untracked.
 15. ViewState colors use float RGB/RGBA in 0..1; UI theme colors use integer channels in 0..255. Do not interchange them.
+16. For visible object paths, use `stageviz.render().capturePaths(accumulate=False)`
+    for a fresh tiled scan or the default `accumulate=True` to share the Edit
+    menu's collection. Read/clear it with `visibleCapturePaths()` and
+    `clearVisibleCapture()`. Use `capture()` for image/pixel/color queries; its
+    snapshot paths are separate and can differ at small object sizes. Do not
+    duplicate the native scan or collection in Python when these APIs are available.
 
 ## Recommended object access
 

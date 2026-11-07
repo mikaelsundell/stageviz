@@ -306,9 +306,12 @@ public:
      *
      * This is intended for explicit visibility capture, not every viewport
      * frame. Selection outlines still use only the normal one-pass ID image.
+     * Prim/instance IDs use the same USD origin resolver as image snapshots,
+     * so returned native-instance paths identify actual instance proxy geometry.
      *
      * @param gridSize Thorough-scan grid dimension. 1 performs a quick capture;
      *                 4 is the default and is robust for small/distant prims.
+     *
      * @return Visible front-most prim paths from the current masked scene.
      */
     QList<SdfPath> captureVisiblePaths(int gridSize = 4);

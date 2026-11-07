@@ -1940,7 +1940,7 @@ ViewerPrivate::hideRecursive()
 void
 ViewerPrivate::selectVisibleCapture()
 {
-    renderView()->captureVisible();
+    renderView()->capturePaths();
 }
 
 void

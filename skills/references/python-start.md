@@ -263,6 +263,14 @@ rendering, create `stageviz.RenderEngine()`, set its stage, size and USD camera
 path, then call `render(filename)`. That renderer has its own settings; changing
 ViewState does not configure it. Both require supported graphics facilities.
 
+To collect visible objects across camera views, use the same scan and collection
+as the Edit menu: `view = stageviz.render()`, then `view.capturePaths()` after
+each view change. Read the union with `view.visibleCapturePaths()` and start over
+with `view.clearVisibleCapture()`. For a fresh path-only query that leaves the
+collection untouched, use `view.capturePaths(accumulate=False)`. This tiled scan
+has finer object coverage than the image snapshot. Capturing itself never
+selects anything; use `stageviz.command.select_paths(paths)` when ready.
+
 Save deliberately with `session.save(filename)` and check its bool result.
 `copy(filename)` exports a root-layer copy without retargeting the document;
 `flatten(filename)` exports composition. See the reference for layer Save As,

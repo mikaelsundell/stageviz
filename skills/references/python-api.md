@@ -26,7 +26,7 @@ This is the public Python surface implemented in `sources/python/`. Start with t
 
 - `stageviz.command`: snake_case functions.
 - Other `stageviz` module functions use camelCase names.
-- `Application`, `Session`, `SelectionList`, `ViewState`, `ViewCamera`, `UI`: camelCase methods.
+- `Application`, `Session`, `SelectionList`, `ViewState`, `ViewCamera`, `UI`, `Render`, `ViewportCapture`: camelCase methods.
 - `RenderEngine`: snake_case methods.
 
 ### Calling conventions and types
@@ -42,6 +42,7 @@ All arguments of the following callables may be passed by the displayed names:
 | Session | `beginProgressBlock(name, count=0)`, `updateProgressNotify(message, completed, paths=None, status=0, details=None)`, `newStage(policy=stageviz.LoadAll)`, `load(filename, policy=stageviz.LoadAll)`, `loadFromFile(filename, policy=stageviz.LoadAll)`, `boundingBox(paths=None)` |
 | command | `select_all(recursive=False)`, `show_paths(paths, recursive=False)`, `hide_paths(paths, recursive=False)`, `load_payloads(paths, variant_set="", variant_value="")`, `new_light(parent_path, name, type="point")`, `new_prim(parent_path, name, type_name="")`, `new_reference(parent_path, name, asset_path, prim_path="")`, `new_payload(parent_path, name, asset_path, prim_path="")`, `move_path(paths, parent_path, insert_index=-1, preserve_world_transform=True)`, `add_attributes(prim_paths, name, type_name, custom=False)` |
 | UI | `color(role, state=stageviz.UI.Normal)` |
+| Render | `capturePaths(accumulate=True)` |
 | ViewportCapture | `pathsByColor(color, tolerance=30, minPixels=8, minCoverage=0.0)`, `pathsByHue(hue, tolerance=15, minSaturation=0.35, minValue=0.05, minPixels=8, minCoverage=0.0)` |
 
 In the entries below, `paths` means a list/tuple of absolute USD path strings,
@@ -211,6 +212,54 @@ with their chosen stream. Native output from those scripts is still captured.
   Storm scene-ID support. Raises `RuntimeError` on an unavailable stage, context,
   renderer or unsupported display mode. Capturing does not change USD, selection
   or undo history. Snapshots survive subsequent stage/camera changes and closure.
+
+### Visible path scans and the Edit menu
+
+`render.capturePaths(accumulate=True) -> list[str]`
+: Run the same 4-by-4 tiled scene-ID scan as Edit's visible-selection **Capture
+  view** action. With `accumulate=True` (the default), add newly visible paths to
+  the menu's shared collection and return the complete collection. With `False`,
+  return only the current scan and leave that collection unchanged. Synchronizes
+  the current camera, mask and display settings before scanning. Requires the
+  GUI thread and a rendered viewport; an unavailable rendered view produces an
+  empty scan. This does not select objects, author USD or create undo history.
+
+`render.visibleCapturePaths() -> list[str]`
+: Copy the collection shared with the menu without rendering. Paths are unique,
+  ordered by first capture; the returned Python list is independent of the native
+  collection. Native instance proxy geometry keeps its actual USD path.
+
+`render.clearVisibleCapture() -> None`
+: Clear that same collection, like the menu's **Clear** action. Does not change
+  selection. Replacing/closing the stage also clears the collection.
+
+All three methods raise `RuntimeError` when called off the GUI thread or after
+their viewport has closed. The menu and Python share one native implementation;
+capturing through either interface contributes to the same collection. Capture
+is synchronous. Wait for any outstanding USD command before capturing.
+
+```python
+import stageviz
+
+view = stageviz.render()
+view.clearVisibleCapture()
+paths_now = view.capturePaths(accumulate=False)  # A fresh scan, without collecting.
+view.capturePaths()                            # Collect this view, like the menu.
+# Change the view, then call view.capturePaths() again to add more objects.
+collected = view.visibleCapturePaths()
+if collected:
+    stageviz.command.select_paths(collected)   # Selection is a separate undoable edit.
+```
+
+Use `capture()` for a color image, pixel IDs and color queries. Its snapshot
+`paths()` describes one viewport-resolution image and does not use or modify the
+menu collection. The finer tiled `capturePaths()` scan can find small objects
+missing from that image's pixel grid; the two path sets need not match. Neither
+scan includes objects fully occluded in its rendered view. The collection is
+historical: changing visibility/camera does not remove earlier entries. Clear
+and recapture when you need a fresh set.
+
+### Snapshot diagnostics and queries
 
 `render.inspectPrim(path) -> dict`
 : Diagnose an existing geometry prim, including native-instance proxy geometry.
