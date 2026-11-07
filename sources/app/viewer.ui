@@ -1997,7 +1997,7 @@
   </action>
   <action name="editLayerSelect">
    <property name="text">
-    <string>Select Layer</string>
+    <string>Select in Layer</string>
    </property>
   </action>
   <action name="editPayloadInvert">

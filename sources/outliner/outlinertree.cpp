@@ -75,6 +75,7 @@ public:
 public Q_SLOTS:
     void itemSelectionChanged();
     void checkStateChanged(PrimItem* item);
+    void payloadRequestsChanged();
     void nameChanged(PrimItem* item);
 
 public:
@@ -166,12 +167,11 @@ public:
     struct Data {
         QPoint dragPressPosition;
         bool dragPressCandidate = false;
-        int pending = 0;
+        QTimer* payloadTimer = nullptr;
         mutable int cachedMaxDepth = -1;
         bool payloadEnabled = false;
         QString filter;
-        QList<SdfPath> loadPaths;
-        QList<SdfPath> unloadPaths;
+        QMap<SdfPath, bool> payloadRequests;
         QList<SdfPath> maskPaths;
         QSet<SdfPath> directOverridePaths;
         QSet<SdfPath> descendantOverridePaths;
@@ -188,6 +188,10 @@ OutlinerTreePrivate::OutlinerTreePrivate() {}
 void
 OutlinerTreePrivate::init()
 {
+    d.payloadTimer = new QTimer(d.tree);
+    d.payloadTimer->setSingleShot(true);
+    connect(d.payloadTimer, &QTimer::timeout, this, &OutlinerTreePrivate::payloadRequestsChanged);
+
     attach(d.tree);
     attach(d.tree->selectionModel());
 
@@ -590,10 +594,9 @@ void
 OutlinerTreePrivate::close()
 {
     QSignalBlocker blocker(d.tree);
-    d.pending = 0;
+    d.payloadTimer->stop();
     d.cachedMaxDepth = -1;
-    d.loadPaths.clear();
-    d.unloadPaths.clear();
+    d.payloadRequests.clear();
     d.directOverridePaths.clear();
     d.descendantOverridePaths.clear();
     d.stage = nullptr;
@@ -1012,57 +1015,47 @@ OutlinerTreePrivate::itemSelectionChanged()
 void
 OutlinerTreePrivate::checkStateChanged(PrimItem* item)
 {
-    PrimItem* primItem = static_cast<PrimItem*>(item);
-    const QString pathString = primItem->data(0, PrimItem::Path).toString();
-    if (pathString.isEmpty())
+    const SdfPath path = item->path();
+    if (path.IsEmpty() || !d.payloadEnabled)
         return;
 
-    const SdfPath path(QStringToString(pathString));
+    {
+        READ_LOCKER(locker, d.context->stageLock(), "stageLock");
+        if (!d.stage || !stage::isPayload(d.stage, path))
+            return;
+    }
 
-    bool hasPayload = false;
-    bool isLoaded = false;
+    const Qt::CheckState state = item->checkState(PrimItem::Name);
+    if (state == Qt::PartiallyChecked)
+        return;
+
+    // Keep the last requested state even when it currently matches USD: an
+    // opposite click may already be waiting for this same event-loop batch.
+    d.payloadRequests.insert(path, state == Qt::Checked);
+    d.payloadTimer->start(0);
+}
+
+void
+OutlinerTreePrivate::payloadRequestsChanged()
+{
+    QList<SdfPath> loadPaths;
+    QList<SdfPath> unloadPaths;
     {
         READ_LOCKER(locker, d.context->stageLock(), "stageLock");
         if (!d.stage)
             return;
-
-        const UsdPrim prim = d.stage->GetPrimAtPath(path);
-        if (!prim)
-            return;
-
-        if (!stage::isPayload(d.stage, path))
-            return;
-
-        hasPayload = true;
-        isLoaded = prim.IsLoaded();
-    }
-
-    if (!hasPayload)
-        return;
-
-    const Qt::CheckState state = item->checkState(PrimItem::Name);
-    if ((state == Qt::Checked && isLoaded) || (state == Qt::Unchecked && !isLoaded))
-        return;
-
-    if (state == Qt::Checked)
-        d.loadPaths.append(path);
-    else if (state == Qt::Unchecked)
-        d.unloadPaths.append(path);
-
-    d.pending++;
-    QTimer::singleShot(0, d.tree, [this]() {
-        if (--d.pending <= 0) {
-            if (!d.loadPaths.isEmpty()) {
-                d.context->execute(new Command(loadPayloads(d.loadPaths)));
-                d.loadPaths.clear();
-            }
-            if (!d.unloadPaths.isEmpty()) {
-                d.context->execute(new Command(unloadPayloads(d.unloadPaths)));
-                d.unloadPaths.clear();
-            }
-            d.pending = 0;
+        for (auto it = d.payloadRequests.cbegin(); it != d.payloadRequests.cend(); ++it) {
+            const UsdPrim prim = d.stage->GetPrimAtPath(it.key());
+            if (!prim || !prim.HasPayload() || prim.IsLoaded() == it.value())
+                continue;
+            (it.value() ? loadPaths : unloadPaths).append(it.key());
         }
-    });
+    }
+    d.payloadRequests.clear();
+    if (!loadPaths.isEmpty())
+        d.context->execute(new Command(loadPayloads(loadPaths)));
+    if (!unloadPaths.isEmpty())
+        d.context->execute(new Command(unloadPayloads(unloadPaths)));
 }
 
 void

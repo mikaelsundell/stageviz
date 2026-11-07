@@ -110,6 +110,8 @@ foreach(case IN ITEMS
     transform_operation_api
     pivot_operation_api
     command_payload_api
+    payload_nested_rules
+    payload_overlapping_batch
 )
     add_test(NAME stageviz.${case} COMMAND $<TARGET_FILE:stageviz_regressions> ${case})
     set_tests_properties(stageviz.${case} PROPERTIES LABELS "native;regression" TIMEOUT 60)
@@ -162,6 +164,8 @@ foreach(case IN ITEMS
     material_browser_api
     geometry_subset_gui_api
     outliner_instance_payload_resync_api
+    outliner_payload_group_checkbox_api
+    outliner_payload_queued_checkbox_api
     layer_tree_root_row_api
 )
     if(APPLE)

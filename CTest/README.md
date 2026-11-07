@@ -136,6 +136,16 @@ The pivot Python checks also cover normal Move, Rotate, and Scale drags after
 Center Pivot, including previously edited pivot frames, unchanged geometry on
 press, stable pivots through release, and exact undo/redo.
 
+Pivot checks use `testbench.wait_for_commands()` before reading USD results,
+issuing undo/redo, editing fixtures directly, or releasing shared-layer stages.
+The reference-layer edge case releases its temporary fixture stage before
+session authoring starts. This prevents USD notice delivery from racing the
+destruction of a second stage's composition cache. Waiting for a visible value
+alone does not establish command completion.
+The `shared-layer-lifetime` Python phase repeats queued pivot edits and exact
+undo while a second stage observes the same layers, verifies its composed
+pivot values, and releases it only after command completion.
+
 `console_output_file_api` covers native stdout/stderr logging, destination
 switches, failed opens preserving the active file, append/truncate, synchronous
 stop, and continued console capture. `python/testconsole.py` checks the public
@@ -254,3 +264,38 @@ and collection coverage.
 Native performance logging regressions cover unset, empty and enabled startup
 settings, a cached destination, nested JSONL events and append behavior. See
 [performance logging](../docs/performance-logging.md) for developer usage.
+
+`payload_nested_rules` and `payload_overlapping_batch` cover effective load-rule
+restoration across nested payload parent/child load, unload, undo and redo,
+including duplicate and overlapping targets. Commands retain one rule snapshot
+for the entire batch and restore individual edits in reverse execution order.
+Rule repair uses scoped loads/unloads, including `LoadWithoutDescendants`,
+without triggering a whole-stage root resync. Redundant rule encodings are
+ignored when comparing equivalent load policies.
+
+`python/testpayloadhierarchy.py` builds a disposable 15-file fixture with 9,605
+composed prims, four payload levels, sublayers, external references, native
+instances and independent branches. It exercises real Outliner checkbox clicks,
+partial group states, hidden nested load exclusions, instance sibling isolation,
+overlapping batches, root load/unload/undo, queued opposite and mixed checkbox
+clicks, menu actions, row selection, filtering, collapsed branches, rename/move/delete,
+load-policy changes, fixed-seed command sequences and reload in Payloads mode.
+The layer-inversion workflow verifies that direct inversion equals Select in
+Layer followed by inversion, and that unloading the complement preserves selected
+payloads and payloads authored in other layers through undo/redo.
+Every checkpoint verifies every visible payload gate and grouping checkbox against
+USD; external MCP prim-info calls independently check all visible gates and the
+relevant hidden nested payloads. Every checkpoint checks source
+file hashes and captures Qt/viewport evidence; the external pipeline brackets
+phases with independent MCP session and selection observations.
+
+Run it with `CTest/benchmark/pipeline/run_regressions.py --suites testpayloadhierarchy`
+and the required `--app` and `--output` arguments. Payloads mode intentionally
+stops Outliner traversal at the first payload gate: its checkbox describes that
+prim's own loaded state, rather than aggregating hidden nested payload rules.
+
+`stageviz.gui.outliner_payload_group_checkbox_api` guards grouping rows against
+stale ordinary-geometry checkbox state after root undo and command-driven updates.
+`stageviz.gui.outliner_payload_queued_checkbox_api` checks that the last request
+wins within a queued click batch, cancelled batches add no undo command, and stage
+replacement cancels the previous stage's pending checkbox timer.
