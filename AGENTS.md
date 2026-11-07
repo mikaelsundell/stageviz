@@ -147,6 +147,9 @@ consistent with the existing architecture.
 
 ## Commit messages
 
+- Include a DCO `Signed-off-by: Name <email>` trailer in every commit, using
+  the contributor's Git identity. Use `git commit --signoff` (`-s`), including
+  when amending commits. An `Authorized-by:` trailer does not satisfy DCO.
 - Write commit messages with a short, lowercase type prefix and a concise
   summary, followed by dash bullets. Each bullet starts with a clear subject
   header, then describes that part of the change. For example:
@@ -156,3 +159,15 @@ consistent with the existing architecture.
   - Context menu: Disable Duplicate > Instance for leaf geometry prims
   - Edit menu: Disable Duplicate > Instance for leaf geometry prims
   ```
+
+## Final PR preparation
+
+- Fetch the PR's current target branch and inspect every commit introduced
+  by the PR for a valid `Signed-off-by:` trailer matching its author. Do not
+  assume that signing off the latest commit covers earlier commits.
+- Repair missing sign-offs before declaring the PR ready for merge. Preserve
+  other contributors' identities; do not certify their contributions on their
+  behalf. If authorized history rewriting is needed, verify that the source
+  tree is unchanged and push with an explicit `--force-with-lease` guard.
+- Verify the DCO check on the updated PR alongside the required regression
+  and CI checks. Report checks that are pending or could not be verified.
