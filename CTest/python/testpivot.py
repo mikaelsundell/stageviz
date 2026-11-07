@@ -44,6 +44,7 @@ class PivotTest(_base["TransformOperationTest"]):
         self.snapshot("pivot_enabled")
 
     def finish_pivot(self, before, original, before_frames, label, expected=None):
+        assert tb.wait_for_commands(), "pivot gesture completion"
         assert self.matches(before), label + " keeps all geometry fixed"
         after_frames = self.frames()
         delta = before_frames[self.targets[0]].GetInverse() * after_frames[self.targets[0]]
@@ -57,9 +58,11 @@ class PivotTest(_base["TransformOperationTest"]):
         authored = self.layer_text()
         assert stageviz.command.can_undo()
         stageviz.command.undo()
+        assert tb.wait_for_commands(), "pivot command completion"
         assert tb.wait_until(lambda: self.layer_text() == original and self.matches(before))
         assert not stageviz.command.can_undo(), "one pivot gesture produces one undo step"
         stageviz.command.redo()
+        assert tb.wait_for_commands(), "pivot command completion"
         assert tb.wait_until(lambda: self.layer_text() == authored and self.matches(before))
         self.snapshot(label)
         print("PASS", label, "fixed geometry, shared pivot delta, preserved instances, exact undo/redo")
@@ -71,6 +74,7 @@ class PivotTest(_base["TransformOperationTest"]):
         before, original, frames = self.worlds(), self.layer_text(), self.frames()
         stageviz.command.clear()
         stageviz.command.transform_pivots(self.selected, [list(row) for row in delta])
+        assert tb.wait_for_commands(), "pivot command completion"
         self.finish_pivot(before, original, frames, "pivot_api_" + mode.lower(), delta)
 
     def gesture(self, mode):
@@ -112,18 +116,22 @@ class PivotTest(_base["TransformOperationTest"]):
         row.setExpanded(True)
         component = row.child(0)
         component.setText(1, str(value))
+        assert tb.wait_for_commands(), "pivot property edit completion"
         assert tb.wait_until(lambda: abs(attr.Get()[3][0] - value) < 1e-8)
         assert self.matches(before), "Property Editor pivot edit keeps geometry fixed"
         stageviz.command.undo()
+        assert tb.wait_for_commands(), "pivot command completion"
         assert tb.wait_until(lambda: self.layer_text() == original)
         assert not stageviz.command.can_undo(), "Property Editor pivot edit is one command"
         stageviz.command.redo()
+        assert tb.wait_for_commands(), "pivot command completion"
         assert tb.wait_until(lambda: abs(attr.Get()[3][0] - value) < 1e-8)
         assert self.matches(before)
         self.snapshot("pivot_property_edit")
         print("PASS pivot Property Editor component edit and exact undo/redo")
 
     def edge_cases(self):
+        assert tb.wait_for_commands(), "complete edits before replacing the stage"
         # Put the fixture behind a reference so the root edit layer starts with
         # no prim specs for the selected paths or their intermediate ancestors.
         wrapper_path = self.directory / "pivot_reference.usda"
@@ -132,6 +140,10 @@ class PivotTest(_base["TransformOperationTest"]):
         root.GetPrim().GetReferences().AddReference(self.fixture_path, "/World")
         wrapper.SetDefaultPrim(root.GetPrim())
         wrapper.GetRootLayer().Save()
+        # The fixture and session stages share layers. Drop the temporary stage
+        # before workers edit them: USD stage destruction also mutates its
+        # composition cache and cannot race layer-change notice delivery.
+        del root, wrapper
         assert stageviz.session().loadFromFile(str(wrapper_path))
         tb.process_events(100)
         stage = stageviz.session().stage()
@@ -140,21 +152,49 @@ class PivotTest(_base["TransformOperationTest"]):
         before, original = self.worlds(), self.layer_text()
         delta = Gf.Matrix4d(1).SetTranslate(Gf.Vec3d(0.2, 0.1, 0.3))
         stageviz.command.transform_pivots(self.selected, [list(row) for row in delta])
+        assert tb.wait_for_commands(), "pivot command completion"
         assert self.matches(before)
         stageviz.command.undo()
+        assert tb.wait_for_commands(), "pivot command completion"
         assert tb.wait_until(lambda: self.layer_text() == original), "undo prunes only newly created ancestor overs"
         stageviz.command.clear()
         singular = Gf.Matrix4d(1).SetScale(Gf.Vec3d(0, 1, 1))
         stageviz.command.transform_pivots(self.selected, [list(row) for row in singular])
+        assert tb.wait_for_commands(), "pivot command completion"
         assert self.layer_text() == original, "singular delta is rejected before authoring"
         reset = UsdGeom.Xform.Define(stage, "/World/ResetPivot")
         reset.AddTranslateOp().Set(Gf.Vec3d(3, 2, 1))
         reset.SetResetXformStack(True)
         original_world = UsdGeom.XformCache().GetLocalToWorldTransform(reset.GetPrim())
         stageviz.command.transform_pivots([str(reset.GetPath())], [list(row) for row in delta])
+        assert tb.wait_for_commands(), "pivot command completion"
         assert reset.GetResetXformStack(), "pivot authoring preserves resetXformStack"
         assert Gf.IsClose(UsdGeom.XformCache().GetLocalToWorldTransform(reset.GetPrim()), original_world, 1e-6)
         print("PASS reference-layer exact undo, singular rejection, and resetXformStack")
+
+    def shared_layer_lifetime(self, iterations=12):
+        """Keep a second composition cache alive until worker notices finish."""
+        assert tb.wait_for_commands()
+        stage = stageviz.session().stage()
+        original, before = self.layer_text(), self.worlds()
+        delta = Gf.Matrix4d(1).SetTranslate(Gf.Vec3d(0.03, 0.02, 0.01))
+        for _ in range(iterations):
+            observer = Usd.Stage.Open(stage.GetRootLayer())
+            stageviz.command.clear()
+            stageviz.command.transform_pivots(self.selected, [list(row) for row in delta])
+            assert tb.wait_for_commands(), "shared-layer pivot edit completion"
+            assert self.matches(before), "shared-layer edit keeps geometry fixed"
+            for path in self.targets[:2]:
+                expected = stage.GetPrimAtPath(path).GetAttribute("xformOp:transform:pivot").Get()
+                actual = observer.GetPrimAtPath(path).GetAttribute("xformOp:transform:pivot").Get()
+                assert expected is not None and actual == expected, "both stages receive completed notices"
+            stageviz.command.undo()
+            assert tb.wait_for_commands(), "shared-layer undo completion"
+            assert self.layer_text() == original and self.matches(before)
+            # Destruction is safe only after the worker's layer notices finish.
+            del observer
+        self.snapshot("pivot_shared_layer_lifetime")
+        print("PASS shared-layer stage lifetime", iterations, "completed edits and exact undo")
 
     def centered_object_drag(self, mode, full_frame=False, center=True):
         """Centering and normal dragging retain the same active pivot pair."""
@@ -172,10 +212,12 @@ class PivotTest(_base["TransformOperationTest"]):
         if full_frame:
             delta = Gf.Matrix4d(1).SetTranslate(Gf.Vec3d(0.4, 0.3, 0.2))
             stageviz.command.transform_pivots([path], [list(row) for row in delta])
+            assert tb.wait_for_commands(), "pivot command completion"
             assert tb.wait_until(lambda: bool(prim.GetAttribute("xformOp:transform:pivot")))
         pivot_name = "xformOp:transform:pivot" if full_frame and not center else "xformOp:translate:pivot"
         if center:
             stageviz.command.center_pivots([path])
+            assert tb.wait_for_commands(), "pivot command completion"
             assert tb.wait_until(lambda: bool(prim.GetAttribute(pivot_name)))
         if tb.action_info("displayPivot")["checked"]:
             assert tb.trigger_action("displayPivot")
@@ -211,14 +253,17 @@ class PivotTest(_base["TransformOperationTest"]):
                       + ("_after_frame" if full_frame else ""))
         authored = self.layer_text()
         stageviz.command.undo()
+        assert tb.wait_for_commands(), "pivot command completion"
         assert tb.wait_until(lambda: self.layer_text() == original and Gf.IsClose(world(), before, 1e-6))
         stageviz.command.redo()
+        assert tb.wait_for_commands(), "pivot command completion"
         assert tb.wait_until(lambda: self.layer_text() == authored and Gf.IsClose(world(), during, 1e-6))
         stage.RemovePrim(path)
         stageviz.command.clear()
         print("PASS centered object drag", mode, "after full frame", full_frame, "press/move/release and exact undo/redo")
 
     def cleanup(self):
+        assert tb.wait_for_commands(), "complete edits before fixture teardown"
         action = tb.action_info("displayPivot")
         if action and action["checked"]:
             assert tb.trigger_action("displayPivot")

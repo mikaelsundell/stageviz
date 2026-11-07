@@ -978,7 +978,7 @@ def payload_menu_state():
         "Load Neighbors",
         "Unload",
         "Select payload",
-        "Select Layer",
+        "Select in Layer",
         "Invert in Payload",
         "Invert in Layer",
     ):
@@ -1138,7 +1138,7 @@ Coverage:
     - Load / Unload
     - Load Neighbors
     - Select payload
-    - Select Layer
+    - Select in Layer
     - Invert in Payload
     - Invert in Layer
 """,
@@ -1154,7 +1154,7 @@ Coverage:
         "Load Neighbors",
         "Unload",
         "Select payload",
-        "Select Layer",
+        "Select in Layer",
         "Invert in Payload",
         "Invert in Layer",
     ):
@@ -1199,7 +1199,7 @@ Coverage:
     require(not state["Unload"], "Unload is disabled for unloaded BodyPayload")
     require(state["Load Neighbors"], "Load Neighbors is enabled for a payload selection")
     require(state["Select payload"], "Select payload is enabled for a payload selection")
-    require(state["Select Layer"], "Select Layer is enabled for an active-layer payload")
+    require(state["Select in Layer"], "Select in Layer is enabled for an active-layer payload")
     require(state["Invert in Payload"], "Invert in Payload is enabled for a payload selection")
     require(state["Invert in Layer"], "Invert in Layer is enabled for an active-layer payload")
     require(set(state["variants"]) == {"bodyTrim"}, "BodyPayload exposes only bodyTrim")
@@ -1288,13 +1288,13 @@ Coverage:
     )
 
     select_semantic_path(descendant_path)
-    trigger_payload_action("Select Layer")
+    trigger_payload_action("Select in Layer")
     require(
         wait_until(
             lambda: [str(value) for value in stageviz.session().paths()] == [body_payload_path],
             timeout=3.0,
         ),
-        "Select Layer maps descendant to nearest payload authored in active layer",
+        "Select in Layer maps descendant to nearest payload authored in active layer",
     )
 
     select_semantic_path(descendant_path)

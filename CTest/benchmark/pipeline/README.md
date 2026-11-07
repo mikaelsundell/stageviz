@@ -30,6 +30,14 @@ console suites. Every suite gets a fresh app. External MCP stage/selection
 snapshots bracket its phases. Explicit Python completion markers catch assertions
 that the embedded interpreter reports as ordinary text rather than MCP errors.
 Use `--suites` to select suites; run `--help` for the accepted syntax.
+`--suites testpayloadhierarchy` exercises a disposable 15-file/four-level payload
+fixture with real Outliner checkboxes, nested load-rule undo/redo, references,
+instance payloads, overlapping targets, root/group undo, queued click bursts,
+menu actions, filtering/collapse, row selection, namespace changes, fixed-seed
+commands, load-policy changes and reload in Payloads mode. Checkpoints assert all
+visible gate and grouping states; external MCP prim-info queries verify every
+visible gate and relevant hidden nested payloads independently. Use `--port`
+(default 37657) to give concurrent disposable runs independent MCP listeners.
 
 Run the native and offscreen GUI CTests separately. Embedded Python tests do not
 replace native coverage, and their own historical performance section is disabled

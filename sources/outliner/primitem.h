@@ -124,6 +124,11 @@ public:
     TreeItem::ItemStates itemStates() const override;
 
 private:
+    /**
+     * @brief Aggregates visible payload gates, excluding ordinary geometry branches.
+     */
+    QVariant payloadCheckState() const;
+
     QScopedPointer<PrimItemPrivate> p;
 };
 

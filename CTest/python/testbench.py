@@ -87,6 +87,21 @@ def wait_until(predicate, timeout=3.0, interval_ms=25):
     return False
 
 
+def wait_for_commands(timeout=10.0):
+    """Wait for deferred USD authoring and its session completion callback.
+
+    Command dispatch returns before worker edits finish. Call this before USD
+    reads, direct fixture edits, stage replacement or releasing another stage
+    that shares the edited layers. A visible authored value alone does not
+    guarantee the worker has finished delivering USD notices. Use after each
+    command before starting the next; this is not a global thread-pool drain.
+    """
+    import stageviz
+
+    return wait_until(lambda: stageviz.session().primsUpdate() == stageviz.PrimsImmediate,
+                      timeout=timeout)
+
+
 def viewer(object_name="Viewer"):
     for widget in top_level_widgets():
         try:

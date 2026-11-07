@@ -142,6 +142,11 @@ PrimItem::data(int column, int role) const
     p->updateCache();
     const SdfPath path = p->d.path;
 
+    if (column == Name && role == Qt::CheckStateRole && (flags() & Qt::ItemIsAutoTristate)) {
+        const QVariant state = payloadCheckState();
+        return state.isValid() ? state : QVariant(Qt::Unchecked);
+    }
+
     bool selected = false;
     if (const QTreeWidget* tree = treeWidget()) {
         if (const auto* indexTree = dynamic_cast<const IndexTree*>(tree))
@@ -261,6 +266,26 @@ PrimItem::setData(int column, int role, const QVariant& value)
     }
 
     TreeItem::setData(column, role, value);
+}
+
+QVariant
+PrimItem::payloadCheckState() const
+{
+    p->updateCache();
+    if (p->d.hasPayload)
+        return TreeItem::data(Name, Qt::CheckStateRole);
+
+    QVariant state;
+    for (int i = 0; i < childCount(); ++i) {
+        const auto* item = static_cast<const PrimItem*>(child(i));
+        const QVariant childState = item->payloadCheckState();
+        if (!childState.isValid())
+            continue;
+        if (childState.toInt() == Qt::PartiallyChecked || (state.isValid() && state != childState))
+            return Qt::PartiallyChecked;
+        state = childState;
+    }
+    return state;
 }
 
 bool

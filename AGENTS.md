@@ -4,6 +4,18 @@ Use these conventions when adding or changing Stageviz functionality. Follow
 nearby code when it establishes a more specific pattern, and keep changes
 consistent with the existing architecture.
 
+## Sensitive local investigation files
+
+- `investigation/` contains sensitive local files. Never stage, commit, push,
+  upload, or otherwise publish that directory or its contents, including by
+  copying them into tracked files, patches, or release artifacts.
+- Keep `investigation/` ignored by Git. Before staging or committing, check
+  the staged file list and ensure no investigation files are included. Never
+  use force-add to bypass this exclusion.
+- Reusable tests or documentation intended for the repository must be written
+  without sensitive local data, paths, logs, captures, or credentials from
+  investigation files.
+
 ## macOS builds and runs
 
 - Set `DYLD_IMAGE_SUFFIX=_debug` when building or running Stageviz on macOS so

@@ -8,8 +8,10 @@
 #include "selectionlist.h"
 #include "tracelocks.h"
 #include "usdutils.h"
+#include <algorithm>
 #include <memory>
 #include <pxr/usd/usd/prim.h>
+#include <pxr/usd/usd/stageLoadRules.h>
 
 namespace stageviz {
 
@@ -18,11 +20,78 @@ namespace payload {
         QList<PayloadState> payloadStates;
         QList<SdfPath> previousSelection;
         QList<SdfPath> previousMask;
+        UsdStageWeakPtr loadRulesStage;
+        UsdStageLoadRules previousLoadRules;
     };
 }  // namespace payload
 
 
 namespace {
+
+    void captureLoadRules(Session* session, const std::shared_ptr<payload::State>& state)
+    {
+        READ_LOCKER(locker, session->stageLock(), "stageLock");
+        const UsdStageRefPtr stage = session->stageUnsafe();
+        state->loadRulesStage = stage;
+        if (stage)
+            state->previousLoadRules = stage->GetLoadRules();
+    }
+
+    UsdStageLoadRules::Rule inheritedRule(const UsdStageLoadRules& rules, const SdfPath& path)
+    {
+        // Unlike GetEffectiveRuleForPath(), do not promote ancestors because
+        // of loaded descendants: their explicit overrides are replayed later.
+        const auto& entries = rules.GetRules();
+        const auto it = SdfPathFindLongestPrefix(entries.begin(), entries.end(), path,
+                                                [](const auto& entry) -> const SdfPath& { return entry.first; });
+        if (it == entries.end())
+            return UsdStageLoadRules::AllRule;
+        if (it->second == UsdStageLoadRules::OnlyRule && it->first != path)
+            return UsdStageLoadRules::NoneRule;
+        return it->second;
+    }
+
+    void restoreLoadRules(Session* session, const std::shared_ptr<payload::State>& state)
+    {
+        WRITE_LOCKER(locker, session->stageLock(), "stageLock");
+        const UsdStageRefPtr stage = session->stageUnsafe();
+        if (!stage || state->loadRulesStage != stage || stage->GetLoadRules() == state->previousLoadRules)
+            return;
+
+        // SetLoadRules() sends a root resync in USD 25.11. Restore changed
+        // prefixes instead, visiting parents before their saved child overrides.
+        QList<SdfPath> scopes;
+        scopes.reserve(state->payloadStates.size());
+        path::PathCollector collector(scopes);
+        for (const auto& payloadState : state->payloadStates)
+            collector.append(payloadState.path);
+
+        SdfPathVector paths;
+        const auto appendRules = [&](const UsdStageLoadRules& rules, const SdfPath& scope) {
+            const auto& entries = rules.GetRules();
+            const auto range = SdfPathFindPrefixedRange(entries.begin(), entries.end(), scope,
+                                                       [](const auto& entry) -> const SdfPath& { return entry.first; });
+            for (auto it = range.first; it != range.second; ++it)
+                paths.push_back(it->first);
+        };
+        for (const SdfPath& scope : path::stableRootPaths(scopes)) {
+            paths.push_back(scope);
+            appendRules(state->previousLoadRules, scope);
+            appendRules(stage->GetLoadRules(), scope);
+        }
+        std::sort(paths.begin(), paths.end());
+        paths.erase(std::unique(paths.begin(), paths.end()), paths.end());
+        for (const SdfPath& path : paths) {
+            const auto wanted = inheritedRule(state->previousLoadRules, path);
+            if (inheritedRule(stage->GetLoadRules(), path) == wanted)
+                continue;
+            if (wanted == UsdStageLoadRules::NoneRule)
+                stage->Unload(path);
+            else
+                stage->Load(path, wanted == UsdStageLoadRules::OnlyRule ? UsdLoadWithoutDescendants
+                                                                      : UsdLoadWithDescendants);
+        }
+    }
 
     QList<SdfPath> remapPayloadAffectedPaths(const QList<SdfPath>& paths, const QList<SdfPath>& payloadPaths)
     {
@@ -97,6 +166,7 @@ loadPayloads(const QList<SdfPath>& paths, const QString& variantSet, const QStri
 
             state->previousSelection = session->selectionList()->paths();
             state->previousMask = session->mask();
+            captureLoadRules(session, state);
 
             session->beginProgressBlock("Load payloads", paths.size());
             session->setPrimsUpdate(Session::PrimsUpdate::Deferred);
@@ -234,7 +304,9 @@ loadPayloads(const QList<SdfPath>& paths, const QString& variantSet, const QStri
                 pending.reserve(16);
 
                 int completed = 0;
-                for (const payload::PayloadState& payloadState : state->payloadStates) {
+                // Undo in reverse execution order while child targets still exist.
+                for (auto it = state->payloadStates.crbegin(); it != state->payloadStates.crend(); ++it) {
+                    const payload::PayloadState& payloadState = *it;
                     if (!session || session->isProgressBlockCancelled())
                         break;
 
@@ -270,6 +342,11 @@ loadPayloads(const QList<SdfPath>& paths, const QString& variantSet, const QStri
                     }
                 }
 
+                // A parent's loaded bit cannot represent nested exclusions or
+                // explicit child loads. Keep one exact rule snapshot per command.
+                if (!session->isProgressBlockCancelled())
+                    restoreLoadRules(session, state);
+
                 command::queueToSession(session, [session, state, pending, completed]() {
                     if (!pending.isEmpty())
                         command::flushResults(session, pending, completed);
@@ -295,6 +372,7 @@ loadNeighborPayloads(const QList<SdfPath>& paths)
 
             state->previousSelection = session->selectionList()->paths();
             state->previousMask = session->mask();
+            captureLoadRules(session, state);
             state->payloadStates.clear();
 
             command::runWorker([session, paths, state]() {
@@ -436,7 +514,9 @@ loadNeighborPayloads(const QList<SdfPath>& paths)
 
                 int completed = 0;
 
-                for (const payload::PayloadState& payloadState : state->payloadStates) {
+                // Undo in reverse execution order while child targets still exist.
+                for (auto it = state->payloadStates.crbegin(); it != state->payloadStates.crend(); ++it) {
+                    const payload::PayloadState& payloadState = *it;
                     if (!session || session->isProgressBlockCancelled())
                         break;
 
@@ -476,6 +556,11 @@ loadNeighborPayloads(const QList<SdfPath>& paths)
                     }
                 }
 
+                // A parent's loaded bit cannot represent nested exclusions or
+                // explicit child loads. Keep one exact rule snapshot per command.
+                if (!session->isProgressBlockCancelled())
+                    restoreLoadRules(session, state);
+
                 command::queueToSession(session, [session, state, pending, completed]() {
                     if (!pending.isEmpty())
                         command::flushResults(session, pending, completed);
@@ -501,6 +586,7 @@ unloadPayloads(const QList<SdfPath>& paths)
 
             state->previousSelection = session->selectionList()->paths();
             state->previousMask = session->mask();
+            captureLoadRules(session, state);
 
             session->beginProgressBlock("Unload payloads", paths.size());
             session->setPrimsUpdate(Session::PrimsUpdate::Deferred);
@@ -587,7 +673,9 @@ unloadPayloads(const QList<SdfPath>& paths)
                 pending.reserve(16);
 
                 int completed = 0;
-                for (const payload::PayloadState& payloadState : state->payloadStates) {
+                // Undo in reverse execution order while child targets still exist.
+                for (auto it = state->payloadStates.crbegin(); it != state->payloadStates.crend(); ++it) {
+                    const payload::PayloadState& payloadState = *it;
                     if (!session || session->isProgressBlockCancelled())
                         break;
 
@@ -620,6 +708,11 @@ unloadPayloads(const QList<SdfPath>& paths)
                         pending.clear();
                     }
                 }
+
+                // A parent's loaded bit cannot represent nested exclusions or
+                // explicit child loads. Keep one exact rule snapshot per command.
+                if (!session->isProgressBlockCancelled())
+                    restoreLoadRules(session, state);
 
                 command::queueToSession(session, [session, state, pending, completed]() {
                     if (!pending.isEmpty())

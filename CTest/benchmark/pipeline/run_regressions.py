@@ -19,6 +19,13 @@ def phases(root, name):
         return [('suite', load + extra + "; assert ns['run']() is True")]
     if name == 'testlayers':
         return [('suite', load + "; assert ns['_TEST_RESULT'] is True")]
+    if name == 'testpayloadhierarchy':
+        return [('setup', load + "; test=ns['PayloadHierarchyTest'](disposable=True); test.setup()")] + [
+            (method, 'test.%s()' % method) for method in (
+                'leaf_checkbox', 'group_checkbox', 'nested_rules', 'instance_payloads',
+                'overlapping_batch', 'repeated_toggle', 'root_checkbox', 'menu_actions',
+                'filtered_collapsed', 'rapid_clicks', 'mixed_clicks', 'selection_clicks',
+                'randomized_commands', 'namespace_commands', 'layer_invert_unload', 'load_policy', 'reload', 'cleanup')]
     classes = {'testhierarchytransforms':'HierarchyTransformTest', 'testtransformoperation':'TransformOperationTest', 'testpivot':'PivotTest'}
     if name in classes:
         result = [('setup', load + "; test=ns[%r](disposable=True); test.setup()" % classes[name])]
@@ -42,7 +49,8 @@ def phases(root, name):
                 for mode in ('Move','Rotate','Scale'):
                     for full in (False,True):
                         result += [('centered-%s-%s' % (mode,full), 'test.centered_object_drag(%r,full_frame=%r)' % (mode,full))]
-                result += [('edge-cases','test.edge_cases()')]
+                result += [('edge-cases','test.edge_cases()'),
+                           ('shared-layer-lifetime','test.shared_layer_lifetime()')]
         return result + [('cleanup','test.cleanup()')]
     if name == 'testsharedviewport':
         fixture = '''import tempfile
@@ -69,23 +77,49 @@ f.GetRootLayer().Save()
     return [('suite',load+"; ns['run'](disposable=True)")]
 
 
+def payload_oracle(app, result):
+    """Compare native MCP loaded flags with the phase's asserted USD/Qt snapshot."""
+    lines = [line for block in result['result']['content']
+             for line in block.get('text', '').splitlines()
+             if line.startswith('PAYLOAD_CHECKPOINT ')]
+    assert lines, 'Payload phase did not publish its checkpoint'
+    checkpoint = json.loads(lines[-1].split(' ', 1)[1])
+    first = '/World/RegionA/Vehicle01'
+    proxy = '/World/Depot/InstanceA/PartA'
+    expected = {path: gate['loaded'] for path, gate in checkpoint['payload_gates'].items()}
+    if checkpoint['loaded'][first]:
+        for path in (first + '/ModuleA/PartA/Bolts', first + '/ModuleA/PartB/Bolts'):
+            expected[path] = checkpoint['loaded'][path]
+    if checkpoint['loaded'][proxy]:
+        expected[proxy + '/Bolts'] = checkpoint['loaded'][proxy + '/Bolts']
+    evidence = {}
+    for path, loaded in expected.items():
+        response = app.tool('stageviz_get_prim_info', {'path': path})
+        data = json.loads(response['result']['content'][0]['text'])
+        assert data['loaded'] == loaded, (path, data, checkpoint)
+        evidence[path] = response
+    return evidence
+
+
 def run(args):
     root = Path(__file__).resolve().parents[3]
     output = Path(args.output).resolve()
     output.mkdir(parents=True,exist_ok=False)
-    names = args.suites or ['testapi','testui','testlayers','testviewport','testsubsets','testlights','testnumericeditors','testviewporthdri','testviewportcapture','testscenestats','testaxissize','testconsole','testhierarchytransforms','testtransformoperation','testpivot','testsharedviewport']
+    names = args.suites or ['testapi','testui','testlayers','testpayloadhierarchy','testviewport','testsubsets','testlights','testnumericeditors','testviewporthdri','testviewportcapture','testscenestats','testaxissize','testconsole','testhierarchytransforms','testtransformoperation','testpivot','testsharedviewport']
     summary=[]
     for name in names:
         started=time.monotonic()
         row=dict(suite=name,passed=False,completed=[])
         try:
-            with DisposableStageviz(args.app,output/name) as app:
+            with DisposableStageviz(args.app,output/name,port=args.port) as app:
                 app.python("from PySide6 import QtCore,QtWidgets,QtOpenGLWidgets; import stageviz; w=stageviz.application().window(); w.resize(1500,1000); w.setWindowFlag(QtCore.Qt.WindowType.WindowStaysOnTopHint,True);w.show();w.raise_();w.activateWindow()")
                 for label,code in phases(root,name):
                     print('RUN',name,label,flush=True)
                     before=app.oracle()
                     result=app.python(code)
                     after=app.oracle()
+                    if name == 'testpayloadhierarchy' and label != 'cleanup':
+                        after['payload_prims'] = payload_oracle(app, result)
                     (app.output/(label+'.json')).write_text(json.dumps(dict(before=before,result=result,after=after),indent=2))
                     row['completed'].append(label)
                     print('PASS',name,label,flush=True)
@@ -105,4 +139,5 @@ if __name__=='__main__':
     parser.add_argument('--app',required=True)
     parser.add_argument('--output',required=True)
     parser.add_argument('--suites',nargs='+')
+    parser.add_argument('--port',type=int,default=37657,help='Isolated MCP listener port')
     run(parser.parse_args())

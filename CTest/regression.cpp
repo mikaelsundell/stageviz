@@ -3922,6 +3922,138 @@ commandMoveApi()
 }
 
 void
+nestedPayloadUndo(bool overlapping)
+{
+    QTemporaryDir dir;
+    require(dir.isValid(), "nested payload temporary directory");
+    writeFile(dir.filePath("leaf.usda"), R"USD(#usda 1.0
+(defaultPrim = "Leaf")
+def Xform "Leaf" {
+    def Cube "Body" {}
+}
+)USD");
+    writeFile(dir.filePath("middle.usda"), R"USD(#usda 1.0
+(defaultPrim = "Branch")
+def Xform "Branch" {
+    def Xform "ChildA" (prepend payload = @leaf.usda@</Leaf>) {}
+    def Xform "ChildB" (prepend payload = @leaf.usda@</Leaf>) {}
+}
+)USD");
+    writeFile(dir.filePath("asset.usda"), R"USD(#usda 1.0
+(defaultPrim = "Asset")
+def Xform "Asset" {
+    def Xform "Mid" (prepend payload = @middle.usda@</Branch>) {}
+}
+)USD");
+    writeFile(dir.filePath("layout.usda"), R"USD(#usda 1.0
+def Xform "World" {
+    def Xform "A" (prepend payload = @asset.usda@</Asset>) {}
+    def Xform "B" (prepend payload = @asset.usda@</Asset>) {}
+}
+)USD");
+    writeFile(dir.filePath("scene.usda"), R"USD(#usda 1.0
+(
+    defaultPrim = "World"
+    subLayers = [@layout.usda@]
+)
+)USD");
+    Session session;
+    require(session.loadFromFile(dir.filePath("scene.usda"), Session::None), "load layered nested payload fixture");
+    drainWorkers();
+    bool rootResynced = false;
+    QObject::connect(&session, &Session::primsChanged, &session, [&](const stageviz::NoticeBatch& batch) {
+        for (const auto& entry : batch.entries)
+            if (!entry.changedInfoOnly && entry.path == SdfPath::AbsoluteRootPath())
+                rootResynced = true;
+    });
+    const auto stage = session.stage();
+    const SdfPath parent("/World/A"), child("/World/A/Mid/ChildA"), sibling("/World/A/Mid/ChildB");
+    const auto rules = [&]() {
+        auto result = stage->GetLoadRules();
+        result.Minimize();
+        return result;
+    };
+    const auto initial = rules();
+    if (overlapping) {
+        auto load = stageviz::loadPayloads({ parent, SdfPath("/World/A/Mid"), child, SdfPath("/World/B"), parent });
+        executeCommand(load, session);
+        require(stage->GetPrimAtPath(child).IsLoaded(), "overlapping batch loads nested payloads");
+        undoCommand(load, session);
+        require(rules() == initial, "overlapping batch undo restores initial effective load rules");
+        require(!rootResynced, "overlapping undo does not resync the whole stage");
+        require(!stage->GetPrimAtPath(parent).IsLoaded() && !stage->GetPrimAtPath(SdfPath("/World/B")).IsLoaded(),
+                "overlapping batch undo unloads both parents");
+        executeCommand(load, session);
+        require(stage->GetPrimAtPath(child).IsLoaded(), "overlapping batch redo restores loaded children");
+    }
+    else {
+        auto load = stageviz::loadPayloads({ parent });
+        executeCommand(load, session);
+        auto exclude = stageviz::unloadPayloads({ child });
+        executeCommand(exclude, session);
+        const auto partial = rules();
+        auto unload = stageviz::unloadPayloads({ parent });
+        executeCommand(unload, session);
+        undoCommand(unload, session);
+        require(rules() == partial, "parent unload undo preserves nested exclusion rules");
+        require(!rootResynced, "nested exclusion restore does not resync the whole stage");
+        require(!stage->GetPrimAtPath(child).IsLoaded() && stage->GetPrimAtPath(sibling).IsLoaded(),
+                "parent undo restores mixed nested load state");
+        executeCommand(unload, session);
+        undoCommand(unload, session);
+        require(rules() == partial, "nested rules survive another redo and undo");
+        auto loadChild = stageviz::loadPayloads({ parent, child });
+        executeCommand(loadChild, session);
+        require(stage->GetPrimAtPath(child).IsLoaded(), "explicit child loads below an already loaded parent");
+        undoCommand(loadChild, session);
+        require(rules() == partial, "load undo restores the prior child exclusion");
+        const SdfPath mid("/World/A/Mid");
+        stage->Load(mid, UsdLoadWithoutDescendants);
+        const auto only = rules();
+        auto unloadOnly = stageviz::unloadPayloads({ parent });
+        executeCommand(unloadOnly, session);
+        undoCommand(unloadOnly, session);
+        require(rules() == only, "parent undo preserves LoadWithoutDescendants rules");
+        auto loadUnderOnly = stageviz::loadPayloads({ child });
+        executeCommand(loadUnderOnly, session);
+        undoCommand(loadUnderOnly, session);
+        require(stage->GetLoadRules().GetEffectiveRuleForPath(mid) == UsdStageLoadRules::OnlyRule,
+                "loading and undoing a child retains its parent's OnlyRule");
+        require(!stage->GetPrimAtPath(child).IsLoaded() && !stage->GetPrimAtPath(sibling).IsLoaded(),
+                "OnlyRule still excludes both children after undo");
+        auto descendantOnly = UsdStageLoadRules::LoadNone();
+        descendantOnly.LoadWithDescendants(child);
+        stage->SetLoadRules(descendantOnly);
+        drainWorkers();
+        rootResynced = false;
+        const auto sparse = rules();
+        auto unloadSparse = stageviz::unloadPayloads({ parent });
+        executeCommand(unloadSparse, session);
+        undoCommand(unloadSparse, session);
+        require(rules() == sparse && stage->GetPrimAtPath(child).IsLoaded()
+                    && !stage->GetPrimAtPath(sibling).IsLoaded(),
+                "undo restores a loaded descendant beneath implicitly loaded ancestors");
+        require(!rootResynced, "sparse descendant restoration remains scoped to its branch");
+        auto scopedUndo = stageviz::unloadPayloads({ parent });
+        executeCommand(scopedUndo, session);
+        stage->Load(SdfPath("/World/B"));
+        undoCommand(scopedUndo, session);
+        require(stage->GetPrimAtPath(SdfPath("/World/B")).IsLoaded(),
+                "undo does not overwrite an independent sibling load rule");
+        require(stage->GetPrimAtPath(child).IsLoaded() && !stage->GetPrimAtPath(sibling).IsLoaded(),
+                "scoped undo restores only its own nested payload state");
+        stage->Unload(parent);
+        const auto beforeNeighbors = rules();
+        auto neighbors = stageviz::loadNeighborPayloads({ parent });
+        executeCommand(neighbors, session);
+        require(stage->GetPrimAtPath(parent).IsLoaded(), "neighbor command includes its unloaded source");
+        undoCommand(neighbors, session);
+        require(rules() == beforeNeighbors && stage->GetPrimAtPath(SdfPath("/World/B")).IsLoaded(),
+                "neighbor undo preserves effective rules and the independent sibling");
+    }
+}
+
+void
 commandPayloadApi()
 {
     QTemporaryDir dir;
@@ -4446,6 +4578,8 @@ main(int argc, char** argv)
         { "command_move_api", commandMoveApi },
         { "transform_operation_api", transformOperationApi },
         { "pivot_operation_api", pivotOperationApi },
+        { "payload_nested_rules", [] { nestedPayloadUndo(false); } },
+        { "payload_overlapping_batch", [] { nestedPayloadUndo(true); } },
         { "command_payload_api", commandPayloadApi }
     };
     if (argc != 2 || !cases.count(argv[1])) {

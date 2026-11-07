@@ -784,6 +784,103 @@ outlinerInstancePayloadResyncApi()
 }
 
 void
+outlinerPayloadCheckboxApi(bool rapid)
+{
+    QTemporaryDir dir;
+    require(dir.isValid(), "temporary checkbox fixture directory");
+    const QString asset = dir.filePath("asset.usda");
+    const QString scene = dir.filePath("scene.usda");
+    {
+        const auto stage = UsdStage::CreateNew(asset.toStdString());
+        stage->DefinePrim(SdfPath("/Asset"), TfToken("Xform"));
+        stage->DefinePrim(SdfPath("/Asset/Body"), TfToken("Cube"));
+        require(stage->GetRootLayer()->Save(), "save checkbox payload asset");
+    }
+    {
+        const auto stage = UsdStage::CreateNew(scene.toStdString());
+        stage->DefinePrim(SdfPath("/World"), TfToken("Xform"));
+        stage->DefinePrim(SdfPath("/World/Ordinary"), TfToken("Cube"));
+        for (const char* path : { "/World/A", "/World/B" }) {
+            const auto prim = stage->DefinePrim(SdfPath(path), TfToken("Xform"));
+            require(prim.GetPayloads().AddPayload(asset.toStdString(), SdfPath("/Asset")), "add checkbox payload");
+        }
+        require(stage->GetRootLayer()->Save(), "save checkbox scene");
+    }
+    auto* current = stageviz::session();
+    stageviz::OutlinerView view;
+    require(current->loadFromFile(scene, stageviz::Session::None), "load checkbox scene in Payloads mode");
+    const auto drain = []() {
+        for (int i = 0; i < 8; ++i) {
+            QCoreApplication::sendPostedEvents(nullptr, 0);
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+            QThreadPool::globalInstance()->waitForDone();
+        }
+    };
+    drain();
+    auto* tree = view.findChild<stageviz::OutlinerTree*>(QStringLiteral("outlinerTree"));
+    require(tree && tree->payloadEnabled(), "payload checkbox tree available");
+    const auto row = [&](const char* path) {
+        for (QTreeWidgetItemIterator it(tree); *it; ++it) {
+            if ((*it)->data(0, stageviz::PrimItem::Path).toString() == QLatin1String(path))
+                return *it;
+        }
+        return static_cast<QTreeWidgetItem*>(nullptr);
+    };
+    const auto loaded = [&](const char* path) { return current->stage()->GetPrimAtPath(SdfPath(path)).IsLoaded(); };
+    auto* stack = current->commandStack();
+    stack->clear();
+    if (rapid) {
+        row("/World/A")->setCheckState(0, Qt::Checked);
+        row("/World/A")->setCheckState(0, Qt::Unchecked);
+        drain();
+        require(!loaded("/World/A") && row("/World/A")->checkState(0) == Qt::Unchecked,
+                "queued opposite clicks retain the last requested state");
+        require(!stack->canUndo(), "cancelled checkbox batch adds no command");
+        row("/World/A")->setCheckState(0, Qt::Checked);
+        row("/World/A")->setCheckState(0, Qt::Unchecked);
+        row("/World/A")->setCheckState(0, Qt::Checked);
+        drain();
+        require(loaded("/World/A") && !loaded("/World/B"), "odd click burst loads only its target");
+        stack->undo();
+        drain();
+        require(!loaded("/World/A"), "coalesced checkbox batch is undoable");
+        stack->redo();
+        drain();
+        require(loaded("/World/A"), "coalesced checkbox batch is redoable");
+        stack->clear();
+        row("/World/B")->setCheckState(0, Qt::Checked);
+        require(current->loadFromFile(scene, stageviz::Session::None), "replace stage with a checkbox batch pending");
+        drain();
+        require(!loaded("/World/A") && !loaded("/World/B"), "stage replacement cancels old checkbox timer");
+    }
+    else {
+        row("/")->setCheckState(0, Qt::Checked);
+        drain();
+        require(loaded("/World/A") && loaded("/World/B"), "root checkbox loads all payload gates");
+        require(row("/")->checkState(0) == Qt::Checked, "root is checked when all payload gates load");
+        stack->undo();
+        drain();
+        require(!loaded("/World/A") && !loaded("/World/B"), "root checkbox undo unloads both gates");
+        require(row("/")->checkState(0) == Qt::Unchecked && row("/World")->checkState(0) == Qt::Unchecked,
+                "ordinary geometry does not leave grouping rows partially checked after undo");
+        stack->redo();
+        drain();
+        row("/")->setCheckState(0, Qt::Unchecked);
+        drain();
+        stack->undo();
+        drain();
+        require(row("/")->checkState(0) == Qt::Checked, "undo root unload restores checked aggregation");
+        stack->clear();
+        current->commandStack()->execute(new stageviz::Command(stageviz::unloadPayloads({ SdfPath("/World/A") })));
+        drain();
+        require(row("/")->checkState(0) == Qt::PartiallyChecked, "mixed gates produce partial grouping state");
+        stack->undo();
+        drain();
+        require(row("/")->checkState(0) == Qt::Checked, "command undo restores checked grouping state");
+    }
+}
+
+void
 treeWidgetSelectionApi()
 {
     stageviz::TreeWidget tree;
@@ -1643,6 +1740,8 @@ main(int argc, char** argv)
         { "material_browser_api", materialBrowserApi },
         { "geometry_subset_gui_api", geometrySubsetGuiApi },
         { "outliner_instance_payload_resync_api", outlinerInstancePayloadResyncApi },
+        { "outliner_payload_group_checkbox_api", []() { outlinerPayloadCheckboxApi(false); } },
+        { "outliner_payload_queued_checkbox_api", []() { outlinerPayloadCheckboxApi(true); } },
         { "layer_tree_root_row_api", layerTreeRootRowApi },
     };
 
