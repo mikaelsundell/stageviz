@@ -7,6 +7,7 @@
 #include "mcp/mcpserver.h"
 #include "pyapplication.h"
 #include "pycommand.h"
+#include "pyhydrarenderer.h"
 #include "pyrender.h"
 #include "pyrenderengine.h"
 #include "pyselectionlist.h"
@@ -181,6 +182,9 @@ PyInit_stageviz(void)
     if (!initPyRenderEngineType())
         return nullptr;
 
+    if (!initPyHydraRendererType())
+        return nullptr;
+
     if (!initPyViewCameraType())
         return nullptr;
 
@@ -215,6 +219,11 @@ PyInit_stageviz(void)
     }
 
     if (addPyRenderEngineType(module) < 0) {
+        Py_DECREF(module);
+        return nullptr;
+    }
+
+    if (addPyHydraRendererType(module) < 0) {
         Py_DECREF(module);
         return nullptr;
     }

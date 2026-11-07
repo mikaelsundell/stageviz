@@ -15,6 +15,7 @@ set(OpenUSD_COMPONENTS
   HD
   HDST
   HDX
+  HF
   HGI
   HGIGL
   HIO

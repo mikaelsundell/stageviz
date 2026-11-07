@@ -1,5 +1,12 @@
 # Native regression tests
 
+`stageviz.hydra_renderer_discovery` verifies metadata-only Hydra plugin discovery,
+including repeated enumeration of a registered plugin with a missing library.
+It requires neither RenderMan nor a graphics context. The embedded companion is
+`python/testhydrarenderer.py`. Run `python3 CTest/test_renderman_preflight.py`
+from the repository root for standalone binary compatibility preflight tests.
+See [Hydra rendering](../docs/hydra-renderer.md) for the current phase boundary.
+
 This directory registers native C++ regression tests through CTest. Enable
 them with `BUILD_TESTING=ON` in a configured Stageviz development build. The
 native executable uses a separate `QCoreApplication`; the GUI executable uses

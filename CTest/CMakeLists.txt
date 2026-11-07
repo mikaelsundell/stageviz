@@ -1,5 +1,14 @@
 # SPDX-License-Identifier: BSD-3-Clause
 
+add_test(
+    NAME stageviz.renderman_preflight
+    COMMAND ${Python3_EXECUTABLE} "${CMAKE_CURRENT_SOURCE_DIR}/test_renderman_preflight.py"
+)
+set_tests_properties(stageviz.renderman_preflight PROPERTIES
+    LABELS "python;regression"
+    TIMEOUT 30
+)
+
 # Reuse the application's sources and dependency settings so Session and its
 # collaborators are tested without replacing them with test doubles. This
 # executable has a QCoreApplication entry point and does not initialize Python.
@@ -43,6 +52,7 @@ foreach(case IN ITEMS
     perf_scope_empty
     perf_scope_enabled
     render_scene_index_removal
+    hydra_renderer_discovery
     save_twice_usda
     save_twice_usdc
     save_failure

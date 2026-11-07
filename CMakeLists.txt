@@ -389,7 +389,7 @@ target_include_directories(${project_name} PRIVATE
     ${CMAKE_BINARY_DIR}
 )
 
-# Native regression tests only; the Python editor suites are not registered.
+# Native regressions and standalone preflight; Python editor suites are not registered.
 option(BUILD_TESTING "Build native Stageviz regression tests" OFF)
 include(CTest)
 if(BUILD_TESTING)

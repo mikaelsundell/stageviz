@@ -17,6 +17,7 @@
 #include "commandutils.h"
 #include "commandvisibility.h"
 #include "console.h"
+#include "hydrarenderer.h"
 #include "materialmenu.h"
 #include "materialutils.h"
 #include "notice.h"
@@ -50,6 +51,8 @@
 #include <pxr/base/gf/matrix4d.h>
 #include <pxr/base/gf/range3d.h>
 #include <pxr/base/gf/rotation.h>
+#include <pxr/base/plug/plugin.h>
+#include <pxr/base/plug/registry.h>
 #include <pxr/base/tf/errorMark.h>
 #include <pxr/imaging/hd/retainedSceneIndex.h>
 #include <pxr/imaging/hd/tokens.h>
@@ -112,9 +115,13 @@ perfScopeLog(int mode)
     require(stageviz::PerfScope::enabled() == enabled, "performance logging cached gate");
     {
         stageviz::PerfScope outer("test.outer");
-        { stageviz::PerfScope inner("test.inner"); }
+        {
+            stageviz::PerfScope inner("test.inner");
+        }
     }
-    { stageviz::PerfScope appended("test.appended"); }
+    {
+        stageviz::PerfScope appended("test.appended");
+    }
     QFile file(QString::fromLocal8Bit(path));
     require(file.exists() == enabled, "disabled performance logging creates no file");
     require(!QFile::exists(QString::fromLocal8Bit(path + ".other")), "cached performance log destination");
@@ -4500,6 +4507,47 @@ viewportColorQueryApi()
     require(capture.pathsByColor(QColor(200, 0, 0), 5, 1, 0).isEmpty(), "invalid snapshots fail safely");
 }
 
+void
+hydraRendererDiscovery()
+{
+    // Missing libraries are deliberate: enumeration must use metadata only.
+    QTemporaryDir directory;
+    require(directory.isValid(), "create Hydra metadata fixture");
+    QFile metadata(directory.filePath("plugInfo.json"));
+    require(metadata.open(QIODevice::WriteOnly), "write Hydra metadata fixture");
+    metadata.write(R"({"Plugins":[{
+        "Type":"library", "Name":"stagevizDiscoveryFixture", "Root":".",
+        "LibraryPath":"missing-renderer.dylib", "ResourcePath":".",
+        "Info":{"Types":{"StagevizDiscoveryRendererPlugin":{
+            "bases":["HdRendererPlugin"], "displayName":"Metadata Only Renderer", "priority":-12345
+        }}}
+    }]})");
+    metadata.close();
+    const auto registered = PlugRegistry::GetInstance().RegisterPlugins(metadata.fileName().toStdString());
+    require(!registered.empty(), "register metadata without loading missing library");
+    const auto fixture = PlugRegistry::GetInstance().GetPluginWithName("stagevizDiscoveryFixture");
+    require(fixture && !fixture->IsLoaded(), "fixture starts unloaded");
+
+    for (int iteration = 0; iteration < 3; ++iteration) {
+        const auto plugins = stageviz::HydraRenderer::availableRenderers();
+        QSet<QString> ids;
+        bool found = false;
+        for (const auto& plugin : plugins) {
+            require(!plugin.id.isEmpty() && !ids.contains(plugin.id), "renderer IDs are nonempty and unique");
+            ids.insert(plugin.id);
+            if (plugin.id == "StagevizDiscoveryRendererPlugin") {
+                found = true;
+                require(plugin.displayName == "Metadata Only Renderer", "renderer display name comes from metadata");
+                require(plugin.priority == -12345, "renderer priority comes from metadata");
+                require(plugin.libraryPath == fixture->GetPath().c_str(), "renderer library path comes from Plug");
+                require(!plugin.loaded, "discovery reports unloaded library");
+            }
+        }
+        require(found, "discover plugin even when its library is missing");
+        require(!fixture->IsLoaded(), "repeated discovery never attempts to load renderer library");
+    }
+}
+
 }  // namespace
 
 int
@@ -4511,6 +4559,7 @@ main(int argc, char** argv)
         { "perf_scope_empty", [] { perfScopeLog(1); } },
         { "perf_scope_enabled", [] { perfScopeLog(2); } },
         { "render_scene_index_removal", renderSceneIndexRemoval },
+        { "hydra_renderer_discovery", hydraRendererDiscovery },
         { "save_twice_usda", [] { saveTwice("usda"); } },
         { "save_twice_usdc", [] { saveTwice("usdc"); } },
         { "save_failure", saveFailure },
