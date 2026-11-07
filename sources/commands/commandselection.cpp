@@ -2,9 +2,9 @@
 // Copyright (c) 2025 - present Mikael Sundell
 // https://github.com/mikaelsundell/stageviz
 
-#include "perfscope.h"
 #include "commandselection.h"
 #include "commandutils.h"
+#include "perfscope.h"
 #include "selectionlist.h"
 #include "tracelocks.h"
 #include "usdutils.h"

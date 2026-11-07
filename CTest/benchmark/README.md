@@ -1,5 +1,10 @@
 # Stageviz performance benchmarks
 
+For optional native timings, launch with
+`STAGEVIZ_PERF_LOG=/absolute/path/to/phases.jsonl`. See
+[performance logging](../../docs/performance-logging.md) for startup behavior,
+event fields, scope coverage, overhead and interpretation.
+
 ## Two-layer Storm investigation
 
 `benchmark_storm_layers.py` runs the two supplied Volvo assembly sublayers in an
@@ -67,3 +72,11 @@ fixture size (5,000 prims). `benchmark_hide_delete.py` also accepts
 
 The tests must use MCP for live app operation and capture screenshots through
 the viewer widget. Do not add these scripts to the automatic CTest suite.
+
+## Synthetic 250k-prim / 20m-face comparison
+
+See [`sweep_scale/README.md`](sweep_scale/README.md) for the generated independent
+mesh fixture, serial standalone-build comparison, native phase breakdown and
+external MCP verification. It covers cold and repeated warm sweeps, gizmo
+activation, bulk dragging and parent moves, with undo/redo. Timings distinguish
+synchronous dispatch, viewport response and deferred UI settling.

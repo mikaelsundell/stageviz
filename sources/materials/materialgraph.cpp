@@ -10,6 +10,7 @@
 #include "session.h"
 #include "tracelocks.h"
 #include "ui.h"
+#include "usdutils.h"
 #include <QContextMenuEvent>
 #include <QGraphicsEllipseItem>
 #include <QGraphicsPathItem>
@@ -611,6 +612,7 @@ MaterialGraphPrivate::layoutNodes()
             return;
 
         QList<QString> queue { rootKey };
+        QSet<QString> queued { rootKey };
         for (int index = 0; index < queue.size(); ++index) {
             const QString key = queue[index];
             if (connected.contains(key))
@@ -645,8 +647,10 @@ MaterialGraphPrivate::layoutNodes()
                 if (!depths.contains(sourceKey) || sourceDepth > depths.value(sourceKey))
                     depths[sourceKey] = sourceDepth;
 
-                if (!queue.contains(sourceKey))
+                if (!queued.contains(sourceKey)) {
+                    queued.insert(sourceKey);
                     queue.append(sourceKey);
+                }
             }
             upstream.insert(key, children);
         }
@@ -1258,7 +1262,7 @@ QList<SdfPath>
 MaterialGraphPrivate::selectedDeletableNodePaths() const
 {
     QList<SdfPath> paths;
-    QSet<QString> seen;
+    path::PathCollector collector(paths);
 
     for (QGraphicsItem* item : d.scene.selectedItems()) {
         auto* node = dynamic_cast<GraphNodeItem*>(item);
@@ -1266,12 +1270,7 @@ MaterialGraphPrivate::selectedDeletableNodePaths() const
             continue;
 
         const SdfPath path = node->path();
-        const QString key = QString::fromStdString(path.GetString());
-        if (seen.contains(key))
-            continue;
-
-        seen.insert(key);
-        paths.append(path);
+        collector.append(path);
     }
 
     std::sort(paths.begin(), paths.end(),
@@ -1286,17 +1285,12 @@ MaterialGraphPrivate::deleteNodes(const QList<SdfPath>& paths)
         return;
 
     QList<SdfPath> filtered;
-    QSet<QString> seen;
+    path::PathCollector collector(filtered);
     for (const SdfPath& path : paths) {
         if (!canDeleteNode(path))
             continue;
 
-        const QString key = QString::fromStdString(path.GetString());
-        if (seen.contains(key))
-            continue;
-
-        seen.insert(key);
-        filtered.append(path);
+        collector.append(path);
     }
 
     if (filtered.isEmpty())

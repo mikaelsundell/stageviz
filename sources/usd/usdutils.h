@@ -7,10 +7,10 @@
 #include "stageviz.h"
 #include <QList>
 #include <QMap>
-#include <unordered_set>
 #include <pxr/usd/sdf/attributeSpec.h>
 #include <pxr/usd/usd/prim.h>
 #include <pxr/usd/usd/stage.h>
+#include <unordered_set>
 
 PXR_NAMESPACE_USING_DIRECTIVE
 
@@ -34,7 +34,7 @@ namespace layer {
      * @return Attribute spec, or an empty handle on rejection.
      */
     SdfAttributeSpecHandle ensureAttributeSpec(const SdfLayerHandle& layer, const SdfPath& specPath,
-                                              const SdfValueTypeName& type, SdfVariability variability, bool custom);
+                                               const SdfValueTypeName& type, SdfVariability variability, bool custom);
 
     /**
      * @brief Validates that a prim is authored in a specific layer.
@@ -119,6 +119,17 @@ namespace identifier {
 
 }  // namespace identifier
 
+/**
+ * @brief Shares native USD path collection and namespace query operations.
+ *
+ * Keep SdfPath keys in internal sets and maps; convert to text at presentation,
+ * serialization, and generic Qt item-role boundaries. Use PathCollector for
+ * stable unique nonempty output and PathIndex for repeated membership or ancestor
+ * queries. These helpers preserve exact paths, including property paths.
+ * Choose root filtering by its ordering contract: stableRootPaths preserves input
+ * order, sortedRootPaths uses USD namespace order, and minimalRootPaths uses depth
+ * followed by lexical text order. These orders are not interchangeable.
+ */
 namespace path {
 
     /**
@@ -202,7 +213,8 @@ namespace path {
     /**
      * @brief Collects unique nonempty paths in insertion order without rescanning.
      *
-     * The output must not be modified independently while this collector exists.
+     * Do not modify the output independently between append calls. After the last
+     * append, the output can be consumed or replaced without using this collector again.
      */
     class PathCollector {
     public:

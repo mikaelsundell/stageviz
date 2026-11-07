@@ -16,13 +16,22 @@ namespace {
         static UsdGeomBBoxCache cache(UsdTimeCode::Default(), UsdGeomImageable::GetOrderedPurposeTokens(), true);
         return cache;
     }
+    const TfTokenVector& geometryPurposes()
+    {
+        static const TfTokenVector purposes { UsdGeomTokens->default_, UsdGeomTokens->proxy, UsdGeomTokens->render };
+        return purposes;
+    }
 }  // namespace
 
-CacheGuard::CacheGuard()
+CacheGuard::CacheGuard(Purposes purposes)
     : lock_(cacheMutex)
 {
     if (cacheDirty.exchange(false))
         sharedCache().Clear();
+    // USD caches bounds by purpose. Changing this filter preserves the entries,
+    // allowing framing and aggregate queries to share geometry and transforms.
+    sharedCache().SetIncludedPurposes(purposes == Purposes::Geometry ? geometryPurposes()
+                                                                     : UsdGeomImageable::GetOrderedPurposeTokens());
 }
 
 CacheGuard::~CacheGuard() = default;

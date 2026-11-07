@@ -2,30 +2,30 @@
 // Copyright (c) 2025 - present Mikael Sundell
 // https://github.com/mikaelsundell/stageviz
 
-#include "perfscope.h"
 #include "commandtransform.h"
 #include "commandprimprivate.h"
 #include "commandtransformprivate.h"
 #include "commandutils.h"
+#include "perfscope.h"
 #include "qtutils.h"
 #include "tracelocks.h"
 #include "usdutils.h"
 #include <algorithm>
 #include <cmath>
 #include <memory>
-#include <unordered_map>
 #include <pxr/base/gf/vec3f.h>
 #include <pxr/base/gf/vec3h.h>
-#include <pxr/usd/sdf/changeBlock.h>
 #include <pxr/usd/sdf/attributeSpec.h>
-#include <pxr/usd/sdf/primSpec.h>
+#include <pxr/usd/sdf/changeBlock.h>
 #include <pxr/usd/sdf/copyUtils.h>
+#include <pxr/usd/sdf/primSpec.h>
 #include <pxr/usd/sdf/schema.h>
 #include <pxr/usd/usd/editContext.h>
 #include <pxr/usd/usdGeom/bboxCache.h>
 #include <pxr/usd/usdGeom/tokens.h>
 #include <pxr/usd/usdGeom/xformCache.h>
 #include <pxr/usd/usdGeom/xformable.h>
+#include <unordered_map>
 
 namespace stageviz {
 
@@ -886,7 +886,8 @@ beginTransformOperation(const UsdStageRefPtr& stage, const QList<SdfPath>& selec
             error = QString("unmappable transform target: %1").arg(pathText(path));
             return false;
         }
-        for (SdfPath ancestor = state.specPath.GetParentPath(); ancestor.IsPrimPath(); ancestor = ancestor.GetParentPath()) {
+        for (SdfPath ancestor = state.specPath.GetParentPath(); ancestor.IsPrimPath();
+             ancestor = ancestor.GetParentPath()) {
             if (!layer->GetPrimAtPath(ancestor))
                 state.missingAncestors.append(ancestor);
         }
@@ -1037,8 +1038,8 @@ prepareTransforms(const UsdStageRefPtr& stage, const QList<SdfPath>& paths, cons
         const UsdGeomXformable xformable(prim);
         Plan plan;
         plan.specPath = editTarget.MapToSpecPath(path);
-        if (!editLayer || !editLayer->PermissionToEdit() || plan.specPath.IsEmpty()
-            || !prim || prim.IsInstanceProxy() || prim.IsInPrototype() || !xformable) {
+        if (!editLayer || !editLayer->PermissionToEdit() || plan.specPath.IsEmpty() || !prim || prim.IsInstanceProxy()
+            || prim.IsInPrototype() || !xformable) {
             if (errors)
                 errors->append(QString("invalid transform authoring target: %1").arg(pathText(path)));
             return rejected();
@@ -1150,7 +1151,12 @@ applyPreparedTransforms(const UsdStageRefPtr& stage, const QList<PreparedTransfo
         return false;
 
     bool success = true;
-    struct Update { SdfLayerHandle layer; SdfPath specPath; GfMatrix4d local; SdfPath path; };
+    struct Update {
+        SdfLayerHandle layer;
+        SdfPath specPath;
+        GfMatrix4d local;
+        SdfPath path;
+    };
     QList<Update> updates;
     QList<qsizetype> fallback;
     const UsdEditTarget editTarget = stage->GetEditTarget();
@@ -1167,8 +1173,8 @@ applyPreparedTransforms(const UsdStageRefPtr& stage, const QList<PreparedTransfo
             && item.matrixSpecPath == editTarget.MapToSpecPath(item.path).AppendProperty(TfToken("xformOp:transform"))
             && item.editLayer->PermissionToEdit() && item.editLayer->GetAttributeAtPath(item.matrixSpecPath)
             && (!item.parentFollowsSelection || hasSelectionDelta)) {
-            const GfMatrix4d parentWorld = item.parentFollowsSelection
-                                              ? item.parentWorld * selectionDelta : item.parentWorld;
+            const GfMatrix4d parentWorld = item.parentFollowsSelection ? item.parentWorld * selectionDelta
+                                                                       : item.parentWorld;
             updates.append({ item.editLayer, item.matrixSpecPath,
                              item.localPivot * matrices.at(i) * parentWorld.GetInverse() * item.localPivot.GetInverse(),
                              item.path });
@@ -1234,9 +1240,8 @@ restoreTransformOperation(const UsdStageRefPtr& stage, const TransformOperation&
         for (const auto& ancestor : state.missingAncestors)
             collector.append(ancestor);
     }
-    std::sort(ancestors.begin(), ancestors.end(), [](const SdfPath& a, const SdfPath& b) {
-        return a.GetPathElementCount() > b.GetPathElementCount();
-    });
+    std::sort(ancestors.begin(), ancestors.end(),
+              [](const SdfPath& a, const SdfPath& b) { return a.GetPathElementCount() > b.GetPathElementCount(); });
     for (const auto& ancestor : ancestors) {
         const auto spec = layer->GetPrimAtPath(ancestor);
         if (spec && spec->IsInert())

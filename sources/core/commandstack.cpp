@@ -5,6 +5,7 @@
 #include "commandstack.h"
 #include "application.h"
 #include "command.h"
+#include "perfscope.h"
 #include <QPointer>
 #include <QReadLocker>
 #include <QVector>
@@ -87,6 +88,7 @@ CommandStackPrivate::synchronizeEditTarget()
 void
 CommandStack::execute(Command* command, ExecutionMode mode)
 {
+    PerfScope perfScope("command.execute_dispatch");
     if (!command)
         return;
 
@@ -134,6 +136,7 @@ CommandStack::canRedo() const
 void
 CommandStack::undo()
 {
+    PerfScope perfScope("command.undo_dispatch");
     if (p->synchronizeEditTarget())
         clear();
     if (!canUndo())
@@ -162,6 +165,7 @@ CommandStack::undo()
 void
 CommandStack::redo()
 {
+    PerfScope perfScope("command.redo_dispatch");
     if (p->synchronizeEditTarget())
         clear();
     if (!canRedo())

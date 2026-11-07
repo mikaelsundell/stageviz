@@ -2,11 +2,11 @@
 // Copyright (c) 2025 - present Mikael Sundell
 // https://github.com/mikaelsundell/stageviz
 
-#include "perfscope.h"
 #include "outlinerview.h"
 #include "application.h"
 #include "notice.h"
 #include "outlinertree.h"
+#include "perfscope.h"
 #include "primitem.h"
 #include "signalguard.h"
 #include "ui.h"

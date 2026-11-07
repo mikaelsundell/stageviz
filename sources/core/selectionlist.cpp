@@ -2,8 +2,8 @@
 // Copyright (c) 2025 - present Mikael Sundell
 // https://github.com/mikaelsundell/stageviz
 
-#include "perfscope.h"
 #include "selectionlist.h"
+#include "perfscope.h"
 #include "qtutils.h"
 #include <QList>
 #include <unordered_set>
@@ -106,6 +106,9 @@ void
 SelectionList::updatePaths(const QList<SdfPath>& paths)
 {
     PerfScope perfScope("selection.update_paths");
+    if (p->d.paths == paths)
+        return;
+
     QList<SdfPath> uniquePaths;
     std::unordered_set<SdfPath, SdfPath::Hash> membership;
     membership.reserve(static_cast<size_t>(paths.size()));

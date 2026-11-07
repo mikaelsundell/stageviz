@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: BSD-3-Clause
 // Copyright (c) 2025 - present Mikael Sundell
 
-#include "commandcomposition.h"
 #include "bboxutils.h"
+#include "commandcomposition.h"
 #include "commandlayer.h"
 #include "commandlight.h"
 #include "commandmaterial.h"
@@ -20,6 +20,8 @@
 #include "materialmenu.h"
 #include "materialutils.h"
 #include "notice.h"
+#include "perfscope.h"
+#include "qtutils.h"
 #include "rendersceneindex.h"
 #include "selectionlist.h"
 #include "session.h"
@@ -31,9 +33,11 @@
 #include <QCoreApplication>
 #include <QDir>
 #include <QFile>
+#include <QHash>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QSet>
 #include <QTemporaryDir>
 #include <QThreadPool>
 #include <algorithm>
@@ -41,6 +45,7 @@
 #include <cstdio>
 #include <functional>
 #include <iostream>
+#include <limits>
 #include <map>
 #include <pxr/base/gf/matrix4d.h>
 #include <pxr/base/gf/range3d.h>
@@ -56,6 +61,7 @@
 #include <pxr/usd/usd/attribute.h>
 #include <pxr/usd/usd/editContext.h>
 #include <pxr/usd/usd/payloads.h>
+#include <pxr/usd/usd/primRange.h>
 #include <pxr/usd/usd/references.h>
 #include <pxr/usd/usd/relationship.h>
 #include <pxr/usd/usd/variantSets.h>
@@ -86,6 +92,49 @@ require(bool result, const char* message)
 {
     if (!result)
         throw std::runtime_error(message);
+}
+
+// Each mode runs in a separate process: PerfScope caches its startup setting.
+void
+perfScopeLog(int mode)
+{
+    QTemporaryDir directory;
+    require(directory.isValid(), "performance log temporary directory");
+    const QByteArray path = QFile::encodeName(directory.filePath("phases.jsonl"));
+    if (mode == 0)
+        qunsetenv("STAGEVIZ_PERF_LOG");
+    else
+        qputenv("STAGEVIZ_PERF_LOG", mode == 1 ? QByteArray() : path);
+    const bool enabled = mode == 2;
+    require(stageviz::PerfScope::enabled() == enabled, "performance logging startup gate");
+    // Later environment changes must not turn diagnostics on or redirect them.
+    qputenv("STAGEVIZ_PERF_LOG", path + ".other");
+    require(stageviz::PerfScope::enabled() == enabled, "performance logging cached gate");
+    {
+        stageviz::PerfScope outer("test.outer");
+        { stageviz::PerfScope inner("test.inner"); }
+    }
+    { stageviz::PerfScope appended("test.appended"); }
+    QFile file(QString::fromLocal8Bit(path));
+    require(file.exists() == enabled, "disabled performance logging creates no file");
+    require(!QFile::exists(QString::fromLocal8Bit(path + ".other")), "cached performance log destination");
+    if (!enabled)
+        return;
+    require(file.open(QIODevice::ReadOnly), "read performance log");
+    const auto lines = file.readAll().trimmed().split('\n');
+    require(lines.size() == 3, "performance log appends one event per scope");
+    const char* names[] = { "test.inner", "test.outer", "test.appended" };
+    for (int i = 0; i < lines.size(); ++i) {
+        QJsonParseError error;
+        const auto document = QJsonDocument::fromJson(lines.at(i), &error);
+        require(error.error == QJsonParseError::NoError && document.isObject(), "valid performance JSON line");
+        const auto event = document.object();
+        require(event.value("phase").toString() == QString::fromLatin1(names[i]), "performance phase name");
+        require(event.value("start_ms").toDouble() > 0.0, "monotonic start timestamp");
+        require(event.value("wall_start_ms").toDouble() > 0.0, "wall start timestamp");
+        require(event.value("duration_ms").toDouble(-1.0) >= 0.0, "nonnegative scope duration");
+        require(!event.value("thread").toString().isEmpty(), "performance thread identifier");
+    }
 }
 
 void
@@ -575,35 +624,41 @@ reparentBatch()
     stage->GetRootLayer()->ExportToString(&after);
     require(before == after, "failed multi-move restores all layers");
 }
-void renderSceneIndexRemoval()
+void
+renderSceneIndexRemoval()
 {
     struct Observer final : HdSceneIndexObserver {
         std::set<SdfPath> dirtied;
         std::set<SdfPath> added;
         void PrimsAdded(const HdSceneIndexBase&, const AddedPrimEntries& entries) override
-        { for (const auto& entry : entries) added.insert(entry.primPath); }
+        {
+            for (const auto& entry : entries)
+                added.insert(entry.primPath);
+        }
         void PrimsRemoved(const HdSceneIndexBase&, const RemovedPrimEntries&) override {}
         void PrimsDirtied(const HdSceneIndexBase&, const DirtiedPrimEntries& entries) override
-        { for (const auto& entry : entries) dirtied.insert(entry.primPath); }
+        {
+            for (const auto& entry : entries)
+                dirtied.insert(entry.primPath);
+        }
         void PrimsRenamed(const HdSceneIndexBase&, const RenamedPrimEntries&) override {}
     } observer;
     const auto input = HdRetainedSceneIndex::New();
-    input->AddPrims({
-        { SdfPath("/A/Mesh"), HdPrimTypeTokens->mesh, nullptr },
-        { SdfPath("/A/Mesh/Subset"), HdPrimTypeTokens->geomSubset, nullptr },
-        { SdfPath("/A/Nested/Mesh"), HdPrimTypeTokens->mesh, nullptr },
-        { SdfPath("/AA/Mesh"), HdPrimTypeTokens->mesh, nullptr },
-        { SdfPath("/B/Mesh"), HdPrimTypeTokens->mesh, nullptr },
-        { SdfPath("/B/Mesh/Subset"), HdPrimTypeTokens->geomSubset, nullptr },
-        { SdfPath("/B/Sphere"), HdPrimTypeTokens->sphere, nullptr }
-    });
+    input->AddPrims({ { SdfPath("/A/Mesh"), HdPrimTypeTokens->mesh, nullptr },
+                      { SdfPath("/A/Mesh/Subset"), HdPrimTypeTokens->geomSubset, nullptr },
+                      { SdfPath("/A/Nested/Mesh"), HdPrimTypeTokens->mesh, nullptr },
+                      { SdfPath("/AA/Mesh"), HdPrimTypeTokens->mesh, nullptr },
+                      { SdfPath("/B/Mesh"), HdPrimTypeTokens->mesh, nullptr },
+                      { SdfPath("/B/Mesh/Subset"), HdPrimTypeTokens->geomSubset, nullptr },
+                      { SdfPath("/B/Sphere"), HdPrimTypeTokens->sphere, nullptr } });
     const auto filter = stageviz::RenderSceneIndex::New(input);
     filter->AddObserver(HdSceneIndexObserverPtr(&observer));
     input->RemovePrims({ { SdfPath("/A") }, { SdfPath("/Missing") } });
     filter->setDoubleSidedOverrideEnabled(true);
     require(observer.dirtied == std::set<SdfPath> { SdfPath("/AA/Mesh"), SdfPath("/B/Mesh") },
             "subtree removal preserves similarly named siblings and other branches");
-    observer.dirtied.clear(); observer.added.clear();
+    observer.dirtied.clear();
+    observer.added.clear();
     filter->setSceneMaterialsEnabled(false);
     require(observer.added == std::set<SdfPath> { SdfPath("/B/Mesh/Subset") },
             "removed subsets are absent from material override notifications");
@@ -618,7 +673,8 @@ void renderSceneIndexRemoval()
     filter->setDoubleSidedOverride(false);
     require(observer.dirtied == std::set<SdfPath> { SdfPath("/A/Readded") }, "readded targets are indexed");
     input->RemovePrims({ { SdfPath::AbsoluteRootPath() } });
-    observer.dirtied.clear(); observer.added.clear();
+    observer.dirtied.clear();
+    observer.added.clear();
     filter->setSceneMaterialsEnabled(true);
     require(observer.dirtied.empty() && observer.added.empty(), "root removal clears every target set");
     HdRetainedSceneIndex::AddedPrimEntries batch;
@@ -999,6 +1055,10 @@ selectionListSemantics()
     operation(3, { SdfPath("/Item3"), SdfPath("/Item4") });
     operation(4, {});
     operation(4, {});
+    operation(3, { SdfPath(), SdfPath("/Item0") });
+    operation(3, { SdfPath(), SdfPath("/Item0") });
+    operation(3, { SdfPath(), SdfPath("/Item0"), SdfPath() });
+    operation(3, { SdfPath("/Item0"), SdfPath() });
 
     // Reproducible mixed operations, including duplicate toggles and no-ops.
     uint32_t seed = 0x5E1EC710u;
@@ -1296,7 +1356,14 @@ sessionFileApi()
     require(!session.flattenPathsToFile({}, dir.filePath("empty.usda")), "empty selection export rejected");
 
     session.stage()->DefinePrim(SdfPath("/Transient"));
+    QList<Session::StageStatus> reloadStatuses;
+    const auto reloadConnection = QObject::connect(&session, &Session::stageChanged, &session,
+                                                   [&](UsdStageRefPtr, Session::LoadPolicy,
+                                                       Session::StageStatus status) { reloadStatuses.append(status); });
     require(session.reload(), "reload current stage");
+    QObject::disconnect(reloadConnection);
+    require(reloadStatuses == QList<Session::StageStatus>({ Session::Closed, Session::Loaded }),
+            "reload closes the old stage once before publishing its replacement");
     require(!session.stage()->GetPrimAtPath(SdfPath("/Transient")), "reload discards unsaved edit");
     require(bool(session.stage()->GetPrimAtPath(SdfPath("/World/Part"))), "reload restores saved content");
 
@@ -1672,14 +1739,118 @@ usdPathUtilsApi()
 }
 
 void
+transformInstanceTargets()
+{
+    const auto stage = UsdStage::CreateInMemory();
+    const SdfPath source("/Source"), cube("/Source/Cube"), instance("/Instances/A"), external("/Instances/B");
+    UsdGeomXform::Define(stage, source);
+    UsdGeomCube::Define(stage, cube);
+    UsdGeomXform::Define(stage, SdfPath("/Instances"));
+    // Point-instancer prototypes are ordinary scene prims, not native USD
+    // prototypes. Neither they nor bare instanceable prims imply instances.
+    const auto points = stage->DefinePrim(SdfPath("/Points"), TfToken("PointInstancer"));
+    points.CreateRelationship(TfToken("prototypes")).SetTargets({ source });
+    const auto empty = UsdGeomXform::Define(stage, SdfPath("/Empty")).GetPrim();
+    empty.SetInstanceable(true);
+    require(stage->GetPrototypes().empty() && !empty.IsInstance(), "ordinary stage has no native prototypes");
+    require(stageviz::stage::transformEditTargetPaths(stage, { cube }) == QList<SdfPath> { cube },
+            "ordinary and point-instancer source geometry keeps its own transform target");
+    require(stageviz::stage::transformPreservationPaths(stage, { source }).isEmpty(),
+            "ordinary stage has no shared native instances to preserve");
+
+    auto inst = UsdGeomXform::Define(stage, instance).GetPrim();
+    inst.GetReferences().AddInternalReference(source);
+    inst.SetInstanceable(true);
+    require(inst.IsInstance() && !stage->GetPrototypes().empty(), "internal reference creates a native prototype");
+    require(stageviz::stage::transformEditTargetPaths(stage, { cube }) == QList<SdfPath> { source },
+            "native internal instances redirect shared source edits to the source root");
+    require(stageviz::stage::transformEditTargetPaths(stage, { instance.AppendChild(TfToken("Cube")) })
+                == QList<SdfPath> { instance },
+            "native instance proxies resolve to their instance root");
+    require(stageviz::stage::transformPreservationPaths(stage, { source }) == QList<SdfPath> { instance },
+            "shared internal instance roots are preserved when editing the source");
+
+    const auto asset = UsdStage::CreateInMemory();
+    UsdGeomXform::Define(asset, SdfPath("/Model"));
+    UsdGeomCube::Define(asset, SdfPath("/Model/Part"));
+    auto ext = UsdGeomXform::Define(stage, external).GetPrim();
+    ext.GetReferences().AddReference(asset->GetRootLayer()->GetIdentifier(), SdfPath("/Model"));
+    ext.SetInstanceable(true);
+    require(ext.IsInstance(), "external reference is a native instance");
+    require(stageviz::stage::transformPreservationPaths(stage, { source }) == QList<SdfPath> { instance },
+            "external source layers are not mistaken for local shared sources");
+    require(stageviz::stage::transformEditTargetPaths(stage, { external.AppendChild(TfToken("Part")) })
+                == QList<SdfPath> { external },
+            "external instance proxies keep their own instance target");
+
+    inst.SetActive(false);
+    require(stageviz::stage::transformEditTargetPaths(stage, { cube }) == QList<SdfPath> { cube },
+            "deactivation removes internal source redirection even with other prototypes present");
+    ext.SetActive(false);
+    require(stage->GetPrototypes().empty(), "deactivating all native instances removes their prototypes");
+    require(stageviz::stage::transformPreservationPaths(stage, { source }).isEmpty(),
+            "no stale source mapping survives prototype removal");
+    stage->GetPrimAtPath(instance).SetActive(true);
+    stage->GetPrimAtPath(source).GetPayloads().AddPayload(asset->GetRootLayer()->GetIdentifier(), SdfPath("/Model"));
+    stage->Unload(instance);
+    require(!stage->GetPrimAtPath(instance).IsLoaded(), "instance payload unloaded");
+    require(stageviz::stage::transformEditTargetPaths(stage, { cube }) == QList<SdfPath> { cube },
+            "unloaded instances do not redirect source transforms");
+    stage->Load(instance);
+    require(stageviz::stage::transformEditTargetPaths(stage, { cube }) == QList<SdfPath> { source },
+            "loading restores native source redirection without an application cache refresh");
+}
+
+void
+qtPathHashApi()
+{
+    QList<SdfPath> paths { SdfPath(),
+                           SdfPath("/"),
+                           SdfPath("."),
+                           SdfPath(".."),
+                           SdfPath("../Relative"),
+                           SdfPath("/World/A"),
+                           SdfPath("/World/A.attr"),
+                           SdfPath("/World/A.rel[/World/B]"),
+                           SdfPath("/World/A{variant=x}Child"),
+                           SdfPath("Relative.attr") };
+    for (int i = 0; i < 50000; ++i)
+        paths.append(SdfPath("/World/Assembly/Part_" + std::to_string(i) + "/Mesh"));
+    for (size_t seed : { size_t(0), size_t(1), std::numeric_limits<size_t>::max() }) {
+        for (const auto& path : paths)
+            require(qHash(path, seed) == qHash(SdfPath(path.GetString()), seed),
+                    "equal USD paths have equal seeded Qt hashes, including non-prim paths");
+    }
+    QHash<SdfPath, qsizetype> values;
+    QSet<SdfPath> membership;
+    for (qsizetype i = 0; i < paths.size(); ++i) {
+        values.insert(paths.at(i), i);
+        membership.insert(paths.at(i));
+    }
+    require(values.size() == paths.size() && membership.size() == paths.size(),
+            "Qt path containers retain distinct empty, root, variant, relative, property and large prim paths");
+    for (qsizetype i = 0; i < paths.size(); ++i) {
+        const SdfPath reparsed(paths.at(i).GetString());
+        require(values.value(reparsed, -1) == i && membership.contains(reparsed),
+                "Qt containers resolve reparsed USD paths independently of their source object");
+    }
+    for (qsizetype i = paths.size(); i-- > 0;) {
+        require(values.remove(paths.at(i)) == 1 && membership.remove(paths.at(i)),
+                "Qt path containers support removal after rehashing");
+    }
+    require(values.isEmpty() && membership.isEmpty(), "all Qt path keys were removed");
+}
+
+void
 indexedPathApi()
 {
-    const QList<SdfPath> roots { SdfPath("/A"), SdfPath("/A/B"), SdfPath("/C.attr"),
-                               SdfPath("Relative"), SdfPath("/Variant{model=x}"), SdfPath() };
+    const QList<SdfPath> roots {
+        SdfPath("/A"), SdfPath("/A/B"), SdfPath("/C.attr"), SdfPath("Relative"), SdfPath("/Variant{model=x}"), SdfPath()
+    };
     const stageviz::path::PathIndex index(roots);
-    for (const auto& path : { SdfPath("/A/B/C"), SdfPath("/AB"), SdfPath("/C"), SdfPath("/C.attr"),
-                             SdfPath("Relative/Child"), SdfPath("Other"), SdfPath("/Variant{model=x}Child"),
-                             SdfPath(), SdfPath("/") }) {
+    for (const auto& path :
+         { SdfPath("/A/B/C"), SdfPath("/AB"), SdfPath("/C"), SdfPath("/C.attr"), SdfPath("Relative/Child"),
+           SdfPath("Other"), SdfPath("/Variant{model=x}Child"), SdfPath(), SdfPath("/") }) {
         bool covered = false;
         for (const auto& root : roots)
             covered = covered || (!root.IsEmpty() && path.HasPrefix(root));
@@ -1715,9 +1886,18 @@ indexedPathApi()
     inputs = { SdfPath("/B/Child"), SdfPath("/A"), SdfPath("/B"), SdfPath("/A"), SdfPath() };
     require(stageviz::path::stableRootPaths(inputs) == QList<SdfPath> { SdfPath("/A"), SdfPath("/B") },
             "stable roots retain surviving input order");
-    const QList<SdfPath> mixed { SdfPath("/Z"), SdfPath("/A/Child"), SdfPath("/A"), SdfPath("/A.attr"),
-                                SdfPath("Relative/Child"), SdfPath("Relative"), SdfPath("../A"), SdfPath(".."),
-                                SdfPath("/Var{v=x}Child"), SdfPath("/Var{v=x}"), SdfPath("/A"), SdfPath() };
+    const QList<SdfPath> mixed { SdfPath("/Z"),
+                                 SdfPath("/A/Child"),
+                                 SdfPath("/A"),
+                                 SdfPath("/A.attr"),
+                                 SdfPath("Relative/Child"),
+                                 SdfPath("Relative"),
+                                 SdfPath("../A"),
+                                 SdfPath(".."),
+                                 SdfPath("/Var{v=x}Child"),
+                                 SdfPath("/Var{v=x}"),
+                                 SdfPath("/A"),
+                                 SdfPath() };
     QList<SdfPath> expected;
     for (const auto& candidate : stageviz::path::uniquePaths(mixed)) {
         bool child = false;
@@ -1847,11 +2027,24 @@ bboxCacheInvalidation()
         require(matches(actual, reference.ComputeWorldBound(prim)), "shared bounds match a fresh USD cache");
         require(matches(session.boundingBox(), reference.ComputeWorldBound(stage->GetPseudoRoot())),
                 "session aggregate notices mutations before deferred Qt delivery");
+        // Preserve the existing framing policy, including explicitly requested
+        // invisible descendants and overlapping parent/child selections.
+        UsdGeomBBoxCache geometry(UsdTimeCode::Default(),
+                                  { UsdGeomTokens->default_, UsdGeomTokens->proxy, UsdGeomTokens->render }, true);
+        GfRange3d selectedRange;
+        for (const UsdPrim& descendant : UsdPrimRange(stage->GetPseudoRoot())) {
+            if (descendant.IsActive() && descendant.IsDefined() && UsdGeomImageable(descendant))
+                selectedRange.UnionWith(geometry.ComputeWorldBound(descendant).ComputeAlignedRange());
+        }
+        const QList<SdfPath> selection { SdfPath("/World"), cube.GetPath(), SdfPath("/Missing") };
+        for (int repeat = 0; repeat < 2; ++repeat)
+            require(matches(session.boundingBox(selection), GfBBox3d(selectedRange)),
+                    "cold and warm selection bounds retain traversal and purpose semantics");
     };
     check(cube.GetPrim());
     const auto translate = cube.AddTranslateOp();
     translate.Set(GfVec3d(10, 20, 30));
-    check(cube.GetPrim()); // No event processing: the Qt notice batch is still pending.
+    check(cube.GetPrim());  // No event processing: the Qt notice batch is still pending.
     UsdGeomXformable(stage->GetPrimAtPath(SdfPath("/World/Parent"))).AddScaleOp().Set(GfVec3f(-2, 3, 4));
     check(cube.GetPrim());
     cube.GetSizeAttr().Set(7.0);
@@ -1866,6 +2059,24 @@ bboxCacheInvalidation()
     check(stage->GetPseudoRoot());
     cube.GetPrim().SetActive(true);
     check(stage->GetPseudoRoot());
+    const auto guide = UsdGeomCube::Define(stage, SdfPath("/World/Guide"));
+    guide.CreatePurposeAttr().Set(UsdGeomTokens->guide);
+    guide.AddTranslateOp().Set(GfVec3d(1000, 0, 0));
+    check(stage->GetPseudoRoot());
+    require(session.boundingBox({ guide.GetPath() }).ComputeAlignedRange().IsEmpty(),
+            "selection bounds exclude guides while aggregate bounds include them");
+    guide.CreatePurposeAttr().Set(UsdGeomTokens->render);
+    check(stage->GetPseudoRoot());
+    cube.SetResetXformStack(true);
+    check(cube.GetPrim());
+    require(session.close(), "close releases cached selection prims");
+    require(session.newStage(), "replace bounds cache stage");
+    const auto replacement = UsdGeomCube::Define(session.stage(), SdfPath("/World/Parent/Cube"));
+    replacement.GetSizeAttr().Set(40.0);
+    require(matches(session.boundingBox({ replacement.GetPath() }),
+                    UsdGeomBBoxCache(UsdTimeCode::Default(), { UsdGeomTokens->default_ }, true)
+                        .ComputeWorldBound(replacement.GetPrim())),
+            "replacement stage with identical paths cannot reuse old bounds");
 }
 
 void
@@ -1905,7 +2116,8 @@ batchedAttributeAuthoring()
     float sample = 0;
     const auto renamed = stage->GetAttributeAtPath(paths.first().AppendProperty(TfToken("custom:renamed")));
     require(renamed.Get(&sample, UsdTimeCode(1)) && sample == 3.0f
-                && renamed.GetDocumentation() == "retained batch metadata", "rename retains time samples and metadata");
+                && renamed.GetDocumentation() == "retained batch metadata",
+            "rename retains time samples and metadata");
     undoCommand(rename, session);
     stage->GetRootLayer()->ExportToString(&restored);
     require(restored == original, "batch rename undo restores exact authored specs");
@@ -1941,7 +2153,8 @@ batchedAttributeAuthoring()
     for (const auto& path : mappedProperties) {
         require(bool(mappedStage->GetAttributeAtPath(path)), "mapped attribute composes at scene path");
         require(mappedLayer->GetPropertyAtPath(mappedStage->GetEditTarget().MapToSpecPath(path))
-                    && !mappedLayer->GetPropertyAtPath(path), "mapped attribute stays inside variant namespace");
+                    && !mappedLayer->GetPropertyAtPath(path),
+                "mapped attribute stays inside variant namespace");
     }
     mappedLayer->ExportToString(&mappedAdded);
     auto mappedRename = stageviz::renameAttributes(mappedProperties, TfToken("custom:renamed"));
@@ -1978,7 +2191,8 @@ specDeletionApi()
         errors.append(QString("failed path %1").arg(i));
     const auto summary = stageviz::command::summarizeErrors(errors);
     require(summary.startsWith("failed path 0\n") && summary.contains("additional errors omitted")
-                && summary.size() < 1024, "bulk error notifications retain a bounded sample and omission count");
+                && summary.size() < 1024,
+            "bulk error notifications retain a bounded sample and omission count");
     const auto stage = UsdStage::CreateInMemory();
     const auto layer = stage->GetRootLayer();
     auto keep = UsdGeomCube::Define(stage, SdfPath("/Root/Keep"));
@@ -2002,7 +2216,8 @@ specDeletionApi()
         edits.Add(path, SdfPath::EmptyPath());
         require(reference->CanApply(edits) && reference->Apply(edits), "reference namespace deletion succeeds");
         require(path.IsPropertyPath() ? stageviz::command::removePropertySpec(direct, path)
-                                      : stageviz::stage::removePrimSpec(direct, path), "direct spec deletion succeeds");
+                                      : stageviz::stage::removePrimSpec(direct, path),
+                "direct spec deletion succeeds");
         std::string expected, actual;
         reference->ExportToString(&expected);
         direct->ExportToString(&actual);
@@ -2013,7 +2228,8 @@ specDeletionApi()
             "attribute deletion preserves unrelated relationship");
     require(stageviz::command::removePropertySpec(layer, attr.GetPath()), "absent property deletion is a no-op");
     layer->SetPermissionToEdit(false);
-    require(!stageviz::command::removePropertySpec(layer, relationship.GetPath()), "readonly property deletion rejected");
+    require(!stageviz::command::removePropertySpec(layer, relationship.GetPath()),
+            "readonly property deletion rejected");
     require(!stageviz::stage::removePrimSpec(layer, remove.GetPath()), "readonly prim deletion rejected");
     layer->SetPermissionToEdit(true);
     require(stageviz::command::removePropertySpec(layer, relationship.GetPath()), "delete exact relationship spec");
@@ -3830,6 +4046,9 @@ geometrySubsetApi()
     require(stageviz::stage::objectPaths(stage, { left.GetPath(), right.GetPath(), meshPath })
                 == QList<SdfPath> { meshPath },
             "object projection resolves multiple subset paths to their owning geometry once");
+    require(stageviz::stage::objectPaths(stage, { blue, left.GetPath(), blue, right.GetPath(), SdfPath(), SdfPath() })
+                == QList<SdfPath>({ blue, meshPath, SdfPath() }),
+            "object projection preserves first occurrence order and empty-path semantics");
     require(stageviz::stage::leafPaths(stage, {}, false).contains(meshPath)
                 && !stageviz::stage::leafPaths(stage, {}, false).contains(left.GetPath()),
             "subset children do not replace geometry in leaf selection domains");
@@ -4156,6 +4375,9 @@ main(int argc, char** argv)
 {
     QCoreApplication app(argc, argv);
     const std::map<std::string, std::function<void()>> cases {
+        { "perf_scope_unset", [] { perfScopeLog(0); } },
+        { "perf_scope_empty", [] { perfScopeLog(1); } },
+        { "perf_scope_enabled", [] { perfScopeLog(2); } },
         { "render_scene_index_removal", renderSceneIndexRemoval },
         { "save_twice_usda", [] { saveTwice("usda"); } },
         { "save_twice_usdc", [] { saveTwice("usdc"); } },
@@ -4198,7 +4420,9 @@ main(int argc, char** argv)
         { "command_merge_api", commandMergeApi },
         { "namespace_editor_crud_api", namespaceEditorCrudApi },
         { "usd_path_utils_api", usdPathUtilsApi },
+        { "transform_instance_targets", transformInstanceTargets },
         { "indexed_path_api", indexedPathApi },
+        { "qt_path_hash_api", qtPathHashApi },
         { "spec_deletion_api", specDeletionApi },
         { "batched_attribute_authoring", batchedAttributeAuthoring },
         { "bbox_cache_invalidation", bboxCacheInvalidation },

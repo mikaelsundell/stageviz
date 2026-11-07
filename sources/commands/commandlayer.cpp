@@ -2,9 +2,9 @@
 // Copyright (c) 2025 - present Mikael Sundell
 // https://github.com/mikaelsundell/stageviz
 
-#include "perfscope.h"
 #include "commandlayer.h"
 #include "commandutils.h"
+#include "perfscope.h"
 #include "qtutils.h"
 #include "tracelocks.h"
 #include "usdutils.h"
@@ -135,14 +135,16 @@ reorderSublayers(const QString& parentIdentifier, const QString& sourceIdentifie
                     std::vector<std::string> paths = parent->GetSubLayerPaths();
                     std::vector<std::string> sourcePaths;
                     std::vector<std::string> targetPaths;
+                    const std::string sourceId = sourceIdentifier.toStdString();
+                    const std::string targetId = targetIdentifier.toStdString();
                     for (const std::string& path : paths) {
                         const SdfLayerHandle child = SdfLayer::FindRelativeToLayer(parent, path);
                         if (!child)
                             continue;
-                        const std::string identifier = child->GetIdentifier();
-                        if (identifier == sourceIdentifier.toStdString())
+                        const std::string& identifier = child->GetIdentifier();
+                        if (identifier == sourceId)
                             sourcePaths.push_back(path);
-                        if (identifier == targetIdentifier.toStdString())
+                        if (identifier == targetId)
                             targetPaths.push_back(path);
                     }
 
@@ -315,12 +317,18 @@ setLayerMuted(const QString& layerIdentifier, bool muted)
                 };
                 retainSubtree(layer);
             }
-            { PerfScope usdScope("usd.mute_layer"); stage->MuteLayer(identifier); }
+            {
+                PerfScope usdScope("usd.mute_layer");
+                stage->MuteLayer(identifier);
+            }
         }
         else {
             if (!currentlyMuted || (stage->GetRootLayer() && stage->GetRootLayer()->GetIdentifier() == identifier))
                 return false;
-            { PerfScope usdScope("usd.unmute_layer"); stage->UnmuteLayer(identifier); }
+            {
+                PerfScope usdScope("usd.unmute_layer");
+                stage->UnmuteLayer(identifier);
+            }
         }
         return stage->IsLayerMuted(identifier) == muted;
     };

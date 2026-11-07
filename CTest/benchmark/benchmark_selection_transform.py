@@ -260,6 +260,7 @@ class SelectionBenchmark(Base):
         (self.directory/'results.json').write_text(json.dumps(self.results,indent=2))
         self.write_status('checkpoint',result=row)
 
-config=json.loads(Path(os.environ['STAGEVIZ_STORM_PROFILE']).read_text())
-stageviz._selectionBenchmark=SelectionBenchmark(config)
-print('Selection/transform benchmark armed; external controller acknowledges checkpoints')
+if globals().get('_SELECTION_AUTORUN', True):
+    config=json.loads(Path(os.environ['STAGEVIZ_STORM_PROFILE']).read_text())
+    stageviz._selectionBenchmark=SelectionBenchmark(config)
+    print('Selection/transform benchmark armed; external controller acknowledges checkpoints')

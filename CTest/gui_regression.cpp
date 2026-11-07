@@ -2,11 +2,9 @@
 // Copyright (c) 2025 - present Mikael Sundell
 
 #include "application.h"
-#include <fstream>
-#include <QTreeWidgetItemIterator>
 #include "bboxutils.h"
-#include "commandlight.h"
 #include "commandlayer.h"
+#include "commandlight.h"
 #include "commandmaterial.h"
 #include "commandpayload.h"
 #include "commandpivot.h"
@@ -61,6 +59,8 @@
 #include <QThread>
 #include <QThreadPool>
 #include <QTreeWidgetItem>
+#include <QTreeWidgetItemIterator>
+#include <fstream>
 #include <functional>
 #include <iostream>
 #include <map>
@@ -439,6 +439,16 @@ materialBrowserApi()
     browser.setSwatch(0, swatch);
     require(!browser.swatch(0).isNull() && browser.swatch(0).size() == QSize(32, 32),
             "material browser caches swatch image");
+    browser.selectRow(0);
+    browser.setEntries({ second, first });
+    require(browser.selectedRows() == QList<int> { 1 }, "entry reorder retains selection by native USD path");
+    require(browser.swatch(1) == swatch, "entry reorder retains the matching material swatch");
+    browser.setEntries({ first });
+    require(browser.selectedRows() == QList<int> { 0 } && browser.swatch(0) == swatch,
+            "entry removal retains the surviving selection and swatch");
+    browser.setEntries({ first, second });
+    require(browser.selectedRows() == QList<int> { 0 } && browser.swatch(0) == swatch,
+            "append-only refresh retains the existing selection and swatch");
     browser.invalidateSwatch(0);
     require(!browser.swatch(0).isNull(), "invalidating swatch keeps previous image visible");
 
@@ -1476,6 +1486,55 @@ viewportTransformHierarchySyncApi()
 }
 
 void
+viewportTransformSelectionRefreshApi()
+{
+    auto* current = stageviz::session();
+    require(current->newStage(), "new selection refresh stage");
+    const auto first = UsdGeomXform::Define(current->stage(), SdfPath("/World/First"));
+    first.AddTranslateOp().Set(GfVec3d(1, 2, 3));
+    const auto second = UsdGeomXform::Define(current->stage(), SdfPath("/World/Second"));
+    second.AddTranslateOp().Set(GfVec3d(4, 5, 6));
+    ViewportTestHost host;
+    stageviz::ViewportSelection selection(host);
+    host.selection = &selection;
+    host.selected = { first.GetPath() };
+    stageviz::ViewportTransform transform(host);
+    GfVec3d shown(0);
+    int refreshes = 0;
+    QObject::connect(&host.viewport, &stageviz::ViewportWidget::transformInputValuesChanged,
+                     [&shown, &refreshes](const GfVec3d& values) {
+                         shown = values;
+                         ++refreshes;
+                     });
+    transform.setMode(stageviz::ViewportTransform::Mode::Move, true);
+    require(shown == GfVec3d(1, 2, 3), "enabling a tool resolves the current selection");
+    host.selected = { first.GetPath(), second.GetPath() };
+    refreshes = 0;
+    transform.selectionChanged(false);
+    require(refreshes == 1 && shown == GfVec3d(4, 5, 6), "selection refresh publishes the lead object's values once");
+    host.selected = { second.GetPath(), first.GetPath() };
+    refreshes = 0;
+    transform.selectionChanged(false);
+    require(refreshes == 1 && shown == GfVec3d(1, 2, 3), "reordering selection refreshes the new lead object once");
+    host.selected.clear();
+    refreshes = 0;
+    transform.selectionChanged(true);
+    require(refreshes == 1 && shown == GfVec3d(0), "clearing selection resets numeric values once");
+    require(!transform.hasActiveHandle(), "clearing selection hides the handle");
+    transform.setEnabled(false);
+    host.selected = { second.GetPath() };
+    transform.selectionChanged(false);
+    transform.setMode(stageviz::ViewportTransform::Mode::Move, true);
+    require(shown == GfVec3d(4, 5, 6) && transform.hasActiveHandle(),
+            "enabling after a disabled-tool selection resolves fresh values and handle");
+    second.GetTranslateOp().Set(GfVec3d(7, 8, 9));
+    refreshes = 0;
+    transform.invalidate();
+    require(refreshes == 1 && shown == GfVec3d(7, 8, 9),
+            "stage invalidation still refreshes numeric values without a selection change");
+}
+
+void
 viewportGizmoDefaultFrameApi()
 {
     const stageviz::ViewportGizmo::Frame frame;
@@ -1483,7 +1542,8 @@ viewportGizmoDefaultFrameApi()
             "transform gizmo defaults to the object reference frame");
 }
 
-void outlinerLayerMuteApi()
+void
+outlinerLayerMuteApi()
 {
     QTemporaryDir dir;
     require(dir.isValid(), "temporary layer-mute directory");
@@ -1540,14 +1600,17 @@ void outlinerLayerMuteApi()
         mixed.entries.append(entry);
     }
     stageviz::NoticeEntry info;
-    info.path = SdfPath("/World/Keep.visibility"); info.changedInfoOnly = true;
+    info.path = SdfPath("/World/Keep.visibility");
+    info.changedInfoOnly = true;
     mixed.entries.append(info);
     tree->updatePrims(mixed);
     require(find("/World/Keep") == keep && keep->childCount() == 500, "mixed deletes preserve surviving hierarchy");
-    session->commandStack()->undo(); drain();
+    session->commandStack()->undo();
+    drain();
     require(!session->stage()->IsLayerMuted(layerPath.toStdString()) && find("/World/Delete19"),
             "undo restores composed prims and Qt rows");
-    session->commandStack()->redo(); drain();
+    session->commandStack()->redo();
+    drain();
     require(session->stage()->IsLayerMuted(layerPath.toStdString()) && !find("/World/Delete19"),
             "redo removes composed prims and Qt rows");
 }
@@ -1566,6 +1629,7 @@ main(int argc, char** argv)
         { "viewport_transform_hierarchy_sync_api", viewportTransformHierarchySyncApi },
         { "viewport_transform_individual_rotation_api", viewportTransformIndividualRotationApi },
         { "viewport_gizmo_default_frame_api", viewportGizmoDefaultFrameApi },
+        { "viewport_transform_selection_refresh_api", viewportTransformSelectionRefreshApi },
         { "transform_operation_applied_api", transformOperationAppliedApi },
         { "pivot_operation_applied_api", pivotOperationAppliedApi },
         { "settings_api", settingsApi },

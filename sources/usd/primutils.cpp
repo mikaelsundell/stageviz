@@ -2,10 +2,10 @@
 // Copyright (c) 2025 - present Mikael Sundell
 // https://github.com/mikaelsundell/stageviz
 
-#include "perfscope.h"
 #include "primutils.h"
 #include "bboxutils.h"
 #include "payloadutils.h"
+#include "perfscope.h"
 #include "qtutils.h"
 #include "usdutils.h"
 #include <QSet>
@@ -36,6 +36,7 @@
 #include <pxr/usd/usdShade/material.h>
 #include <pxr/usd/usdShade/materialBindingAPI.h>
 #include <stack>
+#include <unordered_set>
 
 namespace stageviz {
 
@@ -130,7 +131,9 @@ namespace stage {
     {
         PerfScope perfScope("transform.object_paths");
         QList<SdfPath> result;
-        QSet<SdfPath> seen;
+        // Keep projection identity native; format paths only at text boundaries.
+        std::unordered_set<SdfPath, SdfPath::Hash> seen;
+        seen.reserve(static_cast<size_t>(paths.size()));
         result.reserve(paths.size());
         for (const SdfPath& path : paths) {
             SdfPath target = path;
@@ -138,10 +141,8 @@ namespace stage {
             const UsdPrim prim = stage ? stage->GetPrimAtPath(primPath) : UsdPrim();
             if (prim && prim.IsA<UsdGeomSubset>())
                 target = prim.GetParent().GetPath();
-            if (!seen.contains(target)) {
-                seen.insert(target);
+            if (seen.insert(target).second)
                 result.append(target);
-            }
         }
         return result;
     }
@@ -354,6 +355,10 @@ namespace stage {
         PerfScope perfScope("transform.instance_sources");
         QList<QPair<SdfPath, SdfPath>> sources;
         if (!stage)
+            return sources;
+        // Native instances require prototypes. Avoid walking an entire ordinary
+        // stage for each gizmo target/pivot query when there cannot be any.
+        if (stage->GetPrototypes().empty())
             return sources;
         const SdfLayerHandleVector layers = stage->GetLayerStack();
         for (const UsdPrim& prim : stage->Traverse()) {
