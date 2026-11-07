@@ -130,9 +130,18 @@ The goal is not to turn Stageviz into a giant node editor. The interesting part 
 
 Stageviz embeds Python and exposes application functionality through its own Python bindings while keeping the normal OpenUSD `pxr` modules available.
 
+Start with the [Python guide](skills/references/python-start.md), then keep the
+[API reference](skills/references/python-api.md) beside your editor. They cover
+running code, command completion, undo, selection, layers, transforms, rendering
+and saving without requiring example scripts. For interfaces, read
+[dialogs and panels](skills/references/python-dialogs.md). The
+[Python documentation index](skills/README.md) links the complete set.
+
 That means a script can use **OpenUSD directly for scene data** and use **Stageviz for application state and behavior** such as selection, commands, view state, cameras and rendering.
 
-A tiny script can create geometry directly on the current stage:
+A tiny script can create geometry directly on the current stage. This example
+deliberately uses untracked OpenUSD authoring for its typed color array; use
+Stageviz commands for supported user edits that should be undoable:
 
 ```python
 import stageviz
@@ -141,6 +150,10 @@ from pxr import Gf, UsdGeom
 
 session = stageviz.Session()
 stage = session.stage()
+if stage is None:
+    raise RuntimeError("Open a USD stage first.")
+if session.primsUpdate() != stageviz.PrimsImmediate:
+    raise RuntimeError("Wait for the current scene edit to finish.")
 
 cube = UsdGeom.Cube.Define(stage, "/Cube")
 cube.CreateSizeAttr(2.0)
@@ -176,6 +189,11 @@ The shelf is deliberately simple: **if a script solves the problem, that can be 
 This has become one of the more fun parts of the project.
 
 Stageviz includes an **Agent skill** describing the Stageviz Python interface and the conventions an AI coding agent needs in order to build tools against it correctly.
+
+Point the agent directly to [skills/SKILL.md](skills/SKILL.md), and ask it to read
+the linked API reference before writing Stageviz calls. A directory link alone
+does not guarantee that the skill is loaded. The reference describes this source
+revision; an older installed application may have a smaller API.
 
 Instead of explaining your application API from scratch every time, give the skill to a compatible AI agent and describe what you want:
 

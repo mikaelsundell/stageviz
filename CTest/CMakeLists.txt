@@ -1,5 +1,18 @@
 # SPDX-License-Identifier: BSD-3-Clause
 
+add_test(
+    NAME stageviz.python_documentation
+    COMMAND ${Python3_EXECUTABLE} "${CMAKE_CURRENT_SOURCE_DIR}/check_python_documentation.py"
+)
+add_test(
+    NAME stageviz.python_documentation_guard
+    COMMAND ${Python3_EXECUTABLE} "${CMAKE_CURRENT_SOURCE_DIR}/test_python_documentation.py"
+)
+set_tests_properties(stageviz.python_documentation stageviz.python_documentation_guard PROPERTIES
+    LABELS "python;documentation"
+    TIMEOUT 30
+)
+
 # Reuse the application's sources and dependency settings so Session and its
 # collaborators are tested without replacing them with test doubles. This
 # executable has a QCoreApplication entry point and does not initialize Python.

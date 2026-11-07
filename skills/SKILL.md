@@ -11,10 +11,13 @@ Produce ready-to-run Python for the Stageviz embedded interpreter and reason abo
 
 Before generating or modifying Stageviz Python, load the reference that matches the task:
 
+- For a first script, execution/undo questions, or a new tool built from scratch,
+  read [references/python-start.md](references/python-start.md). The guide and
+  reference stand on their own; example scripts and helper modules are optional.
 - For any Stageviz API use, including `Session`, `SelectionList`, `ViewState`, `ViewCamera`, `Application`, `UI`, `RenderEngine`, `stageviz.command`, stage access, edit layers, selection, payloads, namespace edits, attributes, transforms, materials, progress, or rendering, read [references/python-api.md](references/python-api.md).
 - For any Qt UI work, including dialogs, tool windows, dock widgets, inspectors, browsers, material/look tools, primitive tools, shelf tools, selection utilities, or other interactive Stageviz Python UI, ALWAYS read [references/python-dialogs.md](references/python-dialogs.md) before generating code.
 - For requests involving both Stageviz API calls and Qt UI, read both references before producing the script.
-- For reusable Qt scaffolding and concrete helper implementations, inspect [scripts/dialogs.py](scripts/dialogs.py). Use it as a pattern or import it only when the target Stageviz environment will ship this helper module.
+- For optional reusable Qt helper implementations, inspect [scripts/dialogs.py](scripts/dialogs.py). Do not require it to understand the API or import it unless the target environment ships the helper module.
 
 Do not replace these references with assumptions from the C++ API or from other DCC applications.
 
@@ -33,7 +36,11 @@ Do not replace these references with assumptions from the C++ API or from other 
 8. Prefer `stage()` and `auxiliary()` in ordinary scripts. Treat `stageUnsafe()` and `auxiliaryUnsafe()` as advanced access that assumes the caller already owns the appropriate native lock.
 9. Treat `stageLock()`, `auxiliaryLock()`, and `commandStack()` as native pointer addresses, not Python lock or command objects.
 10. Use documented module helpers such as `stageviz.session()`, `stageviz.application()`, and `stageviz.ui()` when they fit the task; do not guess undocumented convenience globals.
-11. If the requested capability is absent from the reference, say so. Then use an appropriate `pxr` API, propose a binding addition, or ask for newer binding source.
+11. If a capability is absent from the reference, check the matching CPython binding when source is available before declaring it unavailable. Otherwise identify the uncertainty, check the installed API with `hasattr`, or request matching binding source. Do not infer methods from C++ declarations. Use direct `pxr` authoring only after establishing the command surface cannot perform the operation.
+12. Most methods are positional-only. Follow the reference's keyword-support table; an optional default does not imply a keyword is accepted.
+13. Commands can finish asynchronously. Wait for each command's Session completion before dependent edits, queries, undo/redo or saves; use the guide's controlled-script pattern or `testbench.wait_for_commands()` in tests. Interactive tools should use timer continuations and prevent overlapping edits. Do not add manual Deferred policy around command calls.
+14. Starting a Python execution clears existing native history. Perform programmatic command/undo/redo checks in one execution. Direct USD writes remain untracked.
+15. ViewState colors use float RGB/RGBA in 0..1; UI theme colors use integer channels in 0..255. Do not interchange them.
 
 ## Recommended object access
 
@@ -42,12 +49,12 @@ Use these entry points unless the user's existing script establishes another val
 ```python
 import stageviz
 
-session = stageviz.Session()
+session = stageviz.session()
 selection = session.selection()
 view_state = session.viewState()
 camera = view_state.camera()
-app = stageviz.Application()
-ui = stageviz.UI()
+app = stageviz.application()
+ui = stageviz.ui()
 ```
 
 Create `stageviz.RenderEngine()` directly for offscreen rendering. Use functions under `stageviz.command` for undoable commands.
@@ -84,7 +91,9 @@ The dialog reference defines the Stageviz conventions for:
 
 When a user asks for a Stageviz dialog script, return a complete runnable script unless they explicitly request only a patch.
 
-Use `scripts/dialogs.py` as a reusable implementation reference for main-window lookup, QApplication handling, retained dialog lifetime, standalone tool windows, dock widgets, and shortcut ownership. Generated standalone scripts should remain self-contained unless the user explicitly wants to depend on this helper module.
+The dialog reference includes a complete small tool and explains ownership and
+lifecycle. `scripts/dialogs.py` is optional scaffolding. Generated standalone
+scripts should remain self-contained unless the user explicitly wants that dependency.
 
 ## Qt tests
 

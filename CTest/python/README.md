@@ -44,11 +44,24 @@ methods.
 ## Importing the bench
 
 Stageviz may run a script without setting `__file__` or adding this directory
-to `sys.path`. Copy the small `_import_testbench()` bootstrap from
-`testlayers.py` into a new script, then import the helpers:
+to `sys.path`. Set an explicit checkout path and import the bench directly;
+no example script is required:
 
 ```python
-_tb = _import_testbench()
+import importlib.util
+from pathlib import Path
+
+checkout = Path("/absolute/path/to/stageviz")
+bench_path = checkout / "CTest/python/testbench.py"
+spec = importlib.util.spec_from_file_location("stageviz_testbench", bench_path)
+_tb = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(_tb)
+```
+
+Then bind the helpers needed by your test:
+
+```python
+# After the explicit bench import above:
 qt = _tb.qt
 process_events = _tb.process_events
 require = _tb.require
@@ -57,8 +70,8 @@ command = _tb.command
 stage = _tb.stage
 ```
 
-Reloading the module when running a script again keeps edits to `testbench.py`
-available in the long-lived embedded interpreter.
+Executing that bootstrap again reads the current `testbench.py`, keeping helper
+edits available in the long-lived embedded interpreter.
 
 ## Available helpers
 
@@ -91,6 +104,7 @@ wait_until = _tb.wait_until
 
 session = _tb.session()
 command = _tb.command()
+require(_tb.wait_for_commands(), "previous commands finished")
 stage = _tb.stage()
 require(stage is not None, "a stage is loaded")
 ```

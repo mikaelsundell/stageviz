@@ -4,6 +4,21 @@ Use these conventions when adding or changing Stageviz functionality. Follow
 nearby code when it establishes a more specific pattern, and keep changes
 consistent with the existing architecture.
 
+## Python scripts, bindings and documentation
+
+- Before writing, reviewing or explaining Stageviz Python, read
+  `skills/SKILL.md` and `skills/references/python-api.md`. For a fresh start,
+  read `skills/references/python-start.md`; for Qt tools also read
+  `skills/references/python-dialogs.md`. These documents must be sufficient
+  without consulting example scripts.
+- Match the CPython bindings, not similarly named C++ APIs. Preserve argument
+  casing and positional/keyword support. Prefer undoable command bindings;
+  account for asynchronous completion before dependent operations.
+- When changing a binding, update its reference entry, constants and relevant
+  guide/coverage notes in the same change. Run
+  `python3 CTest/check_python_documentation.py` for documentation synchronization;
+  this static check supplements the behavior regressions below.
+
 ## Sensitive local investigation files
 
 - `investigation/` contains sensitive local files. Never stage, commit, push,

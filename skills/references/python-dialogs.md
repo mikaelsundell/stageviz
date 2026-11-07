@@ -31,6 +31,11 @@ Use this reference when creating, modifying, or debugging Stageviz Python UI too
 - Preserve the user's existing coding style and lifecycle scaffolding when modifying supplied code.
 - Prefer `stageviz.command` for operations that should participate in Stageviz undo/redo. Use direct `pxr` authoring only when the Stageviz command API does not expose the operation.
 - Treat [python-api.md](python-api.md) as canonical for Stageviz-specific methods and signatures.
+- Read [the start guide](python-start.md) for execution and asynchronous command
+  completion. The current stage/selection must be acquired inside each action.
+  Do not retain USD/Qt wrappers across stage replacement or queued UI rebuilds.
+- The snippets below explain reusable pieces; the complete small tool at the end
+  is runnable without the optional `scripts/dialogs.py` helper.
 
 ## Imports and compatibility
 
@@ -47,7 +52,7 @@ import stageviz
 try:
     from PySide6 import QtCore, QtGui, QtWidgets
     QT_NAME = "PySide6"
-except Exception:
+except ImportError:
     from PyQt6 import QtCore, QtGui, QtWidgets
     QT_NAME = "PyQt6"
 ```
@@ -325,7 +330,16 @@ def ensure_looks_scope(stage):
 
 ## MaterialX authoring
 
-For generated looks, prefer MaterialX through `UsdShade` unless the user requests another shading system.
+Choose the shading system for the target renderer. `command.new_material()`
+creates a UsdPreviewSurface material with undo support. For existing networks,
+prefer `connect_shader_input`, `connect_shader_node`, `connect_materialx_node`,
+`disconnect_shader_inputs` and `reset_shader_inputs` over equivalent direct edits.
+The API reference documents their exact property paths and argument order.
+
+Creating an arbitrary complete MaterialX material is not exposed as one Python
+command. The following pattern is **direct, untracked OpenUSD authoring** for
+that gap; it does not provide native undo. Do not substitute it for an existing
+command. Shader identifiers/inputs depend on the installed MaterialX registry.
 
 A basic Standard Surface network:
 
@@ -336,13 +350,21 @@ surface.CreateIdAttr("ND_standard_surface_surfaceshader")
 surface.CreateInput("base", Sdf.ValueTypeNames.Float).Set(1.0)
 surface.CreateInput("base_color", Sdf.ValueTypeNames.Color3f).Set(base_color)
 surface.CreateInput("metalness", Sdf.ValueTypeNames.Float).Set(0.0)
-surface.CreateInput("roughness", Sdf.ValueTypeNames.Float).Set(0.4)
+surface.CreateInput("specular_roughness", Sdf.ValueTypeNames.Float).Set(0.4)
 surface.CreateInput("specular", Sdf.ValueTypeNames.Float).Set(0.5)
 surface.CreateOutput("out", Sdf.ValueTypeNames.Token)
 material.CreateSurfaceOutput().ConnectToSource(surface.ConnectableAPI(), "out")
 ```
 
-Useful car-paint inputs include `base_color`, `roughness`, `specular`, `metalness`, `coat`, and `coat_roughness`.
+Here `stage` is the loaded USD stage, `material_path` is an absolute `Sdf.Path`,
+and `base_color` is a `Gf.Vec3f`. These fragments describe the USD authoring
+boundary, not a complete material UI. Check the installed NodeDef before choosing
+input names (for example, a Standard Surface may use `specular_roughness` rather
+than a generic `roughness`). Do not assume similarly named renderer shaders share
+the same interface. Do not directly author while a native command is in flight.
+
+Useful Standard Surface car-paint inputs include `base_color`,
+`specular_roughness`, `specular`, `metalness`, `coat`, and `coat_roughness`.
 
 For procedural networks:
 
@@ -401,7 +423,7 @@ Use this only when a large batch justifies deferral, and always restore the orig
 ```python
 session = stageviz.Session()
 previous_update = session.primsUpdate()
-session.setPrimsUpdate(1)  # Session::Deferred
+session.setPrimsUpdate(stageviz.PrimsDeferred)
 try:
     # Perform direct USD authoring here.
     ...
@@ -410,6 +432,21 @@ finally:
 ```
 
 If the previous policy was already `Deferred`, restoring it intentionally leaves notification delivery deferred for its owner. Do not force `Immediate` or call an undocumented flush method. Prefer `stageviz.command` for undoable edits; do not add custom update-policy handling around ordinary commands or individual shader/attribute edits.
+
+## Asynchronous command callbacks
+
+An Apply button should validate inputs, disable further edits, dispatch one
+command and return to Qt. A short `QTimer.singleShot` continuation can poll
+`session.primsUpdate() == stageviz.PrimsImmediate`, then verify USD state and
+re-enable Apply. Use a timeout and leave further edits disabled if work is still
+running; a timeout is not cancellation or completion. Do not chain commands just
+because their functions returned. Undo/redo can also dispatch workers.
+
+Only use this policy when no other component owns a Deferred batch. For a
+controlled editor script, the [guide's bounded runner](python-start.md#let-commands-finish-before-the-next-step)
+shows event-pumping completion; repository tests use `testbench.wait_for_commands()`.
+Native Session signals are not exposed as Python signals. Observe state through
+public accessors and timers; do not invent `session.selectionChanged.connect(...)`.
 
 ## Shortcut ownership
 
@@ -512,3 +549,63 @@ Before returning a Stageviz dialog script, verify:
 - Dockable tools use `QDockWidget`, a child content widget, and `addDockWidget()` on the Stageviz main window.
 - Dialog-local standard shortcuts suppress conflicting Stageviz main-window shortcuts while active.
 - User-triggered errors are visible in the UI and print a traceback.
+
+## A complete little tool: frame the selection
+
+Paste this whole block into the Stageviz Python editor. It uses only documented
+Stageviz calls plus Qt, keeps one window alive, and reads the current selection
+on each click. Framing is a view operation, so this tool needs no command worker.
+
+```python
+import traceback
+import stageviz
+try:
+    from PySide6 import QtCore, QtWidgets
+except ImportError:
+    from PyQt6 import QtCore, QtWidgets
+
+class FrameSelectionDialog(QtWidgets.QDialog):
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.setObjectName("stagevizFrameSelectionDialog")
+        self.setWindowTitle("A closer look")
+        self.setWindowFlag(QtCore.Qt.WindowType.Tool, True)
+        self.setAttribute(QtCore.Qt.WidgetAttribute.WA_DeleteOnClose, True)
+        layout = QtWidgets.QVBoxLayout(self)
+        self.status = QtWidgets.QLabel("Select an object, then bring it into view.")
+        layout.addWidget(self.status)
+        button = QtWidgets.QPushButton("Frame selection")
+        button.setObjectName("frameSelectionButton")
+        button.setToolTip("Frame the currently selected prims in the viewport.")
+        button.clicked.connect(self.frame_selection)
+        layout.addWidget(button)
+
+    def frame_selection(self):
+        try:
+            session = stageviz.session()
+            if session.primsUpdate() != stageviz.PrimsImmediate:
+                raise RuntimeError("Wait for the current scene edit to finish.")
+            if session.stage() is None:
+                raise RuntimeError("Open a USD stage first.")
+            paths = session.paths()
+            if not paths:
+                raise RuntimeError("Select something in the viewport or Outliner.")
+            session.viewState().camera().frame(session.boundingBox(paths))
+            self.status.setText("Framed " + str(len(paths)) + " selected paths.")
+        except Exception as error:
+            self.status.setText(str(error))
+            traceback.print_exc()
+
+# Find live instances by identity instead of retaining a potentially dead wrapper.
+for widget in QtWidgets.QApplication.topLevelWidgets():
+    if widget.objectName() == "stagevizFrameSelectionDialog":
+        widget.close()
+
+_stageviz_frame_dialog = FrameSelectionDialog(stageviz.application().window())
+_stageviz_frame_dialog.show()  # Non-modal; Stageviz already runs the event loop.
+```
+
+For a dock, use the same content in `QDockWidget` and register it through the main
+window as described above. For an authoring tool, replace the action with a
+documented command and add the completion/busy-state handling before enabling
+another operation.
