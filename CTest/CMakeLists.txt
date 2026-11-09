@@ -140,6 +140,7 @@ foreach(case IN ITEMS
     command_composition_api
     command_move_api
     light_command_api
+    render_resources_api
     copy_transform_api
     transform_operation_api
     pivot_operation_api
@@ -154,14 +155,18 @@ endforeach()
 # GUI/offscreen regressions use QApplication because Qt requires QWindow-backed
 # offscreen surfaces and OpenGL resources to be created on the GUI thread.
 add_executable(stageviz_gui_regressions gui_regression.cpp ${stageviz_test_absolute_sources})
-add_custom_command(TARGET stageviz_gui_regressions POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:stageviz_gui_regressions>/resources"
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        "${PROJECT_SOURCE_DIR}/resources/Render.glslfx"
-        "${PROJECT_SOURCE_DIR}/resources/SceneId.glslfx"
-        "$<TARGET_FILE_DIR:stageviz_gui_regressions>/resources"
-    VERBATIM
-)
+foreach(test_target IN ITEMS stageviz_regressions stageviz_gui_regressions)
+    add_custom_command(TARGET ${test_target} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:${test_target}>/resources"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${PROJECT_SOURCE_DIR}/resources/Render.glslfx"
+            "${PROJECT_SOURCE_DIR}/resources/SceneId.glslfx"
+            "${PROJECT_SOURCE_DIR}/resources/scandinavia_1024x512.exr"
+            "${PROJECT_SOURCE_DIR}/resources/scandinavia_bw_1024x512.exr"
+            "$<TARGET_FILE_DIR:${test_target}>/resources"
+        VERBATIM
+    )
+endforeach()
 target_include_directories(stageviz_gui_regressions PRIVATE
     "${PROJECT_SOURCE_DIR}/sources"
     "$<TARGET_PROPERTY:${project_name},INCLUDE_DIRECTORIES>"
@@ -200,6 +205,10 @@ foreach(case IN ITEMS
     renderengine_hdri_api
     material_browser_api
     property_reveal_file_api
+    material_numeric_editor_api
+    property_asset_editor_api
+    property_material_light_dropdown_api
+    material_swatch_alpha_api
     geometry_subset_gui_api
     outliner_reset_opinions_menu_api
     outliner_layer_colors_api

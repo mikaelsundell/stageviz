@@ -5,7 +5,7 @@
 #include "materialrenderer.h"
 #include "application.h"
 #include "renderengine.h"
-#include "ui.h"
+#include "renderresources.h"
 #include <QApplication>
 #include <QColor>
 #include <QDir>
@@ -394,12 +394,18 @@ MaterialRendererPrivate::initializeContext(RenderContext& context, QString& erro
         return false;
 
     RenderEngine::Settings settings;
-    settings.clearColor = ui()->color(UI::ColorRole::Render);
+    // Let the browser's selection or panel color show around the shaderball.
+    settings.clearColor = Qt::transparent;
     settings.sceneMaterialsEnabled = true;
     settings.sceneLightsEnabled = true;
     settings.defaultCameraLightEnabled = false;
     settings.defaultDomeLightEnabled = true;
-    settings.domeLightTexture.clear();  // Empty = OpenUSD/Stageviz default dome HDRI.
+    settings.domeLightTexture = renderresources::neutralDomeTexture();
+    if (settings.domeLightTexture.isEmpty()) {
+        error = QStringLiteral("Could not find the bundled neutral material HDRI");
+        resetContext(context);
+        return false;
+    }
     settings.domeLightCameraVisibility = false;
 
     context.renderEngine = std::make_unique<RenderEngine>(RenderEngine::ContextMode::Offscreen);

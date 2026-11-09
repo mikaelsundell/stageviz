@@ -57,12 +57,42 @@ class NumericEditorTest(_base["ViewportTest"]):
         QtCore, QtGui, QtTest, QtWidgets = tb.qt()
         tree, spin, line = self.editor()
         assert line.isReadOnly()
+        attr = lambda: stageviz.session().stage().GetAttributeAtPath("/World/Light.inputs:specular")
+        baseline = attr().Get()
+        stageviz.command.clear()
+        activated = []
+        shortcuts = [QtGui.QShortcut(QtGui.QKeySequence(key), tree.window()) for key in ("5", "A")]
+        for shortcut in shortcuts:
+            shortcut.activated.connect(lambda: activated.append(True))
+        try:
+            self.snapshot("numeric_before_double_click")
+            tree, spin, line = self.editor()
+            QtTest.QTest.mouseDClick(line, QtCore.Qt.MouseButton.LeftButton, pos=line.rect().center())
+            assert line.hasFocus() and not line.isReadOnly()
+            assert line.selectedText() == line.text(), "double-click selects the whole value"
+            QtTest.QTest.keyClicks(line, "5")
+            assert spin.value() == 5.0, "first digit replaces the selected value"
+            QtTest.QTest.keyClicks(line, "a")
+            assert not activated, "application shortcuts must not run during numeric entry"
+            assert spin.value() == 5.0, "invalid numeric input preserves the value"
+            QtTest.QTest.keyClick(line, QtCore.Qt.Key.Key_Return)
+            assert tb.wait_for_commands()
+            assert abs(attr().Get() - 5.0) < 1e-6
+            self.snapshot("numeric_double_click_committed")
+            stageviz.command.undo()
+            assert tb.wait_for_commands() and abs(attr().Get() - baseline) < 1e-6
+            stageviz.command.redo()
+            assert tb.wait_for_commands() and abs(attr().Get() - 5.0) < 1e-6
+        finally:
+            for shortcut in shortcuts:
+                shortcut.setEnabled(False)
+                shortcut.deleteLater()
+        tree, spin, line = self.editor()
         decimal = spin.locale().decimalPoint()
         QtTest.QTest.keyClicks(line, "0" + decimal + "25")
         assert abs(spin.value() - .25) < 1e-8 and not line.isReadOnly(), spin.value()
         assert tree.currentItem().text(0) == "inputs:specular", "typing must not jump to another row"
         QtTest.QTest.keyClick(line, QtCore.Qt.Key.Key_Return)
-        attr = lambda: stageviz.session().stage().GetAttributeAtPath("/World/Light.inputs:specular")
         assert tb.wait_until(lambda: abs(attr().Get() - .25) < 1e-6)
         tree, spin, line = self.editor()
         # The same delegate editor must survive both asynchronous USD updates.

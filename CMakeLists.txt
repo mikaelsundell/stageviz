@@ -224,6 +224,7 @@ list(REMOVE_DUPLICATES project_source_dirs)
 file(GLOB project_resources
     "resources/*.qss"
     "resources/*.glslfx"
+    "resources/*.exr"
 )
 
 # build

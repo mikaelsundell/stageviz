@@ -4,6 +4,13 @@ Use these conventions when adding or changing Stageviz functionality. Follow
 nearby code when it establishes a more specific pattern, and keep changes
 consistent with the existing architecture.
 
+## Code formatting
+
+- After every code edit, run `clang-format -i` on all changed C/C++ source and
+  header files using the repository's `.clang-format`. Include newly added files
+  and format whole files, not only edited lines. Before finishing a change,
+  verify formatting with `clang-format --dry-run --Werror` on those files.
+
 ## Python scripts, bindings and documentation
 
 - Before writing, reviewing or explaining Stageviz Python, read

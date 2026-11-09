@@ -3,7 +3,6 @@
 // https://github.com/mikaelsundell/stageviz
 
 #include "materialbrowser.h"
-#include "perfscope.h"
 #include "application.h"
 #include "commandmaterial.h"
 #include "commandprim.h"
@@ -12,6 +11,7 @@
 #include "materialitem.h"
 #include "messagedialog.h"
 #include "mime.h"
+#include "perfscope.h"
 #include "primutils.h"
 #include "qtutils.h"
 #include "selectionlist.h"
@@ -899,7 +899,7 @@ QImage
 MaterialBrowserPrivate::placeholderImage() const
 {
     QImage image(d.swatchMaximum, d.swatchMaximum, QImage::Format_RGBA8888);
-    image.fill(ui()->color(UI::ColorRole::Render));
+    image.fill(Qt::transparent);
     return image;
 }
 

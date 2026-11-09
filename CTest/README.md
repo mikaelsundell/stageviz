@@ -385,24 +385,42 @@ The script does not autorun; its `run(disposable=True)` executes all phases.
 
 - `renderengine_hdri_api` changes opacity through opaque, translucent, zero and
   back to opaque with the dome background off/on and a separate helper pass.
+  It also compares default dome lighting with explicit bundled color and neutral HDRIs.
 - `testviewporthdri.py` checks Preview Surface and MaterialX opacity with camera
   lighting, HDRI lighting, combined lights, default/custom HDRI paths, background
   toggles, and shaded/wireframe presentation in a disposable viewer. It stores
   viewport screenshots and Qt snapshots for each fixture.
 
 - `light_command_api` covers all standard light presets, shaped spots, selection
-  restoration and redo. `viewport_lights_api` covers guide picking, sweep hits,
+  restoration, the bundled color Scandinavia dome texture and redo.
+  `render_resources_api` checks lookup and OpenEXR headers for both bundled
+  Scandinavia HDRIs: color for viewport/dome lighting, monochrome for material previews.
+  `viewport_lights_api` covers guide picking, sweep hits,
   isolate masks, visibility and the absence of document authoring by helpers.
 - `testlights.py` exercises every Create action and Python light factory, click
   and sweep selection, Move undo/redo, Qt snapshots and clean viewport capture
   in a disposable viewer.
 
-- `numeric_editor_api` checks typing directly into a scrub-mode spin box.
-  `testnumericeditors.py` checks numeric replacement, stable row focus, repeated
+- `numeric_editor_api` checks typing directly into a scrub-mode spin box,
+  double-click replacement and shortcut ownership during numeric entry.
+  `testnumericeditors.py` checks double-click replacement with conflicting
+  application shortcuts, numeric replacement, stable row focus, repeated
   property drags without closing the editor, undo/redo refresh and keyboard
   commit through the real Property Editor in a disposable viewer. It also checks
   gizmo-panel visibility across selection changes and non-accumulating numeric
   Move/Scale previews.
+
+- `material_numeric_editor_api` checks shared spin-box keyboard ownership,
+  double-click replacement, integer and vector multi-material commits, scrub
+  release, and undo/redo without duplicate commits when editing finishes.
+- `property_asset_editor_api` checks the asset Open helper, preserved text
+  editing, USD allowed-token dropdowns, Qt file-chooser cancellation and selection,
+  and asset path undo/redo. It does not automate the native OS file chooser.
+  It also checks the Designer-created Property View retains the Browse column
+  and keeps the dome-light Open icon visible while editing the path.
+- `property_material_light_dropdown_api` checks shader-definition choices for
+  USD UV-texture wrapping/color space and MaterialX image addressing/filtering,
+  schema choices on dome lights/light filters, and free-form string editing.
 
 - `testlights.py` also isolates the default Distant light with other sources off,
   checking visible illumination, rotation, translation independence, and undo.
@@ -470,7 +488,10 @@ Path collection conventions are documented in [docs/path-collections.md](../docs
 `selection_list_semantics` checks identical and duplicate updates with empty paths
 and order changes, including notification counts. `material_browser_api` checks
 that reordered, removed, and appended entries retain selection and swatches by
-USD path. These complement `qt_path_hash_api` and `indexed_path_api` native key
+USD path, with transparent placeholders while rendering is pending.
+`material_swatch_alpha_api` checks fully transparent background corners and an
+opaque shaderball center for fallback, authored-network and interactive swatches.
+These complement `qt_path_hash_api` and `indexed_path_api` native key
 and collection coverage.
 
 Native performance logging regressions cover unset, empty and enabled startup

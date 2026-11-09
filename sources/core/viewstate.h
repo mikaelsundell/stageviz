@@ -281,14 +281,14 @@ public:
     /**
      * @brief Returns the custom dome-light texture path.
      *
-     * An empty path uses OpenUSD's packaged default dome texture.
+     * An empty path uses Stageviz's bundled color Scandinavia HDRI.
      */
     QString domeLightTexture() const;
 
     /**
      * @brief Sets the custom dome-light texture path.
      *
-     * An empty path restores OpenUSD's packaged default dome texture.
+     * An empty path restores Stageviz's bundled color Scandinavia HDRI.
      */
     void setDomeLightTexture(const QString& filename);
 

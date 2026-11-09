@@ -42,10 +42,32 @@ SpinBox::scrubSensitivity() const
 }
 
 bool
+SpinBox::event(QEvent* event)
+{
+    if (event->type() == QEvent::ShortcutOverride) {
+        // Shortcut resolution precedes KeyPress. Claim numeric entry here so
+        // application actions cannot consume the first digit in scrub mode.
+        beginTextInput(static_cast<QKeyEvent*>(event));
+        if (m_editing) {
+            event->accept();
+            return true;
+        }
+    }
+    return QDoubleSpinBox::event(event);
+}
+
+bool
 SpinBox::eventFilter(QObject* watched, QEvent* event)
 {
     if (watched == lineEdit()) {
         switch (event->type()) {
+        case QEvent::ShortcutOverride:
+            beginTextInput(static_cast<QKeyEvent*>(event));
+            if (m_editing) {
+                event->accept();
+                return true;
+            }
+            break;
         case QEvent::KeyPress: beginTextInput(static_cast<QKeyEvent*>(event)); break;
         case QEvent::Enter: updateValueCursor(); break;
 

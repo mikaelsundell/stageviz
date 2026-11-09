@@ -966,7 +966,7 @@ The wrapper is non-owning.
 `domeLightTexture() -> str`
 
 `setDomeLightTexture(path) -> None`
-: Empty string restores OpenUSD's default dome texture.
+: Empty string restores Stageviz's bundled color Scandinavia HDRI.
 
 `domeLightCameraVisibility() -> bool`
 
@@ -1450,8 +1450,10 @@ stageviz.command.new_light("/World", "Key", type="rect")
 ```
 
 The Create menu exposes the same presets. Intensity, exposure, color, shape and
-spot-cone inputs are ordinary USD properties. A Dome starts with OpenUSD's
-packaged environment texture, replaceable through `inputs:texture:file`. Viewport light guides support click
-and sweep selection; existing transform commands move and rotate the real light.
+spot-cone inputs are ordinary USD properties. A Dome starts with Stageviz's
+bundled color Scandinavia environment texture, replaceable through `inputs:texture:file`.
+Material previews use the bundled monochrome Scandinavia HDRI for neutral lighting.
+Viewport light guides support click and sweep selection; existing transform
+commands move and rotate the real light.
 The guides are editor overlays, visible through geometry and excluded from USD
 exports and viewport color capture. Scene lighting still follows Scene Lights.
