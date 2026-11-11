@@ -9,6 +9,7 @@
 #include "tracelocks.h"
 #include "usdutils.h"
 #include <QFileInfo>
+#include <QHash>
 #include <QSet>
 #include <algorithm>
 #include <functional>
@@ -21,12 +22,139 @@ namespace stageviz {
 namespace {
     using command::appendError;
 
+    // Layer commands are synchronous. Keep each batch in one history entry and
+    // retain detached layers so parent/child removal can be undone reliably.
+    Command layerBatch(const QStringList& identifiers, const std::function<Command(const QString&)>& factory,
+                       bool childrenFirst)
+    {
+        struct State {
+            std::vector<Command> commands;
+            std::vector<SdfLayerRefPtr> retained;
+            bool captured = false;
+        };
+        auto state = std::make_shared<State>();
+        return Command(
+            [identifiers, factory, childrenFirst, state](Session* session) {
+                if (!session)
+                    return;
+                if (!state->captured) {
+                    QStringList ordered = identifiers;
+                    ordered.removeAll(QString());
+                    ordered.removeDuplicates();
+                    {
+                        READ_LOCKER(locker, session->stageLock(), "stageLock");
+                        const auto stage = session->stageUnsafe();
+                        if (!stage)
+                            return;
+                        QHash<QString, int> layerOrder;
+                        QSet<QString> visited;
+                        std::function<void(const SdfLayerHandle&)> visit = [&](const SdfLayerHandle& layer) {
+                            if (!layer)
+                                return;
+                            const auto id = QString::fromStdString(layer->GetIdentifier());
+                            if (visited.contains(id))
+                                return;
+                            visited.insert(id);
+                            for (const auto& path : layer->GetSubLayerPaths())
+                                visit(SdfLayer::FindRelativeToLayer(layer, path));
+                            layerOrder.insert(id, static_cast<int>(layerOrder.size()));
+                        };
+                        visit(stage->GetRootLayer());
+                        std::stable_sort(ordered.begin(), ordered.end(), [&](const auto& a, const auto& b) {
+                            return childrenFirst ? layerOrder.value(a) < layerOrder.value(b)
+                                                 : layerOrder.value(a) > layerOrder.value(b);
+                        });
+                        for (const auto& id : ordered) {
+                            if (const auto layer = SdfLayer::Find(id.toStdString()))
+                                state->retained.emplace_back(layer);
+                            state->commands.push_back(factory(id));
+                        }
+                    }
+                    state->captured = true;
+                }
+                for (auto& command : state->commands)
+                    command.execute(session);
+            },
+            [state](Session* session) {
+                for (auto it = state->commands.rbegin(); it != state->commands.rend(); ++it)
+                    it->undo(session);
+            });
+    }
+
     struct SublayerState {
         SdfLayerHandle editLayer;
         std::vector<std::string> previousPaths;
         bool captured = false;
     };
+
+    Command updateLayer(const QString& identifier)
+    {
+        struct State {
+            UsdStageRefPtr stage;
+            SdfLayerRefPtr layer;
+            SdfLayerRefPtr before;
+            SdfLayerRefPtr after;
+            UsdEditTarget editTarget;
+        };
+        auto state = std::make_shared<State>();
+        return Command(
+            [identifier, state](Session* session) {
+                if (!session)
+                    return;
+                QString error;
+                {
+                    WRITE_LOCKER(locker, session->stageLock(), "stageLock");
+                    const auto stage = session->stageUnsafe();
+                    const auto layer = SdfLayer::Find(identifier.toStdString());
+                    if (!stage || !layer || !stage->HasLocalLayer(layer) || layer->IsAnonymous()
+                        || stage->IsLayerMuted(layer->GetIdentifier()) || !layer->PermissionToEdit()) {
+                        error = QStringLiteral("Layer must be file-backed, local, unmuted and editable");
+                    }
+                    else if (state->after) {
+                        if (stage == state->stage)
+                            layer->TransferContent(state->after);
+                    }
+                    else {
+                        state->stage = stage;
+                        state->layer = layer;
+                        state->editTarget = stage->GetEditTarget();
+                        state->before = SdfLayer::CreateAnonymous();
+                        state->before->TransferContent(layer);
+                        if (layer->Reload(true)) {
+                            state->after = SdfLayer::CreateAnonymous();
+                            state->after->TransferContent(layer);
+                        }
+                        else {
+                            layer->TransferContent(state->before);
+                            error = QStringLiteral("Could not reload layer from disk: %1").arg(identifier);
+                        }
+                    }
+                    if (state->after && stage == state->stage
+                        && !stage->HasLocalLayer(stage->GetEditTarget().GetLayer()))
+                        stage->SetEditTarget(stage->GetRootLayer());
+                }
+                if (!error.isEmpty())
+                    session->notifyStatus(Session::Notify::Status::Warning, error);
+            },
+            [state](Session* session) {
+                if (!session || !state->after)
+                    return;
+                WRITE_LOCKER(locker, session->stageLock(), "stageLock");
+                const auto stage = session->stageUnsafe();
+                if (stage != state->stage || !state->layer->PermissionToEdit())
+                    return;
+                state->layer->TransferContent(state->before);
+                if (stage->HasLocalLayer(state->editTarget.GetLayer()))
+                    stage->SetEditTarget(state->editTarget);
+            });
+    }
 }  // namespace
+
+Command
+updateLayers(const QStringList& layerIdentifiers)
+{
+    return layerBatch(layerIdentifiers, updateLayer, true);
+}
 
 Command
 addSublayer(const QString& filename)
@@ -378,6 +506,7 @@ setLayerPermissionToEdit(const QString& layerIdentifier, bool editable)
                 return;
 
             bool success = false;
+            SdfLayerHandle changedLayer;
             {
                 WRITE_LOCKER(locker, session->stageLock(), "stageLock");
                 const UsdStageRefPtr stage = session->stageUnsafe();
@@ -389,10 +518,14 @@ setLayerPermissionToEdit(const QString& layerIdentifier, bool editable)
                         state->previousEditable = layer->PermissionToEdit();
                         state->captured = true;
                     }
+                    if (layer->PermissionToEdit() != editable)
+                        changedLayer = layer;
                     layer->SetPermissionToEdit(editable);
                     success = layer->PermissionToEdit() == editable;
                 }
             }
+            if (success && changedLayer)
+                session->notifyLayerPermissionChanged(changedLayer);
             session->notifyStatus(success ? Session::Notify::Status::Success : Session::Notify::Status::Warning,
                                   success
                                       ? (editable ? QStringLiteral("Layer unlocked") : QStringLiteral("Layer locked"))
@@ -403,19 +536,44 @@ setLayerPermissionToEdit(const QString& layerIdentifier, bool editable)
                 return;
 
             bool success = false;
+            bool changed = false;
             {
                 WRITE_LOCKER(locker, session->stageLock(), "stageLock");
                 const UsdStageRefPtr stage = session->stageUnsafe();
                 if (stage && stage->GetRootLayer() != state->layer
                     && (stage->HasLocalLayer(state->layer) || stage->IsLayerMuted(state->layer->GetIdentifier()))) {
+                    changed = state->layer->PermissionToEdit() != state->previousEditable;
                     state->layer->SetPermissionToEdit(state->previousEditable);
                     success = state->layer->PermissionToEdit() == state->previousEditable;
                 }
             }
+            if (success && changed)
+                session->notifyLayerPermissionChanged(state->layer);
             session->notifyStatus(success ? Session::Notify::Status::Success : Session::Notify::Status::Warning,
                                   success ? QStringLiteral("Layer permission restored")
                                           : QStringLiteral("Could not restore layer permission"));
         });
+}
+
+Command
+removeLayers(const QStringList& identifiers)
+{
+    return layerBatch(
+        identifiers, [](const QString& id) { return removeLayer(id); }, true);
+}
+
+Command
+setLayersMuted(const QStringList& identifiers, bool muted)
+{
+    return layerBatch(
+        identifiers, [muted](const QString& id) { return setLayerMuted(id, muted); }, muted);
+}
+
+Command
+setLayersPermissionToEdit(const QStringList& identifiers, bool editable)
+{
+    return layerBatch(
+        identifiers, [editable](const QString& id) { return setLayerPermissionToEdit(id, editable); }, true);
 }
 
 Command

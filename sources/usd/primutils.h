@@ -97,8 +97,8 @@ namespace stage {
      * @brief Resolves a selected prim to the prim that should receive a transform edit.
      *
      * Instance proxy prims resolve to their nearest transform-editable instance
-     * ancestor. Shared source contents resolve to their reference roots;
-     * other ordinary transformable prims resolve to themselves.
+     * ancestor. Ordinary transformable prims, including editable source children,
+     * resolve to themselves.
      *
      * @param stage Stage containing the prim.
      * @param path Prim or property path selected by the user.
@@ -110,8 +110,10 @@ namespace stage {
     /**
      * @brief Resolves selected paths to unique transform targets.
      *
-     * Proxy selections resolve to their owning instances, and shared source
-     * contents resolve to their reference roots. Duplicate targets
+     * Proxy selections resolve to their owning instances. Ordinary source
+     * children keep their own targets unless a dependent instance is also
+     * selected; that mixed selection resolves source contents to their reference
+     * roots to avoid applying shared transforms twice. Duplicate targets
      * are removed. Descendants covered by a selected ancestor are removed
      * when minimalRoots is true.
      *

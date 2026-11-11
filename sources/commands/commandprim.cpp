@@ -1145,6 +1145,128 @@ instancePaths(const QList<SdfPath>& inPaths)
         });
 }
 
+Command
+makeEditablePaths(const QList<SdfPath>& paths)
+{
+    struct State {
+        struct Item {
+            SdfPath path;
+            SdfPath specPath;
+            bool hadValue = false;
+            VtValue value;
+            QList<SdfPath> createdSpecs;
+        };
+        SdfLayerRefPtr layer;
+        QList<Item> items;
+    };
+    const auto state = std::make_shared<State>();
+    const auto restore = [](const SdfLayerHandle& layer, const State::Item& item) {
+        if (item.hadValue)
+            layer->SetField(item.specPath, SdfFieldKeys->Instanceable, item.value);
+        else if (layer->GetPrimAtPath(item.specPath))
+            layer->EraseField(item.specPath, SdfFieldKeys->Instanceable);
+        for (const SdfPath& path : item.createdSpecs) {
+            const auto spec = layer->GetPrimAtPath(path);
+            if (spec && spec->IsInert())
+                stage::removePrimSpec(layer, path);
+        }
+    };
+    return Command(
+        [paths, state, restore](Session* session) {
+            if (!session || paths.isEmpty())
+                return;
+            command::beginDeferred(session, "Make editable", 1);
+            command::runWorker([paths, state, restore, session]() {
+                QList<SdfPath> changed;
+                QStringList errors;
+                {
+                    WRITE_LOCKER(locker, session->stageLock(), "stageLock");
+                    const auto stage = session->stageUnsafe();
+                    QString error;
+                    state->items.clear();
+                    state->layer = currentEditLayer(stage, error);
+                    if (!state->layer)
+                        errors.append(error);
+                    else if (!state->layer->PermissionToEdit())
+                        errors.append("edit layer is locked");
+                    else {
+                        QList<SdfPath> roots;
+                        path::PathCollector collector(roots);
+                        for (const SdfPath& path : paths) {
+                            auto prim = stage->GetPrimAtPath(path.IsPropertyPath() ? path.GetPrimPath() : path);
+                            while (prim && prim.IsInstanceProxy())
+                                prim = prim.GetParent();
+                            if (prim && prim.IsInstance() && !prim.IsInPrototype())
+                                collector.append(prim.GetPath());
+                            else
+                                errors.append(QString("not an editable instance: %1").arg(pathText(path)));
+                        }
+                        // Resolve all proxy paths before the first instance changes composition.
+                        for (const SdfPath& root : roots) {
+                            State::Item item;
+                            item.path = root;
+                            item.specPath = stage->GetEditTarget().MapToSpecPath(root);
+                            if (item.specPath.IsEmpty()) {
+                                errors.append(QString("unmappable instance: %1").arg(pathText(root)));
+                                continue;
+                            }
+                            item.hadValue = state->layer->HasField(item.specPath, SdfFieldKeys->Instanceable);
+                            if (item.hadValue)
+                                item.value = state->layer->GetField(item.specPath, SdfFieldKeys->Instanceable);
+                            for (SdfPath path = item.specPath; path.IsPrimPath(); path = path.GetParentPath()) {
+                                if (!state->layer->GetPrimAtPath(path))
+                                    item.createdSpecs.append(path);
+                            }
+                            const auto prim = stage->GetPrimAtPath(root);
+                            if (!prim.SetInstanceable(false) || prim.IsInstance()) {
+                                restore(state->layer, item);
+                                errors.append(QString("edit target cannot disable instancing: %1").arg(pathText(root)));
+                                continue;
+                            }
+                            state->items.append(item);
+                            changed.append(root);
+                        }
+                    }
+                }
+                const bool success = !changed.isEmpty();
+                const QString error = summarizeErrors(errors);
+                command::queueToSession(session, [session, changed, success, error]() {
+                    command::finishDeferred(session,
+                                            error.isEmpty() ? QStringLiteral("Instances made editable")
+                                                            : appendError("Make editable", error),
+                                            changed,
+                                            success ? Session::Notify::Status::Success
+                                                    : Session::Notify::Status::Error);
+                });
+            });
+        },
+        [state, restore](Session* session) {
+            if (!session || state->items.isEmpty())
+                return;
+            command::beginDeferred(session, "Undo make editable", 1);
+            command::runWorker([state, restore, session]() {
+                QList<SdfPath> changed;
+                bool success = false;
+                {
+                    WRITE_LOCKER(locker, session->stageLock(), "stageLock");
+                    if (session->stageUnsafe() && state->layer && state->layer->PermissionToEdit()) {
+                        for (auto it = state->items.crbegin(); it != state->items.crend(); ++it) {
+                            restore(state->layer, *it);
+                            changed.append(it->path);
+                        }
+                        success = true;
+                    }
+                }
+                command::queueToSession(session, [session, changed, success]() {
+                    command::finishDeferred(session, success ? "Make editable undone" : "Undo make editable failed",
+                                            changed,
+                                            success ? Session::Notify::Status::Success
+                                                    : Session::Notify::Status::Error);
+                });
+            });
+        });
+}
+
 namespace {
     GfVec3f stageAlignedPoint(const UsdStageRefPtr& stage, const GfVec3f& point)
     {
@@ -1984,7 +2106,8 @@ newXformPath(const SdfPath& parentPath, const QString& nameInput, bool selectCre
                     else {
                         const QList<SdfPath> selection = path::minimalRootPaths(state->previousSelection);
 
-                        if (selection.size() > 1)
+                        if (selection.size() > 1
+                            || (selection.size() == 1 && selection.first().GetParentPath() == parentPath))
                             movePaths = selection;
 
                         QString editError;

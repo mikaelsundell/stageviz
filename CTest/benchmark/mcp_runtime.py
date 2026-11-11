@@ -1,17 +1,19 @@
 # SPDX-License-Identifier: BSD-3-Clause
-"""External control of disposable macOS Stageviz benchmark processes."""
+"""External control of disposable Stageviz test and benchmark processes."""
 import hashlib
 import json
 import os
 import re
 from pathlib import Path
 import socket
+import sys
+from urllib.parse import urlparse
 import subprocess
 import threading
 import time
 import urllib.request
 
-_MACOS_BOOTSTRAP = r'''import ctypes,stageviz,shiboken6
+_MACOS_BOOTSTRAP = r'''import ctypes,stageviz
 # Keep this finite user-requested benchmark from being background-throttled.
 # NSActivityUserInitiatedAllowingIdleSystemSleep, from NSProcessInfo.h.
 objc=ctypes.CDLL('/usr/lib/libobjc.A.dylib')
@@ -34,22 +36,42 @@ def endActivity():
         objc.objc_release(stageviz._scaleActivity)
         stageviz._scaleActivity=None
 stageviz._scaleEndActivity=endActivity
-from PySide6.QtCore import QObject
-from PySide6.QtNetwork import QTcpServer,QHostAddress
-class AppWrapper(ctypes.Structure):
-    _fields_=[('refcount',ctypes.c_ssize_t),('type',ctypes.c_void_p),('application',ctypes.c_void_p)]
-wrapper=stageviz.application()
-accessor=ctypes.CDLL(None)._ZNK8stageviz11Application9mcpServerEv
-accessor.argtypes=[ctypes.c_void_p];accessor.restype=ctypes.c_void_p
-obj=shiboken6.wrapInstance(accessor(AppWrapper.from_address(id(wrapper)).application),QObject)
-listeners=obj.findChildren(QTcpServer)
-assert len(listeners)==1 and listeners[0].listen(QHostAddress(QHostAddress.SpecialAddress.LocalHost),__PORT__)
 '''
 
 
 def macos_bootstrap(port):
     """Reuse the isolated native MCP listener and finite macOS activity scope."""
-    return _MACOS_BOOTSTRAP.replace('__PORT__', str(port))
+    return _MACOS_BOOTSTRAP + '\nimport os,stageviz\nos.environ[\"STAGEVIZ_TEST_MCP_PORT\"]=%r\nstageviz.startMcpServer()\n' % str(port)
+
+
+def windows_rss(pid):
+    """Return the owned Windows process's working set in MiB."""
+    import ctypes
+    from ctypes import wintypes
+
+    class Counters(ctypes.Structure):
+        _fields_ = [('cb', wintypes.DWORD), ('faults', wintypes.DWORD)] + [
+            (name, ctypes.c_size_t) for name in (
+                'peak_working_set', 'working_set', 'peak_paged_pool', 'paged_pool',
+                'peak_nonpaged_pool', 'nonpaged_pool', 'pagefile', 'peak_pagefile')]
+    kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+    psapi = ctypes.WinDLL('psapi', use_last_error=True)
+    kernel.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    kernel.OpenProcess.restype = wintypes.HANDLE
+    kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+    psapi.GetProcessMemoryInfo.argtypes = [wintypes.HANDLE, ctypes.POINTER(Counters), wintypes.DWORD]
+    psapi.GetProcessMemoryInfo.restype = wintypes.BOOL
+    handle = kernel.OpenProcess(0x0400 | 0x0010, False, pid)
+    if not handle:
+        raise ctypes.WinError(ctypes.get_last_error())
+    try:
+        counters = Counters()
+        counters.cb = ctypes.sizeof(counters)
+        if not psapi.GetProcessMemoryInfo(handle, ctypes.byref(counters), counters.cb):
+            raise ctypes.WinError(ctypes.get_last_error())
+        return counters.working_set / (1024 * 1024)
+    finally:
+        kernel.CloseHandle(handle)
 
 
 class DisposableStageviz:
@@ -66,7 +88,7 @@ class DisposableStageviz:
     def rpc(self, method, params, timeout=900):
         request = urllib.request.Request('http://127.0.0.1:%d/mcp' % self.port,
             json.dumps(dict(jsonrpc='2.0', id=1, method=method, params=params)).encode(),
-            {'Content-Type': 'application/json', 'Host': '127.0.0.1:37651'})
+            {'Content-Type': 'application/json', 'Host': '127.0.0.1:%d' % self.port})
         with urllib.request.urlopen(request, timeout=timeout) as response:
             result = json.load(response)
         assert 'error' not in result, result
@@ -92,12 +114,21 @@ class DisposableStageviz:
             while not self.stop.wait(1):
                 if self.process.poll() is not None:
                     return
-                fields = subprocess.check_output(['ps', '-o', 'rss=,%cpu=', '-p', str(self.process.pid)], text=True).split()
-                if len(fields) < 2:
-                    continue
-                rss = float(fields[0]) / 1024
-                row=dict(wall_ms=time.time()*1000,rss_mib=rss,cpu_percent=float(fields[1]))
-                if time.monotonic()-pressure_at>=10:
+                try:
+                    if sys.platform == 'win32':
+                        rss, cpu = windows_rss(self.process.pid), None
+                    else:
+                        fields = subprocess.check_output(['ps', '-o', 'rss=,%cpu=', '-p', str(self.process.pid)], text=True).split()
+                        if len(fields) < 2:
+                            continue
+                        rss, cpu = float(fields[0]) / 1024, float(fields[1])
+                except Exception as error:
+                    if self.process.poll() is None:
+                        self.watchdog_error = 'Resource monitor failed: %s' % error
+                        self.process.terminate()
+                    return
+                row=dict(wall_ms=time.time()*1000,rss_mib=rss,cpu_percent=cpu)
+                if sys.platform == 'darwin' and time.monotonic()-pressure_at>=10:
                     row['swap_usage']=subprocess.check_output(['sysctl','-n','vm.swapusage'],text=True).strip()
                     match=re.search(r'used = ([0-9.]+)([MGK])',row['swap_usage'])
                     if match:row['system_swap_used_mib']=float(match[1])*{'M':1,'G':1024,'K':1/1024}[match[2]]
@@ -111,30 +142,52 @@ class DisposableStageviz:
                     return
 
     def __enter__(self):
-        with socket.socket() as probe:
-            assert probe.connect_ex(('127.0.0.1', self.port)) != 0, 'Dedicated MCP port is occupied'
+        if self.port:
+            with socket.socket() as probe:
+                assert probe.connect_ex(('127.0.0.1', self.port)) != 0, 'Dedicated MCP port is occupied'
         bootstrap = self.output / 'mcp-start.py'
-        bootstrap.write_text(macos_bootstrap(self.port))
+        # The native app isolates settings before constructing its UI.
+        settings_directory = self.output / 'settings'
+        settings_directory.mkdir()
+        endpoint = self.output / 'endpoint.json'
+        activity = _MACOS_BOOTSTRAP if sys.platform == 'darwin' else ''
+        bootstrap.write_text(activity + '\nimport json,os,stageviz\nfrom pathlib import Path\n'
+            + 'from PySide6.QtCore import QSettings\n'
+            + 'test_settings=Path(os.environ["STAGEVIZ_TEST_SETTINGS_DIR"]).resolve()\n'
+            + 'assert QSettings.defaultFormat()==QSettings.Format.IniFormat, "Rebuild Stageviz for isolated test settings"\n'
+            + 'assert test_settings in Path(QSettings(QSettings.defaultFormat(),QSettings.Scope.UserScope,"StagevizTest","probe").fileName()).resolve().parents, "Test settings are not isolated"\n'
+            + 'Path(%r).write_text(json.dumps({\"url\":stageviz.startMcpServer()}))\n' % str(endpoint), encoding='utf-8')
         env = dict(os.environ)
         env.update(self.environment)
-        env['DYLD_IMAGE_SUFFIX'] = '_debug'
+        if sys.platform == 'darwin':
+            env['DYLD_IMAGE_SUFFIX'] = '_debug'
+        env['STAGEVIZ_TEST_MCP_PORT'] = str(self.port)
+        env['STAGEVIZ_TEST_SETTINGS_DIR'] = str(settings_directory)
         self.log = (self.output / 'app.log').open('w')
-        self.process = subprocess.Popen([str(self.app), '--execute', 'exec(open(%r).read())' % str(bootstrap)], env=env, stdout=self.log, stderr=subprocess.STDOUT)
+        self.process = subprocess.Popen([str(self.app), '--execute', 'exec(open(%r, encoding="utf-8").read())' % str(bootstrap)], env=env, stdout=self.log, stderr=subprocess.STDOUT)
         self.watcher = threading.Thread(target=self._watch, daemon=True)
         self.watcher.start()
-        (self.output / 'provenance.json').write_text(json.dumps(dict(app=str(self.app), app_sha256=hashlib.sha256(self.app.read_bytes()).hexdigest(), pid=self.process.pid, environment=self.environment, activity='NSActivityUserInitiatedAllowingIdleSystemSleep', port=self.port), indent=2))
+        (self.output / 'provenance.json').write_text(json.dumps(dict(app=str(self.app), app_sha256=hashlib.sha256(self.app.read_bytes()).hexdigest(), pid=self.process.pid, environment=self.environment, activity='NSActivityUserInitiatedAllowingIdleSystemSleep' if sys.platform == 'darwin' else None, port=self.port), indent=2))
         deadline = time.monotonic() + 90
         try:
             while True:
                 try:
+                    if not endpoint.is_file():
+                        raise RuntimeError('Waiting for public MCP startup')
+                    url = urlparse(json.loads(endpoint.read_text(encoding='utf-8'))['url'])
+                    assert url.hostname == '127.0.0.1' and url.port, 'Unexpected disposable MCP endpoint'
+                    self.port = url.port
                     tools = self.rpc('tools/list', {}, timeout=2)
                     (self.output / 'tools.json').write_text(json.dumps(tools, indent=2))
+                    provenance = json.loads((self.output / 'provenance.json').read_text())
+                    provenance['port'] = self.port
+                    (self.output / 'provenance.json').write_text(json.dumps(provenance, indent=2))
                     return self
                 except Exception:
                     assert self.process.poll() is None and time.monotonic() < deadline, 'Disposable app failed to start'
                     time.sleep(.25)
         except BaseException:
-            self.__exit__(None, None, None)
+            self.__exit__(*sys.exc_info())
             raise
 
     def __exit__(self, *args):
@@ -152,3 +205,8 @@ class DisposableStageviz:
         self.log.close()
         outcome['cleanup_returncode'] = self.process.returncode
         (self.output / 'process-outcome.json').write_text(json.dumps(outcome, indent=2))
+        if not args or args[0] is None:
+            if self.watchdog_error:
+                raise RuntimeError(self.watchdog_error)
+            if outcome['before_cleanup_returncode'] is not None:
+                raise RuntimeError('Disposable app exited before cleanup: %s' % outcome['before_cleanup_returncode'])

@@ -1,5 +1,196 @@
 # Native regression tests
 
+## Run all tests
+
+After configuring/building a development checkout with `build_app`, run:
+
+```sh
+./test_app.sh debug
+./test_app.sh release
+./test_app.sh all
+```
+
+On Windows, use `test_app.bat Debug`, `test_app.bat Release`, or
+`test_app.bat All`. Both entry points use the same Python 3 controller and
+incrementally build `stageviz` and `stageviz_tests` before running **every
+registered CTest and every embedded Python suite**. Native/GUI tests run
+serially, followed by isolated application processes controlled through MCP.
+The embedded API performance checks and UI large-tree checks are included.
+Manual benchmark comparisons requiring supplied datasets are separate tools.
+A graphical desktop and working viewport renderer are required; GUI checks
+show disposable application windows. Runtime dependencies must be available
+as they are when launching the development app normally.
+
+`--list` lists embedded suites, `--no-build` uses current binaries, and
+`--output PATH` chooses a new results directory. `--build-dir PATH`, `--app PATH`
+and `--cmake PATH` support custom single-configuration builds. Examples:
+
+```sh
+./test_app.sh debug --no-build
+./test_app.sh debug --output /absolute/path/new-results
+```
+
+The default output is `build.test-results/<run>/`, containing an overall
+`summary.json`, build/CTest/Python logs, native `ctest.xml`, per-suite summaries,
+MCP oracles, resource samples and screenshot paths. Test failures return a
+nonzero exit status. Python suites still run after CTest failures; build failures
+stop that configuration to avoid testing stale binaries. API timing baselines
+are kept per configuration under the build's `test-baselines/` directory.
+
+The disposable runner starts the public native MCP server on a free loopback
+port and never connects to the user's app. Test settings use fresh per-process
+INI storage before app initialization. `STAGEVIZ_TEST_SETTINGS_DIR` and
+`STAGEVIZ_TEST_MCP_PORT` are set by the controller; port `0` requests a free port.
+The macOS environment includes `DYLD_IMAGE_SUFFIX=_debug` for build and run.
+Windows resource monitoring uses the native process API; macOS additionally
+records system memory pressure and holds a finite App Nap activity scope.
+
+`stageviz.test_app_runner` tests discovery, paths with spaces, configuration
+selection and failure propagation. `stageviz.gui.mcp_server_api` checks native
+tools discovery on an ephemeral port and rejection of invalid Host/Origin
+headers and invalid port settings.
+
+`stageviz.clang_format_scope` uses disposable Git repositories to check formatting
+scope: committed branch edits, staged/unstaged changes, new files, renames,
+deletions, spaces in paths and a diverged base. Unchanged and ignored files are
+excluded, and a clean branch never invokes the formatter.
+
+## Regression coverage
+
+The native Layer Editor multi-selection case runs with Qt's offscreen backend
+so desktop focus changes cannot cancel its synthetic context-menu interaction.
+It still checks selection preservation, batch lock/mute actions and undo. The
+MCP `testlayermultiselection` suite checks the visible desktop dialog separately.
+
+`session_layer_state_api` and the `testpreservestate` layer-controls phase cover
+lock/mute/edit-target companion-state round trips, permission undo/redo, dirty
+tracking, unchanged USD files, legacy state files and invalid lock data. Locked
+layers remain retained while muted, and the Layer Editor refreshes its mute and
+lock icons after restoration. Missing, muted or locked edit targets fall back
+to the root layer.
+
+Save summaries show expanded layer hierarchy, including clean ancestors needed
+to locate nested edits. Location cells show filenames and retain full paths in
+tooltips and Reveal context actions. State without a filename uses No filename
+and Choose filename on save. GUI and MCP cases cover hierarchy, clean read-only
+ancestors, basename presentation and the Reveal action's full-path target.
+Save state precedes layer saves in the File menu, stays visible while Preserve
+state is off, and is disabled then. Layer context menus separate edit-target
+selection from saving.
+
+The changes dialog uses a compact default size, a filling Status column and
+interactive resizing on all five headers. Companion entries are labeled State.
+The native state and GUI menu regressions and `testpreservestate.py` verify that
+camera-only changes on a pristine Untitled stage neither dirty state nor prompt
+on New; authoring content or loading a file establishes normal state tracking.
+The close-stage statistics fixture disables Remember state so its rendering
+checks remain noninteractive; state-save prompts have dedicated coverage.
+
+`session_layer_update_api` checks selected file-backed layer updates, dirty
+content restoration, deterministic redo, parent/child batches, edit-target
+fallback/restoration, and preservation of unselected layers. The Layer Editor
+places Update layer(s) below Save layer(s), disabling it for anonymous, locked,
+or muted layers. `testlayerupdate.py` checks the menu actions, batch undo/redo,
+external disk edits, unselected sublayers, and unchanged camera state via MCP.
+
+`viewport_components_api` verifies that all nine tessellated gizmo meshes are
+explicitly polygonal, rather than inheriting USD's Catmull-Clark fallback.
+`testgizmostability.py` keeps Rotate active while creating a sphere and plane,
+opens the Material Editor, and orbits through multiple camera revolutions and
+distances, including repeated left/right sweeps through an edge-on red ring.
+It checks unchanged handle topology, finite transforms, selection,
+and rendered color bounds to detect spikes that only occur on the GPU. The
+external MCP regression controller records independent stage/selection evidence.
+
+The Outliner composition marker uses one strip per colored layer with a prim
+spec, ordered left to right from weaker to stronger opinions. The identifiers
+are cached lazily per row and reset by the existing prim invalidation path;
+color changes use session state without rebuilding the USD stack. Repeated specs
+from one layer contribute one strip. `outliner_layer_colors_api` checks selected
+row pixels, adding/resetting overrides, undo, duplicate layers, cached rereads,
+and clearing one layer color while retaining other contributors.
+
+`make_editable_instance_api` checks disabling instancing in place on an instance
+or proxy selection, including generated undefined prototype sources and weaker
+composed instances. Children accept independent transform overrides while other
+instances and placements remain fixed. Exact undo/redo preserves references,
+selection, prior metadata, inert specs and the captured edit layer. Locked and
+ineffective weaker edit targets leave no edits behind.
+`testmakeeditable.py` exercises the public command and both root/proxy context
+menus through MCP. It verifies Make editable / divider / Source ordering,
+locked-layer availability, independent child movement, retained references and
+selection, exact undo/redo, and captured menu/viewer presentation.
+
+`export_subset_metadata` verifies that subset exports clear an omitted default
+prim, filter stale root-order names, preserve surviving order and unrelated stage
+metadata, and retain native instances without adding their original source
+objects. Cleanup affects only the exported layer; the source remains unchanged.
+
+`transform_source_child_api` verifies that moving, rotating, or scaling an
+ordinary source child keeps its siblings and source/instance roots fixed while
+the corresponding instance child inherits the shared edit. It checks resolved
+gizmo targets, preview, exact undo, redo, and preservation of native instancing.
+Mixed source/proxy selections retain their group transform handling.
+`testsourcechild.py` checks the same behavior through public Python transforms
+and a real Move gizmo drag, including gizmo placement, session selection,
+unchanged siblings, corresponding proxy changes, exact undo/redo, and screenshots.
+
+`render_primitive_selection_api` renders cone, cube, sphere, cylinder, and capsule
+selection outlines through the viewport GL path. Selecting each primitive's
+Xform parent must produce the same visible outline as selecting it directly.
+Selection classification uses Hydra's complete renderable-primitive token
+registry, covering implicit surfaces, meshes, curves, points, and volumes.
+
+`export_instances` checks subset exports containing an ordinary prim together
+with a native instance root or proxy child. Reopened files retain instance
+geometry and bound material dependencies without exporting the source library
+as a scene object. Export-visible traversal includes proxy geometry and prunes
+invisible proxy branches.
+`testexportinstances.py` exercises selected instance roots and proxy children
+through the Python Session API, reopens the files in the live viewer, and records
+Qt snapshots alongside external MCP prim inspection.
+
+`outliner_empty_group_checkbox_api` checks mixed parent state when muting a layer
+empties an Xform, with cached rereads, load/unload, group insertion, parent moves,
+and undo/redo. Ordinary geometry-only branches remain excluded from payload
+aggregation. The embedded payload hierarchy checks count empty Xform/Scope rows
+as unchecked, including intentional empty groups. `testpayloadindicator.py`
+reproduces layer muting and namespace changes through the public command bindings
+with Qt state, screenshots, repeated cached reads, and undo/redo.
+
+`property_reveal_file_api` checks platform reveal actions for payloads and
+references authored with sublayer-relative paths, resolved asset attributes,
+strongest-layer and stage filenames. Missing files and USD prim paths have no
+reveal action. The test checks menu targets without launching a file browser.
+
+`session_layer_colors_api` checks session-only layer colors, clear/restore, root
+and sublayer Save As, and state round trips without USD color authoring.
+`outliner_layer_colors_api` checks strongest-spec ownership, actual strip pixels,
+selection, override/reset and undo, and clearing colors. It also checks matching
+strips on selected root and sublayer rows in the Layer Editor. `testlayercolors.py`
+checks Color and Clear Color availability in the Layer Editor context menu,
+restores and saves color state, checks selected-row pixels, and captures viewer/Qt
+snapshots. Native OS color panels are not automated.
+
+`outliner_edit_layer_font_api` checks italics for prims absent from the active
+edit layer, payload contents, refresh on edit-layer switches, and override
+authoring/reset with undo/redo. The pseudo-root keeps its normal font.
+
+`outliner_defined_prims_api` checks that flattened prototype roots and other
+undefined prims stay hidden, including after definition changes. Defined untyped
+groups, inactive prims, unloaded payloads, instances and proxies remain visible.
+
+`new_xform_grouping_api` checks grouping a single selected prim, redundant
+descendant selections, placement under transformed parents, selection and
+undo/redo, plus explicit empty-child creation. The embedded `testapi.py` suite
+also checks single-selection grouping through `new_xform`.
+`testxformgrouping.py` drives Xform > New and Xform > Parent in the real Edit
+and Outliner context menus with single and multiple selections. It checks empty
+creation versus grouping, Parent enabled state, shortcut ownership, hierarchy,
+selection, undo/redo and Qt snapshots in a disposable viewer. It also verifies
+that Edit and Create own distinct Xform submenus sharing the same actions, with
+no shared submenu attachments or cycles in the Xform menu graph.
+
 The standalone `stageviz.python_documentation` case compares the reference with
 the CPython registrations by owning surface, argument count and keyword names,
 checks the keyword-support table, all module constants and UI enum members, and
@@ -320,3 +511,50 @@ stale ordinary-geometry checkbox state after root undo and command-driven update
 `stageviz.gui.outliner_payload_queued_checkbox_api` checks that the last request
 wins within a queued click batch, cancelled batches add no undo command, and stage
 replacement cancels the previous stage's pending checkbox timer.
+
+Outliner Reset shows All followed by the property-opinion groups actually authored
+in the active edit layer. `reset_opinion_groups_api` covers all eight groups,
+recursive and overlapping selections, definition preservation, locked layers and
+exact undo after an edit-target switch, and mapped variant targets.
+`outliner_reset_opinions_menu_api` checks the offscreen menu labels, divider,
+available groups and locked-layer state. `testresetopinions.py` checks the live
+menu, grouped and All commands, undo/redo, retained metadata and source-layer
+isolation through a disposable MCP viewer. Discovery visits authored edit-layer
+specs rather than traversing the entire composed payload hierarchy.
+
+Layer Editor multi-selection is covered by `session_layer_batch_api` (nested
+layer removal, retained handles, mixed mute/permission states and one-step
+undo/redo), `layer_tree_multi_selection_api` (selection retention and batch
+context actions), and `testlayermultiselection.py` through disposable MCP.
+Batch remove/mute/permission operations share the single-layer command rules.
+
+`session_state_dirty_api` checks camera/view dirtiness with coalesced notifications,
+state-only writes without USD changes, failed writes, orthographic scale and AO,
+payload-rule round trips, root pairing with an active sublayer, copy isolation,
+and preservation disabled. The live `testpreservestate.py` suite checks Save state
+menu availability, title dirtiness, restoration and Save/Don't Save/Cancel paths
+through an external disposable MCP controller.
+
+With Remember state enabled, companion state is paired with the root USD
+filename, not the active edit layer. File > Save state writes only that sidecar;
+ordinary Save handles state-only documents and saves pending state alongside
+the active layer. Save/Don't Save/Cancel tests cover New, Reload and Close,
+including a failed companion write preventing document replacement.
+`preserve_state_menu_api` checks the save menu, root title dirty marker and
+state-only Cancel behavior without requiring manual dialog confirmation.
+
+The disposable controller compares the state suite's filename, selection and
+payload checkpoints against independent MCP queries. Anonymous-root Save/Cancel
+and color-dialog tests use Qt's non-native backend only inside their disposable
+process; production still uses system dialogs. These tests do not claim visual
+coverage of the native OS file picker. Runtime preferences are redirected to
+disposable INI storage before startup so testing does not change another running
+Stageviz session's preferences.
+
+The dedicated Changes dialog summarizes root layers, modified sublayers and root
+companion state in a five-column, scrollable table. `changes_dialog_api` checks
+rows, headers, full-path tooltips, explicit Save all/Don't save/Cancel, Escape,
+blocked entries and a 1,000-row list. `testchangesdialog.py` verifies the actual
+Viewer flow for anonymous roots with multiple dirty sublayers, one save decision
+before choosing the root filename, read-only/anonymous/session-layer entries,
+discard and cancel. `testpreservestate.py` checks the state-only and mixed tables.

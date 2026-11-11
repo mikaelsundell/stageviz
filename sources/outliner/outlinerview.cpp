@@ -37,6 +37,7 @@ public Q_SLOTS:
     void expand();
     void follow(bool enabled);
     void filterChanged(const QString& filter);
+    void colorsChanged();
     void editLayerChanged(SdfLayerHandle layer);
     void maskChanged(const QList<SdfPath>& paths);
     void primsChanged(const NoticeBatch& batch);
@@ -89,6 +90,7 @@ OutlinerViewPrivate::init()
     connect(d.ui->expand, &QToolButton::clicked, this, &OutlinerViewPrivate::expand);
     connect(d.ui->follow, &QToolButton::toggled, this, &OutlinerViewPrivate::follow);
     connect(d.ui->depth, &QSlider::valueChanged, this, &OutlinerViewPrivate::depthChanged);
+    connect(session(), &Session::colorsChanged, this, &OutlinerViewPrivate::colorsChanged);
     connect(session(), &Session::editLayerChanged, this, &OutlinerViewPrivate::editLayerChanged);
     connect(session(), &Session::maskChanged, this, &OutlinerViewPrivate::maskChanged);
     connect(session(), &Session::primsChanged, this, &OutlinerViewPrivate::primsChanged);
@@ -101,6 +103,7 @@ OutlinerViewPrivate::outlinerTree()
 {
     return d.ui->outlinerTree;
 }
+
 bool
 OutlinerViewPrivate::eventFilter(QObject* obj, QEvent* event)
 {
@@ -174,6 +177,12 @@ OutlinerViewPrivate::filterChanged(const QString& filter)
 {
     outlinerTree()->setFilter(filter);
     d.ui->clear->setEnabled(!filter.isEmpty());
+}
+
+void
+OutlinerViewPrivate::colorsChanged()
+{
+    outlinerTree()->viewport()->update();
 }
 
 void

@@ -10,6 +10,7 @@
 #include <pxr/base/vt/value.h>
 #include <pxr/usd/sdf/path.h>
 #include <pxr/usd/sdf/types.h>
+#include <pxr/usd/usd/stage.h>
 
 PXR_NAMESPACE_USING_DIRECTIVE
 
@@ -143,6 +144,21 @@ Command
 resetAttributeOverrides(const QList<SdfPath>& attributePaths);
 
 /**
+ * @brief Property-opinion groups available in the Outliner Reset menu.
+ */
+enum class OverrideGroup { All, Transforms, Visibility, Materials, Geometry, Primvars, Lights, Cameras, Other };
+
+/**
+ * @brief Finds resettable property groups authored in the current edit target.
+ *
+ * @param stage Composed stage to inspect.
+ * @param paths Selected hierarchy roots.
+ * @return Available groups, excluding All, in menu order.
+ */
+QList<OverrideGroup>
+resetOverrideGroups(const UsdStageRefPtr& stage, const QList<SdfPath>& paths);
+
+/**
  * @brief Creates a command that removes edit-layer property overrides from composed prims.
  *
  * The selected prims and their descendants are inspected recursively. Only
@@ -162,8 +178,9 @@ resetAttributeOverrides(const QList<SdfPath>& attributePaths);
  * Undo restores the removed edit-layer property specs exactly.
  *
  * @param paths Root prim paths of the hierarchies whose property overrides should be removed.
+ * @param group Property group to remove, or All for every property opinion.
  */
 Command
-resetOverrides(const QList<SdfPath>& paths);
+resetOverrides(const QList<SdfPath>& paths, OverrideGroup group = OverrideGroup::All);
 
 }  // namespace stageviz

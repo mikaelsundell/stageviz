@@ -20,6 +20,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QMetaEnum>
 #include <QMetaObject>
 #include <QMutex>
 #include <QMutexLocker>
@@ -29,6 +30,7 @@
 #include <QTemporaryDir>
 #include <algorithm>
 #include <atomic>
+#include <cmath>
 #include <pxr/base/tf/weakBase.h>
 #include <pxr/usd/sdf/copyUtils.h>
 #include <pxr/usd/sdf/fileFormat.h>
@@ -69,7 +71,9 @@ public:
     bool copyToFile(const QString& filename);
     bool flattenPathsToFile(const QList<SdfPath>& paths, const QString& filename);
     bool loadState(const QString& filename);
-    bool saveState(const QString& filename);
+    bool saveState(const QString& filename, bool markSaved = true, const QString& stageFilenameOverride = QString());
+    void markStateDirty();
+    void setStateDirty(bool dirty);
     bool close();
     bool reload();
     bool isLoaded() const;
@@ -108,6 +112,7 @@ public:
             init();
             d.stage = stage;
             if (stage) {
+                rememberLoadRules(stage->GetLoadRules());
                 const TfWeakPtr<StageWatcher> listener(this);
                 d.objectsKey = TfNotice::Register(listener, &StageWatcher::objectsChanged, stage);
                 d.layerMutingKey = TfNotice::Register(listener, &StageWatcher::layerMutingChanged, stage);
@@ -167,8 +172,17 @@ public:
                 batch.entries.append(entry);
             }
 
+            if (!notice.GetResyncedPaths().empty() && !d.parent->d.sessionStateDirty.load()) {
+                QMutexLocker locker(&d.loadRulesMutex);
+                if (senderStage->GetLoadRules() != d.savedLoadRules)
+                    d.parent->markStateDirty();
+            }
             if (batch.entries.isEmpty())
                 return;
+
+            if (!d.parent->d.stateTrackingBlocked.load() && d.parent->d.stateTrackingReady.load()
+                && (!notice.GetChangedInfoOnlyPaths().empty() || !notice.GetResyncedPaths().empty()))
+                d.parent->d.stateDocumentEstablished.store(true);
 
             bool queueDispatch = false;
             {
@@ -203,7 +217,7 @@ public:
                 unmuted.append(QString::fromStdString(identifier));
 
             if (!muted.isEmpty() || !unmuted.isEmpty())
-                d.parent->d.sessionStateDirty.store(true);
+                d.parent->markStateDirty();
 
             Session* session = d.parent->d.session;
             const UsdStageRefPtr sourceStage = sender;
@@ -215,6 +229,11 @@ public:
                 },
                 Qt::QueuedConnection);
         }
+        void rememberLoadRules(const UsdStageLoadRules& rules)
+        {
+            QMutexLocker locker(&d.loadRulesMutex);
+            d.savedLoadRules = rules;
+        }
         void blockSignals(bool block) { d.suppress.store(block); }
         bool signalsBlocked() const { return d.suppress.load(); }
         struct Data {
@@ -224,6 +243,8 @@ public:
             SessionPrivate* parent = nullptr;
             UsdStageRefPtr stage;
             QMutex pendingMutex;
+            QMutex loadRulesMutex;
+            UsdStageLoadRules savedLoadRules;
             NoticeBatch pending;
             bool dispatchQueued = false;
         };
@@ -246,6 +267,18 @@ public:
     private:
         StageWatcher* watcher = nullptr;
     };
+    class StateTrackingBlocker {
+    public:
+        explicit StateTrackingBlocker(std::atomic<bool>& flag)
+            : flag(flag)
+            , previous(flag.exchange(true))
+        {}
+        ~StateTrackingBlocker() { flag.store(previous); }
+
+    private:
+        std::atomic<bool>& flag;
+        bool previous;
+    };
     struct Data {
         UsdStageRefPtr stage;
         UsdStageRefPtr auxiliary;
@@ -261,6 +294,14 @@ public:
         size_t completedChanges = 0;
         std::atomic<bool> changeCancelled { false };
         std::atomic<bool> sessionStateDirty { false };
+        std::atomic<bool> stateTrackingBlocked { false };
+        std::atomic<bool> stateTrackingReady { false };
+        std::atomic<bool> stateDocumentEstablished { false };
+        std::atomic<quint64> stateRevision { 0 };
+        QHash<QString, QColor> stateColors;
+        // Muting releases the stage's layer references, but edit permissions
+        // live on the layer object and must survive until it is unmuted.
+        QHash<QString, SdfLayerRefPtr> stateLockedLayers;
         GfBBox3d bbox;
         std::atomic<bool> bboxDirty { true };
         QList<SdfPath> mask;
@@ -286,6 +327,61 @@ SessionPrivate::init()
     d.commandStack.reset(new CommandStack());
     d.selectionList.reset(new SelectionList());
     d.viewState.reset(new ViewState());
+    QObject::connect(d.viewState->camera(), &ViewCamera::cameraChanged, d.session, [this]() { markStateDirty(); });
+    QObject::connect(d.viewState.data(), &ViewState::backgroundColorChanged, d.session, [this]() { markStateDirty(); });
+    QObject::connect(d.viewState.data(), &ViewState::gridColorChanged, d.session, [this]() { markStateDirty(); });
+    QObject::connect(d.viewState.data(), &ViewState::gridEnabledChanged, d.session, [this]() { markStateDirty(); });
+    QObject::connect(d.viewState.data(), &ViewState::materialModeChanged, d.session, [this]() { markStateDirty(); });
+    QObject::connect(d.viewState.data(), &ViewState::overrideMaterialChanged, d.session,
+                     [this]() { markStateDirty(); });
+    QObject::connect(d.viewState.data(), &ViewState::defaultCameraLightEnabledChanged, d.session,
+                     [this]() { markStateDirty(); });
+    QObject::connect(d.viewState.data(), &ViewState::defaultDomeLightEnabledChanged, d.session,
+                     [this]() { markStateDirty(); });
+    QObject::connect(d.viewState.data(), &ViewState::domeLightTextureChanged, d.session,
+                     [this]() { markStateDirty(); });
+    QObject::connect(d.viewState.data(), &ViewState::domeLightCameraVisibilityChanged, d.session,
+                     [this]() { markStateDirty(); });
+    QObject::connect(d.viewState.data(), &ViewState::sceneLightsEnabledChanged, d.session,
+                     [this]() { markStateDirty(); });
+    QObject::connect(d.viewState.data(), &ViewState::sceneMaterialsEnabledChanged, d.session,
+                     [this]() { markStateDirty(); });
+    QObject::connect(d.viewState.data(), &ViewState::doubleSidedModeChanged, d.session, [this]() { markStateDirty(); });
+    QObject::connect(d.viewState.data(), &ViewState::renderModeChanged, d.session, [this]() { markStateDirty(); });
+    QObject::connect(d.viewState.data(), &ViewState::complexityLevelChanged, d.session, [this]() { markStateDirty(); });
+    QObject::connect(d.viewState.data(), &ViewState::rendererAovChanged, d.session, [this]() { markStateDirty(); });
+    QObject::connect(d.viewState.data(), &ViewState::sceneStatsEnabledChanged, d.session,
+                     [this]() { markStateDirty(); });
+    QObject::connect(d.viewState.data(), &ViewState::performanceStatsEnabledChanged, d.session,
+                     [this]() { markStateDirty(); });
+    QObject::connect(d.viewState.data(), &ViewState::cameraAxisEnabledChanged, d.session,
+                     [this]() { markStateDirty(); });
+    QObject::connect(d.viewState.data(), &ViewState::ambientOcclusionEnabledChanged, d.session,
+                     [this]() { markStateDirty(); });
+    QObject::connect(d.viewState.data(), &ViewState::ambientOcclusionContactAmountChanged, d.session,
+                     [this]() { markStateDirty(); });
+    QObject::connect(d.viewState.data(), &ViewState::ambientOcclusionContactRadiusChanged, d.session,
+                     [this]() { markStateDirty(); });
+    QObject::connect(d.viewState.data(), &ViewState::ambientOcclusionBroadAmountChanged, d.session,
+                     [this]() { markStateDirty(); });
+    QObject::connect(d.viewState.data(), &ViewState::ambientOcclusionBroadRadiusChanged, d.session,
+                     [this]() { markStateDirty(); });
+    QObject::connect(d.viewState.data(), &ViewState::ambientOcclusionNormalBiasChanged, d.session,
+                     [this]() { markStateDirty(); });
+    QObject::connect(d.viewState.data(), &ViewState::ambientOcclusionFalloffChanged, d.session,
+                     [this]() { markStateDirty(); });
+    QObject::connect(d.viewState.data(), &ViewState::ambientOcclusionContrastChanged, d.session,
+                     [this]() { markStateDirty(); });
+    QObject::connect(d.viewState.data(), &ViewState::ambientOcclusionEdgeSharpnessChanged, d.session,
+                     [this]() { markStateDirty(); });
+    QObject::connect(d.viewState.data(), &ViewState::ambientOcclusionBlurEnabledChanged, d.session,
+                     [this]() { markStateDirty(); });
+    QObject::connect(d.viewState.data(), &ViewState::ambientOcclusionBlurRadiusChanged, d.session,
+                     [this]() { markStateDirty(); });
+    QObject::connect(d.viewState.data(), &ViewState::ambientOcclusionQualityChanged, d.session,
+                     [this]() { markStateDirty(); });
+    QObject::connect(d.viewState.data(), &ViewState::ambientOcclusionDebugModeChanged, d.session,
+                     [this]() { markStateDirty(); });
     d.auxiliary = UsdStage::CreateInMemory("stageviz_auxiliary.usda");
 }
 
@@ -317,6 +413,7 @@ SessionPrivate::initStage()
         camera->resetView();
     }
     d.stageWatcher->watch(stage);
+    d.stateTrackingReady.store(true);
 }
 
 void
@@ -375,6 +472,7 @@ SessionPrivate::isProgressBlockCancelled() const
 bool
 SessionPrivate::newStage(Session::LoadPolicy policy)
 {
+    StateTrackingBlocker stateBlocker(d.stateTrackingBlocked);
     close();
     beginProgressBlock("New stage", 1);
     QList<SdfPath> mask;
@@ -417,6 +515,7 @@ SessionPrivate::newStage(Session::LoadPolicy policy)
 bool
 SessionPrivate::loadFromFile(const QString& filename, Session::LoadPolicy policy)
 {
+    StateTrackingBlocker stateBlocker(d.stateTrackingBlocked);
     PerfScope perfScope("session.load_file");
     const QString absFilename = QFileInfo(filename).absoluteFilePath();
     const std::string identifier = QStringToString(absFilename);
@@ -442,6 +541,7 @@ SessionPrivate::loadFromFile(const QString& filename, Session::LoadPolicy policy
         if (d.stage) {
             d.stage->SetEditTarget(UsdEditTarget(d.stage->GetRootLayer()));
             d.filename = absFilename;
+            d.stateDocumentEstablished.store(true);
             loaded = true;
             preserveState = d.preserveState;
             stateFilename = QFileInfo(d.filename + ".session").absoluteFilePath();
@@ -635,6 +735,10 @@ SessionPrivate::saveLayer(const QString& identifier)
         const QString filename = QString::fromStdString(target->GetRealPath());
         if (filename.isEmpty())
             error = QStringLiteral("Layer has no file path: %1").arg(identifier);
+        else if (target == d.stage->GetRootLayer()) {
+            locker.unlock();
+            return saveToFile(filename, false);
+        }
         else if (exportLayer(target, filename, error))
             return true;
     }
@@ -707,6 +811,7 @@ SessionPrivate::saveToFile(const QString& filename, bool saveSublayersFirst)
                     return false;
                 }
                 d.filename = stageFilename;
+                d.stateDocumentEstablished.store(true);
             }
             else {
                 const SdfLayerRefPtr relocated = relocatedCopy(rootLayer);
@@ -773,6 +878,7 @@ SessionPrivate::saveToFile(const QString& filename, bool saveSublayersFirst)
                 d.stageWatcher->init();
                 d.stage = replacement;
                 d.filename = stageFilename;
+                d.stateDocumentEstablished.store(true);
                 d.pendingNotices.entries.clear();
                 d.stageWatcher->watch(d.stage);
                 stageReplaced = true;
@@ -794,9 +900,6 @@ SessionPrivate::saveToFile(const QString& filename, bool saveSublayersFirst)
             qWarning() << "[Session] failed to save preserve-state sidecar:" << stateFilename;
             return false;
         }
-    }
-    else {
-        d.sessionStateDirty.store(false);
     }
     return true;
 }
@@ -938,6 +1041,12 @@ SessionPrivate::saveLayerAs(const QString& identifier, const QString& filename)
             Qt::QueuedConnection);
         return false;
     }
+    {
+        WRITE_LOCKER(locker, &d.stageLock, "stageLock");
+        if (d.stateColors.contains(identifier))
+            d.stateColors.insert(QFileInfo(filename).absoluteFilePath(), d.stateColors.take(identifier));
+    }
+    Q_EMIT d.session->colorsChanged();
     if (changedEditLayer)
         Q_EMIT d.session->editLayerChanged(changedEditLayer);
     return true;
@@ -1018,7 +1127,7 @@ SessionPrivate::copyToFile(const QString& filename)
     }
     if (preserveState) {
         const QString stateFilename = QFileInfo(stageFilename + ".session").absoluteFilePath();
-        if (!saveState(stateFilename))
+        if (!saveState(stateFilename, false, stageFilename))
             return false;
     }
     return true;
@@ -1046,13 +1155,37 @@ SessionPrivate::flattenPathsToFile(const QList<SdfPath>& paths, const QString& f
 
     maskedStage->MuteAndUnmuteLayers(d.stage->GetMutedLayers(), {});
     maskedStage->SetLoadRules(d.stage->GetLoadRules());
-    maskedStage->ExpandPopulationMask();
-    return maskedStage->Export(QStringToString(QFileInfo(filename).absoluteFilePath()));
+    // Dependencies such as material bindings may be authored on instance proxy
+    // children, which the default traversal does not visit.
+    maskedStage->ExpandPopulationMask(UsdTraverseInstanceProxies());
+    const SdfLayerRefPtr flattened = maskedStage->Flatten();
+    if (!flattened)
+        return false;
+
+    // USD preserves stage metadata when flattening a population mask. Remove
+    // references to omitted roots on the export layer, never the source layer.
+    const SdfPath defaultPrim = flattened->GetDefaultPrimAsPath();
+    if (flattened->HasDefaultPrim() && (defaultPrim.IsEmpty() || !flattened->GetPrimAtPath(defaultPrim)))
+        flattened->ClearDefaultPrim();
+
+    const auto originalOrder = flattened->GetRootPrimOrder();
+    TfTokenVector order;
+    order.reserve(originalOrder.size());
+    for (const TfToken& name : originalOrder) {
+        if (SdfPath::IsValidIdentifier(name.GetString())
+            && flattened->GetPrimAtPath(SdfPath::AbsoluteRootPath().AppendChild(name)))
+            order.push_back(name);
+    }
+    if (order.size() != originalOrder.size())
+        flattened->SetRootPrimOrder(order);
+
+    return flattened->Export(QStringToString(QFileInfo(filename).absoluteFilePath()));
 }
 
 bool
 SessionPrivate::loadState(const QString& filename)
 {
+    StateTrackingBlocker stateBlocker(d.stateTrackingBlocked);
     const QString stateFilename = QFileInfo(filename).absoluteFilePath();
     QFile file(stateFilename);
     if (!file.exists()) {
@@ -1074,6 +1207,19 @@ SessionPrivate::loadState(const QString& filename)
     const QJsonObject cameraObject = root.value("viewCamera").toObject();
     const QJsonObject viewStateObject = root.value("viewState").toObject();
     const QJsonArray payloads = root.value("loadedPayloads").toArray();
+    QHash<QString, QColor> layerColors;
+    if (root.contains("layerColors")) {
+        if (!root.value("layerColors").isObject())
+            return false;
+        const QJsonObject colors = root.value("layerColors").toObject();
+        for (auto it = colors.begin(); it != colors.end(); ++it) {
+            const QColor color(it.value().toString());
+            if (it.key().isEmpty() || !it.value().isString() || !color.isValid())
+                return false;
+            layerColors.insert(it.key(), color);
+        }
+    }
+
     QStringList mutedLayerIdentifiers;
     if (root.contains("mutedLayers")) {
         if (!root.value("mutedLayers").isArray()) {
@@ -1093,6 +1239,19 @@ SessionPrivate::loadState(const QString& filename)
             }
         }
     }
+    QSet<QString> lockedLayerIdentifiers;
+    if (root.contains("lockedLayers")) {
+        if (!root.value("lockedLayers").isArray())
+            return false;
+        for (const QJsonValue& value : root.value("lockedLayers").toArray()) {
+            if (!value.isString() || value.toString().isEmpty())
+                return false;
+            lockedLayerIdentifiers.insert(value.toString());
+        }
+    }
+    if (root.contains("editLayer")
+        && (!root.value("editLayer").isString() || root.value("editLayer").toString().isEmpty()))
+        return false;
     const bool restoreLoadRules = root.contains("loadRules") || root.contains("loadedPayloads");
     UsdStageLoadRules loadRules = UsdStageLoadRules::LoadNone();
     if (root.contains("loadRules")) {
@@ -1139,14 +1298,36 @@ SessionPrivate::loadState(const QString& filename)
     }
     QStringList newlyMutedLayers;
     QStringList newlyUnmutedLayers;
+    SdfLayerHandle restoredEditLayer;
     {
         WRITE_LOCKER(locker, &d.stageLock, "stageLock");
         if (!d.stage)
             return false;
 
+        d.stateColors = layerColors;
         StageBlocker blocker(d.stageWatcher.data());
         if (restoreLoadRules)
             d.stage->SetLoadRules(loadRules);
+
+        if (root.contains("lockedLayers")) {
+            auto candidates = d.stateLockedLayers;
+            for (const auto& layer : d.stage->GetLayerStack(false))
+                candidates.insert(QString::fromStdString(layer->GetIdentifier()), SdfLayerRefPtr(layer));
+            for (const QString& identifier : lockedLayerIdentifiers) {
+                const auto layer = SdfLayer::FindOrOpen(identifier.toStdString());
+                if (layer)
+                    candidates.insert(identifier, layer);
+            }
+            d.stateLockedLayers.clear();
+            for (auto it = candidates.cbegin(); it != candidates.cend(); ++it) {
+                if (it.value() == d.stage->GetRootLayer())
+                    continue;
+                const bool locked = lockedLayerIdentifiers.contains(it.key());
+                it.value()->SetPermissionToEdit(!locked);
+                if (locked)
+                    d.stateLockedLayers.insert(it.key(), it.value());
+            }
+        }
 
         if (root.contains("mutedLayers")) {
             const std::vector<std::string> currentMuted = d.stage->GetMutedLayers();
@@ -1181,8 +1362,26 @@ SessionPrivate::loadState(const QString& filename)
             if (!toMute.empty() || !toUnmute.empty())
                 d.stage->MuteAndUnmuteLayers(toMute, toUnmute);
         }
+        if (root.contains("editLayer")) {
+            const QString identifier = root.value("editLayer").toString();
+            SdfLayerHandle layer = identifier == QStringLiteral("$root") ? d.stage->GetRootLayer()
+                                                                         : SdfLayer::Find(identifier.toStdString());
+            if (!layer || !d.stage->HasLocalLayer(layer) || !layer->PermissionToEdit())
+                layer = d.stage->GetRootLayer();
+            d.stage->SetEditTarget(d.stage->GetEditTargetForLocalLayer(layer));
+            restoredEditLayer = layer;
+        }
     }
-    d.sessionStateDirty.store(false);
+    {
+        READ_LOCKER(locker, &d.stageLock, "stageLock");
+        d.stageWatcher->rememberLoadRules(d.stage->GetLoadRules());
+    }
+    setStateDirty(false);
+    Q_EMIT d.session->colorsChanged();
+    if (root.contains("lockedLayers"))
+        Q_EMIT d.session->layerPermissionsChanged();
+    if (restoredEditLayer)
+        Q_EMIT d.session->editLayerChanged(restoredEditLayer);
     if (!newlyMutedLayers.isEmpty() || !newlyUnmutedLayers.isEmpty())
         Q_EMIT d.session->layerMutingChanged(newlyMutedLayers, newlyUnmutedLayers);
     d.bboxDirty.store(true);
@@ -1264,8 +1463,71 @@ SessionPrivate::loadState(const QString& filename)
                 camera->setAxisRoll(cameraObject.value("axisRoll").toDouble(camera->axisRoll()));
             if (cameraObject.contains("cameraDistance"))
                 camera->setCameraDistance(cameraObject.value("cameraDistance").toDouble(camera->cameraDistance()));
+            if (cameraObject.value("projectionMode").toString() == "Orthographic") {
+                const double distance = camera->cameraDistance();
+                camera->setProjectionMode(ViewCamera::Orthographic);
+                const double height = cameraObject.value("orthographicHeight").toDouble(0.0);
+                const double currentHeight = camera->camera().GetVerticalAperture() / 10.0;
+                if (std::isfinite(height) && height > 0.0 && currentHeight > 0.0)
+                    camera->distance(height / currentHeight);
+                camera->setCameraDistance(distance);
+            }
         }
         if (!viewStateObject.isEmpty()) {
+            if (viewStateObject.contains("ambientOcclusionEnabled"))
+                d.viewState->setAmbientOcclusionEnabled(
+                    viewStateObject.value("ambientOcclusionEnabled").toBool(d.viewState->ambientOcclusionEnabled()));
+            if (viewStateObject.contains("ambientOcclusionContactAmount"))
+                d.viewState->setAmbientOcclusionContactAmount(
+                    static_cast<float>(viewStateObject.value("ambientOcclusionContactAmount")
+                                           .toDouble(d.viewState->ambientOcclusionContactAmount())));
+            if (viewStateObject.contains("ambientOcclusionContactRadius"))
+                d.viewState->setAmbientOcclusionContactRadius(
+                    static_cast<float>(viewStateObject.value("ambientOcclusionContactRadius")
+                                           .toDouble(d.viewState->ambientOcclusionContactRadius())));
+            if (viewStateObject.contains("ambientOcclusionBroadAmount"))
+                d.viewState->setAmbientOcclusionBroadAmount(
+                    static_cast<float>(viewStateObject.value("ambientOcclusionBroadAmount")
+                                           .toDouble(d.viewState->ambientOcclusionBroadAmount())));
+            if (viewStateObject.contains("ambientOcclusionBroadRadius"))
+                d.viewState->setAmbientOcclusionBroadRadius(
+                    static_cast<float>(viewStateObject.value("ambientOcclusionBroadRadius")
+                                           .toDouble(d.viewState->ambientOcclusionBroadRadius())));
+            if (viewStateObject.contains("ambientOcclusionNormalBias"))
+                d.viewState->setAmbientOcclusionNormalBias(
+                    static_cast<float>(viewStateObject.value("ambientOcclusionNormalBias")
+                                           .toDouble(d.viewState->ambientOcclusionNormalBias())));
+            if (viewStateObject.contains("ambientOcclusionFalloff"))
+                d.viewState->setAmbientOcclusionFalloff(static_cast<float>(
+                    viewStateObject.value("ambientOcclusionFalloff").toDouble(d.viewState->ambientOcclusionFalloff())));
+            if (viewStateObject.contains("ambientOcclusionContrast"))
+                d.viewState->setAmbientOcclusionContrast(
+                    static_cast<float>(viewStateObject.value("ambientOcclusionContrast")
+                                           .toDouble(d.viewState->ambientOcclusionContrast())));
+            if (viewStateObject.contains("ambientOcclusionEdgeSharpness"))
+                d.viewState->setAmbientOcclusionEdgeSharpness(
+                    static_cast<float>(viewStateObject.value("ambientOcclusionEdgeSharpness")
+                                           .toDouble(d.viewState->ambientOcclusionEdgeSharpness())));
+            if (viewStateObject.contains("ambientOcclusionBlurEnabled"))
+                d.viewState->setAmbientOcclusionBlurEnabled(viewStateObject.value("ambientOcclusionBlurEnabled")
+                                                                .toBool(d.viewState->ambientOcclusionBlurEnabled()));
+            if (viewStateObject.contains("ambientOcclusionBlurRadius"))
+                d.viewState->setAmbientOcclusionBlurRadius(
+                    static_cast<float>(viewStateObject.value("ambientOcclusionBlurRadius")
+                                           .toDouble(d.viewState->ambientOcclusionBlurRadius())));
+            if (viewStateObject.contains("ambientOcclusionQuality")) {
+                const int value = QMetaEnum::fromType<ViewState::AmbientOcclusionQuality>().keyToValue(
+                    viewStateObject.value("ambientOcclusionQuality").toString().toLatin1().constData());
+                if (value >= 0)
+                    d.viewState->setAmbientOcclusionQuality(static_cast<ViewState::AmbientOcclusionQuality>(value));
+            }
+            if (viewStateObject.contains("ambientOcclusionDebugMode")) {
+                const int value = QMetaEnum::fromType<ViewState::AmbientOcclusionDebugMode>().keyToValue(
+                    viewStateObject.value("ambientOcclusionDebugMode").toString().toLatin1().constData());
+                if (value >= 0)
+                    d.viewState->setAmbientOcclusionDebugMode(static_cast<ViewState::AmbientOcclusionDebugMode>(value));
+            }
+
             if (viewStateObject.contains("backgroundColor")) {
                 const QColor color(viewStateObject.value("backgroundColor").toString());
                 if (color.isValid())
@@ -1352,20 +1614,51 @@ SessionPrivate::loadState(const QString& filename)
     return true;
 }
 
-bool
-SessionPrivate::saveState(const QString& filename)
+void
+SessionPrivate::setStateDirty(bool dirty)
 {
+    if (d.sessionStateDirty.exchange(dirty) == dirty)
+        return;
+    QMetaObject::invokeMethod(
+        d.session, [session = d.session]() { Q_EMIT session->stateDirtyChanged(session->isStateDirty()); },
+        Qt::QueuedConnection);
+}
+
+void
+SessionPrivate::markStateDirty()
+{
+    if (d.stateTrackingBlocked.load() || !d.stateTrackingReady.load() || !d.stateDocumentEstablished.load())
+        return;
+    d.stateRevision.fetch_add(1);
+    setStateDirty(true);
+}
+
+bool
+SessionPrivate::saveState(const QString& filename, bool markSaved, const QString& stageFilenameOverride)
+{
+    if (filename.isEmpty())
+        return false;
+    const quint64 revision = d.stateRevision.load();
+    UsdStageLoadRules savedRules;
     const QString stateFilename = QFileInfo(filename).absoluteFilePath();
     QString stageFilename;
     QJsonArray payloads;
     QJsonArray loadRules;
     QJsonArray mutedLayers;
+    QJsonArray lockedLayers;
+    QString editLayer;
+    QJsonObject layerColors;
     {
         READ_LOCKER(locker, &d.stageLock, "stageLock");
         if (!d.stage)
             return false;
 
-        stageFilename = QFileInfo(d.filename).absoluteFilePath();
+        for (auto it = d.stateColors.cbegin(); it != d.stateColors.cend(); ++it)
+            layerColors.insert(it.key(), it.value().name(QColor::HexArgb));
+
+        stageFilename = stageFilenameOverride.isEmpty() ? QFileInfo(d.filename).absoluteFilePath()
+                                                        : stageFilenameOverride;
+        savedRules = d.stage->GetLoadRules();
         for (const auto& rule : d.stage->GetLoadRules().GetRules()) {
             QJsonObject object;
             object["path"] = qt::SdfPathToQString(rule.first);
@@ -1376,6 +1669,24 @@ SessionPrivate::saveState(const QString& filename)
         }
         for (const std::string& identifier : d.stage->GetMutedLayers())
             mutedLayers.append(QString::fromStdString(identifier));
+        auto candidates = d.stateLockedLayers;
+        for (const auto& layer : d.stage->GetLayerStack(false))
+            candidates.insert(QString::fromStdString(layer->GetIdentifier()), SdfLayerRefPtr(layer));
+        for (const auto& identifier : d.stage->GetMutedLayers()) {
+            if (const auto layer = SdfLayer::Find(identifier))
+                candidates.insert(QString::fromStdString(identifier), SdfLayerRefPtr(layer));
+        }
+        QStringList lockedIdentifiers;
+        for (auto it = candidates.cbegin(); it != candidates.cend(); ++it) {
+            if (it.value() != d.stage->GetRootLayer() && !it.value()->PermissionToEdit())
+                lockedIdentifiers.append(it.key());
+        }
+        lockedIdentifiers.sort();
+        for (const QString& identifier : lockedIdentifiers)
+            lockedLayers.append(identifier);
+        const auto target = d.stage->GetEditTarget().GetLayer();
+        editLayer = target == d.stage->GetRootLayer() ? QStringLiteral("$root")
+                                                      : QString::fromStdString(target->GetIdentifier());
         for (const UsdPrim& prim : d.stage->TraverseAll()) {
             if (!prim || !prim.IsValid())
                 continue;
@@ -1385,11 +1696,14 @@ SessionPrivate::saveState(const QString& filename)
         }
     }
     QJsonObject root;
-    root["version"] = 6;
+    root["version"] = 8;
+    root["layerColors"] = layerColors;
     root["stageFile"] = stageFilename;
     root["loadedPayloads"] = payloads;
     root["loadRules"] = loadRules;
     root["mutedLayers"] = mutedLayers;
+    root["lockedLayers"] = lockedLayers;
+    root["editLayer"] = editLayer;
     if (d.viewState && d.viewState->camera()) {
         ViewCamera* camera = d.viewState->camera();
         auto cameraUp = [](ViewCamera::CameraUp value) {
@@ -1483,6 +1797,8 @@ SessionPrivate::saveState(const QString& filename)
         cameraObject["axisPitch"] = camera->axisPitch();
         cameraObject["axisRoll"] = camera->axisRoll();
         cameraObject["cameraDistance"] = camera->cameraDistance();
+        if (camera->projectionMode() == ViewCamera::Orthographic)
+            cameraObject["orthographicHeight"] = camera->camera().GetVerticalAperture() / 10.0;
         root["viewCamera"] = cameraObject;
         QJsonObject viewStateObject;
         viewStateObject["backgroundColor"] = d.viewState->backgroundColor().name(QColor::HexArgb);
@@ -1503,6 +1819,23 @@ SessionPrivate::saveState(const QString& filename)
         viewStateObject["sceneStatsEnabled"] = d.viewState->sceneStatsEnabled();
         viewStateObject["performanceStatsEnabled"] = d.viewState->performanceStatsEnabled();
         viewStateObject["cameraAxisEnabled"] = d.viewState->cameraAxisEnabled();
+        viewStateObject["ambientOcclusionEnabled"] = d.viewState->ambientOcclusionEnabled();
+        viewStateObject["ambientOcclusionContactAmount"] = d.viewState->ambientOcclusionContactAmount();
+        viewStateObject["ambientOcclusionContactRadius"] = d.viewState->ambientOcclusionContactRadius();
+        viewStateObject["ambientOcclusionBroadAmount"] = d.viewState->ambientOcclusionBroadAmount();
+        viewStateObject["ambientOcclusionBroadRadius"] = d.viewState->ambientOcclusionBroadRadius();
+        viewStateObject["ambientOcclusionNormalBias"] = d.viewState->ambientOcclusionNormalBias();
+        viewStateObject["ambientOcclusionFalloff"] = d.viewState->ambientOcclusionFalloff();
+        viewStateObject["ambientOcclusionContrast"] = d.viewState->ambientOcclusionContrast();
+        viewStateObject["ambientOcclusionEdgeSharpness"] = d.viewState->ambientOcclusionEdgeSharpness();
+        viewStateObject["ambientOcclusionBlurEnabled"] = d.viewState->ambientOcclusionBlurEnabled();
+        viewStateObject["ambientOcclusionBlurRadius"] = d.viewState->ambientOcclusionBlurRadius();
+        viewStateObject["ambientOcclusionQuality"] = QString::fromLatin1(
+            QMetaEnum::fromType<ViewState::AmbientOcclusionQuality>().valueToKey(
+                d.viewState->ambientOcclusionQuality()));
+        viewStateObject["ambientOcclusionDebugMode"] = QString::fromLatin1(
+            QMetaEnum::fromType<ViewState::AmbientOcclusionDebugMode>().valueToKey(
+                d.viewState->ambientOcclusionDebugMode()));
         root["viewState"] = viewStateObject;
     }
     QSaveFile file(stateFilename);
@@ -1515,10 +1848,13 @@ SessionPrivate::saveState(const QString& filename)
     const QJsonDocument doc(root);
     const QByteArray bytes = doc.toJson(QJsonDocument::Indented);
     const bool saved = file.write(bytes) == bytes.size() && file.commit();
-    if (saved) {
-        d.sessionStateDirty.store(false);
+    if (saved && markSaved) {
+        d.stageWatcher->rememberLoadRules(savedRules);
+        setStateDirty(false);
+        if (d.stateRevision.load() != revision)
+            setStateDirty(true);
     }
-    else
+    else if (!saved)
         qWarning() << "[Session] failed to commit session state:" << stateFilename << file.errorString();
     return saved;
 }
@@ -1526,6 +1862,8 @@ SessionPrivate::saveState(const QString& filename)
 bool
 SessionPrivate::close()
 {
+    d.stateTrackingReady.store(false);
+    d.stateDocumentEstablished.store(false);
     {
         WRITE_LOCKER(locker, &d.stageLock, "stageLock");
         StageBlocker blocker(d.stageWatcher.data());
@@ -1541,8 +1879,10 @@ SessionPrivate::close()
         d.completedChanges = 0;
         d.changeName.clear();
         d.changeCancelled.store(false);
-        d.sessionStateDirty.store(false);
+        setStateDirty(false);
         d.filename.clear();
+        d.stateColors.clear();
+        d.stateLockedLayers.clear();
         bbox::clear();
     }
     d.commandStack->clear();
@@ -1628,6 +1968,7 @@ SessionPrivate::setPayloads(const QList<SdfPath>& paths, bool loaded)
     }
     if (!changed)
         return;
+    markStateDirty();
     d.bboxDirty.store(true);
     const GfBBox3d bbox = boundingBox();
     if (d.viewState && d.viewState->camera())
@@ -2029,6 +2370,53 @@ Session::saveState(const QString& filename)
     return p->saveState(filename);
 }
 
+QColor
+Session::layerColor(const QString& identifier) const
+{
+    READ_LOCKER(locker, stageLock(), "stageLock");
+    if (!p->d.stage || identifier.isEmpty())
+        return {};
+    const QString root = QString::fromStdString(p->d.stage->GetRootLayer()->GetIdentifier());
+    return p->d.stateColors.value(identifier == root ? QStringLiteral("$root") : identifier);
+}
+
+void
+Session::setLayerColor(const QString& identifier, const QColor& color)
+{
+    {
+        WRITE_LOCKER(locker, stageLock(), "stageLock");
+        if (!p->d.stage || identifier.isEmpty())
+            return;
+        const QString root = QString::fromStdString(p->d.stage->GetRootLayer()->GetIdentifier());
+        const QString key = identifier == root ? QStringLiteral("$root") : identifier;
+        const QColor opaque = color.isValid() ? QColor(color.red(), color.green(), color.blue()) : QColor();
+        if (p->d.stateColors.value(key) == opaque)
+            return;
+        if (opaque.isValid())
+            p->d.stateColors.insert(key, opaque);
+        else
+            p->d.stateColors.remove(key);
+        p->markStateDirty();
+    }
+    Q_EMIT colorsChanged();
+}
+
+void
+Session::notifyLayerPermissionChanged(const SdfLayerHandle& layer)
+{
+    {
+        WRITE_LOCKER(locker, stageLock(), "stageLock");
+        if (!p->d.stage || !layer)
+            return;
+        const QString identifier = QString::fromStdString(layer->GetIdentifier());
+        if (layer->PermissionToEdit())
+            p->d.stateLockedLayers.remove(identifier);
+        else
+            p->d.stateLockedLayers.insert(identifier, SdfLayerRefPtr(layer));
+        p->markStateDirty();
+    }
+}
+
 bool
 Session::isStateDirty() const
 {
@@ -2174,6 +2562,7 @@ Session::setEditLayer(const SdfLayerHandle& layer)
 
         p->d.stage->SetEditTarget(target);
         changedLayer = target.GetLayer();
+        p->markStateDirty();
     }
 
     Q_EMIT editLayerChanged(changedLayer);

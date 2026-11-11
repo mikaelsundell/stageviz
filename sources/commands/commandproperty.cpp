@@ -7,6 +7,9 @@
 #include "commandutils.h"
 #include "tracelocks.h"
 #include "usdutils.h"
+#include <QSet>
+#include <algorithm>
+#include <map>
 #include <memory>
 #include <pxr/usd/sdf/changeBlock.h>
 #include <pxr/usd/sdf/copyUtils.h>
@@ -18,7 +21,14 @@
 #include <pxr/usd/usd/editTarget.h>
 #include <pxr/usd/usd/prim.h>
 #include <pxr/usd/usd/primDefinition.h>
+#include <pxr/usd/usd/primRange.h>
+#include <pxr/usd/usdGeom/camera.h>
+#include <pxr/usd/usdGeom/gprim.h>
+#include <pxr/usd/usdGeom/imageable.h>
 #include <pxr/usd/usdGeom/xformable.h>
+#include <pxr/usd/usdLux/lightAPI.h>
+#include <pxr/usd/usdShade/connectableAPI.h>
+#include <unordered_set>
 
 namespace stageviz {
 
@@ -38,6 +48,83 @@ namespace {
     using command::detail::captureTransformPropertyState;
     using command::detail::restoreTransformPropertyState;
     using command::detail::TransformPropertyState;
+
+    OverrideGroup propertyOverrideGroup(const UsdPrim& prim, const TfToken& property)
+    {
+        const std::string& name = property.GetString();
+        if (name == "xformOpOrder" || name.rfind("xformOp:", 0) == 0)
+            return OverrideGroup::Transforms;
+        if (name == "visibility" || name.rfind("visibility:", 0) == 0)
+            return OverrideGroup::Visibility;
+        if (name.rfind("material:binding", 0) == 0
+            || ((name.rfind("inputs:", 0) == 0 || name.rfind("outputs:", 0) == 0 || name.rfind("info:", 0) == 0)
+                && UsdShadeConnectableAPI(prim) && !UsdLuxLightAPI(prim)))
+            return OverrideGroup::Materials;
+        if (name.rfind("primvars:", 0) == 0)
+            return OverrideGroup::Primvars;
+        if (UsdLuxLightAPI(prim)
+            && (name.rfind("inputs:", 0) == 0 || name.rfind("light:", 0) == 0
+                || name.rfind("collection:lightLink", 0) == 0 || name.rfind("collection:shadowLink", 0) == 0))
+            return OverrideGroup::Lights;
+        const auto schemaContains = [&property](const TfTokenVector& names) {
+            return std::find(names.begin(), names.end(), property) != names.end();
+        };
+        if (prim.IsA<UsdGeomCamera>() && schemaContains(UsdGeomCamera::GetSchemaAttributeNames(false)))
+            return OverrideGroup::Cameras;
+        // Concrete geometry schemas include mesh topology, shape dimensions, points and curves.
+        if (prim.IsA<UsdGeomGprim>() && prim.GetPrimDefinition().GetSchemaPropertySpec(property)
+            && !schemaContains(UsdGeomImageable::GetSchemaAttributeNames(true)))
+            return OverrideGroup::Geometry;
+        return OverrideGroup::Other;
+    }
+
+    SdfPrimSpecHandle resettableOverrideSpec(const UsdPrim& prim, const UsdEditTarget& target)
+    {
+        const SdfLayerHandle layer = target.GetLayer();
+        if (!prim || prim.IsInstanceProxy() || !layer || !layer->PermissionToEdit())
+            return {};
+        const SdfPrimSpecHandle spec = layer->GetPrimAtPath(target.MapToSpecPath(prim.GetPath()));
+        if (!spec || spec->GetSpecifier() != SdfSpecifierOver || spec->GetProperties().empty())
+            return {};
+        for (const auto& opinion : prim.GetPrimStack()) {
+            if (opinion && opinion->GetLayer() != layer)
+                return spec;
+        }
+        return {};
+    }
+
+    QList<SdfPath> resettablePrimPaths(const UsdStageRefPtr& stage, const QList<SdfPath>& paths)
+    {
+        QList<SdfPath> result;
+        if (!stage)
+            return result;
+        const auto target = stage->GetEditTarget();
+        const auto layer = target.GetLayer();
+        if (!layer || !layer->PermissionToEdit())
+            return result;
+        path::PathCollector collector(result);
+        for (const auto& input : path::minimalRootPaths(path::uniquePaths(paths))) {
+            const SdfPath sceneRoot = input.GetAbsoluteRootOrPrimPath();
+            const SdfPath specRoot = sceneRoot.IsAbsoluteRootPath() ? sceneRoot : target.MapToSpecPath(sceneRoot);
+            if (specRoot.IsEmpty() || (!specRoot.IsAbsoluteRootPath() && !layer->GetPrimAtPath(specRoot)))
+                continue;
+            // Visit authored specs only: a sparse override layer need not scan its composed payloads.
+            layer->Traverse(specRoot, [&](const SdfPath& specPath) {
+                const auto spec = layer->GetPrimAtPath(specPath);
+                if (!spec || spec->GetSpecifier() != SdfSpecifierOver || spec->GetProperties().empty())
+                    return;
+                const SdfPath scenePath
+                    = specPath.StripAllVariantSelections().ReplacePrefix(specRoot.StripAllVariantSelections(),
+                                                                         sceneRoot);
+                if (!scenePath.IsPrimPath() || target.MapToSpecPath(scenePath) != specPath)
+                    return;
+                const UsdPrim prim = stage->GetPrimAtPath(scenePath);
+                if (resettableOverrideSpec(prim, target))
+                    collector.append(scenePath);
+            });
+        }
+        return result;
+    }
 
     bool clearDependencyFields(const SdfLayerHandle& editLayer, const SdfPath& propertyPath, bool& changed,
                                QString& error)
@@ -1142,30 +1229,56 @@ resetAttributeOverride(const SdfPath& attributePath)
     return resetAttributeOverrides({ attributePath });
 }
 
+QList<OverrideGroup>
+resetOverrideGroups(const UsdStageRefPtr& stage, const QList<SdfPath>& paths)
+{
+    QSet<int> groups;
+    if (!stage)
+        return {};
+    const auto inspect = [&](const UsdPrim& prim) {
+        if (const auto spec = resettableOverrideSpec(prim, stage->GetEditTarget())) {
+            for (const auto& property : spec->GetProperties())
+                groups.insert(static_cast<int>(propertyOverrideGroup(prim, property->GetNameToken())));
+        }
+    };
+    for (const auto& path : resettablePrimPaths(stage, paths))
+        inspect(stage->GetPrimAtPath(path));
+    QList<OverrideGroup> result;
+    for (int group = static_cast<int>(OverrideGroup::Transforms); group <= static_cast<int>(OverrideGroup::Other);
+         ++group) {
+        if (groups.contains(group))
+            result.append(static_cast<OverrideGroup>(group));
+    }
+    return result;
+}
+
 Command
-resetOverrides(const QList<SdfPath>& paths)
+resetOverrides(const QList<SdfPath>& paths, OverrideGroup group)
 {
     struct ResetOverrideState {
         struct Item {
             SdfPath path;
+            SdfPath scenePath;
             SdfLayerRefPtr snapshotLayer;
             QList<SdfPath> propertyPaths;
             bool removedPrimSpec = false;
         };
 
         QList<Item> items;
+        SdfLayerRefPtr editLayer;
+        std::map<SdfPath, TfTokenVector> childOrders;
     };
 
     auto state = std::make_shared<ResetOverrideState>();
 
     return Command(
-        [paths, state](Session* session) {
+        [paths, state, group](Session* session) {
             if (!session || paths.isEmpty())
                 return;
 
             command::beginDeferred(session, "Reset overrides", static_cast<int>(paths.size()));
 
-            command::runWorker([session, paths, state]() {
+            command::runWorker([session, paths, state, group]() {
                 QList<SdfPath> affected;
                 path::PathCollector affectedCollector(affected);
                 QStringList errors;
@@ -1186,52 +1299,22 @@ resetOverrides(const QList<SdfPath>& paths)
                         }
                         else {
                             state->items.clear();
+                            state->editLayer = editLayer;
+                            state->childOrders.clear();
 
-                            QList<SdfPath> primPaths;
-                            path::PathCollector primPathsCollector(primPaths);
-                            for (const SdfPath& inputPath : path::minimalRootPaths(path::uniquePaths(paths))) {
-                                const SdfPath primPath = inputPath.IsPropertyPath() ? inputPath.GetPrimPath()
-                                                                                    : inputPath;
-                                const UsdPrim prim = stage->GetPrimAtPath(primPath);
-                                if (!prim || !prim.IsValid() || prim.IsInstanceProxy()) {
-                                    errors.append(QString("invalid prim: %1").arg(pathText(primPath)));
-                                    continue;
-                                }
-
-                                primPathsCollector.append(primPath);
-                                for (const UsdPrim& descendant : prim.GetAllDescendants()) {
-                                    if (descendant && descendant.IsValid() && !descendant.IsInstanceProxy())
-                                        primPathsCollector.append(descendant.GetPath());
-                                }
-                            }
-
+                            const QList<SdfPath> primPaths = resettablePrimPaths(stage, paths);
                             for (const SdfPath& primPath : primPaths) {
                                 const UsdPrim prim = stage->GetPrimAtPath(primPath);
                                 if (!prim || !prim.IsValid() || prim.IsInstanceProxy())
                                     continue;
 
-                                const SdfPrimSpecHandle rootSpec = editLayer->GetPrimAtPath(primPath);
-                                if (!rootSpec || rootSpec->GetSpecifier() != SdfSpecifierOver
-                                    || rootSpec->GetProperties().empty())
-                                    continue;
-
-                                bool hasUnderlyingOpinion = false;
-                                for (const SdfPrimSpecHandle& primSpec : prim.GetPrimStack()) {
-                                    if (!primSpec)
-                                        continue;
-
-                                    const SdfLayerHandle layer = primSpec->GetLayer();
-                                    if (layer && layer != editLayer) {
-                                        hasUnderlyingOpinion = true;
-                                        break;
-                                    }
-                                }
-
-                                if (!hasUnderlyingOpinion)
+                                const SdfPrimSpecHandle rootSpec = resettableOverrideSpec(prim, stage->GetEditTarget());
+                                if (!rootSpec)
                                     continue;
 
                                 ResetOverrideState::Item item;
-                                item.path = primPath;
+                                item.path = rootSpec->GetPath();
+                                item.scenePath = primPath;
                                 item.snapshotLayer = SdfLayer::CreateAnonymous("stageviz_override_snapshot.usda");
                                 if (!item.snapshotLayer) {
                                     errors.append(
@@ -1239,14 +1322,16 @@ resetOverrides(const QList<SdfPath>& paths)
                                     continue;
                                 }
 
-                                SdfCreatePrimInLayer(item.snapshotLayer, primPath);
+                                SdfCreatePrimInLayer(item.snapshotLayer, item.path);
 
                                 const auto properties = rootSpec->GetProperties();
                                 item.propertyPaths.reserve(static_cast<int>(properties.size()));
 
                                 bool snapshotFailed = false;
                                 for (const SdfPropertySpecHandle& property : properties) {
-                                    if (!property)
+                                    if (!property
+                                        || (group != OverrideGroup::All
+                                            && propertyOverrideGroup(prim, property->GetNameToken()) != group))
                                         continue;
 
                                     const SdfPath propertyPath = property->GetPath();
@@ -1276,9 +1361,19 @@ resetOverrides(const QList<SdfPath>& paths)
                                 if (!reset)
                                     continue;
 
-                                const SdfPrimSpecHandle remainingSpec = editLayer->GetPrimAtPath(primPath);
-                                if (remainingSpec && remainingSpec->IsInert()) {
-                                    item.removedPrimSpec = stage::removePrimSpec(editLayer, primPath);
+                                const SdfPrimSpecHandle remainingSpec = editLayer->GetPrimAtPath(item.path);
+                                if (remainingSpec && remainingSpec->IsInert()
+                                    && !item.path.IsPrimVariantSelectionPath()) {
+                                    const SdfPath parentPath = item.path.GetParentPath();
+                                    if (!state->childOrders.count(parentPath)) {
+                                        const auto parent = editLayer->GetPrimAtPath(parentPath);
+                                        if (parent) {
+                                            auto& order = state->childOrders[parentPath];
+                                            for (const auto& child : parent->GetNameChildren())
+                                                order.push_back(child->GetNameToken());
+                                        }
+                                    }
+                                    item.removedPrimSpec = stage::removePrimSpec(editLayer, item.path);
                                     if (!item.removedPrimSpec) {
                                         errors.append(
                                             QString("failed to remove empty override spec: %1").arg(pathText(primPath)));
@@ -1324,9 +1419,12 @@ resetOverrides(const QList<SdfPath>& paths)
                     }
                     else {
                         QString editError;
-                        const SdfLayerHandle editLayer = currentEditLayer(stage, editError);
+                        const SdfLayerHandle editLayer = state->editLayer;
+                        if (!editLayer || !editLayer->PermissionToEdit()) {
+                            editError = "original edit layer is not editable";
+                        }
 
-                        if (!editLayer) {
+                        if (!editLayer || !editLayer->PermissionToEdit()) {
                             errors.append(editError);
                         }
                         else {
@@ -1352,7 +1450,25 @@ resetOverrides(const QList<SdfPath>& paths)
                                 }
 
                                 if (restoredItem)
-                                    restoredCollector.append(item.path);
+                                    restoredCollector.append(item.scenePath);
+                            }
+                            for (const auto& entry : state->childOrders) {
+                                const auto parent = editLayer->GetPrimAtPath(entry.first);
+                                if (!parent)
+                                    continue;
+                                SdfPrimSpecHandleVector children;
+                                const std::unordered_set<TfToken, TfToken::HashFunctor> originalNames(
+                                    entry.second.begin(), entry.second.end());
+                                for (const auto& name : entry.second) {
+                                    const auto child = editLayer->GetPrimAtPath(entry.first.AppendChild(name));
+                                    if (child)
+                                        children.push_back(child);
+                                }
+                                for (const auto& child : parent->GetNameChildren()) {
+                                    if (!originalNames.count(child->GetNameToken()))
+                                        children.push_back(child);
+                                }
+                                parent->SetNameChildren(children);
                             }
                         }
                     }

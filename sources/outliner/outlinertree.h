@@ -213,6 +213,11 @@ public:
 
 protected:
     /**
+     * @brief Draws a row and its weak-to-strong session composition color strips.
+     */
+    void drawRow(QPainter* painter, const QStyleOptionViewItem& option, const QModelIndex& index) const override;
+
+    /**
      * @name Event Handling
      */
     /**
@@ -289,6 +294,18 @@ protected:
      */
 
 private:
+    friend class PrimItem;
+
+    /**
+     * @brief Returns the revision used by lazy checkbox aggregate caches.
+     */
+    quint64 payloadCheckRevision() const;
+
+    /**
+     * @brief Invalidates checkbox aggregates without traversing the tree.
+     */
+    void invalidatePayloadChecks();
+
     Q_DISABLE_COPY_MOVE(OutlinerTree)
     QScopedPointer<OutlinerTreePrivate> p;
 };

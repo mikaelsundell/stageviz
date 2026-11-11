@@ -80,3 +80,24 @@ mesh fixture, serial standalone-build comparison, native phase breakdown and
 external MCP verification. It covers cold and repeated warm sweeps, gizmo
 activation, bulk dragging and parent moves, with undo/redo. Timings distinguish
 synchronous dispatch, viewport response and deferred UI settling.
+
+## Payload checkbox aggregation at 200k prims
+
+`benchmark_payload_indicators.py` generates 500 populated Xform groups, each
+with 400 ordinary child Xforms and a payload gate, plus a separate mutable layer
+branch. The unloaded scene contains 201,004 USD prims and 201,005 Outliner rows;
+loading adds 501 payload geometry prims. Run on a disposable process using
+`mcp_runtime.DisposableStageviz` and an independent MCP listener. Load the module
+through MCP, call `make_fixture(directory)`, create `PayloadIndicatorBenchmark`
+with the returned filename and an output directory, then run its `setup`,
+`load`, `mute`, `parent_move`, and `unload` phases as separate MCP requests.
+Capture `stageviz_get_stage_info`, `stageviz_get_selection`, `stageviz_list_prims`
+and representative `stageviz_get_prim_info` responses between phases.
+
+Reports distinguish cold aggregate reads after model invalidation, repeated warm
+reads, forced viewport painting into a pixmap, stage loading, payload loading,
+layer muting and a populated parent move with undo. Screenshots and JSON reports
+are written per phase. Use the same fixture, build settings, active branch and
+serialized process order for before/after comparisons; monitor memory through
+`DisposableStageviz`. This is a targeted UI/command benchmark, not a geometry or
+renderer throughput benchmark.

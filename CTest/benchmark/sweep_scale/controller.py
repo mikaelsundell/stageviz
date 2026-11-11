@@ -68,7 +68,7 @@ def run(args):
     def rpc(method, params, timeout=180):
         request = urllib.request.Request('http://127.0.0.1:%d/mcp' % args.port,
             json.dumps(dict(jsonrpc='2.0', id=1, method=method, params=params)).encode(),
-            {'Content-Type': 'application/json', 'Host': '127.0.0.1:37651'})
+            {'Content-Type': 'application/json', 'Host': '127.0.0.1:%d' % args.port})
         with urllib.request.urlopen(request, timeout=timeout) as response:
             return json.load(response)
 
@@ -79,6 +79,7 @@ def run(args):
         return result
 
     env = os.environ.copy()
+    env['STAGEVIZ_TEST_SETTINGS_DIR'] = str(output / 'settings')
     env.update(DYLD_IMAGE_SUFFIX='_debug', STAGEVIZ_PERF_LOG=str(output / 'native-phases.jsonl'),
                STAGEVIZ_SCALE_PROFILE=str(output / 'profile.json'), HD_ENABLE_GPU_FRUSTUM_CULLING='0')
     # Verify the dedicated port is unused before starting anything.

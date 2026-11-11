@@ -24,7 +24,18 @@ class PrimItemPrivate;
  */
 class PrimItem : public TreeItem {
 public:
-    enum PrimRole { Path = Qt::UserRole + 1, EditName };
+    enum PrimRole {
+        Path = Qt::UserRole + 1,
+        EditName,
+        /**
+         * @brief Identifier of the layer containing the strongest prim spec.
+         */
+        StrongestLayer,
+        /**
+         * @brief Unique prim-spec layer identifiers, ordered weakest to strongest.
+         */
+        CompositionLayers
+    };
 
     /**
      * @brief Column indices used by the stage tree.
@@ -125,9 +136,14 @@ public:
 
 private:
     /**
-     * @brief Aggregates visible payload gates, excluding ordinary geometry branches.
+     * @brief Aggregates payload gates and empty groups, excluding geometry-only branches.
+     *
+     * Empty checkable groups contribute unchecked. A shared tree revision makes
+     * repeated reads reuse the cached result until checkbox or structure changes.
+     *
+     * @return A Qt check state, or -1 for a branch without contributing rows.
      */
-    QVariant payloadCheckState() const;
+    int payloadCheckState(quint64 revision) const;
 
     QScopedPointer<PrimItemPrivate> p;
 };

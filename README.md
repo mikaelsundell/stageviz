@@ -338,6 +338,22 @@ call build_app.bat Release --deploy
 
 ---
 
+## Testing
+
+Run `./test_app.sh debug` on macOS/Linux or `test_app.bat Debug` on Windows to
+incrementally build and run all native, GUI, documentation and embedded Python
+tests. Use `release` or `all` for those configurations. See
+[test commands and reports](CTest/README.md#run-all-tests) for options.
+
+## Formatting
+
+Run `scripts/clang-format.sh` or `scripts\clang-format.bat` to format C++ files
+changed on the current branch, including staged, unstaged and untracked files.
+The scripts use the branch's merge base with `master` and leave unchanged files
+alone. Use `--list` to preview, `--check` to validate without editing, or
+`--base REF` for a different target branch. Python 3, Git and clang-format on
+`PATH` are required; `CLANG_FORMAT` or `--clang-format PATH` can select the tool.
+
 ## Built with
 
 ### OpenUSD

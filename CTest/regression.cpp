@@ -30,6 +30,7 @@
 #include "viewcamera.h"
 #include "viewportcapture.h"
 #include "viewstate.h"
+#include <QColor>
 #include <QCoreApplication>
 #include <QDir>
 #include <QFile>
@@ -112,9 +113,13 @@ perfScopeLog(int mode)
     require(stageviz::PerfScope::enabled() == enabled, "performance logging cached gate");
     {
         stageviz::PerfScope outer("test.outer");
-        { stageviz::PerfScope inner("test.inner"); }
+        {
+            stageviz::PerfScope inner("test.inner");
+        }
     }
-    { stageviz::PerfScope appended("test.appended"); }
+    {
+        stageviz::PerfScope appended("test.appended");
+    }
     QFile file(QString::fromLocal8Bit(path));
     require(file.exists() == enabled, "disabled performance logging creates no file");
     require(!QFile::exists(QString::fromLocal8Bit(path + ".other")), "cached performance log destination");
@@ -895,6 +900,122 @@ exportSessionOpinions()
             "selection export preserves session opinions");
 }
 void
+exportSubsetMetadata()
+{
+    QTemporaryDir dir;
+    require(dir.isValid(), "temporary subset metadata directory");
+    Session session;
+    require(session.newStage(), "new subset metadata stage");
+    const auto stage = session.stage();
+    const auto layer = stage->GetRootLayer();
+    const auto world = UsdGeomXform::Define(stage, SdfPath("/World")).GetPrim();
+    UsdGeomXform::Define(stage, SdfPath("/Xform"));
+    UsdGeomCube::Define(stage, SdfPath("/Xform/Cube"));
+    auto instance = UsdGeomXform::Define(stage, SdfPath("/Xform_1")).GetPrim();
+    instance.GetReferences().AddInternalReference(SdfPath("/Xform"));
+    instance.SetInstanceable(true);
+    stage->DefinePrim(SdfPath("/Sphere"), TfToken("Sphere"));
+    stage->SetDefaultPrim(world);
+    stage->SetMetadata(TfToken("metersPerUnit"), .001);
+    stage->SetMetadata(TfToken("upAxis"), TfToken("Z"));
+    layer->SetRootPrimOrder({ TfToken("World"), TfToken("Xform"), TfToken("Xform_1"), TfToken("Sphere") });
+    std::string original;
+    layer->ExportToString(&original);
+    const auto exportPaths = [&](const QList<SdfPath>& paths, const QString& name) {
+        const QString file = dir.filePath(name + ".usda");
+        require(session.flattenPathsToFile(paths, file), "export subset with root metadata");
+        std::string unchanged;
+        layer->ExportToString(&unchanged);
+        require(unchanged == original, "subset metadata cleanup never changes source layer");
+        return diskStage(file);
+    };
+    const auto subset = exportPaths({ SdfPath("/Xform_1"), SdfPath("/Sphere") }, "selection");
+    require(!subset->GetRootLayer()->HasDefaultPrim(), "omitted World does not remain the export default prim");
+    require(!subset->GetPrimAtPath(SdfPath("/World")) && !subset->GetPrimAtPath(SdfPath("/Xform")),
+            "metadata cleanup does not add omitted source objects");
+    const TfTokenVector expected { TfToken("Xform_1"), TfToken("Sphere") };
+    require(subset->GetRootLayer()->GetRootPrimOrder() == expected,
+            "root order retains only existing names in their authored order");
+    require(subset->GetPrimAtPath(SdfPath("/Xform_1")).IsInstance()
+                && subset->GetPrimAtPath(SdfPath("/Xform_1/Cube")).IsInstanceProxy(),
+            "cleaned export retains native instance and generated prototype geometry");
+    double meters = 0;
+    TfToken up;
+    require(subset->GetMetadata(TfToken("metersPerUnit"), &meters) && meters == .001
+                && subset->GetMetadata(TfToken("upAxis"), &up) && up == TfToken("Z"),
+            "unrelated stage metadata is retained");
+    const auto visible = exportPaths(stageviz::stage::visiblePaths(stage), "visible");
+    require(!visible->GetRootLayer()->HasDefaultPrim(), "visible export clears omitted non-rendering default root");
+    require(visible->GetRootLayer()->GetRootPrimOrder()
+                == TfTokenVector({ TfToken("Xform"), TfToken("Xform_1"), TfToken("Sphere") }),
+            "visible export removes only omitted root-order names");
+    const auto valid = exportPaths({ SdfPath("/World"), SdfPath("/Sphere") }, "valid_default");
+    require(valid->GetDefaultPrim().GetPath() == SdfPath("/World"), "included default prim is preserved");
+    const auto emptyOrder = exportPaths({ SdfPath("/World") }, "single_root");
+    const auto singleOrder = emptyOrder->GetRootLayer()->GetRootPrimOrder();
+    // The USD writer may omit a redundant order statement for a single root.
+    require(singleOrder.empty() || singleOrder == TfTokenVector { TfToken("World") },
+            "single-root export has no stale order names");
+    layer->SetRootPrimOrder({ TfToken("World"), TfToken("Xform") });
+    layer->ExportToString(&original);
+    const auto noOrder = exportPaths({ SdfPath("/Sphere") }, "no_surviving_order");
+    require(noOrder->GetRootLayer()->GetRootPrimOrder().empty(),
+            "order becomes empty when all named roots are omitted");
+}
+
+void
+exportInstances()
+{
+    QTemporaryDir dir;
+    require(dir.isValid(), "temporary instance export directory");
+    Session session;
+    require(session.newStage(), "new instance export stage");
+    const auto stage = session.stage();
+    const auto library = UsdGeomXform::Define(stage, SdfPath("/Library"));
+    library.GetVisibilityAttr().Set(UsdGeomTokens->invisible);
+    UsdGeomXform::Define(stage, SdfPath("/Library/Source"));
+    const auto body = UsdGeomCube::Define(stage, SdfPath("/Library/Source/Body")).GetPrim();
+    const auto material = UsdShadeMaterial::Define(stage, SdfPath("/Looks/Material"));
+    UsdShadeMaterialBindingAPI::Apply(body).Bind(material);
+    UsdGeomCube::Define(stage, SdfPath("/Library/Source/Hidden")).GetVisibilityAttr().Set(UsdGeomTokens->invisible);
+    const auto instance = UsdGeomXform::Define(stage, SdfPath("/World/Instance")).GetPrim();
+    require(instance.GetReferences().AddInternalReference(SdfPath("/Library/Source")), "reference hidden source");
+    instance.SetInstanceable(true);
+    UsdGeomCube::Define(stage, SdfPath("/World/Ordinary"));
+    UsdGeomCube::Define(stage, SdfPath("/World/Unrelated")).GetVisibilityAttr().Set(UsdGeomTokens->invisible);
+    require(stage->GetPrimAtPath(SdfPath("/World/Instance/Body")).IsInstanceProxy(), "instance proxy fixture");
+
+    const auto check = [&](const QList<SdfPath>& paths, const QString& name) {
+        const QString file = dir.filePath(name + ".usda");
+        require(session.flattenPathsToFile(paths, file), "export instance subset");
+        const auto reopened = diskStage(file);
+        const auto exportedInstance = reopened->GetPrimAtPath(SdfPath("/World/Instance"));
+        require(exportedInstance && exportedInstance.IsInstance(), "export retains native instance");
+        require(reopened->GetPrimAtPath(SdfPath("/World/Instance/Body")).IsA<UsdGeomCube>(),
+                "export retains instance geometry without selected source");
+        require(bool(UsdShadeMaterialBindingAPI(reopened->GetPrimAtPath(SdfPath("/World/Instance/Body")))
+                         .ComputeBoundMaterial()),
+                "export includes material dependency of instance proxy");
+        require(bool(reopened->GetPrimAtPath(SdfPath("/World/Ordinary"))), "ordinary selected geometry exported");
+        require(!reopened->GetPrimAtPath(SdfPath("/Library")), "source library is not added to exported scene");
+        require(!reopened->GetPrimAtPath(SdfPath("/World/Unrelated")), "unrelated geometry excluded");
+        return reopened;
+    };
+    const auto full = check({ SdfPath("/World/Ordinary"), SdfPath("/World/Instance") }, "selected_instance");
+    require(bool(full->GetPrimAtPath(SdfPath("/World/Instance/Hidden"))),
+            "selecting the instance root retains the complete hierarchy");
+    const auto partial = check({ SdfPath("/World/Ordinary"), SdfPath("/World/Instance/Body") }, "selected_proxy");
+    require(!partial->GetPrimAtPath(SdfPath("/World/Instance/Hidden")),
+            "selecting a proxy child excludes unselected siblings");
+    const auto visible = stageviz::stage::visiblePaths(stage);
+    require(visible.contains(SdfPath("/World/Instance/Body")), "visible paths include instance proxies");
+    require(!visible.contains(SdfPath("/World/Instance/Hidden")), "invisible proxy geometry excluded");
+    const auto visibleExport = check(visible, "visible_instance");
+    require(!visibleExport->GetPrimAtPath(SdfPath("/World/Instance/Hidden")),
+            "visible export excludes hidden proxy geometry");
+}
+
+void
 exportMultipleSessionOpinions()
 {
     QTemporaryDir dir;
@@ -1374,6 +1495,52 @@ sessionFileApi()
 }
 
 void
+sessionLayerColorsApi()
+{
+    QTemporaryDir dir;
+    require(dir.isValid(), "temporary layer colors directory");
+    Session current;
+    current.setPreserveState(false);
+    require(current.newStage(), "new layer colors stage");
+    const QString rootId = QString::fromStdString(current.stage()->GetRootLayer()->GetIdentifier());
+    const auto child = SdfLayer::CreateNew(dir.filePath("child.usda").toStdString());
+    require(bool(child), "create colored child layer");
+    const QString childId = QString::fromStdString(child->GetIdentifier());
+    current.stage()->GetRootLayer()->SetSubLayerPaths({ child->GetIdentifier() });
+    const QColor red("#d04030");
+    const QColor blue("#3060c0");
+    std::string before;
+    current.stage()->GetRootLayer()->ExportToString(&before);
+    current.setLayerColor(rootId, red);
+    current.setLayerColor(childId, blue);
+    std::string after;
+    current.stage()->GetRootLayer()->ExportToString(&after);
+    require(before == after, "colors do not author USD content");
+    require(current.layerColor(rootId) == red && current.layerColor(childId) == blue && current.isStateDirty(),
+            "set per-layer colors in session state");
+    const QString state = dir.filePath("colors.session");
+    require(current.saveState(state), "save layer colors");
+    require(!current.isStateDirty(), "saving state clears its dirty marker");
+    current.setLayerColor(childId, QColor());
+    require(!current.layerColor(childId).isValid(), "clear layer color");
+    require(current.loadState(state) && current.layerColor(childId) == blue, "restore layer colors from state");
+    const QString file = dir.filePath("saved.usda");
+    require(current.saveToFile(file), "save anonymous root as file");
+    require(current.layerColor(file) == red, "root color survives Save As");
+    const QString childCopy = dir.filePath("child-copy.usda");
+    require(current.saveLayerAs(childId, childCopy) && current.layerColor(childCopy) == blue,
+            "sublayer color follows Save Layer As");
+    require(current.saveState(state), "save retargeted layer colors");
+    require(current.saveToFile(file), "save retargeted sublayer link");
+    Session restored;
+    restored.setPreserveState(false);
+    require(restored.loadFromFile(file) && restored.loadState(state), "reopen colored stage and session");
+    require(restored.layerColor(file) == red && restored.layerColor(childCopy) == blue,
+            "layer colors survive closing and reopening");
+    require(restored.newStage() && !restored.layerColor(childCopy).isValid(), "new document clears old layer colors");
+}
+
+void
 sessionEditLayerApi()
 {
     Session session;
@@ -1443,6 +1610,134 @@ sessionLayerCommands()
     require(sublayer->PermissionToEdit(), "undo restores layer permission");
     executeCommand(lock, session);
     require(!sublayer->PermissionToEdit(), "redo locks layer");
+}
+
+void
+sessionLayerBatchApi()
+{
+    Session current;
+    require(current.newStage(), "new layer batch fixture");
+    const auto stage = current.stage();
+    const auto root = stage->GetRootLayer();
+    const auto parent = SdfLayer::CreateAnonymous("batch-parent.usda");
+    const auto child = SdfLayer::CreateAnonymous("batch-child.usda");
+    const auto sibling = SdfLayer::CreateAnonymous("batch-sibling.usda");
+    parent->SetSubLayerPaths({ child->GetIdentifier() });
+    root->SetSubLayerPaths({ parent->GetIdentifier(), sibling->GetIdentifier() });
+    const QString parentId = QString::fromStdString(parent->GetIdentifier());
+    const QString childId = QString::fromStdString(child->GetIdentifier());
+    const QString siblingId = QString::fromStdString(sibling->GetIdentifier());
+    const QStringList ids { parentId, childId, siblingId, childId };
+    child->SetPermissionToEdit(false);
+    auto lock = stageviz::setLayersPermissionToEdit(ids, false);
+    executeCommand(lock, current);
+    require(!parent->PermissionToEdit() && !child->PermissionToEdit() && !sibling->PermissionToEdit(),
+            "one batch locks all selected layers");
+    undoCommand(lock, current);
+    require(parent->PermissionToEdit() && !child->PermissionToEdit() && sibling->PermissionToEdit(),
+            "one undo restores individual mixed permissions");
+    executeCommand(lock, current);
+    require(!parent->PermissionToEdit() && !sibling->PermissionToEdit(), "batch permission redo");
+    undoCommand(lock, current);
+    stage->MuteLayer(child->GetIdentifier());
+    auto mute = stageviz::setLayersMuted(ids, true);
+    executeCommand(mute, current);
+    require(stage->IsLayerMuted(parent->GetIdentifier()) && stage->IsLayerMuted(child->GetIdentifier())
+                && stage->IsLayerMuted(sibling->GetIdentifier()),
+            "children mute before parents");
+    undoCommand(mute, current);
+    require(!stage->IsLayerMuted(parent->GetIdentifier()) && stage->IsLayerMuted(child->GetIdentifier())
+                && !stage->IsLayerMuted(sibling->GetIdentifier()),
+            "one undo restores mixed mute states");
+    executeCommand(mute, current);
+    auto unmute = stageviz::setLayersMuted(ids, false);
+    executeCommand(unmute, current);
+    require(stage->HasLocalLayer(child) && !stage->IsLayerMuted(child->GetIdentifier()),
+            "batch unmute restores parent before child");
+    undoCommand(unmute, current);
+    require(stage->IsLayerMuted(parent->GetIdentifier()) && stage->IsLayerMuted(child->GetIdentifier()),
+            "batch unmute undo restores muted subtree");
+    executeCommand(unmute, current);
+    const auto originalRoot = root->GetSubLayerPaths();
+    const auto originalParent = parent->GetSubLayerPaths();
+    auto remove = stageviz::removeLayers(ids);
+    executeCommand(remove, current);
+    require(root->GetSubLayerPaths().empty() && parent->GetSubLayerPaths().empty(),
+            "batch removes selected parent, child and sibling arcs");
+    undoCommand(remove, current);
+    require(root->GetSubLayerPaths() == originalRoot && parent->GetSubLayerPaths() == originalParent
+                && stage->HasLocalLayer(child),
+            "one undo restores removed layer handles and exact sibling order");
+    executeCommand(remove, current);
+    require(root->GetSubLayerPaths().empty(), "batch removal redo");
+    undoCommand(remove, current);
+    child->SetPermissionToEdit(true);
+}
+
+void
+sessionLayerUpdateApi()
+{
+    QTemporaryDir dir;
+    require(dir.isValid(), "layer update temporary directory");
+    const auto childPath = dir.filePath("child.usda");
+    const auto parentPath = dir.filePath("parent.usda");
+    const auto otherPath = dir.filePath("other.usda");
+    writeFile(childPath, "#usda 1.0\ndef Sphere \"Child\" {}\n");
+    writeFile(parentPath, "#usda 1.0\n(subLayers = [@child.usda@])\ndef Xform \"Before\" {}\n");
+    writeFile(otherPath, "#usda 1.0\ndef Cube \"OtherBefore\" {}\n");
+    Session current;
+    require(current.newStage(), "new layer update fixture");
+    const auto stage = current.stage();
+    const auto root = stage->GetRootLayer();
+    const auto parent = SdfLayer::FindOrOpen(parentPath.toStdString());
+    const auto child = SdfLayer::FindOrOpen(childPath.toStdString());
+    const auto other = SdfLayer::FindOrOpen(otherPath.toStdString());
+    root->SetSubLayerPaths({ parent->GetIdentifier(), other->GetIdentifier() });
+    stage->SetEditTarget(child);
+    stage->DefinePrim(SdfPath("/Unsaved"));
+    std::string beforeChild, beforeParent, beforeOther;
+    child->ExportToString(&beforeChild);
+    parent->ExportToString(&beforeParent);
+    other->ExportToString(&beforeOther);
+    writeFile(childPath, "#usda 1.0\ndef Sphere \"ChildUpdated\" {}\n");
+    writeFile(parentPath, "#usda 1.0\ndef Xform \"After\" {}\n");
+    writeFile(otherPath, "#usda 1.0\ndef Cube \"OtherAfter\" {}\n");
+    auto update = stageviz::updateLayers({ parentPath, childPath, parentPath });
+    executeCommand(update, current);
+    require(stage->GetPrimAtPath(SdfPath("/After")) && !stage->GetPrimAtPath(SdfPath("/Before"))
+                && !stage->GetPrimAtPath(SdfPath("/ChildUpdated")),
+            "selected parent update removes its former sublayer arc");
+    require(stage->GetEditTarget().GetLayer() == root, "detached edit layer falls back to root");
+    require(child->GetPrimAtPath(SdfPath("/ChildUpdated")) && !child->GetPrimAtPath(SdfPath("/Unsaved")),
+            "selected child updates before its parent detaches it");
+    require(stage->GetPrimAtPath(SdfPath("/OtherBefore")) && !stage->GetPrimAtPath(SdfPath("/OtherAfter")),
+            "unselected layer remains unchanged in memory");
+    undoCommand(update, current);
+    std::string restored;
+    child->ExportToString(&restored);
+    require(restored == beforeChild && stage->GetEditTarget().GetLayer() == child,
+            "undo restores unsaved contents and original edit target");
+    parent->ExportToString(&restored);
+    require(restored == beforeParent, "undo restores exact parent composition");
+    writeFile(parentPath, "#usda 1.0\ndef Xform \"LaterDiskChange\" {}\n");
+    executeCommand(update, current);
+    require(stage->GetPrimAtPath(SdfPath("/After")) && !stage->GetPrimAtPath(SdfPath("/LaterDiskChange")),
+            "redo uses captured update rather than later disk changes");
+    undoCommand(update, current);
+    child->SetPermissionToEdit(false);
+    auto locked = stageviz::updateLayers({ childPath });
+    executeCommand(locked, current);
+    child->ExportToString(&restored);
+    require(restored == beforeChild, "locked layer update rejected without edits");
+    child->SetPermissionToEdit(true);
+    std::string rootBefore;
+    root->ExportToString(&rootBefore);
+    auto anonymous = stageviz::updateLayers({ QString::fromStdString(root->GetIdentifier()) });
+    executeCommand(anonymous, current);
+    root->ExportToString(&restored);
+    require(restored == rootBefore, "anonymous root is never cleared by reload");
+    other->ExportToString(&restored);
+    require(restored == beforeOther, "all updates preserve unselected layer contents");
 }
 
 void
@@ -1532,6 +1827,189 @@ sessionStateApi()
     require(disk->GetRootLayer()->GetSubLayerPaths().size() == 4,
             "USD stage file retains all four sublayer references");
     require(disk->GetLayerStack(false).size() == 5, "opening the USD stage independently composes all five layers");
+}
+
+void
+sessionLayerStateApi()
+{
+    QTemporaryDir dir;
+    const QString rootPath = dir.filePath("root.usda");
+    const QString layerPath = dir.filePath("layer.usda");
+    const QString editPath = dir.filePath("edit.usda");
+    const QString sidecar = rootPath + ".session";
+    auto layer = SdfLayer::CreateNew(layerPath.toStdString());
+    auto edit = SdfLayer::CreateNew(editPath.toStdString());
+    require(layer && edit && layer->Save() && edit->Save(), "create layer state fixture");
+    Session current;
+    require(current.newStage(), "new layer state stage");
+    current.stage()->GetRootLayer()->SetSubLayerPaths({ layerPath.toStdString(), editPath.toStdString() });
+    require(current.saveToFile(rootPath), "save layer state root");
+    const auto bytes = [](const QString& path) {
+        QFile file(path);
+        require(file.open(QIODevice::ReadOnly), "read layer state file");
+        return file.readAll();
+    };
+    const QByteArray rootBytes = bytes(rootPath);
+    const QByteArray layerBytes = bytes(layerPath);
+    auto lock = stageviz::setLayerPermissionToEdit(layerPath, false);
+    executeCommand(lock, current);
+    require(current.isStateDirty() && !layer->PermissionToEdit(), "locking dirties companion state");
+    require(current.saveState(sidecar), "save lock state");
+    executeCommand(lock, current);
+    require(!current.isStateDirty(), "repeating the current lock setting leaves state clean");
+    undoCommand(lock, current);
+    require(current.isStateDirty() && layer->PermissionToEdit(), "unlock undo dirties state");
+    executeCommand(lock, current);
+    require(!layer->PermissionToEdit(), "lock redo");
+    require(current.setEditLayer(edit), "select saved edit layer");
+    current.stage()->MuteLayer(layerPath.toStdString());
+    require(current.saveState(sidecar), "save mute lock and edit target together");
+    QJsonObject saved = QJsonDocument::fromJson(bytes(sidecar)).object();
+    require(saved.value("lockedLayers").toArray().contains(layerPath)
+                && saved.value("editLayer").toString() == editPath,
+            "companion stores lock and active edit layer");
+    layer->SetPermissionToEdit(true);
+    require(current.reload(), "reload layer controls");
+    require(!layer->PermissionToEdit() && current.stage()->IsLayerMuted(layerPath.toStdString())
+                && current.stage()->GetEditTarget().GetLayer() == edit && !current.isStateDirty(),
+            "reload restores mute lock and edit target without dirtying state");
+    require(bytes(rootPath) == rootBytes && bytes(layerPath) == layerBytes, "layer controls leave USD files unchanged");
+    require(current.setEditLayer(current.stage()->GetRootLayer()) && current.isStateDirty(),
+            "edit target changes dirty state");
+    const auto write = [&](const QJsonObject& object) {
+        QFile file(sidecar);
+        require(file.open(QIODevice::WriteOnly | QIODevice::Truncate), "write test companion");
+        file.write(QJsonDocument(object).toJson());
+    };
+    QJsonObject invalid = saved;
+    invalid["lockedLayers"] = QJsonArray { 42 };
+    write(invalid);
+    require(!current.loadState(sidecar) && !layer->PermissionToEdit() && current.isStateDirty(),
+            "malformed lock state fails before mutating state");
+    saved["editLayer"] = layerPath;
+    write(saved);
+    require(current.loadState(sidecar)
+                && current.stage()->GetEditTarget().GetLayer() == current.stage()->GetRootLayer(),
+            "muted or locked edit target falls back to root");
+    saved["lockedLayers"] = QJsonArray();
+    saved["mutedLayers"] = QJsonArray();
+    saved["editLayer"] = QStringLiteral("$root");
+    write(saved);
+    require(current.loadState(sidecar) && layer->PermissionToEdit()
+                && !current.stage()->IsLayerMuted(layerPath.toStdString()),
+            "empty controls clear previous locks and mutes");
+    saved.remove("lockedLayers");
+    saved.remove("editLayer");
+    write(saved);
+    layer->SetPermissionToEdit(false);
+    require(current.loadState(sidecar) && !layer->PermissionToEdit(), "legacy companions leave lock state alone");
+    layer->SetPermissionToEdit(true);
+    saved["lockedLayers"] = QJsonArray { layerPath };
+    saved["editLayer"] = editPath;
+    write(saved);
+    current.setPreserveState(false);
+    require(current.reload() && layer->PermissionToEdit()
+                && current.stage()->GetEditTarget().GetLayer() == current.stage()->GetRootLayer(),
+            "Remember state off does not restore lock or edit target state");
+}
+
+void
+sessionStateDirtyApi()
+{
+    QTemporaryDir dir;
+    Session current;
+    require(current.newStage(), "new companion state fixture");
+    require(!current.isStateDirty(), "new stage camera initialization is clean");
+    current.viewState()->camera()->setCameraDistance(8);
+    current.viewState()->setGridEnabled(!current.viewState()->gridEnabled());
+    require(!current.isStateDirty(), "camera and view changes alone do not dirty a pristine Untitled stage");
+    current.stage()->DefinePrim(SdfPath("/World/Cube"), TfToken("Cube"));
+    current.viewState()->camera()->setCameraDistance(9);
+    require(current.isStateDirty(), "authored stage changes establish companion state tracking");
+    require(current.newStage() && !current.isStateDirty(), "New resets state tracking eligibility");
+    const QString filename = dir.filePath("state-root.usda");
+    const QString sidecar = filename + ".session";
+    require(current.saveToFile(filename), "establish root and sidecar");
+    const auto read = [](const QString& path) {
+        QFile file(path);
+        require(file.open(QIODevice::ReadOnly), "read state fixture file");
+        return file.readAll();
+    };
+    const auto usdBytes = read(filename);
+    auto* camera = current.viewState()->camera();
+    int dirtyNotifications = 0;
+    QObject::connect(&current, &Session::stateDirtyChanged, &current, [&](bool dirty) {
+        if (dirty)
+            ++dirtyNotifications;
+    });
+    drainWorkers();
+    dirtyNotifications = 0;
+    for (int i = 0; i < 100; ++i)
+        camera->setCameraDistance(camera->cameraDistance() + 0.1);
+    drainWorkers();
+    require(current.isStateDirty() && dirtyNotifications == 1, "camera changes coalesce one dirty transition");
+    require(current.saveState(sidecar) && !current.isStateDirty(), "state-only save clears dirty marker");
+    require(read(filename) == usdBytes, "state-only save leaves USD bytes unchanged");
+    const double savedDistance = camera->cameraDistance();
+    camera->setCameraDistance(savedDistance + 10);
+    current.viewState()->setGridEnabled(false);
+    require(current.isStateDirty(), "camera and view settings mark state dirty");
+    require(!current.saveState(dir.filePath("missing/state.session")) && current.isStateDirty(),
+            "failed state write retains dirtiness");
+    require(current.loadState(sidecar) && !current.isStateDirty(), "restoring state is clean");
+    require(closeEnough(camera->cameraDistance(), savedDistance), "camera distance round trip");
+    camera->setProjectionMode(ViewCamera::Orthographic);
+    camera->distance(1.7);
+    current.viewState()->setAmbientOcclusionEnabled(true);
+    current.viewState()->setAmbientOcclusionContactRadius(17.0f);
+    require(current.isStateDirty() && current.saveState(sidecar), "save orthographic camera and ambient occlusion");
+    const double aperture = camera->camera().GetVerticalAperture();
+    camera->setProjectionMode(ViewCamera::Physical);
+    current.viewState()->setAmbientOcclusionEnabled(false);
+    current.viewState()->setAmbientOcclusionContactRadius(4.0f);
+    require(current.loadState(sidecar) && !current.isStateDirty(), "orthographic state restoration stays clean");
+    require(camera->projectionMode() == ViewCamera::Orthographic
+                && closeEnough(camera->camera().GetVerticalAperture(), aperture)
+                && current.viewState()->ambientOcclusionEnabled()
+                && closeEnough(current.viewState()->ambientOcclusionContactRadius(), 17.0),
+            "orthographic scale and ambient occlusion round trip");
+    camera->setCameraDistance(savedDistance + 1);
+    const QString copied = dir.filePath("state-copy.usda");
+    require(current.copyToFile(copied) && current.isStateDirty(), "copy leaves source state dirty");
+    require(QJsonDocument::fromJson(read(copied + ".session")).object().value("stageFile").toString() == copied,
+            "copied sidecar identifies its own root document");
+    const QString asset = makeAssetFixture(dir.filePath("state-payload.usda"));
+    auto stage = current.stage();
+    require(stage->DefinePrim(SdfPath("/Payload"), TfToken("Xform")).GetPayloads().AddPayload(asset.toStdString()),
+            "state payload fixture");
+    require(current.saveToFile(filename), "save payload fixture and state");
+    stage->Unload(SdfPath("/Payload"));
+    require(current.isStateDirty(), "direct USD payload unload marks companion dirty");
+    require(current.saveState(sidecar), "save explicit payload load rules");
+    stage->Load(SdfPath("/Payload"));
+    require(current.isStateDirty(), "payload reload marks companion dirty");
+    require(current.reload() && !current.isStateDirty(), "document reload restores clean companion");
+    stage = current.stage();
+    require(!stage->GetPrimAtPath(SdfPath("/Payload")).IsLoaded(), "payload rules round trip");
+    const auto child = SdfLayer::CreateNew(dir.filePath("edit.usda").toStdString());
+    require(child->Save(), "save edit-layer fixture");
+    stage->GetRootLayer()->SetSubLayerPaths({ child->GetIdentifier() });
+    require(current.saveToFile(filename) && current.setEditLayer(child), "edit target is a sublayer");
+    camera->setCameraDistance(camera->cameraDistance() + 1);
+    require(current.saveState(sidecar) && !QFileInfo::exists(dir.filePath("edit.usda.session")),
+            "state remains paired with root while editing a sublayer");
+    current.setPreserveState(false);
+    camera->setCameraDistance(camera->cameraDistance() + 1);
+    const auto previousSidecar = read(sidecar);
+    require(current.saveLayer(QString::fromStdString(stage->GetRootLayer()->GetIdentifier())),
+            "save root with preservation off");
+    require(read(sidecar) == previousSidecar && current.isStateDirty(),
+            "preservation off does not overwrite or acknowledge sidecar");
+    current.setPreserveState(true);
+    require(current.saveLayer(QString::fromStdString(stage->GetRootLayer()->GetIdentifier()))
+                && !current.isStateDirty(),
+            "saving root layer also saves its companion");
+    require(current.reload() && !current.isStateDirty(), "loading saved view does not dirty state");
 }
 
 void
@@ -1762,8 +2240,11 @@ transformInstanceTargets()
     inst.GetReferences().AddInternalReference(source);
     inst.SetInstanceable(true);
     require(inst.IsInstance() && !stage->GetPrototypes().empty(), "internal reference creates a native prototype");
-    require(stageviz::stage::transformEditTargetPaths(stage, { cube }) == QList<SdfPath> { source },
-            "native internal instances redirect shared source edits to the source root");
+    require(stageviz::stage::transformEditTargetPaths(stage, { cube }) == QList<SdfPath> { cube },
+            "ordinary source children remain independently editable with native instances");
+    require(stageviz::stage::transformEditTargetPaths(stage, { cube, instance })
+                == QList<SdfPath>({ source, instance }),
+            "mixed source and instance selections avoid applying shared edits twice");
     require(stageviz::stage::transformEditTargetPaths(stage, { instance.AppendChild(TfToken("Cube")) })
                 == QList<SdfPath> { instance },
             "native instance proxies resolve to their instance root");
@@ -1797,8 +2278,80 @@ transformInstanceTargets()
     require(stageviz::stage::transformEditTargetPaths(stage, { cube }) == QList<SdfPath> { cube },
             "unloaded instances do not redirect source transforms");
     stage->Load(instance);
-    require(stageviz::stage::transformEditTargetPaths(stage, { cube }) == QList<SdfPath> { source },
-            "loading restores native source redirection without an application cache refresh");
+    require(stageviz::stage::transformEditTargetPaths(stage, { cube }) == QList<SdfPath> { cube },
+            "loading an instance does not promote ordinary source child edits");
+}
+
+void
+transformSourceChildApi()
+{
+    Session current;
+    require(current.newStage(), "new source child transform stage");
+    const auto stage = current.stage();
+    const SdfPath source("/World/Source"), sphere("/World/Source/Sphere"), cube("/World/Source/Cube");
+    const SdfPath instance("/World/Instance");
+    UsdGeomXform::Define(stage, source).AddTranslateOp().Set(GfVec3d(2, 0, 0));
+    const auto child = UsdGeomXformable(stage->DefinePrim(sphere, TfToken("Sphere")));
+    child.AddTranslateOp().Set(GfVec3d(0, 3, 0));
+    UsdGeomCube::Define(stage, cube).AddTranslateOp().Set(GfVec3d(0, -3, 0));
+    auto copy = UsdGeomXform::Define(stage, instance);
+    require(copy.GetPrim().GetReferences().AddInternalReference(source), "instance source hierarchy");
+    copy.GetPrim().SetInstanceable(true);
+    copy.MakeMatrixXform().Set(GfMatrix4d(1).SetTranslate(GfVec3d(10, 0, 0)));
+    current.selectionList()->updatePaths({ sphere });
+    const QList<SdfPath> unchanged { source, cube, instance, SdfPath("/World/Instance/Cube") };
+    QList<GfMatrix4d> before;
+    QString error;
+    for (const SdfPath& path : unchanged) {
+        GfMatrix4d world(1);
+        require(stageviz::stage::worldTransform(stage, path, world, error), "capture unaffected source sibling/root");
+        before.append(world);
+    }
+    std::string original;
+    stage->GetRootLayer()->ExportToString(&original);
+    const QList<GfMatrix4d> deltas { GfMatrix4d(1).SetTranslate(GfVec3d(1, 2, 3)),
+                                     GfMatrix4d(1).SetRotate(GfRotation(GfVec3d::ZAxis(), 25)),
+                                     GfMatrix4d(1).SetScale(GfVec3d(1.2, .8, 1.1)) };
+    for (const GfMatrix4d& delta : deltas) {
+        GfMatrix4d childBefore(1);
+        require(stageviz::stage::worldTransform(stage, sphere, childBefore, error), "capture selected source child");
+        stageviz::TransformOperation operation;
+        require(stageviz::beginTransformOperation(stage, { sphere }, operation, error),
+                "capture source child operation");
+        require(operation.paths == QList<SdfPath> { sphere } && operation.targetCount == 1,
+                "source child is the only authored transform target");
+        QStringList errors;
+        const auto prepared = stageviz::prepareTransforms(stage, operation.paths, operation.edit.before, &errors);
+        require(errors.isEmpty(), "prepare source child transform");
+        require(stageviz::applyTransformOperation(stage, operation, prepared, delta, &errors),
+                "preview source child delta");
+        const auto verify = [&]() {
+            for (qsizetype i = 0; i < unchanged.size(); ++i) {
+                GfMatrix4d world(1);
+                require(stageviz::stage::worldTransform(stage, unchanged.at(i), world, error), "read unaffected prim");
+                require(GfIsClose(world, before.at(i), 1e-6),
+                        "source child edit leaves siblings and group roots fixed");
+            }
+            GfMatrix4d world(1), proxy(1);
+            require(stageviz::stage::worldTransform(stage, sphere, world, error), "read moved source child");
+            require(GfIsClose(world, childBefore * delta, 1e-6), "selected source child receives requested delta");
+            require(stageviz::stage::worldTransform(stage, SdfPath("/World/Instance/Sphere"), proxy, error),
+                    "read corresponding instance child");
+            require(GfIsClose(proxy, world * before.at(0).GetInverse() * before.at(2), 1e-6),
+                    "instance child inherits shared source edit in its own placement");
+            require(stage->GetPrimAtPath(instance).IsInstance(), "source edit retains native instancing");
+            require(current.selectionList()->paths() == QList<SdfPath> { sphere }, "source child selection retained");
+        };
+        verify();
+        auto command = stageviz::setTransforms(operation);
+        undoCommand(command, current);
+        std::string restored;
+        stage->GetRootLayer()->ExportToString(&restored);
+        require(restored == original, "source child undo restores exact authored layer");
+        executeCommand(command, current);
+        verify();
+        undoCommand(command, current);
+    }
 }
 
 void
@@ -2792,6 +3345,212 @@ materialMenuApi()
 }
 
 void
+resetOpinionGroupsApi()
+{
+    Session current;
+    require(current.newStage(), "new grouped reset fixture");
+    const auto stage = current.stage();
+    const auto root = stage->GetRootLayer();
+    const auto weak = SdfLayer::CreateAnonymous("reset_base.usda");
+    require(weak->ImportFromString(R"USD(#usda 1.0
+ def Xform "Group" {
+    def Sphere "Sphere" { }
+    def Camera "Camera" { }
+    def SphereLight "Light" (prepend apiSchemas = ["LightAPI"]) { }
+    def Material "Material" { }
+ }
+)USD"),
+            "prepare base opinions");
+    root->SetSubLayerPaths({ weak->GetIdentifier() });
+    require(root->ImportFromString((std::string(R"USD(#usda 1.0
+ (
+ subLayers = [@)USD") + weak->GetIdentifier()
+                                    + R"USD(@]
+ )
+ over "Group" {
+    over "Sphere" {
+        double3 xformOp:translate = (3, 0, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+        token visibility = "invisible"
+        rel material:binding = </Group/Material>
+        double radius = 4
+        float primvars:test = 0.5
+        string customNote = "keep"
+    }
+    over "Camera" {
+        float focalLength = 100
+    }
+    over "Light" {
+        float inputs:intensity = 10
+    }
+    over "Material" {
+        color3f inputs:color = (1, 0, 0)
+    }
+ }
+ def Sphere "Owned" {
+    double radius = 8
+ }
+)USD")
+                                       .c_str()),
+            "prepare authored override groups");
+    std::string original, base;
+    root->ExportToString(&original);
+    weak->ExportToString(&base);
+    const QList<SdfPath> paths { SdfPath("/Group"), SdfPath("/Group/Sphere"), SdfPath("/Owned") };
+    const auto groups = stageviz::resetOverrideGroups(stage, paths);
+    require(groups.size() == 8, "all authored property groups discovered once");
+    require(stageviz::resetOverrideGroups(stage, { SdfPath::AbsoluteRootPath() }) == groups,
+            "stage-root selection discovers descendant override groups");
+    for (const auto group : groups) {
+        auto command = stageviz::resetOverrides(paths, group);
+        executeCommand(command, current);
+        require(!stageviz::resetOverrideGroups(stage, paths).contains(group), "only chosen group removed");
+        require(stageviz::resetOverrideGroups(stage, paths).size() == 7, "unrelated groups retained");
+        require(root->GetPropertyAtPath(SdfPath("/Owned.radius")), "owned definition properties retained");
+        stage->SetEditTarget(UsdEditTarget(weak));
+        undoCommand(command, current);
+        std::string restored, unchanged;
+        root->ExportToString(&restored);
+        weak->ExportToString(&unchanged);
+        require(restored == original && unchanged == base, "exact undo uses captured layer after target switch");
+        stage->SetEditTarget(UsdEditTarget(root));
+        executeCommand(command, current);
+        require(!stageviz::resetOverrideGroups(stage, paths).contains(group), "group reset redo");
+        undoCommand(command, current);
+    }
+    auto all = stageviz::resetOverrides(paths);
+    executeCommand(all, current);
+    require(stageviz::resetOverrideGroups(stage, paths).isEmpty(), "All removes all eligible property opinions");
+    require(stage->GetPrimAtPath(SdfPath("/Group/Sphere")).IsDefined(), "base geometry survives All");
+    undoCommand(all, current);
+    root->SetPermissionToEdit(false);
+    require(stageviz::resetOverrideGroups(stage, paths).isEmpty(), "locked edit layer offers no resets");
+    root->SetPermissionToEdit(true);
+    auto variants = stage->GetPrimAtPath(SdfPath("/Group/Sphere")).GetVariantSets().AddVariantSet("edit");
+    variants.AddVariant("test");
+    variants.SetVariantSelection("test");
+    {
+        UsdEditContext context(variants.GetVariantEditContext());
+        stage->GetPrimAtPath(SdfPath("/Group/Sphere")).GetAttribute(TfToken("radius")).Set(12.0);
+        const auto mapped = stage->GetEditTarget().MapToSpecPath(SdfPath("/Group/Sphere.radius"));
+        root->ExportToString(&original);
+        auto reset = stageviz::resetOverrides({ SdfPath("/Group") }, stageviz::OverrideGroup::Geometry);
+        executeCommand(reset, current);
+        require(!root->GetPropertyAtPath(mapped), "ancestor selection resets mapped variant-target properties");
+        undoCommand(reset, current);
+        std::string restored;
+        root->ExportToString(&restored);
+        require(restored == original, "mapped reset undo exactly restores variant authoring");
+    }
+}
+
+void
+makeEditableInstanceApi()
+{
+    for (const bool composed : { false, true }) {
+        Session current;
+        require(current.newStage(), "new make editable fixture");
+        const auto stage = current.stage();
+        const auto root = stage->GetRootLayer();
+        const auto weak = SdfLayer::CreateAnonymous("instances.usda");
+        root->SetSubLayerPaths({ weak->GetIdentifier() });
+        const SdfLayerHandle authored = composed ? SdfLayerHandle(weak) : SdfLayerHandle(root);
+        stage->SetEditTarget(UsdEditTarget(authored));
+        const auto source = SdfPrimSpec::New(authored, "Flattened_Prototype_1", SdfSpecifierOver);
+        SdfPrimSpec::New(source, "Cube", SdfSpecifierDef, "Cube");
+        SdfPrimSpec::New(source, "Sphere", SdfSpecifierDef, "Sphere");
+        for (const char* name : { "First", "Second" }) {
+            auto instance = UsdGeomXform::Define(stage, SdfPath(std::string("/World/") + name));
+            instance.GetPrim().GetReferences().AddInternalReference(source->GetPath());
+            instance.GetPrim().SetInstanceable(true);
+            instance.AddTranslateOp().Set(GfVec3d(name == std::string("First") ? 0 : 10, 0, 0));
+        }
+        stage->SetEditTarget(UsdEditTarget(root));
+        const QList<SdfPath> selected { SdfPath("/World/First/Cube"), SdfPath("/World/First/Sphere") };
+        current.selectionList()->updatePaths(selected);
+        std::string original, originalWeak;
+        root->ExportToString(&original);
+        weak->ExportToString(&originalWeak);
+        auto command = stageviz::makeEditablePaths(selected);
+        executeCommand(command, current);
+        require(!stage->GetPrimAtPath(SdfPath("/World/First")).IsInstance()
+                    && !stage->GetPrimAtPath(SdfPath("/World/First")).IsInstanceable(),
+                "proxy siblings resolve to one editable owning instance");
+        require(stage->GetPrimAtPath(selected.first()).IsDefined()
+                    && !stage->GetPrimAtPath(selected.first()).IsInstanceProxy(),
+                "generated prototype contents become ordinary defined children");
+        require(stage->GetPrimAtPath(SdfPath("/World/Second")).IsInstance()
+                    && stage->GetPrimAtPath(SdfPath("/World/First")).HasAuthoredReferences(),
+                "other instances and the selected instance reference are retained");
+        require(current.selectionList()->paths() == selected, "make editable retains exact proxy-child selection");
+        GfMatrix4d before(1), other(1), parent(1);
+        QString error;
+        require(stageviz::stage::worldTransform(stage, selected.first(), before, error)
+                    && stageviz::stage::worldTransform(stage, SdfPath("/World/Second/Cube"), other, error)
+                    && stageviz::stage::worldTransform(stage, SdfPath("/World/First"), parent, error),
+                "capture editable child and retained instance placement");
+        stageviz::XformEdit edit;
+        edit.before = { before };
+        edit.after = { before * GfMatrix4d(1).SetTranslate(GfVec3d(1, 2, 3)) };
+        auto move = stageviz::setTransforms({ selected.first() }, edit);
+        executeCommand(move, current);
+        GfMatrix4d moved(1), unchanged(1);
+        require(stageviz::stage::worldTransform(stage, selected.first(), moved, error)
+                    && GfIsClose(moved, edit.after.first(), 1e-6),
+                "editable child can move independently");
+        require(stageviz::stage::worldTransform(stage, SdfPath("/World/Second/Cube"), unchanged, error)
+                    && GfIsClose(unchanged, other, 1e-6),
+                "editable child override leaves shared instance geometry fixed");
+        require(stageviz::stage::worldTransform(stage, SdfPath("/World/First"), unchanged, error)
+                    && GfIsClose(unchanged, parent, 1e-6),
+                "moving an editable child leaves its parent fixed");
+        undoCommand(move, current);
+        stage->SetEditTarget(UsdEditTarget(weak));
+        undoCommand(command, current);
+        std::string restored, restoredWeak;
+        root->ExportToString(&restored);
+        weak->ExportToString(&restoredWeak);
+        require(restored == original && restoredWeak == originalWeak,
+                "undo restores exact layer metadata and newly created override specs after target switch");
+        require(stage->GetPrimAtPath(selected.first()).IsInstanceProxy(), "undo restores proxy children");
+        stage->SetEditTarget(UsdEditTarget(root));
+        executeCommand(command, current);
+        require(!stage->GetPrimAtPath(selected.first()).IsInstanceProxy(), "redo makes children editable again");
+        undoCommand(command, current);
+        root->SetPermissionToEdit(false);
+        auto locked = stageviz::makeEditablePaths({ SdfPath("/World/First") });
+        executeCommand(locked, current);
+        root->SetPermissionToEdit(true);
+        root->ExportToString(&restored);
+        require(restored == original, "locked layer rejects make editable without authoring");
+        if (!composed) {
+            stage->SetEditTarget(UsdEditTarget(weak));
+            auto ineffective = stageviz::makeEditablePaths({ SdfPath("/World/First") });
+            executeCommand(ineffective, current);
+            weak->ExportToString(&restoredWeak);
+            require(restoredWeak == originalWeak && stage->GetPrimAtPath(selected.first()).IsInstanceProxy(),
+                    "ineffective weaker override is rolled back without residual specs");
+        }
+        else {
+            stage->SetEditTarget(UsdEditTarget(root));
+            auto variants = stage->GetPrimAtPath(SdfPath("/World")).GetVariantSets().AddVariantSet("edit");
+            variants.AddVariant("test");
+            variants.SetVariantSelection("test");
+            UsdEditContext context(variants.GetVariantEditContext());
+            root->ExportToString(&original);
+            auto variantCommand = stageviz::makeEditablePaths({ selected.first() });
+            executeCommand(variantCommand, current);
+            // Local layer-stack metadata is stronger than a variant opinion,
+            // even when that local opinion comes from a weaker sublayer.
+            require(stage->GetPrimAtPath(selected.first()).IsInstanceProxy(),
+                    "ineffective variant opinion does not change instance state");
+            root->ExportToString(&restored);
+            require(restored == original, "ineffective mapped variant override leaves no residual specs");
+        }
+    }
+}
+
+void
 commandMaterialApi()
 {
     Session session;
@@ -2929,6 +3688,60 @@ commandSelectionApi()
 }
 
 void
+newXformGroupingApi()
+{
+    for (bool selectCreated : { true, false }) {
+        for (bool descendant : { false, true }) {
+            Session current;
+            require(current.newStage(), "new grouping fixture");
+            auto parent = UsdGeomXform::Define(current.stage(), SdfPath("/World"));
+            parent.AddTranslateOp().Set(GfVec3d(7, 8, 9));
+            auto child = UsdGeomXform::Define(current.stage(), SdfPath("/World/A"));
+            child.AddTranslateOp().Set(GfVec3d(1, 2, 3));
+            UsdGeomXform::Define(current.stage(), SdfPath("/World/A/Child"));
+            UsdGeomXform::Define(current.stage(), SdfPath("/World/B"));
+            const QList<SdfPath> selection = descendant
+                                                 ? QList<SdfPath> { SdfPath("/World/A/Child"), SdfPath("/World/A") }
+                                                 : QList<SdfPath> { SdfPath("/World/A") };
+            current.selectionList()->updatePaths(selection);
+            GfMatrix4d before;
+            QString error;
+            require(stageviz::stage::worldTransform(current.stage(), SdfPath("/World/A"), before, error),
+                    "capture placement");
+            auto command = stageviz::newXformPath(SdfPath("/World"), "Group", selectCreated);
+            for (int redo = 0; redo < 2; ++redo) {
+                executeCommand(command, current);
+                require(current.stage()->GetPrimAtPath(SdfPath("/World/Group/A/Child"))
+                            && !current.stage()->GetPrimAtPath(SdfPath("/World/A")),
+                        "group the selected root and subtree");
+                require(bool(current.stage()->GetPrimAtPath(SdfPath("/World/B"))),
+                        "leave unselected siblings unchanged");
+                GfMatrix4d after;
+                require(stageviz::stage::worldTransform(current.stage(), SdfPath("/World/Group/A"), after, error)
+                            && GfIsClose(before, after, 1e-8),
+                        "grouping preserves world placement");
+                require(selectCreated ? current.selectionList()->paths() == QList<SdfPath> { SdfPath("/World/Group") }
+                                      : current.selectionList()->paths().contains(SdfPath("/World/Group/A")),
+                        "select the wrapper or remap selected children");
+                undoCommand(command, current);
+                require(!current.stage()->GetPrimAtPath(SdfPath("/World/Group"))
+                            && current.stage()->GetPrimAtPath(SdfPath("/World/A/Child")),
+                        "undo restores hierarchy");
+                require(current.selectionList()->paths() == selection, "undo restores exact selection");
+            }
+        }
+    }
+    Session current;
+    require(current.newStage(), "new empty Xform fixture");
+    UsdGeomXform::Define(current.stage(), SdfPath("/World"));
+    current.selectionList()->updatePaths({ SdfPath("/World") });
+    auto command = stageviz::newXformPath(SdfPath("/World"), "Empty");
+    executeCommand(command, current);
+    require(bool(current.stage()->GetPrimAtPath(SdfPath("/World/Empty"))),
+            "explicit destination parent creates an empty child");
+}
+
+void
 commandAuthoringApi()
 {
     Session session;
@@ -2946,6 +3759,8 @@ commandAuthoringApi()
     require(session.stage()->GetPrimAtPath(SdfPath("/World/Scope")).GetTypeName() == TfToken("Scope"),
             "newScopePath authors scope");
 
+    // This case needs an empty Xform; grouping behavior is covered separately.
+    session.selectionList()->updatePaths({});
     stageviz::Command xform = stageviz::newXformPath(SdfPath("/World"), "Xform");
     executeCommand(xform, session);
     require(session.stage()->GetPrimAtPath(SdfPath("/World/Xform")).GetTypeName() == TfToken("Xform"),
@@ -4535,6 +5350,8 @@ main(int argc, char** argv)
         { "namespace_load_rules_batch_failure", namespaceLoadRulesBatchFailure },
         { "namespace_load_rules_rename", namespaceLoadRulesRename },
         { "export_session_opinions", exportSessionOpinions },
+        { "export_subset_metadata", exportSubsetMetadata },
+        { "export_instances", exportInstances },
         { "export_multiple_session_opinions", exportMultipleSessionOpinions },
         { "merge_asset_paths", mergeAssetPaths },
         { "merge_composition_asset_paths", mergeCompositionAssetPaths },
@@ -4545,14 +5362,20 @@ main(int argc, char** argv)
         { "view_state_api", viewStateApi },
         { "session_core_api", sessionCoreApi },
         { "session_file_api", sessionFileApi },
+        { "session_layer_colors_api", sessionLayerColorsApi },
         { "session_edit_layer_api", sessionEditLayerApi },
         { "session_layer_commands", sessionLayerCommands },
+        { "session_layer_batch_api", sessionLayerBatchApi },
+        { "session_layer_update_api", sessionLayerUpdateApi },
         { "session_state_api", sessionStateApi },
+        { "session_layer_state_api", sessionLayerStateApi },
+        { "session_state_dirty_api", sessionStateDirtyApi },
         { "session_load_policy_api", sessionLoadPolicyApi },
         { "command_merge_api", commandMergeApi },
         { "namespace_editor_crud_api", namespaceEditorCrudApi },
         { "usd_path_utils_api", usdPathUtilsApi },
         { "transform_instance_targets", transformInstanceTargets },
+        { "transform_source_child_api", transformSourceChildApi },
         { "indexed_path_api", indexedPathApi },
         { "qt_path_hash_api", qtPathHashApi },
         { "spec_deletion_api", specDeletionApi },
@@ -4565,8 +5388,11 @@ main(int argc, char** argv)
         { "geometry_subset_api", geometrySubsetApi },
         { "material_menu_api", materialMenuApi },
         { "command_material_api", commandMaterialApi },
+        { "reset_opinion_groups_api", resetOpinionGroupsApi },
+        { "make_editable_instance_api", makeEditableInstanceApi },
         { "command_selection_api", commandSelectionApi },
         { "command_authoring_api", commandAuthoringApi },
+        { "new_xform_grouping_api", newXformGroupingApi },
         { "command_generated_geometry_api", commandGeneratedGeometryApi },
         { "command_property_api", commandPropertyApi },
         { "command_attribute_lifecycle_api", commandAttributeLifecycleApi },

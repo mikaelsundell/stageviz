@@ -128,7 +128,7 @@
          </size>
         </property>
         <property name="toolTip">
-         <string>Select all composed prim paths authored by the selected layer</string>
+         <string>Select all composed prim paths authored by the selected layers</string>
         </property>
         <property name="text">
          <string/>

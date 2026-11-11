@@ -1,21 +1,15 @@
 @echo off
-REM Format C++ files in multiple directories using clang-format
-
-REM Get the directory of this script
-set "script_dir=%~dp0"
-set "script_dir=%script_dir:~0,-1%"
-
-REM Define directories to format
-set "dirs=sources"
-
-REM Loop through each target directory recursively
-for %%D in (%dirs%) do (
-    echo Running clang-format in: %script_dir%\..\%%D
-
-    for /R "%script_dir%\..\%%D" %%F in (*.cpp *.h) do (
-        echo Formatting %%F
-        clang-format -i "%%~fF"
-    )
-)
-
-echo Clang-format completed.
+REM SPDX-License-Identifier: BSD-3-Clause
+setlocal DisableDelayedExpansion
+where py >nul 2>&1
+if errorlevel 1 goto python
+py -3 "%~dp0clang_format.py" %*
+exit /b %errorlevel%
+:python
+where python >nul 2>&1
+if errorlevel 1 goto missing
+python "%~dp0clang_format.py" %*
+exit /b %errorlevel%
+:missing
+echo Python 3 is required to select changed files for clang-format. 1>&2
+exit /b 1

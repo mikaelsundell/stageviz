@@ -6,18 +6,26 @@
 #include "application.h"
 #include "command.h"
 #include "indextree.h"
+#include "outlinertree.h"
 #include "qtutils.h"
 #include "ui.h"
 #include "usdutils.h"
 #include <QBrush>
+#include <QFont>
 #include <QIcon>
 #include <QItemSelectionModel>
 #include <QPixmap>
 #include <QPointer>
+#include <QSet>
+#include <QStringList>
+#include <algorithm>
+#include <pxr/usd/sdf/primSpec.h>
 #include <pxr/usd/usd/prim.h>
 #include <pxr/usd/usdGeom/gprim.h>
 #include <pxr/usd/usdGeom/imageable.h>
+#include <pxr/usd/usdGeom/scope.h>
 #include <pxr/usd/usdGeom/tokens.h>
+#include <pxr/usd/usdGeom/xform.h>
 
 PXR_NAMESPACE_USING_DIRECTIVE
 
@@ -33,18 +41,23 @@ public:
         SdfPath path;
         PrimItem* item = nullptr;
         bool dirty = true;
+        quint64 payloadCheckRevision = 0;
+        int payloadCheckState = -1;
         bool visible = true;
         bool active = true;
         bool hasPayload = false;
         bool isAuthoredInEditTarget = true;
         bool isRoot = false;
         bool isGprim = false;
+        bool isGroup = false;
         bool isInstance = false;
         bool isInstanceProxy = false;
         bool supportsVisibility = false;
         bool isDefaultPrim = false;
         bool hasDirectOverride = false;
         bool hasDescendantOverride = false;
+        QStringList compositionLayers;
+        bool compositionLayersCached = false;
         QString editName;
         QString name;
         QString typeName;
@@ -73,10 +86,13 @@ PrimItemPrivate::updateCache()
     d.isAuthoredInEditTarget = true;
     d.isRoot = false;
     d.isGprim = false;
+    d.isGroup = false;
     d.isInstance = false;
     d.isInstanceProxy = false;
     d.supportsVisibility = false;
     d.isDefaultPrim = false;
+    d.compositionLayers.clear();
+    d.compositionLayersCached = false;
     d.name.clear();
     d.typeName.clear();
 
@@ -96,6 +112,7 @@ PrimItemPrivate::updateCache()
         const SdfLayerHandle editLayer = d.stage->GetEditTarget().GetLayer();
         d.isAuthoredInEditTarget = editLayer && stage::isAuthoredInLayer(d.stage, editLayer, d.path);
         d.isGprim = prim.IsA<UsdGeomGprim>();
+        d.isGroup = d.isRoot || d.typeName.isEmpty() || prim.IsA<UsdGeomXform>() || prim.IsA<UsdGeomScope>();
         d.isInstance = prim.IsInstance();
         d.isInstanceProxy = prim.IsInstanceProxy();
         d.supportsVisibility = !d.isInstanceProxy && prim.IsA<UsdGeomImageable>()
@@ -142,9 +159,43 @@ PrimItem::data(int column, int role) const
     p->updateCache();
     const SdfPath path = p->d.path;
 
+    if (role == PrimItem::StrongestLayer || role == PrimItem::CompositionLayers) {
+        if (!p->d.compositionLayersCached) {
+            if (p->d.stage && !p->d.isRoot) {
+                const UsdPrim prim = p->d.stage->GetPrimAtPath(path);
+                if (prim) {
+                    const auto stack = prim.GetPrimStack();
+                    QSet<QString> seen;
+                    seen.reserve(int(stack.size()));
+                    for (const auto& spec : stack) {
+                        const QString identifier = QString::fromStdString(spec->GetLayer()->GetIdentifier());
+                        if (!seen.contains(identifier)) {
+                            seen.insert(identifier);
+                            p->d.compositionLayers.append(identifier);
+                        }
+                    }
+                    std::reverse(p->d.compositionLayers.begin(), p->d.compositionLayers.end());
+                }
+            }
+            p->d.compositionLayersCached = true;
+        }
+        if (role == PrimItem::CompositionLayers)
+            return p->d.compositionLayers;
+        return p->d.compositionLayers.isEmpty() ? QString() : p->d.compositionLayers.constLast();
+    }
+
+
+    if (role == Qt::FontRole && !p->d.isRoot && !p->d.isAuthoredInEditTarget) {
+        const QVariant base = TreeItem::data(column, role);
+        QFont font = base.isValid() ? base.value<QFont>() : treeWidget() ? treeWidget()->font() : QFont();
+        font.setItalic(true);
+        return font;
+    }
+
     if (column == Name && role == Qt::CheckStateRole && (flags() & Qt::ItemIsAutoTristate)) {
-        const QVariant state = payloadCheckState();
-        return state.isValid() ? state : QVariant(Qt::Unchecked);
+        const auto* tree = dynamic_cast<const OutlinerTree*>(treeWidget());
+        const int state = payloadCheckState(tree ? tree->payloadCheckRevision() : 0);
+        return state < 0 ? int(Qt::Unchecked) : state;
     }
 
     bool selected = false;
@@ -249,6 +300,14 @@ PrimItem::data(int column, int role) const
 void
 PrimItem::setData(int column, int role, const QVariant& value)
 {
+    if (column == Name && role == Qt::CheckStateRole) {
+        // Qt emits itemChanged before later model dataChanged connections run.
+        // Invalidate first so checkbox commands observe the newly stored state.
+        if (auto* tree = dynamic_cast<OutlinerTree*>(treeWidget()))
+            tree->invalidatePayloadChecks();
+        p->d.payloadCheckRevision = 0;
+    }
+
     if (column == Name && (role == Qt::EditRole || role == PrimItem::EditName)) {
         const QString newName = value.toString().trimmed();
 
@@ -268,23 +327,40 @@ PrimItem::setData(int column, int role, const QVariant& value)
     TreeItem::setData(column, role, value);
 }
 
-QVariant
-PrimItem::payloadCheckState() const
+int
+PrimItem::payloadCheckState(quint64 revision) const
 {
-    p->updateCache();
-    if (p->d.hasPayload)
-        return TreeItem::data(Name, Qt::CheckStateRole);
+    if (revision && p->d.payloadCheckRevision == revision)
+        return p->d.payloadCheckState;
 
-    QVariant state;
-    for (int i = 0; i < childCount(); ++i) {
-        const auto* item = static_cast<const PrimItem*>(child(i));
-        const QVariant childState = item->payloadCheckState();
-        if (!childState.isValid())
-            continue;
-        if (childState.toInt() == Qt::PartiallyChecked || (state.isValid() && state != childState))
-            return Qt::PartiallyChecked;
-        state = childState;
+    p->updateCache();
+    int state = -1;
+    if (!(QTreeWidgetItem::flags() & Qt::ItemIsUserCheckable)) {
+        // Instance proxies and other non-checkable rows do not contribute.
     }
+    else if (p->d.hasPayload) {
+        const QVariant value = TreeItem::data(Name, Qt::CheckStateRole);
+        if (value.isValid())
+            state = value.toInt();
+    }
+    else {
+        for (int i = 0; i < childCount(); ++i) {
+            const auto* item = static_cast<const PrimItem*>(child(i));
+            const int childState = item->payloadCheckState(revision);
+            if (childState < 0)
+                continue;
+            if (childState == Qt::PartiallyChecked || (state >= 0 && state != childState)) {
+                state = Qt::PartiallyChecked;
+                break;
+            }
+            state = childState;
+        }
+        if (state < 0 && childCount() == 0 && p->d.isGroup)
+            state = Qt::Unchecked;
+    }
+
+    p->d.payloadCheckState = state;
+    p->d.payloadCheckRevision = revision;
     return state;
 }
 
@@ -308,8 +384,7 @@ PrimItem::setPath(const SdfPath& path)
         return;
 
     p->d.path = path;
-    p->d.dirty = true;
-    p->d.editName.clear();
+    invalidate();
 }
 
 void
@@ -317,6 +392,8 @@ PrimItem::invalidate()
 {
     p->d.dirty = true;
     p->d.editName.clear();
+    if (auto* tree = dynamic_cast<OutlinerTree*>(treeWidget()))
+        tree->invalidatePayloadChecks();
 }
 
 void

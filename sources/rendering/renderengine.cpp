@@ -445,14 +445,10 @@ namespace {
 
     bool primTypeSupportsSelection(const TfToken& type)
     {
-        static const TfTokenVector supportedTypes = {
-            HdPrimTypeTokens->mesh,       HdPrimTypeTokens->basisCurves, HdPrimTypeTokens->points,
-            HdPrimTypeTokens->nurbsPatch, HdPrimTypeTokens->nurbsCurves, HdPrimTypeTokens->volume,
-            HdPrimTypeTokens->tetMesh,    HdPrimTypeTokens->geomSubset,  HdPrimTypeTokens->plane,
-            HdPrimTypeTokens->capsule,    HdPrimTypeTokens->cube,        HdPrimTypeTokens->cylinder,
-            HdPrimTypeTokens->sphere,     HdPrimTypeTokens->model,
-        };
-        return std::find(supportedTypes.begin(), supportedTypes.end(), type) != supportedTypes.end();
+        // Use Hydra's complete renderable-prim registry, including implicit
+        // surfaces before tessellation. HdPrimTypeIsGprim only covers a subset.
+        const TfTokenVector& types = HdRprimTypeTokens->allTokens;
+        return std::find(types.begin(), types.end(), type) != types.end();
     }
 
     void classifyNodes(size_t begin, size_t end, const SelectionSeed& seed, const HdSceneIndexBaseRefPtr& sceneIndex,

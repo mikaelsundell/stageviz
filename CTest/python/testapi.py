@@ -1248,6 +1248,7 @@ def test_command_api():
         "delete_paths",
         "copy_paths",
         "instance_paths",
+        "make_editable_paths",
         "new_prim",
         "new_scope",
         "new_material",
@@ -2588,6 +2589,21 @@ def test_new_xform_unique_name():
         _wait_until(lambda: _exists("/World/A_1") or _exists("/World/A1")),
         "new_xform creates unique name when sibling exists",
     )
+
+
+def test_new_xform_wraps_single_selection():
+    stageviz.command.select_paths(["/World/A"])
+    _assert(_wait_until(lambda: _selection() == ["/World/A"]), "prepare single-prim grouping")
+    stageviz.command.new_xform("/World", "SingleGroup")
+    _assert(_wait_until(lambda: _exists("/World/SingleGroup/A") and not _exists("/World/A")),
+            "new_xform wraps a single selected sibling")
+    _assert(_selection() == ["/World/SingleGroup"], "new_xform selects the new group")
+    if _undo():
+        _assert(_wait_until(lambda: _exists("/World/A") and not _exists("/World/SingleGroup")),
+                "undo restores the single grouped prim")
+        _assert(_selection() == ["/World/A"], "undo restores the original selection")
+    if _redo():
+        _assert(_wait_until(lambda: _exists("/World/SingleGroup/A")), "redo restores the single-prim group")
 
 
 def test_new_xform_wraps_multiple_selection():
@@ -6667,6 +6683,7 @@ def run():
         ("new_xform root parent", test_new_xform_root_parent, ()),
         ("new_xform unique name", test_new_xform_unique_name, ()),
         ("new_xform wraps multiple selection", test_new_xform_wraps_multiple_selection, ()),
+        ("new_xform wraps single selection", test_new_xform_wraps_single_selection, ()),
         ("new_xform minimal root selection", test_new_xform_minimal_root_selection, ()),
         ("rename remaps child selection and mask", test_rename_remaps_child_selection_and_mask, ()),
         ("rename noop is safe", test_rename_noop_is_safe, ()),

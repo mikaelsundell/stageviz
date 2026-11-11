@@ -89,9 +89,10 @@ struct TransformOperation {
 /**
  * @brief Resolves selected paths and captures undo state before any authoring.
  *
- * Subsets resolve to geometry, proxy children to instance roots, and shared
- * sources to reference roots. Targets are deduplicated. Session selection is
- * never modified. The caller must hold the stage read or write lock.
+ * Subsets resolve to geometry and proxy children to instance roots. Ordinary
+ * source children remain editable; mixed source/proxy selections use reference
+ * roots to avoid applying shared edits twice. Targets are deduplicated. Session
+ * selection is never modified. The caller must hold the stage read or write lock.
  *
  * @param stage Stage to edit.
  * @param selection Exact selected USD paths.

@@ -35,22 +35,6 @@
 namespace stageviz {
 
 namespace {
-    bool hasResettableOverrides(const UsdPrim& prim, const SdfLayerHandle& editLayer)
-    {
-        if (!prim || prim.IsInstanceProxy() || !editLayer || !editLayer->PermissionToEdit())
-            return false;
-
-        const SdfPrimSpecHandle spec = editLayer->GetPrimAtPath(prim.GetPath());
-        if (!spec || spec->GetSpecifier() != SdfSpecifierOver || spec->GetProperties().empty())
-            return false;
-
-        for (const SdfPrimSpecHandle& primSpec : prim.GetPrimStack()) {
-            if (primSpec && primSpec->GetLayer() && primSpec->GetLayer() != editLayer)
-                return true;
-        }
-        return false;
-    }
-
     bool maskContainsSelection(const QList<SdfPath>& maskPaths, const QList<SdfPath>& selectedPaths)
     {
         if (maskPaths.isEmpty() || selectedPaths.isEmpty())
@@ -124,6 +108,10 @@ ContextMenu::exec(QWidget* parent, ViewContext* context, UsdStageRefPtr usdStage
         return;
 
     const QList<SdfPath> topLevelPaths = path::topLevelPaths(paths);
+    const QList<SdfPath> groupPaths = path::minimalRootPaths(paths);
+    const SdfPath xformParentPath = !groupPaths.isEmpty() && groupPaths.first() != SdfPath::AbsoluteRootPath()
+                                        ? groupPaths.first().GetParentPath()
+                                        : createParentPath;
     const bool canSetDefaultPrim = paths.size() == 1 && !paths.first().IsEmpty()
                                    && paths.first() != SdfPath::AbsoluteRootPath()
                                    && paths.first().GetParentPath() == SdfPath::AbsoluteRootPath();
@@ -142,15 +130,19 @@ ContextMenu::exec(QWidget* parent, ViewContext* context, UsdStageRefPtr usdStage
     bool canTransform = !paths.isEmpty();
     bool canCenterPivot = !paths.isEmpty();
     bool canResetPivot = !paths.isEmpty();
-    bool canResetOverrides = false;
+    QList<OverrideGroup> resetGroups;
     bool canInstance = !paths.isEmpty();
     SdfPath instanceRootPath;
     SdfPath instanceSourcePath;
+    bool canMakeInstanceEditable = false;
 
     {
         READ_LOCKER(locker, context->stageLock(), "stageLock");
         if (!usdStage)
             return;
+        resetGroups = resetOverrideGroups(usdStage, paths);
+        const auto instanceEditLayer = usdStage->GetEditTarget().GetLayer();
+        canMakeInstanceEditable = instanceEditLayer && instanceEditLayer->PermissionToEdit();
 
         if (canSetDefaultPrim) {
             const UsdPrim defaultPrim = usdStage->GetDefaultPrim();
@@ -219,19 +211,6 @@ ContextMenu::exec(QWidget* parent, ViewContext* context, UsdStageRefPtr usdStage
                 }
                 if (!hasPivot)
                     canResetPivot = false;
-            }
-
-            if (!canResetOverrides && prim && prim.IsValid() && !prim.IsInstanceProxy()) {
-                const SdfLayerHandle editLayer = usdStage->GetEditTarget().GetLayer();
-                canResetOverrides = hasResettableOverrides(prim, editLayer);
-                if (!canResetOverrides && editLayer && editLayer->PermissionToEdit()) {
-                    for (const UsdPrim& descendant : prim.GetAllDescendants()) {
-                        if (hasResettableOverrides(descendant, editLayer)) {
-                            canResetOverrides = true;
-                            break;
-                        }
-                    }
-                }
             }
 
             if (prim && prim.IsInstanceProxy())
@@ -372,12 +351,15 @@ ContextMenu::exec(QWidget* parent, ViewContext* context, UsdStageRefPtr usdStage
 
     QAction* selectInstanceRoot = nullptr;
     QAction* selectInstanceSource = nullptr;
+    QAction* makeInstanceEditable = nullptr;
     if (!instanceRootPath.IsEmpty() || !instanceSourcePath.IsEmpty()) {
         QMenu* instanceMenu = menu.addMenu("Instance");
         if (!instanceRootPath.IsEmpty() && instanceRootPath != paths.value(0))
             selectInstanceRoot = instanceMenu->addAction("Select");
-        if (selectInstanceRoot)
-            instanceMenu->addSeparator();
+        makeInstanceEditable = instanceMenu->addAction("Make editable");
+        makeInstanceEditable->setObjectName("instanceMakeEditable");
+        makeInstanceEditable->setEnabled(!instanceRootPath.IsEmpty() && canMakeInstanceEditable);
+        instanceMenu->addSeparator();
         selectInstanceSource = instanceMenu->addAction("Source");
         selectInstanceSource->setEnabled(!instanceSourcePath.IsEmpty());
     }
@@ -446,19 +428,36 @@ ContextMenu::exec(QWidget* parent, ViewContext* context, UsdStageRefPtr usdStage
     menu.addSeparator();
 
     QMenu* resetMenu = menu.addMenu("Reset");
-    QAction* resetOverridesAction = resetMenu->addAction("Overrides");
-    resetOverridesAction->setEnabled(canResetOverrides);
-    resetMenu->setEnabled(canResetOverrides);
+    resetMenu->setObjectName("resetOpinionsMenu");
+    QAction* resetOverridesAction = resetMenu->addAction("All");
+    resetOverridesAction->setObjectName("resetOpinionsAll");
+    resetOverridesAction->setEnabled(!resetGroups.isEmpty());
+    resetMenu->setEnabled(!resetGroups.isEmpty());
+    QMap<QAction*, OverrideGroup> resetActions;
+    if (!resetGroups.isEmpty())
+        resetMenu->addSeparator();
+    const QStringList resetLabels = { "All",      "Transforms", "Visibility", "Materials", "Geometry",
+                                      "Primvars", "Lights",     "Cameras",    "Other" };
+    for (const OverrideGroup group : resetGroups) {
+        const int index = static_cast<int>(group);
+        QAction* action = resetMenu->addAction(resetLabels.at(index));
+        action->setObjectName(QStringLiteral("resetOpinions%1").arg(index));
+        resetActions.insert(action, group);
+    }
 
     menu.addSeparator();
 
-    QAction* newXform = menu.addAction("New xform");
+    QMenu* xformMenu = menu.addMenu("Xform");
+    QAction* newXform = xformMenu->addAction("New");
+    QAction* parentXform = xformMenu->addAction("Parent");
     QMenu* duplicateMenu = menu.addMenu("Duplicate");
     QAction* copySelected = duplicateMenu->addAction("Copy");
     QAction* instanceSelected = duplicateMenu->addAction("Instance");
     instanceSelected->setEnabled(canInstance);
     QAction* deleteSelected = menu.addAction("Delete");
     newXform->setEnabled(!createParentPath.IsEmpty());
+    parentXform->setEnabled(!groupPaths.isEmpty() && !groupPaths.contains(SdfPath::AbsoluteRootPath())
+                            && !xformParentPath.IsEmpty());
     duplicateMenu->setEnabled(!paths.isEmpty());
     deleteSelected->setEnabled(!paths.isEmpty());
 
@@ -516,6 +515,12 @@ ContextMenu::exec(QWidget* parent, ViewContext* context, UsdStageRefPtr usdStage
         return;
     }
 
+    if (chosen == makeInstanceEditable) {
+        if (!instanceRootPath.IsEmpty())
+            context->execute(new Command(makeEditablePaths({ instanceRootPath })));
+        return;
+    }
+
     if (chosen == loadSelected) {
         if (!payloadPaths.isEmpty())
             context->execute(new Command(loadPayloads(payloadPaths)));
@@ -548,8 +553,18 @@ ContextMenu::exec(QWidget* parent, ViewContext* context, UsdStageRefPtr usdStage
         return;
     }
 
+    if (resetActions.contains(chosen)) {
+        context->execute(new Command(resetOverrides(paths, resetActions.value(chosen))));
+        return;
+    }
+
     if (chosen == newXform) {
-        context->execute(new Command(newXformPath(createParentPath, "Xform")));
+        context->execute(new Command(newPrimPath(createParentPath, "Xform", TfToken("Xform"))));
+        return;
+    }
+
+    if (chosen == parentXform) {
+        context->execute(new Command(newXformPath(xformParentPath, "Xform")));
         return;
     }
 

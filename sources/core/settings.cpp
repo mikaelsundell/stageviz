@@ -30,14 +30,14 @@ Settings::~Settings() {}
 QVariant
 Settings::value(const QString& key, const QVariant& defaultValue)
 {
-    QSettings settings(PROJECT_IDENTIFIER, PROJECT_NAME);
+    QSettings settings(QSettings::defaultFormat(), QSettings::UserScope, PROJECT_IDENTIFIER, PROJECT_NAME);
     return settings.value(key, defaultValue);
 }
 
 void
 Settings::setValue(const QString& key, const QVariant& value)
 {
-    QSettings settings(PROJECT_IDENTIFIER, PROJECT_NAME);
+    QSettings settings(QSettings::defaultFormat(), QSettings::UserScope, PROJECT_IDENTIFIER, PROJECT_NAME);
     settings.setValue(key, value);
 }
 

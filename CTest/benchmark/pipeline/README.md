@@ -1,6 +1,6 @@
 # Large-data pipeline audit
 
-These external controllers launch disposable macOS Stageviz processes. They never
+These external controllers launch disposable Stageviz processes. They never
 connect to the user's running app. Build the application with the normal release
 pipeline, preserving an immutable baseline application for comparisons:
 
@@ -11,10 +11,12 @@ DYLD_IMAGE_SUFFIX=_debug ./build_app.sh release --github
 `../mcp_runtime.py` owns each process, confirms its native MCP tools list, records
 the executable hash and environment, samples RSS/CPU/system memory pressure, and
 closes the process on completion or failure. The dedicated MCP port must be free.
-The macOS bootstrap uses the current native Application/MCP ABI; fail rather than
-substituting a user application when that ABI is unavailable. The finite activity
+The bootstrap uses `stageviz.startMcpServer()` and receives the actual loopback
+URL through an output file. It uses no private Application/MCP ABI. The macOS activity
 scope prevents App Nap during measurements. It does not disable idle system sleep.
-Native macOS preferences remain shared between app processes.
+Preferences are isolated in per-process INI storage before app initialization.
+The complete cross-platform entry points are `test_app.sh` and `test_app.bat`;
+see [Run all tests](../../README.md#run-all-tests).
 
 ## Correctness pipeline
 
@@ -42,6 +44,10 @@ visible gate and relevant hidden nested payloads independently. Use `--port`
 Run the native and offscreen GUI CTests separately. Embedded Python tests do not
 replace native coverage, and their own historical performance section is disabled
 here so correctness and controlled performance measurements stay separate.
+Pass `--performance` to include the API timing checks, as `test_app` does.
+`--performance-baseline PATH` keeps those baselines outside the user's profile.
+Suite discovery includes every embedded `test*.py` workflow automatically;
+new workflows with custom setup/cleanup need an adapter in `phases()`.
 
 ## Outliner, property and render pipeline
 

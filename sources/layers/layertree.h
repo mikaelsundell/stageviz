@@ -21,7 +21,7 @@ class LayerTreePrivate;
  * @class LayerTree
  * @brief Lists the local layers in the current USD stage.
  *
- * Selecting a row does not change the stage edit target. Context actions
+ * Extended row selection supports batch layer operations. Selecting a row does not change the stage edit target. Context actions
  * provide layer operations and requests to create or add layers.
  */
 class LayerTree : public TreeWidget {
@@ -45,7 +45,7 @@ public:
     void refresh();
 
     /**
-     * @brief Selects composed prim paths authored by the current layer row.
+     * @brief Selects the union of composed prim paths authored by the selected layer rows.
      */
     void selectCurrentLayer();
 
@@ -67,7 +67,12 @@ Q_SIGNALS:
 
 protected:
     /**
-     * @brief Starts a drag operation for the current layer row.
+     * @brief Draws a layer row and its optional session color strip.
+     */
+    void drawRow(QPainter* painter, const QStyleOptionViewItem& option, const QModelIndex& index) const override;
+
+    /**
+     * @brief Starts a drag operation when exactly one layer row is selected.
      *
      * @param supportedActions Actions supported by the drag operation.
      */
@@ -95,7 +100,7 @@ protected:
     void dropEvent(QDropEvent* event) override;
 
     /**
-     * @brief Displays the context menu for the current layer row.
+     * @brief Displays context actions for the selected layer rows.
      *
      * @param event Context-menu event.
      */

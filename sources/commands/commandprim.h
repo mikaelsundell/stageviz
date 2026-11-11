@@ -66,6 +66,20 @@ Command
 instancePaths(const QList<SdfPath>& paths);
 
 /**
+ * @brief Makes native instances editable by disabling instancing in the edit target.
+ *
+ * Proxy children resolve to their owning non-proxy instance root. References,
+ * geometry, transforms and selection are retained. Children can receive local
+ * overrides; referenced contents are not baked or detached. Undo restores the
+ * exact previous metadata and removes any newly created inert override specs.
+ * Nested instances remain instanced until explicitly made editable themselves.
+ *
+ * @param paths Instance roots or proxy children to make editable.
+ */
+Command
+makeEditablePaths(const QList<SdfPath>& paths);
+
+/**
  * @brief Creates a command that defines a generic prim under a parent.
  *
  * The name is sanitized and made unique under the parent. When @p typeName is
@@ -161,6 +175,8 @@ renamePath(const SdfPath& path, const QString& newNameInput);
  *
  * The name is sanitized and made unique under the parent. The new prim
  * is appended to the child order.
+ * Selected minimal-root prims are grouped below it, including a single selected
+ * sibling. Selecting the parent itself still creates an empty child Xform.
  *
  * By default the new prim becomes the current selection. Callers may preserve
  * the current selection by passing selectCreated = false.

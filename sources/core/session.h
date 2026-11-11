@@ -6,6 +6,7 @@
 
 #include "notice.h"
 #include "stageviz.h"
+#include <QColor>
 #include <QExplicitlySharedDataPointer>
 #include <QMap>
 #include <QObject>
@@ -261,8 +262,8 @@ public:
      * @brief Saves one file-backed local layer in the current stage.
      *
      * Anonymous layers cannot be saved individually until they have a file
-     * backing path. The root layer may be saved through this method when it
-     * already has one.
+     * backing path. Saving a named root layer also saves its companion state
+     * when preservation is enabled; saving a sublayer does not.
      *
      * @param identifier Identifier of a layer in the current local layer stack.
      * @return True if the layer was saved successfully.
@@ -311,6 +312,9 @@ public:
      *
      * The export preserves session-layer opinions, muted layers, resolver
      * context, and payload load rules. Population expands to include dependencies.
+     * An omitted default prim and missing root-order names are removed from the
+     * exported metadata without modifying the source stage.
+     *
      * @param paths Root prim paths to include; an empty selection fails.
      * @param filename Destination flattened USD file.
      * @return True if export succeeds.
@@ -320,7 +324,7 @@ public:
     /**
      * @brief Loads Stageviz state from a companion session file.
      *
-     * Restores view settings, payload load rules, and muted layer identifiers
+     * Restores view settings, payload load rules, layer muting, locks and edit target
      * without changing the authored USD layer files.
      */
     bool loadState(const QString& filename);
@@ -328,7 +332,7 @@ public:
     /**
      * @brief Saves Stageviz state to a companion session file.
      *
-     * Stores view settings, payload load rules, and muted layer identifiers
+     * Stores view settings, payload load rules, layer muting, locks and edit target
      * separately from the authored USD layer files.
      */
     bool saveState(const QString& filename);
@@ -336,8 +340,8 @@ public:
     /**
      * @brief Returns whether Stageviz session state has changed since it was saved.
      *
-     * Layer muting is stage state and is persisted in the optional session sidecar,
-     * rather than in the USD layer files.
+     * Camera/view settings, payload load rules, layer muting, locks, edit target and colors
+     * belong to the root-stage companion file, independently of the edit layer.
      */
     bool isStateDirty() const;
 
@@ -473,6 +477,23 @@ public:
     bool setEditLayer(const SdfLayerHandle& layer);
 
     /**
+     * @brief Returns a layer's session-only display color, or an invalid color.
+     *
+     * @param identifier USD layer identifier.
+     */
+    QColor layerColor(const QString& identifier) const;
+
+    /**
+     * @brief Sets a layer's display color without modifying USD data.
+     *
+     * Colors are persisted in session state. An invalid color clears the choice.
+     * @param identifier USD layer identifier.
+     * @param color Display color, or an invalid color to clear it.
+     */
+    void setLayerColor(const QString& identifier, const QColor& color);
+
+
+    /**
      * @brief Returns the stage lock used for thread-safe access.
      */
     QReadWriteLock* stageLock() const;
@@ -537,6 +558,13 @@ public:
     void notifyRedraw();
 
     /**
+     * @brief Records an undoable command's layer permission change in session state.
+     *
+     * Retains locked layers while muted. Command-stack notifications refresh the UI.
+     */
+    void notifyLayerPermissionChanged(const SdfLayerHandle& layer);
+
+    /**
      * @brief Sets a textual status message.
      */
     void notifyStatus(Notify::Status status, const QString& message, const QString& details = QString());
@@ -579,6 +607,23 @@ Q_SIGNALS:
      * does not itself modify the composed USD stage.
      */
     void editLayerChanged(SdfLayerHandle layer);
+
+    /**
+     * @brief Emitted when session layer display colors change.
+     */
+    void colorsChanged();
+
+    /**
+     * @brief Emitted when layer editing permissions are restored from state.
+     */
+    void layerPermissionsChanged();
+
+    /**
+     * @brief Emitted when the companion-state dirty flag changes.
+     *
+     * Notifications are queued and coalesced across repeated camera changes.
+     */
+    void stateDirtyChanged(bool dirty);
 
     /**
      * @brief Emitted when layers are muted or unmuted on the current stage.
