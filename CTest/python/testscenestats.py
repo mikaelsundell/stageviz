@@ -15,6 +15,11 @@ tb = _base["tb"]
 
 def run(disposable=False):
     assert disposable, "this check requires a disposable viewer"
+    # View changes must not turn this close-stage rendering check into a
+    # Save State prompt; testpreservestate covers that workflow separately.
+    if tb.action_info("filePreserveState")["checked"]:
+        assert tb.trigger_action("filePreserveState")
+    assert not tb.action_info("filePreserveState")["checked"]
     helper = _base["ViewportTest"](disposable=True)
     session = stageviz.session()
     if session.isLoaded():

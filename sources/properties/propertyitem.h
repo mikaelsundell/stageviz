@@ -50,7 +50,8 @@ public:
         EditorMaximumRole,
         EditorDecimalsRole,
         MixedValueRole,
-        ValuePathRole
+        ValuePathRole,
+        FilePathRole
     };
 
     /**

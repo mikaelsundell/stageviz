@@ -526,7 +526,7 @@
                    <number>2</number>
                   </property>
                   <property name="topMargin">
-                   <number>4</number>
+                   <number>2</number>
                   </property>
                   <property name="rightMargin">
                    <number>2</number>
@@ -901,6 +901,8 @@
     <addaction name="separator"/>
     <addaction name="fileLayers"/>
     <addaction name="separator"/>
+    <addaction name="fileStateSave"/>
+    <addaction name="separator"/>
     <addaction name="fileLayerSave"/>
     <addaction name="fileLayerSaveAs"/>
     <addaction name="fileLayerSaveCopyAs"/>
@@ -993,6 +995,13 @@
      <addaction name="editSelectVisibleSelect"/>
      <addaction name="editSelectVisibleClear"/>
     </widget>
+    <widget class="QMenu" name="menuXform">
+     <property name="title">
+      <string>Xform</string>
+     </property>
+     <addaction name="createXform"/>
+     <addaction name="parentXform"/>
+    </widget>
     <addaction name="editUndo"/>
     <addaction name="editRedo"/>
     <addaction name="separator"/>
@@ -1012,7 +1021,7 @@
     <addaction name="separator"/>
     <addaction name="menuPayloads"/>
     <addaction name="separator"/>
-    <addaction name="createXform"/>
+    <addaction name="menuXform"/>
     <addaction name="menuDuplicate"/>
     <addaction name="editDeleteSelected"/>
    </widget>
@@ -1020,7 +1029,14 @@
     <property name="title">
      <string>Create</string>
     </property>
-    <addaction name="createXform"/>
+    <widget class="QMenu" name="menuCreateXform">
+     <property name="title">
+      <string>Xform</string>
+     </property>
+     <addaction name="createXform"/>
+     <addaction name="parentXform"/>
+    </widget>
+    <addaction name="menuCreateXform"/>
     <addaction name="createScope"/>
     <addaction name="createCube"/>
     <addaction name="createSphere"/>
@@ -1278,10 +1294,24 @@
   </action>
   <action name="createXform">
    <property name="text">
-    <string>Xform</string>
+    <string>New</string>
+   </property>
+   <property name="toolTip">
+    <string>Create an empty Xform.</string>
    </property>
    <property name="shortcut">
     <string>Ctrl+Shift+N</string>
+   </property>
+  </action>
+  <action name="parentXform">
+   <property name="enabled">
+    <bool>false</bool>
+   </property>
+   <property name="text">
+    <string>Parent</string>
+   </property>
+   <property name="toolTip">
+    <string>Create an Xform above the selected prims, preserving their world positions.</string>
    </property>
   </action>
   <action name="createScope">
@@ -1984,7 +2014,7 @@
   </action>
   <action name="editPayloadLoadNeighbors">
    <property name="text">
-    <string>Load Neighbors</string>
+    <string>Load neighbors</string>
    </property>
    <property name="shortcut">
     <string>Alt+N</string>
@@ -1997,17 +2027,17 @@
   </action>
   <action name="editLayerSelect">
    <property name="text">
-    <string>Select in Layer</string>
+    <string>Select in layer</string>
    </property>
   </action>
   <action name="editPayloadInvert">
    <property name="text">
-    <string>Invert in Payload</string>
+    <string>Invert in payload</string>
    </property>
   </action>
   <action name="editLayerInvert">
    <property name="text">
-    <string>Invert in Layer</string>
+    <string>Invert in layer</string>
    </property>
   </action>
   <action name="editSelectVisibleCapture">
@@ -2137,7 +2167,18 @@
     <bool>false</bool>
    </property>
    <property name="text">
-    <string>Preserve state</string>
+    <string>Remember state</string>
+   </property>
+   <property name="toolTip">
+    <string>Automatically save and restore camera, view, and layer settings with this stage.</string>
+   </property>
+  </action>
+  <action name="fileStateSave">
+   <property name="text">
+    <string>Save state</string>
+   </property>
+   <property name="toolTip">
+    <string>Save camera, view settings, payload loading, muted layers and layer colors to the root layer's .session companion file</string>
    </property>
   </action>
   <action name="fileRevealInFolder">

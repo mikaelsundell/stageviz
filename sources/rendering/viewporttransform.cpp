@@ -1221,7 +1221,7 @@ ViewportTransformPrivate::absoluteNumericDelta(const GfVec3d& values) const
 {
     // The panel displays absolute local TRS. Convert its correction through
     // the lead object's parent, independently of the handle reference frame.
-    const int lead = d.numericOperation.targetCount - 1;
+    const qsizetype lead = d.numericOperation.targetCount - 1;
     GfMatrix4d parent = d.numericPrepared.at(lead).parentWorld;
     const GfMatrix4d local = d.numericOperation.edit.before.at(lead) * parent.GetInverse();
     parent.SetTranslateOnly(GfVec3d(0.0));

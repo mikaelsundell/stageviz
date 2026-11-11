@@ -195,7 +195,7 @@ class PayloadHierarchyTest:
                     expected = (children[0] if all(s == children[0] for s in children) else 1) if children else 0
                     assert info['state'] == expected, ('group/ordinary row', path, info, expected)
                     groups[path] = dict(info, expected=expected)
-                    if children:
+                    if children or prim.IsA(UsdGeom.Xform) or prim.IsA(UsdGeom.Scope) or not prim.GetTypeName():
                         states.append(expected)
             return states
         visit(QtCore.QModelIndex())
@@ -232,7 +232,11 @@ class PayloadHierarchyTest:
         stageviz.command.clear()
         self.click_checkbox(path)
         assert tb.wait_for_commands(timeout=30)
-        expected = 2 if checked else 0
+        # The fixture's intentionally empty MoveTarget remains unchecked even
+        # when every payload gate under its ancestors has been loaded.
+        empty = '/World/RegionA/MoveTarget'
+        contains_empty = Sdf.Path(empty).HasPrefix(Sdf.Path(path)) and self.row(empty)['children'] == 0
+        expected = (1 if contains_empty else 2) if checked else 0
         assert tb.wait_until(lambda: self.row(path)['state'] == expected), (path, self.row(path))
         assert list(stageviz.session().paths()) == before_selection, 'checkbox click preserves selection'
 
@@ -249,11 +253,11 @@ class PayloadHierarchyTest:
         self.assert_group('/', 0)
         self.assert_group('/World', 0)
         self.redo()
-        self.assert_group('/', 2)
+        self.assert_group('/', 1)
         self.toggle('/', False)
         self.undo()
         self.checkpoint('root_unload_undone')
-        self.assert_group('/', 2)
+        self.assert_group('/', 1)
         self.redo()
         self.assert_group('/', 0)
         self.checkpoint('root_unload_redone')
@@ -297,7 +301,7 @@ class PayloadHierarchyTest:
         self.command('unload_payloads', [self.first])
         self.assert_group('/World/RegionA', 1)
         self.undo()
-        self.assert_group('/World/RegionA', 2)
+        self.assert_group('/World/RegionA', 1)
         self.checkpoint('collapsed_command_undone')
 
     def rapid_clicks(self):
@@ -417,7 +421,7 @@ class PayloadHierarchyTest:
             control = tb.viewer().findChild(QtGui.QAction, name)
             assert control is not None and control.isEnabled(), name
             if name == 'editLayerSelect':
-                assert control.text() == 'Select in Layer', control.text()
+                assert control.text() == 'Select in layer', control.text()
             control.trigger()
             assert tb.wait_for_commands(timeout=30), name
         action('editLayerInvert')
@@ -489,7 +493,7 @@ class PayloadHierarchyTest:
         self.toggle('/World/RegionA', True)
         assert self.loaded(self.first) and self.loaded(self.second)
         assert not self.loaded('/World/RegionB/Vehicle03')
-        assert self.row('/World/RegionA')['state'] == 2 and self.row('/World')['state'] == 1
+        assert self.row('/World/RegionA')['state'] == 1 and self.row('/World')['state'] == 1
         self.checkpoint('group_loaded')
         self.undo()
         assert not self.loaded(self.first) and not self.loaded(self.second)
@@ -555,7 +559,7 @@ class PayloadHierarchyTest:
         for _ in range(4):
             self.toggle('/World/RegionA', True)
             assert self.loaded(self.nested) and self.loaded(self.second)
-            assert self.row('/World/RegionA')['state'] == 2
+            assert self.row('/World/RegionA')['state'] == 1
             self.toggle('/World/RegionA', False)
             assert not self.loaded(self.first) and not self.loaded(self.second)
             self.undo()

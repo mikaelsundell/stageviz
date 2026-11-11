@@ -87,6 +87,30 @@ namespace {
         return true;
     }
 
+    static bool parseLayerIdentifiers(PyObject* object, QStringList* identifiers)
+    {
+        if (PyUnicode_Check(object)) {
+            const char* value = PyUnicode_AsUTF8(object);
+            if (!value)
+                return false;
+            identifiers->append(QString::fromUtf8(value));
+            return true;
+        }
+        PyObject* sequence = PySequence_Fast(object, "Expected a layer identifier or a sequence of identifiers");
+        if (!sequence)
+            return false;
+        for (Py_ssize_t i = 0; i < PySequence_Fast_GET_SIZE(sequence); ++i) {
+            const char* value = PyUnicode_AsUTF8(PySequence_Fast_GET_ITEM(sequence, i));
+            if (!value) {
+                Py_DECREF(sequence);
+                return false;
+            }
+            identifiers->append(QString::fromUtf8(value));
+        }
+        Py_DECREF(sequence);
+        return true;
+    }
+
     static PyObject* runCommand(const Command& command)
     {
         Session* s = stageviz::session();
@@ -314,35 +338,53 @@ PyCommand_reorderSublayers(PyObject*, PyObject* args)
 }
 
 static PyObject*
+PyCommand_updateLayer(PyObject*, PyObject* args)
+{
+    PyObject* object = nullptr;
+    if (!PyArg_ParseTuple(args, "O", &object))
+        return nullptr;
+    QStringList identifiers;
+    if (!parseLayerIdentifiers(object, &identifiers))
+        return nullptr;
+    return runCommand(updateLayers(identifiers));
+}
+
+static PyObject*
 PyCommand_removeLayer(PyObject*, PyObject* args)
 {
-    const char* layerIdentifier = nullptr;
-    if (!PyArg_ParseTuple(args, "s", &layerIdentifier))
+    PyObject* object = nullptr;
+    if (!PyArg_ParseTuple(args, "O", &object))
         return nullptr;
-
-    return runCommand(removeLayer(QString::fromUtf8(layerIdentifier)));
+    QStringList identifiers;
+    if (!parseLayerIdentifiers(object, &identifiers))
+        return nullptr;
+    return runCommand(removeLayers(identifiers));
 }
 
 static PyObject*
 PyCommand_setLayerMuted(PyObject*, PyObject* args)
 {
-    const char* layerIdentifier = nullptr;
+    PyObject* object = nullptr;
     int muted = 0;
-    if (!PyArg_ParseTuple(args, "sp", &layerIdentifier, &muted))
+    if (!PyArg_ParseTuple(args, "Op", &object, &muted))
         return nullptr;
-
-    return runCommand(setLayerMuted(QString::fromUtf8(layerIdentifier), muted != 0));
+    QStringList identifiers;
+    if (!parseLayerIdentifiers(object, &identifiers))
+        return nullptr;
+    return runCommand(setLayersMuted(identifiers, muted != 0));
 }
 
 static PyObject*
 PyCommand_setLayerPermissionToEdit(PyObject*, PyObject* args)
 {
-    const char* layerIdentifier = nullptr;
+    PyObject* object = nullptr;
     int editable = 0;
-    if (!PyArg_ParseTuple(args, "sp", &layerIdentifier, &editable))
+    if (!PyArg_ParseTuple(args, "Op", &object, &editable))
         return nullptr;
-
-    return runCommand(setLayerPermissionToEdit(QString::fromUtf8(layerIdentifier), editable != 0));
+    QStringList identifiers;
+    if (!parseLayerIdentifiers(object, &identifiers))
+        return nullptr;
+    return runCommand(setLayersPermissionToEdit(identifiers, editable != 0));
 }
 
 static PyObject*
@@ -540,14 +582,22 @@ static PyObject*
 PyCommand_resetOverrides(PyObject*, PyObject* args)
 {
     PyObject* pyPaths = nullptr;
-    if (!PyArg_ParseTuple(args, "O", &pyPaths))
+    const char* groupName = "all";
+    if (!PyArg_ParseTuple(args, "O|s", &pyPaths, &groupName))
         return nullptr;
 
     QList<SdfPath> paths;
     if (!parsePathListArg(pyPaths, "paths", &paths))
         return nullptr;
 
-    return runCommand(resetOverrides(paths));
+    const QStringList names = { "all",      "transforms", "visibility", "materials", "geometry",
+                                "primvars", "lights",     "cameras",    "other" };
+    const qsizetype index = names.indexOf(QString::fromUtf8(groupName));
+    if (index < 0) {
+        PyErr_SetString(PyExc_ValueError, "unknown reset opinion group");
+        return nullptr;
+    }
+    return runCommand(resetOverrides(paths, static_cast<OverrideGroup>(index)));
 }
 
 static PyObject*
@@ -795,6 +845,18 @@ PyCommand_instancePaths(PyObject*, PyObject* args)
         return nullptr;
 
     return runCommand(instancePaths(paths));
+}
+
+static PyObject*
+PyCommand_makeEditablePaths(PyObject*, PyObject* args)
+{
+    PyObject* pyPaths = nullptr;
+    if (!PyArg_ParseTuple(args, "O", &pyPaths))
+        return nullptr;
+    QList<SdfPath> paths;
+    if (!parsePathListArg(pyPaths, "paths", &paths))
+        return nullptr;
+    return runCommand(makeEditablePaths(paths));
 }
 
 static PyObject*
@@ -1458,6 +1520,8 @@ static PyMethodDef PyCommand_methods[] = {
       "Reorder sibling USD sublayers: parent_identifier, source_identifier, target_identifier, after_target." },
     { "remove_layer", reinterpret_cast<PyCFunction>(PyCommand_removeLayer), METH_VARARGS,
       "Remove a USD layer from the stage while keeping its file on disk, with undo support." },
+    { "update_layer", reinterpret_cast<PyCFunction>(PyCommand_updateLayer), METH_VARARGS,
+      "Reload selected file-backed layers from disk with undo support; accepts an identifier or sequence." },
     { "set_layer_muted", reinterpret_cast<PyCFunction>(PyCommand_setLayerMuted), METH_VARARGS,
       "Mute or unmute a local USD layer with undo support." },
     { "set_layer_permission_to_edit", reinterpret_cast<PyCFunction>(PyCommand_setLayerPermissionToEdit), METH_VARARGS,
@@ -1505,6 +1569,8 @@ static PyMethodDef PyCommand_methods[] = {
       "Copy one or more prim paths as sibling prims." },
     { "instance_paths", reinterpret_cast<PyCFunction>(PyCommand_instancePaths), METH_VARARGS,
       "Create instanceable sibling prims referencing one or more prim paths." },
+    { "make_editable_paths", reinterpret_cast<PyCFunction>(PyCommand_makeEditablePaths), METH_VARARGS,
+      "Disable instancing on instance roots or the owners of proxy children, retaining references and selection." },
     { "new_light", reinterpret_cast<PyCFunction>(PyCommand_newLight), METH_VARARGS | METH_KEYWORDS,
       "Create a standard USD light: point, spot, distant, rect, disk, cylinder or dome." },
     { "new_prim", reinterpret_cast<PyCFunction>(PyCommand_newPrim), METH_VARARGS | METH_KEYWORDS,
@@ -1530,7 +1596,8 @@ static PyMethodDef PyCommand_methods[] = {
     { "new_payload", reinterpret_cast<PyCFunction>(PyCommand_newPayload), METH_VARARGS | METH_KEYWORDS,
       "Create a prim with a payload arc. Optional keyword argument: prim_path." },
     { "rename_path", reinterpret_cast<PyCFunction>(PyCommand_renamePath), METH_VARARGS, "Rename a path." },
-    { "new_xform", reinterpret_cast<PyCFunction>(PyCommand_newXform), METH_VARARGS, "Create a new Xform path." },
+    { "new_xform", reinterpret_cast<PyCFunction>(PyCommand_newXform), METH_VARARGS,
+      "Create an Xform and group selected siblings under it, including a single selected sibling." },
     { "move_path", reinterpret_cast<PyCFunction>(PyCommand_movePath), METH_VARARGS | METH_KEYWORDS,
       "Move paths. Optional keyword arguments: insert_index, preserve_world_transform." },
     { "add_attributes", reinterpret_cast<PyCFunction>(PyCommand_addAttributes), METH_VARARGS | METH_KEYWORDS,

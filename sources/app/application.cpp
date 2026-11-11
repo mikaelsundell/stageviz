@@ -15,6 +15,7 @@
 #include <QDir>
 #include <QFileOpenEvent>
 #include <QPointer>
+#include <QSettings>
 #include <pxr/base/plug/plugin.h>
 #include <pxr/base/plug/registry.h>
 #include <pxr/base/tf/setenv.h>
@@ -48,6 +49,14 @@ ApplicationPrivate::~ApplicationPrivate() {}
 void
 ApplicationPrivate::init()
 {
+    const QString testSettings = qEnvironmentVariable("STAGEVIZ_TEST_SETTINGS_DIR");
+    if (!testSettings.isEmpty()) {
+        const QString path = QDir(testSettings).absoluteFilePath(QString::number(QCoreApplication::applicationPid()));
+        if (!QDir().mkpath(path))
+            qFatal("Could not create isolated Stageviz test settings directory");
+        QSettings::setDefaultFormat(QSettings::IniFormat);
+        QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, path);
+    }
     d.console.reset(new Console());
 #ifdef NDEBUG
     d.console->start();

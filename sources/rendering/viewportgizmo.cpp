@@ -511,6 +511,9 @@ ViewportGizmoPrivate::updateGeometry()
                     mesh.CreatePointsAttr(VtValue(points));
                     mesh.CreateFaceVertexCountsAttr(VtValue(counts));
                     mesh.CreateFaceVertexIndicesAttr(VtValue(indices));
+                    // Handles are fully tessellated polygon meshes. USD's
+                    // default Catmull-Clark scheme would refine them again.
+                    mesh.CreateSubdivisionSchemeAttr(VtValue(UsdGeomTokens->none));
                     mesh.CreateDoubleSidedAttr(VtValue(true));
                     const GfVec3f color = colors[axis];
                     const SdfPath materialPath = paths::auxiliary::materials.AppendChild(

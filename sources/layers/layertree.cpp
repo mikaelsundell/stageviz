@@ -14,6 +14,8 @@
 #include "session.h"
 #include "tracelocks.h"
 #include "ui.h"
+#include "usdutils.h"
+#include <QColorDialog>
 #include <QContextMenuEvent>
 #include <QDebug>
 #include <QDrag>
@@ -26,6 +28,7 @@
 #include <QMenu>
 #include <QMimeData>
 #include <QMouseEvent>
+#include <QPainter>
 #include <QSet>
 #include <QTimer>
 #include <QTreeWidgetItem>
@@ -80,6 +83,7 @@ public:
                         refresh();
                     });
             connect(session(), &Session::editLayerChanged, this, [this](SdfLayerHandle) { refresh(); });
+            connect(session(), &Session::layerPermissionsChanged, this, [this]() { refresh(); });
             connect(session(), &Session::layerMutingChanged, this,
                     [this](const QStringList&, const QStringList&) { refresh(); });
             connect(session(), &Session::primsChanged, this, [this](const NoticeBatch& batch) {
@@ -290,6 +294,7 @@ public:
         // Keep existing items when their layer still exists. Reusing the item
         // preserves its selection and expansion state across layer notices.
         const QString previousCurrentIdentifier = currentIdentifier();
+        const QStringList previousSelectedIdentifiers = selectedIdentifiers();
         QHash<QString, LayerItem*> items;
         QHash<QString, bool> expanded;
         QTreeWidgetItemIterator existing(d);
@@ -473,15 +478,39 @@ public:
                                                : nullptr;
         if (previousCurrent && previousCurrent->treeWidget() == d) {
             if (d->currentItem() != previousCurrent)
-                d->setCurrentItem(previousCurrent);
+                d->setCurrentItem(previousCurrent, LayerItem::Name, QItemSelectionModel::NoUpdate);
         }
         else if (editItem)
-            d->setCurrentItem(editItem);
+            d->setCurrentItem(editItem, LayerItem::Name, QItemSelectionModel::NoUpdate);
+        const QSet<QString> selected(previousSelectedIdentifiers.begin(), previousSelectedIdentifiers.end());
+        const bool selectionSurvives = std::any_of(selected.begin(), selected.end(), [&](const auto& identifier) {
+            return activeIdentifiers.contains(identifier);
+        });
+        for (const auto& identifier : activeIdentifiers) {
+            if (auto* item = items.value(identifier))
+                item->setSelected(selected.contains(identifier)
+                                  || (!previousCurrent && !selectionSurvives && item == editItem));
+        }
         d->setEnabled(!layers.empty());
         refreshing = false;
     }
 
     QTreeWidgetItem* currentItem() const { return d ? d->currentItem() : nullptr; }
+
+    QStringList selectedIdentifiers() const
+    {
+        QStringList result;
+        if (d) {
+            QTreeWidgetItemIterator it(d, QTreeWidgetItemIterator::Selected);
+            while (*it) {
+                const QString identifier = layerItem(*it)->identifier();
+                if (!identifier.isEmpty())
+                    result.append(identifier);
+                ++it;
+            }
+        }
+        return result;
+    }
 
     void setDropIndicator(QTreeWidgetItem* item, int mode)
     {
@@ -520,8 +549,10 @@ LayerTree::LayerTree(QWidget* parent)
     : TreeWidget(parent)
     , p(new LayerTreePrivate(this))
 {
+    if (session())
+        connect(session(), &Session::colorsChanged, this, [this]() { viewport()->update(); });
     setContextMenuPolicy(Qt::DefaultContextMenu);
-    setSelectionMode(QAbstractItemView::SingleSelection);
+    setSelectionMode(QAbstractItemView::ExtendedSelection);
     setDragEnabled(true);
     setAcceptDrops(true);
     setDropIndicatorShown(false);
@@ -551,6 +582,21 @@ LayerTree::LayerTree(QWidget* parent)
 LayerTree::~LayerTree() = default;
 
 void
+LayerTree::drawRow(QPainter* painter, const QStyleOptionViewItem& option, const QModelIndex& index) const
+{
+    TreeWidget::drawRow(painter, option, index);
+    const auto* item = layerItem(itemFromIndex(index));
+    if (!item || !session())
+        return;
+    const QColor color = session()->layerColor(item->identifier());
+    if (!color.isValid())
+        return;
+    painter->save();
+    painter->fillRect(QRect(0, option.rect.top(), 3, option.rect.height()), color);
+    painter->restore();
+}
+
+void
 LayerTree::refresh()
 {
     PerfScope perfScope("ui.layer_tree_refresh");
@@ -560,48 +606,36 @@ LayerTree::refresh()
 void
 LayerTree::selectCurrentLayer()
 {
-    if (!session()) {
+    if (!session())
         return;
-    }
-
-    const QString identifier = p->currentIdentifier();
-    if (identifier.isEmpty()) {
+    const QStringList identifiers = p->selectedIdentifiers();
+    if (identifiers.isEmpty())
         return;
-    }
-
     QList<SdfPath> paths;
-    QString layerName;
     {
         READ_LOCKER(locker, session()->stageLock(), "stageLock");
         const UsdStageRefPtr stage = session()->stageUnsafe();
         if (!stage)
             return;
-
-        SdfLayerHandle layer;
-        for (const SdfLayerHandle& candidate : stage->GetLayerStack(false)) {
-            if (candidate && QString::fromStdString(candidate->GetIdentifier()) == identifier) {
-                layer = candidate;
-                break;
-            }
+        for (const auto& identifier : identifiers) {
+            SdfLayerHandle layer = p->retainedLayerHandles.value(identifier);
+            if (!layer)
+                layer = SdfLayer::Find(identifier.toStdString());
+            if (!layer)
+                continue;
+            for (const auto& rootPrim : layer->GetRootPrims())
+                LayerItem::appendComposedPrimPaths(rootPrim, stage, paths);
         }
-        if (!layer)
-            layer = SdfLayer::Find(identifier.toStdString());
-        if (!layer)
-            return;
-
-        layerName = QString::fromStdString(layer->GetDisplayName());
-        for (const SdfPrimSpecHandle& rootPrim : layer->GetRootPrims())
-            LayerItem::appendComposedPrimPaths(rootPrim, stage, paths);
     }
-
+    paths = path::uniquePaths(paths);
     if (paths.isEmpty()) {
         session()->notifyStatus(Session::Notify::Status::Warning,
-                                tr("Layer %1 has no composed prim paths to select.").arg(layerName));
+                                tr("Selected layers have no composed prim paths to select."));
         return;
     }
     session()->selectionList()->updatePaths(paths);
     session()->notifyStatus(Session::Notify::Status::Success,
-                            tr("Selected %1 prim path(s) from layer %2.").arg(paths.size()).arg(layerName));
+                            tr("Selected %1 prim path(s) from %2 layer(s).").arg(paths.size()).arg(identifiers.size()));
 }
 
 void
@@ -609,7 +643,7 @@ LayerTree::startDrag(Qt::DropActions supportedActions)
 {
     Q_UNUSED(supportedActions);
     QTreeWidgetItem* item = currentItem();
-    if (!item)
+    if (!item || selectedItems().size() != 1)
         return;
     const LayerItem* currentLayer = layerItem(item);
     const QString identifier = currentLayer->identifier();
@@ -703,84 +737,124 @@ LayerTree::contextMenuEvent(QContextMenuEvent* event)
         return;
 
     QTreeWidgetItem* item = itemAt(event->pos());
-    if (item)
-        setCurrentItem(item);
+    if (item) {
+        if (!item->isSelected()) {
+            clearSelection();
+            item->setSelected(true);
+        }
+        setCurrentItem(item, LayerItem::Name, QItemSelectionModel::NoUpdate);
+    }
 
     QMenu menu(this);
     QAction* selectAction = menu.addAction(stageviz::ui()->icon(UI::IconRole::Select), tr("Select"));
     menu.addSeparator();
 
-    const QString identifier = p->currentIdentifier();
-    SdfLayerHandle layer;
-    bool muted = false;
-    bool editTarget = false;
-    bool rootLayer = false;
-    bool permissionToEdit = true;
-    bool canRemove = false;
-    bool canMute = false;
-    bool localLayer = false;
+    const QStringList identifiers = p->selectedIdentifiers();
+    const bool single = identifiers.size() == 1;
+    const QString identifier = single ? identifiers.first() : QString();
+    QList<SdfLayerRefPtr> layers;
+    bool allLocal = !identifiers.isEmpty();
+    bool canRemove = !identifiers.isEmpty();
+    bool canMute = !identifiers.isEmpty();
+    bool canLock = !identifiers.isEmpty();
+    bool canSave = !identifiers.isEmpty();
+    bool canUpdate = !identifiers.isEmpty();
+    bool canSetEdit = false;
+    bool anyUnmuted = false;
+    bool anyEditable = false;
+    bool anyColor = false;
     QString layerFilePath;
-    const bool inheritedMuted = item && layerItem(item)->isInheritedMuted();
-    if (!identifier.isEmpty() && session()) {
+    if (session()) {
         READ_LOCKER(locker, session()->stageLock(), "stageLock");
-        const UsdStageRefPtr stage = session()->stageUnsafe();
+        const auto stage = session()->stageUnsafe();
         if (stage) {
-            layer = p->retainedLayerHandles.value(identifier);
-            for (const SdfLayerHandle& candidate : stage->GetLayerStack(false)) {
-                if (candidate && QString::fromStdString(candidate->GetIdentifier()) == identifier) {
-                    layer = candidate;
-                    break;
+            const auto stack = stage->GetLayerStack(false);
+            QHash<QString, int> referenceCounts;
+            QHash<QString, bool> parentPermissions;
+            for (const auto& parent : stack) {
+                for (const auto& path : parent->GetSubLayerPaths()) {
+                    if (const auto child = SdfLayer::FindRelativeToLayer(parent, path)) {
+                        const auto childId = QString::fromStdString(child->GetIdentifier());
+                        ++referenceCounts[childId];
+                        parentPermissions[childId] = parent->PermissionToEdit();
+                    }
                 }
             }
-            const std::vector<std::string> mutedLayers = stage->GetMutedLayers();
-            muted = std::find(mutedLayers.begin(), mutedLayers.end(), identifier.toStdString()) != mutedLayers.end();
-            if (!layer && muted)
-                layer = SdfLayer::Find(identifier.toStdString());
-            if (layer) {
-                if (!layer->IsAnonymous())
-                    layerFilePath = QString::fromStdString(layer->GetRealPath());
-                editTarget = stage->GetEditTarget().GetLayer() == layer;
-                rootLayer = stage->GetRootLayer() == layer;
-                localLayer = stage->HasLocalLayer(layer);
-                canMute = !rootLayer && (muted || (localLayer && !editTarget));
-                permissionToEdit = layer->PermissionToEdit();
-                if (!rootLayer && !editTarget && !muted && localLayer) {
-                    int referenceCount = 0;
-                    bool parentEditable = false;
-                    for (const SdfLayerHandle& parent : stage->GetLayerStack(false)) {
-                        if (!parent)
-                            continue;
-                        for (const std::string& subLayerPath : parent->GetSubLayerPaths()) {
-                            if (SdfLayer::FindRelativeToLayer(parent, subLayerPath) == layer) {
-                                ++referenceCount;
-                                parentEditable = parent->PermissionToEdit();
-                            }
-                        }
-                    }
-                    canRemove = referenceCount == 1 && parentEditable;
+            QHash<QString, bool> inheritedMuteStates;
+            for (auto* selectedItem : selectedItems())
+                inheritedMuteStates.insert(layerItem(selectedItem)->identifier(),
+                                           layerItem(selectedItem)->isInheritedMuted());
+            for (const auto& id : identifiers) {
+                SdfLayerRefPtr layer = p->retainedLayerHandles.value(id);
+                if (!layer)
+                    layer = SdfLayer::Find(id.toStdString());
+                if (!layer) {
+                    allLocal = canRemove = canMute = canLock = canSave = false;
+                    continue;
                 }
+                layers.append(layer);
+                const bool muted = stage->IsLayerMuted(layer->GetIdentifier());
+                const bool root = layer == stage->GetRootLayer();
+                const bool editTarget = layer == stage->GetEditTarget().GetLayer();
+                const bool local = stage->HasLocalLayer(layer);
+                const bool inheritedMuted = inheritedMuteStates.value(id);
+                allLocal &= local;
+                canMute &= !root && (muted || (local && !editTarget));
+                canLock &= !root && !inheritedMuted;
+                canSave &= local && !muted && !layer->IsAnonymous() && layer->PermissionToSave();
+                canUpdate &= local && !muted && !layer->IsAnonymous() && layer->PermissionToEdit();
+                anyUnmuted |= !muted;
+                anyEditable |= layer->PermissionToEdit();
+                anyColor |= session()->layerColor(id).isValid();
+                if (single) {
+                    canSetEdit = local && !editTarget && !muted;
+                    if (!layer->IsAnonymous())
+                        layerFilePath = QString::fromStdString(layer->GetRealPath());
+                }
+                canRemove &= !root && !editTarget && !muted && local && referenceCounts.value(id) == 1
+                             && parentPermissions.value(id);
             }
         }
+        else
+            allLocal = canRemove = canMute = canLock = canSave = false;
     }
-
-    QAction* setEditAction = menu.addAction(tr("Set as Edit Layer"));
-    selectAction->setEnabled(layer);
-    setEditAction->setEnabled(layer && localLayer && !editTarget && !muted);
-    QAction* saveAction = menu.addAction(tr("Save Layer"));
-    saveAction->setEnabled(layer && localLayer && !muted && layer->IsDirty() && !layer->IsAnonymous()
-                           && layer->PermissionToSave());
-    QAction* removeAction = menu.addAction(tr("Remove Layer"));
-    removeAction->setEnabled(canRemove);
-    removeAction->setToolTip(tr("Remove this layer from the stage. The USD file stays on disk."));
-    QAction* muteAction = menu.addAction(muted ? tr("Unmute Layer") : tr("Mute Layer"));
-    muteAction->setEnabled(layer && canMute);
-    QAction* lockAction = menu.addAction(permissionToEdit ? tr("Lock Layer") : tr("Unlock Layer"));
-    lockAction->setEnabled(layer && !rootLayer && !inheritedMuted);
-    if (inheritedMuted)
-        lockAction->setToolTip(tr("Permission changes are unavailable while an ancestor layer is muted."));
+    const bool valid = !identifiers.isEmpty() && layers.size() == identifiers.size();
+    QAction* setEditAction = menu.addAction(tr("Set as edit layer"));
+    setEditAction->setObjectName("layerSetEdit");
+    selectAction->setObjectName("layerSelect");
+    selectAction->setEnabled(valid);
+    setEditAction->setEnabled(valid && single && canSetEdit);
+    menu.addSeparator();
+    QAction* saveAction = menu.addAction(single ? tr("Save layer") : tr("Save layers"));
+    saveAction->setObjectName("layerSave");
+    const bool anyDirty = std::any_of(layers.begin(), layers.end(), [](const auto& layer) { return layer->IsDirty(); });
+    saveAction->setEnabled(valid && allLocal && canSave && anyDirty);
+    QAction* updateAction = menu.addAction(single ? tr("Update layer") : tr("Update layers"));
+    updateAction->setObjectName("layerUpdate");
+    updateAction->setEnabled(valid && allLocal && canUpdate);
+    updateAction->setToolTip(tr("Reload the selected layers from disk. Undo restores their current contents."));
+    QAction* removeAction = menu.addAction(single ? tr("Remove layer") : tr("Remove layers"));
+    removeAction->setObjectName("layerRemove");
+    removeAction->setEnabled(valid && canRemove);
+    removeAction->setToolTip(tr("Remove the selected layers from the stage. USD files stay on disk."));
+    QAction* muteAction = menu.addAction(anyUnmuted ? (single ? tr("Mute layer") : tr("Mute layers"))
+                                                    : (single ? tr("Unmute layer") : tr("Unmute layers")));
+    muteAction->setObjectName("layerMute");
+    muteAction->setEnabled(valid && canMute);
+    QAction* lockAction = menu.addAction(anyEditable ? (single ? tr("Lock layer") : tr("Lock layers"))
+                                                     : (single ? tr("Unlock layer") : tr("Unlock layers")));
+    lockAction->setObjectName("layerLock");
+    lockAction->setEnabled(valid && canLock);
+    menu.addSeparator();
+    QAction* colorAction = menu.addAction(tr("Assign color"));
+    colorAction->setObjectName("layerColor");
+    colorAction->setEnabled(valid);
+    QAction* clearColorAction = menu.addAction(tr("Clear color"));
+    clearColorAction->setObjectName("layerClearColor");
+    clearColorAction->setEnabled(valid && anyColor);
     QAction* revealAction = nullptr;
     const QFileInfo layerFileInfo(layerFilePath);
-    if (!layerFilePath.isEmpty() && layerFileInfo.isFile()) {
+    if (single && !layerFilePath.isEmpty() && layerFileInfo.isFile()) {
         layerFilePath = layerFileInfo.absoluteFilePath();
         menu.addSeparator();
 #ifdef Q_OS_MAC
@@ -788,35 +862,54 @@ LayerTree::contextMenuEvent(QContextMenuEvent* event)
 #elif defined(Q_OS_WIN)
         revealAction = menu.addAction(tr("Reveal in Explorer"));
 #else
-        revealAction = menu.addAction(tr("Reveal in Folder"));
+        revealAction = menu.addAction(tr("Reveal in folder"));
 #endif
     }
     const QAction* selected = menu.exec(event->globalPos());
     if (!selected)
         return;
 
-    if (selected == selectAction) {
+    if (selected == colorAction && valid) {
+        const QColor previous = session()->layerColor(identifiers.first());
+        const QColor color = QColorDialog::getColor(previous.isValid() ? previous : QColor(Qt::white), this,
+                                                    tr("Layer color"));
+        if (color.isValid()) {
+            for (const auto& id : identifiers)
+                session()->setLayerColor(id, color);
+        }
+    }
+    else if (selected == clearColorAction && valid) {
+        for (const auto& id : identifiers)
+            session()->setLayerColor(id, QColor());
+    }
+    else if (selected == selectAction) {
         selectCurrentLayer();
     }
-    else if (selected == setEditAction && !identifier.isEmpty()) {
+    else if (selected == setEditAction && single) {
         session()->commandStack()->execute(new Command(setEditLayer(identifier)));
     }
-    else if (selected == saveAction && layer) {
-        if (session()->saveLayer(identifier)) {
-            session()->notifyStatus(Session::Notify::Status::Success,
-                                    tr("Saved layer %1").arg(QString::fromStdString(layer->GetDisplayName())));
+    else if (selected == saveAction) {
+        bool saved = false;
+        for (const auto& layer : layers) {
+            if (layer->IsDirty())
+                saved |= session()->saveLayer(QString::fromStdString(layer->GetIdentifier()));
+        }
+        if (saved) {
             refresh();
             Q_EMIT layerSaved();
         }
     }
-    else if (selected == removeAction && !identifier.isEmpty()) {
-        session()->commandStack()->execute(new Command(removeLayer(identifier)));
+    else if (selected == updateAction) {
+        session()->commandStack()->execute(new Command(updateLayers(identifiers)));
     }
-    else if (selected == muteAction && layer) {
-        session()->commandStack()->execute(new Command(setLayerMuted(identifier, !muted)));
+    else if (selected == removeAction) {
+        session()->commandStack()->execute(new Command(removeLayers(identifiers)));
     }
-    else if (selected == lockAction && layer) {
-        session()->commandStack()->execute(new Command(setLayerPermissionToEdit(identifier, !permissionToEdit)));
+    else if (selected == muteAction) {
+        session()->commandStack()->execute(new Command(setLayersMuted(identifiers, anyUnmuted)));
+    }
+    else if (selected == lockAction) {
+        session()->commandStack()->execute(new Command(setLayersPermissionToEdit(identifiers, !anyEditable)));
     }
     else if (selected == revealAction) {
         if (!QFileInfo::exists(layerFilePath)) {

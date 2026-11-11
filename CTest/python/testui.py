@@ -872,7 +872,7 @@ def create_payload_menu_fixture(root):
         ],
     )
 
-    # Separate payloads for exercising Load Neighbors through the menu.
+    # Separate payloads for exercising Load neighbors through the menu.
     define_xform(usd_stage, "/World/MenuNeighbors")
 
     # neighboringPaths() computes the source search bounds from the selected
@@ -975,12 +975,12 @@ def payload_menu_state():
     state = {}
     for label in (
         "Load",
-        "Load Neighbors",
+        "Load neighbors",
         "Unload",
         "Select payload",
-        "Select in Layer",
-        "Invert in Payload",
-        "Invert in Layer",
+        "Select in layer",
+        "Invert in payload",
+        "Invert in layer",
     ):
         action = find_menu_action(menu, label)
         require(action is not None, f"Payload menu contains {label}")
@@ -1136,11 +1136,11 @@ Coverage:
     - no sibling leakage from a branch selection
     - payload variant switching
     - Load / Unload
-    - Load Neighbors
+    - Load neighbors
     - Select payload
-    - Select in Layer
-    - Invert in Payload
-    - Invert in Layer
+    - Select in layer
+    - Invert in payload
+    - Invert in layer
 """,
     )
 
@@ -1151,12 +1151,12 @@ Coverage:
     state = payload_menu_state()
     for label in (
         "Load",
-        "Load Neighbors",
+        "Load neighbors",
         "Unload",
         "Select payload",
-        "Select in Layer",
-        "Invert in Payload",
-        "Invert in Layer",
+        "Select in layer",
+        "Invert in payload",
+        "Invert in layer",
     ):
         require(not state[label], f"{label} is disabled with empty selection")
     require(not state["variants"], "Payload Variant submenu is absent with empty selection")
@@ -1197,11 +1197,11 @@ Coverage:
     state = payload_menu_state()
     require(state["Load"], "Load is enabled for unloaded BodyPayload")
     require(not state["Unload"], "Unload is disabled for unloaded BodyPayload")
-    require(state["Load Neighbors"], "Load Neighbors is enabled for a payload selection")
+    require(state["Load neighbors"], "Load neighbors is enabled for a payload selection")
     require(state["Select payload"], "Select payload is enabled for a payload selection")
-    require(state["Select in Layer"], "Select in Layer is enabled for an active-layer payload")
-    require(state["Invert in Payload"], "Invert in Payload is enabled for a payload selection")
-    require(state["Invert in Layer"], "Invert in Layer is enabled for an active-layer payload")
+    require(state["Select in layer"], "Select in layer is enabled for an active-layer payload")
+    require(state["Invert in payload"], "Invert in payload is enabled for a payload selection")
+    require(state["Invert in layer"], "Invert in layer is enabled for an active-layer payload")
     require(set(state["variants"]) == {"bodyTrim"}, "BodyPayload exposes only bodyTrim")
 
     trigger_payload_variant("bodyTrim", "Sport")
@@ -1288,38 +1288,38 @@ Coverage:
     )
 
     select_semantic_path(descendant_path)
-    trigger_payload_action("Select in Layer")
+    trigger_payload_action("Select in layer")
     require(
         wait_until(
             lambda: [str(value) for value in stageviz.session().paths()] == [body_payload_path],
             timeout=3.0,
         ),
-        "Select in Layer maps descendant to nearest payload authored in active layer",
+        "Select in layer maps descendant to nearest payload authored in active layer",
     )
 
     select_semantic_path(descendant_path)
-    trigger_payload_action("Invert in Payload")
+    trigger_payload_action("Invert in payload")
     inverted = [str(value) for value in stageviz.session().paths()]
-    require(bool(inverted), "Invert in Payload produces a non-empty inverse selection")
-    require(descendant_path not in inverted, "Invert in Payload excludes the originally selected leaf")
+    require(bool(inverted), "Invert in payload produces a non-empty inverse selection")
+    require(descendant_path not in inverted, "Invert in payload excludes the originally selected leaf")
     require(
         all(path.startswith(body_payload_path + "/") for path in inverted),
-        "Invert in Payload remains inside the nearest payload scope",
+        "Invert in payload remains inside the nearest payload scope",
     )
 
     select_semantic_path(body_payload_path)
-    trigger_payload_action("Invert in Layer")
+    trigger_payload_action("Invert in layer")
     inverted_layer = [str(value) for value in stageviz.session().paths()]
-    require(body_payload_path not in inverted_layer, "Invert in Layer excludes selected payload root")
+    require(body_payload_path not in inverted_layer, "Invert in layer excludes selected payload root")
     require(
         "/World/MenuAssembly/Color/ColorPayload" in inverted_layer
         and "/World/MenuAssembly/Wheels/WheelPayload" in inverted_layer,
-        "Invert in Layer includes sibling payload roots authored in active edit layer",
+        "Invert in layer includes sibling payload roots authored in active edit layer",
     )
     require(
         bool(inverted_layer)
         and all(bool(prim(path) and prim(path).HasPayload()) for path in inverted_layer),
-        "Invert in Layer returns only payload prims",
+        "Invert in layer returns only payload prims",
     )
 
     source_path = "/World/MenuNeighbors/Source"
@@ -1327,16 +1327,16 @@ Coverage:
     far_path = "/World/MenuNeighbors/Far"
     select_path(tree, source_path)
     state = payload_menu_state()
-    require(state["Load Neighbors"], "Load Neighbors is enabled for neighbor-source payload")
-    trigger_payload_action("Load Neighbors")
+    require(state["Load neighbors"], "Load neighbors is enabled for neighbor-source payload")
+    trigger_payload_action("Load neighbors")
     require(
         wait_until(
             lambda: bool(prim(near_path) and prim(near_path).IsLoaded()),
             timeout=5.0,
         ),
-        "Payload menu Load Neighbors loads near payload",
+        "Payload menu Load neighbors loads near payload",
     )
-    require(bool(prim(far_path) and not prim(far_path).IsLoaded()), "Load Neighbors leaves far payload unloaded")
+    require(bool(prim(far_path) and not prim(far_path).IsLoaded()), "Load neighbors leaves far payload unloaded")
 
     release_qt_wrappers()
 

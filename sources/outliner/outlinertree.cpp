@@ -170,6 +170,7 @@ public:
         QTimer* payloadTimer = nullptr;
         mutable int cachedMaxDepth = -1;
         bool payloadEnabled = false;
+        quint64 payloadCheckRevision = 1;
         QString filter;
         QMap<SdfPath, bool> payloadRequests;
         QList<SdfPath> maskPaths;
@@ -210,6 +211,18 @@ OutlinerTreePrivate::init()
     d.tree->setColumnSelectable(PrimItem::Visibility, false);
     d.tree->setSelectionMode(QAbstractItemView::ExtendedSelection);
     d.tree->setSelectionBehavior(QAbstractItemView::SelectRows);
+
+    const auto invalidateChecks = [this]() { ++d.payloadCheckRevision; };
+    connect(d.tree->model(), &QAbstractItemModel::rowsInserted, this, invalidateChecks);
+    connect(d.tree->model(), &QAbstractItemModel::rowsRemoved, this, invalidateChecks);
+    connect(d.tree->model(), &QAbstractItemModel::rowsMoved, this, invalidateChecks);
+    connect(d.tree->model(), &QAbstractItemModel::modelReset, this, invalidateChecks);
+    connect(d.tree->model(), &QAbstractItemModel::layoutChanged, this, invalidateChecks);
+    connect(d.tree->model(), &QAbstractItemModel::dataChanged, this,
+            [this](const QModelIndex&, const QModelIndex&, const QList<int>& roles) {
+                if (roles.isEmpty() || roles.contains(Qt::CheckStateRole))
+                    ++d.payloadCheckRevision;
+            });
 
     connect(d.tree.data(), &OutlinerTree::itemSelectionChanged, this, &OutlinerTreePrivate::itemSelectionChanged);
     connect(d.tree.data(), &OutlinerTree::itemChanged, this, [this](QTreeWidgetItem* item, int column) {
@@ -875,7 +888,7 @@ OutlinerTreePrivate::addItem(PrimItem* parent, const SdfPath& path)
             return nullptr;
 
         const UsdPrim prim = stage->GetPrimAtPath(path);
-        if (!prim || prim.IsA<UsdGeomSubset>())
+        if (!prim || !prim.IsDefined() || prim.IsA<UsdGeomSubset>())
             return nullptr;
 
         isPayload = stage::isPayload(stage, path);
@@ -919,7 +932,7 @@ OutlinerTreePrivate::addChildren(PrimItem* parent, const SdfPath& path)
         if (!prim)
             return;
 
-        for (const UsdPrim& child : prim.GetFilteredChildren(UsdTraverseInstanceProxies(UsdPrimAllPrimsPredicate))) {
+        for (const UsdPrim& child : prim.GetFilteredChildren(UsdTraverseInstanceProxies(UsdPrimIsDefined))) {
             if (!child.IsA<UsdGeomSubset>())
                 childPaths.append(child.GetPath());
         }
@@ -1127,6 +1140,25 @@ OutlinerTreePrivate::contextMenuEvent(QContextMenuEvent* event)
 }
 
 void
+OutlinerTree::drawRow(QPainter* painter, const QStyleOptionViewItem& option, const QModelIndex& index) const
+{
+    IndexTree::drawRow(painter, option, index);
+    if (!session())
+        return;
+    const QStringList layers = index.data(PrimItem::CompositionLayers).toStringList();
+    painter->save();
+    int x = 0;
+    for (const QString& layer : layers) {
+        const QColor color = session()->layerColor(layer);
+        if (!color.isValid())
+            continue;
+        painter->fillRect(QRect(x, option.rect.top(), 3, option.rect.height()), color);
+        x += 3;
+    }
+    painter->restore();
+}
+
+void
 OutlinerTreePrivate::updateStage(UsdStageRefPtr stage)
 {
     SignalGuard::Scope guard(this);
@@ -1277,8 +1309,7 @@ OutlinerTreePrivate::syncDirectChildrenOnly(PrimItem* parentItem, const UsdPrim&
         if (!d.stage)
             return;
 
-        for (const UsdPrim& childPrim :
-             parentPrim.GetFilteredChildren(UsdTraverseInstanceProxies(UsdPrimAllPrimsPredicate))) {
+        for (const UsdPrim& childPrim : parentPrim.GetFilteredChildren(UsdTraverseInstanceProxies(UsdPrimIsDefined))) {
             if (childPrim.IsA<UsdGeomSubset>())
                 continue;
             const SdfPath childPath = childPrim.GetPath();
@@ -1299,7 +1330,8 @@ OutlinerTreePrivate::syncDirectChildrenOnly(PrimItem* parentItem, const UsdPrim&
             if (stageSet.contains(it.key()))
                 continue;
 
-            if (!d.stage->GetPrimAtPath(it.key()))
+            const UsdPrim child = d.stage->GetPrimAtPath(it.key());
+            if (!child || !child.IsDefined() || child.IsA<UsdGeomSubset>())
                 staleItems.append(it.value());
         }
     }
@@ -1960,7 +1992,7 @@ OutlinerTreePrivate::invalidatePrim(const SdfPath& path)
         prim = d.stage->GetPrimAtPath(primPath);
     }
 
-    if (!prim || prim.IsA<UsdGeomSubset>()) {
+    if (!prim || !prim.IsDefined() || prim.IsA<UsdGeomSubset>()) {
         PrimItem* parentItem = itemFromPath(parentPath);
 
         if (primItem)
@@ -2068,8 +2100,7 @@ OutlinerTreePrivate::invalidateChildren(PrimItem* parentItem, const UsdPrim& pri
 
     {
         READ_LOCKER(locker, d.context->stageLock(), "stageLock");
-        for (const UsdPrim& childPrim :
-             prim.GetFilteredChildren(UsdTraverseInstanceProxies(UsdPrimAllPrimsPredicate))) {
+        for (const UsdPrim& childPrim : prim.GetFilteredChildren(UsdTraverseInstanceProxies(UsdPrimIsDefined))) {
             if (childPrim.IsA<UsdGeomSubset>())
                 continue;
             const SdfPath childPath = childPrim.GetPath();
@@ -2088,7 +2119,8 @@ OutlinerTreePrivate::invalidateChildren(PrimItem* parentItem, const UsdPrim& pri
             if (stageSet.contains(it.key()))
                 continue;
 
-            if (!d.stage->GetPrimAtPath(it.key()))
+            const UsdPrim child = d.stage->GetPrimAtPath(it.key());
+            if (!child || !child.IsDefined() || child.IsA<UsdGeomSubset>())
                 staleItems.append(it.value());
         }
     }
@@ -2347,6 +2379,19 @@ OutlinerTree::OutlinerTree(QWidget* parent)
 }
 
 OutlinerTree::~OutlinerTree() = default;
+
+quint64
+OutlinerTree::payloadCheckRevision() const
+{
+    return p->d.payloadCheckRevision;
+}
+
+void
+OutlinerTree::invalidatePayloadChecks()
+{
+    ++p->d.payloadCheckRevision;
+}
+
 
 ViewContext*
 OutlinerTree::context() const

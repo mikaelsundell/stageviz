@@ -82,8 +82,36 @@ consistent with the existing architecture.
   `layerDir`), use the current layer or stage path as the initial directory
   when available, and persist the directory selected by the user.
 
+## Formatting
+
+- After C++ edits, run `scripts/clang-format.sh` on macOS/Linux or
+  `scripts\clang-format.bat` on Windows. These format only changed `.cpp` and
+  `.h` files under `sources/` and `CTest/`, using the current branch's merge
+  base with `master` (or `origin/master` when no local master exists).
+- Include committed branch changes, staged/unstaged edits and untracked source
+  files. Leave unchanged, deleted, ignored and investigation files alone. Use
+  `--list` to inspect the selection, `--check` to validate without edits, and
+  `--base REF` for branches targeting another base. Resolve clang-format from
+  `PATH`, `CLANG_FORMAT`, or `--clang-format PATH`; keep machine paths local.
+
 ## Tests and live verification
 
+- Use `./test_app.sh debug` on macOS/Linux or `test_app.bat Debug` on Windows
+  for the complete automatic test run. Use `release` or `all` to test those
+  configurations. The scripts incrementally build the app and native test
+  targets, run every registered CTest, then every discovered embedded Python
+  suite, including its built-in performance checks. Use this complete run
+  before final code review; focused checks remain appropriate during editing.
+- Run the scripts from a configured development checkout with CMake and Python
+  3 available. `--list` shows the embedded suites; `--no-build` uses existing
+  binaries. Results, logs, JUnit, MCP evidence and screenshots are written under
+  `build.test-results/` unless `--output` names a new directory. A failed build
+  or test returns a nonzero exit code. CTests and GUI suites run serially.
+- Keep new embedded suites discoverable as `CTest/python/test*.py` and add a
+  phase adapter in `CTest/benchmark/pipeline/run_regressions.py` when a suite
+  needs setup/cleanup phases. The aggregate `test.py` and `testbench.py` helper
+  are not independent suites. Manual benchmark comparisons that require user
+  datasets or an explicit baseline remain separate from automatic tests.
 - For the Qt testing patterns used by the embedded Python suite, read
   `skills/references/python-qt-testing.md` and reuse `CTest/python/testbench.py`.
 - Add native regression coverage in `CTest/regression.cpp` for critical

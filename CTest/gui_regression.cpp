@@ -3,19 +3,25 @@
 
 #include "application.h"
 #include "bboxutils.h"
+#include "changesdialog.h"
 #include "commandlayer.h"
 #include "commandlight.h"
 #include "commandmaterial.h"
 #include "commandpayload.h"
 #include "commandpivot.h"
+#include "commandprim.h"
+#include "commandproperty.h"
 #include "commandselection.h"
 #include "commandstack.h"
 #include "commandtransform.h"
+#include "commandvisibility.h"
 #include "indextree.h"
 #include "layerdialog.h"
+#include "layeritem.h"
 #include "layertree.h"
 #include "materialbrowser.h"
 #include "materialutils.h"
+#include "mcp/mcpserver.h"
 #include "outliner/outlinertree.h"
 #include "outliner/outlinerview.h"
 #include "outliner/primitem.h"
@@ -32,6 +38,7 @@
 #include "ui.h"
 #include "viewcamera.h"
 #include "viewcontext.h"
+#include "viewer.h"
 #include "viewportauxiliary.h"
 #include "viewportgizmo.h"
 #include "viewporthost.h"
@@ -42,23 +49,37 @@
 #include "viewstate.h"
 #include <QApplication>
 #include <QColor>
+#include <QContextMenuEvent>
 #include <QCoreApplication>
+#include <QDialog>
 #include <QDir>
 #include <QElapsedTimer>
+#include <QEventLoop>
+#include <QFont>
+#include <QHeaderView>
 #include <QImage>
 #include <QItemSelectionModel>
 #include <QKeyEvent>
+#include <QLabel>
 #include <QLineEdit>
+#include <QMenu>
+#include <QNetworkAccessManager>
+#include <QNetworkProxy>
+#include <QNetworkReply>
+#include <QNetworkRequest>
 #include <QOffscreenSurface>
 #include <QOpenGLContext>
 #include <QOpenGLFramebufferObject>
 #include <QPainter>
+#include <QPushButton>
+#include <QScrollBar>
 #include <QSet>
 #include <QSettings>
 #include <QSurfaceFormat>
 #include <QTemporaryDir>
 #include <QThread>
 #include <QThreadPool>
+#include <QTimer>
 #include <QTreeWidgetItem>
 #include <QTreeWidgetItemIterator>
 #include <fstream>
@@ -70,6 +91,7 @@
 #include <pxr/base/gf/range1f.h>
 #include <pxr/base/gf/rotation.h>
 #include <pxr/base/gf/vec3d.h>
+#include <pxr/usd/sdf/primSpec.h>
 #include <pxr/usd/usd/payloads.h>
 #include <pxr/usd/usd/prim.h>
 #include <pxr/usd/usd/stage.h>
@@ -114,6 +136,8 @@ settingsApi()
 
         settings.setValue(key, QStringLiteral("stored"));
         require(settings.value(key).toString() == QStringLiteral("stored"), "settings value roundtrip");
+        const auto organizations = QDir(dir.path()).entryList(QDir::Dirs | QDir::NoDotAndDotDot);
+        require(!organizations.isEmpty(), "settings honors the isolated default format and directory");
     }
 
     QSettings::setDefaultFormat(previousFormat);
@@ -298,6 +322,69 @@ renderEngineApi()
 }
 
 void
+renderPrimitiveSelectionApi()
+{
+    QSurfaceFormat format;
+    format.setDepthBufferSize(24);
+    format.setStencilBufferSize(8);
+    QOpenGLContext context;
+    context.setFormat(format);
+    require(context.create(), "create primitive selection context");
+    QOffscreenSurface surface;
+    surface.setFormat(context.format());
+    surface.create();
+    require(surface.isValid() && context.makeCurrent(&surface), "activate primitive selection context");
+    {
+        QOpenGLFramebufferObjectFormat framebufferFormat;
+        framebufferFormat.setAttachment(QOpenGLFramebufferObject::CombinedDepthStencil);
+        QOpenGLFramebufferObject framebuffer(128, 128, framebufferFormat);
+        for (const char* type : { "Cone", "Cube", "Sphere", "Cylinder", "Capsule" }) {
+            const auto stage = UsdStage::CreateInMemory();
+            UsdGeomXform::Define(stage, SdfPath("/Group"));
+            stage->DefinePrim(SdfPath("/Group/Shape"), TfToken(type));
+            stageviz::RenderEngine viewport(stageviz::RenderEngine::ContextMode::Current);
+            viewport.setStage(stage);
+            GfCamera camera;
+            GfMatrix4d view(1.);
+            view.SetLookAt(GfVec3d(4, 3, 6), GfVec3d(0), GfVec3d(0, 1, 0));
+            camera.SetTransform(view.GetInverse());
+            camera.SetPerspectiveFromAspectRatioAndFieldOfView(1., 45., GfCamera::FOVVertical);
+            camera.SetClippingRange(GfRange1f(.1f, 100.f));
+            viewport.setCamera(camera);
+            viewport.setSize(GfVec2i(128));
+            viewport.setViewport(GfVec4d(0, 0, 128, 128));
+            viewport.setSelectionColor(QColor(255, 200, 0));
+            const auto draw = [&](const QList<SdfPath>& paths) {
+                viewport.setSelected(paths);
+                require(framebuffer.bind(), "bind primitive selection framebuffer");
+                for (int i = 0; i < 3; ++i)
+                    require(viewport.renderToCurrentFramebuffer(), "render primitive selection");
+                const QImage image = framebuffer.toImage();
+                framebuffer.release();
+                return image;
+            };
+            const auto orangePixels = [](const QImage& image) {
+                int count = 0;
+                for (int y = 0; y < image.height(); ++y) {
+                    for (int x = 0; x < image.width(); ++x) {
+                        const QColor color = image.pixelColor(x, y);
+                        count += color.red() > 200 && color.green() > 100 && color.green() < 230 && color.blue() < 60;
+                    }
+                }
+                return count;
+            };
+            require(orangePixels(draw({})) == 0, "unselected primitive has no selection outline");
+            const QImage parent = draw({ SdfPath("/Group") });
+            require(orangePixels(parent) > 8, "parent selection outlines every analytic primitive type");
+            require(draw({ SdfPath("/Group/Shape") }) == parent,
+                    "direct and parent selection outline the same analytic primitive");
+            viewport.reset();
+        }
+    }
+    context.doneCurrent();
+}
+
+void
 numericEditorApi()
 {
     stageviz::SpinBox spin;
@@ -466,6 +553,99 @@ materialBrowserApi()
     require(!browser.updateEntry(10, updated), "material browser rejects invalid row update");
 }
 
+
+void
+propertyRevealFileApi()
+{
+    QTemporaryDir dir;
+    require(dir.isValid(), "temporary property file reveal directory");
+    require(QDir(dir.path()).mkdir("nested"), "create nested layer directory");
+    const QString assetFile = dir.filePath("nested/box.usda");
+    const auto asset = UsdStage::CreateNew(assetFile.toStdString());
+    const auto box = UsdGeomXform::Define(asset, SdfPath("/Box")).GetPrim();
+    asset->SetDefaultPrim(box);
+    require(asset->GetRootLayer()->Save(), "save reveal asset");
+    const QString childFile = dir.filePath("nested/child.usda");
+    const auto child = UsdStage::CreateNew(childFile.toStdString());
+    const auto payload = UsdGeomXform::Define(child, SdfPath("/Payload")).GetPrim();
+    require(payload.GetPayloads().AddPayload("box.usda"), "author relative payload in sublayer");
+    payload.CreateAttribute(TfToken("texture"), SdfValueTypeNames->Asset).Set(SdfAssetPath("box.usda"));
+    payload.CreateAttribute(TfToken("missingTexture"), SdfValueTypeNames->Asset).Set(SdfAssetPath("missing.exr"));
+    const auto reference = UsdGeomXform::Define(child, SdfPath("/Reference")).GetPrim();
+    require(reference.GetReferences().AddReference("box.usda"), "author relative reference in sublayer");
+    require(child->GetRootLayer()->Save(), "save reveal sublayer");
+    const QString rootFile = dir.filePath("root.usda");
+    const auto fixture = UsdStage::CreateNew(rootFile.toStdString());
+    fixture->GetRootLayer()->SetSubLayerPaths({ "nested/child.usda" });
+    // A stronger prim spec must not change the anchor of the weaker payload.
+    fixture->OverridePrim(SdfPath("/Payload")).SetCustomDataByKey(TfToken("stronger"), VtValue(true));
+    require(fixture->GetRootLayer()->Save(), "save reveal scene");
+
+    stageviz::PropertyView view;
+    view.resize(640, 800);
+    view.show();
+    auto* current = stageviz::session();
+    require(current->loadFromFile(rootFile, stageviz::Session::None), "load reveal scene");
+    auto* tree = view.findChild<stageviz::PropertyTree*>("propertyTree");
+    require(tree, "find reveal property tree");
+    const auto select = [&](const char* path) {
+        current->commandStack()->execute(
+            new stageviz::Command(stageviz::selectPaths(*path ? QList<SdfPath> { SdfPath(path) } : QList<SdfPath>())));
+        for (int i = 0; i < 6; ++i) {
+            QThreadPool::globalInstance()->waitForDone();
+            QCoreApplication::sendPostedEvents(nullptr, 0);
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+        }
+        tree->expandAll();
+    };
+    const auto find = [&](const QString& name, const QString& parent = QString()) -> QTreeWidgetItem* {
+        QTreeWidgetItemIterator it(tree);
+        while (*it) {
+            if ((*it)->text(0) == name && (parent.isEmpty() || ((*it)->parent() && (*it)->parent()->text(0) == parent)))
+                return *it;
+            ++it;
+        }
+        return nullptr;
+    };
+    const auto menuTarget = [&](QTreeWidgetItem* row) {
+        require(row, "find file reveal row");
+        tree->scrollToItem(row);
+        const QPoint point = tree->visualItemRect(row).center();
+        QString target;
+        bool inspected = false;
+        QTimer::singleShot(0, tree, [&]() {
+            for (QWidget* widget : QApplication::topLevelWidgets()) {
+                auto* menu = qobject_cast<QMenu*>(widget);
+                if (!menu || !menu->isVisible())
+                    continue;
+                for (QAction* action : menu->actions()) {
+                    if (action->objectName() == "propertyRevealFile") {
+                        require(action->isEnabled(), "file reveal action enabled");
+                        target = action->data().toString();
+                    }
+                }
+                inspected = true;
+                menu->close();
+            }
+        });
+        QContextMenuEvent event(QContextMenuEvent::Mouse, point, tree->viewport()->mapToGlobal(point));
+        QApplication::sendEvent(tree->viewport(), &event);
+        require(inspected, "inspect property context menu");
+        return target;
+    };
+    select("/Payload");
+    require(menuTarget(find("Asset", "Payload")) == assetFile,
+            "payload reveal resolves relative to its authored sublayer");
+    require(menuTarget(find("texture")) == assetFile, "asset attribute reveals its resolved file");
+    require(menuTarget(find("missingTexture")).isEmpty(), "missing asset has no reveal action");
+    require(menuTarget(find("Prim Path", "Payload")).isEmpty(), "USD prim paths are not filesystem paths");
+    require(menuTarget(find("Strongest Layer")) == rootFile, "strongest layer row reveals the layer file");
+    select("/Reference");
+    require(menuTarget(find("Asset", "References")) == assetFile,
+            "reference reveal resolves relative to its authored sublayer");
+    select("");
+    require(menuTarget(find("filePath")) == rootFile, "stage filename row reveals its full path");
+}
 
 void
 geometrySubsetGuiApi()
@@ -666,6 +846,413 @@ geometrySubsetGuiApi()
     auto* subsetRow = dynamic_cast<stageviz::PropertyItem*>(subsetIndices ? subsetIndices->parent() : nullptr);
     require(subsetRow && subsetRow->valuePath() == front.GetPath(),
             "subset property group exposes its exact path for the Select action");
+}
+
+void
+outlinerResetOpinionsMenuApi()
+{
+    stageviz::OutlinerView view;
+    view.resize(500, 400);
+    view.show();
+    auto* current = stageviz::session();
+    require(current->newStage(), "new reset menu fixture");
+    const auto stage = current->stage();
+    const auto root = stage->GetRootLayer();
+    const auto weak = SdfLayer::CreateAnonymous("reset-menu-base.usda");
+    require(weak->ImportFromString("#usda 1.0\ndef Sphere \"Sphere\" { }\n"), "base menu geometry");
+    root->SetSubLayerPaths({ weak->GetIdentifier() });
+    stage->GetPrimAtPath(SdfPath("/Sphere")).GetAttribute(TfToken("visibility")).Set(TfToken("invisible"));
+    current->commandStack()->execute(new stageviz::Command(stageviz::selectPaths({ SdfPath("/Sphere") })));
+    for (int i = 0; i < 6; ++i) {
+        QThreadPool::globalInstance()->waitForDone();
+        QCoreApplication::sendPostedEvents(nullptr, 0);
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    }
+    auto* tree = view.findChild<stageviz::OutlinerTree*>("outlinerTree");
+    require(tree, "find reset menu tree");
+    tree->expandAll();
+    auto* row = tree->findItems("Sphere", Qt::MatchExactly | Qt::MatchRecursive).value(0);
+    require(row, "find reset menu prim row");
+    const auto inspect = [&](bool locked) {
+        QStringList labels;
+        bool enabled = false;
+        QTimer::singleShot(0, tree, [&]() {
+            for (auto* widget : QApplication::allWidgets()) {
+                auto* menu = qobject_cast<QMenu*>(widget);
+                if (!menu || menu->objectName() != "resetOpinionsMenu")
+                    continue;
+                enabled = menu->menuAction()->isEnabled();
+                for (auto* action : menu->actions())
+                    labels.append(action->isSeparator() ? "separator" : action->text());
+            }
+            for (auto* widget : QApplication::topLevelWidgets()) {
+                if (auto* menu = qobject_cast<QMenu*>(widget); menu && menu->isVisible())
+                    menu->close();
+            }
+        });
+        const QPoint point = tree->visualItemRect(row).center();
+        QContextMenuEvent event(QContextMenuEvent::Mouse, point, tree->viewport()->mapToGlobal(point));
+        QApplication::sendEvent(tree->viewport(), &event);
+        require(labels == (locked ? QStringList { "All" } : QStringList { "All", "separator", "Visibility" }),
+                "reset menu shows only edit-layer property groups below All and divider");
+        require(enabled != locked, "locked edit layer disables reset menu");
+    };
+    inspect(false);
+    root->SetPermissionToEdit(false);
+    inspect(true);
+    root->SetPermissionToEdit(true);
+}
+
+void
+outlinerLayerColorsApi()
+{
+    stageviz::LayerTree layers;
+    layers.resize(420, 300);
+    layers.show();
+    stageviz::OutlinerView view;
+    view.resize(420, 300);
+    view.show();
+    auto* current = stageviz::session();
+    require(current->newStage(), "new colored Outliner fixture");
+    const auto stage = current->stage();
+    const auto root = stage->GetRootLayer();
+    const auto child = SdfLayer::CreateAnonymous("colored-child.usda");
+    root->SetSubLayerPaths({ child->GetIdentifier() });
+    UsdGeomXform::Define(stage, SdfPath("/RootOwned"));
+    require(current->setEditLayer(child), "select colored child layer");
+    UsdGeomXform::Define(stage, SdfPath("/ChildOwned"));
+    require(current->setEditLayer(root), "restore colored root layer");
+    auto* tree = view.findChild<stageviz::OutlinerTree*>("outlinerTree");
+    require(tree, "find colored Outliner tree");
+    const auto drain = []() {
+        for (int i = 0; i < 6; ++i) {
+            QThreadPool::globalInstance()->waitForDone();
+            QCoreApplication::sendPostedEvents(nullptr, 0);
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+        }
+    };
+    const auto find = [&](const QString& path) -> QTreeWidgetItem* {
+        QTreeWidgetItemIterator it(tree);
+        while (*it) {
+            if ((*it)->data(0, stageviz::PrimItem::Path).toString() == path)
+                return *it;
+            ++it;
+        }
+        return nullptr;
+    };
+    const auto strip = [&](const QString& path, int column = 0) {
+        auto* row = find(path);
+        require(row, "find colored row");
+        tree->scrollToItem(row);
+        drain();
+        const QRect rect = tree->visualItemRect(row);
+        const QImage image = tree->viewport()->grab().toImage();
+        return image.pixelColor(qRound((column * 3 + 1) * image.devicePixelRatio()),
+                                qRound(rect.center().y() * image.devicePixelRatio()));
+    };
+    const auto layerStrip = [&](const QString& identifier) {
+        QTreeWidgetItemIterator it(&layers);
+        while (*it && static_cast<stageviz::LayerItem*>(*it)->identifier() != identifier)
+            ++it;
+        require(*it, "find colored layer row");
+        auto* row = *it;
+        layers.setCurrentItem(row);
+        layers.scrollToItem(row);
+        drain();
+        const QImage image = layers.viewport()->grab().toImage();
+        return image.pixelColor(qRound(image.devicePixelRatio()),
+                                qRound(layers.visualItemRect(row).center().y() * image.devicePixelRatio()));
+    };
+    const QString rootId = QString::fromStdString(root->GetIdentifier());
+    const QString childId = QString::fromStdString(child->GetIdentifier());
+    const QColor red("#d04030");
+    const QColor blue("#3060c0");
+    current->setLayerColor(rootId, red);
+    current->setLayerColor(childId, blue);
+    drain();
+    tree->expandAll();
+    require(find("/ChildOwned")->data(0, stageviz::PrimItem::StrongestLayer).toString() == childId,
+            "row identifies its strongest prim spec layer");
+    require(strip("/RootOwned") == red && strip("/ChildOwned") == blue, "row starts show assigned layer colors");
+    UsdGeomXform::Define(stage, SdfPath("/SameLayerSource"));
+    const auto sameLayer = UsdGeomXform::Define(stage, SdfPath("/SameLayerCopy")).GetPrim();
+    sameLayer.GetReferences().AddInternalReference(SdfPath("/SameLayerSource"));
+    drain();
+    require(find("/SameLayerCopy")->data(0, stageviz::PrimItem::CompositionLayers).toStringList()
+                == QStringList { rootId },
+            "multiple specs from one layer contribute one color strip");
+    layers.refresh();
+    layers.expandAll();
+    require(layerStrip(rootId) == red && layerStrip(childId) == blue,
+            "Layer Editor root and sublayer strips match colors while selected");
+    current->commandStack()->execute(new stageviz::Command(stageviz::selectPaths({ SdfPath("/ChildOwned") })));
+    drain();
+    QElapsedTimer selectedPaint;
+    selectedPaint.start();
+    QColor selectedColor;
+    do {
+        selectedColor = strip("/ChildOwned");
+        if (selectedColor == blue)
+            break;
+        QThread::msleep(5);
+    } while (selectedPaint.elapsed() < 2000);
+    require(selectedColor == blue, "color strip remains visible over selected row");
+    current->commandStack()->execute(new stageviz::Command(stageviz::hidePaths({ SdfPath("/ChildOwned") }, false)));
+    drain();
+    const QStringList expectedLayers { childId, rootId };
+    for (int i = 0; i < 100; ++i)
+        require(find("/ChildOwned")->data(0, stageviz::PrimItem::CompositionLayers).toStringList() == expectedLayers,
+                "cached composition lists contributing layers from weak to strong");
+    require(find("/ChildOwned")->data(0, stageviz::PrimItem::StrongestLayer).toString() == rootId,
+            "strongest-layer role still identifies the override layer");
+    require(strip("/ChildOwned") == blue && strip("/ChildOwned", 1) == red,
+            "override adds its color to the right of the base layer while selected");
+    current->commandStack()->execute(new stageviz::Command(stageviz::resetOverrides({ SdfPath("/ChildOwned") })));
+    drain();
+    require(strip("/ChildOwned") == blue && strip("/ChildOwned", 1) != red,
+            "reset override restores the single underlying layer color");
+    current->commandStack()->undo();
+    drain();
+    require(strip("/ChildOwned") == blue && strip("/ChildOwned", 1) == red,
+            "undo restores the full composition marker");
+    current->setLayerColor(rootId, QColor());
+    drain();
+    require(strip("/RootOwned") != red && strip("/ChildOwned") == blue && strip("/ChildOwned", 1) != red,
+            "clearing a layer color removes only its composition strip");
+    require(layerStrip(rootId) != red && layerStrip(childId) == blue,
+            "clearing root color removes its Layer Editor strip and keeps the sublayer color");
+}
+
+void
+outlinerEditLayerFontApi()
+{
+    stageviz::OutlinerView view;
+    auto* current = stageviz::session();
+    require(current->newStage(), "new Outliner font fixture");
+    const auto stage = current->stage();
+    const auto root = stage->GetRootLayer();
+    const auto child = SdfLayer::CreateAnonymous("font-child.usda");
+    root->SetSubLayerPaths({ child->GetIdentifier() });
+    UsdGeomXform::Define(stage, SdfPath("/RootOwned"));
+    const auto payloadStage = UsdStage::CreateInMemory();
+    UsdGeomXform::Define(payloadStage, SdfPath("/Asset"));
+    UsdGeomCube::Define(payloadStage, SdfPath("/Asset/Cube"));
+    const auto payload = UsdGeomXform::Define(stage, SdfPath("/Payload")).GetPrim();
+    require(payload.GetPayloads().AddPayload(payloadStage->GetRootLayer()->GetIdentifier(), SdfPath("/Asset")),
+            "add font fixture payload");
+    require(current->setEditLayer(child), "select font fixture sublayer");
+    UsdGeomXform::Define(stage, SdfPath("/ChildOwned"));
+    require(current->setEditLayer(root), "select root edit layer");
+    auto* tree = view.findChild<stageviz::OutlinerTree*>("outlinerTree");
+    require(tree, "find Outliner font tree");
+    const auto drain = []() {
+        for (int i = 0; i < 6; ++i) {
+            QThreadPool::globalInstance()->waitForDone();
+            QCoreApplication::sendPostedEvents(nullptr, 0);
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+        }
+    };
+    const auto italic = [&](const QString& path) {
+        QTreeWidgetItemIterator it(tree);
+        while (*it) {
+            if ((*it)->data(0, stageviz::PrimItem::Path).toString() == path)
+                return (*it)->font(0).italic();
+            ++it;
+        }
+        throw std::runtime_error("missing Outliner font row");
+    };
+    drain();
+    require(!italic("/") && !italic("/RootOwned") && italic("/ChildOwned"),
+            "only prims absent from the root edit layer are italic");
+    require(!italic("/Payload") && italic("/Payload/Cube"),
+            "payload root uses normal font while external contents are italic");
+    require(current->setEditLayer(child), "switch to child edit layer");
+    drain();
+    require(!italic("/") && italic("/RootOwned") && !italic("/ChildOwned"),
+            "italics refresh when the edit layer changes");
+    require(current->setEditLayer(root), "restore root edit layer");
+    drain();
+    current->commandStack()->execute(new stageviz::Command(stageviz::hidePaths({ SdfPath("/ChildOwned") }, false)));
+    drain();
+    require(root->GetPrimAtPath(SdfPath("/ChildOwned")) && !italic("/ChildOwned"),
+            "authoring an edit-layer override removes italics");
+    current->commandStack()->execute(new stageviz::Command(stageviz::resetOverrides({ SdfPath("/ChildOwned") })));
+    drain();
+    require(!root->GetPrimAtPath(SdfPath("/ChildOwned")) && italic("/ChildOwned"),
+            "resetting the override restores italics");
+    current->commandStack()->undo();
+    drain();
+    require(!italic("/ChildOwned"), "undo restores the override and its normal font");
+    current->commandStack()->redo();
+    drain();
+    require(italic("/ChildOwned"), "redo removes the override and restores italics");
+}
+
+void
+outlinerDefinedPrimsApi()
+{
+    QTemporaryDir dir;
+    require(dir.isValid(), "temporary defined prims directory");
+    const auto fixture = UsdStage::CreateInMemory();
+    fixture->DefinePrim(SdfPath("/Source"), TfToken("Xform"));
+    UsdGeomCube::Define(fixture, SdfPath("/Source/Cube"));
+    const UsdPrim instance = fixture->DefinePrim(SdfPath("/Instance"), TfToken("Xform"));
+    require(instance.GetReferences().AddInternalReference(SdfPath("/Source")), "reference instance source");
+    require(instance.SetInstanceable(true), "enable fixture instancing");
+    fixture->DefinePrim(SdfPath("/UntypedGroup"));
+    fixture->DefinePrim(SdfPath("/Flattened_Prototype_UserGroup"));
+
+    const QString assetPath = dir.filePath("asset.usda");
+    const auto asset = UsdStage::CreateNew(assetPath.toStdString());
+    UsdGeomCube::Define(asset, SdfPath("/Geometry"));
+    require(asset->GetRootLayer()->Save(), "save payload fixture");
+    const QString file = dir.filePath("flattened.usda");
+    require(fixture->Export(file.toStdString()), "flatten instance fixture");
+    const auto flattened = UsdStage::Open(file.toStdString());
+    require(flattened->DefinePrim(SdfPath("/Inactive"), TfToken("Xform")).SetActive(false), "deactivate fixture prim");
+    flattened->OverridePrim(SdfPath("/UnresolvedOver/Nested"));
+    const UsdPrim payload = flattened->DefinePrim(SdfPath("/Payload"), TfToken("Xform"));
+    require(payload.GetPayloads().AddPayload(assetPath.toStdString(), SdfPath("/Geometry")), "add payload fixture");
+    require(flattened->GetRootLayer()->Save(), "save unloaded payload fixture");
+
+    stageviz::OutlinerView view;
+    auto* current = stageviz::session();
+    require(current->loadFromFile(file, stageviz::Session::None), "load flattened stage with unloaded payload");
+    auto* tree = view.findChild<stageviz::OutlinerTree*>("outlinerTree");
+    require(tree, "find defined prim Outliner");
+    const auto drain = []() {
+        for (int i = 0; i < 6; ++i) {
+            QThreadPool::globalInstance()->waitForDone();
+            QCoreApplication::sendPostedEvents(nullptr, 0);
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+        }
+    };
+    const auto find = [&](const SdfPath& path) -> QTreeWidgetItem* {
+        QTreeWidgetItemIterator it(tree);
+        while (*it) {
+            if ((*it)->data(0, stageviz::PrimItem::Path).toString() == QString::fromStdString(path.GetString()))
+                return *it;
+            ++it;
+        }
+        return nullptr;
+    };
+    drain();
+    const auto stage = current->stage();
+    int helperCount = 0;
+    for (const UsdPrim& prim : stage->GetPseudoRoot().GetAllChildren()) {
+        if (!prim.IsDefined()) {
+            require(!find(prim.GetPath()), "undefined root excluded from Outliner");
+            if (prim.GetName().GetString().find("Flattened_Prototype_") == 0)
+                ++helperCount;
+        }
+    }
+    require(helperCount > 0, "USD flattening produced undefined prototype roots");
+    require(!find(SdfPath("/UnresolvedOver/Nested")), "undefined descendants excluded");
+    require(find(SdfPath("/UntypedGroup")), "defined untyped group remains visible");
+    require(find(SdfPath("/Flattened_Prototype_UserGroup")), "defined group with prototype-like name remains visible");
+    require(find(SdfPath("/Inactive")), "inactive defined prim remains visible");
+    require(find(SdfPath("/Payload")) && !stage->GetPrimAtPath(SdfPath("/Payload")).IsLoaded(),
+            "unloaded payload remains visible");
+    require(stage->GetPrimAtPath(SdfPath("/Instance")).IsInstance() && find(SdfPath("/Instance/Cube")),
+            "instance and its proxy geometry remain visible");
+
+    const SdfPath changing("/Changing");
+    stage->OverridePrim(changing);
+    drain();
+    require(!find(changing), "new undefined prim stays hidden during resync");
+    stage->DefinePrim(changing);
+    stage->DefinePrim(changing.AppendChild(TfToken("Child")));
+    drain();
+    require(find(changing) && find(changing.AppendChild(TfToken("Child"))), "newly defined subtree becomes visible");
+    stage->GetRootLayer()->GetPrimAtPath(changing)->SetSpecifier(SdfSpecifierOver);
+    drain();
+    require(!find(changing) && !find(changing.AppendChild(TfToken("Child"))),
+            "undefined subtree removed during resync");
+    stage->DefinePrim(changing);
+    drain();
+    require(find(changing) && find(changing.AppendChild(TfToken("Child"))), "redefined subtree returns during resync");
+}
+
+void
+outlinerEmptyGroupCheckboxApi()
+{
+    QTemporaryDir dir;
+    require(dir.isValid(), "temporary empty group checkbox directory");
+    const auto asset = UsdStage::CreateNew(dir.filePath("asset.usda").toStdString());
+    UsdGeomXform::Define(asset, SdfPath("/Asset"));
+    require(asset->GetRootLayer()->Save(), "save checkbox asset");
+    const QString layerFile = dir.filePath("branch.usda");
+    const auto branch = UsdStage::CreateNew(layerFile.toStdString());
+    UsdGeomXform::Define(branch, SdfPath("/World/Branch"));
+    const auto branchGate = UsdGeomXform::Define(branch, SdfPath("/World/Branch/Gate")).GetPrim();
+    require(branchGate.GetPayloads().AddPayload("asset.usda", SdfPath("/Asset")), "author branch payload");
+    require(branch->GetRootLayer()->Save(), "save checkbox branch");
+    const QString file = dir.filePath("scene.usda");
+    const auto fixture = UsdStage::CreateNew(file.toStdString());
+    UsdGeomXform::Define(fixture, SdfPath("/World/Branch"));
+    const auto sibling = UsdGeomXform::Define(fixture, SdfPath("/World/Sibling")).GetPrim();
+    require(sibling.GetPayloads().AddPayload("asset.usda", SdfPath("/Asset")), "author sibling payload");
+    UsdGeomCube::Define(fixture, SdfPath("/World/AlwaysVisible"));
+    fixture->GetRootLayer()->SetSubLayerPaths({ "branch.usda" });
+    require(fixture->GetRootLayer()->Save(), "save checkbox scene");
+
+    stageviz::OutlinerView view;
+    auto* current = stageviz::session();
+    require(current->loadFromFile(file, stageviz::Session::None), "load checkbox scene");
+    auto* tree = view.findChild<stageviz::OutlinerTree*>("outlinerTree");
+    require(tree, "find empty group checkbox tree");
+    const auto drain = []() {
+        for (int i = 0; i < 6; ++i) {
+            QThreadPool::globalInstance()->waitForDone();
+            QCoreApplication::sendPostedEvents(nullptr, 0);
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+        }
+    };
+    const auto state = [&](const QString& path) {
+        QTreeWidgetItemIterator it(tree);
+        while (*it) {
+            if ((*it)->data(0, stageviz::PrimItem::Path).toString() == path)
+                return (*it)->checkState(0);
+            ++it;
+        }
+        throw std::runtime_error("missing empty group checkbox row");
+    };
+    const auto run = [&](stageviz::Command command) {
+        current->commandStack()->execute(new stageviz::Command(std::move(command)));
+        drain();
+    };
+    run(stageviz::loadPayloads({ SdfPath("/World/Branch/Gate"), SdfPath("/World/Sibling") }));
+    for (int i = 0; i < 100; ++i)
+        require(state("/") == Qt::Checked, "loaded payloads stay checked; ordinary geometry is excluded");
+    run(stageviz::setLayerMuted(layerFile, true));
+    require(state("/World/Branch") == Qt::Unchecked && state("/World") == Qt::PartiallyChecked
+                && state("/") == Qt::PartiallyChecked,
+            "empty group contributes unchecked after its payload layer is muted");
+    current->commandStack()->undo();
+    drain();
+    require(state("/") == Qt::Checked, "unmuting restores cached parent state");
+    current->commandStack()->redo();
+    drain();
+    require(state("/") == Qt::PartiallyChecked, "redo invalidates cached aggregate");
+    current->commandStack()->undo();
+    drain();
+    run(stageviz::newPrimPath(SdfPath("/World"), "Target", TfToken("Xform"), false));
+    require(state("/World/Target") == Qt::Unchecked && state("/") == Qt::PartiallyChecked,
+            "inserting an empty group invalidates checked parent cache");
+    run(stageviz::movePath({ SdfPath("/World/Branch") }, SdfPath("/World/Target"), -1));
+    require(state("/World/Target") == Qt::Checked && state("/") == Qt::Checked,
+            "moving populated children into the empty group invalidates both branches");
+    current->commandStack()->undo();
+    drain();
+    require(state("/") == Qt::PartiallyChecked, "undoing the move restores the empty group");
+    current->commandStack()->undo();
+    drain();
+    require(state("/") == Qt::Checked, "removing the empty group invalidates the parent cache");
+    run(stageviz::unloadPayloads({ SdfPath("/World/Branch/Gate") }));
+    require(state("/") == Qt::PartiallyChecked, "unloading a gate invalidates cached loaded state");
+    current->commandStack()->undo();
+    drain();
+    require(state("/") == Qt::Checked, "undo restores cached gate load state");
 }
 
 void
@@ -980,6 +1567,376 @@ indexTreeSelectionModesApi()
 }
 
 void
+layerTreeMultiSelectionApi()
+{
+    auto* current = stageviz::session();
+    require(current->newStage(), "new multi-layer selection fixture");
+    const auto stage = current->stage();
+    const auto root = stage->GetRootLayer();
+    const auto first = SdfLayer::CreateAnonymous("first.usda");
+    const auto second = SdfLayer::CreateAnonymous("second.usda");
+    require(first->ImportFromString("#usda 1.0\ndef Xform \"First\" { }\ndef Xform \"Shared\" { }\n"),
+            "first layer prims");
+    require(second->ImportFromString("#usda 1.0\ndef Xform \"Second\" { }\nover \"Shared\" { }\n"),
+            "second layer prims");
+    root->SetSubLayerPaths({ first->GetIdentifier(), second->GetIdentifier() });
+    stageviz::LayerDialog dialog;
+    dialog.resize(600, 450);
+    dialog.show();
+    auto* tree = dialog.findChild<stageviz::LayerTree*>("layerTree");
+    require(tree && tree->selectionMode() == QAbstractItemView::ExtendedSelection,
+            "layer tree enables extended selection");
+    const auto find = [&](const SdfLayerHandle& layer) -> QTreeWidgetItem* {
+        QTreeWidgetItemIterator it(tree);
+        while (*it) {
+            if (static_cast<stageviz::LayerItem*>(*it)->identifier() == QString::fromStdString(layer->GetIdentifier()))
+                return *it;
+            ++it;
+        }
+        return nullptr;
+    };
+    auto* firstRow = find(first);
+    auto* secondRow = find(second);
+    require(firstRow && secondRow, "both layer rows present");
+    tree->setCurrentItem(firstRow);
+    secondRow->setSelected(true);
+    require(tree->selectedItems().size() == 2, "two layers selected");
+    require(current->setEditLayer(second), "switch edit target while multi-selected");
+    tree->refresh();
+    require(tree->selectedItems().size() == 2 && firstRow->isSelected() && secondRow->isSelected(),
+            "layer refresh and edit target changes preserve multi-selection");
+    require(current->setEditLayer(root), "restore edit target");
+    tree->selectCurrentLayer();
+    const auto selectedPaths = current->selectionList()->paths();
+    require(selectedPaths.size() == 3 && selectedPaths.contains(SdfPath("/First"))
+                && selectedPaths.contains(SdfPath("/Second")) && selectedPaths.contains(SdfPath("/Shared")),
+            "Select unions and deduplicates prim paths from all selected layers");
+    const auto context = [&](const QString& actionName) {
+        bool inspected = false;
+        QTimer::singleShot(0, tree, [&]() {
+            for (auto* widget : QApplication::topLevelWidgets()) {
+                auto* menu = qobject_cast<QMenu*>(widget);
+                if (!menu || !menu->isVisible())
+                    continue;
+                QAction* chosen = nullptr;
+                QAction* previous = nullptr;
+                for (auto* action : menu->actions()) {
+                    if (action->objectName() == "layerSave") {
+                        const auto actions = menu->actions();
+                        const qsizetype index = actions.indexOf(action);
+                        require(index >= 2 && actions[index - 1]->isSeparator()
+                                    && actions[index - 2]->objectName() == "layerSetEdit",
+                                "divider separates edit-layer selection from layer saves");
+                    }
+                    if (action->objectName() == "layerUpdate") {
+                        require(previous && previous->objectName() == "layerSave", "Update layers follows Save layers");
+                        require(action->text() == "Update layers" && !action->isEnabled(),
+                                "anonymous selected layers cannot be updated from disk");
+                    }
+                    if (action->objectName() == "layerSetEdit")
+                        require(!action->isEnabled(), "multiple selected layers cannot become one edit target");
+                    if (action->objectName() == actionName)
+                        chosen = action;
+                    previous = action;
+                }
+                if (!chosen)
+                    continue;
+                require(tree->selectedItems().size() == 2, "right-click preserves existing multi-selection");
+                require(chosen->isEnabled(), "batch action enabled");
+                inspected = true;
+                menu->setActiveAction(chosen);
+                QKeyEvent key(QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier);
+                QApplication::sendEvent(menu, &key);
+            }
+        });
+        const QPoint point = tree->visualItemRect(firstRow).center();
+        QContextMenuEvent event(QContextMenuEvent::Mouse, point, tree->viewport()->mapToGlobal(point));
+        QApplication::sendEvent(tree->viewport(), &event);
+        require(inspected, "inspect and trigger layer batch action");
+    };
+    context("layerLock");
+    require(!first->PermissionToEdit() && !second->PermissionToEdit(), "context action locks both selected layers");
+    current->commandStack()->undo();
+    require(first->PermissionToEdit() && second->PermissionToEdit(), "one undo restores both locks");
+    context("layerMute");
+    require(stage->IsLayerMuted(first->GetIdentifier()) && stage->IsLayerMuted(second->GetIdentifier()),
+            "context action mutes both selected layers");
+    require(tree->selectedItems().size() == 2, "muting retains selected rows");
+    current->commandStack()->undo();
+    require(!stage->IsLayerMuted(first->GetIdentifier()) && !stage->IsLayerMuted(second->GetIdentifier()),
+            "one undo restores both mute states");
+    require(current->newStage(), "replace multi-selected stage");
+    tree->refresh();
+    require(tree->selectedItems().size() == 1 && tree->selectedItems().first() == tree->topLevelItem(0),
+            "new stage selects its root after old selected layers disappear");
+}
+
+void
+mcpServerApi()
+{
+    const QByteArray previous = qgetenv("STAGEVIZ_TEST_MCP_PORT");
+    qputenv("STAGEVIZ_TEST_MCP_PORT", "0");
+    stageviz::McpServer server;
+    require(server.start() && server.isRunning(), "MCP starts on an isolated loopback port");
+    const QUrl url = server.url();
+    require(url.host() == "127.0.0.1" && url.port() > 0 && url.path() == "/mcp",
+            "MCP reports the actual assigned port");
+    QNetworkAccessManager network;
+    network.setProxy(QNetworkProxy(QNetworkProxy::NoProxy));
+    const auto request = [&](const QByteArray& host, const QByteArray& origin) {
+        QNetworkRequest request(url);
+        request.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
+        request.setRawHeader("Host", host);
+        if (!origin.isEmpty())
+            request.setRawHeader("Origin", origin);
+        auto* reply = network.post(request, R"JSON({"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}})JSON");
+        QEventLoop loop;
+        QTimer timer;
+        timer.setSingleShot(true);
+        QObject::connect(&timer, &QTimer::timeout, &loop, &QEventLoop::quit);
+        QObject::connect(reply, &QNetworkReply::finished, &loop, &QEventLoop::quit);
+        timer.start(5000);
+        if (!reply->isFinished())
+            loop.exec();
+        require(reply->isFinished(), "MCP HTTP request completes");
+        const int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+        const QByteArray body = reply->readAll();
+        reply->deleteLater();
+        return std::make_pair(status, body);
+    };
+    const QByteArray host = "127.0.0.1:" + QByteArray::number(url.port());
+    const auto valid = request(host, url.adjusted(QUrl::RemovePath).toEncoded());
+    require(valid.first == 200 && valid.second.contains("stageviz_get_stage_info"),
+            "isolated port accepts matching local Host and Origin and serves native tools");
+    require(request("example.com", {}).first == 403, "MCP rejects non-local Host headers");
+    const auto wrongPort = QByteArray::number(url.port() == 65535 ? 65534 : url.port() + 1);
+    require(request("127.0.0.1:" + wrongPort, {}).first == 403, "MCP rejects a mismatched Host port");
+    require(request(host, "http://127.0.0.1:" + wrongPort).first == 403, "MCP rejects a mismatched Origin port");
+    server.stop();
+    require(!server.isRunning(), "MCP listener stops");
+    qputenv("STAGEVIZ_TEST_MCP_PORT", "65536");
+    require(!server.start() && !server.errorString().isEmpty(), "invalid test ports fail explicitly");
+    if (previous.isNull())
+        qunsetenv("STAGEVIZ_TEST_MCP_PORT");
+    else
+        qputenv("STAGEVIZ_TEST_MCP_PORT", previous);
+}
+
+void
+changesDialogApi()
+{
+    using Dialog = stageviz::ChangesDialog;
+    const QList<Dialog::Entry> entries {
+        { "root", "Untitled", Dialog::Type::RootLayer, "New layer", "No filename", "Choose filename on save", true },
+        { "layer", "model.usda", Dialog::Type::Sublayer, "USD edits", "/example/model.usda", "Modified", true, "root" },
+        { "state", "State", Dialog::Type::CompanionState, "View / layer state", "No filename",
+          "Choose filename on save", true }
+    };
+    for (const auto result : { Dialog::Result::Save, Dialog::Result::Discard, Dialog::Result::Cancel }) {
+        Dialog dialog;
+        dialog.setDocumentName("Untitled");
+        dialog.setEntries(entries);
+        auto* tree = dialog.findChild<QTreeWidget*>("changesTree");
+        require(tree && tree->columnCount() == 5 && tree->topLevelItemCount() == 2
+                    && tree->topLevelItem(0)->childCount() == 1 && tree->topLevelItem(0)->isExpanded(),
+                "changes table nests sublayers beneath their expanded root and keeps State separate");
+        const QStringList headers { "Name", "Type", "Changes", "Location", "Status" };
+        for (int column = 0; column < headers.size(); ++column)
+            require(tree->headerItem()->text(column) == headers[column], "changes table headers");
+        require(tree->topLevelItem(0)->child(0)->text(3) == "model.usda"
+                    && tree->topLevelItem(0)->child(0)->toolTip(3) == "/example/model.usda",
+                "locations show filenames with full paths available in tooltips");
+        require(tree->rootIsDecorated() && tree->uniformRowHeights(), "layer hierarchy uses uniform rows");
+        QTimer::singleShot(0, &dialog, [&]() {
+            auto* header = tree->header();
+            require(header->stretchLastSection(), "Status fills remaining dialog width");
+            const int statusWidth = header->sectionSize(4);
+            dialog.resize(dialog.width() + 120, dialog.height());
+            QCoreApplication::processEvents();
+            require(header->sectionSize(4) > statusWidth, "Status expands when the dialog widens");
+            for (int column = 0; column < 5; ++column) {
+                require(header->sectionResizeMode(column) == QHeaderView::Interactive,
+                        "every changes-table header remains resizable");
+                const int width = header->sectionSize(column);
+                header->resizeSection(column, width + 24);
+                require(header->sectionSize(column) >= width + 24, "every changes-table column can grow");
+            }
+            const char* button = result == Dialog::Result::Save      ? "saveAllButton"
+                                 : result == Dialog::Result::Discard ? "discardButton"
+                                                                     : "cancelButton";
+            dialog.findChild<QPushButton*>(button)->click();
+        });
+        dialog.exec();
+        require(dialog.choice() == result, "explicit Save all, Don't save and Cancel results");
+    }
+    Dialog blocked;
+    auto unavailable = entries;
+    unavailable[1].canSave = false;
+    unavailable[1].status = "Read-only";
+    blocked.setEntries(unavailable);
+    blocked.setDiscardAllowed(false);
+    require(!blocked.findChild<QPushButton*>("saveAllButton")->isEnabled(),
+            "known unavailable writes disable Save all");
+    require(blocked.findChild<QPushButton*>("discardButton")->isHidden(), "confirmation can hide discard");
+    QTimer::singleShot(0, &blocked, [&]() {
+        QKeyEvent key(QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);
+        QApplication::sendEvent(&blocked, &key);
+    });
+    blocked.exec();
+    require(blocked.choice() == Dialog::Result::Cancel, "Escape cancels the changes dialog");
+    QTemporaryDir files;
+    const QString filename = files.filePath("model.usda");
+    QFile file(filename);
+    require(file.open(QIODevice::WriteOnly), "create reveal fixture");
+    file.close();
+    Dialog revealDialog;
+    auto fileEntry = entries[1];
+    fileEntry.location = filename;
+    fileEntry.parentIdentifier.clear();
+    revealDialog.setEntries({ fileEntry });
+    revealDialog.show();
+    QCoreApplication::processEvents();
+    auto* revealTree = revealDialog.findChild<QTreeWidget*>("changesTree");
+    bool revealInspected = false;
+    QTimer::singleShot(0, &revealDialog, [&]() {
+        for (auto* widget : QApplication::topLevelWidgets()) {
+            if (auto* menu = qobject_cast<QMenu*>(widget); menu && menu->isVisible()) {
+                for (auto* action : menu->actions()) {
+                    if (action->objectName() == "changesReveal") {
+                        require(action->isEnabled() && action->data().toString() == filename,
+                                "Reveal context action uses the original full path");
+                        revealInspected = true;
+                        menu->close();
+                    }
+                }
+            }
+        }
+    });
+    revealTree->customContextMenuRequested(revealTree->visualItemRect(revealTree->topLevelItem(0)).center());
+    require(revealInspected, "existing save-target files expose Reveal in the context menu");
+    revealDialog.reject();
+    QList<Dialog::Entry> many;
+    for (int i = 0; i < 1000; ++i) {
+        auto entry = entries[1];
+        entry.identifier = QString::number(i);
+        entry.name = QString("Layer %1").arg(i);
+        many.append(entry);
+    }
+    Dialog scrollable;
+    scrollable.setEntries(many);
+    scrollable.show();
+    QCoreApplication::processEvents();
+    const auto* tree = scrollable.findChild<QTreeWidget*>("changesTree");
+    require(tree->topLevelItemCount() == 1000 && tree->verticalScrollBar()->maximum() > 0,
+            "large change lists scroll inside the dialog");
+    scrollable.reject();
+}
+
+void
+preserveStateMenuApi()
+{
+    QTemporaryDir dir;
+    stageviz::Viewer viewer;
+    auto* current = stageviz::session();
+    const bool originalPreserve = viewer.findChild<QAction*>("filePreserveState")->isChecked();
+    const auto drain = []() {
+        for (int i = 0; i < 6; ++i) {
+            QThreadPool::globalInstance()->waitForDone();
+            QCoreApplication::sendPostedEvents(nullptr, 0);
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 25);
+        }
+    };
+    require(current->newStage(), "new Save state menu fixture");
+    current->setPreserveState(true);
+    current->viewState()->camera()->setCameraDistance(4);
+    drain();
+    require(!current->isStateDirty() && !viewer.findChild<QAction*>("fileStateSave")->isEnabled()
+                && !viewer.windowTitle().contains('*'),
+            "untouched Untitled camera changes do not enable Save state or dirty its title");
+    viewer.findChild<QAction*>("fileNew")->trigger();
+    drain();
+    require(!current->isStateDirty(), "New discards pristine view changes without a review dialog");
+    current->stage()->DefinePrim(SdfPath("/World/Cube"), TfToken("Cube"));
+    current->viewState()->camera()->setCameraDistance(5);
+    drain();
+    bool anonymousReviewed = false;
+    QTimer::singleShot(0, &viewer, [&]() {
+        for (auto* widget : QApplication::topLevelWidgets()) {
+            auto* dialog = qobject_cast<QDialog*>(widget);
+            if (!dialog || !dialog->isVisible() || dialog->objectName() != "changesDialog")
+                continue;
+            const auto* tree = dialog->findChild<QTreeWidget*>("changesTree");
+            require(tree && tree->topLevelItem(0)->text(4) == "Choose filename on save"
+                        && dialog->findChild<QPushButton*>("saveAllButton")->isEnabled(),
+                    "anonymous root can be named and saved despite lacking an in-place save path");
+            anonymousReviewed = true;
+            dialog->reject();
+        }
+    });
+    viewer.findChild<QAction*>("fileNew")->trigger();
+    require(anonymousReviewed, "review anonymous root companion changes");
+    const QString filename = dir.filePath("root.usda");
+    require(current->saveToFile(filename), "save root baseline");
+    drain();
+    auto* save = viewer.findChild<QAction*>("fileStateSave");
+    require(save && save->isVisible(), "Save state is visible with preservation on");
+    auto* fileMenu = viewer.findChild<QMenu*>("menuFile");
+    require(fileMenu, "Save state belongs to the File menu");
+    const auto fileActions = fileMenu->actions();
+    const qsizetype stateIndex = fileActions.indexOf(save);
+    require(stateIndex >= 0 && stateIndex + 2 < fileActions.size() && fileActions[stateIndex + 1]->isSeparator()
+                && fileActions[stateIndex + 2]->objectName() == "fileLayerSave",
+            "Save state precedes Save layer with a divider");
+    current->viewState()->camera()->setCameraDistance(current->viewState()->camera()->cameraDistance() + 2);
+    drain();
+    require(save->isEnabled() && viewer.windowTitle().contains('*'),
+            "camera enables Save state and dirties root title");
+    auto* regularSave = viewer.findChild<QAction*>("fileLayerSave");
+    require(regularSave->isEnabled(), "ordinary Save is enabled for state-only changes");
+    regularSave->trigger();
+    drain();
+    require(!save->isEnabled() && !current->isStateDirty() && !viewer.windowTitle().contains('*'),
+            "Save state action clears state dirtiness and title");
+    current->setPreserveState(false);
+    current->viewState()->camera()->setCameraDistance(current->viewState()->camera()->cameraDistance() + 1);
+    drain();
+    require(save->isVisible() && !save->isEnabled() && !viewer.windowTitle().contains('*'),
+            "preservation off keeps Save state visible but disabled and ignores camera dirtiness in UI");
+    current->setPreserveState(true);
+    drain();
+    require(save->isVisible() && save->isEnabled(), "enabling preservation exposes pending state changes");
+    bool prompted = false;
+    const auto scheduleCancel = [&]() {
+        QTimer::singleShot(0, &viewer, [&]() {
+            for (auto* widget : QApplication::topLevelWidgets()) {
+                auto* dialog = qobject_cast<QDialog*>(widget);
+                if (!dialog || !dialog->isVisible() || dialog->objectName() != "changesDialog")
+                    continue;
+                const auto* tree = dialog->findChild<QTreeWidget*>("changesTree");
+                require(tree && tree->topLevelItemCount() == 1 && tree->topLevelItem(0)->text(1) == "State"
+                            && tree->topLevelItem(0)->text(3) == QFileInfo(filename + ".session").fileName()
+                            && tree->topLevelItem(0)->toolTip(3) == filename + ".session",
+                        "state-only changes table names the root companion");
+                prompted = true;
+                dialog->reject();
+            }
+        });
+    };
+    scheduleCancel();
+    viewer.findChild<QAction*>("fileNew")->trigger();
+    require(prompted && current->filename() == filename && current->isStateDirty(),
+            "Cancel preserves current dirty state");
+    prompted = false;
+    scheduleCancel();
+    viewer.openFile(filename);
+    require(prompted && current->isStateDirty(), "Open also asks before discarding root companion state");
+    save->trigger();
+    drain();
+    current->close();
+    current->setPreserveState(originalPreserve);
+}
+
+void
 layerTreeRootRowApi()
 {
     stageviz::Session* currentSession = stageviz::session();
@@ -1196,6 +2153,15 @@ viewportComponentsApi()
     gizmo.update(frame);
     require(gizmo.hitTest(frame, QPointF(320, 240)) == 11, "move center maps to free translation");
     const SdfPath gizmoPath = stageviz::paths::auxiliary::transform;
+    for (const char* mode : { "Move", "Rotate", "Scale" }) {
+        for (const char* axis : { "X", "Y", "Z" }) {
+            const UsdGeomMesh mesh(
+                host.auxiliary->GetPrimAtPath(gizmoPath.AppendChild(TfToken(mode)).AppendChild(TfToken(axis))));
+            TfToken scheme;
+            require(mesh && mesh.GetSubdivisionSchemeAttr().Get(&scheme) && scheme == UsdGeomTokens->none,
+                    "fully tessellated gizmo handles do not enter the subdivision rendering path");
+        }
+    }
     require(UsdGeomImageable(host.auxiliary->GetPrimAtPath(gizmoPath)).ComputeVisibility() == UsdGeomTokens->inherited,
             "gizmo geometry is visible after update");
     frame.mode = stageviz::ViewportGizmo::Mode::Rotate;
@@ -1277,7 +2243,8 @@ viewportCapturePathsApi()
     QOpenGLContext* previousContext = QOpenGLContext::currentContext();
     const auto scan = view.capturePaths(false);
     require(QOpenGLContext::currentContext() == previousContext, "capture restores the caller's GL context");
-    require(scan.size() == 2 && scan.contains(left) && scan.contains(right), "tiled scan resolves source and instance proxy");
+    require(scan.size() == 2 && scan.contains(left) && scan.contains(right),
+            "tiled scan resolves source and instance proxy");
     require(view.visibleCapturePaths().isEmpty(), "fresh scan leaves menu collection empty");
     current->setMask({ left });
     require(view.capturePaths() == QList<SdfPath> { left }, "capture immediately synchronizes the left mask");
@@ -1286,7 +2253,7 @@ viewportCapturePathsApi()
     require(unmasked.size() == 2 && unmasked.contains(left) && unmasked.contains(right),
             "fresh scan immediately synchronizes the cleared mask, including instance proxies");
     require(view.visibleCapturePaths() == QList<SdfPath> { left }, "fresh scan preserves earlier collection");
-    view.captureVisible(); // Existing native callers delegate to the same implementation.
+    view.captureVisible();  // Existing native callers delegate to the same implementation.
     require(view.visibleCapturePaths() == QList<SdfPath> { left, right }, "legacy capture shares ordered collection");
     require(view.capturePaths() == QList<SdfPath> { left, right }, "repeated capture suppresses duplicates");
     require(ready == 5, "both native entry points publish the capture completion signal");
@@ -1804,13 +2771,24 @@ main(int argc, char** argv)
         { "ui_api", uiApi },
         { "numeric_editor_api", numericEditorApi },
         { "renderengine_api", renderEngineApi },
+        { "render_primitive_selection_api", renderPrimitiveSelectionApi },
         { "renderengine_hdri_api", renderEngineHdriApi },
         { "material_browser_api", materialBrowserApi },
+        { "property_reveal_file_api", propertyRevealFileApi },
         { "geometry_subset_gui_api", geometrySubsetGuiApi },
+        { "outliner_reset_opinions_menu_api", outlinerResetOpinionsMenuApi },
+        { "outliner_layer_colors_api", outlinerLayerColorsApi },
+        { "outliner_edit_layer_font_api", outlinerEditLayerFontApi },
+        { "outliner_defined_prims_api", outlinerDefinedPrimsApi },
+        { "outliner_empty_group_checkbox_api", outlinerEmptyGroupCheckboxApi },
         { "outliner_instance_payload_resync_api", outlinerInstancePayloadResyncApi },
         { "outliner_payload_group_checkbox_api", []() { outlinerPayloadCheckboxApi(false); } },
         { "outliner_payload_queued_checkbox_api", []() { outlinerPayloadCheckboxApi(true); } },
+        { "changes_dialog_api", changesDialogApi },
+        { "mcp_server_api", mcpServerApi },
+        { "preserve_state_menu_api", preserveStateMenuApi },
         { "layer_tree_root_row_api", layerTreeRootRowApi },
+        { "layer_tree_multi_selection_api", layerTreeMultiSelectionApi },
     };
 
     if (argc != 2 || !cases.count(argv[1])) {

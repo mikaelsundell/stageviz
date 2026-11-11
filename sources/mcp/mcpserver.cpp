@@ -183,7 +183,7 @@ public:
 
     bool allowedHost(const QByteArray& host) const
     {
-        const QByteArray port = QByteArray::number(McpServer::defaultPort);
+        const QByteArray port = QByteArray::number(server->serverPort());
         return host.compare("127.0.0.1:" + port, Qt::CaseInsensitive) == 0
                || host.compare("localhost:" + port, Qt::CaseInsensitive) == 0;
     }
@@ -193,7 +193,7 @@ public:
         if (origin.isEmpty())
             return {};
         const QUrl url(QString::fromUtf8(origin));
-        if (url.scheme() != QLatin1String("http") || url.port(-1) != McpServer::defaultPort
+        if (url.scheme() != QLatin1String("http") || url.port(-1) != server->serverPort()
             || (url.host() != QLatin1String("127.0.0.1") && url.host() != QLatin1String("localhost")))
             return {};
         return origin;
@@ -539,7 +539,19 @@ McpServer::start()
 {
     if (p->server->isListening())
         return true;
-    if (!p->server->listen(QHostAddress::LocalHost, defaultPort)) {
+    quint16 port = defaultPort;
+    const QByteArray testPort = qgetenv("STAGEVIZ_TEST_MCP_PORT");
+    if (!testPort.isEmpty()) {
+        bool valid = false;
+        const int value = testPort.toInt(&valid);
+        if (!valid || value < 0 || value > 65535) {
+            p->error = QStringLiteral("Invalid STAGEVIZ_TEST_MCP_PORT: expected 0..65535");
+            Q_EMIT errorOccurred(p->error);
+            return false;
+        }
+        port = static_cast<quint16>(value);
+    }
+    if (!p->server->listen(QHostAddress::LocalHost, port)) {
         p->error = p->server->errorString();
         Q_EMIT errorOccurred(p->error);
         return false;
@@ -570,7 +582,7 @@ McpServer::isRunning() const
 QUrl
 McpServer::url() const
 {
-    return QUrl(QStringLiteral("http://127.0.0.1:%1/mcp").arg(defaultPort));
+    return QUrl(QStringLiteral("http://127.0.0.1:%1/mcp").arg(isRunning() ? p->server->serverPort() : defaultPort));
 }
 
 QString

@@ -4,6 +4,7 @@
 
 #include "viewer.h"
 #include "application.h"
+#include "changesdialog.h"
 #include "commandcomposition.h"
 #include "commandlight.h"
 #include "commandpayload.h"
@@ -50,18 +51,22 @@
 #include <QEvent>
 #include <QEventLoop>
 #include <QFileDialog>
+#include <QHash>
 #include <QImageWriter>
 #include <QMimeData>
 #include <QObject>
 #include <QParallelAnimationGroup>
 #include <QPointer>
 #include <QPropertyAnimation>
+#include <QScopedValueRollback>
+#include <QSet>
 #include <QSettings>
 #include <QSizePolicy>
 #include <QStatusBar>
 #include <QTimer>
 #include <QVBoxLayout>
 #include <algorithm>
+#include <functional>
 #include <pxr/usd/usdGeom/modelAPI.h>
 #include <pxr/usd/usdGeom/scope.h>
 #include <pxr/usd/usdGeom/xform.h>
@@ -114,6 +119,7 @@ public Q_SLOTS:
     void saveAllLayers();
     void revealInFolder();
     void preserveState();
+    bool saveState();
     void exportAll();
     void exportSelected();
     void exportVisible();
@@ -217,6 +223,7 @@ public:
     void refreshModifiedFromLayers();
     QStringList saveTargets(const QString& rootFilename = QString(), bool includeRoot = true,
                             bool includeAnonymous = false) const;
+    QList<ChangesDialog::Entry> changesEntries(bool stateOnly, const QString& rootFilename = QString()) const;
     bool confirmLayerSave(const QString& title, const QString& rootFilename = QString()) const;
     void updateSaveActions();
     void updateWindowTitle();
@@ -235,6 +242,7 @@ public:
         Session::LoadPolicy loadPolicy;
         bool stageChanged;
         bool rootChanged;
+        bool changesConfirmed = false;
         quint64 statusRevision = 0;
         QStringList arguments;
         QStringList extensions;
@@ -350,6 +358,7 @@ ViewerPrivate::init()
     connect(d.ui->fileLayerSaveAll, &QAction::triggered, this, &ViewerPrivate::saveAllLayers);
     connect(d.ui->fileRevealInFolder, &QAction::triggered, this, &ViewerPrivate::revealInFolder);
     connect(d.ui->filePreserveState, &QAction::triggered, this, &ViewerPrivate::preserveState);
+    connect(d.ui->fileStateSave, &QAction::triggered, this, &ViewerPrivate::saveState);
     connect(d.ui->fileExportAll, &QAction::triggered, this, &ViewerPrivate::exportAll);
     connect(d.ui->fileExportSelected, &QAction::triggered, this, &ViewerPrivate::exportSelected);
     connect(d.ui->fileExportVisible, &QAction::triggered, this, &ViewerPrivate::exportVisible);
@@ -387,7 +396,8 @@ ViewerPrivate::init()
     connect(d.ui->editLayerSelect, &QAction::triggered, this, &ViewerPrivate::layerSelect);
     connect(d.ui->editPayloadInvert, &QAction::triggered, this, &ViewerPrivate::payloadInvert);
     connect(d.ui->editLayerInvert, &QAction::triggered, this, &ViewerPrivate::layerInvert);
-    connect(d.ui->createXform, &QAction::triggered, this, &ViewerPrivate::newXform);
+    connect(d.ui->createXform, &QAction::triggered, this, [this]() { newPrim(TfToken("Xform")); });
+    connect(d.ui->parentXform, &QAction::triggered, this, &ViewerPrivate::newXform);
     connect(d.ui->createScope, &QAction::triggered, this, [this]() { newPrim(TfToken("Scope")); });
     connect(d.ui->createMesh, &QAction::triggered, this, [this]() { newPrim(TfToken("Mesh")); });
     connect(d.ui->createPoints, &QAction::triggered, this, [this]() { newPrim(TfToken("Points")); });
@@ -535,6 +545,8 @@ ViewerPrivate::init()
     connect(session(), &Session::stageChanged, this, &ViewerPrivate::updateStage);
     connect(session(), &Session::editLayerChanged, this, &ViewerPrivate::updateEditLayer);
     connect(session(), &Session::layerMutingChanged, this, &ViewerPrivate::updateLayerState);
+    connect(session(), &Session::colorsChanged, this, &ViewerPrivate::updateLayerState);
+    connect(session(), &Session::stateDirtyChanged, this, &ViewerPrivate::updateLayerState);
     connect(session(), &Session::auxiliaryChanged, this, &ViewerPrivate::updateAuxiliary);
     connect(session(), &Session::stageUpChanged, this, &ViewerPrivate::updateStageUp);
     connect(session(), &Session::preserveStateChanged, this, &ViewerPrivate::updatePreserveState);
@@ -1126,6 +1138,7 @@ ViewerPrivate::enable(bool enable)
                                 d.ui->fileLayerSaveAll,
                                 d.ui->fileLayers,
                                 d.ui->filePreserveState,
+                                d.ui->fileStateSave,
                                 d.ui->fileExportAll,
                                 d.ui->fileExportSelected,
                                 d.ui->fileExportVisible,
@@ -1212,6 +1225,9 @@ ViewerPrivate::enable(bool enable)
             action->setEnabled(enable);
     }
 
+    const QList<SdfPath> xformPaths = path::minimalRootPaths(session()->selectionList()->paths());
+    d.ui->parentXform->setEnabled(enable && !xformPaths.isEmpty() && !xformPaths.contains(SdfPath::AbsoluteRootPath()));
+
     const ViewState* state = session()->viewState();
     d.ui->lightClearDomeTexture->setEnabled(enable && state && !state->domeLightTexture().isEmpty());
 
@@ -1225,6 +1241,7 @@ ViewerPrivate::enable(bool enable)
         d.ui->fileLayerSaveAs->setEnabled(false);
         d.ui->fileLayerSaveCopyAs->setEnabled(false);
         d.ui->fileLayerSaveAll->setEnabled(false);
+        d.ui->fileStateSave->setEnabled(false);
     }
 
     if (enable)
@@ -1337,6 +1354,10 @@ ViewerPrivate::save()
     }
     if (!layer)
         return;
+    if (!layer->IsDirty() && d.ui->filePreserveState->isChecked() && session()->isStateDirty()) {
+        saveState();
+        return;
+    }
     if (layer->IsAnonymous()) {
         saveAs();
         return;
@@ -1346,6 +1367,8 @@ ViewerPrivate::save()
     timer.start();
     const QString identifier = QString::fromStdString(layer->GetIdentifier());
     if (session()->saveLayer(identifier)) {
+        if (d.ui->filePreserveState->isChecked() && session()->isStateDirty() && !saveState())
+            return;
         d.layerDialog->refreshLayers();
         refreshModifiedFromLayers();
         updateSaveActions();
@@ -1565,6 +1588,27 @@ void
 ViewerPrivate::preserveState()
 {
     session()->setPreserveState(d.ui->filePreserveState->isChecked());
+}
+
+bool
+ViewerPrivate::saveState()
+{
+    if (!session()->isLoaded() || !d.ui->filePreserveState->isChecked())
+        return false;
+    const QString filename = session()->filename();
+    if (filename.isEmpty()) {
+        // A companion file needs a named root stage, even when editing a sublayer.
+        saveStageAs();
+        return !session()->filename().isEmpty() && !session()->isStateDirty();
+    }
+    const QString stateFilename = filename + ".session";
+    const bool saved = session()->saveState(stateFilename);
+    updateLayerState();
+    session()->notifyStatus(saved ? Session::Notify::Status::Success : Session::Notify::Status::Error,
+                            saved ? tr("Saved state to %1").arg(stateFilename)
+                                  : tr("Failed to save state: %1").arg(stateFilename),
+                            stateFilename);
+    return saved;
 }
 
 void
@@ -2109,17 +2153,15 @@ void
 ViewerPrivate::newXform()
 {
     SdfPath parentPath = SdfPath::AbsoluteRootPath();
-    const QList<SdfPath> paths = session()->selectionList()->paths();
+    const QList<SdfPath> paths = path::minimalRootPaths(session()->selectionList()->paths());
 
-    if (paths.size() == 1) {
-        parentPath = paths.first();
-    }
-    else if (paths.size() > 1) {
-        parentPath = paths.first().GetParentPath();
-    }
+    if (paths.isEmpty() || paths.contains(SdfPath::AbsoluteRootPath()))
+        return;
+
+    parentPath = paths.first().GetParentPath();
 
     if (!parentPath.IsEmpty())
-        session()->commandStack()->execute(new Command(newXformPath(parentPath, "Xform", false)));
+        session()->commandStack()->execute(new Command(newXformPath(parentPath, "Xform")));
 }
 
 void
@@ -2632,6 +2674,9 @@ ViewerPrivate::updateSelection(const QList<SdfPath>& paths)
     const bool hasSelection = !paths.isEmpty();
     d.ui->editSelectInvert->setEnabled(hasSelection);
     d.ui->editCopySelected->setEnabled(hasSelection);
+    const QList<SdfPath> xformPaths = path::minimalRootPaths(paths);
+    d.ui->parentXform->setEnabled(session()->isLoaded() && !xformPaths.isEmpty()
+                                  && !xformPaths.contains(SdfPath::AbsoluteRootPath()));
     bool canInstance = hasSelection;
 
     bool canSelectParent = false;
@@ -2824,6 +2869,7 @@ ViewerPrivate::updatePreserveState(bool enabled)
     d.ui->filePreserveState->setChecked(enabled);
     d.ui->filePreserveState->blockSignals(false);
     settings()->setValue("preserveState", enabled);
+    updateLayerState();
 }
 
 void
@@ -3176,7 +3222,7 @@ ViewerPrivate::refreshModifiedFromLayers()
             }
         }
     }
-    const bool sessionStateDirty = session()->isStateDirty();
+    const bool sessionStateDirty = d.ui->filePreserveState->isChecked() && session()->isStateDirty();
     const bool stageChanged = anyLayerModified || sessionLayerDirty || sessionStateDirty;
     updateStageChanged(stageChanged);
 }
@@ -3219,21 +3265,124 @@ ViewerPrivate::saveTargets(const QString& rootFilename, bool includeRoot, bool i
     return result;
 }
 
+QList<ChangesDialog::Entry>
+ViewerPrivate::changesEntries(bool stateOnly, const QString& rootFilename) const
+{
+    QList<ChangesDialog::Entry> entries;
+    const QString currentFilename = session()->filename();
+    const QString targetRoot = rootFilename.isEmpty() ? currentFilename : QFileInfo(rootFilename).absoluteFilePath();
+    READ_LOCKER(locker, session()->stageLock(), "stageLock");
+    const auto stage = session()->stageUnsafe();
+    if (!stage)
+        return entries;
+    const auto root = stage->GetRootLayer();
+    const bool writesLayers = !stateOnly || (root && root->IsAnonymous());
+    if (writesLayers) {
+        const auto stack = stage->GetLayerStack(false);
+        QSet<QString> local;
+        QSet<QString> included;
+        for (const auto& layer : stack) {
+            const auto id = QString::fromStdString(layer->GetIdentifier());
+            local.insert(id);
+            if (layer == root || layer->IsDirty() || layer->IsAnonymous())
+                included.insert(id);
+        }
+        QList<SdfLayerHandle> ordered;
+        QHash<QString, QString> parents;
+        std::function<void(const SdfLayerHandle&, const QString&)> visit = [&](const auto& layer, const auto& parent) {
+            if (!layer)
+                return;
+            const auto id = QString::fromStdString(layer->GetIdentifier());
+            if (!local.contains(id) || parents.contains(id))
+                return;
+            parents.insert(id, parent);
+            ordered.append(layer);
+            for (const auto& path : layer->GetSubLayerPaths())
+                visit(SdfLayer::FindRelativeToLayer(layer, path), id);
+        };
+        visit(root, QString());
+        // Include unchanged ancestors as context for nested changed layers.
+        for (const auto& id : QSet<QString>(included)) {
+            auto parent = parents.value(id);
+            while (!parent.isEmpty() && !included.contains(parent)) {
+                included.insert(parent);
+                parent = parents.value(parent);
+            }
+        }
+        for (const auto& layer : ordered) {
+            const bool isRoot = layer == root;
+            const auto id = QString::fromStdString(layer->GetIdentifier());
+            if (!included.contains(id))
+                continue;
+            ChangesDialog::Entry entry;
+            entry.identifier = id;
+            entry.parentIdentifier = parents.value(id);
+            entry.type = isRoot ? ChangesDialog::Type::RootLayer : ChangesDialog::Type::Sublayer;
+            entry.name = isRoot && !targetRoot.isEmpty()       ? QFileInfo(targetRoot).fileName()
+                         : isRoot && currentFilename.isEmpty() ? tr("Untitled")
+                                                               : QString::fromStdString(layer->GetDisplayName());
+            entry.changes = layer->IsAnonymous() ? tr("New layer")
+                            : layer->IsDirty()   ? tr("USD edits")
+                                                 : tr("No USD edits");
+            entry.location = isRoot && !targetRoot.isEmpty() ? targetRoot
+                             : layer->IsAnonymous()          ? tr("No filename")
+                                                             : QString::fromStdString(layer->GetRealPath());
+            const bool anonymousSublayer = !isRoot && layer->IsAnonymous();
+            const bool writable = layer->IsAnonymous() ? layer->PermissionToEdit() : layer->PermissionToSave();
+            const bool writesLayer = isRoot || layer->IsDirty() || layer->IsAnonymous();
+            entry.canSave = !anonymousSublayer && (!writesLayer || writable);
+            entry.status = !writesLayer                     ? tr("Unchanged")
+                           : anonymousSublayer              ? tr("Save layer as first")
+                           : !writable                      ? tr("Read-only")
+                           : isRoot && targetRoot.isEmpty() ? tr("Choose filename on save")
+                           : layer->IsDirty()               ? tr("Modified")
+                           : isRoot                         ? tr("Saved with stage")
+                                                            : tr("Unchanged");
+            entries.append(entry);
+        }
+    }
+    if (const auto layer = stage->GetSessionLayer(); layer && layer->IsDirty()) {
+        ChangesDialog::Entry entry;
+        entry.identifier = QString::fromStdString(layer->GetIdentifier());
+        entry.name = tr("USD session layer");
+        entry.type = ChangesDialog::Type::SessionLayer;
+        entry.changes = tr("Temporary USD opinions");
+        entry.location = tr("In memory");
+        entry.status = tr("Not saved by this operation");
+        entry.canSave = false;
+        entries.append(entry);
+    }
+    if (d.ui->filePreserveState->isChecked()) {
+        ChangesDialog::Entry entry;
+        entry.identifier = targetRoot.isEmpty() ? QStringLiteral("$state") : targetRoot + ".session";
+        entry.name = tr("State");
+        entry.type = ChangesDialog::Type::CompanionState;
+        entry.changes = session()->isStateDirty() ? tr("View / layer state") : tr("Current state");
+        entry.location = targetRoot.isEmpty() ? tr("No filename") : targetRoot + ".session";
+        entry.status = targetRoot.isEmpty()        ? tr("Choose filename on save")
+                       : session()->isStateDirty() ? tr("Modified")
+                                                   : tr("Saved with stage");
+        entries.append(entry);
+    }
+    return entries;
+}
+
 bool
 ViewerPrivate::confirmLayerSave(const QString& title, const QString& rootFilename) const
 {
+    if (d.changesConfirmed)
+        return true;
     const QStringList targets = saveTargets(rootFilename);
     if (targets.size() <= 1)
         return true;
 
-    const QString details = targets.join(QLatin1Char('\n'));
-    QString text = tr("Saving this stage will write multiple USD layer files.\n\n%1").arg(details);
-    if (!rootFilename.isEmpty())
-        text += tr("\n\nThe sublayers will remain at their current paths; only the root layer will be written "
-                   "to the selected filename.");
-    text += tr("\n\nEach file is saved separately. If a write fails, earlier successful writes are not "
-               "rolled back.\n\nContinue?");
-    return MessageDialog::question(d.viewer.data(), title, text);
+    ChangesDialog dialog(d.viewer.data());
+    dialog.setWindowTitle(title);
+    dialog.setDocumentName(QFileInfo(rootFilename.isEmpty() ? session()->filename() : rootFilename).fileName());
+    dialog.setEntries(changesEntries(false, rootFilename));
+    dialog.setDiscardAllowed(false);
+    dialog.exec();
+    return dialog.choice() == ChangesDialog::Result::Save;
 }
 
 void
@@ -3299,6 +3448,7 @@ ViewerPrivate::updateSaveActions()
     bool loaded = false;
     bool canSaveActive = false;
     bool hasEditLayer = false;
+    bool activeLayerDirty = false;
     {
         READ_LOCKER(locker, session()->stageLock(), "stageLock");
         const UsdStageRefPtr stage = session()->stageUnsafe();
@@ -3306,6 +3456,7 @@ ViewerPrivate::updateSaveActions()
             loaded = true;
             const SdfLayerHandle layer = stage->GetEditTarget().GetLayer();
             hasEditLayer = bool(layer);
+            activeLayerDirty = layer && layer->IsDirty();
             canSaveActive = layer && layer->IsDirty()
                             && (layer->IsAnonymous() ? layer->PermissionToEdit()
                                                      : layer->PermissionToSave()
@@ -3327,10 +3478,19 @@ ViewerPrivate::updateSaveActions()
             }
         }
     }
-    d.ui->fileLayerSave->setEnabled(canSaveActive);
+    const bool stateOnly = loaded && hasEditLayer && !activeLayerDirty && d.ui->filePreserveState->isChecked()
+                           && session()->isStateDirty();
+    if (stateOnly)
+        d.ui->fileLayerSave->setToolTip(tr("Save the root stage's companion state."));
+    d.ui->fileLayerSave->setEnabled(canSaveActive || stateOnly);
     d.ui->fileLayerSaveAs->setEnabled(loaded && hasEditLayer);
     d.ui->fileLayerSaveCopyAs->setEnabled(loaded && hasEditLayer);
     d.ui->fileLayerSaveAll->setEnabled(loaded);
+    const bool preserve = d.ui->filePreserveState->isChecked();
+    const QString filename = session()->filename();
+    d.ui->fileStateSave->setEnabled(
+        loaded && preserve && (!filename.isEmpty() || d.rootChanged)
+        && (session()->isStateDirty() || filename.isEmpty() || !QFileInfo::exists(filename + ".session")));
 }
 
 bool
@@ -3366,8 +3526,25 @@ ViewerPrivate::saveFile()
 bool
 ViewerPrivate::saveChanges()
 {
+    refreshModifiedFromLayers();
     if (!hasChanges())
         return true;
+    const bool stateDirty = d.ui->filePreserveState->isChecked() && session()->isStateDirty();
+    bool layerDirty = false;
+    {
+        READ_LOCKER(locker, session()->stageLock(), "stageLock");
+        const auto stage = session()->stageUnsafe();
+        if (stage) {
+            layerDirty = stage->GetSessionLayer() && stage->GetSessionLayer()->IsDirty();
+            for (const auto& layer : stage->GetLayerStack(false)) {
+                const bool pristineAnonymousRoot = layer == stage->GetRootLayer() && layer->IsAnonymous()
+                                                   && !d.rootChanged && layer->GetSubLayerPaths().empty();
+                if (!pristineAnonymousRoot && layer->IsDirty())
+                    layerDirty = true;
+            }
+        }
+    }
+    const bool stateOnly = stateDirty && !layerDirty;
 
     const QString name = session()->filename().isEmpty() ? "Untitled" : QFileInfo(session()->filename()).fileName();
 
@@ -3377,26 +3554,23 @@ ViewerPrivate::saveChanges()
     d.viewer->activateWindow();
     d.viewer->setFocus();
 
-    QString question = tr("Save changes to %1?").arg(name);
-    const QStringList targets = saveTargets();
-    if (targets.size() > 1) {
-        question
-            += tr("\n\nThe following layer files will be written:\n%1\n\nEach file is saved separately. If a write fails, "
-                  "earlier successful writes are not rolled back.")
-                   .arg(targets.join(QLatin1Char('\n')));
-    }
-
-    const MessageDialog::SaveResult result = MessageDialog::saveQuestion(d.viewer.data(), tr("Save changes?"),
-                                                                         question);
+    ChangesDialog dialog(d.viewer.data());
+    dialog.setDocumentName(name);
+    dialog.setEntries(changesEntries(stateOnly));
+    dialog.exec();
+    const ChangesDialog::Result result = dialog.choice();
 
     updateToolsSuppressed(false, true);
 
     switch (result) {
-    case MessageDialog::SaveResult::Save: return saveFile();
+    case ChangesDialog::Result::Save: {
+        QScopedValueRollback<bool> confirmed(d.changesConfirmed, true);
+        return stateOnly ? saveState() : saveFile();
+    }
 
-    case MessageDialog::SaveResult::DontSave: return true;
+    case ChangesDialog::Result::Discard: return true;
 
-    case MessageDialog::SaveResult::Cancel:
+    case ChangesDialog::Result::Cancel:
     default: return false;
     }
 }

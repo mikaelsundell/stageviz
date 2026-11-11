@@ -404,6 +404,8 @@ Use `merge_stage`, `merge_flattened_stage`, `add_sublayer`, `add_reference`, and
 
 `saveLayer(identifier) -> bool`
 : Save one existing file-backed local layer; anonymous layers need Save As first.
+  Saving the root also saves its companion when Remember state is enabled.
+  Saving a sublayer does not change the root companion by itself.
 
 `saveLayerAs(identifier, filename) -> bool`
 : Export one local layer and retarget the live stage to the new file. Parent
@@ -427,19 +429,28 @@ Use `merge_stage`, `merge_flattened_stage`, `add_sublayer`, `add_reference`, and
 `flattenPaths(paths, filename) -> bool`
 
 `flattenPathsToFile(paths, filename) -> bool`
-: Alias of `flattenPaths`. Export selected hierarchies and dependencies, preserving session-layer opinions, load rules and muted-layer composition. Empty paths fail.
+: Alias of `flattenPaths`. Export selected hierarchies and dependencies, preserving session-layer opinions, load rules and muted-layer composition. Clear an omitted default prim and filter missing root-order names in the output without changing the source stage. Empty paths fail.
 
 `loadState(filename) -> bool`
-: Restore companion Stageviz state, including view settings, payload load rules and muted layers. This does not author USD layer files.
+: Restore companion Stageviz state, including camera projection/orthographic scale, view and ambient-occlusion settings, payload load rules, muted layers, layer locks, the active local edit layer and layer colors. An unavailable, muted or locked saved edit layer falls back to the root. This does not author USD layer files.
 
 `saveState(filename) -> bool`
 : Save that state to the explicitly supplied companion-state filename. Automatic
-  persistence uses the USD filename plus `.session`; explicit save/loadState
-  calls take the sidecar filename itself.
+  persistence uses the root USD filename plus `.session`, regardless of the active
+  edit layer; explicit save/loadState calls take the sidecar filename itself.
+  File > Save state writes only this companion. Ordinary Save also handles
+  state-only documents without rewriting USD. An unnamed stage must first be
+  saved to establish its root filename. Saving a copy does not clear the source
+  document's unsaved state.
 
 `isStateDirty() -> bool`
-: Whether preserved application/session state has changed since being saved;
-  distinct from `Sdf.Layer.dirty` for authored USD.
+: Camera and view changes on a pristine, unnamed New stage do not mark state
+  dirty. Tracking starts after authored document changes or loading/naming a
+  root file; an untouched loaded file can still have dirty camera state.
+  Returns whether preserved application/session state has changed since being saved;
+  distinct from `Sdf.Layer.dirty` for authored USD. Camera/view changes, payload
+  load rules, layer muting, locks, edit-target changes and colors participate. The viewer includes this flag
+  in document dirtiness and save prompts only while Remember state is enabled.
 
 `setPreserveState(enabled) -> None`
 : Enable automatic companion-state saving/restoration with file operations. Muting is stage state; USD files alone do not preserve the mute list.
@@ -608,14 +619,27 @@ the composed layer stack, so retain their identifier before muting.
 
 `remove_layer(layer_identifier) -> None`
 : Remove the layer's sublayer arc from its parent; keep the file on disk.
+  `layer_identifier` accepts a string or sequence of strings; a sequence is one
+  undo step and removes children before parents.
+
+`update_layer(layer_identifier) -> None`
+: Reload only the selected file-backed, local, unmuted, editable layers from disk.
+  Accept a string or sequence of strings; a batch is one undo step. Unsaved
+  contents are replaced. Undo restores the previous contents and redo restores
+  the captured update without reading disk again. Anonymous and locked layers
+  are not updated; unselected sublayers and companion state are preserved.
 
 `set_layer_muted(layer_identifier, muted) -> None`
 : Mute/unmute a local layer with undo. Persist this through Stageviz companion
-  state; muting is not an authored USD layer change.
+  state; muting is not an authored USD layer change. The identifier accepts a
+  string or sequence of strings. A batch is one undo step, muting children first
+  and unmuting parents first; undo restores individual original states.
 
 `set_layer_permission_to_edit(layer_identifier, editable) -> None`
 : Change local edit permission with undo. This is an in-process layer permission,
-  not filesystem chmod. Check permissions before authoring.
+  not filesystem chmod. The identifier accepts a string or sequence of strings;
+  a sequence is one undo step that restores individual permissions on undo.
+  Check permissions before authoring.
 
 `set_edit_layer(layer_identifier) -> None`
 : Choose an existing local edit target with undo. `Session.setEditLayer()` also
@@ -717,6 +741,14 @@ the composed layer stack, so retain their identifier before muting.
 `instance_paths(paths) -> None`
 : Create instanceable sibling prims that internally reference the selected prims.
 
+`make_editable_paths(paths) -> None`
+: Disable native instancing in the active edit target. Proxy children resolve to
+  their owning non-proxy instance root, with duplicate roots processed once.
+  Retain references, placement and selection so children can receive local
+  overrides. Nested instances remain instanced. Undo restores exact metadata and
+  removes newly created inert override specs. Locked layers and ineffective
+  weaker edit targets are rejected without leaving edits behind.
+
 `new_prim(parent_path, name, type_name="") -> None`
 : Create an untyped prim or a USD schema prim such as `Cube`, `Sphere`, `Camera`
   or `Xform`. Names are sanitized and made unique. Creation commands generally
@@ -763,7 +795,7 @@ the composed layer stack, so retain their identifier before muting.
 : Rename a prim within its parent, remapping affected selection and mask. Native namespace/ownership restrictions apply.
 
 `new_xform(parent_path, name) -> None`
-: Create an Xform; selected eligible siblings can be wrapped under it using native Create Xform behavior. Use `new_prim(parent_path, name, "Xform")` when you need a plain new Xform without grouping selected objects.
+: Create an Xform and group selected eligible siblings under it, including a single selected sibling. Selecting `parent_path` itself creates an empty child Xform. Use `new_prim(parent_path, name, "Xform")` when you need a plain new Xform without grouping selected objects.
 
 `move_path(paths, parent_path, insert_index=-1, preserve_world_transform=True) -> None`
 : Reparent paths; -1 uses default insertion, otherwise choose sibling position. Preserve world transforms by default. Invalid cycles/collisions and unsupported composition boundaries are rejected. Undo restores namespace, transforms, ordering, selection and mask.
@@ -818,9 +850,12 @@ Other value types are rejected by this binding.
 : Apply undoable world transforms. The three sequences must have equal lengths;
   each matrix is four rows of four numbers. Each pair defines a world delta
   `inverse(before) * after` using USD row-vector matrices. Subsets resolve to
-  geometry, proxy children to instance roots, and shared source geometry to
-  reference roots. Resolved targets are deduplicated; conflicting deltas for one
-  object are rejected before writes. Unselected inherited instances remain fixed.
+  geometry and proxy children to instance roots. Ordinary source children remain
+  independently editable, with their shared edits inherited by instance children.
+  Mixed source/proxy selections resolve source contents to reference roots to
+  avoid applying a shared delta twice. Resolved targets are deduplicated;
+  conflicting deltas for one object are rejected before writes. When editing a
+  source root, unselected inherited instance roots remain fixed.
   Selection paths are retained. Undo/redo restore captured edit-layer opinions.
   Supply world matrices, not native TransformOperation/XformEdit objects.
 
@@ -845,8 +880,8 @@ Other value types are rejected by this binding.
 `identity_transforms(paths) -> None`
 : Set local transforms to identity using edit-layer-aware transform reset behavior.
 
-`reset_overrides(paths) -> None`
-: Recursively remove edit-layer property overrides on composed prims, exposing weaker opinions. Preserve metadata, composition arcs and edit-layer-owned definitions. Undo restores the removed property specs.
+`reset_overrides(paths, group="all") -> None`
+: Recursively remove edit-layer property overrides on composed prims, exposing weaker opinions. Preserve metadata, composition arcs and edit-layer-owned definitions. Optional positional `group` is `all`, `transforms`, `visibility`, `materials`, `geometry`, `primvars`, `lights`, `cameras`, or `other`. Materials includes bindings and shading inputs/outputs; geometry uses USD schema properties. Undo restores the removed property specs in the original authoring layer, even after switching edit targets.
 
 ### Materials
 

@@ -1,22 +1,10 @@
-#!/bin/bash
+#!/usr/bin/env bash
+# SPDX-License-Identifier: BSD-3-Clause
 
-set -e
-
-script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-project_root="$(cd "$script_dir/.." && pwd)"
-
-echo "Running clang-format in project: $project_root"
-
-for directory in "sources" "CTest"; do
-    target_dir="$project_root/$directory"
-
-    if [ -d "$target_dir" ]; then
-        echo "Formatting: $target_dir"
-
-        find "$target_dir" -type f \
-            \( -name '*.cpp' -o -name '*.h' \) \
-            -exec clang-format -i {} +
-    fi
-done
-
-echo "Clang-format completed."
+set -euo pipefail
+script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+if ! command -v python3 >/dev/null 2>&1; then
+    echo "Python 3 is required to select changed files for clang-format." >&2
+    exit 1
+fi
+exec python3 "$script_dir/clang_format.py" "$@"

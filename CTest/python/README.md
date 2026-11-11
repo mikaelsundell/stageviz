@@ -5,7 +5,13 @@ Qt and OpenUSD utilities live in [`testbench.py`](testbench.py); workflow
 coverage belongs in focused scripts such as [`testlayers.py`](testlayers.py)
 and future `testmaterials.py`.
 
-Run [`test.py`](test.py) from the Stageviz Python editor to execute the current
+For all native and embedded tests, use `./test_app.sh debug` or
+`test_app.bat Debug` from the checkout. The complete runner discovers every
+`test*.py` suite here except the aggregate `test.py` and shared `testbench.py`,
+and runs each suite in a disposable MCP-controlled app. See
+[complete test commands](../README.md#run-all-tests).
+
+Run [`test.py`](test.py) from the Stageviz Python editor for the three core
 suite scripts in order: command/session API, Outliner/editor UI, then layer
 editor workflows. It runs each script in a fresh namespace, records returned
 pass/fail results, and continues after a suite failure so the final summary

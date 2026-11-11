@@ -2,7 +2,7 @@
 # Copyright (c) 2026 - present Mikael Sundell
 # https://github.com/mikaelsundell/stageviz
 
-"""Run all embedded Stageviz Python test suites from the Python editor."""
+"""Run the three core Python suites from the editor; test_app runs every suite."""
 
 import runpy
 import sys

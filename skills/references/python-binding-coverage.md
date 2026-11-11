@@ -24,6 +24,13 @@ Module integer constants cover the documented enum inputs; UI additionally
 exposes nested IntEnum classes and member aliases. Constants alias native enum
 values; code should use their names instead of maintaining its own ordinals.
 
+`command.make_editable_paths` exposes undoable native-instance conversion for
+instance roots and proxy selections, retaining references and exact selection.
+
+`command.update_layer` reloads a selected layer or batch from disk with undoable
+content snapshots; redo uses the captured content. It does not reload the stage
+or unselected sublayers.
+
 ## Native command factories without direct Python equivalents
 
 The Python command surface is useful but is not every native factory/overload:
@@ -111,3 +118,9 @@ availability, resource validity, native behavior or complete C++ parity.
 Keep API prose, [agent instructions](../SKILL.md), the [start guide](python-start.md)
 and this boundary document consistent. Behavior changes still need focused
 native/GUI and embedded Python regressions as described in [Qt testing](python-qt-testing.md).
+
+Reset opinion groups are covered by `CTest/python/testresetopinions.py` and the native `reset_opinion_groups_api` case, including active-layer isolation and undo/redo.
+
+Layer remove, mute and permission bindings accept one identifier or a sequence; `testlayermultiselection.py` covers one-step batch undo/redo and the multi-selection Layer Editor UI.
+
+Companion-state dirtiness and root-stage pairing are exercised by `session_state_dirty_api` and `testpreservestate.py`, including state-only save prompts, camera/view changes, payloads, failed writes, copying and preservation disabled.

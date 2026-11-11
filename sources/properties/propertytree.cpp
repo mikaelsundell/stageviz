@@ -9,6 +9,7 @@
 #include "commandstack.h"
 #include "messagedialog.h"
 #include "notice.h"
+#include "os.h"
 #include "perfscope.h"
 #include "propertyitem.h"
 #include "qtutils.h"
@@ -60,8 +61,13 @@
 #include <pxr/base/vt/array.h>
 #include <pxr/base/vt/dictionary.h>
 #include <pxr/base/vt/value.h>
+#include <pxr/usd/ar/resolver.h>
+#include <pxr/usd/ar/resolverContextBinder.h>
 #include <pxr/usd/sdf/assetPath.h>
+#include <pxr/usd/sdf/layerUtils.h>
+#include <pxr/usd/sdf/listOp.h>
 #include <pxr/usd/sdf/payload.h>
+#include <pxr/usd/sdf/primSpec.h>
 #include <pxr/usd/sdf/reference.h>
 #include <pxr/usd/sdf/schema.h>
 #include <pxr/usd/usd/attribute.h>
@@ -87,6 +93,31 @@ PXR_NAMESPACE_USING_DIRECTIVE
 namespace stageviz {
 
 namespace {
+
+    template<class Arc> QString compositionFilePath(const UsdPrim& prim, const Arc& arc, const TfToken& field)
+    {
+        if (arc.GetAssetPath().empty())
+            return {};
+        ArResolverContextBinder binder(prim.GetStage()->GetPathResolverContext());
+        for (const SdfPrimSpecHandle& spec : prim.GetPrimStack()) {
+            const VtValue value = spec->GetInfo(field);
+            if (!value.IsHolding<SdfListOp<Arc>>())
+                continue;
+            const auto& list = value.UncheckedGet<SdfListOp<Arc>>();
+            const auto contains = [&](const auto& entries) {
+                return std::find(entries.begin(), entries.end(), arc) != entries.end();
+            };
+            if (contains(list.GetExplicitItems()) || contains(list.GetPrependedItems())
+                || contains(list.GetAppendedItems()) || contains(list.GetAddedItems())) {
+                const std::string anchored = SdfComputeAssetPathRelativeToLayer(spec->GetLayer(), arc.GetAssetPath());
+                return QString::fromStdString(ArGetResolver().Resolve(anchored).GetPathString());
+            }
+        }
+        // Composed metadata may already contain an anchored asset path.
+        if (QFileInfo(QString::fromStdString(arc.GetAssetPath())).isAbsolute())
+            return QString::fromStdString(ArGetResolver().Resolve(arc.GetAssetPath()).GetPathString());
+        return {};
+    }
 
     enum ComponentRole {
         ComponentKindRole = Qt::UserRole + 200,
@@ -2381,7 +2412,10 @@ PropertyTreePrivate::addCompositionSection(const UsdPrim& prim)
         sourceToolTip = !realPath.isEmpty() ? realPath : identifier;
 
         const QString display = !realPath.isEmpty() ? QFileInfo(realPath).fileName() : identifier;
-        addInfo(section, "Strongest Layer", display.isEmpty() ? QStringLiteral("<anonymous>") : display, sourceToolTip);
+        auto* source = addInfo(section, "Strongest Layer", display.isEmpty() ? QStringLiteral("<anonymous>") : display,
+                               sourceToolTip);
+        source->setData(PropertyItem::Value, PropertyItem::FilePathRole,
+                        QString::fromStdString(strongestLayer->GetRealPath()));
     }
 
     addInfo(section, "Edit Source", editSource, sourceToolTip);
@@ -2426,7 +2460,10 @@ PropertyTreePrivate::addCompositionSection(const UsdPrim& prim)
             const QString assetPath = qt::StringToQString(entry.payload.GetAssetPath());
             const SdfPath primPath = entry.payload.GetPrimPath();
 
-            addInfo(parent, "Asset", assetPath.isEmpty() ? QStringLiteral("<current layer>") : assetPath, assetPath);
+            auto* asset = addInfo(parent, "Asset", assetPath.isEmpty() ? QStringLiteral("<current layer>") : assetPath,
+                                  assetPath);
+            asset->setData(PropertyItem::Value, PropertyItem::FilePathRole,
+                           compositionFilePath(prim, entry.payload, SdfFieldKeys->Payload));
 
             if (primPath.IsEmpty()) {
                 addInfo(parent, "Prim Path", "<defaultPrim>", QStringLiteral("Uses the payload layer's defaultPrim."));
@@ -2484,7 +2521,10 @@ PropertyTreePrivate::addCompositionSection(const UsdPrim& prim)
             const QString assetPath = qt::StringToQString(entry.reference.GetAssetPath());
             const SdfPath primPath = entry.reference.GetPrimPath();
 
-            addInfo(parent, "Asset", assetPath.isEmpty() ? QStringLiteral("<current layer>") : assetPath, assetPath);
+            auto* asset = addInfo(parent, "Asset", assetPath.isEmpty() ? QStringLiteral("<current layer>") : assetPath,
+                                  assetPath);
+            asset->setData(PropertyItem::Value, PropertyItem::FilePathRole,
+                           compositionFilePath(prim, entry.reference, SdfFieldKeys->References));
 
             if (primPath.IsEmpty()) {
                 addInfo(parent, "Prim Path", "<defaultPrim>",
@@ -3172,6 +3212,7 @@ PropertyTreePrivate::updateStage(UsdStageRefPtr stage)
         item->setKind(PropertyItem::Group);
         item->setText(PropertyItem::Name, name);
         item->setText(PropertyItem::Value, value);
+        return item;
     };
 
     addChild("metersPerUnit", QString::number(UsdGeomGetStageMetersPerUnit(stage)));
@@ -3185,7 +3226,8 @@ PropertyTreePrivate::updateStage(UsdStageRefPtr stage)
         addChild("comment", StringToQString(comment));
 
     const std::string filePath = stage->GetRootLayer()->GetRealPath();
-    addChild("filePath", QFileInfo(StringToQString(filePath)).fileName());
+    addChild("filePath", QFileInfo(StringToQString(filePath)).fileName())
+        ->setData(PropertyItem::Value, PropertyItem::FilePathRole, StringToQString(filePath));
 
     restoreExpansionState();
 
@@ -4075,6 +4117,27 @@ PropertyTree::contextMenuEvent(QContextMenuEvent* event)
     QAction* resetOverrideAction = nullptr;
     QAction* resetDependencyAction = nullptr;
     QAction* removeAttributeAction = nullptr;
+    QAction* revealAction = nullptr;
+    QString revealPath = item->data(PropertyItem::Value, PropertyItem::FilePathRole).toString();
+    if (revealPath.isEmpty() && p->d.stage && !item->propertyPath().IsEmpty()) {
+        READ_LOCKER(locker, p->d.context ? p->d.context->stageLock() : session()->stageLock(), "stageLock");
+        const UsdAttribute attr = p->d.stage->GetAttributeAtPath(item->propertyPath());
+        VtValue value;
+        SdfAssetPath asset;
+        if (attr && attr.Get(&value)) {
+            if (value.IsHolding<SdfAssetPath>())
+                asset = value.UncheckedGet<SdfAssetPath>();
+            else if (value.IsHolding<VtArray<SdfAssetPath>>() && item->kind() == PropertyItem::ArrayElement) {
+                const auto& paths = value.UncheckedGet<VtArray<SdfAssetPath>>();
+                if (item->arrayIndex() >= 0 && size_t(item->arrayIndex()) < paths.size())
+                    asset = paths[item->arrayIndex()];
+            }
+            revealPath = QString::fromStdString(asset.GetResolvedPath());
+            if (revealPath.isEmpty() && QFileInfo(QString::fromStdString(asset.GetAssetPath())).isAbsolute())
+                revealPath = QString::fromStdString(asset.GetAssetPath());
+        }
+    }
+
 
     const SdfPath selectPath = p->selectableValuePath(item);
     if (!selectPath.IsEmpty()) {
@@ -4111,6 +4174,21 @@ PropertyTree::contextMenuEvent(QContextMenuEvent* event)
         removeAttributeAction = menu.addAction("Remove Attribute");
     }
 
+    if (QFileInfo(revealPath).isFile()) {
+        revealPath = QFileInfo(revealPath).absoluteFilePath();
+        menu.addSeparator();
+#ifdef Q_OS_MAC
+        revealAction = menu.addAction(tr("Reveal in Finder"));
+#elif defined(Q_OS_WIN)
+        revealAction = menu.addAction(tr("Reveal in Explorer"));
+#else
+        revealAction = menu.addAction(tr("Reveal in folder"));
+#endif
+        revealAction->setObjectName("propertyRevealFile");
+        revealAction->setData(revealPath);
+        revealAction->setToolTip(revealPath);
+    }
+
     if (menu.actions().isEmpty()) {
         TreeWidget::contextMenuEvent(event);
         return;
@@ -4119,6 +4197,13 @@ PropertyTree::contextMenuEvent(QContextMenuEvent* event)
     QAction* chosen = menu.exec(event->globalPos());
     if (!chosen)
         return;
+
+    if (chosen == revealAction) {
+        if (!os::revealFileInFolder(revealPath))
+            session()->notifyStatus(Session::Notify::Status::Warning,
+                                    tr("Could not reveal file in the file browser: %1").arg(revealPath));
+        return;
+    }
 
     if (chosen == removeAttributeAction) {
         runCommand(removeAttributes(item->propertyPaths()));

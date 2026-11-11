@@ -348,8 +348,8 @@ namespace stage {
         return {};
     }
 
-    // Internal references can expose the same source as both ordinary geometry
-    // and instance proxies. Transform the reference root, not its shared contents.
+    // Identify source/instance pairs for whole-group transforms that must keep
+    // unselected instance roots fixed or avoid applying a shared edit twice.
     static QList<QPair<SdfPath, SdfPath>> transformInstanceSources(UsdStageRefPtr stage)
     {
         PerfScope perfScope("transform.instance_sources");
@@ -387,17 +387,31 @@ namespace stage {
         QList<SdfPath> targets;
         targets.reserve(paths.size());
 
-        QList<SdfPath> sourcePaths;
-        for (const auto& source : transformInstanceSources(stage))
-            sourcePaths.append(source.first);
-        const path::PathIndex sourceRoots(sourcePaths);
         path::PathCollector collector(targets);
+        bool hasInstanceTarget = false;
         for (const SdfPath& path : objectPaths(stage, paths)) {
-            SdfPath targetPath = transformProxyTargetPath(stage, path);
-            const SdfPath source = sourceRoots.outermostAncestor(targetPath);
-            if (!source.IsEmpty())
-                targetPath = source;
-            collector.append(targetPath);
+            const SdfPath target = transformProxyTargetPath(stage, path);
+            collector.append(target);
+            const UsdPrim prim = stage && !target.IsEmpty() ? stage->GetPrimAtPath(target) : UsdPrim();
+            hasInstanceTarget = hasInstanceTarget || (prim && prim.IsInstance());
+        }
+        if (hasInstanceTarget) {
+            const path::PathIndex selected(targets);
+            QList<SdfPath> sourcePaths;
+            for (const auto& source : transformInstanceSources(stage)) {
+                if (selected.covers(source.second))
+                    sourcePaths.append(source.first);
+            }
+            const path::PathIndex sourceRoots(sourcePaths);
+            for (SdfPath& target : targets) {
+                // Ordinary source children remain independently editable. Only
+                // promote mixed source/proxy selections, where editing shared
+                // contents and the dependent instance would apply two deltas.
+                const SdfPath source = sourceRoots.outermostAncestor(target);
+                if (!source.IsEmpty())
+                    target = source;
+            }
+            targets = path::uniquePaths(targets);
         }
         if (minimalRoots)
             return path::stableRootPaths(targets);
@@ -1147,7 +1161,9 @@ namespace stage {
 
         QSet<SdfPath> uniquePaths;
 
-        UsdPrimRange range(stage->GetPseudoRoot());
+        // Native instance geometry lives behind proxy children. Include those
+        // paths so subset exports retain visible instances and their materials.
+        UsdPrimRange range(stage->GetPseudoRoot(), UsdTraverseInstanceProxies());
         for (auto it = range.begin(); it != range.end(); ++it) {
             const UsdPrim prim = *it;
             if (!prim || !prim.IsValid())
