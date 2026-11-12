@@ -58,8 +58,8 @@ LayerItem::setState(const State& state)
             this->setToolTip(column, text);
     };
 
-    setIcon(Name, ui()->icon(UI::IconRole::Layer));
-    setToolTip(Name, state.tooltip);
+    setIcon(Name, ui()->icon(state.editTarget ? UI::IconRole::EditLayer : UI::IconRole::Layer));
+    setToolTip(Name, state.editTarget ? state.tooltip + tr("\nCurrent edit layer.") : state.tooltip);
 
     Qt::ItemFlags itemFlags = flags();
     if (!state.parentIdentifier.isEmpty() && state.canReorder)
@@ -79,7 +79,8 @@ LayerItem::setState(const State& state)
         return;
     }
 
-    setIcon(Visibility, ui()->icon(state.muted ? UI::IconRole::Hidden : UI::IconRole::Visible));
+    setIcon(Visibility, ui()->icon(state.muted ? UI::IconRole::Hidden : UI::IconRole::Visible, UI::UIScale::Medium,
+                                   state.canMute ? UI::UIState::Normal : UI::UIState::Disabled));
     QString visibilityTooltip;
     if (state.inheritedMuted)
         visibilityTooltip = tr("Layer is muted by an ancestor layer.");

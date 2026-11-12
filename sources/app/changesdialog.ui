@@ -63,7 +63,7 @@
    <item>
     <widget class="QLabel" name="description">
      <property name="text">
-      <string>Review the layers and state that will be saved.</string>
+      <string>Review the root document and layers that will be saved.</string>
      </property>
      <property name="wordWrap">
       <bool>true</bool>
@@ -73,7 +73,7 @@
    <item>
     <widget class="QTreeWidget" name="changesTree">
      <property name="toolTip">
-      <string>Layer and state summaries. Hover over a cell to see its full text.</string>
+      <string>Root document and layer summaries. Hover over a cell to see its full text.</string>
      </property>
      <property name="alternatingRowColors">
       <bool>true</bool>

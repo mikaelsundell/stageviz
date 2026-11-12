@@ -170,6 +170,7 @@ addUIEnums()
                                            { "Hidden", static_cast<long>(UI::IconRole::Hidden) },
                                            { "Instance", static_cast<long>(UI::IconRole::Instance) },
                                            { "Layer", static_cast<long>(UI::IconRole::Layer) },
+                                           { "EditLayer", static_cast<long>(UI::IconRole::EditLayer) },
                                            { "Left", static_cast<long>(UI::IconRole::Left) },
                                            { "List", static_cast<long>(UI::IconRole::List) },
                                            { "Lock", static_cast<long>(UI::IconRole::Lock) },

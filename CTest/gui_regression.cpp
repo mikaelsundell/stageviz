@@ -2152,9 +2152,37 @@ layerTreeMultiSelectionApi()
     require(tree->selectedItems().size() == 2, "two layers selected");
     require(current->setEditLayer(second), "switch edit target while multi-selected");
     tree->refresh();
+    const auto iconImage = [](const QIcon& icon) { return icon.pixmap(24, 24).toImage(); };
+    const auto* ui = stageviz::ui();
+    require(!ui->icon(stageviz::UI::EditLayer).isNull(), "current edit-layer resource is available");
+    require(iconImage(secondRow->icon(stageviz::LayerItem::Name))
+                == iconImage(QIcon(ui->icon(stageviz::UI::EditLayer))),
+            "active sublayer uses the edit-layer icon");
+    require(iconImage(firstRow->icon(stageviz::LayerItem::Name)) == iconImage(QIcon(ui->icon(stageviz::UI::Layer))),
+            "inactive layer retains the ordinary layer icon");
+    require(iconImage(secondRow->icon(stageviz::LayerItem::Visibility))
+                    == iconImage(QIcon(ui->icon(stageviz::UI::Visible, stageviz::UI::Medium, stageviz::UI::Disabled)))
+                && iconImage(secondRow->icon(stageviz::LayerItem::Visibility))
+                       != iconImage(firstRow->icon(stageviz::LayerItem::Visibility)),
+            "active layer eye is visibly disabled while other layer eyes remain enabled");
+    require(secondRow->toolTip(stageviz::LayerItem::Visibility).contains("cannot be muted"),
+            "active eye explains why muting is unavailable");
+    const QPoint eye(tree->header()->sectionViewportPosition(stageviz::LayerItem::Visibility)
+                         + tree->columnWidth(stageviz::LayerItem::Visibility) / 2,
+                     tree->visualItemRect(secondRow).center().y());
+    QMouseEvent eyePress(QEvent::MouseButtonPress, QPointF(eye), QPointF(tree->viewport()->mapToGlobal(eye)),
+                         Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+    QApplication::sendEvent(tree->viewport(), &eyePress);
+    require(!stage->IsLayerMuted(second->GetIdentifier()), "disabled active-layer eye does not mute the layer");
     require(tree->selectedItems().size() == 2 && firstRow->isSelected() && secondRow->isSelected(),
             "layer refresh and edit target changes preserve multi-selection");
     require(current->setEditLayer(root), "restore edit target");
+    tree->refresh();
+    require(iconImage(tree->topLevelItem(0)->icon(stageviz::LayerItem::Name))
+                    == iconImage(QIcon(ui->icon(stageviz::UI::EditLayer)))
+                && iconImage(secondRow->icon(stageviz::LayerItem::Visibility))
+                       == iconImage(firstRow->icon(stageviz::LayerItem::Visibility)),
+            "edit icon follows the active root and previous layer eye becomes enabled");
     tree->selectCurrentLayer();
     const auto selectedPaths = current->selectionList()->paths();
     require(selectedPaths.size() == 3 && selectedPaths.contains(SdfPath("/First"))
@@ -2277,18 +2305,16 @@ changesDialogApi()
     using Dialog = stageviz::ChangesDialog;
     const QList<Dialog::Entry> entries {
         { "root", "Untitled", Dialog::Type::RootLayer, "New layer", "No filename", "Choose filename on save", true },
-        { "layer", "model.usda", Dialog::Type::Sublayer, "USD edits", "/example/model.usda", "Modified", true, "root" },
-        { "state", "State", Dialog::Type::CompanionState, "View / layer state", "No filename",
-          "Choose filename on save", true }
+        { "layer", "model.usda", Dialog::Type::Sublayer, "USD edits", "/example/model.usda", "Modified", true, "root" }
     };
     for (const auto result : { Dialog::Result::Save, Dialog::Result::Discard, Dialog::Result::Cancel }) {
         Dialog dialog;
         dialog.setDocumentName("Untitled");
         dialog.setEntries(entries);
         auto* tree = dialog.findChild<QTreeWidget*>("changesTree");
-        require(tree && tree->columnCount() == 5 && tree->topLevelItemCount() == 2
+        require(tree && tree->columnCount() == 5 && tree->topLevelItemCount() == 1
                     && tree->topLevelItem(0)->childCount() == 1 && tree->topLevelItem(0)->isExpanded(),
-                "changes table nests sublayers beneath their expanded root and keeps State separate");
+                "changes table nests sublayers beneath their expanded root");
         const QStringList headers { "Name", "Type", "Changes", "Location", "Status" };
         for (int column = 0; column < headers.size(); ++column)
             require(tree->headerItem()->text(column) == headers[column], "changes table headers");
@@ -2399,9 +2425,9 @@ preserveStateMenuApi()
     current->setPreserveState(true);
     current->viewState()->camera()->setCameraDistance(4);
     drain();
-    require(!current->isStateDirty() && !viewer.findChild<QAction*>("fileStateSave")->isEnabled()
+    require(!current->isStateDirty() && !viewer.findChild<QAction*>("fileStateSave")
                 && !viewer.windowTitle().contains('*'),
-            "untouched Untitled camera changes do not enable Save state or dirty its title");
+            "untouched Untitled camera changes do not dirty its title or expose a separate state action");
     viewer.findChild<QAction*>("fileNew")->trigger();
     drain();
     require(!current->isStateDirty(), "New discards pristine view changes without a review dialog");
@@ -2412,45 +2438,54 @@ preserveStateMenuApi()
     QTimer::singleShot(0, &viewer, [&]() {
         for (auto* widget : QApplication::topLevelWidgets()) {
             auto* dialog = qobject_cast<QDialog*>(widget);
-            if (!dialog || !dialog->isVisible() || dialog->objectName() != "changesDialog")
+            if (!dialog || !dialog->isVisible() || dialog->objectName() != "MessageDialog")
                 continue;
-            const auto* tree = dialog->findChild<QTreeWidget*>("changesTree");
-            require(tree && tree->topLevelItem(0)->text(4) == "Choose filename on save"
-                        && dialog->findChild<QPushButton*>("saveAllButton")->isEnabled(),
-                    "anonymous root can be named and saved despite lacking an in-place save path");
+            require(!dialog->findChild<QTreeWidget*>("changesTree")
+                        && dialog->findChild<QPushButton*>("accept")->text() == "Save"
+                        && dialog->findChild<QPushButton*>("reject")->isVisible(),
+                    "one authored anonymous root uses the compact save question");
             anonymousReviewed = true;
             dialog->reject();
         }
     });
     viewer.findChild<QAction*>("fileNew")->trigger();
-    require(anonymousReviewed, "review anonymous root companion changes");
+    require(anonymousReviewed, "prompt before closing one authored anonymous root");
     const QString filename = dir.filePath("root.usda");
     require(current->saveToFile(filename), "save root baseline");
     drain();
-    auto* save = viewer.findChild<QAction*>("fileStateSave");
-    require(save && save->isVisible(), "Save state is visible with preservation on");
-    auto* fileMenu = viewer.findChild<QMenu*>("menuFile");
-    require(fileMenu, "Save state belongs to the File menu");
-    const auto fileActions = fileMenu->actions();
-    const qsizetype stateIndex = fileActions.indexOf(save);
-    require(stateIndex >= 0 && stateIndex + 2 < fileActions.size() && fileActions[stateIndex + 1]->isSeparator()
-                && fileActions[stateIndex + 2]->objectName() == "fileLayerSave",
-            "Save state precedes Save layer with a divider");
+    require(!viewer.findChild<QAction*>("fileStateSave"), "Save state is not a separate action");
+    auto* save = viewer.findChild<QAction*>("fileLayerSave");
     current->viewState()->camera()->setCameraDistance(current->viewState()->camera()->cameraDistance() + 2);
     drain();
-    require(save->isEnabled() && viewer.windowTitle().contains('*'),
-            "camera enables Save state and dirties root title");
+    require(save->isEnabled() && viewer.windowTitle().contains('*'), "camera enables root Save and dirties root title");
+    bool saveAllReviewed = false;
+    QTimer::singleShot(0, &viewer, [&]() {
+        for (auto* widget : QApplication::topLevelWidgets()) {
+            auto* dialog = qobject_cast<QDialog*>(widget);
+            if (dialog && dialog->isVisible() && dialog->objectName() == "changesDialog") {
+                require(dialog->findChild<QPushButton*>("discardButton")->isHidden(),
+                        "explicit Save all offers Save and Cancel");
+                saveAllReviewed = true;
+                dialog->reject();
+            }
+        }
+    });
+    viewer.findChild<QAction*>("fileLayerSaveAll")->trigger();
+    drain();
+    require(!saveAllReviewed && !current->isStateDirty(), "Save all saves one changed root without a layer review");
+    current->viewState()->camera()->setCameraDistance(current->viewState()->camera()->cameraDistance() + 1);
+    drain();
     auto* regularSave = viewer.findChild<QAction*>("fileLayerSave");
     require(regularSave->isEnabled(), "ordinary Save is enabled for state-only changes");
     regularSave->trigger();
     drain();
     require(!save->isEnabled() && !current->isStateDirty() && !viewer.windowTitle().contains('*'),
-            "Save state action clears state dirtiness and title");
+            "root Save clears state dirtiness and title");
     current->setPreserveState(false);
     current->viewState()->camera()->setCameraDistance(current->viewState()->camera()->cameraDistance() + 1);
     drain();
-    require(save->isVisible() && !save->isEnabled() && !viewer.windowTitle().contains('*'),
-            "preservation off keeps Save state visible but disabled and ignores camera dirtiness in UI");
+    require(!save->isEnabled() && !viewer.windowTitle().contains('*'),
+            "preservation off ignores camera dirtiness in the save UI");
     current->setPreserveState(true);
     drain();
     require(save->isVisible() && save->isEnabled(), "enabling preservation exposes pending state changes");
@@ -2459,13 +2494,11 @@ preserveStateMenuApi()
         QTimer::singleShot(0, &viewer, [&]() {
             for (auto* widget : QApplication::topLevelWidgets()) {
                 auto* dialog = qobject_cast<QDialog*>(widget);
-                if (!dialog || !dialog->isVisible() || dialog->objectName() != "changesDialog")
+                if (!dialog || !dialog->isVisible() || dialog->objectName() != "MessageDialog")
                     continue;
-                const auto* tree = dialog->findChild<QTreeWidget*>("changesTree");
-                require(tree && tree->topLevelItemCount() == 1 && tree->topLevelItem(0)->text(1) == "State"
-                            && tree->topLevelItem(0)->text(3) == QFileInfo(filename + ".session").fileName()
-                            && tree->topLevelItem(0)->toolTip(3) == filename + ".session",
-                        "state-only changes table names the root companion");
+                require(!dialog->findChild<QTreeWidget*>("changesTree")
+                            && dialog->findChild<QPushButton*>("accept")->text() == "Save",
+                        "state-only changes use the compact root document question");
                 prompted = true;
                 dialog->reject();
             }
@@ -2473,8 +2506,9 @@ preserveStateMenuApi()
     };
     scheduleCancel();
     viewer.findChild<QAction*>("fileNew")->trigger();
-    require(prompted && current->filename() == filename && current->isStateDirty(),
-            "Cancel preserves current dirty state");
+    require(prompted, "New asks the compact save question for state-only changes");
+    require(current->filename() == filename, "Cancel preserves the current filename");
+    require(current->isStateDirty(), "Cancel preserves current dirty state");
     prompted = false;
     scheduleCancel();
     viewer.openFile(filename);

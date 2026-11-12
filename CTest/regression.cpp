@@ -33,6 +33,7 @@
 #include "viewstate.h"
 #include <QColor>
 #include <QCoreApplication>
+#include <QDateTime>
 #include <QDir>
 #include <QFile>
 #include <QHash>
@@ -1949,8 +1950,15 @@ sessionStateDirtyApi()
         camera->setCameraDistance(camera->cameraDistance() + 0.1);
     drainWorkers();
     require(current.isStateDirty() && dirtyNotifications == 1, "camera changes coalesce one dirty transition");
-    require(current.saveState(sidecar) && !current.isStateDirty(), "state-only save clears dirty marker");
-    require(read(filename) == usdBytes, "state-only save leaves USD bytes unchanged");
+    QFile rootFile(filename);
+    require(rootFile.open(QIODevice::ReadWrite), "open root timestamp fixture");
+    require(rootFile.setFileTime(QDateTime::fromSecsSinceEpoch(1000000000), QFileDevice::FileModificationTime),
+            "set deterministic root timestamp");
+    rootFile.close();
+    const auto rootTimestamp = QFileInfo(filename).lastModified();
+    require(current.saveToFile(filename) && !current.isStateDirty(), "root document save clears state-only changes");
+    require(read(filename) == usdBytes && QFileInfo(filename).lastModified() == rootTimestamp,
+            "state-only document save does not rewrite unchanged USD");
     const double savedDistance = camera->cameraDistance();
     camera->setCameraDistance(savedDistance + 10);
     current.viewState()->setGridEnabled(false);
@@ -1997,8 +2005,14 @@ sessionStateDirtyApi()
     stage->GetRootLayer()->SetSubLayerPaths({ child->GetIdentifier() });
     require(current.saveToFile(filename) && current.setEditLayer(child), "edit target is a sublayer");
     camera->setCameraDistance(camera->cameraDistance() + 1);
-    require(current.saveState(sidecar) && !QFileInfo::exists(dir.filePath("edit.usda.session")),
-            "state remains paired with root while editing a sublayer");
+    const auto previousState = read(sidecar);
+    stage->DefinePrim(SdfPath("/ChildEdit"), TfToken("Xform"));
+    require(current.saveLayer(QString::fromStdString(child->GetIdentifier())) && !child->IsDirty()
+                && current.isStateDirty() && read(sidecar) == previousState,
+            "saving a sublayer does not save or acknowledge root document state");
+    require(current.saveLayer(QString::fromStdString(stage->GetRootLayer()->GetIdentifier())) && !current.isStateDirty()
+                && !QFileInfo::exists(dir.filePath("edit.usda.session")),
+            "only root saving writes the companion, even with a sublayer edit target");
     current.setPreserveState(false);
     camera->setCameraDistance(camera->cameraDistance() + 1);
     const auto previousSidecar = read(sidecar);

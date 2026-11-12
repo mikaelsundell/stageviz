@@ -728,7 +728,9 @@ SessionPrivate::saveLayer(const QString& identifier)
         error = QStringLiteral("Cannot save anonymous layer without a file path: %1")
                     .arg(QString::fromStdString(target->GetDisplayName()));
     }
-    else if (!target->PermissionToSave()) {
+    else if (!target->PermissionToSave()
+             && (target != d.stage->GetRootLayer() || target->IsDirty()
+                 || !QFileInfo::exists(QString::fromStdString(target->GetRealPath())))) {
         error = QStringLiteral("Layer is not writable: %1").arg(QString::fromStdString(target->GetRealPath()));
     }
     else {
@@ -778,7 +780,8 @@ SessionPrivate::saveToFile(const QString& filename, bool saveSublayersFirst)
             preserveState = d.preserveState;
             const bool retarget = rootLayer->IsAnonymous() || d.filename != stageFilename;
 
-            if (!retarget && !rootLayer->PermissionToSave())
+            const bool writesRoot = retarget || rootLayer->IsDirty() || !QFileInfo::exists(stageFilename);
+            if (!retarget && writesRoot && !rootLayer->PermissionToSave())
                 return false;
 
             if (retarget) {
@@ -800,7 +803,7 @@ SessionPrivate::saveToFile(const QString& filename, bool saveSublayersFirst)
             }
 
             if (!retarget) {
-                if (!exportLayer(rootLayer, stageFilename, error)) {
+                if (writesRoot && !exportLayer(rootLayer, stageFilename, error)) {
                     QMetaObject::invokeMethod(
                         d.session,
                         [session = d.session, error]() {

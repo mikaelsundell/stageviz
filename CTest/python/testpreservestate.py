@@ -51,23 +51,46 @@ class PreserveStateTest(_base['ViewportTest']):
         assert session.load(str(self.fixture))
         self.settled()
         self.usd_before = {str(p): p.read_bytes() for p in (self.fixture, self.layer, self.asset)}
-        assert self.action('fileStateSave').isVisible()
-        assert self.action('fileStateSave').isEnabled(), 'can create a missing root companion'
+        assert tb.viewer().findChild(tb.qt()[1].QAction, 'fileStateSave') is None
+        assert self.action('fileLayerSaveAll').isEnabled(), 'root document save includes a missing companion'
         self.save()
         self.snapshot('state_baseline')
 
     def assert_usd_unchanged(self):
         assert all(Path(p).read_bytes() == data for p, data in self.usd_before.items())
 
+    def save_document(self):
+        QtCore, _, _, QtWidgets = tb.qt()
+        failures = []
+        def confirm():
+            try:
+                for dialog in QtWidgets.QApplication.topLevelWidgets():
+                    if dialog.objectName() != 'changesDialog' or not dialog.isVisible():
+                        continue
+                    assert not dialog.findChild(QtWidgets.QPushButton, 'discardButton').isVisible()
+                    button = dialog.findChild(QtWidgets.QPushButton, 'saveAllButton')
+                    assert button.isEnabled()
+                    button.click()
+            except Exception as error:
+                failures.append(repr(error))
+                for dialog in QtWidgets.QApplication.topLevelWidgets():
+                    if dialog.objectName() == 'changesDialog' and dialog.isVisible():
+                        dialog.reject()
+        timer = QtCore.QTimer()
+        timer.timeout.connect(confirm)
+        timer.start(25)
+        try:
+            self.action('fileLayerSaveAll').trigger()
+        finally:
+            timer.stop()
+        self.settled()
+        assert not failures, failures
+
     def save(self):
         self.settled()
-        action = self.action('fileStateSave')
-        assert action.isVisible() and action.isEnabled()
-        action.trigger()
-        self.settled()
+        self.save_document()
         assert self.sidecar.is_file()
         assert not stageviz.session().isStateDirty()
-        assert not self.action('fileStateSave').isEnabled()
         assert '*' not in tb.viewer().windowTitle()
         self.assert_usd_unchanged()
 
@@ -76,7 +99,7 @@ class PreserveStateTest(_base['ViewportTest']):
         camera = session.viewState().camera()
         camera.setCameraDistance(camera.cameraDistance() * 1.2 + 1)
         self.settled()
-        assert session.isStateDirty() and self.action('fileStateSave').isEnabled()
+        assert session.isStateDirty() and self.action('fileLayerSaveAll').isEnabled()
         assert '*' in tb.viewer().windowTitle()
         distance = camera.cameraDistance()
         self.save()
@@ -91,9 +114,8 @@ class PreserveStateTest(_base['ViewportTest']):
         self.settled()
         camera.setAxisYaw(camera.axisYaw() + 13)
         self.settled()
-        assert self.action('fileLayerSave').isEnabled()
-        self.action('fileLayerSave').trigger()
-        self.settled()
+        assert not self.action('fileLayerSave').isEnabled(), 'state-only changes cannot enable a clean sublayer save'
+        self.save()
         assert not session.isStateDirty()
         self.assert_usd_unchanged()
         assert not Path(str(self.layer) + '.session').exists()
@@ -182,6 +204,54 @@ class PreserveStateTest(_base['ViewportTest']):
         assert not session.isStateDirty()
         self.snapshot('state_payload_mute_colors')
 
+    def sublayer_save(self):
+        session = stageviz.session()
+        stageviz.command.set_layer_muted(str(self.layer), False)
+        self.settled()
+        stageviz.command.set_edit_layer(str(self.layer))
+        self.settled()
+        stageviz.command.new_prim('/LayerPrim', 'SublayerEdit', 'Xform')
+        self.settled()
+        assert not session.stage().GetRootLayer().dirty
+        assert session.stage().GetEditTarget().GetLayer().dirty
+        assert '(*' + self.layer.name + ')' in tb.viewer().windowTitle()
+        # A dirty sublayer uses the layer review even with a clean root USD layer.
+        self.prompt('fileNew', 'cancel', sublayer=True)
+        assert session.filename() == str(self.fixture)
+        assert session.stage().GetPrimAtPath('/LayerPrim/SublayerEdit')
+        before = self.sidecar.read_bytes()
+        camera = session.viewState().camera()
+        camera.setAxisYaw(camera.axisYaw() + 3)
+        self.settled()
+        assert session.isStateDirty()
+        self.action('fileLayerSave').trigger()
+        self.settled()
+        assert not session.stage().GetEditTarget().GetLayer().dirty
+        assert '(' + self.layer.name + ')' in tb.viewer().windowTitle()
+        assert '(*' + self.layer.name + ')' not in tb.viewer().windowTitle()
+        assert '*' in tb.viewer().windowTitle(), 'root state remains dirty after saving the sublayer'
+        assert self.sidecar.read_bytes() == before and session.isStateDirty()
+        assert not self.action('fileLayerSave').isEnabled(), 'a clean sublayer cannot save root state'
+        self.usd_before[str(self.layer)] = self.layer.read_bytes()
+        self.save()
+        assert not session.isStateDirty() and self.sidecar.read_bytes() != before
+        # Save As for a sublayer likewise leaves root state pending.
+        camera.setAxisYaw(camera.axisYaw() + 3)
+        self.settled()
+        before = self.sidecar.read_bytes()
+        renamed = self.directory / 'renamed-edit.usda'
+        assert session.saveLayerAs(str(self.layer), str(renamed))
+        self.settled()
+        assert self.sidecar.read_bytes() == before and session.isStateDirty()
+        assert not Path(str(renamed) + '.session').exists()
+        # Reload the fixture to discard the temporary retargeting opinions.
+        assert session.reload()
+        self.settled()
+        stageviz.command.set_edit_layer(str(self.fixture))
+        self.settled()
+        self.save()
+        self.snapshot('state_sublayer_save')
+
     def layer_controls(self):
         session = stageviz.session()
         stageviz.command.set_layer_muted(str(self.layer), False)
@@ -242,30 +312,34 @@ class PreserveStateTest(_base['ViewportTest']):
         self.save()
         assert (self.fixture.read_bytes(), self.layer.read_bytes()) == usd_before
 
-    def prompt(self, action_name, response, expect_state=True):
+    def prompt(self, action_name, response, expect_state=True, sublayer=False):
         QtCore, _, _, QtWidgets = tb.qt()
         seen, failures = [], []
         def answer():
             try:
                 dialog = next(w for w in QtWidgets.QApplication.topLevelWidgets()
                               if isinstance(w, QtWidgets.QDialog) and w.isVisible()
-                              and w.objectName() == 'changesDialog')
-                tree = dialog.findChild(QtWidgets.QTreeWidget, 'changesTree')
-                rows = [[tree.topLevelItem(i).text(column) for column in range(tree.columnCount())]
-                        for i in range(tree.topLevelItemCount())]
-                assert [tree.headerItem().text(i) for i in range(5)] == ['Name', 'Type', 'Changes', 'Location', 'Status']
-                assert any(row[1] == 'State' and row[3] == self.sidecar.name for row in rows), rows
-                assert any(tree.topLevelItem(i).text(1) == 'State'
-                           and tree.topLevelItem(i).toolTip(3) == str(self.sidecar)
-                           for i in range(tree.topLevelItemCount()))
-                assert (len(rows) == 1) == expect_state, rows
-                seen.append(rows)
+                              and w.objectName() == ('changesDialog' if sublayer else 'MessageDialog'))
+                if sublayer:
+                    tree = dialog.findChild(QtWidgets.QTreeWidget, 'changesTree')
+                    root = tree.topLevelItem(0)
+                    assert root.text(1) == 'Root layer' and root.childCount() == 1
+                    assert root.child(0).text(0) == self.layer.name
+                    assert root.child(0).text(2) == 'USD edits'
+                    assert not root.text(2).startswith('USD edits'), 'clean root must not be shown as dirty'
+                    assert dialog.findChild(QtWidgets.QPushButton, 'saveAllButton').isEnabled()
+                else:
+                    assert dialog.findChild(QtWidgets.QTreeWidget, 'changesTree') is None
+                    assert dialog.findChild(QtWidgets.QPushButton, 'accept').text() == 'Save'
+                    assert dialog.findChild(QtWidgets.QPushButton, 'reject').isVisible()
+                seen.append(dialog.objectName())
                 assert dialog.grab().save(str(self.directory / ('state_prompt_' + response + '_dialog.png')))
                 self.snapshot('state_prompt_' + response)
                 if response == 'cancel':
                     dialog.reject()
                 else:
-                    dialog.findChild(QtWidgets.QPushButton, 'saveAllButton' if response == 'save' else 'discardButton').click()
+                    button = ('saveAllButton' if response == 'save' else 'discardButton') if sublayer else ('accept' if response == 'save' else 'reject')
+                    dialog.findChild(QtWidgets.QPushButton, button).click()
             except Exception as error:
                 failures.append(repr(error))
                 for widget in QtWidgets.QApplication.topLevelWidgets():
@@ -324,7 +398,7 @@ class PreserveStateTest(_base['ViewportTest']):
         session.setPreserveState(False)
         session.viewState().camera().setAxisYaw(77)
         self.settled()
-        assert self.action('fileStateSave').isVisible() and not self.action('fileStateSave').isEnabled()
+        assert tb.viewer().findChild(tb.qt()[1].QAction, 'fileStateSave') is None
         assert '*' not in tb.viewer().windowTitle()
         # No state-only question when preservation is disabled.
         self.action('fileNew').trigger()
@@ -337,9 +411,8 @@ class PreserveStateTest(_base['ViewportTest']):
         self.settled()
         self.sidecar.unlink()
         self.sidecar.mkdir()
-        self.action('fileStateSave').trigger()
-        self.settled()
-        assert session.isStateDirty() and self.action('fileStateSave').isEnabled()
+        self.save_document()
+        assert session.isStateDirty() and self.action('fileLayerSaveAll').isEnabled()
         self.prompt('fileNew', 'save')
         assert session.filename() == str(self.fixture), 'failed state save must stop document replacement'
         assert session.isStateDirty()
@@ -386,7 +459,7 @@ class PreserveStateTest(_base['ViewportTest']):
         session.viewState().camera().setCameraDistance(12)
         session.viewState().camera().tumble(15, 8)
         self.settled()
-        assert not session.isStateDirty() and not self.action('fileStateSave').isEnabled()
+        assert not session.isStateDirty()
         assert '*' not in tb.viewer().windowTitle()
         reviewed = []
         def reject_unexpected():
@@ -403,7 +476,7 @@ class PreserveStateTest(_base['ViewportTest']):
         self.settled()
         session.viewState().camera().setCameraDistance(13)
         self.settled()
-        assert session.isStateDirty() and self.action('fileStateSave').isEnabled()
+        assert session.isStateDirty() and self.action('fileLayerSaveAll').isEnabled()
         assert '*' in tb.viewer().windowTitle()
         self.snapshot('state_pristine_then_authored')
         assert session.load(str(self.fixture))
@@ -428,6 +501,11 @@ class PreserveStateTest(_base['ViewportTest']):
             attempts = [0]
             def respond():
                 try:
+                    for review in QtWidgets.QApplication.topLevelWidgets():
+                        if review.objectName() == 'changesDialog' and review.isVisible():
+                            review.findChild(QtWidgets.QPushButton, 'saveAllButton').click()
+                            QtCore.QTimer.singleShot(50, respond)
+                            return
                     dialogs = [w for w in QtWidgets.QApplication.allWidgets()
                                if isinstance(w, QtWidgets.QFileDialog) and w.isVisible()]
                     if not dialogs:
@@ -458,7 +536,7 @@ class PreserveStateTest(_base['ViewportTest']):
                         if isinstance(widget, QtWidgets.QFileDialog):
                             widget.reject()
             QtCore.QTimer.singleShot(50, respond)
-            self.action('fileStateSave').trigger()
+            self.action('fileLayerSaveAll').trigger()
             self.settled()
             assert seen and not failures, failures
         run_dialog(True)

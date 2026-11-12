@@ -110,7 +110,8 @@ public:
         Visible,
         Wireframe,
         Lock,
-        Unlock
+        Unlock,
+        EditLayer
     };
     Q_ENUM(IconRole)
 

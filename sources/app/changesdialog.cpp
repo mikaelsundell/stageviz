@@ -91,7 +91,6 @@ ChangesDialogPrivate::setEntries(const QList<ChangesDialog::Entry>& entries)
         switch (entry.type) {
         case ChangesDialog::Type::RootLayer: type = ChangesDialog::tr("Root layer"); break;
         case ChangesDialog::Type::Sublayer: type = ChangesDialog::tr("Sublayer"); break;
-        case ChangesDialog::Type::CompanionState: type = ChangesDialog::tr("State"); break;
         case ChangesDialog::Type::SessionLayer: type = ChangesDialog::tr("Session layer"); break;
         }
         const QFileInfo file(entry.location);
@@ -102,8 +101,7 @@ ChangesDialogPrivate::setEntries(const QList<ChangesDialog::Entry>& entries)
         rows.insert(entry.identifier, row);
         row->setData(0, Qt::UserRole + 1, entry.identifier);
         row->setData(0, Qt::UserRole + 2, hasPath ? file.absoluteFilePath() : QString());
-        row->setIcon(0, ui()->icon(entry.type == ChangesDialog::Type::CompanionState ? UI::IconRole::List
-                                                                                     : UI::IconRole::Layer));
+        row->setIcon(0, ui()->icon(UI::IconRole::Layer));
         row->setFlags(row->flags() & ~Qt::ItemIsEditable);
         for (int column = 0; column < tree->columnCount(); ++column)
             row->setToolTip(column, row->text(column));

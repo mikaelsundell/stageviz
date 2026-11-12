@@ -400,7 +400,9 @@ Use `merge_stage`, `merge_flattened_stage`, `add_sublayer`, `add_reference`, and
 : Alias of `save`. Save the root and modified file-backed local sublayers.
   A new filename performs Save As and retains asset anchors. Anonymous sublayers
   need backing files first. A failure can occur after earlier layers were saved;
-  this is not a transactional multi-file save.
+  this is not a transactional multi-file save. With Remember state enabled,
+  this root-document save also writes its `.session` companion. An unchanged
+  root USD file is not rewritten for state-only changes.
 
 `saveLayer(identifier) -> bool`
 : Save one existing file-backed local layer; anonymous layers need Save As first.
@@ -438,10 +440,12 @@ Use `merge_stage`, `merge_flattened_stage`, `add_sublayer`, `add_reference`, and
 : Save that state to the explicitly supplied companion-state filename. Automatic
   persistence uses the root USD filename plus `.session`, regardless of the active
   edit layer; explicit save/loadState calls take the sidecar filename itself.
-  File > Save state writes only this companion. Ordinary Save also handles
-  state-only documents without rewriting USD. An unnamed stage must first be
-  saved to establish its root filename. Saving a copy does not clear the source
-  document's unsaved state.
+  This is a low-level serialization API; the UI has no separate Save state action.
+  Root-document saves include remembered state, while individual sublayer saves
+  leave it pending. State-only changes are shown on the root row in save prompts
+  and do not require rewriting unchanged USD. An unnamed stage must first be
+  saved to establish its root filename. Saving a root copy does not clear the
+  source document's unsaved state.
 
 `isStateDirty() -> bool`
 : Camera and view changes on a pristine, unnamed New stage do not mark state
@@ -1263,7 +1267,7 @@ stageviz.UI.AxisX
 
 #### IconRole members
 
-`BranchClosed`, `BranchOpen`, `Checked`, `Clear`, `Code`, `Collapse`, `DefaultPrim`, `Down`, `DropDown`, `Expand`, `Export`, `ExportImage`, `Follow`, `FrameAll`, `Geometry`, `Hidden`, `Instance`, `Layer`, `Left`, `List`, `Lock`, `Material`, `Move`, `Nested`, `New`, `Open`, `Over`, `Override`, `PartiallyChecked`, `Payload`, `Pick`, `Pivot`, `Prim`, `Redo`, `Right`, `Rotate`, `Run`, `Scale`, `Select`, `Shaded`, `Transform`, `Undo`, `Unlock`, `Up`, `Visible`, `Wireframe`.
+`BranchClosed`, `BranchOpen`, `Checked`, `Clear`, `Code`, `Collapse`, `DefaultPrim`, `Down`, `DropDown`, `Expand`, `Export`, `ExportImage`, `Follow`, `FrameAll`, `Geometry`, `Hidden`, `Instance`, `Layer`, `EditLayer`, `Left`, `List`, `Lock`, `Material`, `Move`, `Nested`, `New`, `Open`, `Over`, `Override`, `PartiallyChecked`, `Payload`, `Pick`, `Pivot`, `Prim`, `Redo`, `Right`, `Rotate`, `Run`, `Scale`, `Select`, `Shaded`, `Transform`, `Undo`, `Unlock`, `Up`, `Visible`, `Wireframe`.
 
 #### UIScale members
 
