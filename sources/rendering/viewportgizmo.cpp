@@ -4,6 +4,7 @@
 
 #include "viewportgizmo.h"
 #include "application.h"
+#include "gizmoprojection.h"
 #include "paths.h"
 #include "renderengine.h"
 #include "session.h"
@@ -39,6 +40,8 @@ public:
     GfVec3d scaleAxisVector(int axis);
     double worldPerPixel();
     double worldPerPixel(const GfVec3d& pivot);
+    double handleRadius();
+    bool projectPoint(const GfVec3d& world, QPointF& screen);
     bool rotationScreenBasis(int axis, QPointF& center, QPointF& basisA, QPointF& basisB);
     bool rotationPoint(int axis, double angle, QPointF& screen);
     bool rotationAngle(int axis, const QPointF& pos, double& angle, double* distance);
@@ -79,6 +82,27 @@ ViewportGizmoPrivate::axisDirection(int axis)
         return {};
 
     return direction / length;
+}
+
+double
+ViewportGizmoPrivate::handleRadius()
+{
+    return worldPerPixel(d.frame.pivot) * ui()->gizmoSize(UI::UIScale::Medium);
+}
+
+bool
+ViewportGizmoPrivate::projectPoint(const GfVec3d& world, QPointF& screen)
+{
+    // Preserve the host's gate/projection mapping when it accepts the point;
+    // use the independent gizmo range when document clipping rejects it.
+    if (d.host->projectWorldToScreen(world, screen))
+        return true;
+    GfMatrix4d transform(1.0);
+    transform.SetScale(handleRadius());
+    transform *= d.frame.orientation;
+    transform.SetTranslateOnly(d.frame.pivot);
+    const auto camera = gizmoprojection::camera(d.host->viewCamera()->camera(), transform);
+    return gizmoprojection::project(camera, d.host->cameraGateRect(), world, screen);
 }
 
 GfVec3d
@@ -136,9 +160,9 @@ ViewportGizmoPrivate::worldPerPixel(const GfVec3d& pivot)
 
     const GfVec3d cameraPoint = frustum.ComputeViewMatrix().Transform(pivot);
     const double depth = -cameraPoint[2];
-    const double nearClip = std::max(1e-8, static_cast<double>(d.host->viewCamera()->nearClipping()));
-    const double farClip = d.host->viewCamera()->farClipping();
-    if (!std::isfinite(depth) || depth <= nearClip || (std::isfinite(farClip) && depth >= farClip))
+    // Handle sizing is independent of the document near/far range. Only a
+    // pivot behind or effectively on the eye plane is invalid in perspective.
+    if (!std::isfinite(depth) || depth <= 1e-8)
         return 0.0;
 
     const double worldPerPixel = windowHeight * depth / static_cast<double>(height);
@@ -159,20 +183,19 @@ ViewportGizmoPrivate::rotationScreenBasis(int axis, QPointF& center, QPointF& ba
     // transform hierarchies.
     const GfVec3d worldB = axisVector((axis + 1) % 3 + 1);
 
-    if (!d.host->projectWorldToScreen(d.frame.pivot, center))
+    if (!projectPoint(d.frame.pivot, center))
         return false;
 
     // Match the world-space radius used by the rendered rings. Normalizing
     // the projected axes would enlarge oblique rings and overshoot the mesh.
-    const double gizmoSize = ui()->gizmoSize(UI::UIScale::Medium);
-    const double probeRadius = worldPerPixel(d.frame.pivot) * gizmoSize;
+    const double probeRadius = handleRadius();
     if (!std::isfinite(probeRadius) || probeRadius <= 0.0)
         return false;
 
     QPointF projectedA;
     QPointF projectedB;
-    if (!d.host->projectWorldToScreen(d.frame.pivot + worldA * probeRadius, projectedA)
-        || !d.host->projectWorldToScreen(d.frame.pivot + worldB * probeRadius, projectedB))
+    if (!projectPoint(d.frame.pivot + worldA * probeRadius, projectedA)
+        || !projectPoint(d.frame.pivot + worldB * probeRadius, projectedB))
         return false;
 
     basisA = projectedA - center;
@@ -192,8 +215,8 @@ ViewportGizmoPrivate::rotationPoint(int axis, double angle, QPointF& screen)
 {
     const GfVec3d a = axisVector(axis % 3 + 1);
     const GfVec3d b = axisVector((axis + 1) % 3 + 1);
-    const double radius = worldPerPixel(d.frame.pivot) * ui()->gizmoSize(UI::UIScale::Medium);
-    return d.host->projectWorldToScreen(d.frame.pivot + radius * (a * std::cos(angle) + b * std::sin(angle)), screen);
+    const double radius = handleRadius();
+    return projectPoint(d.frame.pivot + radius * (a * std::cos(angle) + b * std::sin(angle)), screen);
 }
 
 bool
@@ -265,7 +288,7 @@ ViewportGizmoPrivate::hitTest(const QPointF& pos)
         return 0;
 
     QPointF center;
-    if (!d.host->projectWorldToScreen(d.frame.pivot, center))
+    if (!projectPoint(d.frame.pivot, center))
         return 0;
 
     // Handles are encoded as:
@@ -285,7 +308,7 @@ ViewportGizmoPrivate::hitTest(const QPointF& pos)
             return 12;
     }
 
-    const double radius = worldPerPixel(d.frame.pivot) * ui()->gizmoSize(UI::UIScale::Medium);
+    const double radius = handleRadius();
     if (!std::isfinite(radius) || radius <= 0.0)
         return 0;
     constexpr double hitWidth = 8.0;
@@ -302,9 +325,8 @@ ViewportGizmoPrivate::hitTest(const QPointF& pos)
             for (int i = 0; i <= 96; ++i) {
                 const double angle = fullCircle * (i % 96) / 96.0;
                 QPointF current;
-                const bool valid
-                    = d.host->projectWorldToScreen(d.frame.pivot + radius * (a * std::cos(angle) + b * std::sin(angle)),
-                                                   current);
+                const bool valid = projectPoint(d.frame.pivot + radius * (a * std::cos(angle) + b * std::sin(angle)),
+                                                current);
                 if (valid && previousValid) {
                     const QPointF segment = current - previous;
                     const double length2 = QPointF::dotProduct(segment, segment);
@@ -324,7 +346,7 @@ ViewportGizmoPrivate::hitTest(const QPointF& pos)
             continue;
         }
         QPointF end;
-        if (!d.host->projectWorldToScreen(d.frame.pivot + normal * radius, end))
+        if (!projectPoint(d.frame.pivot + normal * radius, end))
             continue;
         if (d.frame.mode == Mode::Scale) {
             const double distance = std::hypot(pos.x() - end.x(), pos.y() - end.y());
@@ -386,7 +408,7 @@ ViewportGizmoPrivate::updateGeometry()
         clearGeometry();
         return;
     }
-    const double radius = worldPerPixel(d.frame.pivot) * ui()->gizmoSize(UI::UIScale::Medium);
+    const double radius = handleRadius();
     if (!std::isfinite(radius) || radius <= 1e-10) {
         clearGeometry();
         return;
@@ -582,7 +604,7 @@ ViewportGizmoPrivate::draw(QPainter& painter)
     if (!d.frame.pivotValid)
         return;
     QPointF center;
-    if (!d.host->projectWorldToScreen(d.frame.pivot, center))
+    if (!projectPoint(d.frame.pivot, center))
         return;
     const int centerHandle = d.frame.mode == Mode::Move ? 11 : (d.frame.mode == Mode::Rotate ? 10 : 12);
     QColor centerColor(35, 35, 35, 220);
@@ -591,7 +613,7 @@ ViewportGizmoPrivate::draw(QPainter& painter)
     painter.save();
     painter.setRenderHint(QPainter::Antialiasing, true);
     if (d.frame.pivotEditing) {
-        const double radius = worldPerPixel() * ui()->gizmoSize(UI::UIScale::Medium);
+        const double radius = handleRadius();
         const UI::ColorRole roles[] = { UI::ColorRole::AxisX, UI::ColorRole::AxisY, UI::ColorRole::AxisZ };
         for (int axis = 1; axis <= 3; ++axis) {
             const int handle = axis + (d.frame.mode == Mode::Rotate ? 3 : (d.frame.mode == Mode::Scale ? 6 : 0));
@@ -619,7 +641,7 @@ ViewportGizmoPrivate::draw(QPainter& painter)
             else {
                 const GfVec3d direction = d.frame.mode == Mode::Scale ? scaleAxisVector(axis) : axisVector(axis);
                 QPointF end;
-                if (!d.host->projectWorldToScreen(d.frame.pivot + direction * radius, end))
+                if (!projectPoint(d.frame.pivot + direction * radius, end))
                     continue;
                 painter.drawLine(center, end);
                 painter.setPen(QPen(color, 1.5));
@@ -760,6 +782,13 @@ double
 ViewportGizmo::worldPerPixel(const GfVec3d& pivot)
 {
     return p->worldPerPixel(pivot);
+}
+
+bool
+ViewportGizmo::projectWorldToScreen(const Frame& frame, const GfVec3d& world, QPointF& screen)
+{
+    p->d.frame = frame;
+    return p->projectPoint(world, screen);
 }
 
 GfVec3d

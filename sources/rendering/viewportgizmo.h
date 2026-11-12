@@ -112,6 +112,11 @@ public:
     double worldPerPixel(const GfVec3d& pivot);
 
     /**
+     * @brief Projects handle interaction points independently of document clipping.
+     */
+    bool projectWorldToScreen(const Frame& frame, const GfVec3d& world, QPointF& screen);
+
+    /**
      * @brief Returns a world coordinate axis.
      */
     static GfVec3d axisVector(int axis);

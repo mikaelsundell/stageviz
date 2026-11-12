@@ -649,14 +649,14 @@ ViewportTransformPrivate::updateDrag(const QPointF& pos)
         const GfVec3d up = cameraTransform.TransformDir(GfVec3d::YAxis()).GetNormalized();
 
         QPointF pivotScreen;
-        if (!d.host->projectWorldToScreen(d.startPivot, pivotScreen))
+        if (!d.gizmo->projectWorldToScreen(d.frame, d.startPivot, pivotScreen))
             return;
 
         const double probeDistance = std::max(1e-6, worldPerPixel(d.startPivot) * 100.0);
         QPointF rightScreen;
         QPointF upScreen;
-        if (!d.host->projectWorldToScreen(d.startPivot + right * probeDistance, rightScreen)
-            || !d.host->projectWorldToScreen(d.startPivot + up * probeDistance, upScreen))
+        if (!d.gizmo->projectWorldToScreen(d.frame, d.startPivot + right * probeDistance, rightScreen)
+            || !d.gizmo->projectWorldToScreen(d.frame, d.startPivot + up * probeDistance, upScreen))
             return;
 
         const QPointF screenRight = rightScreen - pivotScreen;
@@ -766,11 +766,11 @@ ViewportTransformPrivate::updateDrag(const QPointF& pos)
 
         QPointF pivotScreen;
         QPointF axisScreen;
-        if (!d.host->projectWorldToScreen(d.startPivot, pivotScreen))
+        if (!d.gizmo->projectWorldToScreen(d.frame, d.startPivot, pivotScreen))
             return;
 
         const double probeDistance = std::max(1e-6, worldPerPixel(d.startPivot) * 100.0);
-        if (!d.host->projectWorldToScreen(d.startPivot + axis * probeDistance, axisScreen)) {
+        if (!d.gizmo->projectWorldToScreen(d.frame, d.startPivot + axis * probeDistance, axisScreen)) {
             return;
         }
 
@@ -1062,7 +1062,7 @@ ViewportTransformPrivate::publishFrameProperties()
     if (!PerfScope::enabled())
         return;
     QPointF screen;
-    const bool projected = d.frame.pivotValid && d.host->projectWorldToScreen(d.frame.pivot, screen);
+    const bool projected = d.frame.pivotValid && d.gizmo->projectWorldToScreen(d.frame, d.frame.pivot, screen);
     d.host->widget()->setProperty("transformPivotValid", projected);
     d.host->widget()->setProperty("transformPivotScreen", screen);
 }
