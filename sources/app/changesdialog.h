@@ -13,7 +13,7 @@ namespace stageviz {
 class ChangesDialogPrivate;
 
 /**
- * @brief Presents the layer files and companion state involved in a save decision.
+ * @brief Presents the root document and layer files involved in a save decision.
  */
 class ChangesDialog : public QDialog {
     Q_OBJECT
@@ -21,10 +21,10 @@ public:
     /**
      * @brief Kind of item shown in the changes table.
      */
-    enum class Type { RootLayer, Sublayer, CompanionState, SessionLayer };
+    enum class Type { RootLayer, Sublayer, SessionLayer };
 
     /**
-     * @brief One layer or state-file summary, without retained USD or widget pointers.
+     * @brief One root-document or layer summary, without retained USD or widget pointers.
      */
     struct Entry {
         QString identifier;

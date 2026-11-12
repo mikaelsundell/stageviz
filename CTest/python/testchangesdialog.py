@@ -43,7 +43,7 @@ class ChangesDialogTest(_base['ViewportTest']):
         tb.process_events(100)
         self.snapshot('changes_ready')
 
-    def review(self, response='cancel', root_filename=None, blocked_status=None, state=True,
+    def review(self, response='cancel', root_filename=None, blocked_status=None,
                action_name='fileNew', confirmation=False):
         QtCore, QtGui, _, QtWidgets = tb.qt()
         snapshots, failures = [], []
@@ -74,8 +74,7 @@ class ChangesDialogTest(_base['ViewportTest']):
                                 assert item.parent() and item.parent().isExpanded(), 'sublayers follow expanded layer hierarchy'
                             if Path(item.toolTip(3)).is_absolute():
                                 assert item.text(3) == Path(item.toolTip(3)).name
-                        assert any(row[1] == 'State' for row in rows) == state, rows
-                        assert all(row[0] == 'State' for row in rows if row[1] == 'State'), rows
+                        assert all(row[1] != 'State' for row in rows), rows
                         snapshots.append(rows)
                         save = dialog.findChild(QtWidgets.QPushButton, 'saveAllButton')
                         assert dialog.findChild(QtWidgets.QPushButton, 'discardButton').isVisible() != confirmation
@@ -125,20 +124,44 @@ class ChangesDialogTest(_base['ViewportTest']):
         tb.process_events(100)
         return snapshots
 
+    def ordinary_save_as(self):
+        QtCore, QtGui, _, QtWidgets = tb.qt()
+        seen, failures = [], []
+        root = stageviz.session().stage().GetRootLayer().identifier
+        def answer():
+            for dialog in QtWidgets.QApplication.topLevelWidgets():
+                if not isinstance(dialog, QtWidgets.QDialog) or not dialog.isVisible():
+                    continue
+                if dialog.objectName() == 'changesDialog':
+                    failures.append('ordinary Save layer as must not open the Changes dialog')
+                    dialog.reject()
+                elif isinstance(dialog, QtWidgets.QFileDialog):
+                    seen.append(True)
+                    dialog.reject()
+        timer = QtCore.QTimer()
+        timer.timeout.connect(answer)
+        timer.start(25)
+        try:
+            tb.viewer().findChild(QtGui.QAction, 'fileLayerSaveAs').trigger()
+        finally:
+            timer.stop()
+        assert seen and not failures, failures
+        assert stageviz.session().stage().GetRootLayer().identifier == root
+        assert all(Path(p).read_bytes() == data for p, data in self.disk.items())
+
     def anonymous_save(self):
         root_id = stageviz.session().stage().GetRootLayer().identifier
         rows = self.review()[0]
-        assert len(rows) == 4, rows
-        assert rows[0][0:3] == ['Untitled', 'Root layer', 'New layer'], rows
+        assert len(rows) == 3, rows
+        assert rows[0][0:2] == ['Untitled', 'Root layer'] and rows[0][2].startswith('New layer'), rows
         assert rows[0][4] == 'Choose filename on save'
         assert {row[3] for row in rows if row[1] == 'Sublayer'} == {self.first.name, self.second.name}
-        assert all(row[3:5] == ['No filename', 'Choose filename on save'] for row in rows if row[1] == 'State')
         assert stageviz.session().stage().GetRootLayer().identifier == root_id
         assert all(Path(p).read_bytes() == text for p, text in self.disk.items())
         confirmation = self.review('cancel', root_filename=self.named,
                                    action_name='fileLayerSaveAll', confirmation=True)
-        assert len(confirmation) == 1 and confirmation[0][0][3] == self.named.name
-        assert not self.named.exists(), 'canceling Save As confirmation must not write files'
+        assert len(confirmation) == 1 and confirmation[0][0][3] == 'No filename'
+        assert not self.named.exists(), 'canceling Save all review must not write files'
         assert stageviz.session().stage().GetRootLayer().identifier == root_id
         snapshots = self.review('save', root_filename=self.named)
         assert len(snapshots) == 1, 'reviewed changes must not cause a second Save As confirmation'
@@ -189,9 +212,10 @@ class ChangesDialogTest(_base['ViewportTest']):
         assert all(Path(p).read_bytes() == text for p, text in self.disk.items())
         layer.SetPermissionToSave(True)
         session.setPreserveState(False)
-        rows = self.review(state=False)[0]
-        assert all(row[1] != 'State' for row in rows)
-        self.review('discard', state=False)
+        rows = self.review()[0]
+        assert any(row[0] == self.first.name and row[2] == 'USD edits' for row in rows)
+        assert rows[0][2] == 'No USD edits', rows
+        self.review('discard')
         assert not session.filename()
         assert all(Path(p).read_bytes() == text for p, text in self.disk.items())
         session.setPreserveState(True)

@@ -246,12 +246,13 @@ public:
     bool loadFromFile(const QString& filename, LoadPolicy policy = LoadPolicy::All);
 
     /**
-     * @brief Saves the root layer and modified file-backed local sublayers.
+     * @brief Saves the root document and modified file-backed local sublayers.
      *
      * Backing layers use USD's save path and retain a recovery export on write
      * failure. Earlier successful layer writes are not rolled back. Save As
      * anchors root-layer asset paths to their original location. Anonymous
-     * sublayers require a filename first.
+     * sublayers require a filename first. An unchanged root file is not rewritten.
+     * Remembered state is saved alongside the root when preservation is enabled.
      *
      * @param filename Destination root-layer filename.
      * @return True if all required layer and optional session-state writes succeed.

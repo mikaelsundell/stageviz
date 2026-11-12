@@ -147,7 +147,7 @@ class LayerMultiSelectionTest(_base['ViewportTest']):
         return observed
 
     def selection(self):
-        QtCore, _, _, QtWidgets = tb.qt()
+        QtCore, QtGui, QtTest, QtWidgets = tb.qt()
         assert self.tree().selectionMode() == QtWidgets.QAbstractItemView.SelectionMode.ExtendedSelection
         self.click(self.first)
         self.click(self.second, QtCore.Qt.KeyboardModifier.ControlModifier)
@@ -160,8 +160,28 @@ class LayerMultiSelectionTest(_base['ViewportTest']):
         stageviz.command.set_edit_layer(str(self.second))
         assert tb.wait_for_commands()
         assert self.selected() == {str(self.first), str(self.second)}
+        assert not QtGui.QIcon(stageviz.UI().iconPath(stageviz.UI.IconRole.EditLayer)).isNull()
+        active_icon = self.row(self.second).icon(0).pixmap(24, 24).toImage()
+        normal_icon = self.row(self.first).icon(0).pixmap(24, 24).toImage()
+        assert active_icon != normal_icon and self.row(self.second).font(0).bold()
+        assert self.row(self.second).icon(1).pixmap(24, 24).toImage() != self.row(self.first).icon(1).pixmap(24, 24).toImage()
+        assert 'cannot be muted' in self.row(self.second).toolTip(1)
+        tree = self.tree()
+        eye = QtCore.QPoint(tree.header().sectionViewportPosition(1) + tree.columnWidth(1) // 2,
+                           tree.visualItemRect(self.row(self.second)).center().y())
+        QtTest.QTest.mouseClick(tree.viewport(), QtCore.Qt.MouseButton.LeftButton,
+                               QtCore.Qt.KeyboardModifier.NoModifier, eye)
+        assert tb.wait_for_commands()
+        assert not stageviz.session().stage().IsLayerMuted(str(self.second))
+        layer_dialog = next(w for w in QtWidgets.QApplication.topLevelWidgets()
+                            if w.objectName() == 'layerDialog' and w.isVisible())
+        assert layer_dialog.grab().save(str(self.directory / 'layer_edit_target_dialog.png'))
+        self.snapshot('layer_edit_target')
         stageviz.command.set_edit_layer(str(self.fixture))
         assert tb.wait_for_commands()
+        assert self.row(self.fixture).icon(0).pixmap(24, 24).toImage() == active_icon
+        assert self.row(self.second).icon(0).pixmap(24, 24).toImage() == normal_icon
+        assert self.row(self.second).icon(1).pixmap(24, 24).toImage() == self.row(self.first).icon(1).pixmap(24, 24).toImage()
         menu = self.menu('layerSelect')
         assert not menu['layerSetEdit']['enabled']
         assert menu['layerMute']['text'] == 'Mute layers'

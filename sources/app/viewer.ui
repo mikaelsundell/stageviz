@@ -901,8 +901,6 @@
     <addaction name="separator"/>
     <addaction name="fileLayers"/>
     <addaction name="separator"/>
-    <addaction name="fileStateSave"/>
-    <addaction name="separator"/>
     <addaction name="fileLayerSave"/>
     <addaction name="fileLayerSaveAs"/>
     <addaction name="fileLayerSaveCopyAs"/>
@@ -2170,15 +2168,7 @@
     <string>Remember state</string>
    </property>
    <property name="toolTip">
-    <string>Automatically save and restore camera, view, and layer settings with this stage.</string>
-   </property>
-  </action>
-  <action name="fileStateSave">
-   <property name="text">
-    <string>Save state</string>
-   </property>
-   <property name="toolTip">
-    <string>Save camera, view settings, payload loading, muted layers and layer colors to the root layer's .session companion file</string>
+    <string>Save camera, view, and layer settings when saving the root document, and restore them when opening it.</string>
    </property>
   </action>
   <action name="fileRevealInFolder">

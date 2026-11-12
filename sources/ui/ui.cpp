@@ -8,6 +8,7 @@
 #include <QApplication>
 #include <QFile>
 #include <QHeaderView>
+#include <QIcon>
 #include <QMetaEnum>
 #include <QMouseEvent>
 #include <QPixmap>
@@ -70,6 +71,7 @@ private:
             widget->removeEventFilter(this);
             QProxyStyle::unpolish(widget);
         }
+
     protected:
         bool eventFilter(QObject* object, QEvent* event) override
         {
@@ -111,6 +113,7 @@ private:
             }
             return QProxyStyle::eventFilter(object, event);
         }
+
     private:
         Qt::CursorShape resizeCursor(QWidget* widget, const QPoint& position) const
         {
@@ -377,6 +380,7 @@ UIPrivate::updateTheme()
     d.icons[roleName(UI::IconRole::Hidden)] = ":/icons/resources/Hidden.png";
     d.icons[roleName(UI::IconRole::Instance)] = ":/icons/resources/Instance.png";
     d.icons[roleName(UI::IconRole::Layer)] = ":/icons/resources/Layer.png";
+    d.icons[roleName(UI::IconRole::EditLayer)] = ":/icons/resources/EditLayer.png";
     d.icons[roleName(UI::IconRole::Left)] = ":/icons/resources/Left.png";
     d.icons[roleName(UI::IconRole::List)] = ":/icons/resources/List.png";
     d.icons[roleName(UI::IconRole::Lock)] = ":/icons/resources/Lock.png";
@@ -475,6 +479,8 @@ UIPrivate::icon(UI::IconRole role, UI::UIScale scale, UI::UIState state) const
         return QPixmap();
 
     QPixmap scaled = qt::scaledPixmap(loaded, logicalSize, Qt::KeepAspectRatio);
+    if (state == UI::UIState::Disabled)
+        scaled = QIcon(scaled).pixmap(QSize(logicalSize, logicalSize), dpr, QIcon::Disabled);
     d.pixmaps.insert(key, scaled);
     return scaled;
 }

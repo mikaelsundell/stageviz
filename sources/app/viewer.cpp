@@ -58,7 +58,6 @@
 #include <QParallelAnimationGroup>
 #include <QPointer>
 #include <QPropertyAnimation>
-#include <QScopedValueRollback>
 #include <QSet>
 #include <QSettings>
 #include <QSizePolicy>
@@ -119,7 +118,6 @@ public Q_SLOTS:
     void saveAllLayers();
     void revealInFolder();
     void preserveState();
-    bool saveState();
     void exportAll();
     void exportSelected();
     void exportVisible();
@@ -223,8 +221,9 @@ public:
     void refreshModifiedFromLayers();
     QStringList saveTargets(const QString& rootFilename = QString(), bool includeRoot = true,
                             bool includeAnonymous = false) const;
-    QList<ChangesDialog::Entry> changesEntries(bool stateOnly, const QString& rootFilename = QString()) const;
-    bool confirmLayerSave(const QString& title, const QString& rootFilename = QString()) const;
+    QList<ChangesDialog::Entry> changesEntries() const;
+    bool needsChangesDialog() const;
+    bool confirmSaveAll() const;
     void updateSaveActions();
     void updateWindowTitle();
     bool saveFile();
@@ -242,7 +241,6 @@ public:
         Session::LoadPolicy loadPolicy;
         bool stageChanged;
         bool rootChanged;
-        bool changesConfirmed = false;
         quint64 statusRevision = 0;
         QStringList arguments;
         QStringList extensions;
@@ -358,7 +356,6 @@ ViewerPrivate::init()
     connect(d.ui->fileLayerSaveAll, &QAction::triggered, this, &ViewerPrivate::saveAllLayers);
     connect(d.ui->fileRevealInFolder, &QAction::triggered, this, &ViewerPrivate::revealInFolder);
     connect(d.ui->filePreserveState, &QAction::triggered, this, &ViewerPrivate::preserveState);
-    connect(d.ui->fileStateSave, &QAction::triggered, this, &ViewerPrivate::saveState);
     connect(d.ui->fileExportAll, &QAction::triggered, this, &ViewerPrivate::exportAll);
     connect(d.ui->fileExportSelected, &QAction::triggered, this, &ViewerPrivate::exportSelected);
     connect(d.ui->fileExportVisible, &QAction::triggered, this, &ViewerPrivate::exportVisible);
@@ -1138,7 +1135,6 @@ ViewerPrivate::enable(bool enable)
                                 d.ui->fileLayerSaveAll,
                                 d.ui->fileLayers,
                                 d.ui->filePreserveState,
-                                d.ui->fileStateSave,
                                 d.ui->fileExportAll,
                                 d.ui->fileExportSelected,
                                 d.ui->fileExportVisible,
@@ -1241,7 +1237,6 @@ ViewerPrivate::enable(bool enable)
         d.ui->fileLayerSaveAs->setEnabled(false);
         d.ui->fileLayerSaveCopyAs->setEnabled(false);
         d.ui->fileLayerSaveAll->setEnabled(false);
-        d.ui->fileStateSave->setEnabled(false);
     }
 
     if (enable)
@@ -1354,10 +1349,6 @@ ViewerPrivate::save()
     }
     if (!layer)
         return;
-    if (!layer->IsDirty() && d.ui->filePreserveState->isChecked() && session()->isStateDirty()) {
-        saveState();
-        return;
-    }
     if (layer->IsAnonymous()) {
         saveAs();
         return;
@@ -1367,8 +1358,6 @@ ViewerPrivate::save()
     timer.start();
     const QString identifier = QString::fromStdString(layer->GetIdentifier());
     if (session()->saveLayer(identifier)) {
-        if (d.ui->filePreserveState->isChecked() && session()->isStateDirty() && !saveState())
-            return;
         d.layerDialog->refreshLayers();
         refreshModifiedFromLayers();
         updateSaveActions();
@@ -1480,9 +1469,6 @@ ViewerPrivate::saveStageAs()
     if (QFileInfo(filename).suffix().isEmpty())
         filename += ".usd";
 
-    if (!confirmLayerSave(tr("Save USD File As"), filename))
-        return;
-
     const QStringList targets = saveTargets(filename);
     QElapsedTimer timer;
     timer.start();
@@ -1560,6 +1546,9 @@ ViewerPrivate::saveCopy()
 void
 ViewerPrivate::saveAllLayers()
 {
+    refreshModifiedFromLayers();
+    if (hasChanges() && !confirmSaveAll())
+        return;
     saveFile();
 }
 
@@ -1588,27 +1577,6 @@ void
 ViewerPrivate::preserveState()
 {
     session()->setPreserveState(d.ui->filePreserveState->isChecked());
-}
-
-bool
-ViewerPrivate::saveState()
-{
-    if (!session()->isLoaded() || !d.ui->filePreserveState->isChecked())
-        return false;
-    const QString filename = session()->filename();
-    if (filename.isEmpty()) {
-        // A companion file needs a named root stage, even when editing a sublayer.
-        saveStageAs();
-        return !session()->filename().isEmpty() && !session()->isStateDirty();
-    }
-    const QString stateFilename = filename + ".session";
-    const bool saved = session()->saveState(stateFilename);
-    updateLayerState();
-    session()->notifyStatus(saved ? Session::Notify::Status::Success : Session::Notify::Status::Error,
-                            saved ? tr("Saved state to %1").arg(stateFilename)
-                                  : tr("Failed to save state: %1").arg(stateFilename),
-                            stateFilename);
-    return saved;
 }
 
 void
@@ -3187,9 +3155,8 @@ ViewerPrivate::updateDockAction(QAction* action, bool checked)
 void
 ViewerPrivate::updateStageChanged(bool stageChanged)
 {
-    if (d.stageChanged == stageChanged)
-        return;
     d.stageChanged = stageChanged;
+    // The active layer can become clean or dirty while the document stays dirty.
     updateWindowTitle();
 }
 
@@ -3266,18 +3233,18 @@ ViewerPrivate::saveTargets(const QString& rootFilename, bool includeRoot, bool i
 }
 
 QList<ChangesDialog::Entry>
-ViewerPrivate::changesEntries(bool stateOnly, const QString& rootFilename) const
+ViewerPrivate::changesEntries() const
 {
     QList<ChangesDialog::Entry> entries;
     const QString currentFilename = session()->filename();
-    const QString targetRoot = rootFilename.isEmpty() ? currentFilename : QFileInfo(rootFilename).absoluteFilePath();
+    const QString targetRoot = currentFilename;
     READ_LOCKER(locker, session()->stageLock(), "stageLock");
     const auto stage = session()->stageUnsafe();
     if (!stage)
         return entries;
     const auto root = stage->GetRootLayer();
-    const bool writesLayers = !stateOnly || (root && root->IsAnonymous());
-    if (writesLayers) {
+    const bool stateDirty = d.ui->filePreserveState->isChecked() && session()->isStateDirty();
+    {
         const auto stack = stage->GetLayerStack(false);
         QSet<QString> local;
         QSet<QString> included;
@@ -3324,20 +3291,26 @@ ViewerPrivate::changesEntries(bool stateOnly, const QString& rootFilename) const
             entry.changes = layer->IsAnonymous() ? tr("New layer")
                             : layer->IsDirty()   ? tr("USD edits")
                                                  : tr("No USD edits");
+            if (isRoot && stateDirty)
+                entry.changes += layer->IsDirty() || layer->IsAnonymous() ? tr(" / state") : QString();
+            if (isRoot && stateDirty && !layer->IsDirty() && !layer->IsAnonymous())
+                entry.changes = tr("View / layer state");
             entry.location = isRoot && !targetRoot.isEmpty() ? targetRoot
                              : layer->IsAnonymous()          ? tr("No filename")
                                                              : QString::fromStdString(layer->GetRealPath());
             const bool anonymousSublayer = !isRoot && layer->IsAnonymous();
             const bool writable = layer->IsAnonymous() ? layer->PermissionToEdit() : layer->PermissionToSave();
-            const bool writesLayer = isRoot || layer->IsDirty() || layer->IsAnonymous();
+            const bool writesLayer = layer->IsDirty() || layer->IsAnonymous()
+                                     || (isRoot && !QFileInfo::exists(targetRoot));
             entry.canSave = !anonymousSublayer && (!writesLayer || writable);
-            entry.status = !writesLayer                     ? tr("Unchanged")
-                           : anonymousSublayer              ? tr("Save layer as first")
-                           : !writable                      ? tr("Read-only")
-                           : isRoot && targetRoot.isEmpty() ? tr("Choose filename on save")
-                           : layer->IsDirty()               ? tr("Modified")
-                           : isRoot                         ? tr("Saved with stage")
-                                                            : tr("Unchanged");
+            entry.status = isRoot && stateDirty && !writesLayer ? tr("Modified")
+                           : !writesLayer                       ? tr("Unchanged")
+                           : anonymousSublayer                  ? tr("Save layer as first")
+                           : !writable                          ? tr("Read-only")
+                           : isRoot && targetRoot.isEmpty()     ? tr("Choose filename on save")
+                           : layer->IsDirty()                   ? tr("Modified")
+                           : isRoot                             ? tr("Saved with stage")
+                                                                : tr("Unchanged");
             entries.append(entry);
         }
     }
@@ -3352,34 +3325,38 @@ ViewerPrivate::changesEntries(bool stateOnly, const QString& rootFilename) const
         entry.canSave = false;
         entries.append(entry);
     }
-    if (d.ui->filePreserveState->isChecked()) {
-        ChangesDialog::Entry entry;
-        entry.identifier = targetRoot.isEmpty() ? QStringLiteral("$state") : targetRoot + ".session";
-        entry.name = tr("State");
-        entry.type = ChangesDialog::Type::CompanionState;
-        entry.changes = session()->isStateDirty() ? tr("View / layer state") : tr("Current state");
-        entry.location = targetRoot.isEmpty() ? tr("No filename") : targetRoot + ".session";
-        entry.status = targetRoot.isEmpty()        ? tr("Choose filename on save")
-                       : session()->isStateDirty() ? tr("Modified")
-                                                   : tr("Saved with stage");
-        entries.append(entry);
-    }
     return entries;
 }
 
 bool
-ViewerPrivate::confirmLayerSave(const QString& title, const QString& rootFilename) const
+ViewerPrivate::needsChangesDialog() const
 {
-    if (d.changesConfirmed)
-        return true;
-    const QStringList targets = saveTargets(rootFilename);
-    if (targets.size() <= 1)
-        return true;
+    // Keep actionable diagnostics for layers that cannot be saved by this operation.
+    for (const auto& entry : changesEntries()) {
+        if (!entry.canSave)
+            return true;
+    }
+    READ_LOCKER(locker, session()->stageLock(), "stageLock");
+    const auto stage = session()->stageUnsafe();
+    if (!stage)
+        return false;
+    for (const auto& layer : stage->GetLayerStack(false)) {
+        if (layer && layer != stage->GetRootLayer() && layer->IsDirty())
+            return true;
+    }
+    return false;
+}
 
+bool
+ViewerPrivate::confirmSaveAll() const
+{
+    if (!needsChangesDialog())
+        return true;
+    const QString filename = session()->filename();
     ChangesDialog dialog(d.viewer.data());
-    dialog.setWindowTitle(title);
-    dialog.setDocumentName(QFileInfo(rootFilename.isEmpty() ? session()->filename() : rootFilename).fileName());
-    dialog.setEntries(changesEntries(false, rootFilename));
+    dialog.setWindowTitle(tr("Save all layers"));
+    dialog.setDocumentName(filename.isEmpty() ? tr("Untitled") : QFileInfo(filename).fileName());
+    dialog.setEntries(changesEntries());
     dialog.setDiscardAllowed(false);
     dialog.exec();
     return dialog.choice() == ChangesDialog::Result::Save;
@@ -3431,6 +3408,8 @@ ViewerPrivate::updateWindowTitle()
                                                    : QFileInfo(QString::fromStdString(realPath)).fileName();
                 if (activeLayerName.isEmpty())
                     activeLayerName = QString::fromStdString(editLayer->GetIdentifier());
+                if (editLayer->IsDirty())
+                    activeLayerName.prepend(QLatin1Char('*'));
             }
         }
     }
@@ -3448,7 +3427,7 @@ ViewerPrivate::updateSaveActions()
     bool loaded = false;
     bool canSaveActive = false;
     bool hasEditLayer = false;
-    bool activeLayerDirty = false;
+    bool activeIsRoot = false;
     {
         READ_LOCKER(locker, session()->stageLock(), "stageLock");
         const UsdStageRefPtr stage = session()->stageUnsafe();
@@ -3456,7 +3435,7 @@ ViewerPrivate::updateSaveActions()
             loaded = true;
             const SdfLayerHandle layer = stage->GetEditTarget().GetLayer();
             hasEditLayer = bool(layer);
-            activeLayerDirty = layer && layer->IsDirty();
+            activeIsRoot = layer && layer == stage->GetRootLayer();
             canSaveActive = layer && layer->IsDirty()
                             && (layer->IsAnonymous() ? layer->PermissionToEdit()
                                                      : layer->PermissionToSave()
@@ -3478,19 +3457,16 @@ ViewerPrivate::updateSaveActions()
             }
         }
     }
-    const bool stateOnly = loaded && hasEditLayer && !activeLayerDirty && d.ui->filePreserveState->isChecked()
-                           && session()->isStateDirty();
-    if (stateOnly)
-        d.ui->fileLayerSave->setToolTip(tr("Save the root stage's companion state."));
-    d.ui->fileLayerSave->setEnabled(canSaveActive || stateOnly);
+    const QString filename = session()->filename();
+    const bool rootStatePending = loaded && activeIsRoot && d.ui->filePreserveState->isChecked()
+                                  && (session()->isStateDirty()
+                                      || (!filename.isEmpty() && !QFileInfo::exists(filename + ".session")));
+    if (rootStatePending && !canSaveActive)
+        d.ui->fileLayerSave->setToolTip(tr("Save changes to the root document's remembered state."));
+    d.ui->fileLayerSave->setEnabled(canSaveActive || rootStatePending);
     d.ui->fileLayerSaveAs->setEnabled(loaded && hasEditLayer);
     d.ui->fileLayerSaveCopyAs->setEnabled(loaded && hasEditLayer);
     d.ui->fileLayerSaveAll->setEnabled(loaded);
-    const bool preserve = d.ui->filePreserveState->isChecked();
-    const QString filename = session()->filename();
-    d.ui->fileStateSave->setEnabled(
-        loaded && preserve && (!filename.isEmpty() || d.rootChanged)
-        && (session()->isStateDirty() || filename.isEmpty() || !QFileInfo::exists(filename + ".session")));
 }
 
 bool
@@ -3529,23 +3505,6 @@ ViewerPrivate::saveChanges()
     refreshModifiedFromLayers();
     if (!hasChanges())
         return true;
-    const bool stateDirty = d.ui->filePreserveState->isChecked() && session()->isStateDirty();
-    bool layerDirty = false;
-    {
-        READ_LOCKER(locker, session()->stageLock(), "stageLock");
-        const auto stage = session()->stageUnsafe();
-        if (stage) {
-            layerDirty = stage->GetSessionLayer() && stage->GetSessionLayer()->IsDirty();
-            for (const auto& layer : stage->GetLayerStack(false)) {
-                const bool pristineAnonymousRoot = layer == stage->GetRootLayer() && layer->IsAnonymous()
-                                                   && !d.rootChanged && layer->GetSubLayerPaths().empty();
-                if (!pristineAnonymousRoot && layer->IsDirty())
-                    layerDirty = true;
-            }
-        }
-    }
-    const bool stateOnly = stateDirty && !layerDirty;
-
     const QString name = session()->filename().isEmpty() ? "Untitled" : QFileInfo(session()->filename()).fileName();
 
     updateToolsSuppressed(true, true);
@@ -3554,19 +3513,27 @@ ViewerPrivate::saveChanges()
     d.viewer->activateWindow();
     d.viewer->setFocus();
 
-    ChangesDialog dialog(d.viewer.data());
-    dialog.setDocumentName(name);
-    dialog.setEntries(changesEntries(stateOnly));
-    dialog.exec();
-    const ChangesDialog::Result result = dialog.choice();
+    ChangesDialog::Result result = ChangesDialog::Result::Cancel;
+    if (needsChangesDialog()) {
+        ChangesDialog dialog(d.viewer.data());
+        dialog.setDocumentName(name);
+        dialog.setEntries(changesEntries());
+        dialog.exec();
+        result = dialog.choice();
+    }
+    else {
+        const auto choice = MessageDialog::saveQuestion(d.viewer.data(), tr("Save changes?"),
+                                                        tr("Save changes to %1 before closing?").arg(name));
+        if (choice == MessageDialog::SaveResult::Save)
+            result = ChangesDialog::Result::Save;
+        else if (choice == MessageDialog::SaveResult::DontSave)
+            result = ChangesDialog::Result::Discard;
+    }
 
     updateToolsSuppressed(false, true);
 
     switch (result) {
-    case ChangesDialog::Result::Save: {
-        QScopedValueRollback<bool> confirmed(d.changesConfirmed, true);
-        return stateOnly ? saveState() : saveFile();
-    }
+    case ChangesDialog::Result::Save: return saveFile();
 
     case ChangesDialog::Result::Discard: return true;
 

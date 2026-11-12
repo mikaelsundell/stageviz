@@ -61,10 +61,10 @@ def phases(root, name, performance=False, performance_baseline=None):
                 'randomized_commands', 'namespace_commands', 'layer_invert_unload', 'load_policy', 'reload', 'cleanup')]
     if name == 'testchangesdialog':
         return [('setup', load + "; test=ns['ChangesDialogTest'](disposable=True); test.setup(); test.checkpoint()")] + [
-            (method, 'test.%s(); test.checkpoint()' % method) for method in ('anonymous_save', 'nested', 'readonly', 'unavailable', 'cleanup')]
+            (method, 'test.%s(); test.checkpoint()' % method) for method in ('ordinary_save_as', 'anonymous_save', 'nested', 'readonly', 'unavailable', 'cleanup')]
     if name == 'testpreservestate':
         return [('setup', load + "; test=ns['PreserveStateTest'](disposable=True); test.setup(); test.checkpoint()")] + [
-            (method, 'test.%s(); test.checkpoint()' % method) for method in ('camera', 'views', 'payloads', 'layer_controls', 'prompts',
+            (method, 'test.%s(); test.checkpoint()' % method) for method in ('camera', 'views', 'payloads', 'sublayer_save', 'layer_controls', 'prompts',
                 'disabled_and_failures', 'save_as_and_copy', 'pristine', 'anonymous', 'cleanup')]
     if name == 'testlayerupdate':
         return [('setup', load + "; test=ns['LayerUpdateTest'](disposable=True); test.setup(); test.checkpoint()"),
