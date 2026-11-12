@@ -1856,6 +1856,7 @@ SessionPrivate::saveState(const QString& filename, bool markSaved, const QString
         setStateDirty(false);
         if (d.stateRevision.load() != revision)
             setStateDirty(true);
+        Q_EMIT d.session->stateSaved();
     }
     else if (!saved)
         qWarning() << "[Session] failed to commit session state:" << stateFilename << file.errorString();

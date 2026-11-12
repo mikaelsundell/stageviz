@@ -2516,6 +2516,17 @@ preserveStateMenuApi()
     require(prompted && current->isStateDirty(), "Open also asks before discarding root companion state");
     save->trigger();
     drain();
+    require(current->newStage(), "new anonymous root for first-save action refresh");
+    current->stage()->DefinePrim(SdfPath("/World/FirstSave"), TfToken("Cube"));
+    drain();
+    require(!current->isStateDirty(), "anonymous USD edits do not create independent dirty state");
+    require(current->saveLayerAs(QString::fromStdString(current->stage()->GetRootLayer()->GetIdentifier()),
+                                 dir.filePath("first-save.usda")),
+            "save anonymous root without a preceding dirty-state transition");
+    drain();
+    require(QFileInfo::exists(dir.filePath("first-save.usda.session")) && !save->isEnabled()
+                && !current->isStateDirty(),
+            "first root save refreshes Save layer after writing a previously missing companion");
     current->close();
     current->setPreserveState(originalPreserve);
 }

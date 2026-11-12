@@ -11,7 +11,7 @@ object names and model roles. UI snapshots are captured at former manual
 checkpoints so runs do not wait for user input.
 """
 
-_TESTLAYERS_REVISION = "layer-tree-expansion-save-state-2026-10-27"
+_TESTLAYERS_REVISION = "root-state-save-review-2026-11-12"
 
 import importlib
 import os
@@ -53,13 +53,67 @@ _status_message = _tb.status_message
 _snapshot_qt_state = _tb.snapshot_qt_state
 _progress_state = _tb.progress_state
 _action_info = _tb.action_info
-_trigger_action = _tb.trigger_action
 _session = _tb.session
 _command = _tb.command
 _layer_flag = _tb.layer_property
 _UI_ACTION_FAILURES = []
 _LAYER_DIALOG_WRAPPER = None
 _LAYER_TREE_WRAPPER = None
+
+
+def _trigger_action(name):
+    if name != "fileLayerSaveAll":
+        return _tb.trigger_action(name)
+    QtCore, _, _, QtWidgets = _qt()
+    seen, failures = [], []
+    root_id = _session().stage().GetRootLayer().identifier
+    needs_review = any(identifier != root_id for identifier in _dirty_identifiers())
+
+    def confirm():
+        try:
+            for dialog in QtWidgets.QApplication.topLevelWidgets():
+                if dialog.objectName() != "changesDialog" or not dialog.isVisible():
+                    continue
+                tree = dialog.findChild(QtWidgets.QTreeWidget, "changesTree")
+                button = dialog.findChild(QtWidgets.QPushButton, "saveAllButton")
+                assert tree and tree.topLevelItemCount() == 1
+                assert button and button.isEnabled()
+                assert dialog.findChild(QtWidgets.QPushButton, "discardButton").isHidden()
+                seen.append(True)
+                _snapshot_qt_state("Save all layer review", root=dialog)
+                button.click()
+        except Exception as error:
+            failures.append(repr(error))
+            for dialog in QtWidgets.QApplication.topLevelWidgets():
+                if dialog.objectName() == "changesDialog" and dialog.isVisible():
+                    dialog.reject()
+
+    timer = QtCore.QTimer()
+    timer.timeout.connect(confirm)
+    timer.start(50)
+    try:
+        result = _tb.trigger_action(name)
+    finally:
+        timer.stop()
+    _require(not failures, "Save all review is saveable: " + repr(failures))
+    _require(not needs_review or bool(seen), "dirty sublayers are reviewed before Save all")
+    return result
+
+
+def _save_initial_root_state():
+    session = _session()
+    filename = session.filename()
+    _require((_action_info("filePreserveState") or {}).get("checked"), "Remember state is enabled for root-state save checks")
+    _require(not os.path.exists(filename + ".session"), "fixture starts without remembered state")
+    _assert_file_menu(save_enabled=True)
+    with open(filename, "rb") as stream:
+        usd_before = stream.read()
+    _require(_trigger_action("fileLayerSave"), "root Save writes missing remembered state")
+    _require(_wait_until(lambda: os.path.isfile(filename + ".session") and not session.isStateDirty()),
+             "root Save creates its companion and clears state dirtiness")
+    with open(filename, "rb") as stream:
+        _require(stream.read() == usd_before, "initial remembered-state save preserves unchanged USD")
+    _assert_file_menu(save_enabled=False)
 
 
 def _layer_dialog_visible():
@@ -607,7 +661,7 @@ def run_test_layers():
     _require(len(layers) == 4, "basic stage has root plus three sublayers")
     _require(len(root.subLayerPaths) == 3, "root lists all three direct sublayers")
     tree = _open_layer_dialog()
-    _assert_file_menu(save_enabled=False)
+    _save_initial_root_state()
     _assert_window_title(dirty=False)
     def root_is_expanded():
         live_tree = _layer_tree()
@@ -671,11 +725,12 @@ def run_test_layers():
     _require(lighting_id not in _dirty_identifiers(), "File > Save Layer cleared the active layer's dirty state")
     _require(_layer_authors_prim(lighting_id, "/LightingSphere"),
              "saved Lighting layer retains its authored sphere")
-    _require(_wait_until(lambda: "*" not in _viewer().windowTitle()),
-             "window title clears its dirty marker after saving the active layer")
+    _require(_session().isStateDirty(), "saving a sublayer retains pending root remembered state")
+    _require(_wait_until(lambda: "(*Lighting.usda)" not in _viewer().windowTitle()),
+             "saving the active sublayer clears its own title marker")
     _assert_layer_row(lighting_id, name_contains="Lighting.usda", dirty=False, bold=True,
                       visibility=True, locked=True, opinions=True)
-    _assert_window_title(active_layer_name="Lighting.usda", dirty=False)
+    _assert_window_title(active_layer_name="Lighting.usda", dirty=True)
     _assert_file_menu(save_enabled=False)
 
     command.set_edit_layer(_session().stage().GetRootLayer().identifier)
@@ -996,7 +1051,7 @@ def run_test_layers():
     _require(len(layers) == 1 and layers[0] == stage.GetRootLayer(), "root-only stage shows exactly one root row")
     _assert_layer_row(stage.GetRootLayer().identifier, name_contains="04_root_only.usda", dirty=False,
                       bold=True, visibility=False, locked=False, opinions=False)
-    _assert_file_menu(save_enabled=False)
+    _save_initial_root_state()
 
     dialog_layer_path = os.path.join(directory, "Created_From_Layer_Editor.usda")
     _require(_layer_button_enabled("newMaterial"),
@@ -1071,6 +1126,9 @@ def run_test_layers():
     _assert_layer_row(saved_root.identifier, name_contains="Untitled_Saved.usda", dirty=False, bold=True,
                       visibility=False, locked=False, opinions=False)
     _assert_window_title(dirty=False)
+    _require(os.path.isfile(unsaved_path + ".session"), "first root save writes remembered state")
+    _require(_wait_until(lambda: not (_action_info("fileLayerSave") or {}).get("enabled", True)),
+             "first root save refreshes Save layer after its companion is written")
     _assert_file_menu(save_enabled=False)
 
     print("\n=== Layer workflow and Qt UI checks finished ===")

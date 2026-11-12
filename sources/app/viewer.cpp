@@ -544,6 +544,7 @@ ViewerPrivate::init()
     connect(session(), &Session::layerMutingChanged, this, &ViewerPrivate::updateLayerState);
     connect(session(), &Session::colorsChanged, this, &ViewerPrivate::updateLayerState);
     connect(session(), &Session::stateDirtyChanged, this, &ViewerPrivate::updateLayerState);
+    connect(session(), &Session::stateSaved, this, &ViewerPrivate::updateLayerState);
     connect(session(), &Session::auxiliaryChanged, this, &ViewerPrivate::updateAuxiliary);
     connect(session(), &Session::stageUpChanged, this, &ViewerPrivate::updateStageUp);
     connect(session(), &Session::preserveStateChanged, this, &ViewerPrivate::updatePreserveState);

@@ -101,7 +101,9 @@ explicitly polygonal, rather than inheriting USD's Catmull-Clark fallback.
 `testgizmostability.py` keeps Rotate active while creating a sphere and plane,
 opens the Material Editor, and orbits through multiple camera revolutions and
 distances, including repeated left/right sweeps through an edge-on red ring.
-It checks unchanged handle topology, finite transforms, selection,
+Option/Meta-left drags starting on each Move/Rotate/Scale centre must orbit
+without authoring USD. Move is also swept across end-on axes with wireframe
+overlay enabled. It checks unchanged handle topology, finite transforms, selection,
 and rendered color bounds to detect spikes that only occur on the GPU. The
 external MCP regression controller records independent stage/selection evidence.
 
@@ -609,3 +611,9 @@ that saving the sublayer clears its marker while root state remains dirty.
 Ordinary Save layer and Save layer as do not open it. Save all offers Save and
 Cancel; document-replacement prompts also offer Don't save. Accepting a review
 does not cause a second Changes dialog after choosing an anonymous root filename.
+
+The layer workflow also checks the initially missing root companion, confirms the
+Save all review for dirty sublayers, and verifies that saving a sublayer leaves
+remembered root state pending. The first anonymous-root save must refresh Save
+layer after writing its companion, even without a state-dirty transition;
+`preserve_state_menu_api` covers that notification edge case natively.

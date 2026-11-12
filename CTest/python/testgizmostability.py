@@ -4,7 +4,7 @@
 """Orbit with Rotate active in a disposable viewer, checking meshes and pixels.
 
 Use an external MCP controller for setup(), orbit(), distances(), edge_on(),
-clipping() and cleanup().
+option_drag(), move_axis_on(), clipping() and cleanup().
 This stress case replaces the stage and must not run on unsaved user work.
 """
 
@@ -107,6 +107,66 @@ class GizmoStabilityTest(_base['ViewportTest']):
                 tb.process_events(5)
             self.check('gizmo_distance_' + str(distance))
 
+    def option_drag(self):
+        core, gui, qt_test, widgets = tb.qt()
+        session = stageviz.session()
+        for mode in ('Move', 'Rotate', 'Scale'):
+            self.activate_mode(mode)
+            for modifier in (core.Qt.KeyboardModifier.AltModifier, core.Qt.KeyboardModifier.MetaModifier):
+                self.frame_handle()
+                widget = self.viewport()
+                start = core.QPoint(widget.width() // 2, widget.height() // 2)
+                before = {layer.identifier: layer.ExportToString() for layer in session.stage().GetLayerStack()}
+                camera = session.viewState().camera()
+                angles = (camera.axisYaw(), camera.axisPitch(), camera.axisRoll())
+                end = start + core.QPoint(24, 12)
+                qt_test.QTest.mousePress(widget, core.Qt.MouseButton.LeftButton, modifier, start)
+                try:
+                    assert camera.cameraMode() == stageviz.CameraModeTumble, 'navigation modifier wins over ' + mode + ' centre handle'
+                    event = gui.QMouseEvent(core.QEvent.Type.MouseMove, core.QPointF(end),
+                                           core.QPointF(widget.mapToGlobal(end)), core.Qt.MouseButton.NoButton,
+                                           core.Qt.MouseButton.LeftButton, modifier)
+                    widgets.QApplication.sendEvent(widget, event)
+                    tb.process_events(20)
+                finally:
+                    qt_test.QTest.mouseRelease(self.viewport(), core.Qt.MouseButton.LeftButton, modifier, end)
+                assert (camera.axisYaw(), camera.axisPitch(), camera.axisRoll()) != angles
+                assert {layer.identifier: layer.ExportToString() for layer in session.stage().GetLayerStack()} == before
+                assert list(session.paths()) == ['/World/Sphere']
+                self.snapshot('gizmo_option_' + mode + '_' + str(int(modifier.value)))
+        self.activate_mode('Rotate')
+
+    def move_axis_on(self):
+        core, _, qt_test, widgets = tb.qt()
+        wireframe = next(w for w in tb.all_widgets() if isinstance(w, widgets.QToolButton)
+                         and w.objectName() == 'wireframe' and w.isVisible())
+        previous_wireframe = wireframe.isChecked()
+        self.activate_mode('Move')
+        if not previous_wireframe:
+            qt_test.QTest.mouseClick(wireframe, core.Qt.MouseButton.LeftButton)
+        self.frame_handle()
+        camera = stageviz.session().viewState().camera()
+        before = stageviz.session().stage().GetRootLayer().ExportToString()
+        try:
+            for axis, (pitch, roll) in enumerate(((0, 0), (0, 90), (90, 0))):
+                camera.setAxisYaw(0)
+                camera.setAxisPitch(pitch)
+                camera.setAxisRoll(roll)
+                for i in range(33):
+                    angle = -2 + i * .125
+                    camera.setAxisRoll(roll + angle)
+                    self.viewport().repaint()
+                    tb.process_events(8)
+                    if i % 8 == 0:
+                        self.check('gizmo_move_axis_%d_%d' % (axis, i))
+            assert stageviz.session().stage().GetRootLayer().ExportToString() == before
+        finally:
+            wireframe = next(w for w in tb.all_widgets() if isinstance(w, widgets.QToolButton)
+                             and w.objectName() == 'wireframe' and w.isVisible())
+            if wireframe.isChecked() != previous_wireframe:
+                qt_test.QTest.mouseClick(wireframe, core.Qt.MouseButton.LeftButton)
+            self.activate_mode('Rotate')
+
     def clipping(self):
         """Handles remain visible and resize outside the document clip range."""
         session = stageviz.session()
@@ -181,6 +241,8 @@ def run(disposable=False):
         test.orbit()
         test.distances()
         test.edge_on()
+        test.option_drag()
+        test.move_axis_on()
         test.clipping()
     finally:
         test.cleanup()
