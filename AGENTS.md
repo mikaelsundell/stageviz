@@ -4,6 +4,13 @@ Use these conventions when adding or changing Stageviz functionality. Follow
 nearby code when it establishes a more specific pattern, and keep changes
 consistent with the existing architecture.
 
+## Code formatting
+
+- After every code edit, run `clang-format -i` on all changed C/C++ source and
+  header files using the repository's `.clang-format`. Include newly added files
+  and format whole files, not only edited lines. Before finishing a change,
+  verify formatting with `clang-format --dry-run --Werror` on those files.
+
 ## Python scripts, bindings and documentation
 
 - Before writing, reviewing or explaining Stageviz Python, read
@@ -98,8 +105,10 @@ consistent with the existing architecture.
 
 - Use `./test_app.sh debug` on macOS/Linux or `test_app.bat Debug` on Windows
   for the complete automatic test run. Use `release` or `all` to test those
-  configurations. The scripts incrementally build the app and native test
-  targets, run every registered CTest, then every discovered embedded Python
+  configurations. The scripts refresh the cached CMake configuration with
+  `BUILD_TESTING=ON`, then
+  incrementally build the app and native test targets, run every registered
+  CTest, then every discovered embedded Python
   suite, including its built-in performance checks. Use this complete run
   before final code review; focused checks remain appropriate during editing.
 - Run the scripts from a configured development checkout with CMake and Python

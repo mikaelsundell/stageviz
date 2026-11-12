@@ -59,32 +59,43 @@ class TestRunner(unittest.TestCase):
         self.assertEqual(run_all.executable(self.build, 'Debug', 'win32'), windows.resolve())
 
     def test_complete_plan_includes_performance_and_serial_ctest(self):
-        row, calls = self.plan([0, 0, 0])
+        row, calls = self.plan([0, 0, 0, 0])
         self.assertTrue(row['passed'])
-        self.assertEqual(len(calls), 3)
+        self.assertEqual(len(calls), 4)
+        self.assertEqual([step['name'] for step in row['steps']], ['configure', 'build', 'ctest', 'python'])
+        self.assertIn('-S', calls[0][0])
+        self.assertIn(str(run_all.ROOT), calls[0][0])
+        self.assertIn('-B', calls[0][0])
         self.assertIn(str(self.build.resolve()), calls[0][0])
-        self.assertIn('--no-tests=error', calls[1][0])
-        self.assertEqual(calls[1][0][calls[1][0].index('--parallel') + 1], '1')
-        self.assertIn('--performance', calls[2][0])
-        self.assertNotIn('--suites', calls[2][0])
-        self.assertIn('STAGEVIZ_TEST_SETTINGS_DIR', calls[1][1])
-        self.assertIn('--port', calls[2][0])
+        self.assertIn('-DBUILD_TESTING=ON', calls[0][0])
+        self.assertIn('--no-tests=error', calls[2][0])
+        self.assertEqual(calls[2][0][calls[2][0].index('--parallel') + 1], '1')
+        self.assertIn('--performance', calls[3][0])
+        self.assertNotIn('--suites', calls[3][0])
+        self.assertIn('STAGEVIZ_TEST_SETTINGS_DIR', calls[2][1])
+        self.assertIn('--port', calls[3][0])
 
     def test_ctest_failure_does_not_skip_python_or_pass(self):
-        row, calls = self.plan([0, 7, 0])
+        row, calls = self.plan([0, 0, 7, 0])
         self.assertFalse(row['passed'])
-        self.assertEqual(len(calls), 3)
-        self.assertEqual(row['steps'][1]['returncode'], 7)
+        self.assertEqual(len(calls), 4)
+        self.assertEqual(row['steps'][2]['returncode'], 7)
 
     def test_python_failure_is_reported(self):
-        row, _ = self.plan([0, 0, 1])
+        row, _ = self.plan([0, 0, 0, 1])
         self.assertFalse(row['passed'])
 
     def test_build_failure_does_not_test_stale_binaries(self):
+        row, calls = self.plan([0, 1])
+        self.assertFalse(row['passed'])
+        self.assertEqual(len(calls), 2)
+        self.assertIn('stale', row['error'])
+
+    def test_configure_failure_does_not_build_or_test(self):
         row, calls = self.plan([1])
         self.assertFalse(row['passed'])
         self.assertEqual(len(calls), 1)
-        self.assertIn('stale', row['error'])
+        self.assertIn('Configure failed', row['error'])
 
     def test_no_build_still_runs_both_test_families(self):
         self.args.no_build = True

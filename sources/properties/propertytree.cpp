@@ -7,6 +7,7 @@
 #include "commandproperty.h"
 #include "commandselection.h"
 #include "commandstack.h"
+#include "materialutils.h"
 #include "messagedialog.h"
 #include "notice.h"
 #include "os.h"
@@ -14,6 +15,7 @@
 #include "propertyitem.h"
 #include "qtutils.h"
 #include "selectionlist.h"
+#include "settings.h"
 #include "signalguard.h"
 #include "spinbox.h"
 #include "threadutils.h"
@@ -25,6 +27,8 @@
 #include <QClipboard>
 #include <QComboBox>
 #include <QContextMenuEvent>
+#include <QDir>
+#include <QFileDialog>
 #include <QFileInfo>
 #include <QHeaderView>
 #include <QIcon>
@@ -278,6 +282,7 @@ public:
     void populateArrayAttribute(PropertyItem* item);
     void populateChunk(PropertyItem* item);
     void itemChanged(QTreeWidgetItem* item, int column);
+    void browseAsset(PropertyItem* item);
     void itemExpanded(QTreeWidgetItem* item);
     void itemCollapsed(QTreeWidgetItem* item);
     void restoreItemText(PropertyItem* item);
@@ -366,6 +371,10 @@ public:
                 int i = combo->findText(text);
                 if (i < 0)
                     i = combo->findText(text, Qt::MatchFixedString);
+                if (i < 0 && !text.isEmpty()) {
+                    combo->addItem(text);
+                    i = combo->count() - 1;
+                }
                 if (i >= 0)
                     combo->setCurrentIndex(i);
                 return;
@@ -2024,6 +2033,11 @@ PropertyTreePrivate::attributeBaseName(const UsdAttribute& attr)
 QStringList
 PropertyTreePrivate::tokenOptions(const UsdAttribute& attr)
 {
+    const QStringList options = MaterialUtils::inputOptions(attr);
+    if (!options.isEmpty())
+        return options;
+    if (attr.GetTypeName() != SdfValueTypeNames->Token)
+        return {};
     const QString name = attributeBaseName(attr);
 
     if (name == "visibility")
@@ -2065,7 +2079,7 @@ PropertyTreePrivate::editorForValue(const UsdAttribute& attr, const VtValue& val
     if (value.IsHolding<bool>())
         return PropertyItem::BoolEditor;
 
-    if (value.IsHolding<TfToken>()) {
+    if (value.IsHolding<TfToken>() || value.IsHolding<std::string>()) {
         if (!tokenOptions(attr).isEmpty())
             return PropertyItem::TokenEditor;
         return PropertyItem::TextEditor;
@@ -2077,7 +2091,7 @@ PropertyTreePrivate::editorForValue(const UsdAttribute& attr, const VtValue& val
     if (value.IsHolding<float>() || value.IsHolding<double>())
         return PropertyItem::FloatingEditor;
 
-    if (value.IsHolding<std::string>() || value.IsHolding<SdfAssetPath>())
+    if (value.IsHolding<SdfAssetPath>())
         return PropertyItem::TextEditor;
 
     if (scalarEditable(value))
@@ -2094,6 +2108,11 @@ PropertyTreePrivate::configureEditor(PropertyItem* item, const UsdAttribute& att
 
     const PropertyItem::Editor editor = editorForValue(attr, value);
     item->setEditor(editor);
+
+    if (value.IsHolding<SdfAssetPath>() && item->valueEditable() && (item->flags() & Qt::ItemIsEditable)) {
+        item->setIcon(PropertyItem::Browse, ui()->icon(UI::IconRole::Open, UI::UIScale::Small));
+        item->setToolTip(PropertyItem::Browse, QStringLiteral("Choose file"));
+    }
 
     if (editor == PropertyItem::TokenEditor)
         item->setEditorOptions(tokenOptions(attr));
@@ -3155,6 +3174,10 @@ PropertyTreePrivate::init()
     attach(d.tree);
 
     connect(d.tree.data(), &QTreeWidget::itemChanged, this, &PropertyTreePrivate::itemChanged);
+    connect(d.tree.data(), &QTreeWidget::itemClicked, this, [this](QTreeWidgetItem* item, int column) {
+        if (column == PropertyItem::Browse)
+            browseAsset(dynamic_cast<PropertyItem*>(item));
+    });
     connect(d.tree.data(), &QTreeWidget::itemExpanded, this, &PropertyTreePrivate::itemExpanded);
     connect(d.tree.data(), &QTreeWidget::itemCollapsed, this, &PropertyTreePrivate::itemCollapsed);
     connect(session(), &Session::editLayerChanged, this, [this](SdfLayerHandle) {
@@ -3858,6 +3881,41 @@ PropertyTreePrivate::restoreItemText(PropertyItem* item)
 }
 
 void
+PropertyTreePrivate::browseAsset(PropertyItem* item)
+{
+    if (!item || item->icon(PropertyItem::Browse).isNull() || !item->valueEditable() || !d.stage)
+        return;
+    const auto paths = item->propertyPaths();
+    const auto stage = d.stage;
+    QString initial = settings()->value("assetDir", QDir::homePath()).toString();
+    if (!paths.isEmpty()) {
+        const auto attr = stage->GetAttributeAtPath(paths.first());
+        SdfAssetPath asset;
+        if (attr && attr.Get(&asset)) {
+            std::string path = asset.GetResolvedPath();
+            const auto stack = attr.GetPropertyStack();
+            if (path.empty() && !asset.GetAssetPath().empty() && !stack.empty())
+                path = SdfComputeAssetPathRelativeToLayer(stack.front()->GetLayer(), asset.GetAssetPath());
+            if (!path.empty())
+                initial = QString::fromStdString(path);
+            else if (!stage->GetRootLayer()->GetRealPath().empty())
+                initial = QFileInfo(QString::fromStdString(stage->GetRootLayer()->GetRealPath())).absolutePath();
+        }
+    }
+    const QString filename = QFileDialog::getOpenFileName(d.tree.data(), tr("Choose texture or asset"), initial);
+    if (filename.isEmpty())
+        return;
+    settings()->setValue("assetDir", QFileInfo(filename).absolutePath());
+    if (d.stage != stage || paths.isEmpty())
+        return;
+    auto command = new Command(setAttributeValues(paths, VtValue(SdfAssetPath(filename.toStdString()))));
+    if (d.context)
+        d.context->execute(command);
+    else
+        session()->commandStack()->execute(command);
+}
+
+void
 PropertyTreePrivate::itemChanged(QTreeWidgetItem* baseItem, int column)
 {
     if (d.update)
@@ -3996,6 +4054,13 @@ PropertyTree::PropertyTree(QWidget* parent)
 {
     p->d.tree = this;
     p->init();
+
+    setColumnCount(3);
+    setHeaderLabels({ "Name", "Value", "" });
+    header()->setStretchLastSection(false);
+    header()->setSectionResizeMode(PropertyItem::Value, QHeaderView::Stretch);
+    header()->setSectionResizeMode(PropertyItem::Browse, QHeaderView::Fixed);
+    setColumnWidth(PropertyItem::Browse, 32);
 
     setItemDelegate(new PropertyTreePrivate::PropertyDelegate(this));
 

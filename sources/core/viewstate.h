@@ -281,14 +281,14 @@ public:
     /**
      * @brief Returns the custom dome-light texture path.
      *
-     * An empty path uses OpenUSD's packaged default dome texture.
+     * An empty path uses HDx's built-in Stinson Beach HDRI.
      */
     QString domeLightTexture() const;
 
     /**
      * @brief Sets the custom dome-light texture path.
      *
-     * An empty path restores OpenUSD's packaged default dome texture.
+     * An empty path restores HDx's built-in Stinson Beach HDRI.
      */
     void setDomeLightTexture(const QString& filename);
 

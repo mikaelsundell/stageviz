@@ -28,7 +28,7 @@ public:
     /**
      * @brief Columns used for the property name and displayed value.
      */
-    enum Column { Name = 0, Value };
+    enum Column { Name = 0, Value, Browse };
 
     /**
      * @brief Distinguishes groups, attributes, array pages, and individual elements.

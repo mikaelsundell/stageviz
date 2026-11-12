@@ -23,6 +23,7 @@ SpinBox::SpinBox(QWidget* parent)
     lineEdit()->setReadOnly(true);
     lineEdit()->setMouseTracking(true);
     lineEdit()->installEventFilter(this);
+    updateValueCursor();
     // connect
     connect(this, &QDoubleSpinBox::editingFinished, this, [this]() { finishEditing(); });
 }
@@ -42,17 +43,34 @@ SpinBox::scrubSensitivity() const
 }
 
 bool
+SpinBox::event(QEvent* event)
+{
+    if (event->type() == QEvent::ShortcutOverride) {
+        // Shortcut resolution precedes KeyPress. Claim numeric entry here so
+        // application actions cannot consume the first digit in scrub mode.
+        beginTextInput(static_cast<QKeyEvent*>(event));
+        if (m_editing) {
+            event->accept();
+            return true;
+        }
+    }
+    return QDoubleSpinBox::event(event);
+}
+
+bool
 SpinBox::eventFilter(QObject* watched, QEvent* event)
 {
     if (watched == lineEdit()) {
         switch (event->type()) {
+        case QEvent::ShortcutOverride:
+            beginTextInput(static_cast<QKeyEvent*>(event));
+            if (m_editing) {
+                event->accept();
+                return true;
+            }
+            break;
         case QEvent::KeyPress: beginTextInput(static_cast<QKeyEvent*>(event)); break;
         case QEvent::Enter: updateValueCursor(); break;
-
-        case QEvent::Leave:
-            if (!m_scrubbing && !m_editing)
-                lineEdit()->unsetCursor();
-            break;
 
         case QEvent::FocusIn:
             if (!m_editing) {
@@ -211,8 +229,9 @@ SpinBox::updateScrub(QMouseEvent* event)
             return false;
 
         m_scrubbing = true;
+        setCursor(Qt::SizeHorCursor);
+        updateValueCursor();
         Q_EMIT scrubStarted();
-        lineEdit()->setCursor(Qt::SizeHorCursor);
     }
     const int pixels = delta.x() - delta.y();
 
@@ -249,6 +268,7 @@ SpinBox::finishPress(QMouseEvent* event)
     const bool wasScrubbing = m_scrubbing;
     m_pressed = false;
     m_scrubbing = false;
+    unsetCursor();
 
     if (wasScrubbing)
         Q_EMIT scrubFinished(value());
@@ -298,10 +318,7 @@ SpinBox::updateValueCursor()
         return;
     }
 
-    if (lineEdit()->underMouse())
-        lineEdit()->setCursor(Qt::SizeHorCursor);
-    else
-        lineEdit()->unsetCursor();
+    lineEdit()->setCursor(Qt::SizeHorCursor);
 }
 
 }  // namespace stageviz

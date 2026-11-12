@@ -91,7 +91,17 @@
     <widget class="stageviz::PropertyTree" name="propertyTree">
      <column>
       <property name="text">
-       <string notr="true">1</string>
+       <string>Name</string>
+      </property>
+     </column>
+     <column>
+      <property name="text">
+       <string>Value</string>
+      </property>
+     </column>
+     <column>
+      <property name="text">
+       <string notr="true"/>
       </property>
      </column>
     </widget>

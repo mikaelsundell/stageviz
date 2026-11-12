@@ -3,7 +3,6 @@
 // https://github.com/mikaelsundell/stageviz
 
 #include "materialdialog.h"
-#include "perfscope.h"
 #include "application.h"
 #include "commandmaterial.h"
 #include "commandprim.h"
@@ -16,6 +15,7 @@
 #include "materialutils.h"
 #include "mime.h"
 #include "notice.h"
+#include "perfscope.h"
 #include "qtutils.h"
 #include "selectionlist.h"
 #include "session.h"
@@ -392,7 +392,6 @@ MaterialDialogPrivate::init()
     d.ui->materialSplitter->setCollapsible(1, false);
     d.ui->materialSplitter->setStretchFactor(0, 0);
     d.ui->materialSplitter->setStretchFactor(1, 1);
-    d.ui->materialSplitter->setHandleWidth(1);
 
     d.tabs = new TabWidget(d.ui->graphWidget);
     d.tabs->setAttribute(Qt::WA_DeleteOnClose, false);

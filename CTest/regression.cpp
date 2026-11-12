@@ -22,6 +22,7 @@
 #include "notice.h"
 #include "perfscope.h"
 #include "qtutils.h"
+#include "renderresources.h"
 #include "rendersceneindex.h"
 #include "selectionlist.h"
 #include "session.h"
@@ -5210,6 +5211,19 @@ consoleOutputFileApi()
 }
 
 void
+renderResourcesApi()
+{
+    const auto color = stageviz::renderresources::defaultDomeTexture();
+    require(color.endsWith("/StinsonBeach.hdr"), "default dome uses the HDx Stinson Beach HDRI");
+    require(QDir::isAbsolutePath(color), "bundled HDRI resolves to an absolute asset path");
+    QFile file(color);
+    require(file.open(QIODevice::ReadOnly), "bundled HDRI exists and is readable");
+    require(file.read(10).startsWith("#?RADIANCE"), "HDx HDRI has a Radiance header");
+    require(stageviz::renderresources::path("missing-render-resource.exr").isEmpty(),
+            "missing render resources return an empty path");
+}
+
+void
 lightCommandApi()
 {
     Session current;
@@ -5233,6 +5247,16 @@ lightCommandApi()
                 bool normalize = false;
                 UsdLuxLightAPI(prim).GetNormalizeAttr().Get(&normalize);
                 require(normalize, "new lights including distant lights normalize their emitted power");
+            }
+            else {
+                SdfAssetPath texture;
+                TfToken format;
+                require(prim.GetAttribute(TfToken("inputs:texture:file")).Get(&texture)
+                            && texture.GetAssetPath() == stageviz::renderresources::defaultDomeTexture().toStdString(),
+                        "new and redone dome lights use the HDx Stinson Beach HDRI");
+                require(prim.GetAttribute(TfToken("inputs:texture:format")).Get(&format)
+                            && format == TfToken("latlong"),
+                        "dome HDRI uses latitude-longitude mapping");
             }
             require(prim.HasAPI<UsdLuxShapingAPI>() == (i == 1), "spot is a shaped sphere light");
             require(current.selectionList()->paths() == QList<SdfPath> { SdfPath("/World/Light") }, "select new light");
@@ -5333,6 +5357,7 @@ main(int argc, char** argv)
         { "viewport_color_query_api", viewportColorQueryApi },
         { "copy_transform_api", copyTransformApi },
         { "light_command_api", lightCommandApi },
+        { "render_resources_api", renderResourcesApi },
         { "sublayer_save", sublayerSave },
         { "save_layer_as_sublayer", saveLayerAsSublayer },
         { "save_as", saveAs },

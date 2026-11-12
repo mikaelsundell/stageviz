@@ -32,12 +32,18 @@ class LightsTest(_base["ViewportTest"]):
             assert tb.wait_until(lambda: list(stageviz.session().paths()) == [path]), kind
             prim = stageviz.session().stage().GetPrimAtPath(path)
             assert prim.GetTypeName() == schema and UsdLux.LightAPI(prim)
+            if kind == "dome":
+                texture = UsdLux.DomeLight(prim).GetTextureFileAttr().Get()
+                assert Path(texture.path).name == "StinsonBeach.hdr" and Path(texture.path).is_file()
             assert prim.HasAPI(UsdLux.ShapingAPI) == (kind == "spot")
             stageviz.command.undo()
             assert tb.wait_until(lambda: not stageviz.session().stage().GetPrimAtPath(path))
             assert list(stageviz.session().paths()) == ["/World"]
             stageviz.command.redo()
             assert tb.wait_until(lambda: list(stageviz.session().paths()) == [path])
+            if kind == "dome":
+                restored = stageviz.session().stage().GetPrimAtPath(path)
+                assert UsdLux.DomeLight(restored).GetTextureFileAttr().Get() == texture
             stageviz.command.undo()
             assert tb.wait_until(lambda: not stageviz.session().stage().GetPrimAtPath(path))
         print("PASS all Create light actions, USD schemas, selection, undo/redo")

@@ -20,6 +20,8 @@
 #include "layeritem.h"
 #include "layertree.h"
 #include "materialbrowser.h"
+#include "materialrenderer.h"
+#include "materialtree.h"
 #include "materialutils.h"
 #include "mcp/mcpserver.h"
 #include "outliner/outlinertree.h"
@@ -30,6 +32,7 @@
 #include "propertytree.h"
 #include "propertyview.h"
 #include "renderengine.h"
+#include "renderresources.h"
 #include "renderview.h"
 #include "session.h"
 #include "settings.h"
@@ -49,12 +52,16 @@
 #include "viewstate.h"
 #include <QApplication>
 #include <QColor>
+#include <QComboBox>
 #include <QContextMenuEvent>
 #include <QCoreApplication>
+#include <QCursor>
 #include <QDialog>
 #include <QDir>
 #include <QElapsedTimer>
 #include <QEventLoop>
+#include <QFile>
+#include <QFileDialog>
 #include <QFont>
 #include <QHeaderView>
 #include <QImage>
@@ -75,6 +82,7 @@
 #include <QScrollBar>
 #include <QSet>
 #include <QSettings>
+#include <QSplitter>
 #include <QSurfaceFormat>
 #include <QTemporaryDir>
 #include <QThread>
@@ -90,8 +98,11 @@
 #include <pxr/base/gf/matrix4d.h>
 #include <pxr/base/gf/range1f.h>
 #include <pxr/base/gf/rotation.h>
+#include <pxr/base/gf/vec2f.h>
 #include <pxr/base/gf/vec3d.h>
+#include <pxr/base/gf/vec4f.h>
 #include <pxr/usd/sdf/primSpec.h>
+#include <pxr/usd/sdf/schema.h>
 #include <pxr/usd/usd/payloads.h>
 #include <pxr/usd/usd/prim.h>
 #include <pxr/usd/usd/stage.h>
@@ -100,6 +111,9 @@
 #include <pxr/usd/usdGeom/mesh.h>
 #include <pxr/usd/usdGeom/subset.h>
 #include <pxr/usd/usdGeom/xform.h>
+#include <pxr/usd/usdLux/domeLight.h>
+#include <pxr/usd/usdLux/domeLight_1.h>
+#include <pxr/usd/usdLux/lightFilter.h>
 #include <pxr/usd/usdShade/material.h>
 #include <pxr/usd/usdShade/materialBindingAPI.h>
 #include <pxr/usd/usdShade/shader.h>
@@ -147,6 +161,62 @@ void
 uiApi()
 {
     stageviz::UI ui;
+    {
+        QSplitter splitter;
+        splitter.addWidget(new QWidget());
+        splitter.addWidget(new QWidget());
+        auto* handle = splitter.handle(1);
+        handle->ensurePolished();
+        QApplication::setOverrideCursor(Qt::CrossCursor);
+        QMouseEvent press(QEvent::MouseButtonPress, QPointF(2, 2), QPointF(2, 2), Qt::LeftButton, Qt::LeftButton,
+                          Qt::NoModifier);
+        QApplication::sendEvent(handle, &press);
+        require(QApplication::overrideCursor() && QApplication::overrideCursor()->shape() == Qt::SplitHCursor,
+                "splitter drag pins the resize cursor");
+        handle->setCursor(Qt::ArrowCursor);
+        require(QApplication::overrideCursor()->shape() == Qt::SplitHCursor,
+                "widget cursor changes do not replace an active splitter drag cursor");
+        QMouseEvent release(QEvent::MouseButtonRelease, QPointF(2, 2), QPointF(2, 2), Qt::LeftButton, Qt::NoButton,
+                            Qt::NoModifier);
+        QApplication::sendEvent(handle, &release);
+        require(QApplication::overrideCursor() && QApplication::overrideCursor()->shape() == Qt::CrossCursor,
+                "splitter release restores the prior cursor override");
+        QApplication::restoreOverrideCursor();
+
+        QTreeWidget tree;
+        tree.setColumnCount(2);
+        tree.ensurePolished();
+        auto* header = tree.header();
+        header->ensurePolished();
+        header->setStretchLastSection(false);
+        header->resizeSection(0, 100);
+        const int edge = header->sectionViewportPosition(0) + header->sectionSize(0);
+        for (int offset : { -7, 7 }) {
+            const QPointF position(edge + offset, 4);
+            QMouseEvent hover(QEvent::MouseMove, position, position, Qt::NoButton, Qt::NoButton, Qt::NoModifier);
+            QApplication::sendEvent(header->viewport(), &hover);
+            require(header->viewport()->cursor().shape() == Qt::SplitHCursor,
+                    "resize hover cursor covers both sides of the widened header grip");
+        }
+        for (int offset : { -8, 8, 10 }) {
+            const QPointF outside(edge + offset, 4);
+            QMouseEvent hoverOutside(QEvent::MouseMove, outside, outside, Qt::NoButton, Qt::NoButton, Qt::NoModifier);
+            QApplication::sendEvent(header->viewport(), &hoverOutside);
+            require(header->viewport()->cursor().shape() != Qt::SplitHCursor,
+                    "header hover cursor returns to normal outside Qt's actual grip");
+        }
+        const QPointF position(edge - 7, 4);
+        QMouseEvent headerPress(QEvent::MouseButtonPress, position, position, Qt::LeftButton, Qt::LeftButton,
+                                Qt::NoModifier);
+        QApplication::sendEvent(header->viewport(), &headerPress);
+        require(QApplication::overrideCursor() && QApplication::overrideCursor()->shape() == Qt::SplitHCursor,
+                "column resize pins the header cursor");
+        header->unsetCursor();
+        require(QApplication::overrideCursor()->shape() == Qt::SplitHCursor,
+                "header cursor changes do not replace an active column drag cursor");
+        QApplication::sendEvent(header->viewport(), &release);
+        require(!QApplication::overrideCursor(), "column release clears its temporary cursor override");
+    }
     int colorChanges = 0;
     QObject::connect(&ui, &stageviz::UI::colorChanged, &ui, [&](stageviz::UI::ColorRole) { ++colorChanges; });
 
@@ -394,15 +464,44 @@ numericEditorApi()
     spin.setValue(42.);
     auto* line = spin.findChild<QLineEdit*>();
     require(line && line->isReadOnly(), "numeric editor starts in scrub mode");
+    require(line->cursor().shape() == Qt::SizeHorCursor, "scrub mode advertises horizontal dragging");
+    QKeyEvent firstDigit(QEvent::ShortcutOverride, Qt::Key_7, Qt::NoModifier, "7");
+    firstDigit.ignore();
+    QApplication::sendEvent(line, &firstDigit);
+    require(firstDigit.isAccepted(), "numeric entry overrides application shortcuts before the first key press");
     for (const auto& key : { std::make_pair(Qt::Key_7, QString("7")), std::make_pair(Qt::Key_Period, QString(".")),
                              std::make_pair(Qt::Key_5, QString("5")) }) {
         QKeyEvent press(QEvent::KeyPress, key.first, Qt::NoModifier, key.second);
         QApplication::sendEvent(line, &press);
     }
     require(!line->isReadOnly() && qAbs(spin.value() - 7.5) < 1e-8, "typing replaces the old scrub-mode value");
+    require(line->cursor().shape() == Qt::IBeamCursor, "direct entry uses the text cursor");
     QKeyEvent enter(QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier);
     QApplication::sendEvent(line, &enter);
     require(line->isReadOnly(), "Enter returns numeric editor to scrub mode");
+    require(line->cursor().shape() == Qt::SizeHorCursor, "committing restores the scrub cursor");
+
+    spin.setValue(42.);
+    QMouseEvent doubleClick(QEvent::MouseButtonDblClick, QPointF(10, 10), QPointF(10, 10), Qt::LeftButton,
+                            Qt::LeftButton, Qt::NoModifier);
+    QApplication::sendEvent(line, &doubleClick);
+    require(spin.isTextEditing() && line->selectedText() == line->text(), "double-click selects the complete value");
+    for (QWidget* target : { static_cast<QWidget*>(line), static_cast<QWidget*>(&spin) }) {
+        for (auto key : { Qt::Key_5, Qt::Key_A, Qt::Key_Delete }) {
+            QKeyEvent shortcut(QEvent::ShortcutOverride, key, Qt::NoModifier);
+            shortcut.ignore();
+            QApplication::sendEvent(target, &shortcut);
+            require(shortcut.isAccepted(), "direct entry keeps application shortcuts in the numeric editor");
+        }
+    }
+    QKeyEvent five(QEvent::KeyPress, Qt::Key_5, Qt::NoModifier, "5");
+    QApplication::sendEvent(line, &five);
+    require(spin.value() == 5., "first digit replaces the double-clicked value");
+    QApplication::sendEvent(line, &enter);
+    QKeyEvent shortcut(QEvent::ShortcutOverride, Qt::Key_A, Qt::NoModifier, "a");
+    shortcut.ignore();
+    QApplication::sendEvent(line, &shortcut);
+    require(!shortcut.isAccepted(), "unrelated application shortcuts remain available outside text editing");
 }
 
 void
@@ -465,9 +564,457 @@ renderEngineHdriApi()
                         "helper presentation preserves opaque/translucent objects and zero opacity");
             }
         }
+        const auto renderDome = [&](const QString& texture) {
+            settings.defaultCameraLightEnabled = false;
+            settings.domeLightTexture = texture;
+            engine.setSettings(settings);
+            require(fbo.bind() && engine.renderToCurrentFramebuffer(), "render dome texture override");
+            return fbo.toImage();
+        };
+        const QImage defaultDome = renderDome(QString());
+        require(renderDome(stageviz::renderresources::defaultDomeTexture()) == defaultDome,
+                "empty viewport HDRI selects the HDx Stinson Beach texture");
         engine.reset();
     }
     context.doneCurrent();
+}
+
+void
+propertyMaterialLightDropdownApi()
+{
+    auto* current = stageviz::session();
+    require(current->newStage(), "new material/light dropdown fixture");
+    const auto stage = current->stage();
+    auto texture = UsdShadeShader::Define(stage, SdfPath("/Texture"));
+    texture.CreateIdAttr(VtValue(TfToken("UsdUVTexture")));
+    auto image = UsdShadeShader::Define(stage, SdfPath("/Image"));
+    image.CreateIdAttr(VtValue(TfToken("ND_image_color3")));
+    struct Choice {
+        UsdAttribute attribute;
+        QStringList expected;
+    };
+    QList<Choice> choices;
+    for (const auto& name : { "wrapS", "wrapT" })
+        choices.append({ texture.CreateInput(TfToken(name), SdfValueTypeNames->Token).GetAttr(),
+                         { "black", "clamp", "repeat", "mirror", "useMetadata" } });
+    choices.append({ texture.CreateInput(TfToken("sourceColorSpace"), SdfValueTypeNames->Token).GetAttr(),
+                     { "raw", "sRGB", "auto" } });
+    for (const auto& name : { "uaddressmode", "vaddressmode", "frameendaction" })
+        choices.append({ image.CreateInput(TfToken(name), SdfValueTypeNames->String).GetAttr(),
+                         { "constant", "clamp", "periodic", "mirror" } });
+    choices.append({ image.CreateInput(TfToken("filtertype"), SdfValueTypeNames->String).GetAttr(),
+                     { "closest", "linear", "cubic" } });
+    for (const auto& choice : choices) {
+        if (choice.attribute.GetTypeName() == SdfValueTypeNames->String)
+            choice.attribute.Set(choice.expected.first().toStdString());
+        else
+            choice.attribute.Set(TfToken(choice.expected.first().toStdString()));
+    }
+    const auto dome = UsdLuxDomeLight_1::Define(stage, SdfPath("/Dome"));
+    const auto filter = UsdLuxLightFilter::Define(stage, SdfPath("/Filter"));
+    for (const auto& prim : { dome.GetPrim(), filter.GetPrim() }) {
+        for (const auto& attribute : prim.GetAttributes()) {
+            VtTokenArray allowed;
+            if (attribute.GetMetadata(SdfFieldKeys->AllowedTokens, &allowed) && !allowed.empty()) {
+                QStringList expected;
+                for (const auto& value : allowed)
+                    expected.append(QString::fromStdString(value.GetString()));
+                choices.append({ attribute, expected });
+            }
+        }
+    }
+    texture.CreateInput(TfToken("label"), SdfValueTypeNames->String).Set(std::string("free text"));
+    QThreadPool::globalInstance()->waitForDone();
+    stageviz::PropertyTree tree;
+    tree.updateStage(stage);
+    for (const auto& choice : choices) {
+        tree.updateSelection({ choice.attribute.GetPrimPath() });
+        stageviz::PropertyItem* found = nullptr;
+        QTreeWidgetItemIterator it(&tree);
+        while (*it) {
+            auto* item = dynamic_cast<stageviz::PropertyItem*>(*it);
+            if (item && item->propertyPath() == choice.attribute.GetPath())
+                found = item;
+            ++it;
+        }
+        require(found && found->editor() == stageviz::PropertyItem::TokenEditor,
+                "material and light enum attributes use dropdowns");
+        for (const auto& value : choice.expected)
+            require(found->editorOptions().contains(value), "dropdown contains the shader/schema enum value");
+        std::cout << choice.attribute.GetPath() << ": " << found->editorOptions().join(", ").toStdString() << '\n';
+    }
+    tree.updateSelection({ texture.GetPath() });
+    QTreeWidgetItemIterator it(&tree);
+    while (*it) {
+        auto* item = dynamic_cast<stageviz::PropertyItem*>(*it);
+        if (item && item->propertyPath() == texture.GetPath().AppendProperty(TfToken("inputs:label")))
+            require(item->editor() == stageviz::PropertyItem::TextEditor,
+                    "unconstrained shader strings retain text editing");
+        ++it;
+    }
+    tree.updateSelection({ image.GetPath() });
+    tree.expandAll();
+    tree.resize(640, 600);
+    tree.show();
+    auto* address = tree.findItems("inputs:uaddressmode", Qt::MatchExactly | Qt::MatchRecursive, 0).value(0);
+    require(address, "find string-valued MaterialX address input");
+    tree.setCurrentItem(address, stageviz::PropertyItem::Value);
+    tree.editItem(address, stageviz::PropertyItem::Value);
+    const auto drain = []() {
+        for (int i = 0; i < 6; ++i) {
+            QThreadPool::globalInstance()->waitForDone();
+            QCoreApplication::sendPostedEvents(nullptr, 0);
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 25);
+        }
+    };
+    drain();
+    auto* combo = tree.findChild<QComboBox*>();
+    require(combo && combo->findText("mirror") >= 0, "MaterialX string opens a dropdown");
+    current->commandStack()->clear();
+    combo->setCurrentText("mirror");
+    QKeyEvent enter(QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier);
+    QApplication::sendEvent(combo, &enter);
+    drain();
+    std::string value;
+    const auto attr = image.GetInput(TfToken("uaddressmode")).GetAttr();
+    require(attr.Get(&value) && value == "mirror", "dropdown preserves the MaterialX string type");
+    current->commandStack()->undo();
+    drain();
+    require(attr.Get(&value) && value == "constant", "undo restores the MaterialX string choice");
+    current->commandStack()->redo();
+    drain();
+    require(attr.Get(&value) && value == "mirror", "redo restores the MaterialX string choice");
+}
+
+void
+propertyAssetEditorApi()
+{
+    auto* current = stageviz::session();
+    require(current->newStage(), "new property asset fixture");
+    const auto dome = UsdLuxDomeLight::Define(current->stage(), SdfPath("/Dome"));
+    const auto asset = dome.CreateTextureFileAttr(VtValue(SdfAssetPath("original.exr")));
+    const auto format = dome.GetTextureFormatAttr();
+    const auto sync = current->stage()->GetPrimAtPath(SdfPath("/Dome")).GetAttribute(TfToken("light:materialSyncMode"));
+    const auto drain = []() {
+        for (int i = 0; i < 6; ++i) {
+            QThreadPool::globalInstance()->waitForDone();
+            QCoreApplication::sendPostedEvents(nullptr, 0);
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 25);
+        }
+    };
+    drain();
+    stageviz::PropertyTree tree;
+    tree.updateStage(current->stage());
+    tree.updateSelection({ SdfPath("/Dome") });
+    tree.expandAll();
+    tree.resize(640, 600);
+    tree.show();
+    drain();
+    const auto find = [&](const SdfPath& path) -> stageviz::PropertyItem* {
+        QTreeWidgetItemIterator it(&tree);
+        while (*it) {
+            auto* item = dynamic_cast<stageviz::PropertyItem*>(*it);
+            if (item && item->propertyPath() == path)
+                return item;
+            ++it;
+        }
+        return nullptr;
+    };
+    auto* fileItem = find(asset.GetPath());
+    require(fileItem && !fileItem->icon(stageviz::PropertyItem::Browse).isNull(), "asset attribute has an Open helper");
+    require(fileItem->editor() == stageviz::PropertyItem::TextEditor, "asset text editor remains unchanged");
+    for (const auto& attr : { format, sync }) {
+        auto* item = find(attr.GetPath());
+        VtTokenArray allowed;
+        require(item && attr.GetMetadata(SdfFieldKeys->AllowedTokens, &allowed), "USD provides token choices");
+        require(item->editor() == stageviz::PropertyItem::TokenEditor, "schema token attributes use dropdowns");
+        for (const auto& token : allowed)
+            require(item->editorOptions().contains(QString::fromStdString(token.GetString())),
+                    "dropdown includes USD allowed token");
+    }
+    tree.setCurrentItem(find(format.GetPath()), stageviz::PropertyItem::Value);
+    tree.editItem(find(format.GetPath()), stageviz::PropertyItem::Value);
+    drain();
+    auto* combo = tree.findChild<QComboBox*>();
+    require(combo && combo->findText("angular") >= 0, "texture format opens the allowed-token dropdown");
+    combo->setCurrentText("angular");
+    QKeyEvent enter(QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier);
+    QApplication::sendEvent(combo, &enter);
+    drain();
+    TfToken token;
+    require(format.Get(&token) && token == TfToken("angular"), "dropdown choice authors the token");
+    current->commandStack()->undo();
+    drain();
+    require(format.Get(&token) && token == TfToken("automatic"), "undo restores the previous token");
+    current->commandStack()->redo();
+    drain();
+    require(format.Get(&token) && token == TfToken("angular"), "redo restores the dropdown choice");
+    QTemporaryDir directory;
+    const QString chosen = directory.filePath("chosen.exr");
+    QFile file(chosen);
+    require(file.open(QIODevice::WriteOnly), "create asset chooser fixture");
+    file.close();
+    const bool previousNative = QCoreApplication::testAttribute(Qt::AA_DontUseNativeDialogs);
+    QCoreApplication::setAttribute(Qt::AA_DontUseNativeDialogs, true);
+    QSettings preferences(PROJECT_IDENTIFIER, PROJECT_NAME);
+    const bool hadAssetDir = preferences.contains("assetDir");
+    const QVariant previousAssetDir = preferences.value("assetDir");
+    bool dialogSeen = false;
+    const auto browse = [&](bool cancel) {
+        QTimer watchdog;
+        watchdog.setSingleShot(true);
+        bool timedOut = false;
+        QObject::connect(&watchdog, &QTimer::timeout, &tree, [&]() {
+            timedOut = true;
+            for (auto* widget : QApplication::topLevelWidgets()) {
+                if (auto* dialog = qobject_cast<QFileDialog*>(widget))
+                    dialog->reject();
+            }
+        });
+        watchdog.start(5000);
+        QTimer::singleShot(50, &tree, [&, cancel]() {
+            for (auto* widget : QApplication::topLevelWidgets()) {
+                if (auto* dialog = qobject_cast<QFileDialog*>(widget)) {
+                    if (!dialog->isVisible())
+                        continue;
+                    dialogSeen = true;
+                    if (cancel)
+                        dialog->reject();
+                    else {
+                        dialog->setDirectory(directory.path());
+                        QTimer::singleShot(100, dialog, [&, dialog]() {
+                            auto* filename = dialog->findChild<QLineEdit*>("fileNameEdit");
+                            require(filename, "Qt file chooser exposes its filename editor");
+                            filename->setText(chosen);
+                            QMetaObject::invokeMethod(dialog, "accept", Qt::QueuedConnection);
+                        });
+                    }
+                }
+            }
+        });
+        tree.scrollToItem(fileItem);
+        const QPoint position(tree.header()->sectionViewportPosition(stageviz::PropertyItem::Browse) + 16,
+                              tree.visualItemRect(fileItem).center().y());
+        QMouseEvent press(QEvent::MouseButtonPress, QPointF(position), QPointF(tree.viewport()->mapToGlobal(position)),
+                          Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(tree.viewport(), &press);
+        QMouseEvent release(QEvent::MouseButtonRelease, QPointF(position),
+                            QPointF(tree.viewport()->mapToGlobal(position)), Qt::LeftButton, Qt::NoButton,
+                            Qt::NoModifier);
+        QApplication::sendEvent(tree.viewport(), &release);
+        watchdog.stop();
+        drain();
+        require(!timedOut, "file chooser automation completes without manual intervention");
+    };
+    current->commandStack()->clear();
+    browse(true);
+    SdfAssetPath value;
+    require(dialogSeen && asset.Get(&value) && value.GetAssetPath() == "original.exr", "cancel preserves asset path");
+    dialogSeen = false;
+    browse(false);
+    asset.Get(&value);
+    if (!dialogSeen || value.GetAssetPath() != chosen.toStdString())
+        std::cerr << "Asset chooser: dialog=" << dialogSeen << ", value=" << value.GetAssetPath()
+                  << ", expected=" << chosen.toStdString() << '\n';
+    require(dialogSeen && asset.Get(&value) && value.GetAssetPath() == chosen.toStdString(),
+            "Open helper authors chosen asset");
+    current->commandStack()->undo();
+    drain();
+    require(asset.Get(&value) && value.GetAssetPath() == "original.exr", "undo restores original asset path");
+    current->commandStack()->redo();
+    drain();
+    require(asset.Get(&value) && value.GetAssetPath() == chosen.toStdString(), "redo restores chosen asset path");
+    if (hadAssetDir)
+        preferences.setValue("assetDir", previousAssetDir);
+    else
+        preferences.remove("assetDir");
+    QCoreApplication::setAttribute(Qt::AA_DontUseNativeDialogs, previousNative);
+
+    current->selectionList()->updatePaths({ SdfPath("/Dome") });
+    stageviz::PropertyView view;
+    view.resize(640, 600);
+    view.show();
+    drain();
+    auto* embedded = view.findChild<stageviz::PropertyTree*>("propertyTree");
+    require(embedded && embedded->columnCount() == 3, "Designer Property View preserves the Browse column");
+    require(!embedded->isColumnHidden(stageviz::PropertyItem::Browse)
+                && embedded->columnWidth(stageviz::PropertyItem::Browse) == 32,
+            "Property View keeps the file helper column visible at its fixed width");
+    stageviz::PropertyItem* embeddedFile = nullptr;
+    QTreeWidgetItemIterator iterator(embedded);
+    while (*iterator) {
+        auto* item = dynamic_cast<stageviz::PropertyItem*>(*iterator);
+        if (item && item->propertyPath() == asset.GetPath())
+            embeddedFile = item;
+        ++iterator;
+    }
+    require(embeddedFile && !embeddedFile->icon(stageviz::PropertyItem::Browse).isNull(),
+            "embedded dome-light asset displays the Open icon");
+    embedded->expandAll();
+    embedded->scrollToItem(embeddedFile);
+    embedded->setCurrentItem(embeddedFile, stageviz::PropertyItem::Value);
+    embedded->editItem(embeddedFile, stageviz::PropertyItem::Value);
+    drain();
+    auto* editor = embedded->findChild<QLineEdit*>();
+    const int helperLeft = embedded->header()->sectionViewportPosition(stageviz::PropertyItem::Browse);
+    require(editor && editor->isVisible() && editor->geometry().right() < helperLeft,
+            "asset text editor leaves the Open helper visible");
+}
+
+void
+materialNumericEditorApi()
+{
+    auto* current = stageviz::session();
+    const auto drain = []() {
+        for (int i = 0; i < 6; ++i) {
+            QThreadPool::globalInstance()->waitForDone();
+            QCoreApplication::sendPostedEvents(nullptr, 0);
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 25);
+        }
+    };
+    struct Fixture {
+        SdfValueTypeName type;
+        VtValue initial;
+        VtValue typed;
+    };
+    for (const auto& fixture :
+         { Fixture { SdfValueTypeNames->Int, VtValue(1), VtValue(5) },
+           Fixture { SdfValueTypeNames->Float2, VtValue(GfVec2f(1)), VtValue(GfVec2f(5, 1)) },
+           Fixture { SdfValueTypeNames->Float3, VtValue(GfVec3f(1)), VtValue(GfVec3f(5, 1, 1)) },
+           Fixture { SdfValueTypeNames->Float4, VtValue(GfVec4f(1)), VtValue(GfVec4f(5, 1, 1, 1)) } }) {
+        require(current->newStage(), "new material numeric fixture");
+        QList<stageviz::MaterialEntry> entries;
+        QList<UsdAttribute> attributes;
+        for (const auto& name : { "One", "Two" }) {
+            stageviz::MaterialEntry entry;
+            entry.materialPath = SdfPath(std::string("/Materials/") + name);
+            entry.shaderPath = entry.materialPath.AppendChild(TfToken("Surface"));
+            auto shader = UsdShadeShader::Define(current->stage(), entry.shaderPath);
+            auto input = shader.CreateInput(TfToken("test"), fixture.type);
+            input.Set(fixture.initial);
+            attributes.append(input.GetAttr());
+            stageviz::MaterialInputInfo info;
+            info.parameter = "test";
+            info.label = "Test";
+            info.group = "Inputs";
+            info.inputPath = input.GetAttr().GetPath();
+            info.typeName = fixture.type;
+            info.hasValue = true;
+            info.value = fixture.initial;
+            entry.inputs.insert("test", info);
+            entries.append(entry);
+        }
+        drain();
+        current->commandStack()->clear();
+        stageviz::MaterialTree tree;
+        tree.setMaterials(entries);
+        tree.resize(640, 480);
+        tree.expandAll();
+        tree.show();
+        drain();
+        auto* item = tree.topLevelItem(0)->child(0);
+        if (item->childCount())
+            item = item->child(0);
+        auto* spin = qobject_cast<stageviz::SpinBox*>(tree.itemWidget(item, 1));
+        require(spin, "material numeric inputs use the shared SpinBox");
+        auto* line = spin->findChild<QLineEdit*>();
+        require(line && line->isReadOnly(), "material numeric input starts in scrub mode");
+        QMouseEvent doubleClick(QEvent::MouseButtonDblClick, QPointF(10, 10), QPointF(10, 10), Qt::LeftButton,
+                                Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(line, &doubleClick);
+        QKeyEvent shortcut(QEvent::ShortcutOverride, Qt::Key_5, Qt::NoModifier, "5");
+        shortcut.ignore();
+        QApplication::sendEvent(line, &shortcut);
+        require(shortcut.isAccepted(), "material numeric entry claims application shortcuts");
+        QKeyEvent five(QEvent::KeyPress, Qt::Key_5, Qt::NoModifier, "5");
+        QApplication::sendEvent(line, &five);
+        require(spin->value() == 5., "typing replaces the entire material component value");
+        QKeyEvent enter(QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier);
+        QApplication::sendEvent(line, &enter);
+        drain();
+        const auto authoredValuesEqual = [&](const VtValue& expected) {
+            for (const auto& attribute : attributes) {
+                VtValue value;
+                if (!attribute.Get(&value) || value != expected)
+                    return false;
+            }
+            return true;
+        };
+        require(authoredValuesEqual(fixture.typed),
+                "numeric commit updates both materials and preserves other components");
+        current->commandStack()->undo();
+        drain();
+        require(authoredValuesEqual(fixture.initial), "undo restores material numeric values");
+        current->commandStack()->redo();
+        drain();
+        require(authoredValuesEqual(fixture.typed), "redo restores typed material numeric values");
+
+        QMouseEvent press(QEvent::MouseButtonPress, QPointF(10, 10), QPointF(10, 10), Qt::LeftButton, Qt::LeftButton,
+                          Qt::NoModifier);
+        QApplication::sendEvent(line, &press);
+        QMouseEvent move(QEvent::MouseMove, QPointF(40, 10), QPointF(40, 10), Qt::NoButton, Qt::LeftButton,
+                         Qt::NoModifier);
+        QApplication::sendEvent(line, &move);
+        QMouseEvent release(QEvent::MouseButtonRelease, QPointF(40, 10), QPointF(40, 10), Qt::LeftButton, Qt::NoButton,
+                            Qt::NoModifier);
+        QApplication::sendEvent(line, &release);
+        drain();
+        if (!(spin->value() > 5. && !authoredValuesEqual(fixture.typed)))
+            std::cerr << "Material numeric fixture " << fixture.type.GetAsToken().GetString()
+                      << ": scrub value=" << spin->value() << ", text editing=" << spin->isTextEditing()
+                      << ", USD unchanged=" << authoredValuesEqual(fixture.typed) << '\n';
+        require(spin->value() > 5. && !authoredValuesEqual(fixture.typed), "scrub release commits the material edit");
+        QApplication::sendEvent(line, &enter);
+        drain();
+        current->commandStack()->undo();
+        drain();
+        require(authoredValuesEqual(fixture.typed), "scrub release and editingFinished create one undoable edit");
+    }
+}
+
+void
+materialSwatchAlphaApi()
+{
+    stageviz::MaterialRenderer renderer;
+    QImage image;
+    QString error;
+    QObject::connect(&renderer, &stageviz::MaterialRenderer::rendered, &renderer,
+                     [&](const QString&, const QImage& result) { image = result; });
+    QObject::connect(&renderer, &stageviz::MaterialRenderer::error, &renderer,
+                     [&](const QString&, const QString& message) { error = message; });
+    const auto checkRender = [&](const std::function<void()>& request) {
+        image = {};
+        error.clear();
+        request();
+        QElapsedTimer timer;
+        timer.start();
+        while (image.isNull() && error.isEmpty() && timer.elapsed() < 60000) {
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 25);
+            QThread::msleep(1);
+        }
+        require(error.isEmpty() && !image.isNull(), "render a material swatch");
+        require(image.hasAlphaChannel(), "material swatch retains alpha");
+        for (const QPoint corner : { QPoint(0, 0), QPoint(image.width() - 1, 0), QPoint(0, image.height() - 1),
+                                     QPoint(image.width() - 1, image.height() - 1) })
+            require(image.pixelColor(corner).alpha() == 0, "swatch background is fully transparent");
+        require(image.pixelColor(image.width() / 2, image.height() / 2).alpha() == 255,
+                "opaque shaderball remains visible against the transparent background");
+    };
+
+    const SdfPath path("/Materials/Swatch");
+    checkRender([&]() { renderer.request(path, stageviz::MaterialParameters()); });
+
+    const auto stage = UsdStage::CreateInMemory();
+    const auto material = UsdShadeMaterial::Define(stage, path);
+    auto shader = UsdShadeShader::Define(stage, path.AppendChild(TfToken("Surface")));
+    shader.CreateIdAttr(VtValue(TfToken("UsdPreviewSurface")));
+    const auto color = shader.CreateInput(TfToken("diffuseColor"), SdfValueTypeNames->Color3f);
+    color.Set(GfVec3f(.5f));
+    material.CreateSurfaceOutput().ConnectToSource(shader.CreateOutput(TfToken("surface"), SdfValueTypeNames->Token));
+    checkRender([&]() { renderer.request(path, stage->GetRootLayer()); });
+    checkRender([&]() {
+        renderer.preview(path, stage->GetRootLayer(), color.GetAttr().GetPath(), VtValue(GfVec3f(.8f, .2f, .1f)));
+    });
 }
 
 void
@@ -489,6 +1036,8 @@ materialBrowserApi()
 
     browser.setEntries({ first, second });
     require(browser.entries().size() == 2, "material browser stores entries");
+    require(browser.swatch(0).hasAlphaChannel() && browser.swatch(0).pixelColor(0, 0).alpha() == 0,
+            "pending swatches leave the browser card background visible");
     require(browser.entry(0) && browser.entry(0)->materialPath == first.materialPath,
             "material browser exposes entry by row");
     require(browser.entry(-1) == nullptr && browser.entry(99) == nullptr,
@@ -2775,6 +3324,10 @@ main(int argc, char** argv)
         { "renderengine_hdri_api", renderEngineHdriApi },
         { "material_browser_api", materialBrowserApi },
         { "property_reveal_file_api", propertyRevealFileApi },
+        { "material_numeric_editor_api", materialNumericEditorApi },
+        { "property_asset_editor_api", propertyAssetEditorApi },
+        { "property_material_light_dropdown_api", propertyMaterialLightDropdownApi },
+        { "material_swatch_alpha_api", materialSwatchAlphaApi },
         { "geometry_subset_gui_api", geometrySubsetGuiApi },
         { "outliner_reset_opinions_menu_api", outlinerResetOpinionsMenuApi },
         { "outliner_layer_colors_api", outlinerLayerColorsApi },

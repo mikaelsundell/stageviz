@@ -12,8 +12,9 @@ After configuring/building a development checkout with `build_app`, run:
 
 On Windows, use `test_app.bat Debug`, `test_app.bat Release`, or
 `test_app.bat All`. Both entry points use the same Python 3 controller and
-incrementally build `stageviz` and `stageviz_tests` before running **every
-registered CTest and every embedded Python suite**. Native/GUI tests run
+refresh the existing CMake configuration with `BUILD_TESTING=ON` and incrementally build `stageviz` and
+`stageviz_tests` before running **every registered CTest and every embedded
+Python suite**. Native/GUI tests run
 serially, followed by isolated application processes controlled through MCP.
 The embedded API performance checks and UI large-tree checks are included.
 Manual benchmark comparisons requiring supplied datasets are separate tools.
@@ -31,10 +32,10 @@ and `--cmake PATH` support custom single-configuration builds. Examples:
 ```
 
 The default output is `build.test-results/<run>/`, containing an overall
-`summary.json`, build/CTest/Python logs, native `ctest.xml`, per-suite summaries,
-MCP oracles, resource samples and screenshot paths. Test failures return a
-nonzero exit status. Python suites still run after CTest failures; build failures
-stop that configuration to avoid testing stale binaries. API timing baselines
+`summary.json`, configure/build/CTest/Python logs, native `ctest.xml`, per-suite
+summaries, MCP oracles, resource samples and screenshot paths. Test failures
+return a nonzero exit status. Python suites still run after CTest failures;
+configure/build failures stop that configuration to avoid testing stale binaries. API timing baselines
 are kept per configuration under the build's `test-baselines/` directory.
 
 The disposable runner starts the public native MCP server on a free loopback
@@ -46,7 +47,10 @@ Windows resource monitoring uses the native process API; macOS additionally
 records system memory pressure and holds a finite App Nap activity scope.
 
 `stageviz.test_app_runner` tests discovery, paths with spaces, configuration
-selection and failure propagation. `stageviz.gui.mcp_server_api` checks native
+selection, configuration-before-build ordering and failure propagation. The
+configuration step refreshes IDE source lists before MSBuild/Xcode starts, so
+new implementation files are compiled after switching branches or pulling changes.
+`stageviz.gui.mcp_server_api` checks native
 tools discovery on an ephemeral port and rejection of invalid Host/Origin
 headers and invalid port settings.
 
@@ -385,24 +389,42 @@ The script does not autorun; its `run(disposable=True)` executes all phases.
 
 - `renderengine_hdri_api` changes opacity through opaque, translucent, zero and
   back to opaque with the dome background off/on and a separate helper pass.
+  It also compares default dome lighting with the explicit HDx Stinson Beach HDRI.
 - `testviewporthdri.py` checks Preview Surface and MaterialX opacity with camera
   lighting, HDRI lighting, combined lights, default/custom HDRI paths, background
   toggles, and shaded/wireframe presentation in a disposable viewer. It stores
   viewport screenshots and Qt snapshots for each fixture.
 
 - `light_command_api` covers all standard light presets, shaped spots, selection
-  restoration and redo. `viewport_lights_api` covers guide picking, sweep hits,
+  restoration, the HDx Stinson Beach dome texture and redo.
+  `render_resources_api` checks HDx resource lookup and the Radiance header for
+  the Stinson Beach HDRI shared by viewport, dome lights and material previews.
+  `viewport_lights_api` covers guide picking, sweep hits,
   isolate masks, visibility and the absence of document authoring by helpers.
 - `testlights.py` exercises every Create action and Python light factory, click
   and sweep selection, Move undo/redo, Qt snapshots and clean viewport capture
   in a disposable viewer.
 
-- `numeric_editor_api` checks typing directly into a scrub-mode spin box.
-  `testnumericeditors.py` checks numeric replacement, stable row focus, repeated
+- `numeric_editor_api` checks typing directly into a scrub-mode spin box,
+  double-click replacement, scrub/text cursor transitions and shortcut ownership during numeric entry.
+  `testnumericeditors.py` checks double-click replacement with conflicting
+  application shortcuts, numeric replacement, stable row focus, repeated
   property drags without closing the editor, undo/redo refresh and keyboard
   commit through the real Property Editor in a disposable viewer. It also checks
   gizmo-panel visibility across selection changes and non-accumulating numeric
   Move/Scale previews.
+
+- `material_numeric_editor_api` checks shared spin-box keyboard ownership,
+  double-click replacement, integer and vector multi-material commits, scrub
+  release, and undo/redo without duplicate commits when editing finishes.
+- `property_asset_editor_api` checks the asset Open helper, preserved text
+  editing, USD allowed-token dropdowns, Qt file-chooser cancellation and selection,
+  and asset path undo/redo. It does not automate the native OS file chooser.
+  It also checks the Designer-created Property View retains the Browse column
+  and keeps the dome-light Open icon visible while editing the path.
+- `property_material_light_dropdown_api` checks shader-definition choices for
+  USD UV-texture wrapping/color space and MaterialX image addressing/filtering,
+  schema choices on dome lights/light filters, and free-form string editing.
 
 - `testlights.py` also isolates the default Distant light with other sources off,
   checking visible illumination, rotation, translation independence, and undo.
@@ -426,7 +448,10 @@ world-Z snapping uses the same XYZ convention and preserves the X/Y components
 through preview, Applied registration and undo/redo.
 
 Corner-axis sizing is centralized in `UI::axisSize` / `setAxisSize`, with 36/72/144
-logical-pixel defaults. `ui_api` covers sizing notifications and invalid values;
+logical-pixel defaults. `ui_api` covers sizing notifications and invalid values,
+and verifies that header hover cursors cover the widened grip, splitter/header
+drags retain their resize cursor and restore
+the previous cursor on release;
 `viewport_components_api` checks scaled images and hit targets at standard and
 high DPI, including an odd logical size. `python/testaxissize.py` checks the
 embedded API, immediate live repaint and the visible indicator footprint while
@@ -470,7 +495,10 @@ Path collection conventions are documented in [docs/path-collections.md](../docs
 `selection_list_semantics` checks identical and duplicate updates with empty paths
 and order changes, including notification counts. `material_browser_api` checks
 that reordered, removed, and appended entries retain selection and swatches by
-USD path. These complement `qt_path_hash_api` and `indexed_path_api` native key
+USD path, with transparent placeholders while rendering is pending.
+`material_swatch_alpha_api` checks fully transparent background corners and an
+opaque shaderball center for fallback, authored-network and interactive swatches.
+These complement `qt_path_hash_api` and `indexed_path_api` native key
 and collection coverage.
 
 Native performance logging regressions cover unset, empty and enabled startup

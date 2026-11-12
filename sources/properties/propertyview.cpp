@@ -59,8 +59,7 @@ PropertyViewPrivate::init()
     d.context->setStageLock(session()->stageLock());
     d.context->setCommandStack(session()->commandStack());
 
-    d.ui->propertyTree->setHeaderLabels(QStringList() << "Name"
-                                                      << "Value");
+    d.ui->propertyTree->setHeaderLabels({ "Name", "Value", "" });
     d.ui->propertyTree->setContext(d.context.data());
     d.ui->propertyTree->setColumnWidth(0, 160);
     d.ui->propertyTree->header()->setSectionResizeMode(1, QHeaderView::Stretch);

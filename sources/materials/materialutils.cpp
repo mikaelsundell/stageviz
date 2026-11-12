@@ -23,6 +23,7 @@
 #include <pxr/base/vt/array.h>
 #include <pxr/base/vt/value.h>
 #include <pxr/usd/sdf/assetPath.h>
+#include <pxr/usd/sdf/schema.h>
 #include <pxr/usd/sdr/registry.h>
 #include <pxr/usd/sdr/shaderNode.h>
 #include <pxr/usd/sdr/shaderProperty.h>
@@ -558,7 +559,7 @@ namespace {
         info.hasValue = input.Get(&info.value);
         info.hasAuthoredValue = input.GetAttr().HasAuthoredValueOpinion();
         info.declared = false;
-        info.options = materialXInputOptions(shaderId, info.inputName);
+        info.options = MaterialUtils::inputOptions(input.GetAttr());
         readSdrUiMetadata(shaderId, info.inputName, info);
         // Resolve through UsdShadeNodeGraph outputs so the inspector navigates
         // to the actual upstream shader instead of stopping at the node graph.
@@ -1372,6 +1373,35 @@ MaterialUtils::inputInfo(const MaterialEntry& entry, const QString& parameter)
 {
     const auto it = entry.inputs.constFind(parameter);
     return it == entry.inputs.cend() ? nullptr : &it.value();
+}
+
+QStringList
+MaterialUtils::inputOptions(const UsdAttribute& attribute)
+{
+    if (!attribute)
+        return {};
+    QStringList values;
+    VtTokenArray allowed;
+    if (attribute.GetMetadata(SdfFieldKeys->AllowedTokens, &allowed)) {
+        for (const auto& token : allowed)
+            values.append(QString::fromStdString(token.GetString()));
+    }
+    const UsdShadeInput input(attribute);
+    if (values.isEmpty() && input) {
+        const QString shaderId = shaderIdForPrim(attribute.GetPrim());
+        if (const auto node = richestSdrShaderNode(shaderId)) {
+            if (const auto property = node->GetShaderInput(input.GetBaseName())) {
+                for (const auto& option : property->GetOptions()) {
+                    const auto& value = option.second.IsEmpty() ? option.first : option.second;
+                    values.append(QString::fromStdString(value.GetString()));
+                }
+            }
+        }
+        if (values.isEmpty())
+            values = materialXInputOptions(shaderId, input.GetBaseName());
+    }
+    values.removeDuplicates();
+    return values;
 }
 
 MaterialNodeInfo

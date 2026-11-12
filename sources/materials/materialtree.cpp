@@ -32,7 +32,6 @@
 #include <QScrollBar>
 #include <QSet>
 #include <QSignalBlocker>
-#include <QSpinBox>
 #include <QTimer>
 #include <QToolButton>
 #include <QTreeWidgetItemIterator>
@@ -52,6 +51,8 @@ namespace stageviz {
 
 namespace {
     constexpr int kMinimumPropertyColumnWidth = 120;
+    constexpr int kMinimumValueColumnWidth = 120;
+    constexpr int kActionColumnWidth = 44;
     constexpr int kActionRole = Qt::UserRole + 20;
     constexpr int kActionPathRole = Qt::UserRole + 21;
     constexpr int kGroupNameRole = Qt::UserRole + 22;
@@ -167,17 +168,21 @@ MaterialTreePrivate::init()
     d.tree->setHeaderLabels({ "Property", "Value", "" });
     d.tree->header()->setVisible(true);
     d.tree->header()->setStretchLastSection(false);
-    d.tree->header()->setSectionsMovable(true);
+    d.tree->header()->setSectionsMovable(false);
     d.tree->header()->setMinimumSectionSize(36);
-    // Property absorbs all horizontal resizing from the parent panel. Value
-    // and the action column are fixed so the header exposes no resize handles.
-    d.tree->header()->setSectionResizeMode(0, QHeaderView::Stretch);
-    d.tree->header()->setSectionResizeMode(1, QHeaderView::Fixed);
+    // Dragging the Property/Value divider redistributes their space while
+    // Value absorbs panel resizing and the action column stays fixed.
+    d.tree->header()->setSectionResizeMode(0, QHeaderView::Interactive);
+    d.tree->header()->setSectionResizeMode(1, QHeaderView::Stretch);
     d.tree->header()->setSectionResizeMode(2, QHeaderView::Fixed);
 
-    d.tree->header()->resizeSection(1, 120);
-    d.tree->header()->resizeSection(2, 44);
-    d.tree->setMinimumWidth(kMinimumPropertyColumnWidth + 120 + 44);
+    d.tree->header()->resizeSection(0, 240);
+    d.tree->header()->resizeSection(2, kActionColumnWidth);
+    d.tree->setMinimumWidth(kMinimumPropertyColumnWidth + kMinimumValueColumnWidth + kActionColumnWidth
+                            + 2 * d.tree->frameWidth());
+    connect(d.tree->header(), &QHeaderView::sectionResized, this, [this]() { updateColumnWidths(); });
+    d.tree->viewport()->installEventFilter(this);
+    QTimer::singleShot(0, d.tree.data(), [this]() { updateColumnWidths(); });
 
     connect(d.tree.data(), &QTreeWidget::itemExpanded, d.tree.data(), [this](QTreeWidgetItem* item) {
         if (!item || !item->data(0, kGroupPopulatedRole).isValid() || d.currentNode.IsEmpty())
@@ -205,10 +210,6 @@ MaterialTreePrivate::init()
     d.iconNew = ui()->icon(UI::IconRole::New, UI::UIScale::Small);
     d.iconOpen = ui()->icon(UI::IconRole::Open, UI::UIScale::Small);
 
-    d.tree->installEventFilter(this);
-    d.tree->viewport()->installEventFilter(this);
-
-    QTimer::singleShot(0, d.tree.data(), [this]() { updateColumnWidths(); });
     d.tree->setRootIsDecorated(true);
     d.tree->setUniformRowHeights(false);
     d.tree->setSelectionMode(QAbstractItemView::NoSelection);
@@ -252,26 +253,20 @@ MaterialTreePrivate::init()
 void
 MaterialTreePrivate::updateColumnWidths()
 {
-    if (!d.tree || d.tree->columnCount() < 3)
-        return;
-
-    QHeaderView* header = d.tree->header();
-    if (!header)
-        return;
-
-    // Value and action widths are intentionally fixed. Property is Stretch and
-    // therefore takes all remaining space whenever the parent panel resizes.
-    header->resizeSection(1, 120);
-    header->resizeSection(2, 44);
+    auto* header = d.tree->header();
+    const int maximumPropertyWidth = std::max(kMinimumPropertyColumnWidth, d.tree->viewport()->width()
+                                                                               - kMinimumValueColumnWidth
+                                                                               - kActionColumnWidth);
+    const int propertyWidth = std::clamp(header->sectionSize(0), kMinimumPropertyColumnWidth, maximumPropertyWidth);
+    if (header->sectionSize(0) != propertyWidth)
+        header->resizeSection(0, propertyWidth);
 }
 
 bool
 MaterialTreePrivate::eventFilter(QObject* object, QEvent* event)
 {
-    if (event && event->type() == QEvent::Resize && (object == d.tree || (d.tree && object == d.tree->viewport()))) {
+    if (object == d.tree->viewport() && event->type() == QEvent::Resize)
         updateColumnWidths();
-    }
-
     return QObject::eventFilter(object, event);
 }
 
@@ -750,7 +745,6 @@ MaterialTreePrivate::addInputRow(QTreeWidgetItem* group, const MaterialInputInfo
     }
 
     if (info.typeName == SdfValueTypeNames->Int) {
-        auto* spin = new QSpinBox(d.tree.data());
         int minimum = std::numeric_limits<int>::min();
         int maximum = std::numeric_limits<int>::max();
         if (info.hasUiMin)
@@ -763,15 +757,17 @@ MaterialTreePrivate::addInputRow(QTreeWidgetItem* group, const MaterialInputInfo
                                                   static_cast<double>(std::numeric_limits<int>::max())));
         if (minimum > maximum)
             std::swap(minimum, maximum);
-        spin->setRange(minimum, maximum);
+        double step = 1.0;
         if (info.hasUiStep && std::isfinite(info.uiStep) && info.uiStep > 0.0)
-            spin->setSingleStep(std::max(1, static_cast<int>(std::round(info.uiStep))));
+            step = std::clamp(std::round(info.uiStep), 1.0, double(std::numeric_limits<int>::max()));
+        auto* spin = new FloatControl(minimum, maximum, step, d.tree.data());
+        spin->setDecimals(0);
         prepareRowWidget(spin);
-        spin->setValue(info.hasValue && info.value.IsHolding<int>() ? info.value.UncheckedGet<int>() : 0);
-        connect(spin, &QSpinBox::editingFinished, d.tree.data(), [this, editPaths, spin]() {
+        spin->setValue(info.hasValue && info.value.IsHolding<int>() ? info.value.UncheckedGet<int>() : 0, false);
+        spin->changed = [this, editPaths](double value) {
             if (!editPaths.isEmpty())
-                setInputValues(editPaths, VtValue(spin->value()));
-        });
+                setInputValues(editPaths, VtValue(static_cast<int>(value)));
+        };
         d.tree->setItemWidget(item, 1, spin);
         spin->show();
         item->setSizeHint(1, QSize(0, 30));
@@ -793,23 +789,21 @@ MaterialTreePrivate::addInputRow(QTreeWidgetItem* group, const MaterialInputInfo
             channelItem->setData(0, Qt::UserRole, QString::fromStdString(info.inputPath.GetString()));
             applyNextRowBackground(channelItem);
 
-            auto* spin = new SpinBox(d.tree.data());
             const NumericEditorSpec spec = numericEditorSpec(info);
-            spin->setRange(spec.minimum, spec.maximum);
+            auto* spin = new FloatControl(spec.minimum, spec.maximum, spec.step, d.tree.data());
             spin->setDecimals(4);
-            spin->setSingleStep(spec.step);
             prepareRowWidget(spin);
-            spin->setValue(initial[channel]);
+            spin->setValue(initial[channel], false);
             (*controls)[channel] = spin;
 
-            connect(spin, &QDoubleSpinBox::editingFinished, d.tree.data(), [this, editPaths, controls]() {
+            spin->changed = [this, editPaths, controls](double) {
                 if (editPaths.isEmpty() || !(*controls)[0] || !(*controls)[1])
                     return;
 
                 const GfVec2f value(static_cast<float>((*controls)[0]->value()),
                                     static_cast<float>((*controls)[1]->value()));
                 setInputValues(editPaths, VtValue(value));
-            });
+            };
             d.tree->setItemWidget(channelItem, 1, spin);
             spin->show();
             channelItem->setSizeHint(1, QSize(0, 30));
@@ -832,16 +826,14 @@ MaterialTreePrivate::addInputRow(QTreeWidgetItem* group, const MaterialInputInfo
             channelItem->setToolTip(0, QString::fromStdString(info.inputPath.GetString()));
             applyNextRowBackground(channelItem);
 
-            auto* spin = new SpinBox(d.tree.data());
             const NumericEditorSpec spec = numericEditorSpec(info);
-            spin->setRange(spec.minimum, spec.maximum);
+            auto* spin = new FloatControl(spec.minimum, spec.maximum, spec.step, d.tree.data());
             spin->setDecimals(4);
-            spin->setSingleStep(spec.step);
             prepareRowWidget(spin);
-            spin->setValue(initial[channel]);
+            spin->setValue(initial[channel], false);
             (*controls)[channel] = spin;
 
-            connect(spin, &QDoubleSpinBox::editingFinished, d.tree.data(), [this, editPaths, controls]() {
+            spin->changed = [this, editPaths, controls](double) {
                 if (editPaths.isEmpty() || !(*controls)[0] || !(*controls)[1] || !(*controls)[2])
                     return;
 
@@ -849,7 +841,7 @@ MaterialTreePrivate::addInputRow(QTreeWidgetItem* group, const MaterialInputInfo
                                     static_cast<float>((*controls)[1]->value()),
                                     static_cast<float>((*controls)[2]->value()));
                 setInputValues(editPaths, VtValue(value));
-            });
+            };
             d.tree->setItemWidget(channelItem, 1, spin);
             spin->show();
             channelItem->setSizeHint(1, QSize(0, 30));
@@ -874,16 +866,14 @@ MaterialTreePrivate::addInputRow(QTreeWidgetItem* group, const MaterialInputInfo
             channelItem->setToolTip(0, QString::fromStdString(info.inputPath.GetString()));
             applyNextRowBackground(channelItem);
 
-            auto* spin = new SpinBox(d.tree.data());
             const NumericEditorSpec spec = numericEditorSpec(info, color);
-            spin->setRange(spec.minimum, spec.maximum);
+            auto* spin = new FloatControl(spec.minimum, spec.maximum, spec.step, d.tree.data());
             spin->setDecimals(4);
-            spin->setSingleStep(spec.step);
             prepareRowWidget(spin);
-            spin->setValue(initial[channel]);
+            spin->setValue(initial[channel], false);
             (*controls)[channel] = spin;
 
-            connect(spin, &QDoubleSpinBox::editingFinished, d.tree.data(), [this, editPaths, controls]() {
+            spin->changed = [this, editPaths, controls](double) {
                 if (editPaths.isEmpty() || !(*controls)[0] || !(*controls)[1] || !(*controls)[2] || !(*controls)[3])
                     return;
 
@@ -892,7 +882,7 @@ MaterialTreePrivate::addInputRow(QTreeWidgetItem* group, const MaterialInputInfo
                                     static_cast<float>((*controls)[2]->value()),
                                     static_cast<float>((*controls)[3]->value()));
                 setInputValues(editPaths, VtValue(value));
-            });
+            };
             d.tree->setItemWidget(channelItem, 1, spin);
             spin->show();
             channelItem->setSizeHint(1, QSize(0, 30));
@@ -1076,23 +1066,23 @@ MaterialTreePrivate::refreshInputItem(QTreeWidgetItem* item, const MaterialInput
     }
 
     if (info.typeName == SdfValueTypeNames->Int) {
-        auto* spin = qobject_cast<QSpinBox*>(editor);
+        auto* spin = dynamic_cast<FloatControl*>(editor);
         if (!spin)
             return;
         const int value = info.hasValue && info.value.IsHolding<int>() ? info.value.UncheckedGet<int>() : 0;
         const QSignalBlocker blocker(spin);
-        spin->setValue(value);
+        spin->setValue(value, false);
         return;
     }
 
     if (info.typeName == SdfValueTypeNames->Float2 || info.typeName == SdfValueTypeNames->TexCoord2f) {
         const GfVec2f value = vec2Value(info);
         for (int channel = 0; channel < std::min(2, item->childCount()); ++channel) {
-            auto* spin = qobject_cast<SpinBox*>(d.tree->itemWidget(item->child(channel), 1));
+            auto* spin = dynamic_cast<FloatControl*>(d.tree->itemWidget(item->child(channel), 1));
             if (!spin)
                 continue;
             const QSignalBlocker blocker(spin);
-            spin->setValue(value[channel]);
+            spin->setValue(value[channel], false);
         }
         return;
     }
@@ -1100,11 +1090,11 @@ MaterialTreePrivate::refreshInputItem(QTreeWidgetItem* item, const MaterialInput
     if (info.typeName == SdfValueTypeNames->Float3) {
         const GfVec3f value = colorValue(info);
         for (int channel = 0; channel < std::min(3, item->childCount()); ++channel) {
-            auto* spin = qobject_cast<SpinBox*>(d.tree->itemWidget(item->child(channel), 1));
+            auto* spin = dynamic_cast<FloatControl*>(d.tree->itemWidget(item->child(channel), 1));
             if (!spin)
                 continue;
             const QSignalBlocker blocker(spin);
-            spin->setValue(value[channel]);
+            spin->setValue(value[channel], false);
         }
         return;
     }
@@ -1112,11 +1102,11 @@ MaterialTreePrivate::refreshInputItem(QTreeWidgetItem* item, const MaterialInput
     if (info.typeName == SdfValueTypeNames->Float4 || info.typeName == SdfValueTypeNames->Color4f) {
         const GfVec4f value = vec4Value(info);
         for (int channel = 0; channel < std::min(4, item->childCount()); ++channel) {
-            auto* spin = qobject_cast<SpinBox*>(d.tree->itemWidget(item->child(channel), 1));
+            auto* spin = dynamic_cast<FloatControl*>(d.tree->itemWidget(item->child(channel), 1));
             if (!spin)
                 continue;
             const QSignalBlocker blocker(spin);
-            spin->setValue(value[channel]);
+            spin->setValue(value[channel], false);
         }
         return;
     }

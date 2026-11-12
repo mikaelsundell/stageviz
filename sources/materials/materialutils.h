@@ -273,6 +273,16 @@ public:
     static MaterialNodeInfo nodeInfo(UsdStageRefPtr stage, const SdfPath& nodePath);
 
     /**
+     * @brief Returns authored enum values from USD or shader-definition metadata.
+     *
+     * Supports USD allowedTokens, Sdr options, and MaterialX input enums.
+     *
+     * @param attribute Attribute whose legal choices should be inspected.
+     * @return Enum values, or an empty list for free-form inputs.
+     */
+    static QStringList inputOptions(const UsdAttribute& attribute);
+
+    /**
      * @brief Returns the authored shader identifier for a UsdShadeShader prim.
      */
     static QString shaderId(const UsdPrim& prim);

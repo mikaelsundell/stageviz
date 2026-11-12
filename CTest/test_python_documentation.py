@@ -32,9 +32,9 @@ class DocumentationCheckTest(unittest.TestCase):
 
     def mutate(self, relative, before, after):
         path = self.root / relative
-        contents = path.read_text()
+        contents = path.read_text(encoding="utf-8")
         self.assertIn(before, contents)
-        path.write_text(contents.replace(before, after, 1))
+        path.write_text(contents.replace(before, after, 1), encoding="utf-8")
 
     def errors(self):
         return "\n".join(documentation.check(self.root)[2])

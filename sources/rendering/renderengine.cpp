@@ -8,13 +8,11 @@
 #include "perfscope.h"
 #include "qtutils.h"
 #include "renderdiagnostics.h"
+#include "renderresources.h"
 #include "rendersceneindex.h"
 #include "rendertask.h"
 #include "ui.h"
 #include <QColorSpace>
-#include <QCoreApplication>
-#include <QDir>
-#include <QFileInfo>
 #include <QJsonArray>
 #include <QOffscreenSurface>
 #include <QOpenGLContext>
@@ -685,35 +683,15 @@ namespace {
         QSurface* m_surface = nullptr;
     };
 
-    QString renderResourcePath(const QString& filename)
-    {
-        const QString applicationDir = QCoreApplication::applicationDirPath();
-
-#ifdef Q_OS_MAC
-        QDir contentsDir(applicationDir);
-        if (contentsDir.cdUp()) {
-            const QString candidate = contentsDir.filePath(QStringLiteral("Resources/") + filename);
-            if (QFileInfo::exists(candidate))
-                return QFileInfo(candidate).absoluteFilePath();
-        }
-#endif
-
-        const QString candidate = QDir(applicationDir).filePath(QStringLiteral("resources/") + filename);
-        if (QFileInfo::exists(candidate))
-            return QFileInfo(candidate).absoluteFilePath();
-
-        return {};
-    }
-
     QString renderShaderPath()
     {
-        static const QString path = renderResourcePath(QStringLiteral("Render.glslfx"));
+        static const QString path = renderresources::path(QStringLiteral("Render.glslfx"));
         return path;
     }
 
     QString sceneIdShaderPath()
     {
-        static const QString path = renderResourcePath(QStringLiteral("SceneId.glslfx"));
+        static const QString path = renderresources::path(QStringLiteral("SceneId.glslfx"));
         return path;
     }
 
@@ -1525,8 +1503,10 @@ RenderEngine::Private::updateLighting()
             light.SetTransform(domeTransform);
         }
 
-        if (!settings.domeLightTexture.isEmpty()) {
-            const std::string filename = settings.domeLightTexture.toStdString();
+        const QString texture = settings.domeLightTexture.isEmpty() ? renderresources::defaultDomeTexture()
+                                                                    : settings.domeLightTexture;
+        if (!texture.isEmpty()) {
+            const std::string filename = texture.toStdString();
             light.SetDomeLightTextureFile(SdfAssetPath(filename, filename));
         }
 

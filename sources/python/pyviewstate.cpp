@@ -825,9 +825,9 @@ static PyMethodDef PyViewState_methods[] = {
       "Set the default viewport dome light state" },
 
     { "domeLightTexture", reinterpret_cast<PyCFunction>(PyViewState_domeLightTexture), METH_NOARGS,
-      "Get the custom dome light HDRI path; empty uses OpenUSD's default dome texture" },
+      "Get the custom dome light HDRI path; empty uses HDx's built-in Stinson Beach HDRI" },
     { "setDomeLightTexture", reinterpret_cast<PyCFunction>(PyViewState_setDomeLightTexture), METH_VARARGS,
-      "Set a custom dome light HDRI path; empty restores OpenUSD's default dome texture" },
+      "Set a custom dome light HDRI path; empty restores HDx's built-in Stinson Beach HDRI" },
 
     { "domeLightCameraVisibility", reinterpret_cast<PyCFunction>(PyViewState_domeLightCameraVisibility), METH_NOARGS,
       "Get whether the dome texture is visible to the camera" },

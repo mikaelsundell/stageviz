@@ -89,6 +89,14 @@ Q_SIGNALS:
 
 protected:
     /**
+     * @brief Claims keyboard shortcuts while entering a numeric value.
+     *
+     * @param event Incoming event.
+     * @return True when the event has been handled.
+     */
+    bool event(QEvent* event) override;
+
+    /**
      * @brief Filters value-editor events for hover, scrubbing, and direct editing.
      * @param watched Object receiving the event.
      * @param event Incoming event.
