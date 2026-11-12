@@ -57,6 +57,7 @@ class NumericEditorTest(_base["ViewportTest"]):
         QtCore, QtGui, QtTest, QtWidgets = tb.qt()
         tree, spin, line = self.editor()
         assert line.isReadOnly()
+        assert line.cursor().shape() == QtCore.Qt.CursorShape.SizeHorCursor
         attr = lambda: stageviz.session().stage().GetAttributeAtPath("/World/Light.inputs:specular")
         baseline = attr().Get()
         stageviz.command.clear()
@@ -69,6 +70,7 @@ class NumericEditorTest(_base["ViewportTest"]):
             tree, spin, line = self.editor()
             QtTest.QTest.mouseDClick(line, QtCore.Qt.MouseButton.LeftButton, pos=line.rect().center())
             assert line.hasFocus() and not line.isReadOnly()
+            assert line.cursor().shape() == QtCore.Qt.CursorShape.IBeamCursor
             assert line.selectedText() == line.text(), "double-click selects the whole value"
             QtTest.QTest.keyClicks(line, "5")
             assert spin.value() == 5.0, "first digit replaces the selected value"
@@ -108,6 +110,8 @@ class NumericEditorTest(_base["ViewportTest"]):
                                      QtCore.QPointF(line.mapToGlobal(end)), QtCore.Qt.MouseButton.NoButton,
                                      QtCore.Qt.MouseButton.LeftButton, QtCore.Qt.KeyboardModifier.NoModifier)
             QtWidgets.QApplication.sendEvent(line, event)
+            assert line.cursor().shape() == QtCore.Qt.CursorShape.SizeHorCursor
+            assert spin.cursor().shape() == QtCore.Qt.CursorShape.SizeHorCursor
             expected = spin.value()
             QtTest.QTest.mouseRelease(line, QtCore.Qt.MouseButton.LeftButton, pos=end)
             assert tb.wait_until(lambda: abs(attr().Get() - expected) < 1e-6)

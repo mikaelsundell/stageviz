@@ -406,7 +406,7 @@ The script does not autorun; its `run(disposable=True)` executes all phases.
   in a disposable viewer.
 
 - `numeric_editor_api` checks typing directly into a scrub-mode spin box,
-  double-click replacement and shortcut ownership during numeric entry.
+  double-click replacement, scrub/text cursor transitions and shortcut ownership during numeric entry.
   `testnumericeditors.py` checks double-click replacement with conflicting
   application shortcuts, numeric replacement, stable row focus, repeated
   property drags without closing the editor, undo/redo refresh and keyboard
@@ -448,7 +448,10 @@ world-Z snapping uses the same XYZ convention and preserves the X/Y components
 through preview, Applied registration and undo/redo.
 
 Corner-axis sizing is centralized in `UI::axisSize` / `setAxisSize`, with 36/72/144
-logical-pixel defaults. `ui_api` covers sizing notifications and invalid values;
+logical-pixel defaults. `ui_api` covers sizing notifications and invalid values,
+and verifies that header hover cursors cover the widened grip, splitter/header
+drags retain their resize cursor and restore
+the previous cursor on release;
 `viewport_components_api` checks scaled images and hit targets at standard and
 high DPI, including an odd logical size. `python/testaxissize.py` checks the
 embedded API, immediate live repaint and the visible indicator footprint while

@@ -51,6 +51,8 @@ namespace stageviz {
 
 namespace {
     constexpr int kMinimumPropertyColumnWidth = 120;
+    constexpr int kMinimumValueColumnWidth = 120;
+    constexpr int kActionColumnWidth = 44;
     constexpr int kActionRole = Qt::UserRole + 20;
     constexpr int kActionPathRole = Qt::UserRole + 21;
     constexpr int kGroupNameRole = Qt::UserRole + 22;
@@ -166,17 +168,21 @@ MaterialTreePrivate::init()
     d.tree->setHeaderLabels({ "Property", "Value", "" });
     d.tree->header()->setVisible(true);
     d.tree->header()->setStretchLastSection(false);
-    d.tree->header()->setSectionsMovable(true);
+    d.tree->header()->setSectionsMovable(false);
     d.tree->header()->setMinimumSectionSize(36);
-    // Property absorbs all horizontal resizing from the parent panel. Value
-    // and the action column are fixed so the header exposes no resize handles.
-    d.tree->header()->setSectionResizeMode(0, QHeaderView::Stretch);
-    d.tree->header()->setSectionResizeMode(1, QHeaderView::Fixed);
+    // Dragging the Property/Value divider redistributes their space while
+    // Value absorbs panel resizing and the action column stays fixed.
+    d.tree->header()->setSectionResizeMode(0, QHeaderView::Interactive);
+    d.tree->header()->setSectionResizeMode(1, QHeaderView::Stretch);
     d.tree->header()->setSectionResizeMode(2, QHeaderView::Fixed);
 
-    d.tree->header()->resizeSection(1, 120);
-    d.tree->header()->resizeSection(2, 44);
-    d.tree->setMinimumWidth(kMinimumPropertyColumnWidth + 120 + 44);
+    d.tree->header()->resizeSection(0, 240);
+    d.tree->header()->resizeSection(2, kActionColumnWidth);
+    d.tree->setMinimumWidth(kMinimumPropertyColumnWidth + kMinimumValueColumnWidth + kActionColumnWidth
+                            + 2 * d.tree->frameWidth());
+    connect(d.tree->header(), &QHeaderView::sectionResized, this, [this]() { updateColumnWidths(); });
+    d.tree->viewport()->installEventFilter(this);
+    QTimer::singleShot(0, d.tree.data(), [this]() { updateColumnWidths(); });
 
     connect(d.tree.data(), &QTreeWidget::itemExpanded, d.tree.data(), [this](QTreeWidgetItem* item) {
         if (!item || !item->data(0, kGroupPopulatedRole).isValid() || d.currentNode.IsEmpty())
@@ -204,10 +210,6 @@ MaterialTreePrivate::init()
     d.iconNew = ui()->icon(UI::IconRole::New, UI::UIScale::Small);
     d.iconOpen = ui()->icon(UI::IconRole::Open, UI::UIScale::Small);
 
-    d.tree->installEventFilter(this);
-    d.tree->viewport()->installEventFilter(this);
-
-    QTimer::singleShot(0, d.tree.data(), [this]() { updateColumnWidths(); });
     d.tree->setRootIsDecorated(true);
     d.tree->setUniformRowHeights(false);
     d.tree->setSelectionMode(QAbstractItemView::NoSelection);
@@ -251,26 +253,20 @@ MaterialTreePrivate::init()
 void
 MaterialTreePrivate::updateColumnWidths()
 {
-    if (!d.tree || d.tree->columnCount() < 3)
-        return;
-
-    QHeaderView* header = d.tree->header();
-    if (!header)
-        return;
-
-    // Value and action widths are intentionally fixed. Property is Stretch and
-    // therefore takes all remaining space whenever the parent panel resizes.
-    header->resizeSection(1, 120);
-    header->resizeSection(2, 44);
+    auto* header = d.tree->header();
+    const int maximumPropertyWidth = std::max(kMinimumPropertyColumnWidth, d.tree->viewport()->width()
+                                                                               - kMinimumValueColumnWidth
+                                                                               - kActionColumnWidth);
+    const int propertyWidth = std::clamp(header->sectionSize(0), kMinimumPropertyColumnWidth, maximumPropertyWidth);
+    if (header->sectionSize(0) != propertyWidth)
+        header->resizeSection(0, propertyWidth);
 }
 
 bool
 MaterialTreePrivate::eventFilter(QObject* object, QEvent* event)
 {
-    if (event && event->type() == QEvent::Resize && (object == d.tree || (d.tree && object == d.tree->viewport()))) {
+    if (object == d.tree->viewport() && event->type() == QEvent::Resize)
         updateColumnWidths();
-    }
-
     return QObject::eventFilter(object, event);
 }
 

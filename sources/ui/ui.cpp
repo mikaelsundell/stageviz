@@ -7,16 +7,21 @@
 #include "qtutils.h"
 #include <QApplication>
 #include <QFile>
+#include <QHeaderView>
 #include <QMetaEnum>
+#include <QMouseEvent>
 #include <QPixmap>
 #include <QPointer>
+#include <QProxyStyle>
 #include <QRegularExpression>
 #include <QScopedPointer>
+#include <QSplitterHandle>
 #include <QSurfaceFormat>
 #include <algorithm>
 #include <cmath>
 
 namespace stageviz {
+
 
 class UIPrivate {
 public:
@@ -38,6 +43,125 @@ public:
     QString roleName(UI::IconRole role) const;
     QString roleName(UI::UIScale scale) const;
 
+private:
+    class Style : public QProxyStyle {
+    public:
+        ~Style() override { finishResize(); }
+
+        int pixelMetric(PixelMetric metric, const QStyleOption* option = nullptr,
+                        const QWidget* widget = nullptr) const override
+        {
+            return metric == QStyle::PM_HeaderGripMargin ? 8 : QProxyStyle::pixelMetric(metric, option, widget);
+        }
+        void polish(QWidget* widget) override
+        {
+            QProxyStyle::polish(widget);
+            if (auto* header = qobject_cast<QHeaderView*>(widget))
+                header->viewport()->installEventFilter(this);
+            else if (qobject_cast<QSplitterHandle*>(widget)) {
+                widget->setMouseTracking(true);
+                widget->installEventFilter(this);
+            }
+        }
+        void unpolish(QWidget* widget) override
+        {
+            if (auto* header = qobject_cast<QHeaderView*>(widget))
+                header->viewport()->removeEventFilter(this);
+            widget->removeEventFilter(this);
+            QProxyStyle::unpolish(widget);
+        }
+    protected:
+        bool eventFilter(QObject* object, QEvent* event) override
+        {
+            if (d.resizing) {
+                if (event->type() == QEvent::MouseButtonRelease
+                    && static_cast<QMouseEvent*>(event)->button() == Qt::LeftButton)
+                    finishResize();
+                else if (event->type() == QEvent::ApplicationDeactivate || event->type() == QEvent::WindowDeactivate
+                         || (object == d.handle && (event->type() == QEvent::Hide || event->type() == QEvent::Destroy)))
+                    finishResize();
+            }
+            else if (event->type() == QEvent::MouseMove
+                     && static_cast<QMouseEvent*>(event)->buttons() == Qt::NoButton) {
+                auto* widget = qobject_cast<QWidget*>(object);
+                const auto shape = resizeCursor(widget, static_cast<QMouseEvent*>(event)->position().toPoint());
+                if (shape != Qt::ArrowCursor)
+                    widget->setCursor(shape);
+                else if (widget)
+                    widget->unsetCursor();
+            }
+            else if (event->type() == QEvent::Leave) {
+                if (auto* widget = qobject_cast<QWidget*>(object)) {
+                    if (qobject_cast<QHeaderView*>(widget->parentWidget()))
+                        widget->unsetCursor();
+                }
+            }
+            else if (event->type() == QEvent::MouseButtonPress
+                     && static_cast<QMouseEvent*>(event)->button() == Qt::LeftButton) {
+                auto* widget = qobject_cast<QWidget*>(object);
+                const auto shape = resizeCursor(widget, static_cast<QMouseEvent*>(event)->position().toPoint());
+                if (shape == Qt::SplitHCursor || shape == Qt::SplitVCursor) {
+                    d.handle = widget;
+                    d.resizing = true;
+                    QApplication::setOverrideCursor(shape);
+                    // Listen globally only during the drag, since release may
+                    // arrive outside the original handle or header viewport.
+                    qApp->installEventFilter(this);
+                }
+            }
+            return QProxyStyle::eventFilter(object, event);
+        }
+    private:
+        Qt::CursorShape resizeCursor(QWidget* widget, const QPoint& position) const
+        {
+            if (!widget || !widget->isEnabled())
+                return Qt::ArrowCursor;
+            if (auto* handle = qobject_cast<QSplitterHandle*>(widget))
+                return handle->orientation() == Qt::Horizontal ? Qt::SplitHCursor : Qt::SplitVCursor;
+            auto* header = qobject_cast<QHeaderView*>(widget->parentWidget());
+            if (!header)
+                return Qt::ArrowCursor;
+            const bool horizontal = header->orientation() == Qt::Horizontal;
+            const int coordinate = horizontal ? position.x() : position.y();
+            const int margin = pixelMetric(QStyle::PM_HeaderGripMargin, nullptr, header);
+            int section = header->logicalIndexAt(coordinate);
+            if (section < 0)
+                return Qt::ArrowCursor;
+            const int start = header->sectionViewportPosition(section);
+            bool atStart = coordinate < start + margin;
+            bool atEnd = coordinate > start + header->sectionSize(section) - margin;
+            if (horizontal && header->isRightToLeft())
+                std::swap(atStart, atEnd);
+            // Match Qt's section-handle hit test, including its exclusive
+            // outer edge, reordered sections and hidden preceding sections.
+            if (atStart) {
+                int visual = header->visualIndex(section);
+                do {
+                    section = header->logicalIndex(--visual);
+                } while (visual >= 0 && header->isSectionHidden(section));
+            }
+            else if (!atEnd)
+                section = -1;
+            if (section >= 0 && header->sectionResizeMode(section) == QHeaderView::Interactive)
+                return horizontal ? Qt::SplitHCursor : Qt::SplitVCursor;
+            return Qt::ArrowCursor;
+        }
+        void finishResize()
+        {
+            if (!d.resizing)
+                return;
+            d.resizing = false;
+            d.handle.clear();
+            qApp->removeEventFilter(this);
+            QApplication::restoreOverrideCursor();
+        }
+        struct Data {
+            QPointer<QWidget> handle;
+            bool resizing = false;
+        };
+        Data d;
+    };
+
 public:
     struct IconKey {
         int role;
@@ -49,7 +173,6 @@ public:
             return role == o.role && scale == o.scale && state == o.state && physicalSize == o.physicalSize;
         }
     };
-
     struct Data {
         QString styleSheet;
         QHash<QString, QColor> palette;
@@ -64,7 +187,6 @@ public:
         mutable QHash<IconKey, QPixmap> pixmaps;
         QPointer<QObject> object;
     };
-
     Data d;
 };
 
@@ -84,6 +206,7 @@ UIPrivate::~UIPrivate() = default;
 void
 UIPrivate::init()
 {
+    qApp->setStyle(new Style());
     QFile file(":/style/resources/App.qss");
     if (file.open(QFile::ReadOnly))
         d.styleSheet = QString::fromUtf8(file.readAll());

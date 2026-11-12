@@ -55,6 +55,7 @@
 #include <QComboBox>
 #include <QContextMenuEvent>
 #include <QCoreApplication>
+#include <QCursor>
 #include <QDialog>
 #include <QDir>
 #include <QElapsedTimer>
@@ -81,6 +82,7 @@
 #include <QScrollBar>
 #include <QSet>
 #include <QSettings>
+#include <QSplitter>
 #include <QSurfaceFormat>
 #include <QTemporaryDir>
 #include <QThread>
@@ -159,6 +161,62 @@ void
 uiApi()
 {
     stageviz::UI ui;
+    {
+        QSplitter splitter;
+        splitter.addWidget(new QWidget());
+        splitter.addWidget(new QWidget());
+        auto* handle = splitter.handle(1);
+        handle->ensurePolished();
+        QApplication::setOverrideCursor(Qt::CrossCursor);
+        QMouseEvent press(QEvent::MouseButtonPress, QPointF(2, 2), QPointF(2, 2), Qt::LeftButton, Qt::LeftButton,
+                          Qt::NoModifier);
+        QApplication::sendEvent(handle, &press);
+        require(QApplication::overrideCursor() && QApplication::overrideCursor()->shape() == Qt::SplitHCursor,
+                "splitter drag pins the resize cursor");
+        handle->setCursor(Qt::ArrowCursor);
+        require(QApplication::overrideCursor()->shape() == Qt::SplitHCursor,
+                "widget cursor changes do not replace an active splitter drag cursor");
+        QMouseEvent release(QEvent::MouseButtonRelease, QPointF(2, 2), QPointF(2, 2), Qt::LeftButton, Qt::NoButton,
+                            Qt::NoModifier);
+        QApplication::sendEvent(handle, &release);
+        require(QApplication::overrideCursor() && QApplication::overrideCursor()->shape() == Qt::CrossCursor,
+                "splitter release restores the prior cursor override");
+        QApplication::restoreOverrideCursor();
+
+        QTreeWidget tree;
+        tree.setColumnCount(2);
+        tree.ensurePolished();
+        auto* header = tree.header();
+        header->ensurePolished();
+        header->setStretchLastSection(false);
+        header->resizeSection(0, 100);
+        const int edge = header->sectionViewportPosition(0) + header->sectionSize(0);
+        for (int offset : { -7, 7 }) {
+            const QPointF position(edge + offset, 4);
+            QMouseEvent hover(QEvent::MouseMove, position, position, Qt::NoButton, Qt::NoButton, Qt::NoModifier);
+            QApplication::sendEvent(header->viewport(), &hover);
+            require(header->viewport()->cursor().shape() == Qt::SplitHCursor,
+                    "resize hover cursor covers both sides of the widened header grip");
+        }
+        for (int offset : { -8, 8, 10 }) {
+            const QPointF outside(edge + offset, 4);
+            QMouseEvent hoverOutside(QEvent::MouseMove, outside, outside, Qt::NoButton, Qt::NoButton, Qt::NoModifier);
+            QApplication::sendEvent(header->viewport(), &hoverOutside);
+            require(header->viewport()->cursor().shape() != Qt::SplitHCursor,
+                    "header hover cursor returns to normal outside Qt's actual grip");
+        }
+        const QPointF position(edge - 7, 4);
+        QMouseEvent headerPress(QEvent::MouseButtonPress, position, position, Qt::LeftButton, Qt::LeftButton,
+                                Qt::NoModifier);
+        QApplication::sendEvent(header->viewport(), &headerPress);
+        require(QApplication::overrideCursor() && QApplication::overrideCursor()->shape() == Qt::SplitHCursor,
+                "column resize pins the header cursor");
+        header->unsetCursor();
+        require(QApplication::overrideCursor()->shape() == Qt::SplitHCursor,
+                "header cursor changes do not replace an active column drag cursor");
+        QApplication::sendEvent(header->viewport(), &release);
+        require(!QApplication::overrideCursor(), "column release clears its temporary cursor override");
+    }
     int colorChanges = 0;
     QObject::connect(&ui, &stageviz::UI::colorChanged, &ui, [&](stageviz::UI::ColorRole) { ++colorChanges; });
 
@@ -406,6 +464,7 @@ numericEditorApi()
     spin.setValue(42.);
     auto* line = spin.findChild<QLineEdit*>();
     require(line && line->isReadOnly(), "numeric editor starts in scrub mode");
+    require(line->cursor().shape() == Qt::SizeHorCursor, "scrub mode advertises horizontal dragging");
     QKeyEvent firstDigit(QEvent::ShortcutOverride, Qt::Key_7, Qt::NoModifier, "7");
     firstDigit.ignore();
     QApplication::sendEvent(line, &firstDigit);
@@ -416,9 +475,11 @@ numericEditorApi()
         QApplication::sendEvent(line, &press);
     }
     require(!line->isReadOnly() && qAbs(spin.value() - 7.5) < 1e-8, "typing replaces the old scrub-mode value");
+    require(line->cursor().shape() == Qt::IBeamCursor, "direct entry uses the text cursor");
     QKeyEvent enter(QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier);
     QApplication::sendEvent(line, &enter);
     require(line->isReadOnly(), "Enter returns numeric editor to scrub mode");
+    require(line->cursor().shape() == Qt::SizeHorCursor, "committing restores the scrub cursor");
 
     spin.setValue(42.);
     QMouseEvent doubleClick(QEvent::MouseButtonDblClick, QPointF(10, 10), QPointF(10, 10), Qt::LeftButton,

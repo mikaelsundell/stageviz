@@ -23,6 +23,7 @@ SpinBox::SpinBox(QWidget* parent)
     lineEdit()->setReadOnly(true);
     lineEdit()->setMouseTracking(true);
     lineEdit()->installEventFilter(this);
+    updateValueCursor();
     // connect
     connect(this, &QDoubleSpinBox::editingFinished, this, [this]() { finishEditing(); });
 }
@@ -70,11 +71,6 @@ SpinBox::eventFilter(QObject* watched, QEvent* event)
             break;
         case QEvent::KeyPress: beginTextInput(static_cast<QKeyEvent*>(event)); break;
         case QEvent::Enter: updateValueCursor(); break;
-
-        case QEvent::Leave:
-            if (!m_scrubbing && !m_editing)
-                lineEdit()->unsetCursor();
-            break;
 
         case QEvent::FocusIn:
             if (!m_editing) {
@@ -233,8 +229,9 @@ SpinBox::updateScrub(QMouseEvent* event)
             return false;
 
         m_scrubbing = true;
+        setCursor(Qt::SizeHorCursor);
+        updateValueCursor();
         Q_EMIT scrubStarted();
-        lineEdit()->setCursor(Qt::SizeHorCursor);
     }
     const int pixels = delta.x() - delta.y();
 
@@ -271,6 +268,7 @@ SpinBox::finishPress(QMouseEvent* event)
     const bool wasScrubbing = m_scrubbing;
     m_pressed = false;
     m_scrubbing = false;
+    unsetCursor();
 
     if (wasScrubbing)
         Q_EMIT scrubFinished(value());
@@ -320,10 +318,7 @@ SpinBox::updateValueCursor()
         return;
     }
 
-    if (lineEdit()->underMouse())
-        lineEdit()->setCursor(Qt::SizeHorCursor);
-    else
-        lineEdit()->unsetCursor();
+    lineEdit()->setCursor(Qt::SizeHorCursor);
 }
 
 }  // namespace stageviz
