@@ -102,6 +102,14 @@ def run_configuration(args, configuration, output):
             raise RuntimeError('No configured build at %s. Run build_app for %s first.' % (directory, configuration))
         cmake, ctest = tools(directory, args.cmake)
         if not args.no_build:
+            # Refresh the cached project before starting an IDE build. Otherwise
+            # regeneration inside MSBuild/Xcode may leave new .cpp files out of
+            # the project already loaded by that build invocation.
+            step = run_logged([cmake, '-S', ROOT, '-B', directory, '-DBUILD_TESTING=ON'],
+                              output / 'configure.log', environment)
+            row['steps'].append(dict(name='configure', **step))
+            if step['returncode']:
+                raise RuntimeError('Configure failed; tests were not run against stale executables.')
             step = run_logged([cmake, '--build', directory, '--config', configuration,
                                '--target', 'stageviz', 'stageviz_tests', '--parallel', str(args.jobs)],
                               output / 'build.log', environment)

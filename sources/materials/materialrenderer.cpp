@@ -400,9 +400,9 @@ MaterialRendererPrivate::initializeContext(RenderContext& context, QString& erro
     settings.sceneLightsEnabled = true;
     settings.defaultCameraLightEnabled = false;
     settings.defaultDomeLightEnabled = true;
-    settings.domeLightTexture = renderresources::neutralDomeTexture();
+    settings.domeLightTexture = renderresources::defaultDomeTexture();
     if (settings.domeLightTexture.isEmpty()) {
-        error = QStringLiteral("Could not find the bundled neutral material HDRI");
+        error = QStringLiteral("Could not find the HDx Stinson Beach HDRI");
         resetContext(context);
         return false;
     }

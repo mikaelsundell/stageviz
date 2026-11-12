@@ -65,7 +65,7 @@ newLightPath(const SdfPath& parentPath, const QString& nameInput, LightType type
             case LightType::Dome: {
                 const auto texture = renderresources::defaultDomeTexture();
                 if (texture.isEmpty()) {
-                    error = QStringLiteral("Could not find the bundled Scandinavia dome light texture");
+                    error = QStringLiteral("Could not find the HDx Stinson Beach dome light texture");
                     return false;
                 }
                 UsdLuxDomeLight dome(prim);

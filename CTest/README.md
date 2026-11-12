@@ -12,8 +12,9 @@ After configuring/building a development checkout with `build_app`, run:
 
 On Windows, use `test_app.bat Debug`, `test_app.bat Release`, or
 `test_app.bat All`. Both entry points use the same Python 3 controller and
-incrementally build `stageviz` and `stageviz_tests` before running **every
-registered CTest and every embedded Python suite**. Native/GUI tests run
+refresh the existing CMake configuration with `BUILD_TESTING=ON` and incrementally build `stageviz` and
+`stageviz_tests` before running **every registered CTest and every embedded
+Python suite**. Native/GUI tests run
 serially, followed by isolated application processes controlled through MCP.
 The embedded API performance checks and UI large-tree checks are included.
 Manual benchmark comparisons requiring supplied datasets are separate tools.
@@ -31,10 +32,10 @@ and `--cmake PATH` support custom single-configuration builds. Examples:
 ```
 
 The default output is `build.test-results/<run>/`, containing an overall
-`summary.json`, build/CTest/Python logs, native `ctest.xml`, per-suite summaries,
-MCP oracles, resource samples and screenshot paths. Test failures return a
-nonzero exit status. Python suites still run after CTest failures; build failures
-stop that configuration to avoid testing stale binaries. API timing baselines
+`summary.json`, configure/build/CTest/Python logs, native `ctest.xml`, per-suite
+summaries, MCP oracles, resource samples and screenshot paths. Test failures
+return a nonzero exit status. Python suites still run after CTest failures;
+configure/build failures stop that configuration to avoid testing stale binaries. API timing baselines
 are kept per configuration under the build's `test-baselines/` directory.
 
 The disposable runner starts the public native MCP server on a free loopback
@@ -46,7 +47,10 @@ Windows resource monitoring uses the native process API; macOS additionally
 records system memory pressure and holds a finite App Nap activity scope.
 
 `stageviz.test_app_runner` tests discovery, paths with spaces, configuration
-selection and failure propagation. `stageviz.gui.mcp_server_api` checks native
+selection, configuration-before-build ordering and failure propagation. The
+configuration step refreshes IDE source lists before MSBuild/Xcode starts, so
+new implementation files are compiled after switching branches or pulling changes.
+`stageviz.gui.mcp_server_api` checks native
 tools discovery on an ephemeral port and rejection of invalid Host/Origin
 headers and invalid port settings.
 
@@ -385,16 +389,16 @@ The script does not autorun; its `run(disposable=True)` executes all phases.
 
 - `renderengine_hdri_api` changes opacity through opaque, translucent, zero and
   back to opaque with the dome background off/on and a separate helper pass.
-  It also compares default dome lighting with explicit bundled color and neutral HDRIs.
+  It also compares default dome lighting with the explicit HDx Stinson Beach HDRI.
 - `testviewporthdri.py` checks Preview Surface and MaterialX opacity with camera
   lighting, HDRI lighting, combined lights, default/custom HDRI paths, background
   toggles, and shaded/wireframe presentation in a disposable viewer. It stores
   viewport screenshots and Qt snapshots for each fixture.
 
 - `light_command_api` covers all standard light presets, shaped spots, selection
-  restoration, the bundled color Scandinavia dome texture and redo.
-  `render_resources_api` checks lookup and OpenEXR headers for both bundled
-  Scandinavia HDRIs: color for viewport/dome lighting, monochrome for material previews.
+  restoration, the HDx Stinson Beach dome texture and redo.
+  `render_resources_api` checks HDx resource lookup and the Radiance header for
+  the Stinson Beach HDRI shared by viewport, dome lights and material previews.
   `viewport_lights_api` covers guide picking, sweep hits,
   isolate masks, visibility and the absence of document authoring by helpers.
 - `testlights.py` exercises every Create action and Python light factory, click

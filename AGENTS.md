@@ -105,8 +105,10 @@ consistent with the existing architecture.
 
 - Use `./test_app.sh debug` on macOS/Linux or `test_app.bat Debug` on Windows
   for the complete automatic test run. Use `release` or `all` to test those
-  configurations. The scripts incrementally build the app and native test
-  targets, run every registered CTest, then every discovered embedded Python
+  configurations. The scripts refresh the cached CMake configuration with
+  `BUILD_TESTING=ON`, then
+  incrementally build the app and native test targets, run every registered
+  CTest, then every discovered embedded Python
   suite, including its built-in performance checks. Use this complete run
   before final code review; focused checks remain appropriate during editing.
 - Run the scripts from a configured development checkout with CMake and Python

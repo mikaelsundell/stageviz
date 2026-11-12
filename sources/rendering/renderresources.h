@@ -17,19 +17,11 @@ QString
 path(const QString& filename);
 
 /**
- * @brief Returns the bundled color Scandinavia HDRI for dome lights and viewport lighting.
+ * @brief Returns HDx's built-in Stinson Beach HDRI for dome lights, viewport and material previews.
  *
  * @return Absolute texture path, or an empty string if the resource is missing.
  */
 QString
 defaultDomeTexture();
-
-/**
- * @brief Returns the bundled monochrome Scandinavia HDRI for neutral material previews.
- *
- * @return Absolute texture path, or an empty string if the resource is missing.
- */
-QString
-neutralDomeTexture();
 
 }  // namespace stageviz::renderresources

@@ -512,9 +512,7 @@ renderEngineHdriApi()
         };
         const QImage defaultDome = renderDome(QString());
         require(renderDome(stageviz::renderresources::defaultDomeTexture()) == defaultDome,
-                "empty viewport HDRI selects the bundled color Scandinavia texture");
-        require(renderDome(stageviz::renderresources::neutralDomeTexture()) != defaultDome,
-                "custom HDRI overrides the bundled viewport default");
+                "empty viewport HDRI selects the HDx Stinson Beach texture");
         engine.reset();
     }
     context.doneCurrent();

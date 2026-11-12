@@ -161,8 +161,6 @@ foreach(test_target IN ITEMS stageviz_regressions stageviz_gui_regressions)
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "${PROJECT_SOURCE_DIR}/resources/Render.glslfx"
             "${PROJECT_SOURCE_DIR}/resources/SceneId.glslfx"
-            "${PROJECT_SOURCE_DIR}/resources/scandinavia_1024x512.exr"
-            "${PROJECT_SOURCE_DIR}/resources/scandinavia_bw_1024x512.exr"
             "$<TARGET_FILE_DIR:${test_target}>/resources"
         VERBATIM
     )

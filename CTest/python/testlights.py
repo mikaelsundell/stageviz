@@ -34,7 +34,7 @@ class LightsTest(_base["ViewportTest"]):
             assert prim.GetTypeName() == schema and UsdLux.LightAPI(prim)
             if kind == "dome":
                 texture = UsdLux.DomeLight(prim).GetTextureFileAttr().Get()
-                assert Path(texture.path).name == "scandinavia_1024x512.exr" and Path(texture.path).is_file()
+                assert Path(texture.path).name == "StinsonBeach.hdr" and Path(texture.path).is_file()
             assert prim.HasAPI(UsdLux.ShapingAPI) == (kind == "spot")
             stageviz.command.undo()
             assert tb.wait_until(lambda: not stageviz.session().stage().GetPrimAtPath(path))

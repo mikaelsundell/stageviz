@@ -5,6 +5,8 @@
 #include <QCoreApplication>
 #include <QDir>
 #include <QFileInfo>
+#include <pxr/base/plug/plugin.h>
+#include <pxr/base/plug/registry.h>
 
 namespace stageviz::renderresources {
 
@@ -27,13 +29,9 @@ path(const QString& filename)
 QString
 defaultDomeTexture()
 {
-    return path(QStringLiteral("scandinavia_1024x512.exr"));
-}
-
-QString
-neutralDomeTexture()
-{
-    return path(QStringLiteral("scandinavia_bw_1024x512.exr"));
+    const auto plugin = pxr::PlugRegistry::GetInstance().GetPluginWithName("hdx");
+    return plugin ? QString::fromStdString(pxr::PlugFindPluginResource(plugin, "textures/StinsonBeach.hdr"))
+                  : QString();
 }
 
 }  // namespace stageviz::renderresources

@@ -825,9 +825,9 @@ static PyMethodDef PyViewState_methods[] = {
       "Set the default viewport dome light state" },
 
     { "domeLightTexture", reinterpret_cast<PyCFunction>(PyViewState_domeLightTexture), METH_NOARGS,
-      "Get the custom dome light HDRI path; empty uses Stageviz's bundled color Scandinavia HDRI" },
+      "Get the custom dome light HDRI path; empty uses HDx's built-in Stinson Beach HDRI" },
     { "setDomeLightTexture", reinterpret_cast<PyCFunction>(PyViewState_setDomeLightTexture), METH_VARARGS,
-      "Set a custom dome light HDRI path; empty restores Stageviz's bundled color Scandinavia HDRI" },
+      "Set a custom dome light HDRI path; empty restores HDx's built-in Stinson Beach HDRI" },
 
     { "domeLightCameraVisibility", reinterpret_cast<PyCFunction>(PyViewState_domeLightCameraVisibility), METH_NOARGS,
       "Get whether the dome texture is visible to the camera" },

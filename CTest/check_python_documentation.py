@@ -42,7 +42,7 @@ def function_body(source, name):
 def source_contract(root):
     calls = {}
     for path in sorted((root / "sources/python").glob("py*.cpp")):
-        source = path.read_text()
+        source = path.read_text(encoding="utf-8")
         for table in re.finditer(r"PyMethodDef\s+(\w+)\[\]\s*=\s*\{(.*?)}\s*;", source, re.S):
             table_name, entries = table.groups()
             owner_match = re.search(r"(\w+)\.tp_methods\s*=\s*" + table_name + r"\s*;", source)
@@ -130,7 +130,7 @@ def documented_contract(reference):
 
 def check(root=ROOT):
     errors = []
-    reference = (root / "skills/references/python-api.md").read_text()
+    reference = (root / "skills/references/python-api.md").read_text(encoding="utf-8")
     source = source_contract(root)
     documented = documented_contract(reference)
     for key in sorted(source.keys() - documented.keys()):
@@ -159,7 +159,7 @@ def check(root=ROOT):
     for key in sorted(actual_keywords ^ documented_keywords):
         errors.append("Keyword support table mismatch: " + key)
 
-    module = (root / "sources/python/pymodule.cpp").read_text()
+    module = (root / "sources/python/pymodule.cpp").read_text(encoding="utf-8")
     constants = set(re.findall(r'PyModule_AddIntConstant\(module, "(\w+)"', module))
     constant_block = reference.split("## Module constants\n", 1)[1].split("\n## ", 1)[0]
     listed_constants = set()
@@ -168,7 +168,7 @@ def check(root=ROOT):
             listed_constants.update(re.findall(r'`(\w+)`', row))
     for name in sorted(constants ^ listed_constants):
         errors.append("Module constant table mismatch: " + name)
-    ui = (root / "sources/python/pyui.cpp").read_text()
+    ui = (root / "sources/python/pyui.cpp").read_text(encoding="utf-8")
     for enum in ("ColorRole", "IconRole", "UIScale", "UIState"):
         actual = re.findall(r'\{ "(\w+)", static_cast<long>\(UI::' + enum + r'::', ui)
         block = reference.split("#### " + enum + " members\n", 1)[1].split("\n###", 1)[0]
@@ -181,7 +181,7 @@ def check(root=ROOT):
     documents = list((root / "skills").rglob("*.md"))
     documents += [root / "README.md", root / "CTest/python/README.md"]
     for path in documents:
-        text = path.read_text()
+        text = path.read_text(encoding="utf-8")
         for index, block in enumerate(re.findall(r"```python\n(.*?)```", text, re.S), 1):
             try:
                 compile(block, str(path) + ":block" + str(index), "exec")

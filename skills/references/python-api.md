@@ -966,7 +966,7 @@ The wrapper is non-owning.
 `domeLightTexture() -> str`
 
 `setDomeLightTexture(path) -> None`
-: Empty string restores Stageviz's bundled color Scandinavia HDRI.
+: Empty string restores HDx's built-in Stinson Beach HDRI.
 
 `domeLightCameraVisibility() -> bool`
 
@@ -1451,8 +1451,8 @@ stageviz.command.new_light("/World", "Key", type="rect")
 
 The Create menu exposes the same presets. Intensity, exposure, color, shape and
 spot-cone inputs are ordinary USD properties. A Dome starts with Stageviz's
-bundled color Scandinavia environment texture, replaceable through `inputs:texture:file`.
-Material previews use the bundled monochrome Scandinavia HDRI for neutral lighting.
+HDx Stinson Beach environment texture, replaceable through `inputs:texture:file`.
+Material previews use the same HDx Stinson Beach HDRI as dome and viewport lighting.
 Viewport light guides support click and sweep selection; existing transform
 commands move and rotate the real light.
 The guides are editor overlays, visible through geometry and excluded from USD

@@ -5214,16 +5214,11 @@ void
 renderResourcesApi()
 {
     const auto color = stageviz::renderresources::defaultDomeTexture();
-    const auto neutral = stageviz::renderresources::neutralDomeTexture();
-    require(color.endsWith("/scandinavia_1024x512.exr"), "default dome uses the bundled color HDRI");
-    require(neutral.endsWith("/scandinavia_bw_1024x512.exr"), "material previews use the bundled neutral HDRI");
-    require(color != neutral, "viewport and material previews use distinct HDRIs");
-    for (const auto& filename : { color, neutral }) {
-        require(QDir::isAbsolutePath(filename), "bundled HDRI resolves to an absolute asset path");
-        QFile file(filename);
-        require(file.open(QIODevice::ReadOnly), "bundled HDRI exists and is readable");
-        require(file.read(4) == QByteArray::fromHex("762f3101"), "bundled HDRI has an OpenEXR header");
-    }
+    require(color.endsWith("/StinsonBeach.hdr"), "default dome uses the HDx Stinson Beach HDRI");
+    require(QDir::isAbsolutePath(color), "bundled HDRI resolves to an absolute asset path");
+    QFile file(color);
+    require(file.open(QIODevice::ReadOnly), "bundled HDRI exists and is readable");
+    require(file.read(10).startsWith("#?RADIANCE"), "HDx HDRI has a Radiance header");
     require(stageviz::renderresources::path("missing-render-resource.exr").isEmpty(),
             "missing render resources return an empty path");
 }
@@ -5258,7 +5253,7 @@ lightCommandApi()
                 TfToken format;
                 require(prim.GetAttribute(TfToken("inputs:texture:file")).Get(&texture)
                             && texture.GetAssetPath() == stageviz::renderresources::defaultDomeTexture().toStdString(),
-                        "new and redone dome lights use the bundled color Scandinavia HDRI");
+                        "new and redone dome lights use the HDx Stinson Beach HDRI");
                 require(prim.GetAttribute(TfToken("inputs:texture:format")).Get(&format)
                             && format == TfToken("latlong"),
                         "dome HDRI uses latitude-longitude mapping");

@@ -281,14 +281,14 @@ public:
     /**
      * @brief Returns the custom dome-light texture path.
      *
-     * An empty path uses Stageviz's bundled color Scandinavia HDRI.
+     * An empty path uses HDx's built-in Stinson Beach HDRI.
      */
     QString domeLightTexture() const;
 
     /**
      * @brief Sets the custom dome-light texture path.
      *
-     * An empty path restores Stageviz's bundled color Scandinavia HDRI.
+     * An empty path restores HDx's built-in Stinson Beach HDRI.
      */
     void setDomeLightTexture(const QString& filename);
 
