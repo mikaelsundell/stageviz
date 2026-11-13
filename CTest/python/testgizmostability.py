@@ -29,19 +29,19 @@ class GizmoStabilityTest(_base['ViewportTest']):
         self.activate_mode('Rotate')
         for name in ('Plane', 'Sphere'):
             stageviz.command.new_prim('/World', name, type_name=name)
-            tb.wait_for_commands()
+            assert tb.wait_for_commands()
         stageviz.command.new_scope('/', 'Materials')
-        tb.wait_for_commands()
+        assert tb.wait_for_commands()
         stageviz.command.new_material('/Materials', 'Test')
-        tb.wait_for_commands()
+        assert tb.wait_for_commands()
         assert stageviz.session().stage().GetPrimAtPath('/Materials/Test')
         stageviz.command.bind_material(['/World/Sphere'], '/Materials/Test')
-        tb.wait_for_commands()
+        assert tb.wait_for_commands()
         assert stageviz.session().stage().GetPrimAtPath('/World/Sphere').GetRelationship('material:binding').GetTargets()
         tb.trigger_action('materialEditor')
         tb.process_events(300)
         stageviz.command.select_paths(['/World/Sphere'])
-        tb.wait_for_commands()
+        assert tb.wait_for_commands()
         self.frame_handle()
         self.topology = {}
         aux = stageviz.session().auxiliary()
@@ -62,7 +62,7 @@ class GizmoStabilityTest(_base['ViewportTest']):
             assert mesh.GetPointsAttr().Get() == points and mesh.GetFaceVertexIndicesAttr().Get() == indices
         matrix = UsdGeom.XformCache().GetLocalToWorldTransform(aux.GetPrimAtPath('/Display/Transform'))
         assert all(math.isfinite(matrix[r][c]) for r in range(4) for c in range(4))
-        assert list(stageviz.session().paths()) == ['/World/Sphere']
+        assert list(stageviz.session().paths()) == ['/World/Sphere'], (label, list(stageviz.session().paths()))
         self.snapshot(label)
         widget = self.viewport()
         # Check the rendered handles as well as their USD points. A GPU-only

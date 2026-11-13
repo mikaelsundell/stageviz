@@ -48,6 +48,7 @@ class TransformOperationTest(_namespace["SubsetTest"]):
         return all(Gf.IsClose(actual[path], matrix, 1e-6) for path, matrix in expected.items())
 
     def finish_action(self, before, original, label, expected_delta=None, individual_rotation=False):
+        assert tb.wait_for_commands(), 'transform command completion'
         after = self.worlds()
         delta = before[self.owners[0]].GetInverse() * after[self.owners[0]]
         assert not Gf.IsClose(delta, Gf.Matrix4d(1), 1e-6), label + " changes geometry"
@@ -70,9 +71,11 @@ class TransformOperationTest(_namespace["SubsetTest"]):
         authored = self.layer_text()
         assert stageviz.command.can_undo()
         stageviz.command.undo()
+        assert tb.wait_for_commands(), 'transform undo completion'
         assert tb.wait_until(lambda: self.matches(before) and self.layer_text() == original)
         assert not stageviz.command.can_undo(), "one operation produces one undo step"
         stageviz.command.redo()
+        assert tb.wait_for_commands(), 'transform redo completion'
         assert tb.wait_until(lambda: self.matches(after) and self.layer_text() == authored)
         assert list(stageviz.session().paths()) == self.selected
         self.snapshot(label)
@@ -95,6 +98,7 @@ class TransformOperationTest(_namespace["SubsetTest"]):
         as_rows = lambda matrix: [list(row) for row in matrix]
         stageviz.command.set_transforms(self.selected, [as_rows(matrix) for matrix in matrices],
                                        [as_rows(matrix * delta) for matrix in matrices])
+        assert tb.wait_for_commands(), 'transform API completion'
         expected = {path: matrix * delta if path in self.owners else matrix for path, matrix in before.items()}
         assert tb.wait_until(lambda: self.matches(expected))
         self.finish_action(before, original, "python_" + mode.lower(), delta)
@@ -114,6 +118,7 @@ class TransformOperationTest(_namespace["SubsetTest"]):
         QtTest.QTest.mousePress(widget, QtCore.Qt.MouseButton.LeftButton, pos=start)
         QtTest.QTest.mouseMove(widget, end, 50)
         QtTest.QTest.mouseRelease(widget, QtCore.Qt.MouseButton.LeftButton, pos=end)
+        assert tb.wait_for_commands(), 'gizmo command completion'
         tb.process_events(180)
         self.finish_action(before, original, "gizmo_" + mode.lower(), individual_rotation=mode == "Rotate")
 
@@ -124,6 +129,7 @@ class TransformOperationTest(_namespace["SubsetTest"]):
         as_rows = lambda value: [list(row) for row in value]
         stageviz.command.set_transforms(self.selected[:2], [as_rows(matrix), as_rows(matrix)],
                                        [as_rows(moved), as_rows(matrix)])
+        assert tb.wait_for_commands(), 'conflicting transform completion'
         tb.process_events(100)
         assert self.layer_text() == original, "conflicting subset transforms are rejected before any authoring"
         assert list(stageviz.session().paths()) == self.selected

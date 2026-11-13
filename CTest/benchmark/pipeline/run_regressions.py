@@ -8,7 +8,7 @@ import signal
 import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from mcp_runtime import DisposableStageviz
+from mcp_runtime import DisposableStageviz, WindowsDesktopUnavailable
 
 
 DEFAULT_SUITES = ['testapi','testui','testlayers','testpayloadhierarchy','testpayloadindicator','testviewport','testgizmostability','testsubsets','testlights','testnumericeditors','testviewporthdri','testviewportcapture','testscenestats','testaxissize','testconsole','testhierarchytransforms','testtransformoperation','testpivot','testsharedviewport','testxformgrouping','testlayercolors','testexportinstances','testsourcechild','testmakeeditable','testlayermultiselection','testlayerupdate','testresetopinions','testpreservestate','testchangesdialog']
@@ -170,11 +170,26 @@ def run(args):
         row=dict(suite=name,passed=False,completed=[])
         try:
             with DisposableStageviz(args.app,output/name,port=args.port) as app:
-                app.python("from PySide6 import QtCore,QtWidgets,QtOpenGLWidgets; import stageviz; w=stageviz.application().window(); w.resize(1500,1000); w.setWindowFlag(QtCore.Qt.WindowType.WindowStaysOnTopHint,True);w.show();w.raise_();w.activateWindow()")
+                # Changing native window flags on Windows recreates the HWND
+                # and can invalidate an already initialized QOpenGLWidget.
+                app.python("from PySide6 import QtCore,QtWidgets,QtOpenGLWidgets; import stageviz,sys; w=stageviz.application().window(); w.resize(1500,1000)\n"
+                           "if sys.platform != 'win32': w.setWindowFlag(QtCore.Qt.WindowType.WindowStaysOnTopHint,True)\n"
+                           "w.show()\n"
+                           "if sys.platform == 'win32':\n"
+                           " import ctypes\n"
+                           " assert ctypes.windll.user32.SetWindowPos(ctypes.c_void_p(int(w.winId())),ctypes.c_void_p(-1),0,0,0,0,0x13), 'Could not keep test viewer on top'\n"
+                           "w.raise_();w.activateWindow()")
                 for label,code in phases(root,name, getattr(args, 'performance', False), getattr(args, 'performance_baseline', None)):
                     print('RUN',name,label,flush=True)
                     before=app.oracle()
-                    result=app.python(code, timeout=120 if name in ('testpreservestate', 'testlayermultiselection', 'testchangesdialog') else 900)
+                    # The complete API/performance suite is one request and can
+                    # exceed fifteen minutes in an unoptimized Windows build.
+                    timeout = 900
+                    if name == 'testapi':
+                        timeout = 1800
+                    elif name in ('testpreservestate', 'testlayermultiselection', 'testchangesdialog'):
+                        timeout = 120
+                    result=app.python(code, timeout=timeout)
                     after=app.oracle()
                     if name == 'testpayloadhierarchy' and label != 'cleanup':
                         after['payload_prims'] = payload_oracle(app, result)
@@ -249,10 +264,17 @@ def run(args):
         except Exception as error:
             row['passed']=False
             row['error']=str(error)
+            if isinstance(error, WindowsDesktopUnavailable):
+                row['desktop_unavailable'] = True
+            failure = output / name / 'failure.txt'
+            failure.parent.mkdir(parents=True, exist_ok=True)
+            failure.write_text(str(error), encoding='utf-8')
             print('FAIL',name,str(error)[:300],flush=True)
         row['seconds']=time.monotonic()-started
         summary.append(row)
         (output/'summary.json').write_text(json.dumps(summary,indent=2))
+        if row.get('desktop_unavailable'):
+            break
     assert all(row['passed'] for row in summary), [(r['suite'],r.get('error','')[:300]) for r in summary if not r['passed']]
     print('PASS ALL',len(summary),'suites',sum(len(r['completed']) for r in summary),'phases',flush=True)
 

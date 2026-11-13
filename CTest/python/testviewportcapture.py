@@ -239,8 +239,12 @@ class ViewportCaptureTest(_base["ViewportTest"]):
         color.CreateInput("in1", Sdf.ValueTypeNames.Color3f).Set(Gf.Vec3f(0.12, 0.50, 0.16))
         color.CreateInput("in2", Sdf.ValueTypeNames.Color3f).Set(Gf.Vec3f(0.62, 0.10, 0.32))
         surface = node("Surface", "ND_standard_surface_surfaceshader", Sdf.ValueTypeNames.Token)
-        surface.CreateInput("base", Sdf.ValueTypeNames.Float).Set(1.0)
-        surface.CreateInput("base_color", Sdf.ValueTypeNames.Color3f).ConnectToSource(color.ConnectableAPI(), "out")
+        # Classify facing direction by hue independently of camera-light
+        # specular highlights, which can clip the diagnostic color to white.
+        surface.CreateInput("base", Sdf.ValueTypeNames.Float).Set(0.0)
+        surface.CreateInput("specular", Sdf.ValueTypeNames.Float).Set(0.0)
+        surface.CreateInput("emission", Sdf.ValueTypeNames.Float).Set(1.0)
+        surface.CreateInput("emission_color", Sdf.ValueTypeNames.Color3f).ConnectToSource(color.ConnectableAPI(), "out")
         surface.CreateInput("metalness", Sdf.ValueTypeNames.Float).Set(0.0)
         surface.CreateInput("roughness", Sdf.ValueTypeNames.Float).Set(0.68)
         material.CreateSurfaceOutput().ConnectToSource(surface.ConnectableAPI(), "out")

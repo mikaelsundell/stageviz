@@ -9,6 +9,11 @@ set(project_output_name "Stageviz")
 
 project(${project_name})
 
+if(MSVC)
+    # USD-heavy translation units can exceed the standard COFF section limit.
+    add_compile_options(/bigobj)
+endif()
+
 # options
 # DEPLOY_BUILD must be set explicitly by the build script for packaged builds.
 # Local development builds should keep this OFF and reuse the discovered runtime paths.

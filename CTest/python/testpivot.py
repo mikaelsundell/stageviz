@@ -180,14 +180,27 @@ class PivotTest(_base["TransformOperationTest"]):
         delta = Gf.Matrix4d(1).SetTranslate(Gf.Vec3d(0.03, 0.02, 0.01))
         for _ in range(iterations):
             observer = Usd.Stage.Open(stage.GetRootLayer())
+            previous = {str(prim.GetPath()): prim.GetAttribute('xformOp:transform:pivot').Get()
+                        for prim in stage.Traverse() if prim.GetAttribute('xformOp:transform:pivot')}
             stageviz.command.clear()
             stageviz.command.transform_pivots(self.selected, [list(row) for row in delta])
             assert tb.wait_for_commands(), "shared-layer pivot edit completion"
             assert self.matches(before), "shared-layer edit keeps geometry fixed"
-            for path in self.targets[:2]:
+            assert self.layer_text() != original, "shared-layer command authors pivot changes"
+            # The reference wrapper used by edge_cases changes the ordinary
+            # mesh's authoring boundary. Inspect the properties actually
+            # authored in this edit layer instead of assuming the old parents.
+            edit_layer = stage.GetEditTarget().GetLayer()
+            authored = [str(prim.GetPath()) for prim in stage.Traverse()
+                        if edit_layer.GetAttributeAtPath(prim.GetPath().AppendProperty('xformOp:transform:pivot'))
+                        and prim.GetAttribute('xformOp:transform:pivot').Get() != previous.get(str(prim.GetPath()))]
+            assert len(authored) >= 2, authored
+            for path in authored:
                 expected = stage.GetPrimAtPath(path).GetAttribute("xformOp:transform:pivot").Get()
                 actual = observer.GetPrimAtPath(path).GetAttribute("xformOp:transform:pivot").Get()
-                assert expected is not None and actual == expected, "both stages receive completed notices"
+                assert expected is not None and actual == expected, (
+                    "both stages receive completed notices", path, expected, actual,
+                    stage.GetEditTarget().GetLayer().identifier)
             stageviz.command.undo()
             assert tb.wait_for_commands(), "shared-layer undo completion"
             assert self.layer_text() == original and self.matches(before)

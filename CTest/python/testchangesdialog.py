@@ -31,10 +31,11 @@ class ChangesDialogTest(_base['ViewportTest']):
         self.disk = {str(p): p.read_bytes() for p in (self.first, self.second)}
         assert stageviz.session().newStage()
         for filename, parent in ((self.first, '/First'), (self.second, '/Second')):
-            stageviz.command.add_sublayer(str(filename))
+            stageviz.command.add_sublayer(filename.as_posix())
             assert tb.wait_for_commands()
-            stageviz.command.set_edit_layer(str(filename))
+            stageviz.command.set_edit_layer(filename.as_posix())
             assert tb.wait_for_commands()
+            assert stageviz.session().editLayer() == filename.as_posix()
             stageviz.command.new_prim(parent, 'Edited', 'Xform')
             assert tb.wait_for_commands()
             stageviz.command.set_edit_layer(stageviz.session().stage().GetRootLayer().identifier)
@@ -97,7 +98,7 @@ class ChangesDialogTest(_base['ViewportTest']):
                         edit = dialog.findChild(QtWidgets.QLineEdit, 'fileNameEdit')
                         assert edit is not None
                         edit.setText(root_filename.name)
-                        assert dialog.selectedFiles() == [str(root_filename)], dialog.selectedFiles()
+                        assert [Path(p) for p in dialog.selectedFiles()] == [root_filename], dialog.selectedFiles()
                         dialog.accept()
             except Exception as error:
                 failures.append(repr(error))
@@ -166,9 +167,9 @@ class ChangesDialogTest(_base['ViewportTest']):
         snapshots = self.review('save', root_filename=self.named)
         assert len(snapshots) == 1, 'reviewed changes must not cause a second Save As confirmation'
         assert not stageviz.session().filename()
-        assert self.named.is_file() and Path(str(self.named) + '.session').is_file()
+        assert self.named.is_file() and Path(self.named.as_posix() + '.session').is_file()
         assert all(Path(p).read_bytes() != text for p, text in self.disk.items())
-        assert stageviz.session().load(str(self.named))
+        assert stageviz.session().load(self.named.as_posix())
         assert tb.wait_for_commands()
         assert stageviz.session().stage().GetPrimAtPath('/First/Edited')
         assert stageviz.session().stage().GetPrimAtPath('/Second/Edited')
@@ -181,34 +182,34 @@ class ChangesDialogTest(_base['ViewportTest']):
         child = self.directory / 'nested.usda'
         parent.write_text('#usda 1.0\n(subLayers = [@nested.usda@])\ndef Xform "Parent" {}\n')
         child.write_text('#usda 1.0\ndef Xform "Nested" {}\n')
-        stageviz.command.add_sublayer(str(parent))
+        stageviz.command.add_sublayer(parent.as_posix())
         assert tb.wait_for_commands()
-        stageviz.command.set_edit_layer(str(child))
+        stageviz.command.set_edit_layer(child.as_posix())
         assert tb.wait_for_commands()
         stageviz.command.new_prim('/Nested', 'Edited', 'Xform')
         assert tb.wait_for_commands()
         stageviz.command.set_edit_layer(session.stage().GetRootLayer().identifier)
         assert tb.wait_for_commands()
-        parent_layer = Sdf.Layer.Find(str(parent))
+        parent_layer = Sdf.Layer.Find(parent.as_posix())
         parent_layer.SetPermissionToSave(False)
         rows = self.review()[0]
-        assert self.hierarchy[str(child)] == str(parent)
-        assert self.hierarchy[str(parent)] == session.stage().GetRootLayer().identifier
+        assert self.hierarchy[child.as_posix()] == parent.as_posix()
+        assert self.hierarchy[parent.as_posix()] == session.stage().GetRootLayer().identifier
         assert any(row[0] == parent.name and row[4] == 'Unchanged' for row in rows)
         parent_layer.SetPermissionToSave(True)
-        assert session.load(str(self.named))
+        assert session.load(self.named.as_posix())
         assert tb.wait_for_commands()
 
     def readonly(self):
         session = stageviz.session()
-        stageviz.command.set_edit_layer(str(self.first))
+        stageviz.command.set_edit_layer(self.first.as_posix())
         assert tb.wait_for_commands()
         stageviz.command.new_prim('/First', 'Unsaved', 'Xform')
         assert tb.wait_for_commands()
-        layer = Sdf.Layer.Find(str(self.first))
+        layer = Sdf.Layer.Find(self.first.as_posix())
         layer.SetPermissionToSave(False)
         self.review(blocked_status='Read-only')
-        assert session.filename() == str(self.named)
+        assert Path(session.filename()) == self.named
         assert all(Path(p).read_bytes() == text for p, text in self.disk.items())
         layer.SetPermissionToSave(True)
         session.setPreserveState(False)

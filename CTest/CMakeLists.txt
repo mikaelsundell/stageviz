@@ -252,9 +252,31 @@ endforeach()
 # This case drives popup actions with synthetic Qt key events. Native desktop
 # focus changes can dismiss the menu before its inspection timer runs. Keep
 # the C++ selection/command assertions deterministic without relying on OS focus.
-set_property(TEST stageviz.gui.layer_tree_multi_selection_api APPEND PROPERTY
-    ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
-)
+if(NOT WIN32)
+    set_property(TEST stageviz.gui.layer_tree_multi_selection_api APPEND PROPERTY
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    )
+endif()
+
+if(WIN32)
+    # Share the configured DLL search path with the external Python controller.
+    file(GENERATE OUTPUT "${CMAKE_BINARY_DIR}/test-runtime-$<CONFIG>.txt"
+        CONTENT "$<JOIN:${python_runtime_library_paths},\n>\n"
+    )
+    # Native tests need the configured dependency DLLs before any other build
+    # configuration inherited through PATH (notably OpenUSD's same-named DLLs).
+    get_property(stageviz_registered_tests DIRECTORY PROPERTY TESTS)
+    foreach(test_name IN LISTS stageviz_registered_tests)
+        get_test_property(${test_name} LABELS test_labels)
+        if("native" IN_LIST test_labels)
+            foreach(runtime_dir IN LISTS python_runtime_library_paths)
+                set_property(TEST ${test_name} APPEND PROPERTY ENVIRONMENT_MODIFICATION
+                    "PATH=path_list_prepend:${runtime_dir}"
+                )
+            endforeach()
+        endif()
+    endforeach()
+endif()
 
 # Convenience target that builds every native Stageviz regression executable.
 # This intentionally builds the executables only; CTest remains responsible

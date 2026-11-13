@@ -23,11 +23,11 @@ class LayerUpdateTest(_base['LayerMultiSelectionTest']):
 
     def update(self):
         stage = stageviz.session().stage()
-        stageviz.command.set_edit_layer(str(self.first))
-        tb.wait_for_commands()
+        stageviz.command.set_edit_layer(self.first.as_posix())
+        assert tb.wait_for_commands()
         stageviz.command.new_prim('/', 'MemoryOnly', type_name='Cube')
-        tb.wait_for_commands()
-        layer = Sdf.Layer.Find(str(self.first))
+        assert tb.wait_for_commands()
+        layer = Sdf.Layer.Find(self.first.as_posix())
         before = layer.ExportToString()
         self.first.write_text('#usda 1.0\n(subLayers = [@child.usda@])\ndef Sphere "FirstUpdated" {}\n')
         self.child.write_text('#usda 1.0\ndef Sphere "ChildExternal" {}\n')
@@ -45,22 +45,22 @@ class LayerUpdateTest(_base['LayerMultiSelectionTest']):
         updated = layer.ExportToString()
         self.first.write_text('#usda 1.0\ndef Sphere "LaterDiskChange" {}\n')
         stageviz.command.undo()
-        tb.wait_for_commands()
+        assert tb.wait_for_commands()
         assert layer.ExportToString() == before
         stageviz.command.redo()
-        tb.wait_for_commands()
+        assert tb.wait_for_commands()
         assert layer.ExportToString() == updated and not stage.GetPrimAtPath('/LaterDiskChange')
         stageviz.command.undo()
-        tb.wait_for_commands()
-        stageviz.command.set_edit_layer(str(self.fixture))
-        tb.wait_for_commands()
+        assert tb.wait_for_commands()
+        stageviz.command.set_edit_layer(self.fixture.as_posix())
+        assert tb.wait_for_commands()
         stageviz.command.clear()
         self.snapshot('layer_updated_single')
 
     def batch(self):
         core = tb.qt()[0]
         stage = stageviz.session().stage()
-        layers = [Sdf.Layer.Find(str(path)) for path in (self.first, self.second)]
+        layers = [Sdf.Layer.Find(path.as_posix()) for path in (self.first, self.second)]
         before = [layer.ExportToString() for layer in layers]
         self.first.write_text('#usda 1.0\n(subLayers = [@child.usda@])\ndef Sphere "FirstUpdated" {}\n')
         self.second.write_text('#usda 1.0\ndef Cube "SecondUpdated" {}\n')
@@ -71,36 +71,36 @@ class LayerUpdateTest(_base['LayerMultiSelectionTest']):
         assert stage.GetPrimAtPath('/FirstUpdated') and stage.GetPrimAtPath('/SecondUpdated')
         assert stage.GetPrimAtPath('/Child') and not stage.GetPrimAtPath('/ChildExternal')
         stageviz.command.undo()
-        tb.wait_for_commands()
+        assert tb.wait_for_commands()
         assert [layer.ExportToString() for layer in layers] == before, 'one undo restores both layers'
         assert not stageviz.command.can_undo()
         stageviz.command.redo()
-        tb.wait_for_commands()
+        assert tb.wait_for_commands()
         assert stage.GetPrimAtPath('/FirstUpdated') and stage.GetPrimAtPath('/SecondUpdated')
         stageviz.command.undo()
-        tb.wait_for_commands()
+        assert tb.wait_for_commands()
         stageviz.command.clear()
-        stageviz.command.update_layer([str(self.first), str(self.second), str(self.first)])
-        tb.wait_for_commands()
+        stageviz.command.update_layer([self.first.as_posix(), self.second.as_posix(), self.first.as_posix()])
+        assert tb.wait_for_commands()
         assert stage.GetPrimAtPath('/FirstUpdated') and stage.GetPrimAtPath('/SecondUpdated')
         stageviz.command.undo()
-        tb.wait_for_commands()
+        assert tb.wait_for_commands()
         assert [layer.ExportToString() for layer in layers] == before
         self.snapshot('layer_updated_batch')
 
     def availability(self):
         self.click(self.first)
-        stageviz.command.set_layer_permission_to_edit(str(self.first), False)
-        tb.wait_for_commands()
+        stageviz.command.set_layer_permission_to_edit(self.first.as_posix(), False)
+        assert tb.wait_for_commands()
         assert not self.menu()['layerUpdate']['enabled']
         stageviz.command.undo()
-        tb.wait_for_commands()
+        assert tb.wait_for_commands()
         assert self.menu()['layerUpdate']['enabled']
-        stageviz.command.set_layer_muted(str(self.first), True)
-        tb.wait_for_commands()
+        stageviz.command.set_layer_muted(self.first.as_posix(), True)
+        assert tb.wait_for_commands()
         assert not self.menu()['layerUpdate']['enabled']
         stageviz.command.undo()
-        tb.wait_for_commands()
+        assert tb.wait_for_commands()
         assert stageviz.session().newStage()
         tb.process_events(50)
         root_id = stageviz.session().stage().GetRootLayer().identifier

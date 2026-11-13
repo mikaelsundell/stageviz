@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 """External control of disposable Stageviz test and benchmark processes."""
 import hashlib
+from contextlib import contextmanager, ExitStack
 import json
 import os
 import re
@@ -12,6 +13,48 @@ import subprocess
 import threading
 import time
 import urllib.request
+
+
+class WindowsDesktopUnavailable(RuntimeError):
+    pass
+
+
+def _require_windows_desktop():
+    """Check access only; never switch desktops or change lock policy."""
+    import ctypes
+    from ctypes import wintypes
+    user = ctypes.WinDLL('user32', use_last_error=True)
+    user.OpenInputDesktop.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    user.OpenInputDesktop.restype = wintypes.HANDLE
+    user.CloseDesktop.argtypes = [wintypes.HANDLE]
+    desktop = user.OpenInputDesktop(0, False, 1)  # DESKTOP_READOBJECTS
+    if not desktop:
+        raise WindowsDesktopUnavailable(
+            'Windows input desktop is inaccessible. Unlock the workstation and keep it unlocked for GUI tests.')
+    user.CloseDesktop(desktop)
+
+
+@contextmanager
+def test_desktop():
+    """Keep an owned Windows GUI test awake and restore the thread request."""
+    if sys.platform != 'win32':
+        yield
+        return
+    import ctypes
+    from ctypes import wintypes
+    _require_windows_desktop()
+    kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+    request = kernel.SetThreadExecutionState
+    request.argtypes = [wintypes.DWORD]
+    request.restype = wintypes.DWORD
+    # ES_CONTINUOUS | ES_SYSTEM_REQUIRED | ES_DISPLAY_REQUIRED.
+    previous = request(0x80000003)
+    if not previous:
+        raise ctypes.WinError(ctypes.get_last_error())
+    try:
+        yield
+    finally:
+        request(previous)
 
 _MACOS_BOOTSTRAP = r'''import ctypes,stageviz
 # Keep this finite user-requested benchmark from being background-throttled.
@@ -84,6 +127,7 @@ class DisposableStageviz:
         self.max_rss_mib = max_rss_mib
         self.stop = threading.Event()
         self.watchdog_error = None
+        self.desktop = ExitStack()
 
     def rpc(self, method, params, timeout=900):
         request = urllib.request.Request('http://127.0.0.1:%d/mcp' % self.port,
@@ -116,6 +160,7 @@ class DisposableStageviz:
                     return
                 try:
                     if sys.platform == 'win32':
+                        _require_windows_desktop()
                         rss, cpu = windows_rss(self.process.pid), None
                     else:
                         fields = subprocess.check_output(['ps', '-o', 'rss=,%cpu=', '-p', str(self.process.pid)], text=True).split()
@@ -142,6 +187,14 @@ class DisposableStageviz:
                     return
 
     def __enter__(self):
+        try:
+            self.desktop.enter_context(test_desktop())
+            return self._start()
+        except BaseException:
+            self.desktop.close()
+            raise
+
+    def _start(self):
         if self.port:
             with socket.socket() as probe:
                 assert probe.connect_ex(('127.0.0.1', self.port)) != 0, 'Dedicated MCP port is occupied'
@@ -191,6 +244,12 @@ class DisposableStageviz:
             raise
 
     def __exit__(self, *args):
+        try:
+            return self._stop(*args)
+        finally:
+            self.desktop.close()
+
+    def _stop(self, *args):
         outcome = dict(before_cleanup_returncode=self.process.poll(), watchdog_error=self.watchdog_error)
         if len(args) > 1 and args[1] is not None:
             outcome['exception'] = str(args[1])
@@ -205,6 +264,8 @@ class DisposableStageviz:
         self.log.close()
         outcome['cleanup_returncode'] = self.process.returncode
         (self.output / 'process-outcome.json').write_text(json.dumps(outcome, indent=2))
+        if self.watchdog_error and 'Windows input desktop is inaccessible' in self.watchdog_error:
+            raise WindowsDesktopUnavailable(self.watchdog_error)
         if not args or args[0] is None:
             if self.watchdog_error:
                 raise RuntimeError(self.watchdog_error)
