@@ -3,7 +3,8 @@
 
 """Orbit with Rotate active in a disposable viewer, checking meshes and pixels.
 
-Use an external MCP controller for setup(), orbit(), distances(), cleanup().
+Use an external MCP controller for setup(), orbit(), distances(), edge_on(),
+clipping() and cleanup().
 This stress case replaces the stage and must not run on unsaved user work.
 """
 
@@ -106,6 +107,34 @@ class GizmoStabilityTest(_base['ViewportTest']):
                 tb.process_events(5)
             self.check('gizmo_distance_' + str(distance))
 
+    def clipping(self):
+        """Handles remain visible and resize outside the document clip range."""
+        session = stageviz.session()
+        camera = session.viewState().camera()
+        original_clipping = (camera.nearClipping(), camera.farClipping())
+        before = session.stage().GetRootLayer().ExportToString()
+        try:
+            camera.setNearClipping(1000)
+            camera.setFarClipping(1001)
+            for mode in ('Move', 'Rotate', 'Scale'):
+                self.activate_mode(mode)
+                radii = []
+                for distance in (8., 16.):
+                    camera.setCameraDistance(distance)
+                    self.viewport().repaint()
+                    tb.process_events(20)
+                    self.check('gizmo_clipping_' + mode + '_' + str(distance))
+                    handle = session.auxiliary().GetPrimAtPath('/Display/Transform')
+                    matrix = UsdGeom.XformCache().GetLocalToWorldTransform(handle)
+                    radii.append(sum(matrix[0][i] ** 2 for i in range(3)) ** .5)
+                    assert (camera.nearClipping(), camera.farClipping()) == (1000, 1001)
+                assert radii[1] > radii[0] * 1.5, 'handles still resize with camera distance'
+            assert session.stage().GetRootLayer().ExportToString() == before
+        finally:
+            camera.setNearClipping(original_clipping[0])
+            camera.setFarClipping(original_clipping[1])
+            self.activate_mode('Rotate')
+
     def edge_on(self):
         camera = stageviz.session().viewState().camera()
         camera.setAxisYaw(0)
@@ -152,6 +181,7 @@ def run(disposable=False):
         test.orbit()
         test.distances()
         test.edge_on()
+        test.clipping()
     finally:
         test.cleanup()
 

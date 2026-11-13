@@ -40,7 +40,7 @@ def phases(root, name, performance=False, performance_baseline=None):
                 ('selected', 'test.selected()'), ('cleanup', 'test.cleanup()')]
     if name == 'testgizmostability':
         return [('setup', load + "; test=ns['GizmoStabilityTest'](disposable=True); test.setup()"),
-                ('orbit', 'test.orbit()'), ('distances', 'test.distances()'), ('edge-on', 'test.edge_on()'), ('cleanup', 'test.cleanup()')]
+                ('orbit', 'test.orbit()'), ('distances', 'test.distances()'), ('edge-on', 'test.edge_on()'), ('clipping', 'test.clipping()'), ('cleanup', 'test.cleanup()')]
     if name == 'testsourcechild':
         return [('setup', load + "; test=ns['SourceChildTest'](disposable=True); test.setup()")] + [
             ('api-' + mode, 'test.api(%r)' % mode) for mode in ('Move', 'Rotate', 'Scale')

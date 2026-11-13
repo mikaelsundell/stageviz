@@ -4,6 +4,7 @@
 
 #include "renderengine.h"
 #include "application.h"
+#include "gizmoprojection.h"
 #include "paths.h"
 #include "perfscope.h"
 #include "qtutils.h"
@@ -58,6 +59,7 @@
 #include <pxr/usd/usdGeom/metrics.h>
 #include <pxr/usd/usdGeom/subset.h>
 #include <pxr/usd/usdGeom/tokens.h>
+#include <pxr/usd/usdGeom/xformable.h>
 #include <pxr/usdImaging/usdImaging/sceneIndices.h>
 #include <pxr/usdImaging/usdImaging/stageSceneIndex.h>
 #include <pxr/usdImaging/usdImaging/usdPrimInfoSchema.h>
@@ -930,12 +932,16 @@ namespace {
             return cache ? cache->generation : 0;
         }
 
-        void renderBatch(const SdfPathVector& paths, const UsdImagingGLRenderParams& params)
+        void renderBatch(const SdfPathVector& paths, const UsdImagingGLRenderParams& params,
+                         const SdfPathVector& excludes = {})
         {
             if (!_taskControllerSceneIndex || paths.empty())
                 return;
 
             _UpdateHydraCollection(&_renderCollection, paths, params);
+            // Reset exclusions on every submission so collection state cannot
+            // retain paths excluded by an earlier submission.
+            _renderCollection.SetExcludePaths(excludes);
             _taskControllerSceneIndex->SetCollection(_renderCollection);
             _PrepareRender(params);
             _SetBBoxParams(params.bboxes, params.bboxLineColor, params.bboxLineDashSize);
@@ -1222,6 +1228,8 @@ public:
     UsdImagingGLRenderParams params;
     std::unique_ptr<ImagingGLEngine> engine;
     std::unique_ptr<ImagingGLEngine> auxiliaryEngine;
+    std::unique_ptr<ImagingGLEngine> gizmoEngine;
+    bool gizmoRendered = false;
     std::unique_ptr<QOpenGLContext> offscreenContext;
     std::unique_ptr<QOffscreenSurface> offscreenSurface;
 };
@@ -1265,7 +1273,7 @@ RenderEngine::Private::ensureCurrentContext()
 bool
 RenderEngine::Private::initialize()
 {
-    if (engine && (contextMode == ContextMode::Offscreen || auxiliaryEngine))
+    if (engine && (contextMode == ContextMode::Offscreen || (auxiliaryEngine && gizmoEngine)))
         return true;
 
     if (!ensureCurrentContext())
@@ -1297,6 +1305,15 @@ RenderEngine::Private::initialize()
             engine.reset();
             return false;
         }
+        // Keep the grid and gizmo in independent imaging engines so their
+        // camera, collection and GPU resources are not reused between passes.
+        gizmoEngine = std::make_unique<ImagingGLEngine>(overlayParams);
+        if (!gizmoEngine->GetHgi()) {
+            gizmoEngine.reset();
+            auxiliaryEngine.reset();
+            engine.reset();
+            return false;
+        }
     }
 
     updateDocumentRenderSceneIndex();
@@ -1309,8 +1326,10 @@ RenderEngine::Private::initialize()
 void
 RenderEngine::Private::resetEngine()
 {
-    if (!engine && !auxiliaryEngine)
+    if (!engine && !auxiliaryEngine && !gizmoEngine)
         return;
+
+    gizmoRendered = false;
 
     if (contextMode == ContextMode::Offscreen) {
         OpenGLContextRestore contextRestore;
@@ -1320,11 +1339,13 @@ RenderEngine::Private::resetEngine()
             return;
         }
 
+        gizmoEngine.reset();
         auxiliaryEngine.reset();
         engine.reset();
         return;
     }
 
+    gizmoEngine.reset();
     auxiliaryEngine.reset();
     engine.reset();
 }
@@ -1332,16 +1353,18 @@ RenderEngine::Private::resetEngine()
 void
 RenderEngine::Private::reset()
 {
+    gizmoRendered = false;
     if (contextMode == ContextMode::Offscreen) {
         {
             OpenGLContextRestore contextRestore;
 
-            if ((engine || auxiliaryEngine)
+            if ((engine || auxiliaryEngine || gizmoEngine)
                 && (!offscreenContext || !offscreenSurface || !offscreenContext->makeCurrent(offscreenSurface.get()))) {
                 qWarning() << "could not make offscreen context current while releasing render engine";
                 return;
             }
 
+            gizmoEngine.reset();
             auxiliaryEngine.reset();
             engine.reset();
         }
@@ -1351,6 +1374,7 @@ RenderEngine::Private::reset()
         return;
     }
 
+    gizmoEngine.reset();
     auxiliaryEngine.reset();
     engine.reset();
 }
@@ -1436,18 +1460,18 @@ RenderEngine::Private::updateDocumentRenderSceneIndex()
 void
 RenderEngine::Private::updateAuxiliaryRenderSceneIndex()
 {
-    if (!auxiliaryEngine)
-        return;
-
-    SceneIndices& sceneIndices = auxiliaryEngine->sceneIndices();
-    if (!sceneIndices.renderSceneIndex)
-        return;
-
-    TfRefPtr<RenderSceneIndex> renderSceneIndex = sceneIndices.renderSceneIndex;
-    renderSceneIndex->setSceneMaterialsEnabled(true);
-    renderSceneIndex->setMaterialPath({});
-    renderSceneIndex->setMode(RenderSceneIndex::None);
-    renderSceneIndex->setDoubleSidedOverrideEnabled(false);
+    for (auto* target : { auxiliaryEngine.get(), gizmoEngine.get() }) {
+        if (!target)
+            continue;
+        SceneIndices& sceneIndices = target->sceneIndices();
+        if (!sceneIndices.renderSceneIndex)
+            continue;
+        auto renderSceneIndex = sceneIndices.renderSceneIndex;
+        renderSceneIndex->setSceneMaterialsEnabled(true);
+        renderSceneIndex->setMaterialPath({});
+        renderSceneIndex->setMode(RenderSceneIndex::None);
+        renderSceneIndex->setDoubleSidedOverrideEnabled(false);
+    }
 }
 
 
@@ -1474,7 +1498,7 @@ RenderEngine::Private::updateRenderParams()
 void
 RenderEngine::Private::updateLighting()
 {
-    if (!engine && !auxiliaryEngine)
+    if (!engine && !auxiliaryEngine && !gizmoEngine)
         return;
 
     std::vector<GlfSimpleLight> lights;
@@ -1524,6 +1548,8 @@ RenderEngine::Private::updateLighting()
         engine->SetLightingState(lights, material, ambient);
     if (auxiliaryEngine)
         auxiliaryEngine->SetLightingState(lights, material, ambient);
+    if (gizmoEngine)
+        gizmoEngine->SetLightingState(lights, material, ambient);
 }
 
 bool
@@ -1533,9 +1559,10 @@ RenderEngine::Private::render()
     if (!stage || size[0] <= 0 || size[1] <= 0)
         return false;
 
-    if ((!engine || (contextMode == ContextMode::Current && !auxiliaryEngine)) && !initialize())
+    if ((!engine || (contextMode == ContextMode::Current && (!auxiliaryEngine || !gizmoEngine))) && !initialize())
         return false;
 
+    gizmoRendered = false;
     ensureAuxiliarySceneIndex();
     refreshAuxiliarySceneIndex();
     updateRenderParams();
@@ -1579,6 +1606,8 @@ RenderEngine::Private::render()
     configureEngine(engine.get());
     if (auxiliaryEngine)
         configureEngine(auxiliaryEngine.get());
+    if (gizmoEngine)
+        configureEngine(gizmoEngine.get());
 
     const UsdPrim root = stage->GetPseudoRoot();
     UsdImagingGLRenderParams documentParams = params;
@@ -1829,22 +1858,37 @@ RenderEngine::Private::render()
         auxiliaryHgi->StartFrame();
         auxiliaryEngine->PrepareBatch(auxiliaryRoot, auxiliaryParams);
         updateAuxiliaryRenderSceneIndex();
-        auxiliaryEngine->renderBatch({ paths::auxiliary::display }, auxiliaryParams);
-
         const SdfPath gizmoPath = paths::auxiliary::transform;
-        if (auxiliary->GetPrimAtPath(gizmoPath)) {
+        // Draw the gizmo only in its dedicated smooth-shaded, depth-cleared
+        // pass. The broader /Display collection otherwise draws it twice.
+        auxiliaryEngine->renderBatch({ paths::auxiliary::display }, auxiliaryParams, { gizmoPath });
+
+        if (gizmoEngine && auxiliary->GetPrimAtPath(gizmoPath)) {
+            auto* gizmoTarget = gizmoEngine.get();
+            Hgi* gizmoHgi = gizmoTarget->GetHgi();
             // Gizmo shading must not inherit the document's wireframe mode.
             UsdImagingGLRenderParams gizmoParams = auxiliaryParams;
             gizmoParams.drawMode = UsdImagingGLDrawMode::DRAW_SHADED_SMOOTH;
+            gizmoParams.clipPlanes.clear();
+            GfMatrix4d gizmoTransform(1.0);
+            bool resetGizmoStack = false;
+            UsdGeomXformable(auxiliary->GetPrimAtPath(gizmoPath))
+                .GetLocalTransformation(&gizmoTransform, &resetGizmoStack);
+            const auto gizmoCamera = gizmoprojection::camera(camera, gizmoTransform);
+            gizmoTarget->SetCameraState(viewMatrix, gizmoCamera.GetFrustum().ComputeProjectionMatrix());
+            gizmoHgi->StartFrame();
+            gizmoTarget->PrepareBatch(auxiliaryRoot, gizmoParams);
+            updateAuxiliaryRenderSceneIndex();
             // This pass intentionally clears depth but preserves the color
             // attachment. OpenGL state operations require a current GL context.
             glDepthMask(GL_TRUE);
             glClear(GL_DEPTH_BUFFER_BIT);
-            auxiliaryEngine->renderBatch({ gizmoPath }, gizmoParams);
+            gizmoTarget->renderBatch({ gizmoPath }, gizmoParams);
+            gizmoRendered = true;
+            gizmoHgi->EndFrame();
         }
         auxiliaryHgi->EndFrame();
     }
-
 
     return true;
 }
@@ -1879,7 +1923,9 @@ RenderEngine::reset()
 bool
 RenderEngine::isInitialized() const
 {
-    return p->engine != nullptr && (p->contextMode == ContextMode::Offscreen || p->auxiliaryEngine != nullptr);
+    return p->engine != nullptr
+           && (p->contextMode == ContextMode::Offscreen
+               || (p->auxiliaryEngine != nullptr && p->gizmoEngine != nullptr));
 }
 
 void
@@ -2067,7 +2113,8 @@ RenderEngine::renderToCurrentFramebuffer()
 bool
 RenderEngine::isConverged() const
 {
-    return (!p->engine || p->engine->IsConverged()) && (!p->auxiliaryEngine || p->auxiliaryEngine->IsConverged());
+    return (!p->engine || p->engine->IsConverged()) && (!p->auxiliaryEngine || p->auxiliaryEngine->IsConverged())
+           && (!p->gizmoEngine || !p->gizmoRendered || p->gizmoEngine->IsConverged());
 }
 
 QJsonObject

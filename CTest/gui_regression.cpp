@@ -15,6 +15,7 @@
 #include "commandstack.h"
 #include "commandtransform.h"
 #include "commandvisibility.h"
+#include "gizmoprojection.h"
 #include "indextree.h"
 #include "layerdialog.h"
 #include "layeritem.h"
@@ -3249,6 +3250,47 @@ viewportTransformSelectionRefreshApi()
 }
 
 void
+viewportGizmoClippingApi()
+{
+    const QRectF gate(10, 20, 640, 480);
+    for (const auto projection : { GfCamera::Perspective, GfCamera::Orthographic }) {
+        GfCamera document;
+        document.SetProjection(projection);
+        document.SetClippingRange(GfRange1f(5, 6));
+        const auto original = document.GetClippingRange();
+        for (double depth : { 0.05, 2.0, 12.0 }) {
+            GfMatrix4d transform(1.0);
+            transform.SetScale(depth * 0.02);
+            transform.SetTranslateOnly(GfVec3d(0, 0, -depth));
+            const auto gizmo = stageviz::gizmoprojection::camera(document, transform);
+            require(document.GetClippingRange() == original, "gizmo projection leaves document clipping unchanged");
+            require(gizmo.GetTransform() == document.GetTransform()
+                        && gizmo.GetHorizontalAperture() == document.GetHorizontalAperture()
+                        && gizmo.GetVerticalAperture() == document.GetVerticalAperture(),
+                    "gizmo projection preserves the viewport view and field of view");
+            for (int corner = 0; corner < 8; ++corner) {
+                const GfVec3d local(corner & 1 ? 1.2 : -1.2, corner & 2 ? 1.2 : -1.2, corner & 4 ? 1.2 : -1.2);
+                const auto world = transform.Transform(local);
+                QPointF screen;
+                require(stageviz::gizmoprojection::project(gizmo, gate, world, screen),
+                        "all handle bounds remain projectable outside document clipping");
+                const auto expected = document.GetFrustum().ComputeProjectionMatrix().Transform(world);
+                require(std::abs(screen.x() - (gate.left() + (expected[0] * .5 + .5) * gate.width())) < 1e-6
+                            && std::abs(screen.y() - (gate.top() + (.5 - expected[1] * .5) * gate.height())) < 1e-6,
+                        "independent near/far planes do not move the projected handles");
+            }
+        }
+    }
+    GfCamera document;
+    GfMatrix4d behind(1.0);
+    behind.SetTranslateOnly(GfVec3d(0, 0, 2));
+    QPointF screen;
+    require(!stageviz::gizmoprojection::project(stageviz::gizmoprojection::camera(document, behind), gate,
+                                                behind.ExtractTranslation(), screen),
+            "perspective gizmos behind the eye remain unprojectable");
+}
+
+void
 viewportGizmoDefaultFrameApi()
 {
     const stageviz::ViewportGizmo::Frame frame;
@@ -3344,6 +3386,7 @@ main(int argc, char** argv)
         { "viewport_transform_hierarchy_sync_api", viewportTransformHierarchySyncApi },
         { "viewport_transform_individual_rotation_api", viewportTransformIndividualRotationApi },
         { "viewport_gizmo_default_frame_api", viewportGizmoDefaultFrameApi },
+        { "viewport_gizmo_clipping_api", viewportGizmoClippingApi },
         { "viewport_transform_selection_refresh_api", viewportTransformSelectionRefreshApi },
         { "transform_operation_applied_api", transformOperationAppliedApi },
         { "pivot_operation_applied_api", pivotOperationAppliedApi },
