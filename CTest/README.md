@@ -105,6 +105,15 @@ It checks unchanged handle topology, finite transforms, selection,
 and rendered color bounds to detect spikes that only occur on the GPU. The
 external MCP regression controller records independent stage/selection evidence.
 
+`viewport_gizmo_clipping_api` checks perspective and orthographic gizmo bounds
+outside the document clipping range, unchanged viewport framing, and rejection
+behind the eye. The scene, grid and gizmo rendering changes are also exercised
+by `testgizmostability.py` camera sweeps and an independent-clipping phase
+that keeps all three tool modes visible and resizing outside the document
+near/far range. Frame captures can mask
+intermittent timing faults; passing screenshot checks alone does not prove that
+all asynchronous rendering artifacts are absent.
+
 The Outliner composition marker uses one strip per colored layer with a prim
 spec, ordered left to right from weaker to stronger opinions. The identifiers
 are cached lazily per row and reset by the existing prim invalidation path;

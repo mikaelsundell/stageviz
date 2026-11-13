@@ -101,3 +101,26 @@ are written per phase. Use the same fixture, build settings, active branch and
 serialized process order for before/after comparisons; monitor memory through
 `DisposableStageviz`. This is a targeted UI/command benchmark, not a geometry or
 renderer throughput benchmark.
+
+## Gizmo renderer before/after comparison
+
+`benchmark_gizmo_rendering.py` compares two built revisions in isolated MCP
+processes, reversing their order each round. It exercises camera rotation and
+zoom with no selection and with Move/Rotate/Scale, grid on/off, and small and
+2,000-cube scenes. It verifies unchanged USD data and selection, viewport
+renderReady signals, and captures Qt snapshots, screenshots and independent MCP
+stage/selection evidence outside timed spans.
+
+```sh
+python3 CTest/benchmark/benchmark_gizmo_rendering.py \
+  --before /path/to/before/stageviz --after /path/to/after/stageviz \
+  --output /path/to/new-results-directory
+```
+
+The default is three fresh-process rounds per revision, 30 warm-up frames and
+120 measured frames per condition. Repaints without a renderReady signal are
+excluded and retried with a bounded limit. Results include median and p95 repaint wall
+times and process RSS. These timings include CPU submission and driver stalls,
+not GPU hardware execution. No readback, synchronization wait or diagnostic
+logging is added during measurement. RSS is sampled after each scene's measured
+conditions and final checkpoint, so it includes allocated checkpoint resources.
