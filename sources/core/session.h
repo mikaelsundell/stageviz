@@ -627,6 +627,11 @@ Q_SIGNALS:
     void stateDirtyChanged(bool dirty);
 
     /**
+     * @brief Emitted after remembered state is saved, even if its dirty flag was already clear.
+     */
+    void stateSaved();
+
+    /**
      * @brief Emitted when layers are muted or unmuted on the current stage.
      */
     void layerMutingChanged(const QStringList& mutedLayers, const QStringList& unmutedLayers);

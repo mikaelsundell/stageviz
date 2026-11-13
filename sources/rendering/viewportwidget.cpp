@@ -780,16 +780,17 @@ ViewportWidgetPrivate::mousePressEvent(QMouseEvent* event)
     else if (event->button() == Qt::LeftButton) {
         // Shift at press starts a Move copy gesture. Other tools keep Shift snapping.
         d.transform->setSnap(bool(event->modifiers() & Qt::ShiftModifier));
-        if (d.transform->beginDrag(event->position(), bool(event->modifiers() & Qt::ShiftModifier))) {
-            d.drag = false;
-            d.selectionTool->cancel();
-            d.glwidget->setFocus(Qt::MouseFocusReason);
-        }
-        else if (event->modifiers() & (Qt::AltModifier | Qt::MetaModifier)) {
+        // Navigation modifiers take precedence even over a gizmo handle.
+        if (event->modifiers() & (Qt::AltModifier | Qt::MetaModifier)) {
             d.drag = true;
             d.selectionTool->cancel();
             d.transform->endDrag();
             viewCamera()->setCameraMode(ViewCamera::Tumble);
+        }
+        else if (d.transform->beginDrag(event->position(), bool(event->modifiers() & Qt::ShiftModifier))) {
+            d.drag = false;
+            d.selectionTool->cancel();
+            d.glwidget->setFocus(Qt::MouseFocusReason);
         }
         else {
             d.drag = false;
