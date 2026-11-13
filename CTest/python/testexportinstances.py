@@ -61,7 +61,7 @@ class ExportInstancesTest:
             original = stageviz.session().stage().GetRootLayer().ExportToString()
             output = self.directory / (label + '.usda')
             assert stageviz.session().flattenPathsToFile(stageviz.session().paths(), str(output))
-            assert stageviz.session().filename() == str(self.fixture)
+            assert Path(stageviz.session().filename()) == self.fixture
             assert stageviz.session().stage().GetRootLayer().ExportToString() == original
             stage = Usd.Stage.Open(str(output))
             assert not stage.GetRootLayer().HasDefaultPrim()

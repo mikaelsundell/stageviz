@@ -21,6 +21,31 @@ Manual benchmark comparisons requiring supplied datasets are separate tools.
 A graphical desktop and working viewport renderer are required; GUI checks
 show disposable application windows. Runtime dependencies must be available
 as they are when launching the development app normally.
+On Windows, native CTests prepend the configured dependency runtime directories
+to their process-local `PATH` so another configuration's OpenUSD DLLs on the
+parent shell's `PATH` cannot override them.
+The complete-suite controller uses the same generated runtime-path manifest
+for embedded Python app processes. Reconfigure once after updating this setup
+before using `--no-build`. The multi-layer GUI case uses the native Windows
+platform because the offscreen plugin does not reproduce disabled icon styling.
+Embedded Windows tests use `SetWindowPos` to keep the viewer on top without
+recreating its native window after OpenGL initialization and invalidating its
+GL context.
+Use USD's forward-slash identifiers (`Path.as_posix()` for these file-backed
+fixtures) for layer commands and row lookups, and compare filesystem paths with
+`Path` objects. Assert the edit target after switching it: command completion
+alone does not establish that the requested edit was accepted.
+
+Command waits default to 60 seconds; the large payload fixture allows 120
+seconds for Debug rendering. The complete API/performance suite runs as one MCP
+request with a 30-minute limit. Other phase request limits remain unchanged.
+Complete failure details are saved in each failed suite's `failure.txt`.
+Owned Windows app processes request that the system and display stay awake
+during testing, then restore the previous thread execution request on exit.
+The controller checks input-desktop access before startup and while the app
+runs. Locking the workstation stops verification with an explicit desktop
+error rather than cascading blank-viewport failures. Keep it unlocked for GUI
+verification; the controller does not change screen-lock policy.
 
 `--list` lists embedded suites, `--no-build` uses current binaries, and
 `--output PATH` chooses a new results directory. `--build-dir PATH`, `--app PATH`

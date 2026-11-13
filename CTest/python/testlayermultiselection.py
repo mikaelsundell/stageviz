@@ -34,7 +34,7 @@ class LayerMultiSelectionTest(_base['ViewportTest']):
         self.second.write_text('#usda 1.0\ndef Xform "Second" { }\nover "Shared" { }\n')
         self.fixture.write_text('#usda 1.0\n(subLayers = [@first.usda@, @second.usda@])\n')
         self.saved_files = {str(p): p.read_text() for p in (self.child, self.first, self.second, self.fixture)}
-        assert stageviz.session().load(str(self.fixture))
+        assert stageviz.session().load(self.fixture.as_posix())
         assert tb.wait_for_commands()
         _, _, _, QtWidgets = tb.qt()
         dialog = next(w for w in QtWidgets.QApplication.topLevelWidgets()
@@ -57,7 +57,7 @@ class LayerMultiSelectionTest(_base['ViewportTest']):
         QtCore, _, _, QtWidgets = tb.qt()
         it = QtWidgets.QTreeWidgetItemIterator(self.tree())
         while it.value():
-            if str(it.value().data(0, QtCore.Qt.ItemDataRole.UserRole + 1)) == str(path):
+            if str(it.value().data(0, QtCore.Qt.ItemDataRole.UserRole + 1)) == Path(path).as_posix():
                 return it.value()
             it += 1
         raise AssertionError('missing layer row ' + str(path))
@@ -151,15 +151,16 @@ class LayerMultiSelectionTest(_base['ViewportTest']):
         assert self.tree().selectionMode() == QtWidgets.QAbstractItemView.SelectionMode.ExtendedSelection
         self.click(self.first)
         self.click(self.second, QtCore.Qt.KeyboardModifier.ControlModifier)
-        assert self.selected() == {str(self.first), str(self.second)}, self.selected()
+        assert self.selected() == {self.first.as_posix(), self.second.as_posix()}, self.selected()
         self.click(self.first)
         self.click(self.second, QtCore.Qt.KeyboardModifier.ShiftModifier)
-        assert self.selected() == {str(self.first), str(self.child), str(self.second)}, self.selected()
+        assert self.selected() == {self.first.as_posix(), self.child.as_posix(), self.second.as_posix()}, self.selected()
         self.click(self.child, QtCore.Qt.KeyboardModifier.ControlModifier)
-        assert self.selected() == {str(self.first), str(self.second)}
-        stageviz.command.set_edit_layer(str(self.second))
+        assert self.selected() == {self.first.as_posix(), self.second.as_posix()}
+        stageviz.command.set_edit_layer(self.second.as_posix())
         assert tb.wait_for_commands()
-        assert self.selected() == {str(self.first), str(self.second)}
+        assert stageviz.session().editLayer() == self.second.as_posix()
+        assert self.selected() == {self.first.as_posix(), self.second.as_posix()}
         assert not QtGui.QIcon(stageviz.UI().iconPath(stageviz.UI.IconRole.EditLayer)).isNull()
         active_icon = self.row(self.second).icon(0).pixmap(24, 24).toImage()
         normal_icon = self.row(self.first).icon(0).pixmap(24, 24).toImage()
@@ -172,12 +173,12 @@ class LayerMultiSelectionTest(_base['ViewportTest']):
         QtTest.QTest.mouseClick(tree.viewport(), QtCore.Qt.MouseButton.LeftButton,
                                QtCore.Qt.KeyboardModifier.NoModifier, eye)
         assert tb.wait_for_commands()
-        assert not stageviz.session().stage().IsLayerMuted(str(self.second))
+        assert not stageviz.session().stage().IsLayerMuted(self.second.as_posix())
         layer_dialog = next(w for w in QtWidgets.QApplication.topLevelWidgets()
                             if w.objectName() == 'layerDialog' and w.isVisible())
         assert layer_dialog.grab().save(str(self.directory / 'layer_edit_target_dialog.png'))
         self.snapshot('layer_edit_target')
-        stageviz.command.set_edit_layer(str(self.fixture))
+        stageviz.command.set_edit_layer(self.fixture.as_posix())
         assert tb.wait_for_commands()
         assert self.row(self.fixture).icon(0).pixmap(24, 24).toImage() == active_icon
         assert self.row(self.second).icon(0).pixmap(24, 24).toImage() == normal_icon
@@ -186,28 +187,28 @@ class LayerMultiSelectionTest(_base['ViewportTest']):
         assert not menu['layerSetEdit']['enabled']
         assert menu['layerMute']['text'] == 'Mute layers'
         assert set(stageviz.session().paths()) == {'/First', '/Shared', '/Second'}
-        assert self.selected() == {str(self.first), str(self.second)}
+        assert self.selected() == {self.first.as_posix(), self.second.as_posix()}
         self.snapshot('layer_multi_selected')
         # Right-clicking an unselected layer replaces the previous selection.
         self.menu(path=self.child)
-        assert self.selected() == {str(self.child)}
+        assert self.selected() == {self.child.as_posix()}
         self.click(self.first)
         self.click(self.second, QtCore.Qt.KeyboardModifier.ControlModifier)
 
     def actions(self):
         session = stageviz.session()
         stage = session.stage()
-        first = Sdf.Layer.Find(str(self.first))
-        second = Sdf.Layer.Find(str(self.second))
-        child = Sdf.Layer.Find(str(self.child))
+        first = Sdf.Layer.Find(self.first.as_posix())
+        second = Sdf.Layer.Find(self.second.as_posix())
+        child = Sdf.Layer.Find(self.child.as_posix())
         for action, changed, restored in (
             ('layerLock', lambda: not first.permissionToEdit and not second.permissionToEdit,
              lambda: first.permissionToEdit and second.permissionToEdit),
-            ('layerMute', lambda: stage.IsLayerMuted(str(self.first)) and stage.IsLayerMuted(str(self.second)),
-             lambda: not stage.IsLayerMuted(str(self.first)) and not stage.IsLayerMuted(str(self.second)))):
+            ('layerMute', lambda: stage.IsLayerMuted(self.first.as_posix()) and stage.IsLayerMuted(self.second.as_posix()),
+             lambda: not stage.IsLayerMuted(self.first.as_posix()) and not stage.IsLayerMuted(self.second.as_posix()))):
             self.menu(action)
             assert changed()
-            assert self.selected() == {str(self.first), str(self.second)}
+            assert self.selected() == {self.first.as_posix(), self.second.as_posix()}
             stageviz.command.undo()
             assert tb.wait_for_commands()
             assert restored()
@@ -221,7 +222,7 @@ class LayerMultiSelectionTest(_base['ViewportTest']):
         self.menu('layerColor', color='#38b75e')
         assert session.saveState(str(state_file))
         colors = json.loads(state_file.read_text())['layerColors']
-        assert colors == {str(self.first): '#ff38b75e', str(self.second): '#ff38b75e'}, colors
+        assert colors == {self.first.as_posix(): '#ff38b75e', self.second.as_posix(): '#ff38b75e'}, colors
         self.menu('layerClearColor')
         assert session.saveState(str(state_file))
         assert not json.loads(state_file.read_text()).get('layerColors')
@@ -247,7 +248,7 @@ class LayerMultiSelectionTest(_base['ViewportTest']):
 
     def batches(self):
         stage = stageviz.session().stage()
-        ids = [str(self.first), str(self.child), str(self.second)]
+        ids = [self.first.as_posix(), self.child.as_posix(), self.second.as_posix()]
         first, child, second = [Sdf.Layer.Find(identifier) for identifier in ids]
         for command, args, changed in (
             (stageviz.command.set_layer_muted, (ids, True), lambda: all(stage.IsLayerMuted(i) for i in ids)),

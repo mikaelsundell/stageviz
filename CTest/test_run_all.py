@@ -11,6 +11,7 @@ from unittest import mock
 
 import run_all
 import run_regressions
+import mcp_runtime
 
 
 class TestRunner(unittest.TestCase):
@@ -21,6 +22,7 @@ class TestRunner(unittest.TestCase):
         self.build = self.directory / 'build with spaces'
         self.build.mkdir()
         (self.build / 'CMakeCache.txt').write_text('CMAKE_COMMAND:INTERNAL=/unused/cmake\n')
+        (self.build / 'test-runtime-Debug.txt').write_text('C:/debug dependencies/bin\nC:/debug dependencies/lib\n')
         self.app = self.directory / 'app with spaces'
         self.app.touch()
         self.args = argparse.Namespace(build_dir=str(self.build), app=str(self.app), cmake=None,
@@ -103,6 +105,25 @@ class TestRunner(unittest.TestCase):
         self.assertTrue(row['passed'])
         self.assertEqual([step['name'] for step in row['steps']], ['ctest', 'python'])
 
+    def test_windows_runtime_precedes_inherited_path_for_both_test_families(self):
+        self.args.no_build = True
+        with mock.patch.object(run_all.sys, 'platform', 'win32'):
+            row, calls = self.plan([0, 0])
+        self.assertTrue(row['passed'])
+        for _, environment in calls:
+            self.assertTrue(environment['PATH'].startswith(
+                run_all.os.pathsep.join(['C:/debug dependencies/bin', 'C:/debug dependencies/lib'])
+                + run_all.os.pathsep))
+
+    def test_windows_missing_runtime_manifest_requires_reconfigure(self):
+        self.args.no_build = True
+        (self.build / 'test-runtime-Debug.txt').unlink()
+        with mock.patch.object(run_all.sys, 'platform', 'win32'):
+            row, calls = self.plan([])
+        self.assertFalse(row['passed'])
+        self.assertEqual(calls, [])
+        self.assertIn('Refresh the CMake configuration', row['error'])
+
     def test_main_returns_failure_and_retains_summary(self):
         output = self.directory / 'outer'
         with mock.patch.object(run_all, 'run_configuration', return_value={'passed': False}), \
@@ -137,6 +158,30 @@ class TestRunner(unittest.TestCase):
         summary = json.loads((output / 'summary.json').read_text())
         self.assertFalse(summary['passed'])
         self.assertEqual(summary['status'], 'interrupted')
+
+    def test_windows_display_request_is_restored_on_failure(self):
+        user, kernel = mock.MagicMock(), mock.MagicMock()
+        user.OpenInputDesktop.return_value = 123
+        kernel.SetThreadExecutionState.return_value = 0x80000001
+        with mock.patch.object(mcp_runtime.sys, 'platform', 'win32'), \
+                mock.patch('ctypes.WinDLL', side_effect=[user, kernel], create=True):
+            with self.assertRaisesRegex(RuntimeError, 'test failure'):
+                with mcp_runtime.test_desktop():
+                    raise RuntimeError('test failure')
+        user.CloseDesktop.assert_called_once_with(123)
+        self.assertEqual(kernel.SetThreadExecutionState.call_args_list,
+                         [mock.call(0x80000003), mock.call(0x80000001)])
+
+    def test_locked_desktop_stops_before_starting_app(self):
+        user = mock.MagicMock()
+        user.OpenInputDesktop.return_value = None
+        with mock.patch.object(mcp_runtime.sys, 'platform', 'win32'), \
+                mock.patch('ctypes.WinDLL', return_value=user, create=True), \
+                mock.patch.object(mcp_runtime.subprocess, 'Popen') as start:
+            with self.assertRaisesRegex(mcp_runtime.WindowsDesktopUnavailable, 'Unlock the workstation'):
+                with mcp_runtime.DisposableStageviz(self.app, self.directory / 'locked', port=0):
+                    self.fail('locked desktop must not enter app context')
+        start.assert_not_called()
 
 
 if __name__ == '__main__':

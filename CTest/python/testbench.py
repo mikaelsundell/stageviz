@@ -87,7 +87,7 @@ def wait_until(predicate, timeout=3.0, interval_ms=25):
     return False
 
 
-def wait_for_commands(timeout=10.0):
+def wait_for_commands(timeout=60.0):
     """Wait for deferred USD authoring and its session completion callback.
 
     Command dispatch returns before worker edits finish. Call this before USD

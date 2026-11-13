@@ -15,7 +15,7 @@ def run():
         path = Path(directory) / "console.log"
         try:
             stageviz.setConsoleOutputFile(str(path), append=False)
-            assert stageviz.consoleOutputFile() == str(path.absolute())
+            assert Path(stageviz.consoleOutputFile()) == path.absolute()
             os.write(1, b"native stdout marker\n")
             os.write(2, b"native stderr marker\n")
             try:
@@ -24,7 +24,7 @@ def run():
                 pass
             else:
                 raise AssertionError("invalid destination must raise OSError")
-            assert stageviz.consoleOutputFile() == str(path.absolute())
+            assert Path(stageviz.consoleOutputFile()) == path.absolute()
             stageviz.setConsoleOutputFile(None)
             original = path.read_bytes()
             assert b"native stdout marker\n" in original and b"native stderr marker\n" in original

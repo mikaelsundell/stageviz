@@ -33,24 +33,24 @@ class PreserveStateTest(_base['ViewportTest']):
         QtCore = tb.qt()[0]
         self.original_non_native_dialogs = QtCore.QCoreApplication.testAttribute(QtCore.Qt.ApplicationAttribute.AA_DontUseNativeDialogs)
         self.fixture = self.directory / 'root.usda'
-        self.sidecar = Path(str(self.fixture) + '.session')
+        self.sidecar = Path(self.fixture.as_posix() + '.session')
         self.layer = self.directory / 'edit.usda'
         self.asset = self.directory / 'asset.usda'
         self.layer.write_text('#usda 1.0\ndef Xform "LayerPrim" { }\n')
-        asset = Usd.Stage.CreateNew(str(self.asset))
+        asset = Usd.Stage.CreateNew(self.asset.as_posix())
         asset.SetDefaultPrim(UsdGeom.Xform.Define(asset, '/Asset').GetPrim())
         UsdGeom.Sphere.Define(asset, '/Asset/Sphere')
         assert asset.GetRootLayer().Save()
-        root = Usd.Stage.CreateNew(str(self.fixture))
-        root.GetRootLayer().subLayerPaths = [str(self.layer)]
+        root = Usd.Stage.CreateNew(self.fixture.as_posix())
+        root.GetRootLayer().subLayerPaths = [self.layer.as_posix()]
         root.SetDefaultPrim(UsdGeom.Xform.Define(root, '/World').GetPrim())
-        assert root.DefinePrim('/Payload', 'Xform').GetPayloads().AddPayload(str(self.asset))
+        assert root.DefinePrim('/Payload', 'Xform').GetPayloads().AddPayload(self.asset.as_posix())
         assert root.GetRootLayer().Save()
         del root, asset
         session.setPreserveState(True)
-        assert session.load(str(self.fixture))
+        assert session.load(self.fixture.as_posix())
         self.settled()
-        self.usd_before = {str(p): p.read_bytes() for p in (self.fixture, self.layer, self.asset)}
+        self.usd_before = {p.as_posix(): p.read_bytes() for p in (self.fixture, self.layer, self.asset)}
         assert tb.viewer().findChild(tb.qt()[1].QAction, 'fileStateSave') is None
         assert self.action('fileLayerSaveAll').isEnabled(), 'root document save includes a missing companion'
         self.save()
@@ -110,16 +110,17 @@ class PreserveStateTest(_base['ViewportTest']):
         assert abs(session.viewState().camera().cameraDistance() - distance) < 1e-6
         assert not session.isStateDirty()
         # View state belongs to root even with a sublayer as edit target.
-        stageviz.command.set_edit_layer(str(self.layer))
+        stageviz.command.set_edit_layer(self.layer.as_posix())
         self.settled()
+        assert session.editLayer() == self.layer.as_posix()
         camera.setAxisYaw(camera.axisYaw() + 13)
         self.settled()
         assert not self.action('fileLayerSave').isEnabled(), 'state-only changes cannot enable a clean sublayer save'
         self.save()
         assert not session.isStateDirty()
         self.assert_usd_unchanged()
-        assert not Path(str(self.layer) + '.session').exists()
-        assert json.loads(self.sidecar.read_text())['stageFile'] == str(self.fixture)
+        assert not Path(self.layer.as_posix() + '.session').exists()
+        assert json.loads(self.sidecar.read_text())['stageFile'] == self.fixture.as_posix()
         self.snapshot('state_camera_sublayer')
 
     def views(self):
@@ -173,7 +174,8 @@ class PreserveStateTest(_base['ViewportTest']):
 
     def payloads(self):
         session = stageviz.session()
-        stageviz.command.set_edit_layer(str(self.fixture))
+        stageviz.command.set_edit_layer(self.fixture.as_posix())
+        self.settled()
         stageviz.command.unload_payloads(['/Payload'])
         self.settled()
         assert session.isStateDirty() and not session.stage().GetPrimAtPath('/Payload').IsLoaded()
@@ -184,15 +186,15 @@ class PreserveStateTest(_base['ViewportTest']):
         assert session.reload()
         self.settled()
         assert not session.stage().GetPrimAtPath('/Payload').IsLoaded() and not session.isStateDirty()
-        stageviz.command.set_layer_muted(str(self.layer), True)
+        stageviz.command.set_layer_muted(self.layer.as_posix(), True)
         self.settled()
         assert session.isStateDirty()
         self.save()
         assert session.reload()
         self.settled()
-        assert session.stage().IsLayerMuted(str(self.layer)) and not session.isStateDirty()
+        assert session.stage().IsLayerMuted(self.layer.as_posix()) and not session.isStateDirty()
         state = json.loads(self.sidecar.read_text())
-        state['layerColors'] = {'$root': '#ffdf3f80', str(self.layer): '#ff5840d0'}
+        state['layerColors'] = {'$root': '#ffdf3f80', self.layer.as_posix(): '#ff5840d0'}
         self.sidecar.write_text(json.dumps(state))
         assert session.loadState(str(self.sidecar))
         self.settled()
@@ -206,9 +208,9 @@ class PreserveStateTest(_base['ViewportTest']):
 
     def sublayer_save(self):
         session = stageviz.session()
-        stageviz.command.set_layer_muted(str(self.layer), False)
+        stageviz.command.set_layer_muted(self.layer.as_posix(), False)
         self.settled()
-        stageviz.command.set_edit_layer(str(self.layer))
+        stageviz.command.set_edit_layer(self.layer.as_posix())
         self.settled()
         stageviz.command.new_prim('/LayerPrim', 'SublayerEdit', 'Xform')
         self.settled()
@@ -217,7 +219,7 @@ class PreserveStateTest(_base['ViewportTest']):
         assert '(*' + self.layer.name + ')' in tb.viewer().windowTitle()
         # A dirty sublayer uses the layer review even with a clean root USD layer.
         self.prompt('fileNew', 'cancel', sublayer=True)
-        assert session.filename() == str(self.fixture)
+        assert Path(session.filename()) == self.fixture
         assert session.stage().GetPrimAtPath('/LayerPrim/SublayerEdit')
         before = self.sidecar.read_bytes()
         camera = session.viewState().camera()
@@ -232,7 +234,7 @@ class PreserveStateTest(_base['ViewportTest']):
         assert '*' in tb.viewer().windowTitle(), 'root state remains dirty after saving the sublayer'
         assert self.sidecar.read_bytes() == before and session.isStateDirty()
         assert not self.action('fileLayerSave').isEnabled(), 'a clean sublayer cannot save root state'
-        self.usd_before[str(self.layer)] = self.layer.read_bytes()
+        self.usd_before[self.layer.as_posix()] = self.layer.read_bytes()
         self.save()
         assert not session.isStateDirty() and self.sidecar.read_bytes() != before
         # Save As for a sublayer likewise leaves root state pending.
@@ -240,54 +242,54 @@ class PreserveStateTest(_base['ViewportTest']):
         self.settled()
         before = self.sidecar.read_bytes()
         renamed = self.directory / 'renamed-edit.usda'
-        assert session.saveLayerAs(str(self.layer), str(renamed))
+        assert session.saveLayerAs(self.layer.as_posix(), str(renamed))
         self.settled()
         assert self.sidecar.read_bytes() == before and session.isStateDirty()
         assert not Path(str(renamed) + '.session').exists()
         # Reload the fixture to discard the temporary retargeting opinions.
         assert session.reload()
         self.settled()
-        stageviz.command.set_edit_layer(str(self.fixture))
+        stageviz.command.set_edit_layer(self.fixture.as_posix())
         self.settled()
         self.save()
         self.snapshot('state_sublayer_save')
 
     def layer_controls(self):
         session = stageviz.session()
-        stageviz.command.set_layer_muted(str(self.layer), False)
+        stageviz.command.set_layer_muted(self.layer.as_posix(), False)
         self.settled()
         self.save()
         usd_before = self.fixture.read_bytes(), self.layer.read_bytes()
-        stageviz.command.set_edit_layer(str(self.layer))
+        stageviz.command.set_edit_layer(self.layer.as_posix())
         self.settled()
         assert session.isStateDirty()
         self.save()
         assert session.reload()
         self.settled()
-        assert session.stage().GetEditTarget().GetLayer().identifier == str(self.layer)
+        assert session.stage().GetEditTarget().GetLayer().identifier == self.layer.as_posix()
         assert not session.isStateDirty()
-        stageviz.command.set_edit_layer(str(self.fixture))
+        stageviz.command.set_edit_layer(self.fixture.as_posix())
         self.settled()
         self.save()
-        stageviz.command.set_layer_permission_to_edit(str(self.layer), False)
+        stageviz.command.set_layer_permission_to_edit(self.layer.as_posix(), False)
         self.settled()
-        assert session.isStateDirty() and not Sdf.Layer.Find(str(self.layer)).permissionToEdit
+        assert session.isStateDirty() and not Sdf.Layer.Find(self.layer.as_posix()).permissionToEdit
         self.save()
         stageviz.command.undo()
         self.settled()
-        assert session.isStateDirty() and Sdf.Layer.Find(str(self.layer)).permissionToEdit
+        assert session.isStateDirty() and Sdf.Layer.Find(self.layer.as_posix()).permissionToEdit
         stageviz.command.redo()
         self.settled()
-        assert not Sdf.Layer.Find(str(self.layer)).permissionToEdit
-        stageviz.command.set_layer_muted(str(self.layer), True)
+        assert not Sdf.Layer.Find(self.layer.as_posix()).permissionToEdit
+        stageviz.command.set_layer_muted(self.layer.as_posix(), True)
         self.settled()
         self.save()
-        assert json.loads(self.sidecar.read_text())['lockedLayers'] == [str(self.layer)]
+        assert json.loads(self.sidecar.read_text())['lockedLayers'] == [self.layer.as_posix()]
         assert session.reload()
         self.settled()
         assert not session.isStateDirty()
-        assert session.stage().IsLayerMuted(str(self.layer))
-        assert not Sdf.Layer.Find(str(self.layer)).permissionToEdit
+        assert session.stage().IsLayerMuted(self.layer.as_posix())
+        assert not Sdf.Layer.Find(self.layer.as_posix()).permissionToEdit
         assert tb.trigger_action('fileLayers')
         self.settled()
         QtCore, _, _, QtWidgets = tb.qt()
@@ -307,7 +309,7 @@ class PreserveStateTest(_base['ViewportTest']):
         self.snapshot('state_layer_controls')
         next(w for w in QtWidgets.QApplication.topLevelWidgets()
              if w.objectName() == 'layerDialog').hide()
-        stageviz.command.set_layer_permission_to_edit(str(self.layer), True)
+        stageviz.command.set_layer_permission_to_edit(self.layer.as_posix(), True)
         self.settled()
         self.save()
         assert (self.fixture.read_bytes(), self.layer.read_bytes()) == usd_before
@@ -359,16 +361,16 @@ class PreserveStateTest(_base['ViewportTest']):
         session.viewState().camera().setAxisYaw(47)
         self.settled()
         self.prompt('fileNew', 'cancel')
-        assert session.filename() == str(self.fixture) and session.isStateDirty()
+        assert Path(session.filename()) == self.fixture and session.isStateDirty()
         self.prompt('fileReload', 'cancel')
-        assert session.filename() == str(self.fixture) and session.isStateDirty()
+        assert Path(session.filename()) == self.fixture and session.isStateDirty()
         self.prompt('fileClose', 'cancel')
         assert session.isLoaded() and session.isStateDirty()
         distance = session.viewState().camera().cameraDistance()
         self.prompt('fileNew', 'save')
         assert not session.filename()
         self.assert_usd_unchanged()
-        assert session.load(str(self.fixture))
+        assert session.load(self.fixture.as_posix())
         self.settled()
         assert not session.isStateDirty()
         assert abs(session.viewState().camera().cameraDistance() - distance) < 1e-6
@@ -377,7 +379,7 @@ class PreserveStateTest(_base['ViewportTest']):
         self.settled()
         self.prompt('fileNew', 'discard')
         assert not session.filename() and self.sidecar.read_bytes() == before
-        assert session.load(str(self.fixture))
+        assert session.load(self.fixture.as_posix())
         self.settled()
         # Mixed USD edits and state edits share the ordinary Save changes prompt.
         stageviz.command.new_prim('/World', 'SavedWithState', 'Xform')
@@ -385,11 +387,11 @@ class PreserveStateTest(_base['ViewportTest']):
         session.viewState().camera().setAxisYaw(63)
         self.settled()
         self.prompt('fileNew', 'save', expect_state=False)
-        assert session.load(str(self.fixture))
+        assert session.load(self.fixture.as_posix())
         self.settled()
         assert session.stage().GetPrimAtPath('/World/SavedWithState')
         assert abs(session.viewState().camera().axisYaw() - 63) < 1e-6
-        self.usd_before[str(self.fixture)] = self.fixture.read_bytes()
+        self.usd_before[self.fixture.as_posix()] = self.fixture.read_bytes()
         self.snapshot('state_prompt_saved')
 
     def disabled_and_failures(self):
@@ -404,7 +406,7 @@ class PreserveStateTest(_base['ViewportTest']):
         self.action('fileNew').trigger()
         self.settled()
         assert not session.filename() and self.sidecar.read_bytes() == baseline
-        assert session.load(str(self.fixture))
+        assert session.load(self.fixture.as_posix())
         self.settled()
         session.setPreserveState(True)
         session.viewState().camera().setAxisYaw(81)
@@ -414,7 +416,7 @@ class PreserveStateTest(_base['ViewportTest']):
         self.save_document()
         assert session.isStateDirty() and self.action('fileLayerSaveAll').isEnabled()
         self.prompt('fileNew', 'save')
-        assert session.filename() == str(self.fixture), 'failed state save must stop document replacement'
+        assert Path(session.filename()) == self.fixture, 'failed state save must stop document replacement'
         assert session.isStateDirty()
         self.sidecar.rmdir()
         self.sidecar.write_bytes(baseline)
@@ -435,18 +437,18 @@ class PreserveStateTest(_base['ViewportTest']):
         camera.setAxisYaw(92)
         copy = self.directory / 'copy.usda'
         assert session.copyToFile(str(copy)) and session.isStateDirty()
-        assert json.loads(Path(str(copy) + '.session').read_text())['stageFile'] == str(copy)
-        stageviz.command.set_layer_muted(str(self.layer), False)
+        assert Path(json.loads(Path(str(copy) + '.session').read_text())['stageFile']) == copy
+        stageviz.command.set_layer_muted(self.layer.as_posix(), False)
         self.settled()
-        stageviz.command.set_edit_layer(str(self.layer))
+        stageviz.command.set_edit_layer(self.layer.as_posix())
         self.settled()
-        assert session.stage().GetEditTarget().GetLayer().identifier == str(self.layer)
+        assert session.stage().GetEditTarget().GetLayer().identifier == self.layer.as_posix()
         renamed = self.directory / 'renamed-root.usda'
         assert session.saveToFile(str(renamed))
         self.settled()
         assert not session.isStateDirty()
-        assert json.loads(Path(str(renamed) + '.session').read_text())['stageFile'] == str(renamed)
-        assert not Path(str(self.layer) + '.session').exists()
+        assert Path(json.loads(Path(str(renamed) + '.session').read_text())['stageFile']) == renamed
+        assert not Path(self.layer.as_posix() + '.session').exists()
         assert session.reload()
         self.settled()
         assert abs(camera.axisYaw() - 92) < 1e-6
@@ -479,7 +481,7 @@ class PreserveStateTest(_base['ViewportTest']):
         assert session.isStateDirty() and self.action('fileLayerSaveAll').isEnabled()
         assert '*' in tb.viewer().windowTitle()
         self.snapshot('state_pristine_then_authored')
-        assert session.load(str(self.fixture))
+        assert session.load(self.fixture.as_posix())
         self.settled()
 
     def anonymous(self):
@@ -489,9 +491,9 @@ class PreserveStateTest(_base['ViewportTest']):
         # Production continues to use the platform-native picker.
         QtCore.QCoreApplication.setAttribute(QtCore.Qt.ApplicationAttribute.AA_DontUseNativeDialogs, True)
         assert session.newStage()
-        stageviz.command.add_sublayer(str(self.layer))
+        stageviz.command.add_sublayer(self.layer.as_posix())
         self.settled()
-        stageviz.command.set_edit_layer(str(self.layer))
+        stageviz.command.set_edit_layer(self.layer.as_posix())
         self.settled()
         session.viewState().camera().setCameraDistance(7)
         self.settled()
@@ -524,7 +526,7 @@ class PreserveStateTest(_base['ViewportTest']):
                                 edit = dialog.findChild(QtWidgets.QLineEdit, 'fileNameEdit')
                                 assert edit is not None
                                 edit.setText(named.name)
-                                assert dialog.selectedFiles() == [str(named)], dialog.selectedFiles()
+                                assert [Path(p) for p in dialog.selectedFiles()] == [named], dialog.selectedFiles()
                                 dialog.accept()
                             except Exception as error:
                                 failures.append(repr(error))
@@ -542,12 +544,12 @@ class PreserveStateTest(_base['ViewportTest']):
         run_dialog(True)
         assert not session.filename() and session.isStateDirty(), 'cancel keeps unnamed root state unsaved'
         run_dialog(False)
-        assert session.filename() == str(named)
+        assert Path(session.filename()) == named
         assert not session.isStateDirty()
         companion = Path(str(named) + '.session')
-        assert companion.is_file() and json.loads(companion.read_text())['stageFile'] == str(named)
-        assert session.stage().GetEditTarget().GetLayer().identifier == str(self.layer)
-        assert not Path(str(self.layer) + '.session').exists()
+        assert companion.is_file() and Path(json.loads(companion.read_text())['stageFile']) == named
+        assert session.stage().GetEditTarget().GetLayer().identifier == self.layer.as_posix()
+        assert not Path(self.layer.as_posix() + '.session').exists()
         self.snapshot('state_anonymous_named_root')
 
     def checkpoint(self):

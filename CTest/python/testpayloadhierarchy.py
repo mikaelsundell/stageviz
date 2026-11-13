@@ -147,20 +147,20 @@ class PayloadHierarchyTest:
 
     def command(self, operation, paths):
         getattr(stageviz.command, operation)(paths)
-        assert tb.wait_for_commands(timeout=30), operation + ' completion'
+        assert tb.wait_for_commands(timeout=120), operation + ' completion'
 
     def undo(self):
         assert stageviz.command.can_undo()
         stageviz.command.undo()
-        assert tb.wait_for_commands(timeout=30)
+        assert tb.wait_for_commands(timeout=120)
 
     def redo(self):
         assert stageviz.command.can_redo()
         stageviz.command.redo()
-        assert tb.wait_for_commands(timeout=30)
+        assert tb.wait_for_commands(timeout=120)
 
     def baseline(self):
-        assert tb.wait_for_commands(timeout=30)
+        assert tb.wait_for_commands(timeout=120)
         assert stageviz.session().loadFromFile(self.fixture['scene'], policy=stageviz.LoadNone)
         tb.process_events(100)
         stageviz.command.clear()
@@ -168,7 +168,7 @@ class PayloadHierarchyTest:
         assert self.row(self.first)['state'] == 0 and not self.loaded(self.first)
 
     def checkpoint(self, label):
-        assert tb.wait_for_commands(timeout=30)
+        assert tb.wait_for_commands(timeout=120)
         self.tree().expandAll()
         tb.process_events()
         QtCore = tb.qt()[0]
@@ -231,7 +231,7 @@ class PayloadHierarchyTest:
         before_selection = list(stageviz.session().paths())
         stageviz.command.clear()
         self.click_checkbox(path)
-        assert tb.wait_for_commands(timeout=30)
+        assert tb.wait_for_commands(timeout=120)
         # The fixture's intentionally empty MoveTarget remains unchecked even
         # when every payload gate under its ancestors has been loaded.
         empty = '/World/RegionA/MoveTarget'
@@ -270,7 +270,7 @@ class PayloadHierarchyTest:
             control = tb.viewer().findChild(QtGui.QAction, name)
             assert control is not None and control.isEnabled(), name
             control.trigger()
-            assert tb.wait_for_commands(timeout=30), name
+            assert tb.wait_for_commands(timeout=120), name
         action('editPayloadLoad')
         assert self.loaded(self.nested) and not self.loaded(self.second)
         self.checkpoint('menu_load')
@@ -311,7 +311,7 @@ class PayloadHierarchyTest:
             tb.process_events()
             for _ in range(count):
                 self.click_checkbox(self.first)
-            assert tb.wait_for_commands(timeout=30)
+            assert tb.wait_for_commands(timeout=120)
             expected = bool(count % 2)
             self.checkpoint('rapid_%d_clicks' % count)
             assert self.loaded(self.first) == expected, (count, self.loaded(self.first), expected)
@@ -342,7 +342,7 @@ class PayloadHierarchyTest:
         # Opposite requests on independent branches must survive the same batch.
         self.click_checkbox(self.first)
         self.click_checkbox(self.second)
-        assert tb.wait_for_commands(timeout=30)
+        assert tb.wait_for_commands(timeout=120)
         assert not self.loaded(self.first) and self.loaded(self.second)
         self.checkpoint('mixed_queued_clicks')
         # A root click after a child click replaces all outstanding gate requests.
@@ -351,7 +351,7 @@ class PayloadHierarchyTest:
         tb.process_events()
         self.click_checkbox(self.first)
         self.click_checkbox('/')  # Partial root -> Unchecked in TreeWidget.
-        assert tb.wait_for_commands(timeout=30)
+        assert tb.wait_for_commands(timeout=120)
         self.checkpoint('queued_child_then_root')
         assert not any(g['loaded'] for g in self.checkpoints[-1]['payload_gates'].values())
 
@@ -377,16 +377,17 @@ class PayloadHierarchyTest:
         self.command('load_payloads', [self.first, self.proxy])
         renamed = '/World/RegionA/VehicleRenamed'
         moved = '/World/RegionA/MoveTarget/VehicleRenamed'
-        self.command('set_edit_layer', str(self.directory / 'layout_0.usda'))
+        self.command('set_edit_layer', (self.directory / 'layout_0.usda').as_posix())
+        assert stageviz.session().editLayer() == (self.directory / 'layout_0.usda').as_posix()
         stageviz.command.rename_path(self.first, 'VehicleRenamed')
-        assert tb.wait_for_commands(timeout=30)
+        assert tb.wait_for_commands(timeout=120)
         assert self.index(self.first) is None and self.loaded(renamed)
         assert self.row(renamed)['state'] == 2
         self.undo()
         self.checkpoint('rename_payload_undone')
         self.redo()
         stageviz.command.move_path([renamed], '/World/RegionA/MoveTarget')
-        assert tb.wait_for_commands(timeout=30)
+        assert tb.wait_for_commands(timeout=120)
         assert self.index(renamed) is None and self.loaded(moved)
         assert self.row(moved)['state'] == 2
         self.assert_group('/World/RegionA', 1)
@@ -413,7 +414,8 @@ class PayloadHierarchyTest:
         self.baseline()
         outside = '/World/RegionB/Vehicle03'
         self.command('load_payloads', [self.first, self.second, self.proxy, outside])
-        self.command('set_edit_layer', str(self.directory / 'layout_0.usda'))
+        self.command('set_edit_layer', (self.directory / 'layout_0.usda').as_posix())
+        assert stageviz.session().editLayer() == (self.directory / 'layout_0.usda').as_posix()
         leaves = [self.nested + '/Cube_000', self.sibling + '/Cube_001', self.proxy + '/Bolts/Cube_000']
         self.command('select_paths', leaves)
         _, QtGui, _, _ = tb.qt()
@@ -423,7 +425,7 @@ class PayloadHierarchyTest:
             if name == 'editLayerSelect':
                 assert control.text() == 'Select in layer', control.text()
             control.trigger()
-            assert tb.wait_for_commands(timeout=30), name
+            assert tb.wait_for_commands(timeout=120), name
         action('editLayerInvert')
         direct = list(stageviz.session().paths())
         assert direct == [self.second], direct
@@ -579,7 +581,7 @@ class PayloadHierarchyTest:
         self.checkpoint('reload_payloads_mode')
 
     def cleanup(self):
-        assert tb.wait_for_commands(timeout=30)
+        assert tb.wait_for_commands(timeout=120)
         self.checkpoint('final_fixture_unchanged')
         assert stageviz.session().newStage(policy=self.original_policy)
         print('PAYLOAD_FIXTURE', json.dumps(self.fixture))

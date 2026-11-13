@@ -119,6 +119,13 @@ def run_configuration(args, configuration, output):
         app = Path(args.app).resolve() if args.app else executable(directory, configuration)
         if not app.is_file():
             raise FileNotFoundError('Stageviz executable does not exist: %s' % app)
+        if sys.platform == 'win32':
+            runtime_file = directory / ('test-runtime-%s.txt' % configuration)
+            if not runtime_file.is_file():
+                raise RuntimeError('Missing %s. Refresh the CMake configuration before using --no-build.' % runtime_file)
+            runtime_paths = runtime_file.read_text(encoding='utf-8').splitlines()
+            environment['PATH'] = os.pathsep.join([path for path in runtime_paths if path]
+                                                 + [environment.get('PATH', '')])
         step = run_logged([ctest, '--test-dir', directory, '-C', configuration, '--output-on-failure',
                            '--no-tests=error', '--parallel', '1', '--output-junit', output / 'ctest.xml'],
                           output / 'ctest.log', environment)
