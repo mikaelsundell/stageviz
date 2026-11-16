@@ -9,6 +9,7 @@
 #include <QObject>
 #include <pxr/base/gf/bbox3d.h>
 #include <pxr/base/gf/camera.h>
+#include <pxr/base/gf/range3d.h>
 #include <pxr/base/gf/vec3d.h>
 
 PXR_NAMESPACE_USING_DIRECTIVE
@@ -353,6 +354,16 @@ public:
      * @brief Sets the stored scene bounding box used by frameAll() and resetView().
      */
     void setBoundingBox(const GfBBox3d& boundingBox);
+
+    /**
+     * @brief Sets additional viewport bounds used to calculate the far clip.
+     *
+     * Auxiliary geometry can extend beyond the document bounds. These bounds
+     * affect the far clip without changing the near clip or framing target.
+     *
+     * @param range Additional viewport geometry bounds in world space.
+     */
+    void setAuxiliaryRange(const GfRange3d& range);
 
     /**
      * @brief Returns the framing fit multiplier.

@@ -9,6 +9,7 @@
 #include <QPointF>
 #include <QScopedPointer>
 #include <pxr/base/gf/camera.h>
+#include <pxr/base/gf/range3d.h>
 #include <pxr/base/gf/vec3d.h>
 #include <pxr/base/tf/token.h>
 #include <pxr/usd/usd/stage.h>
@@ -59,6 +60,11 @@ public:
      * @brief Updates the grid from the current display settings.
      */
     void updateGrid(ViewState* state);
+
+    /**
+     * @brief Returns the current grid bounds in stage space.
+     */
+    GfRange3d gridRange(ViewState* state) const;
 
     /**
      * @brief Creates the built-in inspection materials.

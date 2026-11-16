@@ -29,7 +29,11 @@ namespace stageviz {
 
 class ViewportAuxiliaryPrivate {
 public:
+    static constexpr int kGridLines = 12;
+    static constexpr float kGridSpacing = 1.0f;
+
     QPointF axisBubblePosition(const GfVec3d& direction) const;
+    GfRange3d gridRange(ViewState* state) const;
     int hitTestAxis(const QPointF& position, const GfCamera& camera) const;
     void updateGrid(ViewState* state);
     void ensureMaterials();
@@ -44,6 +48,18 @@ public:
     };
     Data d;
 };
+
+GfRange3d
+ViewportAuxiliaryPrivate::gridRange(ViewState* state) const
+{
+    if (!d.stage || !state || !state->gridEnabled())
+        return GfRange3d();
+
+    constexpr double extent = kGridLines * kGridSpacing;
+    if (d.upAxis == UsdGeomTokens->z)
+        return GfRange3d(GfVec3d(-extent, -extent, 0.0), GfVec3d(extent, extent, 0.0));
+    return GfRange3d(GfVec3d(-extent, 0.0, -extent), GfVec3d(extent, 0.0, extent));
+}
 
 QPointF
 ViewportAuxiliaryPrivate::axisBubblePosition(const GfVec3d& direction) const
@@ -76,17 +92,15 @@ ViewportAuxiliaryPrivate::updateGrid(ViewState* state)
     UsdGeomScope::Define(d.stage, gridRootPath);
     UsdGeomScope::Define(d.stage, paths::auxiliary::materials);
     const TfToken& upAxis = d.upAxis;
-    constexpr int lines = 12;
-    constexpr float spacing = 1.0f;
-    constexpr float extent = lines * spacing;
+    constexpr float extent = kGridLines * kGridSpacing;
     auto point = [&](float a, float b) {
         return upAxis == UsdGeomTokens->z ? GfVec3f(a, b, 0.0f) : GfVec3f(a, 0.0f, b);
     };
 
     VtVec3fArray points;
     VtIntArray counts;
-    for (int i = 1; i <= lines; ++i) {
-        const float offset = spacing * static_cast<float>(i);
+    for (int i = 1; i <= kGridLines; ++i) {
+        const float offset = kGridSpacing * static_cast<float>(i);
         points.push_back(point(-offset, -extent));
         points.push_back(point(-offset, extent));
         points.push_back(point(offset, -extent));
@@ -317,6 +331,11 @@ ViewportAuxiliary::updateGrid(ViewState* state)
 {
     if (state)
         p->updateGrid(state);
+}
+GfRange3d
+ViewportAuxiliary::gridRange(ViewState* state) const
+{
+    return p->gridRange(state);
 }
 void
 ViewportAuxiliary::ensureMaterials()

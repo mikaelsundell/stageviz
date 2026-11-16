@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <pxr/base/gf/frustum.h>
 #include <pxr/base/gf/range1d.h>
 #include <pxr/base/gf/range3d.h>
@@ -25,6 +26,7 @@ public:
     double mapToFrustumHeight(int height);
     GfMatrix4d mapToCameraUp();
     GfCamera camera();
+    GfRange1f clippingRange() const;
     GfMatrix4d rotateAxis(const GfVec3d& value, double angle);
     double effectiveFov() const;
     void reset();
@@ -46,6 +48,7 @@ public:
         GfVec3d center;
         GfVec3d focusPoint;
         GfRange3d range;
+        GfRange3d auxiliaryRange;
         ViewCamera::CameraUp cameraUp;
         ViewCamera::CameraMode cameraMode;
         ViewCamera::FovDirection direction;
@@ -83,6 +86,7 @@ ViewCameraPrivate::init()
     d.center = GfVec3d(0.0);
     d.focusPoint = d.center;
     d.range = GfRange3d();
+    d.auxiliaryRange = GfRange3d();
     d.cameraUp = ViewCamera::Y;
     d.cameraMode = ViewCamera::None;
     d.direction = ViewCamera::Vertical;
@@ -125,8 +129,16 @@ ViewCameraPrivate::frame(const GfRange3d& range)
     if (!std::isfinite(distance))
         return;
 
-    if (distance < d.nearClipping + maxsize * 0.5)
-        distance = d.nearClipping + length;
+    double nearClipping = d.nearClipping;
+    if (!d.range.IsEmpty()) {
+        const GfVec3d sceneSize = d.range.GetSize();
+        const double sceneScale = std::max(sceneSize[0], std::max(sceneSize[1], sceneSize[2]));
+        if (std::isfinite(sceneScale) && sceneScale > 0.0)
+            nearClipping = std::min(nearClipping, sceneScale * 1e-3);
+    }
+
+    if (distance < nearClipping + maxsize * 0.5)
+        distance = nearClipping + length;
 
     d.distance = distance;
     if (d.projectionMode == ViewCamera::Orthographic)
@@ -260,12 +272,69 @@ ViewCameraPrivate::camera()
             d.camera.SetPerspectiveFromAspectRatioAndFieldOfView(d.aspectRatio, d.fov, direction);
         }
 
-        d.camera.SetClippingRange(GfRange1f(d.nearClipping, d.farClipping));
+        d.camera.SetClippingRange(clippingRange());
 
         d.valid = true;
     }
 
     return d.camera;
+}
+
+GfRange1f
+ViewCameraPrivate::clippingRange() const
+{
+    double nearClip = d.nearClipping;
+    double farClip = d.farClipping;
+    GfRange3d viewportRange = d.range;
+    if (!d.auxiliaryRange.IsEmpty())
+        viewportRange.UnionWith(d.auxiliaryRange);
+
+    if (!viewportRange.IsEmpty()) {
+        const GfMatrix4d view = d.camera.GetFrustum().ComputeViewMatrix();
+        double minDepth = std::numeric_limits<double>::infinity();
+        double documentMaxDepth = 0.0;
+        double viewportMaxDepth = 0.0;
+
+        if (!d.range.IsEmpty()) {
+            for (size_t corner = 0; corner < 8; ++corner) {
+                const double depth = -view.Transform(d.range.GetCorner(corner))[2];
+                if (!std::isfinite(depth))
+                    continue;
+                minDepth = std::min(minDepth, depth);
+                documentMaxDepth = std::max(documentMaxDepth, depth);
+            }
+        }
+
+        auto includeViewportDepth = [&](const GfRange3d& range) {
+            if (range.IsEmpty())
+                return;
+            for (size_t corner = 0; corner < 8; ++corner) {
+                const double depth = -view.Transform(range.GetCorner(corner))[2];
+                if (std::isfinite(depth))
+                    viewportMaxDepth = std::max(viewportMaxDepth, depth);
+            }
+        };
+        includeViewportDepth(d.range);
+        includeViewportDepth(d.auxiliaryRange);
+
+        if (std::isfinite(minDepth) && std::isfinite(documentMaxDepth) && documentMaxDepth > 0.0) {
+            const GfVec3d sceneSize = d.range.GetSize();
+            const double sceneScale = std::max(sceneSize[0], std::max(sceneSize[1], sceneSize[2]));
+            const double precisionFloor = std::max(1e-6, sceneScale * 1e-7);
+            const double safeNear = minDepth > precisionFloor ? minDepth * 0.5 : precisionFloor;
+            nearClip = std::max(precisionFloor, std::min(nearClip, safeNear));
+        }
+
+        const GfVec3d viewportSize = d.range.IsEmpty() ? GfVec3d(0.0) : d.range.GetSize();
+        const GfVec3d gridSize = d.auxiliaryRange.IsEmpty() ? GfVec3d(0.0) : d.auxiliaryRange.GetSize();
+        const double viewportScale = std::max(std::max(viewportSize[0], std::max(viewportSize[1], viewportSize[2])),
+                                              std::max(gridSize[0], std::max(gridSize[1], gridSize[2])));
+        const double farMargin = std::max(1e-6, viewportScale * 0.05);
+        if (viewportMaxDepth > 0.0)
+            farClip = std::min(farClip, viewportMaxDepth + farMargin);
+    }
+
+    return GfRange1f(static_cast<float>(nearClip), static_cast<float>(farClip));
 }
 
 GfMatrix4d
@@ -703,6 +772,17 @@ ViewCamera::setBoundingBox(const GfBBox3d& boundingBox)
     p->d.valid = false;
     p->d.identity = false;
 
+    Q_EMIT cameraChanged(camera());
+}
+
+void
+ViewCamera::setAuxiliaryRange(const GfRange3d& range)
+{
+    if (p->d.auxiliaryRange == range)
+        return;
+
+    p->d.auxiliaryRange = range;
+    p->d.valid = false;
     Q_EMIT cameraChanged(camera());
 }
 
