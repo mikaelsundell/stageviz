@@ -170,7 +170,12 @@ public:
         d.selectionTool->invalidateVisibleSelection();
     }
     const QList<SdfPath>& cachedVisibleSelection() { return d.selectionTool->visiblePaths(); }
-    void updateAuxiliaryGrid() { d.auxiliary->updateGrid(viewState()); }
+    void updateAuxiliaryGrid()
+    {
+        d.auxiliary->updateGrid(viewState());
+        if (ViewCamera* camera = viewCamera())
+            camera->setAuxiliaryRange(d.auxiliary->gridRange(viewState()));
+    }
     void ensureAuxiliaryMaterials() { d.auxiliary->ensureMaterials(); }
     void updateAxis()
     {
@@ -1279,8 +1284,9 @@ ViewportWidgetPrivate::projectWorldToScreen(const GfVec3d& world, QPointF& scree
     // painter overlay. Otherwise perspective projection may turn points behind
     // or extremely close to the camera into very large screen-space values.
     const double depth = -cameraPoint[2];
-    const double nearClip = std::max(1e-8, viewCamera()->nearClipping());
-    const double farClip = viewCamera()->farClipping();
+    const GfRange1f clippingRange = camera.GetClippingRange();
+    const double nearClip = std::max(1e-8, static_cast<double>(clippingRange.GetMin()));
+    const double farClip = clippingRange.GetMax();
 
     if (!std::isfinite(depth) || depth <= nearClip)
         return false;

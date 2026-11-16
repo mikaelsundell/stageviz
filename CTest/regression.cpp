@@ -1300,6 +1300,52 @@ viewCameraApi()
     const GfCamera usdCamera = camera.camera();
     require(usdCamera.GetClippingRange().GetMin() > 0.0, "camera produces valid USD camera");
     camera.reset();
+
+    ViewCamera metricCamera(16.0 / 9.0, 40.0);
+    const GfBBox3d metricBounds(GfRange3d(GfVec3d(-0.15, -0.15, -0.15), GfVec3d(0.15, 0.15, 0.33)));
+    metricCamera.setBoundingBox(metricBounds);
+    const GfRange3d metricGridRange(GfVec3d(-12.0, 0.0, -12.0), GfVec3d(12.0, 0.0, 12.0));
+    metricCamera.setAuxiliaryRange(metricGridRange);
+    metricCamera.setNearClipping(1.0);
+    metricCamera.setFarClipping(2000000.0);
+    metricCamera.setCameraDistance(0.8);
+    const GfCamera metricUsdCamera = metricCamera.camera();
+    const GfRange1f metricClip = metricUsdCamera.GetClippingRange();
+    require(metricClip.GetMin() > 0.0 && metricClip.GetMin() < 1.0,
+            "meter-scale scene reduces the near clip below one stage unit");
+    require(metricClip.GetMax() < 2000000.0, "meter-scale scene derives a tighter far clip");
+    const GfMatrix4d metricView = metricUsdCamera.GetFrustum().ComputeViewMatrix();
+    for (size_t corner = 0; corner < 8; ++corner) {
+        const double depth = -metricView.Transform(metricBounds.GetRange().GetCorner(corner))[2];
+        if (depth > 0.0)
+            require(depth >= metricClip.GetMin() && depth <= metricClip.GetMax(),
+                    "adaptive clipping range contains forward scene bounds");
+    }
+    for (size_t corner = 0; corner < 8; ++corner) {
+        const double depth = -metricView.Transform(metricGridRange.GetCorner(corner))[2];
+        if (depth > 0.0)
+            require(depth <= metricClip.GetMax(), "adaptive clipping range contains the enabled viewport grid");
+    }
+    metricCamera.setAuxiliaryRange(GfRange3d());
+    const GfRange1f documentClip = metricCamera.camera().GetClippingRange();
+    require(documentClip.GetMax() < metricClip.GetMax(), "disabled viewport grid no longer extends the far clip");
+
+    const GfBBox3d largeBounds(GfRange3d(GfVec3d(-100.0, -100.0, -100.0), GfVec3d(100.0, 100.0, 100.0)));
+    metricCamera.setBoundingBox(largeBounds);
+    metricCamera.setAuxiliaryRange(metricGridRange);
+    metricCamera.frame(largeBounds);
+    const GfCamera largeUsdCamera = metricCamera.camera();
+    const GfRange1f largeClip = largeUsdCamera.GetClippingRange();
+    require(largeClip.GetMin() > 0.0 && largeClip.GetMax() < 2000000.0, "large stage uses a bounded clipping range");
+    require(largeClip.GetMax() / largeClip.GetMin() < 1000.0, "large stage retains useful depth precision");
+    const GfMatrix4d largeView = largeUsdCamera.GetFrustum().ComputeViewMatrix();
+    for (size_t corner = 0; corner < 8; ++corner) {
+        const double depth = -largeView.Transform(largeBounds.GetRange().GetCorner(corner))[2];
+        if (depth > 0.0)
+            require(depth >= largeClip.GetMin() && depth <= largeClip.GetMax(),
+                    "large stage bounds remain between adaptive clipping planes");
+    }
+
     require(changes > 0, "camera mutations emit change notifications");
 }
 
