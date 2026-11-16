@@ -642,3 +642,7 @@ Save all review for dirty sublayers, and verifies that saving a sublayer leaves
 remembered root state pending. The first anonymous-root save must refresh Save
 layer after writing its companion, even without a state-dirty transition;
 `preserve_state_menu_api` covers that notification edge case natively.
+
+The multi-layer selection suite also checks that the Assign color dialog and its
+OK button remain visible and enabled while its Layer Editor owner is modal-blocked,
+then clicks OK and verifies the assigned colors through saved session state.
