@@ -121,22 +121,11 @@ def find_stageviz_main_window():
 
 ### Modal message boxes from tool windows
 
-Stageviz temporarily disables visible `Qt.Tool` windows while a modal dialog is
-active. A modal message box parented to a tool dialog can therefore appear with
-its buttons disabled because it inherits the disabled state from that parent.
-Parent message boxes to the Stageviz main window (or leave them unparented when
-no main window is available), not to the tool dialog:
-
-```python
-box = QtWidgets.QMessageBox(find_stageviz_main_window())
-box.setWindowTitle("Operation complete")
-box.setText("The operation completed successfully.")
-box.setStandardButtons(QtWidgets.QMessageBox.StandardButton.Ok)
-box.exec()
-```
-
-Avoid `QMessageBox.information(self, ...)` and similar static calls when `self`
-is a `Qt.Tool` dialog; they parent the modal message box to the tool window.
+Stageviz temporarily disables and hides unrelated visible `Qt.Tool` windows
+while a modal dialog is active. The active modal dialog and its ancestor widgets
+are excluded so dialogs parented to a tool window remain visible and enabled.
+Parent message boxes to the tool that owns the operation, or to the Stageviz
+main window when there is no owning tool.
 
 ## Standalone dialog lifecycle
 

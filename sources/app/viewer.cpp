@@ -3032,7 +3032,10 @@ ViewerPrivate::updateToolsSuppressed(bool suppressed, bool animated)
         const QWidget* modal = QApplication::activeModalWidget();
 
         for (QWidget* widget : QApplication::topLevelWidgets()) {
-            if (!widget || widget == modal || !widget->isVisible())
+            bool ownsModal = false;
+            for (const QWidget* owner = modal; owner; owner = owner->parentWidget())
+                ownsModal |= owner == widget;
+            if (!widget || ownsModal || !widget->isVisible())
                 continue;
 
             if (!(widget->windowFlags() & Qt::Tool))

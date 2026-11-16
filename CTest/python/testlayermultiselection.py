@@ -111,8 +111,17 @@ class LayerMultiSelectionTest(_base['ViewportTest']):
                                 dialogs = [w for w in QtWidgets.QApplication.allWidgets()
                                            if isinstance(w, QtWidgets.QColorDialog)]
                                 if dialogs:
+                                    dialog = dialogs[0]
+                                    assert dialog.isVisible() and dialog.isEnabled(), 'color dialog disabled'
+                                    assert self.tree().window().isVisible(), 'color dialog owner hidden'
+                                    buttons = dialog.findChild(QtWidgets.QDialogButtonBox)
+                                    assert buttons is not None
+                                    ok = buttons.button(QtWidgets.QDialogButtonBox.StandardButton.Ok)
+                                    assert ok.isVisible() and ok.isEnabled(), 'color dialog OK disabled'
+                                    self.snapshot('layer_multi_color_dialog')
+                                    assert dialog.grab().save(str(self.directory / 'layer_multi_color_dialog.png'))
                                     dialogs[0].setCurrentColor(QtGui.QColor(color))
-                                    dialogs[0].accept()
+                                    QtTest.QTest.mouseClick(ok, QtCore.Qt.MouseButton.LeftButton)
                                 elif attempts[0] < 80:
                                     attempts[0] += 1
                                     QtCore.QTimer.singleShot(50, choose_color)
@@ -123,6 +132,9 @@ class LayerMultiSelectionTest(_base['ViewportTest']):
                                             widget.reject()
                             except Exception as error:
                                 failures.append(repr(error))
+                                for widget in QtWidgets.QApplication.allWidgets():
+                                    if isinstance(widget, QtWidgets.QColorDialog):
+                                        widget.reject()
                         QtCore.QTimer.singleShot(50, choose_color)
                     QtTest.QTest.keyClick(menu, QtCore.Qt.Key.Key_Return)
                 else:
