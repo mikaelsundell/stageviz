@@ -8,6 +8,7 @@
 #include "selectionlist.h"
 #include "session.h"
 #include "stageviz.h"
+#include <QStringList>
 #include <QTreeWidget>
 #include <pxr/usd/usd/stage.h>
 
@@ -136,6 +137,32 @@ public:
      * @param filter Filter string applied to prim names.
      */
     void setFilter(const QString& filter);
+
+    /**
+     * @brief Sets optional layer and prim-type display filters.
+     *
+     * Empty lists mean all layers or prim types are displayed.
+     *
+     * @param layers Included layer identifiers.
+     * @param types Included USD type names.
+     * @param showUntyped Whether prims without a schema type are displayed.
+     */
+    void setDisplayFilters(const QStringList& layers, const QStringList& types, bool showUntyped = true);
+
+    /**
+     * @brief Returns the active layer display filter; empty means all layers.
+     */
+    QStringList displayLayers() const;
+
+    /**
+     * @brief Returns the active prim-type display filter; empty means all types.
+     */
+    QStringList displayTypes() const;
+
+    /**
+     * @brief Returns whether untyped prims are included in the display.
+     */
+    bool showUntyped() const;
 
     /**
      * @}

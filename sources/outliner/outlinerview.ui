@@ -73,7 +73,7 @@
          </font>
         </property>
         <property name="placeholderText">
-         <string>Filter tree...</string>
+         <string>Filter stage...</string>
         </property>
        </widget>
       </item>
@@ -100,6 +100,13 @@
         </property>
         <property name="checked">
          <bool>false</bool>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QToolButton" name="display">
+        <property name="text">
+         <string>...</string>
         </property>
        </widget>
       </item>

@@ -152,13 +152,15 @@ addUIEnums()
                                             { "Warning", static_cast<long>(UI::ColorRole::Warning) },
                                             { "Readonly", static_cast<long>(UI::ColorRole::Readonly) } };
 
-    static const EnumEntry iconRoles[] = { { "BranchClosed", static_cast<long>(UI::IconRole::BranchClosed) },
+    static const EnumEntry iconRoles[] = { { "Arrow", static_cast<long>(UI::IconRole::Arrow) },
+                                           { "BranchClosed", static_cast<long>(UI::IconRole::BranchClosed) },
                                            { "BranchOpen", static_cast<long>(UI::IconRole::BranchOpen) },
                                            { "Checked", static_cast<long>(UI::IconRole::Checked) },
                                            { "Clear", static_cast<long>(UI::IconRole::Clear) },
                                            { "Code", static_cast<long>(UI::IconRole::Code) },
                                            { "Collapse", static_cast<long>(UI::IconRole::Collapse) },
                                            { "DefaultPrim", static_cast<long>(UI::IconRole::DefaultPrim) },
+                                           { "Display", static_cast<long>(UI::IconRole::Display) },
                                            { "Down", static_cast<long>(UI::IconRole::Down) },
                                            { "DropDown", static_cast<long>(UI::IconRole::DropDown) },
                                            { "Expand", static_cast<long>(UI::IconRole::Expand) },

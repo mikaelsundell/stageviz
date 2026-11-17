@@ -1330,6 +1330,20 @@ viewCameraApi()
     const GfRange1f documentClip = metricCamera.camera().GetClippingRange();
     require(documentClip.GetMax() < metricClip.GetMax(), "disabled viewport grid no longer extends the far clip");
 
+    ViewCamera closeupCamera(16.0 / 9.0, 40.0);
+    const GfBBox3d closeupBounds(GfRange3d(GfVec3d(-2.205, -1.11, -0.024), GfVec3d(2.206, 1.11, 2.184)));
+    closeupCamera.setBoundingBox(closeupBounds);
+    closeupCamera.setCameraUp(ViewCamera::Z);
+    closeupCamera.setAxisPitch(34.5);
+    closeupCamera.setAxisRoll(62.0);
+    closeupCamera.setFocusPoint(GfVec3d(-0.214, 0.230, 0.962));
+    closeupCamera.setCameraDistance(2.261);
+    closeupCamera.setAuxiliaryRange(GfRange3d(GfVec3d(-12.0, -12.0, 0.0), GfVec3d(12.0, 12.0, 0.0)));
+    const GfRange1f closeupClip = closeupCamera.camera().GetClippingRange();
+    require(closeupClip.GetMin() > 0.005, "close-up view inside stage bounds keeps a useful near plane");
+    require(closeupClip.GetMax() / closeupClip.GetMin() < 2000.0,
+            "close-up view inside stage bounds maintains depth precision");
+
     const GfBBox3d largeBounds(GfRange3d(GfVec3d(-100.0, -100.0, -100.0), GfVec3d(100.0, 100.0, 100.0)));
     metricCamera.setBoundingBox(largeBounds);
     metricCamera.setAuxiliaryRange(metricGridRange);
@@ -1826,6 +1840,19 @@ sessionStateApi()
     require(closeEnough(state->camera()->aspectRatio(), 2.39) && state->camera()->aspectRatioLocked()
                 && closeEnough(state->camera()->fov(), 47.0),
             "camera state restored");
+
+    const QString restrictedDirectory = dir.filePath("restricted");
+    require(QDir().mkdir(restrictedDirectory), "create restricted state directory");
+    const QString restrictedStatePath = QDir(restrictedDirectory).filePath("scene.session");
+    require(session.saveState(restrictedStatePath), "create state file before restricting its directory");
+    const QFile::Permissions originalPermissions = QFile::permissions(restrictedDirectory);
+    require(QFile::setPermissions(restrictedDirectory, QFile::ReadOwner | QFile::ExeOwner),
+            "restrict state directory to prevent temporary-file creation");
+    state->setGridEnabled(true);
+    const bool savedWithoutDirectoryWrite = session.saveState(restrictedStatePath);
+    const bool permissionsRestored = QFile::setPermissions(restrictedDirectory, originalPermissions);
+    require(permissionsRestored, "restore state directory permissions");
+    require(savedWithoutDirectoryWrite, "update existing state file without directory write permission");
 
     std::vector<SdfLayerRefPtr> sublayers;
     QStringList sublayerIdentifiers;

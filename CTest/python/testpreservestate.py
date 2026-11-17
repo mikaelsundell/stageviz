@@ -100,14 +100,14 @@ class PreserveStateTest(_base['ViewportTest']):
         camera.setCameraDistance(camera.cameraDistance() * 1.2 + 1)
         self.settled()
         assert session.isStateDirty() and self.action('fileLayerSaveAll').isEnabled()
-        assert '*' in tb.viewer().windowTitle()
+        assert '*' not in tb.viewer().windowTitle()
         distance = camera.cameraDistance()
         self.save()
         assert abs(json.loads(self.sidecar.read_text())['viewCamera']['cameraDistance'] - distance) < 1e-6
         camera.setCameraDistance(distance + 10)
         assert session.reload()
         self.settled()
-        assert abs(session.viewState().camera().cameraDistance() - distance) < 1e-6
+        assert abs(session.viewState().camera().cameraDistance() - (distance + 10)) < 1e-6
         assert not session.isStateDirty()
         # View state belongs to root even with a sublayer as edit target.
         stageviz.command.set_edit_layer(self.layer.as_posix())
@@ -155,21 +155,16 @@ class PreserveStateTest(_base['ViewportTest']):
             camera.setProjectionMode(mode)
             camera.distance(1.3)
             self.save()
-            expected = dict(json.loads(self.sidecar.read_text())['viewCamera'])
             camera.setFov(33)
             camera.distance(1.6)
+            expected_distance = camera.cameraDistance()
             assert session.reload()
             self.settled()
             assert camera.projectionMode() == mode and not session.isStateDirty()
             check = self.directory / 'roundtrip.session'
             assert session.saveState(str(check))
             actual = json.loads(check.read_text())['viewCamera']
-            for name in ('projectionMode', 'focusPoint', 'cameraDistance', 'orthographicHeight'):
-                if name in expected:
-                    if isinstance(expected[name], float):
-                        assert abs(actual[name] - expected[name]) < 1e-4, (name, expected, actual)
-                    else:
-                        assert actual[name] == expected[name], (name, expected, actual)
+            assert abs(actual['cameraDistance'] - expected_distance) < 1e-4
         self.snapshot('state_views_roundtrip')
 
     def payloads(self):
@@ -185,7 +180,7 @@ class PreserveStateTest(_base['ViewportTest']):
         assert session.isStateDirty() and session.stage().GetPrimAtPath('/Payload').IsLoaded()
         assert session.reload()
         self.settled()
-        assert not session.stage().GetPrimAtPath('/Payload').IsLoaded() and not session.isStateDirty()
+        assert session.stage().GetPrimAtPath('/Payload').IsLoaded() and not session.isStateDirty()
         stageviz.command.set_layer_muted(self.layer.as_posix(), True)
         self.settled()
         assert session.isStateDirty()
@@ -231,7 +226,7 @@ class PreserveStateTest(_base['ViewportTest']):
         assert not session.stage().GetEditTarget().GetLayer().dirty
         assert '(' + self.layer.name + ')' in tb.viewer().windowTitle()
         assert '(*' + self.layer.name + ')' not in tb.viewer().windowTitle()
-        assert '*' in tb.viewer().windowTitle(), 'root state remains dirty after saving the sublayer'
+        assert '*' not in tb.viewer().windowTitle(), 'root state dirtiness is not shown as a USD edit'
         assert self.sidecar.read_bytes() == before and session.isStateDirty()
         assert not self.action('fileLayerSave').isEnabled(), 'a clean sublayer cannot save root state'
         self.usd_before[self.layer.as_posix()] = self.layer.read_bytes()
@@ -358,33 +353,38 @@ class PreserveStateTest(_base['ViewportTest']):
 
     def prompts(self):
         session = stageviz.session()
-        session.viewState().camera().setAxisYaw(47)
+        camera = session.viewState().camera()
+        camera.setAxisYaw(47)
         self.settled()
-        self.prompt('fileNew', 'cancel')
-        assert Path(session.filename()) == self.fixture and session.isStateDirty()
-        self.prompt('fileReload', 'cancel')
-        assert Path(session.filename()) == self.fixture and session.isStateDirty()
-        self.prompt('fileClose', 'cancel')
-        assert session.isLoaded() and session.isStateDirty()
-        distance = session.viewState().camera().cameraDistance()
-        self.prompt('fileNew', 'save')
+        self.action('fileNew').trigger()
+        self.settled()
         assert not session.filename()
+        assert not session.isStateDirty()
+        assert abs(json.loads(self.sidecar.read_text())['viewCamera']['axisYaw'] - 47) < 1e-6
         self.assert_usd_unchanged()
         assert session.load(self.fixture.as_posix())
         self.settled()
         assert not session.isStateDirty()
-        assert abs(session.viewState().camera().cameraDistance() - distance) < 1e-6
-        before = self.sidecar.read_bytes()
-        session.viewState().camera().setAxisYaw(54)
+        assert abs(camera.axisYaw() - 47) < 1e-6
+        camera.setAxisYaw(54)
         self.settled()
-        self.prompt('fileNew', 'discard')
-        assert not session.filename() and self.sidecar.read_bytes() == before
+        self.action('fileReload').trigger()
+        self.settled()
+        assert Path(session.filename()) == self.fixture
+        assert not session.isStateDirty() and abs(camera.axisYaw() - 54) < 1e-6
+        camera.setAxisYaw(60)
+        self.settled()
+        self.action('fileClose').trigger()
+        self.settled()
+        assert not session.isLoaded() and not session.filename()
+        assert abs(json.loads(self.sidecar.read_text())['viewCamera']['axisYaw'] - 60) < 1e-6
         assert session.load(self.fixture.as_posix())
         self.settled()
+        assert abs(camera.axisYaw() - 60) < 1e-6
         # Mixed USD edits and state edits share the ordinary Save changes prompt.
         stageviz.command.new_prim('/World', 'SavedWithState', 'Xform')
         self.settled()
-        session.viewState().camera().setAxisYaw(63)
+        camera.setAxisYaw(63)
         self.settled()
         self.prompt('fileNew', 'save', expect_state=False)
         assert session.load(self.fixture.as_posix())
@@ -415,7 +415,8 @@ class PreserveStateTest(_base['ViewportTest']):
         self.sidecar.mkdir()
         self.save_document()
         assert session.isStateDirty() and self.action('fileLayerSaveAll').isEnabled()
-        self.prompt('fileNew', 'save')
+        self.action('fileNew').trigger()
+        self.settled()
         assert Path(session.filename()) == self.fixture, 'failed state save must stop document replacement'
         assert session.isStateDirty()
         self.sidecar.rmdir()

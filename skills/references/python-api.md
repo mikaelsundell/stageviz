@@ -152,7 +152,7 @@ returning an enum integer can be compared directly with its matching constant.
 | Viewport sidedness | `SidednessPrimitive`, `SidednessDoubleSided`, `SidednessSingleSided` |
 | Viewport AO | `AmbientOcclusionLow`, `AmbientOcclusionMedium`, `AmbientOcclusionHigh`, `AmbientOcclusionUltra`, `AmbientOcclusionComposite`, `AmbientOcclusionCombined`, `AmbientOcclusionContact`, `AmbientOcclusionBroad` |
 | Legacy UI color alias | `ColorBase`, `ColorBaseAlt`, `ColorAccent`, `ColorAccentAlt`, `ColorText`, `ColorHighlight`, `ColorHighlightAlt`, `ColorBorder`, `ColorBorderAlt`, `ColorHandle`, `ColorProgress`, `ColorButton`, `ColorButtonAlt`, `ColorItem`, `ColorItemAlt`, `ColorRender`, `ColorRenderAlt`, `ColorSelection`, `ColorSelectionAlt`, `ColorWarning`, `ColorReadonly`, `ColorError` |
-| Legacy UI icon alias | `IconBranchClosed`, `IconBranchOpen`, `IconChecked`, `IconClear`, `IconCode`, `IconCollapse`, `IconDropdown`, `IconExpand`, `IconExport`, `IconExportImage`, `IconFollow`, `IconFrameAll`, `IconGeometry`, `IconHidden`, `IconLeft`, `IconLock`, `IconMaterial`, `IconOpen`, `IconPartiallyChecked`, `IconPayload`, `IconPrim`, `IconRedo`, `IconRight`, `IconRun`, `IconShaded`, `IconUndo`, `IconUnlock`, `IconVisible`, `IconWireframe` |
+| Legacy UI icon alias | `IconArrow`, `IconBranchClosed`, `IconBranchOpen`, `IconChecked`, `IconClear`, `IconCode`, `IconCollapse`, `IconDropdown`, `IconDisplay`, `IconExpand`, `IconExport`, `IconExportImage`, `IconFollow`, `IconFrameAll`, `IconGeometry`, `IconHidden`, `IconLeft`, `IconLock`, `IconMaterial`, `IconOpen`, `IconPartiallyChecked`, `IconPayload`, `IconPrim`, `IconRedo`, `IconRight`, `IconRun`, `IconShaded`, `IconUndo`, `IconUnlock`, `IconVisible`, `IconWireframe` |
 | Legacy UI scale alias | `UIScaleSmall`, `UIScaleMedium`, `UIScaleLarge` |
 | Legacy UI state alias | `UIStateNormal`, `UIStateDisabled` |
 
@@ -1267,7 +1267,7 @@ stageviz.UI.AxisX
 
 #### IconRole members
 
-`BranchClosed`, `BranchOpen`, `Checked`, `Clear`, `Code`, `Collapse`, `DefaultPrim`, `Down`, `DropDown`, `Expand`, `Export`, `ExportImage`, `Follow`, `FrameAll`, `Geometry`, `Hidden`, `Instance`, `Layer`, `EditLayer`, `Left`, `List`, `Lock`, `Material`, `Move`, `Nested`, `New`, `Open`, `Over`, `Override`, `PartiallyChecked`, `Payload`, `Pick`, `Pivot`, `Prim`, `Redo`, `Right`, `Rotate`, `Run`, `Scale`, `Select`, `Shaded`, `Transform`, `Undo`, `Unlock`, `Up`, `Visible`, `Wireframe`.
+`Arrow`, `BranchClosed`, `BranchOpen`, `Checked`, `Clear`, `Code`, `Collapse`, `DefaultPrim`, `Display`, `Down`, `DropDown`, `Expand`, `Export`, `ExportImage`, `Follow`, `FrameAll`, `Geometry`, `Hidden`, `Instance`, `Layer`, `EditLayer`, `Left`, `List`, `Lock`, `Material`, `Move`, `Nested`, `New`, `Open`, `Over`, `Override`, `PartiallyChecked`, `Payload`, `Pick`, `Pivot`, `Prim`, `Redo`, `Right`, `Rotate`, `Run`, `Scale`, `Select`, `Shaded`, `Transform`, `Undo`, `Unlock`, `Up`, `Visible`, `Wireframe`.
 
 #### UIScale members
 

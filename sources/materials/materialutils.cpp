@@ -1050,6 +1050,24 @@ MaterialUtils::surfaceShader(const UsdShadeMaterial& material, QString* shaderId
         }
     }
 
+    // Vendor renderers can author their terminal in a namespaced context such
+    // as `outputs:vray:surface`. Keep the material and its graph discoverable
+    // even when Stageviz cannot evaluate that renderer's shader network.
+    for (const UsdShadeOutput& output : material.GetOutputs()) {
+        const QString outputName = QString::fromStdString(output.GetAttr().GetName().GetString());
+        if (!outputName.endsWith(QStringLiteral(":surface")))
+            continue;
+
+        const UsdShadeShader shader = resolveOutputToShader(output);
+        if (!shader)
+            continue;
+
+        const QString id = shaderIdForPrim(shader.GetPrim());
+        if (shaderId)
+            *shaderId = id;
+        return shader;
+    }
+
     // Compatibility fallback for older/simple files with incomplete output wiring.
     const UsdPrim materialPrim = material.GetPrim();
     for (const UsdPrim& prim : UsdPrimRange(materialPrim)) {
@@ -1110,6 +1128,25 @@ MaterialUtils::readParameters(const UsdShadeShader& shader, const QString& shade
     return p;
 }
 
+static QStringList
+materialLayerIdentifiers(const UsdPrim& prim)
+{
+    QStringList layers;
+    QSet<QString> seen;
+    for (const SdfPrimSpecHandle& spec : prim.GetPrimStack()) {
+        if (!spec || !spec->GetLayer())
+            continue;
+
+        const QString identifier = QString::fromStdString(spec->GetLayer()->GetIdentifier());
+        if (!seen.contains(identifier)) {
+            seen.insert(identifier);
+            layers.append(identifier);
+        }
+    }
+    std::reverse(layers.begin(), layers.end());
+    return layers;
+}
+
 QList<MaterialEntry>
 MaterialUtils::sceneMaterials(UsdStageRefPtr stage)
 {
@@ -1132,6 +1169,7 @@ MaterialUtils::sceneMaterials(UsdStageRefPtr stage)
         entry.shaderPath = shader.GetPath();
         entry.name = QString::fromStdString(prim.GetName().GetString());
         entry.shaderId = shaderId;
+        entry.layerIdentifiers = materialLayerIdentifiers(prim);
         entry.parameters = readParameters(shader, shaderId);
 
         for (const CanonicalParameter& mapping : kParameters) {
@@ -1177,6 +1215,7 @@ MaterialUtils::materialEntry(UsdStageRefPtr stage, const SdfPath& materialPath, 
     result.shaderPath = shader.GetPath();
     result.name = QString::fromStdString(prim.GetName().GetString());
     result.shaderId = shaderId;
+    result.layerIdentifiers = materialLayerIdentifiers(prim);
     result.parameters = readParameters(shader, shaderId);
 
     for (const CanonicalParameter& mapping : kParameters) {

@@ -159,6 +159,9 @@ PrimItem::data(int column, int role) const
     p->updateCache();
     const SdfPath path = p->d.path;
 
+    if (role == PrimItem::TypeName)
+        return p->d.typeName;
+
     if (role == PrimItem::StrongestLayer || role == PrimItem::CompositionLayers) {
         if (!p->d.compositionLayersCached) {
             if (p->d.stage && !p->d.isRoot) {
