@@ -5754,6 +5754,12 @@ def test_ui_subsystem_api():
     application_ui = stageviz.application().ui()
     require(isinstance(native, stageviz.UI), "stageviz.ui() returns the UI wrapper")
     require(isinstance(application_ui, stageviz.UI), "Application.ui() returns the UI wrapper")
+    arrow_role = stageviz.UI.IconRole.Arrow
+    require(native.iconPath(arrow_role).endswith("Arrow.png"), "Arrow icon role resolves through UI.iconPath")
+    require(stageviz.IconArrow == arrow_role, "legacy Arrow icon constant aliases UI.IconRole.Arrow")
+    display_role = stageviz.UI.IconRole.Display
+    require(native.iconPath(display_role).endswith("Display.png"), "Display icon role resolves through UI.iconPath")
+    require(stageviz.IconDisplay == display_role, "legacy Display icon constant aliases UI.IconRole.Display")
 
     original = (native.gizmoSize(stageviz.UI.Medium), native.transformMoveSnap(),
                 native.transformRotateSnap(), native.transformScaleSnap())

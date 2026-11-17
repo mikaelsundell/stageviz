@@ -62,12 +62,28 @@
         <property name="toolTip">
          <string>Clear</string>
         </property>
+        <property name="text">
+         <string>...</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QToolButton" name="display">
+        <property name="toolTip">
+         <string>Display filters</string>
+        </property>
+        <property name="text">
+         <string>...</string>
+        </property>
        </widget>
       </item>
       <item>
        <widget class="QToolButton" name="view">
         <property name="toolTip">
          <string>View</string>
+        </property>
+        <property name="text">
+         <string>...</string>
         </property>
        </widget>
       </item>

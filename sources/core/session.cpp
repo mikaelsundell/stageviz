@@ -473,7 +473,8 @@ bool
 SessionPrivate::newStage(Session::LoadPolicy policy)
 {
     StateTrackingBlocker stateBlocker(d.stateTrackingBlocked);
-    close();
+    if (!close())
+        return false;
     beginProgressBlock("New stage", 1);
     QList<SdfPath> mask;
     bool created = false;
@@ -519,7 +520,8 @@ SessionPrivate::loadFromFile(const QString& filename, Session::LoadPolicy policy
     PerfScope perfScope("session.load_file");
     const QString absFilename = QFileInfo(filename).absoluteFilePath();
     const std::string identifier = QStringToString(absFilename);
-    close();
+    if (!close())
+        return false;
     QList<SdfPath> mask;
     bool loaded = false;
     bool preserveState = false;
@@ -1842,7 +1844,10 @@ SessionPrivate::saveState(const QString& filename, bool markSaved, const QString
         root["viewState"] = viewStateObject;
     }
     QSaveFile file(stateFilename);
-    file.setDirectWriteFallback(false);
+    // macOS can grant write access to a user-selected companion file without
+    // granting directory access to create QSaveFile's temporary replacement.
+    // In that case QSaveFile can still update the existing state file directly.
+    file.setDirectWriteFallback(true);
     if (!file.open(QIODevice::WriteOnly)) {
         qWarning() << "[Session] cannot write session state:" << stateFilename << file.errorString();
         return false;
@@ -1866,6 +1871,22 @@ SessionPrivate::saveState(const QString& filename, bool markSaved, const QString
 bool
 SessionPrivate::close()
 {
+    QString stateFilename;
+    bool saveRememberedState = false;
+    {
+        READ_LOCKER(locker, &d.stageLock, "stageLock");
+        saveRememberedState = d.stage && d.preserveState && d.sessionStateDirty.load() && !d.filename.isEmpty();
+        if (saveRememberedState)
+            stateFilename = QFileInfo(d.filename + ".session").absoluteFilePath();
+    }
+    if (saveRememberedState && !saveState(stateFilename)) {
+        const QString message = QStringLiteral("Could not save remembered state for %1")
+                                    .arg(stateFilename.left(stateFilename.size() - QStringLiteral(".session").size()));
+        qWarning() << "[Session]" << message;
+        d.session->notifyStatus(Session::Notify::Status::Error, message);
+        return false;
+    }
+
     d.stateTrackingReady.store(false);
     d.stateDocumentEstablished.store(false);
     {

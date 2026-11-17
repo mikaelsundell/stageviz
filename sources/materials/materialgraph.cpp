@@ -602,7 +602,6 @@ MaterialGraphPrivate::layoutNodes()
     QHash<QString, int> depths;
     QSet<QString> connected;
     const QString rootKey = QString::fromStdString(d.material.shaderPath.GetString());
-    depths.insert(rootKey, 0);
 
     UsdStageRefPtr stage;
     {
@@ -611,15 +610,9 @@ MaterialGraphPrivate::layoutNodes()
         if (!stage)
             return;
 
-        QList<QString> queue { rootKey };
-        QSet<QString> queued { rootKey };
-        for (int index = 0; index < queue.size(); ++index) {
-            const QString key = queue[index];
-            if (connected.contains(key))
-                continue;
-            connected.insert(key);
-
-            GraphNodeItem* node = d.nodes.value(key);
+        for (auto it = d.nodes.cbegin(); it != d.nodes.cend(); ++it) {
+            const QString key = it.key();
+            GraphNodeItem* node = it.value();
             if (!node)
                 continue;
 
@@ -642,17 +635,29 @@ MaterialGraphPrivate::layoutNodes()
 
                 if (!children.contains(sourceKey))
                     children.append(sourceKey);
-
-                const int sourceDepth = depths.value(key, 0) + 1;
-                if (!depths.contains(sourceKey) || sourceDepth > depths.value(sourceKey))
-                    depths[sourceKey] = sourceDepth;
-
-                if (!queued.contains(sourceKey)) {
-                    queued.insert(sourceKey);
-                    queue.append(sourceKey);
-                }
             }
             upstream.insert(key, children);
+        }
+    }
+
+    QList<QString> queue { rootKey };
+    QSet<QString> queued { rootKey };
+    depths.insert(rootKey, 0);
+    for (int index = 0; index < queue.size(); ++index) {
+        const QString key = queue[index];
+        if (connected.contains(key))
+            continue;
+        connected.insert(key);
+
+        for (const QString& sourceKey : upstream.value(key)) {
+            const int sourceDepth = depths.value(key, 0) + 1;
+            if (!depths.contains(sourceKey) || sourceDepth > depths.value(sourceKey))
+                depths[sourceKey] = sourceDepth;
+
+            if (!queued.contains(sourceKey)) {
+                queued.insert(sourceKey);
+                queue.append(sourceKey);
+            }
         }
     }
 
@@ -666,7 +671,6 @@ MaterialGraphPrivate::layoutNodes()
 
     QHash<QString, qreal> desiredCenter;
     QSet<QString> placing;
-    QSet<QString> placed;
     qreal cursorY = 0.0;
 
     std::function<qreal(const QString&)> placeBranch = [&](const QString& key) -> qreal {
@@ -701,7 +705,6 @@ MaterialGraphPrivate::layoutNodes()
         }
 
         placing.remove(key);
-        placed.insert(key);
         desiredCenter.insert(key, center);
         return center;
     };
@@ -710,48 +713,93 @@ MaterialGraphPrivate::layoutNodes()
         placeBranch(rootKey);
 
     const qreal connectedBottom = cursorY;
-    qreal freeCursorY = connectedBottom + freeGroupGap;
     QList<QString> freeKeys;
     for (auto it = d.nodes.cbegin(); it != d.nodes.cend(); ++it) {
         if (!connected.contains(it.key()))
             freeKeys.append(it.key());
     }
     std::sort(freeKeys.begin(), freeKeys.end());
-    for (const QString& key : freeKeys) {
-        GraphNodeItem* node = d.nodes.value(key);
-        if (!node)
-            continue;
-        desiredCenter.insert(key, freeCursorY + node->rect().height() * 0.5);
-        depths.insert(key, maxDepth + 1);
-        freeCursorY += node->rect().height() + rowSpacing;
+
+    QHash<QString, QSet<QString>> neighbors;
+    QSet<QString> remainingFree(freeKeys.cbegin(), freeKeys.cend());
+    for (auto it = upstream.cbegin(); it != upstream.cend(); ++it) {
+        for (const QString& sourceKey : it.value()) {
+            neighbors[it.key()].insert(sourceKey);
+            neighbors[sourceKey].insert(it.key());
+        }
     }
 
-    QHash<int, QList<QString>> columns;
-    for (auto it = d.nodes.cbegin(); it != d.nodes.cend(); ++it)
-        columns[depths.value(it.key(), maxDepth + 1)].append(it.key());
-
-    for (auto columnIt = columns.begin(); columnIt != columns.end(); ++columnIt) {
-        QList<QString>& keys = columnIt.value();
-        std::sort(keys.begin(), keys.end(), [&](const QString& a, const QString& b) {
-            const qreal ay = desiredCenter.value(a);
-            const qreal by = desiredCenter.value(b);
-            if (!qFuzzyCompare(ay + 1.0, by + 1.0))
-                return ay < by;
-            return a < b;
-        });
-
-        qreal previousBottom = -1.0e12;
-        for (const QString& key : keys) {
-            GraphNodeItem* node = d.nodes.value(key);
-            if (!node)
+    qreal freeCursorY = connectedBottom + freeGroupGap;
+    const qreal freeRootX = -(280.0 + freeGroupGap);
+    while (!remainingFree.isEmpty()) {
+        QList<QString> componentQueue { *std::min_element(remainingFree.cbegin(), remainingFree.cend()) };
+        QSet<QString> component;
+        for (int index = 0; index < componentQueue.size(); ++index) {
+            const QString key = componentQueue[index];
+            if (!remainingFree.remove(key))
                 continue;
-
-            const qreal height = node->rect().height();
-            qreal top = desiredCenter.value(key) - height * 0.5;
-            top = std::max(top, previousBottom + rowSpacing);
-            desiredCenter[key] = top + height * 0.5;
-            previousBottom = top + height;
+            component.insert(key);
+            for (const QString& neighbor : neighbors.value(key)) {
+                if (remainingFree.contains(neighbor))
+                    componentQueue.append(neighbor);
+            }
         }
+
+        QList<QString> componentKeys = component.values();
+        std::sort(componentKeys.begin(), componentKeys.end());
+        QSet<QString> componentSources;
+        for (const QString& key : componentKeys) {
+            for (const QString& sourceKey : upstream.value(key)) {
+                if (component.contains(sourceKey))
+                    componentSources.insert(sourceKey);
+            }
+        }
+
+        QList<QString> roots;
+        for (const QString& key : componentKeys) {
+            if (!componentSources.contains(key))
+                roots.append(key);
+        }
+        if (roots.isEmpty() && !componentKeys.isEmpty())
+            roots.append(componentKeys.first());
+
+        QHash<QString, int> componentDepths;
+        QList<QString> depthQueue = roots;
+        QSet<QString> depthQueued(roots.cbegin(), roots.cend());
+        for (const QString& root : roots)
+            componentDepths.insert(root, 0);
+        for (int index = 0; index < depthQueue.size(); ++index) {
+            const QString key = depthQueue[index];
+            for (const QString& sourceKey : upstream.value(key)) {
+                if (!component.contains(sourceKey))
+                    continue;
+                const int sourceDepth = componentDepths.value(key, 0) + 1;
+                if (!componentDepths.contains(sourceKey) || sourceDepth > componentDepths.value(sourceKey))
+                    componentDepths[sourceKey] = sourceDepth;
+                if (!depthQueued.contains(sourceKey)) {
+                    depthQueued.insert(sourceKey);
+                    depthQueue.append(sourceKey);
+                }
+            }
+        }
+
+        cursorY = freeCursorY;
+        for (const QString& root : roots)
+            placeBranch(root);
+        for (const QString& key : componentKeys) {
+            if (!desiredCenter.contains(key))
+                placeBranch(key);
+        }
+
+        int componentMaxDepth = 0;
+        for (auto it = componentDepths.cbegin(); it != componentDepths.cend(); ++it)
+            componentMaxDepth = std::max(componentMaxDepth, it.value());
+        for (const QString& key : componentKeys) {
+            if (!componentDepths.contains(key))
+                componentDepths.insert(key, componentMaxDepth + 1);
+            depths.insert(key, componentDepths.value(key));
+        }
+        freeCursorY = cursorY + freeGroupGap;
     }
 
     d.connectedNodes = connected;
@@ -762,7 +810,8 @@ MaterialGraphPrivate::layoutNodes()
             continue;
 
         const int depth = depths.value(key, maxDepth + 1);
-        const qreal x = (maxDepth - depth) * columnSpacing;
+        const qreal x = connected.contains(key) ? (maxDepth - depth) * columnSpacing
+                                                : freeRootX - depth * columnSpacing;
         const qreal y = desiredCenter.value(key) - node->rect().height() * 0.5;
         node->setPos(x, y);
     }

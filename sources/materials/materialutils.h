@@ -183,6 +183,10 @@ struct MaterialEntry {
     SdfPath shaderPath;
     QString name;
     QString shaderId;
+    /**
+     * @brief Identifiers of layers contributing opinions to the material prim.
+     */
+    QStringList layerIdentifiers;
     MaterialParameters parameters;
     QHash<QString, MaterialInputInfo> inputs;
 };

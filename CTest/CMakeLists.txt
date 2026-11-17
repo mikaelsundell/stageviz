@@ -184,6 +184,7 @@ foreach(case IN ITEMS
     mcp_server_api
     viewport_capture_paths_api
     outliner_layer_mute_api
+    outliner_display_menu_api
     viewport_lights_api
     viewport_transform_pivot_api
     viewport_transform_hierarchy_sync_api
@@ -203,6 +204,10 @@ foreach(case IN ITEMS
     render_primitive_selection_api
     renderengine_hdri_api
     material_browser_api
+    material_browser_display_menu_api
+    material_select_multi_selection_api
+    material_graph_disconnected_network_layout_api
+    material_dialog_refresh_after_layer_removal_api
     property_reveal_file_api
     material_numeric_editor_api
     property_asset_editor_api

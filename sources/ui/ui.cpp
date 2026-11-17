@@ -11,6 +11,7 @@
 #include <QIcon>
 #include <QMetaEnum>
 #include <QMouseEvent>
+#include <QPainter>
 #include <QPixmap>
 #include <QPointer>
 #include <QProxyStyle>
@@ -362,6 +363,7 @@ UIPrivate::updateTheme()
     map(UI::ColorRole::TextAlt, QColor::fromHsl(0, 0, 150));
     map(UI::ColorRole::Warning, QColor::fromHsl(50, 130, 100));
 
+    d.icons[roleName(UI::IconRole::Arrow)] = ":/icons/resources/Arrow.png";
     d.icons[roleName(UI::IconRole::BranchClosed)] = ":/icons/resources/BranchClosed.png";
     d.icons[roleName(UI::IconRole::BranchOpen)] = ":/icons/resources/BranchOpen.png";
     d.icons[roleName(UI::IconRole::Checked)] = ":/icons/resources/Checked.png";
@@ -369,6 +371,7 @@ UIPrivate::updateTheme()
     d.icons[roleName(UI::IconRole::Code)] = ":/icons/resources/Code.png";
     d.icons[roleName(UI::IconRole::Collapse)] = ":/icons/resources/Collapse.png";
     d.icons[roleName(UI::IconRole::DefaultPrim)] = ":/icons/resources/DefaultPrim.png";
+    d.icons[roleName(UI::IconRole::Display)] = ":/icons/resources/Display.png";
     d.icons[roleName(UI::IconRole::Down)] = ":/icons/resources/Down.png";
     d.icons[roleName(UI::IconRole::DropDown)] = ":/icons/resources/DropDown.png";
     d.icons[roleName(UI::IconRole::Expand)] = ":/icons/resources/Expand.png";
@@ -479,8 +482,11 @@ UIPrivate::icon(UI::IconRole role, UI::UIScale scale, UI::UIState state) const
         return QPixmap();
 
     QPixmap scaled = qt::scaledPixmap(loaded, logicalSize, Qt::KeepAspectRatio);
-    if (state == UI::UIState::Disabled)
-        scaled = QIcon(scaled).pixmap(QSize(logicalSize, logicalSize), dpr, QIcon::Disabled);
+    if (state == UI::UIState::Disabled) {
+        QPainter painter(&scaled);
+        painter.setCompositionMode(QPainter::CompositionMode_DestinationIn);
+        painter.fillRect(scaled.rect(), QColor(255, 255, 255, 128));
+    }
     d.pixmaps.insert(key, scaled);
     return scaled;
 }

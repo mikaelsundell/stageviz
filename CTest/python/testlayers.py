@@ -105,15 +105,15 @@ def _save_initial_root_state():
     filename = session.filename()
     _require((_action_info("filePreserveState") or {}).get("checked"), "Remember state is enabled for root-state save checks")
     _require(not os.path.exists(filename + ".session"), "fixture starts without remembered state")
-    _assert_file_menu(save_enabled=True)
+    _assert_file_menu(save_enabled=False, save_all_enabled=True)
     with open(filename, "rb") as stream:
         usd_before = stream.read()
-    _require(_trigger_action("fileLayerSave"), "root Save writes missing remembered state")
+    _require(_trigger_action("fileLayerSaveAll"), "Save All writes missing remembered state")
     _require(_wait_until(lambda: os.path.isfile(filename + ".session") and not session.isStateDirty()),
              "root Save creates its companion and clears state dirtiness")
     with open(filename, "rb") as stream:
         _require(stream.read() == usd_before, "initial remembered-state save preserves unchanged USD")
-    _assert_file_menu(save_enabled=False)
+    _assert_file_menu(save_enabled=False, save_all_enabled=True)
 
 
 def _layer_dialog_visible():
@@ -730,7 +730,7 @@ def run_test_layers():
              "saving the active sublayer clears its own title marker")
     _assert_layer_row(lighting_id, name_contains="Lighting.usda", dirty=False, bold=True,
                       visibility=True, locked=True, opinions=True)
-    _assert_window_title(active_layer_name="Lighting.usda", dirty=True)
+    _assert_window_title(active_layer_name="Lighting.usda", dirty=False)
     _assert_file_menu(save_enabled=False)
 
     command.set_edit_layer(_session().stage().GetRootLayer().identifier)
@@ -876,8 +876,8 @@ def run_test_layers():
              "Layer Editor refreshes the muted layer state")
     _snapshot_qt_state("Override layer muted")
     _require(_session().isStateDirty(), "muting a layer marks preserved stage state dirty")
-    _require(_wait_until(lambda: "*" in _viewer().windowTitle()),
-             "muting a layer marks the stage window title dirty")
+    _require(_wait_until(lambda: "*" not in _viewer().windowTitle()),
+             "muting a layer leaves the USD window title clean")
     muted_row = _layer_row(override_id)
     _assert_layer_row(override_id, name_contains="Overrides.usda", visibility=True, locked=True, opinions=True)
     _require(muted_row is not None and _icon_present(muted_row["visible_icon"])

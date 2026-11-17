@@ -74,6 +74,17 @@ PXR_NAMESPACE_USING_DIRECTIVE
 
 namespace stageviz {
 
+namespace {
+
+    bool usesNativeSurfacePreview(const QString& shaderId)
+    {
+        return shaderId == QStringLiteral("UsdPreviewSurface")
+               || shaderId == QStringLiteral("ND_standard_surface_surfaceshader")
+               || shaderId == QStringLiteral("ND_open_pbr_surface_surfaceshader");
+    }
+
+}  // namespace
+
 class MaterialDialogPrivate : public QObject {
 public:
     class GridGraphScene;
@@ -781,6 +792,19 @@ MaterialDialogPrivate::updatePrims(const NoticeBatch& batch)
                 structuralChange = true;
                 break;
             }
+
+            // A composition change can remove a material without leaving a
+            // composed prim at the resync path. Check the browser's previous
+            // material paths before relying on the new stage contents, so a
+            // layer removal still refreshes entries and closes orphaned tabs.
+            for (const MaterialEntry& entry : d.ui->browserWidget->entries()) {
+                if (entry.materialPath.HasPrefix(changedPrim)) {
+                    structuralChange = true;
+                    break;
+                }
+            }
+            if (structuralChange)
+                break;
 
             // An ancestor resync (for example /Materials when a sibling material
             // is added or removed) is structural, but it does not mean every
@@ -1521,6 +1545,11 @@ MaterialDialogPrivate::requestSwatch(int row)
     const MaterialEntry* entry = d.ui->browserWidget->entry(row);
     if (!entry)
         return;
+
+    if (!usesNativeSurfacePreview(entry->shaderId)) {
+        d.renderer->requestPlaceholder(entry->materialPath);
+        return;
+    }
 
     const SdfLayerRefPtr network = swatchNetwork(entry->materialPath);
     if (!network)

@@ -65,6 +65,7 @@ public:
      * @brief Semantic icon roles.
      */
     enum IconRole {
+        Arrow,
         BranchClosed,
         BranchOpen,
         Checked,
@@ -72,6 +73,7 @@ public:
         Code,
         Collapse,
         DefaultPrim,
+        Display,
         Down,
         DropDown,
         Expand,

@@ -330,6 +330,8 @@ PyInit_stageviz(void)
     PyModule_AddIntConstant(module, "ColorReadonly", static_cast<int>(UI::ColorRole::Readonly));
     PyModule_AddIntConstant(module, "ColorError", static_cast<int>(UI::ColorRole::Error));
 
+    PyModule_AddIntConstant(module, "IconArrow", static_cast<int>(UI::IconRole::Arrow));
+    PyModule_AddIntConstant(module, "IconDisplay", static_cast<int>(UI::IconRole::Display));
     PyModule_AddIntConstant(module, "IconBranchClosed", static_cast<int>(UI::IconRole::BranchClosed));
     PyModule_AddIntConstant(module, "IconBranchOpen", static_cast<int>(UI::IconRole::BranchOpen));
     PyModule_AddIntConstant(module, "IconChecked", static_cast<int>(UI::IconRole::Checked));

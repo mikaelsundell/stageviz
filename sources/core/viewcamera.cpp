@@ -321,7 +321,11 @@ ViewCameraPrivate::clippingRange() const
             const GfVec3d sceneSize = d.range.GetSize();
             const double sceneScale = std::max(sceneSize[0], std::max(sceneSize[1], sceneSize[2]));
             const double precisionFloor = std::max(1e-6, sceneScale * 1e-7);
-            const double safeNear = minDepth > precisionFloor ? minDepth * 0.5 : precisionFloor;
+            const double insideBoundsNear = std::max(precisionFloor,
+                                                     std::min(d.distance * 0.01, viewportMaxDepth * 0.001));
+            const double safeNear = minDepth > precisionFloor ? minDepth * 0.5
+                                    : minDepth < 0.0          ? insideBoundsNear
+                                                              : precisionFloor;
             nearClip = std::max(precisionFloor, std::min(nearClip, safeNear));
         }
 

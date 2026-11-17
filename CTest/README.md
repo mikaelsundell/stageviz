@@ -596,17 +596,17 @@ Batch remove/mute/permission operations share the single-layer command rules.
 state-only writes without USD changes, failed writes, orthographic scale and AO,
 payload-rule round trips, root pairing with an active sublayer, copy isolation,
 and preservation disabled. The live `testpreservestate.py` suite checks root-save
-menu availability, sublayer-save isolation, title dirtiness, restoration and Save/Don't Save/Cancel paths
-through an external disposable MCP controller.
+menu availability, sublayer-save isolation, USD title dirtiness, restoration and
+remembered-state autosaves through an external disposable MCP controller.
 
 With Remember state enabled, companion state is paired with the root USD
 filename, not the active edit layer. Saving the root document includes its
 companion; saving an individual sublayer leaves root state pending. State-only
 root saves preserve the root USD file's bytes and modification timestamp.
-Save/Don't Save/Cancel tests cover New, Reload and Close,
-including a failed companion write preventing document replacement.
-`preserve_state_menu_api` checks the save menu, root title dirty marker and
-state-only Cancel behavior without requiring manual dialog confirmation.
+Remembered state autosaves on New, Reload and Close, including a failed companion
+write preventing document replacement.
+`preserve_state_menu_api` checks the save menu, root title behavior and state
+autosave when a stage is replaced without a document prompt.
 
 The disposable controller compares the state suite's filename, selection and
 payload checkpoints against independent MCP queries. Anonymous-root Save/Cancel
@@ -616,8 +616,8 @@ coverage of the native OS file picker. Runtime preferences are redirected to
 disposable INI storage before startup so testing does not change another running
 Stageviz session's preferences.
 
-The dedicated Changes dialog summarizes the root document (including its remembered
-state) and modified sublayers in a five-column, scrollable table. `changes_dialog_api` checks
+The dedicated Changes dialog summarizes the root document and modified sublayers
+in a five-column, scrollable table. `changes_dialog_api` checks
 rows, headers, full-path tooltips, explicit Save all/Don't save/Cancel, Escape,
 blocked entries and a 1,000-row list. `testchangesdialog.py` verifies the actual
 Viewer flow for ordinary Save As without a Changes dialog, explicit Save all
@@ -627,9 +627,10 @@ and single-root USD changes.
 
 The Changes dialog is used when sublayers have unsaved changes, or when a layer
 cannot be saved and needs an actionable diagnostic. It includes clean root and
-ancestor layers as context without marking them as dirty. With only root-layer
-changes (or only remembered state), New/Open/Reload/Close/Exit use the compact
-Save/Don't save/Cancel question; explicit Save all saves directly.
+ancestor layers as context without marking them as dirty. With root-layer USD
+changes, New/Open/Reload/Close/Exit use the compact Save/Don't save/Cancel question.
+Remembered state is saved automatically when replacing or closing a named stage
+and does not mark the USD window title dirty; explicit Save all also writes it.
 The active sublayer's dirty marker is also shown in parentheses in the window
 title, independently of the overall document marker; the state suite verifies
 that saving the sublayer clears its marker while root state remains dirty.

@@ -69,6 +69,7 @@ public:
     void updateOverrideCacheForNamespaceChanges(const QList<QPair<SdfPath, SdfPath>>& pathRemaps,
                                                 const QList<SdfPath>& removedPaths);
     void applyOverrideState(PrimItem* item);
+    bool isOutlinerPrim(const UsdPrim& prim) const;
     bool isTransformPropertyPath(const SdfPath& path) const;
     SelectionList* selectionList() const;
 
@@ -172,6 +173,9 @@ public:
         bool payloadEnabled = false;
         quint64 payloadCheckRevision = 1;
         QString filter;
+        QStringList displayLayers;
+        QStringList displayTypes;
+        bool showUntyped = true;
         QMap<SdfPath, bool> payloadRequests;
         QList<SdfPath> maskPaths;
         QSet<SdfPath> directOverridePaths;
@@ -380,6 +384,12 @@ OutlinerTreePrivate::applyOverrideState(PrimItem* item)
 
     const SdfPath path = item->path();
     item->setOverrideState(d.directOverridePaths.contains(path), d.descendantOverridePaths.contains(path));
+}
+
+bool
+OutlinerTreePrivate::isOutlinerPrim(const UsdPrim& prim) const
+{
+    return prim && !prim.IsA<UsdGeomSubset>() && (prim.IsDefined() || (d.showUntyped && prim.GetTypeName().IsEmpty()));
 }
 
 bool
@@ -888,7 +898,7 @@ OutlinerTreePrivate::addItem(PrimItem* parent, const SdfPath& path)
             return nullptr;
 
         const UsdPrim prim = stage->GetPrimAtPath(path);
-        if (!prim || !prim.IsDefined() || prim.IsA<UsdGeomSubset>())
+        if (!isOutlinerPrim(prim))
             return nullptr;
 
         isPayload = stage::isPayload(stage, path);
@@ -932,8 +942,8 @@ OutlinerTreePrivate::addChildren(PrimItem* parent, const SdfPath& path)
         if (!prim)
             return;
 
-        for (const UsdPrim& child : prim.GetFilteredChildren(UsdTraverseInstanceProxies(UsdPrimIsDefined))) {
-            if (!child.IsA<UsdGeomSubset>())
+        for (const UsdPrim& child : prim.GetFilteredChildren(UsdTraverseInstanceProxies(UsdPrimAllPrimsPredicate))) {
+            if (isOutlinerPrim(child))
                 childPaths.append(child.GetPath());
         }
     }
@@ -969,13 +979,29 @@ OutlinerTreePrivate::updateFilter()
 {
     PerfScope perfScope("ui.outliner_filter");
     std::function<bool(QTreeWidgetItem*)> matchFilter = [&](QTreeWidgetItem* item) -> bool {
-        bool matches = false;
+        bool matchesText = false;
         for (int col = 0; col < d.tree->columnCount(); ++col) {
             if (item->text(col).contains(d.filter, Qt::CaseInsensitive)) {
-                matches = true;
+                matchesText = true;
                 break;
             }
         }
+
+        bool matchesLayer = d.displayLayers.isEmpty();
+        if (!matchesLayer) {
+            const QStringList layers = item->data(0, PrimItem::CompositionLayers).toStringList();
+            for (const QString& layer : layers) {
+                if (d.displayLayers.contains(layer)) {
+                    matchesLayer = true;
+                    break;
+                }
+            }
+        }
+
+        const QString type = item->data(0, PrimItem::TypeName).toString();
+        const bool matchesType = type.isEmpty() ? d.showUntyped
+                                                : (d.displayTypes.isEmpty() || d.displayTypes.contains(type));
+        const bool matches = matchesText && matchesLayer && matchesType;
 
         bool childMatches = false;
         for (int i = 0; i < item->childCount(); ++i) {
@@ -1245,6 +1271,8 @@ OutlinerTreePrivate::updateStage(UsdStageRefPtr stage)
                 d.tree->setCurrentItem(item, PrimItem::Name, QItemSelectionModel::NoUpdate);
         }
     }
+
+    updateFilter();
 }
 
 void
@@ -1309,8 +1337,9 @@ OutlinerTreePrivate::syncDirectChildrenOnly(PrimItem* parentItem, const UsdPrim&
         if (!d.stage)
             return;
 
-        for (const UsdPrim& childPrim : parentPrim.GetFilteredChildren(UsdTraverseInstanceProxies(UsdPrimIsDefined))) {
-            if (childPrim.IsA<UsdGeomSubset>())
+        for (const UsdPrim& childPrim :
+             parentPrim.GetFilteredChildren(UsdTraverseInstanceProxies(UsdPrimAllPrimsPredicate))) {
+            if (!isOutlinerPrim(childPrim))
                 continue;
             const SdfPath childPath = childPrim.GetPath();
             ordered.append(childPath);
@@ -1331,7 +1360,7 @@ OutlinerTreePrivate::syncDirectChildrenOnly(PrimItem* parentItem, const UsdPrim&
                 continue;
 
             const UsdPrim child = d.stage->GetPrimAtPath(it.key());
-            if (!child || !child.IsDefined() || child.IsA<UsdGeomSubset>())
+            if (!isOutlinerPrim(child))
                 staleItems.append(it.value());
         }
     }
@@ -1491,8 +1520,7 @@ OutlinerTreePrivate::updatePrims(const NoticeBatch& batch)
             updateSelection(list ? list->paths() : QList<SdfPath>());
             if (!list || list->paths().isEmpty())
                 d.tree->setCurrentItem(nullptr);
-            if (!d.filter.isEmpty())
-                updateFilter();
+            updateFilter();
             d.tree->setUpdatesEnabled(updatesEnabled);
             if (updatesEnabled)
                 d.tree->viewport()->update();
@@ -1762,6 +1790,7 @@ OutlinerTreePrivate::updatePrims(const NoticeBatch& batch)
 
     // Everything not represented by a usable namespace pair follows the
     // conservative ordinary refresh path.
+    bool filterNeedsUpdate = false;
     for (const NoticeEntry& entry : batch.entries) {
         if (entry.path.IsEmpty())
             continue;
@@ -1813,6 +1842,8 @@ OutlinerTreePrivate::updatePrims(const NoticeBatch& batch)
             continue;
         }
 
+        filterNeedsUpdate = true;
+
         switch (entry.primResyncType) {
         case UsdNotice::ObjectsChanged::PrimResyncType::Delete: {
             bool absent = false;
@@ -1851,6 +1882,9 @@ OutlinerTreePrivate::updatePrims(const NoticeBatch& batch)
         default: rebuildPath(entry.path); break;
         }
     }
+
+    if (filterNeedsUpdate)
+        updateFilter();
 
     // Restore only explicitly affected expansion states. Unrelated rows were
     // never touched and therefore retain their existing Qt state.
@@ -1992,7 +2026,7 @@ OutlinerTreePrivate::invalidatePrim(const SdfPath& path)
         prim = d.stage->GetPrimAtPath(primPath);
     }
 
-    if (!prim || !prim.IsDefined() || prim.IsA<UsdGeomSubset>()) {
+    if (!isOutlinerPrim(prim)) {
         PrimItem* parentItem = itemFromPath(parentPath);
 
         if (primItem)
@@ -2100,8 +2134,9 @@ OutlinerTreePrivate::invalidateChildren(PrimItem* parentItem, const UsdPrim& pri
 
     {
         READ_LOCKER(locker, d.context->stageLock(), "stageLock");
-        for (const UsdPrim& childPrim : prim.GetFilteredChildren(UsdTraverseInstanceProxies(UsdPrimIsDefined))) {
-            if (childPrim.IsA<UsdGeomSubset>())
+        for (const UsdPrim& childPrim :
+             prim.GetFilteredChildren(UsdTraverseInstanceProxies(UsdPrimAllPrimsPredicate))) {
+            if (!isOutlinerPrim(childPrim))
                 continue;
             const SdfPath childPath = childPrim.GetPath();
             ordered.append(childPath);
@@ -2120,7 +2155,7 @@ OutlinerTreePrivate::invalidateChildren(PrimItem* parentItem, const UsdPrim& pri
                 continue;
 
             const UsdPrim child = d.stage->GetPrimAtPath(it.key());
-            if (!child || !child.IsDefined() || child.IsA<UsdGeomSubset>())
+            if (!isOutlinerPrim(child))
                 staleItems.append(it.value());
         }
     }
@@ -2467,6 +2502,40 @@ OutlinerTree::setFilter(const QString& filter)
         p->d.filter = filter;
         p->updateFilter();
     }
+}
+
+void
+OutlinerTree::setDisplayFilters(const QStringList& layers, const QStringList& types, bool showUntyped)
+{
+    if (p->d.displayLayers == layers && p->d.displayTypes == types && p->d.showUntyped == showUntyped)
+        return;
+
+    const bool untypedChanged = p->d.showUntyped != showUntyped;
+    p->d.displayLayers = layers;
+    p->d.displayTypes = types;
+    p->d.showUntyped = showUntyped;
+    if (untypedChanged)
+        p->updateStage(p->d.stage);
+    else
+        p->updateFilter();
+}
+
+QStringList
+OutlinerTree::displayLayers() const
+{
+    return p->d.displayLayers;
+}
+
+QStringList
+OutlinerTree::displayTypes() const
+{
+    return p->d.displayTypes;
+}
+
+bool
+OutlinerTree::showUntyped() const
+{
+    return p->d.showUntyped;
 }
 
 bool

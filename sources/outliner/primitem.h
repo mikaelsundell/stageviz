@@ -34,7 +34,11 @@ public:
         /**
          * @brief Unique prim-spec layer identifiers, ordered weakest to strongest.
          */
-        CompositionLayers
+        CompositionLayers,
+        /**
+         * @brief The composed USD schema type name.
+         */
+        TypeName
     };
 
     /**

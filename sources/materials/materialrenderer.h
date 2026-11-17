@@ -56,6 +56,13 @@ public:
     void request(const SdfPath& materialPath, const SdfLayerRefPtr& sourceLayer, bool forceRender = false);
 
     /**
+     * @brief Renders a uniform, unlit shaderball for an unsupported material.
+     *
+     * @param materialPath Material prim used to identify the browser swatch.
+     */
+    void requestPlaceholder(const SdfPath& materialPath);
+
+    /**
      * @brief Renders an interactive preview with one temporary input override.
      *
      * Repeated preview requests are coalesced and rendered through the same warm

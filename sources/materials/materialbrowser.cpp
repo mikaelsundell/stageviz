@@ -57,6 +57,7 @@
 #include <pxr/usd/usdGeom/gprim.h>
 #include <pxr/usd/usdGeom/subset.h>
 #include <pxr/usd/usdShade/materialBindingAPI.h>
+#include <set>
 
 // generated files
 #include "ui_materialbrowser.h"
@@ -73,13 +74,14 @@ public:
     void updateRow(int row);
     void updateSourceRows();
     void applyFilter(const QString& text);
+    void showDisplayMenu();
     void syncSelection(QAbstractItemView* source);
     void panView(QAbstractItemView* view, const QPoint& delta);
     void updateViewSizes();
     void showViewMenu();
     void showContextMenu(QAbstractItemView* view, const QPoint& position);
     void assignMaterial(const MaterialEntry& material);
-    void selectMaterial(const MaterialEntry& material);
+    void selectMaterials(const QList<MaterialEntry>& materials);
     void beginRename(QAbstractItemView* view, int row = -1);
     void commitRename(int row, const QString& name);
     QAbstractItemView* currentView() const;
@@ -230,6 +232,8 @@ public:
         bool panning = false;
         bool syncingSelection = false;
         bool updatingRows = false;
+        QStringList displayLayers;
+        QStringList displayTypes;
         MaterialBrowser::ViewMode mode = MaterialBrowser::Icons;
     };
     Data d;
@@ -287,6 +291,7 @@ MaterialBrowserPrivate::init()
 
     d.ui->clear->setIcon(ui()->icon(UI::IconRole::Clear));
     d.ui->view->setIcon(ui()->icon(UI::IconRole::List));
+    d.ui->display->setIcon(ui()->icon(UI::IconRole::Display));
     d.ui->view->setText(QString());
     d.ui->view->setContextMenuPolicy(Qt::CustomContextMenu);
 
@@ -315,6 +320,7 @@ MaterialBrowserPrivate::init()
         d.visibleTimer->start();
     });
     connect(d.ui->clear, &QToolButton::clicked, d.ui->filter, &QLineEdit::clear);
+    connect(d.ui->display, &QToolButton::clicked, d.browser.data(), [this]() { showDisplayMenu(); });
     connect(d.ui->view, &QToolButton::clicked, d.browser.data(), [this]() { showViewMenu(); });
     connect(d.ui->view, &QWidget::customContextMenuRequested, d.browser.data(),
             [this](const QPoint&) { showViewMenu(); });
@@ -366,6 +372,149 @@ MaterialBrowserPrivate::showViewMenu()
     menu.addAction(d.listView);
     menu.addAction(d.detailView);
     menu.exec(d.ui->view->mapToGlobal(QPoint(0, d.ui->view->height())));
+}
+
+void
+MaterialBrowserPrivate::showDisplayMenu()
+{
+    struct DisplayEntry {
+        QString key;
+        QString label;
+    };
+
+    QList<DisplayEntry> layers;
+    QSet<QString> seenLayers;
+    QSet<QString> materialLayers;
+    for (const MaterialEntry& entry : std::as_const(d.entries)) {
+        for (const QString& identifier : entry.layerIdentifiers)
+            materialLayers.insert(identifier);
+    }
+
+    const QString stageFilename = session() ? session()->filename() : QString();
+    if (Session* current = session()) {
+        READ_LOCKER(locker, current->stageLock(), "stageLock");
+        const UsdStageRefPtr stage = current->stageUnsafe();
+        if (stage) {
+            for (const SdfLayerHandle& layer : stage->GetLayerStack(false)) {
+                if (!layer)
+                    continue;
+
+                const QString identifier = QString::fromStdString(layer->GetIdentifier());
+                if (seenLayers.contains(identifier))
+                    continue;
+                seenLayers.insert(identifier);
+
+                QString label = QString::fromStdString(layer->GetDisplayName());
+                if (label.isEmpty())
+                    label = identifier;
+                if (layer == stage->GetRootLayer() && stageFilename.isEmpty())
+                    label = tr("Untitled") + tr("  (Root)");
+                layers.append({ identifier, label });
+            }
+        }
+    }
+
+    for (const QString& identifier : std::as_const(materialLayers)) {
+        if (seenLayers.contains(identifier))
+            continue;
+        seenLayers.insert(identifier);
+        layers.append({ identifier, identifier });
+    }
+
+    QStringList types;
+    QHash<QString, QString> typeLabels;
+    for (const MaterialEntry& entry : std::as_const(d.entries)) {
+        if (entry.shaderId.isEmpty() || typeLabels.contains(entry.shaderId))
+            continue;
+        typeLabels.insert(entry.shaderId, MaterialUtils::shaderTypeLabel(entry.shaderId));
+    }
+    for (auto it = typeLabels.cbegin(); it != typeLabels.cend(); ++it)
+        types.append(it.key());
+    std::sort(types.begin(), types.end(), [&](const QString& lhs, const QString& rhs) {
+        return typeLabels.value(lhs).compare(typeLabels.value(rhs), Qt::CaseInsensitive) < 0;
+    });
+
+    QMenu menu(d.ui->display);
+    menu.addAction(tr("Layers"))->setEnabled(false);
+
+    QStringList allLayerKeys;
+    for (const DisplayEntry& entry : std::as_const(layers))
+        allLayerKeys.append(entry.key);
+    for (const DisplayEntry& entry : std::as_const(layers)) {
+        QAction* action = menu.addAction(entry.label);
+        action->setCheckable(true);
+        action->setChecked(d.displayLayers.isEmpty() || d.displayLayers.contains(entry.key));
+        action->setData(entry.key);
+        connect(action, &QAction::toggled, &menu, [this, allLayerKeys, action](bool checked) {
+            QStringList selected = d.displayLayers;
+            if (selected.isEmpty())
+                selected = allLayerKeys;
+
+            const QString key = action->data().toString();
+            if (checked && !selected.contains(key))
+                selected.append(key);
+            else if (!checked)
+                selected.removeAll(key);
+
+            if (selected.size() == allLayerKeys.size())
+                selected.clear();
+            d.displayLayers = selected;
+            applyFilter(d.ui->filter->text());
+        });
+    }
+
+    menu.addSeparator();
+    menu.addAction(tr("Material types"))->setEnabled(false);
+
+    const QStringList standardTypes { QStringLiteral("UsdPreviewSurface"),
+                                      QStringLiteral("ND_standard_surface_surfaceshader"),
+                                      QStringLiteral("ND_open_pbr_surface_surfaceshader") };
+    QStringList orderedTypes;
+    for (const QString& type : standardTypes) {
+        if (typeLabels.contains(type))
+            orderedTypes.append(type);
+    }
+
+    QStringList otherTypes;
+    for (const QString& type : std::as_const(types)) {
+        if (!standardTypes.contains(type))
+            otherTypes.append(type);
+    }
+    std::sort(otherTypes.begin(), otherTypes.end(), [&](const QString& lhs, const QString& rhs) {
+        return typeLabels.value(lhs).compare(typeLabels.value(rhs), Qt::CaseInsensitive) < 0;
+    });
+
+    auto addTypeAction = [&](const QString& type) {
+        QAction* action = menu.addAction(typeLabels.value(type));
+        action->setCheckable(true);
+        action->setChecked(d.displayTypes.isEmpty() || d.displayTypes.contains(type));
+        action->setData(type);
+        connect(action, &QAction::toggled, &menu, [this, types, action](bool checked) {
+            QStringList selected = d.displayTypes;
+            if (selected.isEmpty())
+                selected = types;
+
+            const QString typeId = action->data().toString();
+            if (checked && !selected.contains(typeId))
+                selected.append(typeId);
+            else if (!checked)
+                selected.removeAll(typeId);
+
+            if (selected.size() == types.size())
+                selected.clear();
+            d.displayTypes = selected;
+            applyFilter(d.ui->filter->text());
+        });
+    };
+
+    for (const QString& type : std::as_const(orderedTypes))
+        addTypeAction(type);
+    if (!orderedTypes.isEmpty() && !otherTypes.isEmpty())
+        menu.addSeparator();
+    for (const QString& type : std::as_const(otherTypes))
+        addTypeAction(type);
+
+    menu.exec(d.ui->display->mapToGlobal(QPoint(0, d.ui->display->height())));
 }
 
 void
@@ -437,7 +586,8 @@ MaterialBrowserPrivate::showContextMenu(QAbstractItemView* view, const QPoint& p
         assignMaterial(contextMaterial);
     }
     else if (action == selectAction) {
-        selectMaterial(contextMaterial);
+        const QList<MaterialEntry> selected = d.browser->selectedEntries();
+        selectMaterials(selected.isEmpty() ? QList<MaterialEntry> { contextMaterial } : selected);
     }
     else if (action == duplicateMaterial) {
         // Duplicate only the RMB material and preserve the current scene/browser selection.
@@ -495,8 +645,15 @@ MaterialBrowserPrivate::showContextMenu(QAbstractItemView* view, const QPoint& p
 
 
 void
-MaterialBrowserPrivate::selectMaterial(const MaterialEntry& material)
+MaterialBrowserPrivate::selectMaterials(const QList<MaterialEntry>& materials)
 {
+    if (materials.isEmpty())
+        return;
+
+    std::set<SdfPath> materialPaths;
+    for (const MaterialEntry& material : materials)
+        materialPaths.insert(material.materialPath);
+
     QList<SdfPath> paths;
 
     {
@@ -513,7 +670,7 @@ MaterialBrowserPrivate::selectMaterial(const MaterialEntry& material)
                 continue;
 
             const UsdShadeMaterial bound = UsdShadeMaterialBindingAPI(prim).ComputeBoundMaterial();
-            if (bound && bound.GetPath() == material.materialPath)
+            if (bound && materialPaths.find(bound.GetPath()) != materialPaths.end())
                 paths.append(prim.GetPath());
         }
     }
@@ -781,9 +938,20 @@ MaterialBrowserPrivate::applyFilter(const QString& text)
         const MaterialEntry& entry = d.entries[row];
         const QString path = QString::fromStdString(entry.materialPath.GetString());
         const QString type = MaterialUtils::shaderTypeLabel(entry.shaderId);
-        const bool visible = filter.isEmpty() || entry.name.contains(filter, Qt::CaseInsensitive)
-                             || type.contains(filter, Qt::CaseInsensitive)
-                             || path.contains(filter, Qt::CaseInsensitive);
+        const bool matchesText = filter.isEmpty() || entry.name.contains(filter, Qt::CaseInsensitive)
+                                 || type.contains(filter, Qt::CaseInsensitive)
+                                 || path.contains(filter, Qt::CaseInsensitive);
+        bool matchesLayer = d.displayLayers.isEmpty();
+        if (!matchesLayer) {
+            for (const QString& layer : entry.layerIdentifiers) {
+                if (d.displayLayers.contains(layer)) {
+                    matchesLayer = true;
+                    break;
+                }
+            }
+        }
+        const bool matchesType = d.displayTypes.isEmpty() || d.displayTypes.contains(entry.shaderId);
+        const bool visible = matchesText && matchesLayer && matchesType;
 
         if (QListWidgetItem* item = d.ui->icons->item(row))
             item->setHidden(!visible);
@@ -956,6 +1124,27 @@ MaterialBrowser::setEntries(const QList<MaterialEntry>& entries)
         }
     }
 
+    QSet<QString> availableLayers;
+    QSet<QString> availableTypes;
+    for (const MaterialEntry& entry : std::as_const(orderedEntries)) {
+        for (const QString& layer : entry.layerIdentifiers)
+            availableLayers.insert(layer);
+        if (!entry.shaderId.isEmpty())
+            availableTypes.insert(entry.shaderId);
+    }
+    for (auto it = p->d.displayLayers.begin(); it != p->d.displayLayers.end();) {
+        if (!availableLayers.contains(*it))
+            it = p->d.displayLayers.erase(it);
+        else
+            ++it;
+    }
+    for (auto it = p->d.displayTypes.begin(); it != p->d.displayTypes.end();) {
+        if (!availableTypes.contains(*it))
+            it = p->d.displayTypes.erase(it);
+        else
+            ++it;
+    }
+
     p->d.entries = orderedEntries;
     p->d.swatches.resize(orderedEntries.size());
     p->d.swatchValid.resize(orderedEntries.size());
@@ -1023,6 +1212,7 @@ MaterialBrowser::setEntries(const QList<MaterialEntry>& entries)
             item->setSelected(selected);
     }
     p->d.syncingSelection = false;
+    p->applyFilter(p->d.ui->filter->text());
 
     Q_EMIT selectionChanged();
     refreshVisibleSwatches();

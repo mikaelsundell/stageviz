@@ -9,12 +9,18 @@
 #include "perfscope.h"
 #include "primitem.h"
 #include "signalguard.h"
+#include "tracelocks.h"
 #include "ui.h"
 #include "viewcontext.h"
+#include <QAction>
+#include <QMenu>
 #include <QPointer>
+#include <QSet>
 #include <QSignalBlocker>
 #include <QTimer>
+#include <algorithm>
 #include <pxr/usd/usd/prim.h>
+#include <pxr/usd/usd/primRange.h>
 
 PXR_NAMESPACE_USING_DIRECTIVE
 
@@ -36,6 +42,7 @@ public Q_SLOTS:
     void collapse();
     void expand();
     void follow(bool enabled);
+    void showDisplayMenu();
     void filterChanged(const QString& filter);
     void colorsChanged();
     void editLayerChanged(SdfLayerHandle layer);
@@ -65,12 +72,10 @@ OutlinerViewPrivate::init()
     d.ui.reset(new Ui_OutlinerView());
     d.ui->setupUi(d.view.data());
     d.followEnabled = d.ui->follow->isChecked();
-
     d.context.reset(new ViewContext(d.view.data()));
     d.context->setStageLock(session()->stageLock());
     d.context->setCommandStack(session()->commandStack());
     d.context->setSelectionList(session()->selectionList());
-
     attach(d.ui->depth);
     outlinerTree()->setColumnCount(3);
     outlinerTree()->setHeaderLabels(QStringList() << "Name"
@@ -78,9 +83,9 @@ OutlinerViewPrivate::init()
                                                   << "");
     outlinerTree()->setContext(d.context.data());
     outlinerTree()->installEventFilter(this);
-
     d.ui->clear->setIcon(ui()->icon(UI::IconRole::Clear));
-    d.ui->follow->setIcon(ui()->icon(UI::IconRole::Select));
+    d.ui->follow->setIcon(ui()->icon(UI::IconRole::Follow));
+    d.ui->display->setIcon(ui()->icon(UI::IconRole::Display));
     d.ui->collapse->setIcon(ui()->icon(UI::IconRole::List));
     d.ui->expand->setIcon(ui()->icon(UI::IconRole::Nested));
     // connect
@@ -89,6 +94,7 @@ OutlinerViewPrivate::init()
     connect(d.ui->collapse, &QToolButton::clicked, this, &OutlinerViewPrivate::collapse);
     connect(d.ui->expand, &QToolButton::clicked, this, &OutlinerViewPrivate::expand);
     connect(d.ui->follow, &QToolButton::toggled, this, &OutlinerViewPrivate::follow);
+    connect(d.ui->display, &QToolButton::clicked, this, &OutlinerViewPrivate::showDisplayMenu);
     connect(d.ui->depth, &QSlider::valueChanged, this, &OutlinerViewPrivate::depthChanged);
     connect(session(), &Session::colorsChanged, this, &OutlinerViewPrivate::colorsChanged);
     connect(session(), &Session::editLayerChanged, this, &OutlinerViewPrivate::editLayerChanged);
@@ -173,6 +179,124 @@ OutlinerViewPrivate::follow(bool enabled)
 }
 
 void
+OutlinerViewPrivate::showDisplayMenu()
+{
+    struct DisplayEntry {
+        QString key;
+        QString label;
+    };
+
+    QList<DisplayEntry> layers;
+    QStringList types;
+    const bool untitledStage = session()->filename().isEmpty();
+    {
+        READ_LOCKER(locker, session()->stageLock(), "stageLock");
+        const UsdStageRefPtr stage = session()->stageUnsafe();
+        if (!stage)
+            return;
+
+        QSet<QString> seenLayers;
+        for (const SdfLayerHandle& layer : stage->GetLayerStack(false)) {
+            if (!layer)
+                continue;
+            const QString identifier = QString::fromStdString(layer->GetIdentifier());
+            if (seenLayers.contains(identifier))
+                continue;
+            seenLayers.insert(identifier);
+
+            QString label = QString::fromStdString(layer->GetDisplayName());
+            if (label.isEmpty())
+                label = identifier;
+            if (layer == stage->GetRootLayer()) {
+                if (untitledStage)
+                    label = tr("Untitled");
+                label += tr("  (Root)");
+            }
+            layers.append({ identifier, label });
+        }
+
+        QSet<QString> seenTypes;
+        for (const UsdPrim& prim : UsdPrimRange(stage->GetPseudoRoot())) {
+            const QString type = QString::fromStdString(prim.GetTypeName().GetString());
+            if (!type.isEmpty())
+                seenTypes.insert(type);
+        }
+        types = seenTypes.values();
+        std::sort(types.begin(), types.end(),
+                  [](const QString& lhs, const QString& rhs) { return lhs.compare(rhs, Qt::CaseInsensitive) < 0; });
+    }
+
+    OutlinerTree* tree = outlinerTree();
+    if (!tree)
+        return;
+
+    QMenu menu(d.ui->display);
+    menu.addAction(tr("Layers"))->setEnabled(false);
+
+    QStringList allLayerKeys;
+    for (const DisplayEntry& entry : std::as_const(layers))
+        allLayerKeys.append(entry.key);
+    const QStringList activeLayers = tree->displayLayers();
+    for (const DisplayEntry& entry : std::as_const(layers)) {
+        QAction* action = menu.addAction(entry.label);
+        action->setCheckable(true);
+        action->setChecked(activeLayers.isEmpty() || activeLayers.contains(entry.key));
+        action->setData(entry.key);
+        connect(action, &QAction::toggled, &menu, [tree, allLayerKeys, action](bool checked) {
+            QStringList selected = tree->displayLayers();
+            if (selected.isEmpty())
+                selected = allLayerKeys;
+
+            const QString key = action->data().toString();
+            if (checked && !selected.contains(key))
+                selected.append(key);
+            else if (!checked)
+                selected.removeAll(key);
+
+            if (selected.size() == allLayerKeys.size())
+                selected.clear();
+            tree->setDisplayFilters(selected, tree->displayTypes(), tree->showUntyped());
+        });
+    }
+
+    menu.addSeparator();
+    menu.addAction(tr("Prim types"))->setEnabled(false);
+
+    const QStringList activeTypes = tree->displayTypes();
+    for (const QString& type : std::as_const(types)) {
+        QAction* action = menu.addAction(type);
+        action->setCheckable(true);
+        action->setChecked(activeTypes.isEmpty() || activeTypes.contains(type));
+        action->setData(type);
+        connect(action, &QAction::toggled, &menu, [tree, types, action](bool checked) {
+            QStringList selected = tree->displayTypes();
+            if (selected.isEmpty())
+                selected = types;
+
+            const QString typeName = action->data().toString();
+            if (checked && !selected.contains(typeName))
+                selected.append(typeName);
+            else if (!checked)
+                selected.removeAll(typeName);
+
+            if (selected.size() == types.size())
+                selected.clear();
+            tree->setDisplayFilters(tree->displayLayers(), selected, tree->showUntyped());
+        });
+    }
+
+    menu.addSeparator();
+    QAction* untyped = menu.addAction(tr("Untyped"));
+    untyped->setCheckable(true);
+    untyped->setChecked(tree->showUntyped());
+    untyped->setToolTip(tr("Show prims without a schema type"));
+    connect(untyped, &QAction::toggled, &menu,
+            [tree](bool checked) { tree->setDisplayFilters(tree->displayLayers(), tree->displayTypes(), checked); });
+
+    menu.exec(d.ui->display->mapToGlobal(QPoint(0, d.ui->display->height())));
+}
+
+void
 OutlinerViewPrivate::filterChanged(const QString& filter)
 {
     outlinerTree()->setFilter(filter);
@@ -236,8 +360,10 @@ OutlinerViewPrivate::stageChanged(UsdStageRefPtr stage, Session::LoadPolicy poli
     d.ui->filter->setEnabled(loaded);
     d.ui->depth->setEnabled(loaded);
     d.ui->follow->setEnabled(loaded);
+    d.ui->display->setEnabled(loaded);
 
     if (loaded) {
+        outlinerTree()->setDisplayFilters({}, {});
         outlinerTree()->setPayloadEnabled(policy == Session::LoadPolicy::None);
         outlinerTree()->updateStage(stage);
         updateDepth();

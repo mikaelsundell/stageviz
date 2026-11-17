@@ -43,12 +43,13 @@ namespace stageviz {
 
 class MaterialRendererPrivate {
 public:
-    enum class RequestKind { Parameters, MaterialNetwork, InteractiveNetwork };
+    enum class RequestKind { Parameters, Placeholder, MaterialNetwork, InteractiveNetwork };
     struct Pending;
     struct RenderContext;
 
     void init();
     void dispatchParameters(const QString& path, const MaterialParameters& parameters, bool forceRender);
+    void dispatchPlaceholder(const QString& path);
     void dispatchNetwork(const QString& path, const SdfLayerRefPtr& sourceLayer, bool forceRender);
     void dispatchInteractive(const QString& path, const SdfLayerRefPtr& sourceLayer, const SdfPath& inputPath,
                              const VtValue& value);
@@ -64,7 +65,7 @@ public:
     bool initializeContext(RenderContext& context, QString& error, bool networkContext, const GfVec2i& size);
     bool syncNetworkLayer(RenderContext& context, const SdfPath& materialPath, const SdfLayerRefPtr& sourceLayer,
                           QString& error);
-    QImage renderParameters(const MaterialParameters& parameters, QString& error);
+    QImage renderParameters(const MaterialParameters& parameters, QString& error, bool unlit = false);
     QImage renderNetwork(const SdfPath& materialPath, const SdfLayerRefPtr& sourceLayer, QString& error);
     QImage renderInteractiveNetwork(const SdfPath& materialPath, const SdfLayerRefPtr& sourceLayer,
                                     const SdfPath& inputPath, const VtValue& value, QString& error);
@@ -76,7 +77,8 @@ public:
     static QString extractResource(const QString& resourcePath, const QString& relativePath);
     static UsdStageRefPtr createPreviewStage(QString& error, const SdfLayerRefPtr& networkLayer = {});
     static bool createFallbackMaterial(const UsdStageRefPtr& stage);
-    static bool updatePreviewMaterial(const UsdStageRefPtr& stage, const MaterialParameters& parameters);
+    static bool updatePreviewMaterial(const UsdStageRefPtr& stage, const MaterialParameters& parameters,
+                                      bool unlit = false);
     static bool bindPreviewMaterial(const UsdStageRefPtr& stage, const SdfPath& materialPath);
 
 public:
@@ -168,6 +170,8 @@ MaterialRendererPrivate::createFallbackMaterial(const UsdStageRefPtr& stage)
 
     shader.CreateIdAttr(VtValue(TfToken("UsdPreviewSurface")));
     shader.CreateInput(TfToken("diffuseColor"), SdfValueTypeNames->Color3f).Set(GfVec3f(0.5f));
+    shader.CreateInput(TfToken("emissiveColor"), SdfValueTypeNames->Color3f).Set(GfVec3f(0.0f));
+    shader.CreateInput(TfToken("specularColor"), SdfValueTypeNames->Color3f).Set(GfVec3f(0.5f));
     shader.CreateInput(TfToken("metallic"), SdfValueTypeNames->Float).Set(0.0f);
     shader.CreateInput(TfToken("roughness"), SdfValueTypeNames->Float).Set(0.4f);
     shader.CreateInput(TfToken("opacity"), SdfValueTypeNames->Float).Set(1.0f);
@@ -342,7 +346,8 @@ MaterialRendererPrivate::bindPreviewMaterial(const UsdStageRefPtr& stage, const 
 }
 
 bool
-MaterialRendererPrivate::updatePreviewMaterial(const UsdStageRefPtr& stage, const MaterialParameters& parameters)
+MaterialRendererPrivate::updatePreviewMaterial(const UsdStageRefPtr& stage, const MaterialParameters& parameters,
+                                               bool unlit)
 {
     if (!stage)
         return false;
@@ -352,13 +357,15 @@ MaterialRendererPrivate::updatePreviewMaterial(const UsdStageRefPtr& stage, cons
         return false;
 
     UsdShadeShader shader(shaderPrim);
-    shader.GetInput(TfToken("diffuseColor")).Set(parameters.baseColor);
-    shader.GetInput(TfToken("metallic")).Set(parameters.metalness);
-    shader.GetInput(TfToken("roughness")).Set(parameters.roughness);
+    shader.GetInput(TfToken("diffuseColor")).Set(unlit ? GfVec3f(0.0f) : parameters.baseColor);
+    shader.GetInput(TfToken("emissiveColor")).Set(unlit ? GfVec3f(0.5f) : GfVec3f(0.0f));
+    shader.GetInput(TfToken("specularColor")).Set(unlit ? GfVec3f(0.0f) : GfVec3f(0.5f));
+    shader.GetInput(TfToken("metallic")).Set(unlit ? 0.0f : parameters.metalness);
+    shader.GetInput(TfToken("roughness")).Set(unlit ? 1.0f : parameters.roughness);
     shader.GetInput(TfToken("opacity")).Set(parameters.opacity);
-    shader.GetInput(TfToken("ior")).Set(parameters.ior);
-    shader.GetInput(TfToken("clearcoat")).Set(parameters.coat);
-    shader.GetInput(TfToken("clearcoatRoughness")).Set(parameters.coatRoughness);
+    shader.GetInput(TfToken("ior")).Set(unlit ? 1.0f : parameters.ior);
+    shader.GetInput(TfToken("clearcoat")).Set(unlit ? 0.0f : parameters.coat);
+    shader.GetInput(TfToken("clearcoatRoughness")).Set(unlit ? 1.0f : parameters.coatRoughness);
     return true;
 }
 
@@ -548,7 +555,7 @@ MaterialRendererPrivate::clearContextOverrides(RenderContext& context)
 }
 
 QImage
-MaterialRendererPrivate::renderParameters(const MaterialParameters& parameters, QString& error)
+MaterialRendererPrivate::renderParameters(const MaterialParameters& parameters, QString& error, bool unlit)
 {
     error.clear();
 
@@ -556,7 +563,7 @@ MaterialRendererPrivate::renderParameters(const MaterialParameters& parameters, 
         return {};
 
     RenderContext& context = d.parameterContext;
-    if (!updatePreviewMaterial(context.stage, parameters)) {
+    if (!updatePreviewMaterial(context.stage, parameters, unlit)) {
         error = QStringLiteral("Could not update material preview shader");
         return {};
     }
@@ -720,6 +727,8 @@ MaterialRendererPrivate::processNext()
         else if (request.kind == RequestKind::InteractiveNetwork)
             image = renderInteractiveNetwork(SdfPath(path.toStdString()), request.sourceLayer, request.inputPath,
                                              request.value, error);
+        else if (request.kind == RequestKind::Placeholder)
+            image = renderParameters(MaterialParameters(), error, true);
         else
             image = renderParameters(request.parameters, error);
 
@@ -747,6 +756,21 @@ MaterialRendererPrivate::dispatchParameters(const QString& path, const MaterialP
     pending.parameters = parameters;
     pending.serial = ++d.serial;
     pending.forceRender = forceRender;
+    enqueue(path, pending);
+}
+
+void
+MaterialRendererPrivate::dispatchPlaceholder(const QString& path)
+{
+    if (const auto cached = d.cache.constFind(path); cached != d.cache.cend()) {
+        Q_EMIT d.renderer->rendered(path, cached.value());
+        return;
+    }
+
+    Pending pending;
+    pending.kind = RequestKind::Placeholder;
+    pending.serial = ++d.serial;
+    pending.forceRender = true;
     enqueue(path, pending);
 }
 
@@ -818,7 +842,7 @@ MaterialRendererPrivate::receive(const QString& path, const QImage& image, const
     if (!newerRequestExists) {
         if (!image.isNull()) {
             // Only authored network renders become reusable browser cache entries.
-            if (kind == RequestKind::MaterialNetwork)
+            if (kind == RequestKind::MaterialNetwork || kind == RequestKind::Placeholder)
                 d.cache.insert(path, image);
             Q_EMIT d.renderer->rendered(path, image);
         }
@@ -887,6 +911,28 @@ MaterialRenderer::request(const SdfPath& materialPath, const SdfLayerRefPtr& sou
     }
 
     p->dispatchNetwork(path, sourceLayer, forceRender);
+}
+
+void
+MaterialRenderer::requestPlaceholder(const SdfPath& materialPath)
+{
+    if (materialPath.IsEmpty())
+        return;
+
+    const QString path = QString::fromStdString(materialPath.GetString());
+    if (qApp && QThread::currentThread() != qApp->thread()) {
+        QPointer<MaterialRenderer> renderer(this);
+        QMetaObject::invokeMethod(
+            this,
+            [renderer, path]() {
+                if (renderer)
+                    renderer->p->dispatchPlaceholder(path);
+            },
+            Qt::QueuedConnection);
+        return;
+    }
+
+    p->dispatchPlaceholder(path);
 }
 
 void
