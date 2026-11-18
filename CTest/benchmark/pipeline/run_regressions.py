@@ -35,6 +35,9 @@ def phases(root, name, performance=False, performance_baseline=None):
     if name == 'testpayloadindicator':
         return [('setup', load + "; test=ns['PayloadIndicatorTest'](disposable=True); test.setup()"),
                 ('mute', 'test.mute()'), ('structure', 'test.structure()'), ('cleanup', 'test.cleanup()')]
+    if name == 'testselectionoutline':
+        return [('setup', load + "; test=ns['SelectionOutlineTest'](disposable=True); test.setup()"),
+                ('overlap', 'test.overlap()'), ('cleanup', 'test.cleanup()')]
     if name == 'testexportinstances':
         return [('setup', load + "; test=ns['ExportInstancesTest'](disposable=True); test.setup()"),
                 ('selected', 'test.selected()'), ('cleanup', 'test.cleanup()')]

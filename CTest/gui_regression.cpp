@@ -112,6 +112,7 @@
 #include <pxr/base/gf/vec2f.h>
 #include <pxr/base/gf/vec3d.h>
 #include <pxr/base/gf/vec4f.h>
+#include <pxr/base/tf/errorMark.h>
 #include <pxr/usd/sdf/primSpec.h>
 #include <pxr/usd/sdf/schema.h>
 #include <pxr/usd/usd/payloads.h>
@@ -466,6 +467,80 @@ renderPrimitiveSelectionApi()
             require(orangePixels(parent) > 8, "parent selection outlines every analytic primitive type");
             require(draw({ SdfPath("/Group/Shape") }) == parent,
                     "direct and parent selection outline the same analytic primitive");
+            viewport.reset();
+        }
+    }
+    context.doneCurrent();
+}
+
+void
+renderCoincidentSelectionApi()
+{
+    QOpenGLContext context;
+    require(context.create(), "create coincident selection context");
+    QOffscreenSurface surface;
+    surface.setFormat(context.format());
+    surface.create();
+    require(surface.isValid() && context.makeCurrent(&surface), "activate coincident selection context");
+    {
+        QOpenGLFramebufferObjectFormat format;
+        format.setAttachment(QOpenGLFramebufferObject::CombinedDepthStencil);
+        QOpenGLFramebufferObject framebuffer(128, 128, format);
+        const auto asset = UsdStage::CreateInMemory();
+        UsdGeomXform::Define(asset, SdfPath("/Shape"));
+        UsdGeomCube::Define(asset, SdfPath("/Shape/Body"));
+        for (bool instanced : { false, true }) {
+            const auto stage = UsdStage::CreateInMemory();
+            for (const char* name : { "/A", "/B" }) {
+                const auto prim = UsdGeomXform::Define(stage, SdfPath(name)).GetPrim();
+                prim.GetReferences().AddReference(asset->GetRootLayer()->GetIdentifier(), SdfPath("/Shape"));
+                prim.SetInstanceable(instanced);
+            }
+            stageviz::RenderEngine viewport(stageviz::RenderEngine::ContextMode::Current);
+            viewport.setStage(stage);
+            GfCamera camera;
+            GfMatrix4d view(1.);
+            view.SetLookAt(GfVec3d(0, 0, 8), GfVec3d(0), GfVec3d(0, 1, 0));
+            camera.SetTransform(view.GetInverse());
+            camera.SetPerspectiveFromAspectRatioAndFieldOfView(1., 45., GfCamera::FOVVertical);
+            camera.SetClippingRange(GfRange1f(.1f, 100.f));
+            viewport.setCamera(camera);
+            viewport.setSize(GfVec2i(128));
+            viewport.setViewport(GfVec4d(0, 0, 128, 128));
+            viewport.setSelectionColor(QColor(255, 0, 255));
+            viewport.setSecondarySelectionColor(QColor(255, 0, 255));
+            const auto draw = [&](const QList<SdfPath>& paths) {
+                viewport.setSelected(paths);
+                require(framebuffer.bind(), "bind coincident selection framebuffer");
+                TfErrorMark mark;
+                for (int i = 0; i < 3; ++i)
+                    require(viewport.renderToCurrentFramebuffer(), "render coincident selection");
+                for (const auto& error : mark)
+                    std::cerr << "RENDER ERROR " << error.GetCommentary() << '\n';
+                require(mark.IsClean(), "coincident selection renders without USD errors");
+                QImage image = framebuffer.toImage();
+                framebuffer.release();
+                int count = 0;
+                for (int y = 0; y < image.height(); ++y) {
+                    for (int x = 0; x < image.width(); ++x) {
+                        const QColor color = image.pixelColor(x, y);
+                        count += color.red() > 220 && color.green() < 70 && color.blue() > 220;
+                    }
+                }
+                return count;
+            };
+            require(draw({}) == 0, "no selection produces no outline");
+            require(draw({ SdfPath("/A/Body") }) > 20, "first coincident mesh or instance proxy stays outlined");
+            require(draw({ SdfPath("/B/Body") }) > 20, "second coincident mesh or instance proxy stays outlined");
+            require(draw({ SdfPath("/A"), SdfPath("/B") }) > 20, "coincident parent selection stays outlined");
+            UsdGeomXformable(stage->GetPrimAtPath(SdfPath("/A"))).AddTranslateOp().Set(GfVec3d(0, 0, -3));
+            require(draw({ SdfPath("/A/Body") }) == 0, "selected geometry behind an occluder stays hidden");
+            UsdGeomImageable(stage->GetPrimAtPath(SdfPath("/B"))).MakeInvisible();
+            require(draw({ SdfPath("/A/Body") }) > 20, "removing an occluder restores the outline");
+            require(draw({ SdfPath("/B/Body") }) == 0, "invisible selected geometry stays hidden");
+            viewport.setSize(GfVec2i(96));
+            viewport.setViewport(GfVec4d(0, 0, 96, 96));
+            require(draw({ SdfPath("/A") }) > 20, "resizing reallocates selection buffers");
             viewport.reset();
         }
     }
@@ -3847,6 +3922,7 @@ main(int argc, char** argv)
         { "numeric_editor_api", numericEditorApi },
         { "renderengine_api", renderEngineApi },
         { "render_primitive_selection_api", renderPrimitiveSelectionApi },
+        { "render_coincident_selection_api", renderCoincidentSelectionApi },
         { "renderengine_hdri_api", renderEngineHdriApi },
         { "material_browser_api", materialBrowserApi },
         { "material_browser_display_menu_api", materialBrowserDisplayMenuApi },

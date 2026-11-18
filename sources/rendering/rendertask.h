@@ -30,10 +30,11 @@ namespace stageviz {
  * @brief Settings for the shared single-sample scene ID pass.
  *
  * Renders primId + depth once into dedicated non-MSAA Storm buffers.
- * The same pass feeds selection outlines and visible-prim capture, avoiding a
- * second selected-geometry render and avoiding integer MSAA resolve targets on
- * Metal. Picking and outlines disable back-face culling so reversed meshes
- * remain selectable; color capture matches the document culling settings.
+ * The scene depth gates a separate selected-geometry ID pass so coincident
+ * unselected surfaces cannot erase selection. Single-sample buffers avoid
+ * integer MSAA resolve targets on Metal. Picking and outlines disable back-face
+ * culling so reversed meshes remain selectable; color capture matches the
+ * document culling settings.
  */
 struct SceneIdSettings {
     bool enabled = false;
@@ -201,6 +202,8 @@ private:
     RenderTaskParams m_params;
     std::unique_ptr<Shader> m_shader;
     std::unique_ptr<SceneIdPass> m_sceneIdPass;
+    std::unique_ptr<SceneIdPass> m_selectionIdPass;
+    bool m_selectionUsesSceneIds = false;
     SdfPathVector m_capturedVisiblePaths;
     int32_t m_capturedElementId = -1;
     GpuPickResult m_gpuPickResult;

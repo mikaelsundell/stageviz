@@ -180,6 +180,25 @@ Xform parent must produce the same visible outline as selecting it directly.
 Selection classification uses Hydra's complete renderable-primitive token
 registry, covering implicit surfaces, meshes, curves, points, and volumes.
 
+`render_coincident_selection_api` checks either coincident drawable and native
+instance proxy, parent selection, true occlusion, visibility changes and resized
+selection buffers. `python/testselectionoutline.py` checks the same overlapping
+plane workflow in a disposable viewer, including command undo/redo, actual
+outline pixels and Qt/viewer snapshots.
+
+For a focused before/after performance comparison, run
+`python3 CTest/benchmark/benchmark_selection_outline.py --app /path/to/stageviz
+--output /new/result/directory` against each binary. Add `--baseline` only for
+the old binary to record its known overlap failure. The default 10,000- and
+30,000-object fixtures populate and expand the Outliner, warm each selection
+mode, and record 60 redraw/readback samples, fixed-seed random selection changes,
+and five parent transform/undo cycles. Frame timings include GPU synchronization
+through framebuffer readback; they are not GPU-only timings. Fixture creation,
+load and snapshots are outside the measured intervals. The external MCP
+controller confirms the endpoint with `tools/list` and records independent
+stage, selection and prim observations. Large-scene comparisons are opt-in;
+the discoverable embedded suite runs the focused correctness checks only.
+
 `export_instances` checks subset exports containing an ordinary prim together
 with a native instance root or proxy child. Reopened files retain instance
 geometry and bound material dependencies without exporting the source library

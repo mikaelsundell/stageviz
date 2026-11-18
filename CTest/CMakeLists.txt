@@ -161,6 +161,7 @@ foreach(test_target IN ITEMS stageviz_regressions stageviz_gui_regressions)
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "${PROJECT_SOURCE_DIR}/resources/Render.glslfx"
             "${PROJECT_SOURCE_DIR}/resources/SceneId.glslfx"
+            "${PROJECT_SOURCE_DIR}/resources/SelectionId.glslfx"
             "$<TARGET_FILE_DIR:${test_target}>/resources"
         VERBATIM
     )
@@ -202,6 +203,7 @@ foreach(case IN ITEMS
     numeric_editor_api
     renderengine_api
     render_primitive_selection_api
+    render_coincident_selection_api
     renderengine_hdri_api
     material_browser_api
     material_browser_display_menu_api

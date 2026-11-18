@@ -3,12 +3,12 @@
 // https://github.com/mikaelsundell/stageviz
 
 #include "rendertask.h"
+#include "renderresources.h"
 #include <QScopeGuard>
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <limits>
-#include <map>
 #include <memory>
 #include <pxr/base/gf/vec2i.h>
 #include <pxr/base/gf/vec3i.h>
@@ -23,6 +23,8 @@
 #include <pxr/imaging/hd/rprim.h>
 #include <pxr/imaging/hd/sceneDelegate.h>
 #include <pxr/imaging/hd/tokens.h>
+#include <pxr/imaging/hd/vtBufferSource.h>
+#include <pxr/imaging/hdSt/binding.h>
 #include <pxr/imaging/hdSt/renderBuffer.h>
 #include <pxr/imaging/hdSt/renderDelegate.h>
 #include <pxr/imaging/hdSt/renderPassShader.h>
@@ -427,8 +429,6 @@ public:
         return true;
     }
 
-
-
     bool ensureAoPrograms(const TfToken& path, HgiFormat colorFormat, HgiFormat depthFormat)
     {
         if (path.IsEmpty())
@@ -490,7 +490,6 @@ public:
     std::vector<std::pair<int32_t, int32_t>> selectedInstancePairs;
     std::vector<std::pair<int32_t, int32_t>> selectedLeadInstancePairs;
 
-
     TfToken aoShaderPath;
     HgiFormat aoColorFormat = HgiFormatInvalid;
     HgiFormat aoDepthFormat = HgiFormatInvalid;
@@ -502,8 +501,9 @@ public:
 
 class RenderTask::SceneIdPass {
 public:
-    explicit SceneIdPass(HdRenderIndex* renderIndex)
+    explicit SceneIdPass(HdRenderIndex* renderIndex, bool selectionOnly = false)
         : m_renderIndex(renderIndex)
+        , m_selectionOnly(selectionOnly)
     {}
 
     ~SceneIdPass() { cleanup(); }
@@ -546,6 +546,80 @@ public:
 
     HgiTextureHandle instanceIdTexture() const { return textureHandle(1); }
     HgiTextureHandle elementIdTexture() const { return textureHandle(2); }
+
+    bool syncSelection(const SceneIdSettings& settings, const TfToken& shaderPath, SceneIdPass& scene,
+                       const std::vector<int32_t>& ids, const std::vector<std::pair<int32_t, int32_t>>& instances)
+    {
+        const unsigned version = m_renderIndex->GetChangeTracker().GetRprimIndexVersion();
+        const bool changed = !m_passSelectionValid || ids != m_passSelectedIds || instances != m_passSelectedInstances
+                             || version != m_passIndexVersion;
+        if (changed) {
+            m_passEntries = instances;
+            for (int32_t id : ids)
+                m_passEntries.emplace_back(id, -1);
+            std::sort(m_passEntries.begin(), m_passEntries.end());
+            m_passEntries.erase(std::unique(m_passEntries.begin(), m_passEntries.end()), m_passEntries.end());
+            scene.refreshRprimPathCache();
+            m_passRoots.clear();
+            for (const auto& entry : m_passEntries) {
+                const auto found = scene.m_rprimPathsById.find(entry.first);
+                if (found != scene.m_rprimPathsById.end()
+                    && (m_passRoots.empty() || m_passRoots.back() != found->second))
+                    m_passRoots.push_back(found->second);
+            }
+            SdfPath::RemoveDescendentPaths(&m_passRoots);
+            m_passSelectedIds = ids;
+            m_passSelectedInstances = instances;
+            m_passIndexVersion = version;
+            m_passSelectionValid = true;
+        }
+        SceneIdSettings selectedSettings = settings;
+        selectedSettings.roots = m_passRoots;
+        selectedSettings.enabled = settings.enabled && !m_passRoots.empty();
+        m_filterInstances = !instances.empty();
+        static const TfToken selectionShaderPath(
+            renderresources::path(QStringLiteral("SelectionId.glslfx")).toStdString());
+        if (!sync(selectedSettings, m_filterInstances ? selectionShaderPath : shaderPath))
+            return false;
+        if (scene.m_aovBindings.size() < 6)
+            return false;
+        // Only the scene pass owns depth. Load it without clearing or writing
+        // it: selected fragments at equal depth remain visible regardless of
+        // which coincident object won the scene ID pass.
+        HdRenderPassAovBinding depth = scene.m_aovBindings[5];
+        depth.clearValue = VtValue();
+        if (m_aovBindings.size() == 5)
+            m_aovBindings.push_back(depth);
+        else if (m_aovBindings.size() == 6)
+            m_aovBindings[5] = depth;
+        if (m_filterInstances && m_renderPassState) {
+            auto registry = std::static_pointer_cast<HdStResourceRegistry>(m_renderIndex->GetResourceRegistry());
+            static const TfToken membership("stagevizSelection");
+            // A dedicated buffer keeps indices independent of aggregation offsets.
+            // Membership updates do not create shader variants.
+            if (!m_membershipRange) {
+                HdBufferSpecVector specs { HdBufferSpec(membership, HdTupleType { HdTypeInt32, 1 }) };
+                m_membershipRange
+                    = registry->AllocateSingleBufferArrayRange(HdTokens->drawingShader, specs,
+                                                               HdBufferArrayUsageHintBitsStorage
+                                                                   | HdBufferArrayUsageHintBitsSizeVarying);
+            }
+            if (m_membershipEntries != m_passEntries) {
+                VtIntArray values(1 + m_passEntries.size() * 2);
+                values[0] = static_cast<int>(m_passEntries.size());
+                for (size_t i = 0; i < m_passEntries.size(); ++i) {
+                    values[1 + i * 2] = m_passEntries[i].first;
+                    values[2 + i * 2] = m_passEntries[i].second;
+                }
+                registry->AddSource(m_membershipRange, std::make_shared<HdVtBufferSource>(membership, VtValue(values)));
+                m_membershipEntries = m_passEntries;
+            }
+            auto* state = static_cast<HdStRenderPassState*>(m_renderPassState.get());
+            state->GetRenderPassShader()->AddBufferBinding(
+                HdStBindingRequest(HdStBinding::SSBO, membership, m_membershipRange, false));
+        }
+        return true;
+    }
 
     // A picking-only collection: exclude previously picked rprims without
     // touching USD visibility, scene indices, or the regular outline ID image.
@@ -599,7 +673,6 @@ public:
         m_collectionValid = false;
         return result;
     }
-
 
     int32_t elementIdAt(const GfVec2i& pixel)
     {
@@ -810,8 +883,6 @@ public:
             *selectedInstances = cachedInstancePairs;
         return cachedIds;
     }
-
-
 
     SdfPathVector captureVisiblePaths(const std::vector<GfMatrix4d>& captureProjectionMatrices,
                                       bool includeViewportPass)
@@ -1081,6 +1152,8 @@ private:
         const char* names[] = { "primId", "instanceId", "elementId", "edgeId", "pointId", "depth" };
 
         for (size_t i = 0; i < 6; ++i) {
+            if (m_selectionOnly && i == 5)
+                continue;
             HdAovDescriptor desc = m_renderIndex->GetRenderDelegate()->GetDefaultAovDescriptor(aovs[i]);
 
             // The five picking IDs are signed integer render targets. Be
@@ -1096,7 +1169,8 @@ private:
                 desc.clearValue = VtValue(1.0f);
             }
 
-            const SdfPath id(std::string("/__Stageviz/SceneIds/") + names[i]);
+            const SdfPath id(std::string(m_selectionOnly ? "/__Stageviz/SelectionIds/" : "/__Stageviz/SceneIds/")
+                             + names[i]);
             auto buffer = std::make_unique<HdStRenderBuffer>(registry.get(), id);
             if (!buffer->Allocate(GfVec3i(size[0], size[1], 1), desc.format, false)) {
                 cleanupBuffers();
@@ -1145,7 +1219,7 @@ private:
 
         state->SetStencilEnabled(false);
         state->SetEnableDepthTest(true);
-        state->SetEnableDepthMask(true);
+        state->SetEnableDepthMask(!m_selectionOnly);
         state->SetDepthFunc(HdCmpFuncLEqual);
         state->SetAlphaThreshold(0.0001f);
         state->SetAlphaToCoverageEnabled(false);
@@ -1169,11 +1243,14 @@ private:
 
         // Camera changes only require SetCameraFramingState above. Avoid
         // resetting/synchronizing the Hydra collection on every camera frame.
+        const unsigned indexVersion = m_renderIndex->GetChangeTracker().GetRprimIndexVersion();
+        if (m_collectionValid && m_settings.roots == m_collectionRoots && m_settings.reprSelector == m_collectionRepr
+            && indexVersion == m_collectionIndexVersion)
+            return;
         SdfPathVector roots = m_settings.roots;
         if (roots.empty())
             roots.push_back(SdfPath::AbsoluteRootPath());
         SdfPath::RemoveDescendentPaths(&roots);
-        const unsigned indexVersion = m_renderIndex->GetChangeTracker().GetRprimIndexVersion();
         if (!m_collectionValid || roots != m_collectionRoots || m_settings.reprSelector != m_collectionRepr
             || indexVersion != m_collectionIndexVersion) {
             m_renderPass->SetRprimCollection(sceneCollection(roots, m_settings.reprSelector));
@@ -1219,6 +1296,16 @@ private:
     }
 
     HdRenderIndex* m_renderIndex = nullptr;
+    bool m_selectionOnly = false;
+    bool m_passSelectionValid = false;
+    bool m_filterInstances = false;
+    HdBufferArrayRangeSharedPtr m_membershipRange;
+    std::vector<std::pair<int32_t, int32_t>> m_membershipEntries;
+    std::vector<std::pair<int32_t, int32_t>> m_passEntries;
+    std::vector<int32_t> m_passSelectedIds;
+    std::vector<std::pair<int32_t, int32_t>> m_passSelectedInstances;
+    SdfPathVector m_passRoots;
+    unsigned m_passIndexVersion = std::numeric_limits<unsigned>::max();
     SceneIdSettings m_settings;
     HdRenderPassSharedPtr m_renderPass;
     HdRenderPassStateSharedPtr m_renderPassState;
@@ -1249,7 +1336,6 @@ private:
     std::vector<int32_t> m_leadSelectedPrimIds;
     std::vector<std::pair<int32_t, int32_t>> m_leadSelectedInstancePairs;
     unsigned m_leadSelectedRprimIndexVersion = std::numeric_limits<unsigned>::max();
-
 
     std::unordered_map<int32_t, SdfPath> m_rprimPathsById;
     unsigned m_rprimPathCacheVersion = std::numeric_limits<unsigned>::max();
@@ -1408,6 +1494,7 @@ RenderTask::Prepare(HdTaskContext* ctx, HdRenderIndex* renderIndex)
     if (m_sceneIdPass)
         m_sceneIdPass->prepare(renderIndex);
 
+    m_selectionUsesSceneIds = false;
     if (m_params.selectionOutline.enabled && m_sceneIdPass && m_shader) {
         std::vector<std::pair<int32_t, int32_t>> selectedInstances;
         const std::vector<int32_t>& ids
@@ -1422,6 +1509,18 @@ RenderTask::Prepare(HdTaskContext* ctx, HdRenderIndex* renderIndex)
             m_params.selectionOutline.leadHydraMappingResolved, &leadSelectedInstances, true);
         m_shader->ensureSelectedMask(ids, leadIds);
         m_shader->ensureSelectedInstanceMask(selectedInstances, leadSelectedInstances);
+        // No unselected drawable can erase a selection when every rprim is
+        // fully selected. Reuse the scene IDs for Select All and root selections.
+        m_selectionUsesSceneIds = selectedInstances.empty() && !ids.empty()
+                                  && ids.size() == renderIndex->GetRprimIds().size();
+        if (!m_selectionUsesSceneIds) {
+            if (!m_selectionIdPass)
+                m_selectionIdPass = std::make_unique<SceneIdPass>(renderIndex, true);
+            if (!m_selectionIdPass->syncSelection(m_params.sceneIds, m_params.sceneIdShaderPath, *m_sceneIdPass, ids,
+                                                  selectedInstances))
+                m_params.selectionOutline.enabled = false;
+            m_selectionIdPass->prepare(renderIndex);
+        }
     }
     else if (m_shader) {
         m_shader->ensureSelectedMask({}, {});
@@ -1437,12 +1536,23 @@ RenderTask::Execute(HdTaskContext* ctx)
 
     HgiTextureHandle scenePrimId;
     HgiTextureHandle sceneInstanceId;
+    HgiTextureHandle selectedPrimId;
+    HgiTextureHandle selectedInstanceId;
     const bool needsViewportSceneIds = m_params.selectionOutline.enabled || m_params.captureElementId
                                        || m_params.captureObjects
                                        || (m_params.captureVisible && m_params.captureProjectionMatrices.empty());
     if (m_params.sceneIds.enabled && m_sceneIdPass && needsViewportSceneIds) {
         scenePrimId = m_sceneIdPass->execute();
         sceneInstanceId = m_sceneIdPass->instanceIdTexture();
+    }
+    if (m_params.selectionOutline.enabled && !m_selectionUsesSceneIds && m_selectionIdPass) {
+        selectedPrimId = m_selectionIdPass->execute();
+        selectedInstanceId = m_selectionIdPass->instanceIdTexture();
+    }
+
+    if (m_selectionUsesSceneIds) {
+        selectedPrimId = scenePrimId;
+        selectedInstanceId = sceneInstanceId;
     }
 
     if (m_params.captureElementId && m_sceneIdPass && scenePrimId)
@@ -1530,8 +1640,8 @@ RenderTask::Execute(HdTaskContext* ctx)
         }
     }
 
-    if (m_params.selectionOutline.enabled && m_shader && scenePrimId && sceneInstanceId && m_shader->selectedIdMask
-        && m_shader->selectedInstanceMask && !m_params.shaderPath.IsEmpty()) {
+    if (m_params.selectionOutline.enabled && m_shader && selectedPrimId && selectedInstanceId && scenePrimId
+        && m_shader->selectedIdMask && m_shader->selectedInstanceMask && !m_params.shaderPath.IsEmpty()) {
         HgiTextureHandle inputColor;
         if (_GetTaskContextData(ctx, HdAovTokens->color, &inputColor) && inputColor) {
             const HgiTextureDesc& colorDesc = inputColor->GetDescriptor();
@@ -1554,7 +1664,7 @@ RenderTask::Execute(HdTaskContext* ctx)
                     constants.selectedInstancePairCount = m_shader->selectedInstancePairCount;
                     constants.radius = static_cast<int>(
                         std::clamp(m_params.selectionOutline.radius, 1u, kMaxSelectionRadius));
-                    m_shader->selection.BindTextures({ inputColor, scenePrimId, sceneInstanceId,
+                    m_shader->selection.BindTextures({ inputColor, selectedPrimId, selectedInstanceId,
                                                        m_shader->selectedIdMask, m_shader->selectedInstanceMask });
                     m_shader->selection.SetShaderConstants(sizeof(constants), &constants);
                     m_shader->selection.Draw(outputColor, HgiTextureHandle());
