@@ -1891,12 +1891,25 @@ sessionStateApi()
         require(session.stage()->IsLayerMuted(sublayerIdentifiers[index].toStdString()),
                 "loadState restores each muted layer");
 
+    const QString mutedSnapshot = dir.filePath("muted-snapshot.session");
+    require(QFile::copy(statePath, mutedSnapshot), "retain the explicitly saved muted state");
     for (int index = 0; index < 3; ++index)
         session.stage()->UnmuteLayer(sublayerIdentifiers[index].toStdString());
-    require(session.reload(), "reload stage with preserved muted state");
+    require(session.isStateDirty(), "unmuting changes the remembered state");
+    require(session.reload() && !session.isStateDirty(), "reload autosaves current remembered state");
+    for (int index = 0; index < 3; ++index)
+        require(!session.stage()->IsLayerMuted(sublayerIdentifiers[index].toStdString()),
+                "reload preserves current unmuted state rather than an older companion snapshot");
+    {
+        QFile savedState(statePath);
+        require(savedState.open(QIODevice::ReadOnly), "read the autosaved unmuted companion");
+        require(QJsonDocument::fromJson(savedState.readAll()).object().value("mutedLayers").toArray().isEmpty(),
+                "reload writes the current unmuted state to the companion");
+    }
+    require(session.loadState(mutedSnapshot), "explicit state loading restores the retained muted snapshot");
     for (int index = 0; index < 3; ++index)
         require(session.stage()->IsLayerMuted(sublayerIdentifiers[index].toStdString()),
-                "reload restores each muted layer state");
+                "explicit snapshot restores every muted layer");
     const UsdStageRefPtr disk = diskStage(stagePath);
     require(disk->GetMutedLayers().empty(), "USD stage file does not store mute state");
     require(disk->GetRootLayer()->GetSubLayerPaths().size() == 4,
@@ -2068,11 +2081,19 @@ sessionStateDirtyApi()
     stage->Unload(SdfPath("/Payload"));
     require(current.isStateDirty(), "direct USD payload unload marks companion dirty");
     require(current.saveState(sidecar), "save explicit payload load rules");
+    const QString unloadedSnapshot = dir.filePath("unloaded-snapshot.session");
+    require(QFile::copy(sidecar, unloadedSnapshot), "retain explicitly saved unloaded rules");
     stage->Load(SdfPath("/Payload"));
     require(current.isStateDirty(), "payload reload marks companion dirty");
     require(current.reload() && !current.isStateDirty(), "document reload restores clean companion");
     stage = current.stage();
-    require(!stage->GetPrimAtPath(SdfPath("/Payload")).IsLoaded(), "payload rules round trip");
+    require(stage->GetPrimAtPath(SdfPath("/Payload")).IsLoaded(),
+            "reload autosaves and restores current loaded payload rules");
+    require(current.loadState(sidecar) && stage->GetPrimAtPath(SdfPath("/Payload")).IsLoaded(),
+            "reload writes current loaded rules to the canonical companion");
+    require(current.loadState(unloadedSnapshot) && !current.isStateDirty()
+                && !stage->GetPrimAtPath(SdfPath("/Payload")).IsLoaded(),
+            "explicit snapshot restores the saved unloaded payload rules");
     const auto child = SdfLayer::CreateNew(dir.filePath("edit.usda").toStdString());
     require(child->Save(), "save edit-layer fixture");
     stage->GetRootLayer()->SetSubLayerPaths({ child->GetIdentifier() });

@@ -35,6 +35,9 @@ def phases(root, name, performance=False, performance_baseline=None):
     if name == 'testpayloadindicator':
         return [('setup', load + "; test=ns['PayloadIndicatorTest'](disposable=True); test.setup()"),
                 ('mute', 'test.mute()'), ('structure', 'test.structure()'), ('cleanup', 'test.cleanup()')]
+    if name == 'testselectionoutline':
+        return [('setup', load + "; test=ns['SelectionOutlineTest'](disposable=True); test.setup()"),
+                ('overlap', 'test.overlap()'), ('cleanup', 'test.cleanup()')]
     if name == 'testexportinstances':
         return [('setup', load + "; test=ns['ExportInstancesTest'](disposable=True); test.setup()"),
                 ('selected', 'test.selected()'), ('cleanup', 'test.cleanup()')]
@@ -269,7 +272,7 @@ def run(args):
             failure = output / name / 'failure.txt'
             failure.parent.mkdir(parents=True, exist_ok=True)
             failure.write_text(str(error), encoding='utf-8')
-            print('FAIL',name,str(error)[:300],flush=True)
+            print('FAIL',name,str(error)[:300], 'Full details:', str(failure),flush=True)
         row['seconds']=time.monotonic()-started
         summary.append(row)
         (output/'summary.json').write_text(json.dumps(summary,indent=2))

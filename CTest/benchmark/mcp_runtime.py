@@ -6,6 +6,7 @@ import json
 import os
 import re
 from pathlib import Path
+import shutil
 import socket
 import sys
 from urllib.parse import urlparse
@@ -36,7 +37,31 @@ def _require_windows_desktop():
 
 @contextmanager
 def test_desktop():
-    """Keep an owned Windows GUI test awake and restore the thread request."""
+    """Hold scoped sleep assertions without changing system power preferences."""
+    if sys.platform == 'darwin':
+        executable = shutil.which('caffeinate')
+        if not executable:
+            raise RuntimeError('macOS test runs require caffeinate to prevent idle sleep.')
+        # Watch the controller PID as well as cleaning up normally, so a killed
+        # controller cannot leave an idle-sleep assertion behind. The display
+        # can still sleep; explicit sleep and closing the lid remain possible.
+        keeper = subprocess.Popen([executable, '-i', '-w', str(os.getpid())],
+                                  stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+        try:
+            if keeper.poll() is not None:
+                details = keeper.stderr.read().decode('utf-8', errors='replace').strip()
+                raise RuntimeError('Could not prevent idle sleep for tests: ' + details)
+            yield
+        finally:
+            if keeper.poll() is None:
+                keeper.terminate()
+                try:
+                    keeper.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    keeper.kill()
+                    keeper.wait(timeout=5)
+            keeper.stderr.close()
+        return
     if sys.platform != 'win32':
         yield
         return
@@ -220,7 +245,7 @@ class DisposableStageviz:
         self.process = subprocess.Popen([str(self.app), '--execute', 'exec(open(%r, encoding="utf-8").read())' % str(bootstrap)], env=env, stdout=self.log, stderr=subprocess.STDOUT)
         self.watcher = threading.Thread(target=self._watch, daemon=True)
         self.watcher.start()
-        (self.output / 'provenance.json').write_text(json.dumps(dict(app=str(self.app), app_sha256=hashlib.sha256(self.app.read_bytes()).hexdigest(), pid=self.process.pid, environment=self.environment, activity='NSActivityUserInitiatedAllowingIdleSystemSleep' if sys.platform == 'darwin' else None, port=self.port), indent=2))
+        (self.output / 'provenance.json').write_text(json.dumps(dict(app=str(self.app), app_sha256=hashlib.sha256(self.app.read_bytes()).hexdigest(), pid=self.process.pid, environment=self.environment, activity='NSActivityUserInitiatedAllowingIdleSystemSleep' if sys.platform == 'darwin' else None, idle_sleep_prevention='caffeinate -i (controller scoped)' if sys.platform == 'darwin' else None, port=self.port), indent=2))
         deadline = time.monotonic() + 90
         try:
             while True:

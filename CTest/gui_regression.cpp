@@ -15,6 +15,7 @@
 #include "commandstack.h"
 #include "commandtransform.h"
 #include "commandvisibility.h"
+#include "console.h"
 #include "gizmoprojection.h"
 #include "indextree.h"
 #include "layerdialog.h"
@@ -74,6 +75,8 @@
 #include <QHeaderView>
 #include <QImage>
 #include <QItemSelectionModel>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QKeyEvent>
 #include <QLabel>
 #include <QLineEdit>
@@ -112,6 +115,7 @@
 #include <pxr/base/gf/vec2f.h>
 #include <pxr/base/gf/vec3d.h>
 #include <pxr/base/gf/vec4f.h>
+#include <pxr/base/tf/errorMark.h>
 #include <pxr/usd/sdf/primSpec.h>
 #include <pxr/usd/sdf/schema.h>
 #include <pxr/usd/usd/payloads.h>
@@ -473,6 +477,187 @@ renderPrimitiveSelectionApi()
 }
 
 void
+renderDisplayModeWarmupApi()
+{
+    const auto warmupCount = []() {
+        QFile trace(qEnvironmentVariable("STAGEVIZ_PERF_LOG"));
+        require(trace.open(QIODevice::ReadOnly), "display mode initialization trace exists");
+        int count = 0;
+        for (const QByteArray& line : trace.readAll().split('\n'))
+            count += QJsonDocument::fromJson(line).object().value("phase").toString()
+                     == "viewport.display_modes.warmup";
+        return count;
+    };
+    QOpenGLContext context;
+    require(context.create(), "create display mode context");
+    QOffscreenSurface surface;
+    surface.setFormat(context.format());
+    surface.create();
+    require(surface.isValid() && context.makeCurrent(&surface), "activate display mode context");
+    {
+        QOpenGLFramebufferObjectFormat format;
+        format.setAttachment(QOpenGLFramebufferObject::CombinedDepthStencil);
+        QOpenGLFramebufferObject framebuffer(128, 128, format);
+        const auto stage = UsdStage::CreateInMemory();
+        UsdGeomCube::Define(stage, SdfPath("/Cube"));
+        stageviz::RenderEngine viewport(stageviz::RenderEngine::ContextMode::Current);
+        viewport.setStage(stage);
+        GfCamera camera;
+        GfMatrix4d view(1.);
+        view.SetLookAt(GfVec3d(4, 3, 8), GfVec3d(0), GfVec3d(0, 1, 0));
+        camera.SetTransform(view.GetInverse());
+        camera.SetPerspectiveFromAspectRatioAndFieldOfView(1., 45., GfCamera::FOVVertical);
+        camera.SetClippingRange(GfRange1f(.1f, 100.f));
+        viewport.setCamera(camera);
+        viewport.setSize(GfVec2i(128));
+        viewport.setViewport(GfVec4d(0, 0, 128, 128));
+        auto settings = viewport.settings();
+        settings.ambientOcclusion.enabled = false;
+        viewport.setSettings(settings);
+        const auto draw = [&](UsdImagingGLDrawMode mode) {
+            auto current = viewport.settings();
+            current.drawMode = mode;
+            viewport.setSettings(current);
+            require(framebuffer.bind(), "bind display mode framebuffer");
+            TfErrorMark mark;
+            for (int i = 0; i < 3; ++i)
+                require(viewport.renderToCurrentFramebuffer(), "render requested display mode");
+            require(mark.IsClean(), "display mode warmup renders without USD errors");
+            require(viewport.settings().drawMode == mode, "hidden preparation preserves requested display mode");
+            const QImage image = framebuffer.toImage();
+            framebuffer.release();
+            return image;
+        };
+        const QImage shaded = draw(UsdImagingGLDrawMode::DRAW_SHADED_SMOOTH);
+        require(warmupCount() == 1, "both display modes warm once before first switch");
+        const QImage wireframe = draw(UsdImagingGLDrawMode::DRAW_WIREFRAME_ON_SURFACE);
+        require(wireframe != shaded, "wireframe switch changes the displayed image");
+        require(warmupCount() == 1, "first wireframe switch reuses warmed display modes");
+        require(draw(UsdImagingGLDrawMode::DRAW_SHADED_SMOOTH) == shaded,
+                "returning to shaded restores the image without a hidden wireframe frame");
+        require(warmupCount() == 1, "ordinary redraw and mode switches do not repeat warmup");
+        settings.complexity = 1.1;
+        viewport.setSettings(settings);
+        draw(UsdImagingGLDrawMode::DRAW_SHADED_SMOOTH);
+        require(warmupCount() == 2, "quality changes prepare both new representations once");
+        draw(UsdImagingGLDrawMode::DRAW_WIREFRAME_ON_SURFACE);
+        require(warmupCount() == 2, "wireframe at the new quality is already prepared");
+        UsdGeomCube::Define(stage, SdfPath("/Other"));
+        draw(UsdImagingGLDrawMode::DRAW_SHADED_SMOOTH);
+        require(warmupCount() == 3, "new geometry refreshes display mode preparation once");
+        UsdGeomXformable(stage->GetPrimAtPath(SdfPath("/Other"))).AddTranslateOp().Set(GfVec3d(.1, 0, 0));
+        draw(UsdImagingGLDrawMode::DRAW_SHADED_SMOOTH);
+        require(warmupCount() == 3, "ordinary transform edits reuse prepared representations");
+        const auto auxiliary = UsdStage::CreateInMemory();
+        UsdGeomXform::Define(auxiliary, SdfPath("/Display"));
+        const auto helper = UsdGeomCube::Define(auxiliary, SdfPath("/Display/Helper"));
+        UsdGeomXformable(helper).AddTranslateOp().Set(GfVec3d(3, 0, 0));
+        viewport.setAuxiliaryStage(auxiliary);
+        const QImage shadedWithHelper = draw(UsdImagingGLDrawMode::DRAW_SHADED_SMOOTH);
+        const int withHelper = warmupCount();
+        require(withHelper > 3, "support geometry prepares its display modes before switching");
+        draw(UsdImagingGLDrawMode::DRAW_WIREFRAME_ON_SURFACE);
+        require(warmupCount() == withHelper, "support geometry also reuses warmed display modes");
+        require(draw(UsdImagingGLDrawMode::DRAW_SHADED_SMOOTH) == shadedWithHelper,
+                "hidden support geometry preparation preserves the presented image");
+        viewport.reset();
+    }
+    context.doneCurrent();
+}
+
+void
+renderCoincidentSelectionApi()
+{
+    const auto traceCounts = []() {
+        QFile trace(qEnvironmentVariable("STAGEVIZ_PERF_LOG"));
+        require(trace.open(QIODevice::ReadOnly), "selection initialization trace exists");
+        std::pair<int, int> counts { 0, 0 };
+        for (const QByteArray& line : trace.readAll().split('\n')) {
+            if (line.isEmpty())
+                continue;
+            const QString phase = QJsonDocument::fromJson(line).object().value("phase").toString();
+            counts.first += phase.startsWith("selection.") && phase.endsWith(".create");
+            counts.second += phase == "selection.warmup";
+        }
+        return counts;
+    };
+    QOpenGLContext context;
+    require(context.create(), "create coincident selection context");
+    QOffscreenSurface surface;
+    surface.setFormat(context.format());
+    surface.create();
+    require(surface.isValid() && context.makeCurrent(&surface), "activate coincident selection context");
+    {
+        QOpenGLFramebufferObjectFormat format;
+        format.setAttachment(QOpenGLFramebufferObject::CombinedDepthStencil);
+        QOpenGLFramebufferObject framebuffer(128, 128, format);
+        const auto asset = UsdStage::CreateInMemory();
+        UsdGeomXform::Define(asset, SdfPath("/Shape"));
+        UsdGeomCube::Define(asset, SdfPath("/Shape/Body"));
+        for (bool instanced : { false, true }) {
+            const auto stage = UsdStage::CreateInMemory();
+            for (const char* name : { "/A", "/B" }) {
+                const auto prim = UsdGeomXform::Define(stage, SdfPath(name)).GetPrim();
+                prim.GetReferences().AddReference(asset->GetRootLayer()->GetIdentifier(), SdfPath("/Shape"));
+                prim.SetInstanceable(instanced);
+            }
+            stageviz::RenderEngine viewport(stageviz::RenderEngine::ContextMode::Current);
+            viewport.setStage(stage);
+            GfCamera camera;
+            GfMatrix4d view(1.);
+            view.SetLookAt(GfVec3d(0, 0, 8), GfVec3d(0), GfVec3d(0, 1, 0));
+            camera.SetTransform(view.GetInverse());
+            camera.SetPerspectiveFromAspectRatioAndFieldOfView(1., 45., GfCamera::FOVVertical);
+            camera.SetClippingRange(GfRange1f(.1f, 100.f));
+            viewport.setCamera(camera);
+            viewport.setSize(GfVec2i(128));
+            viewport.setViewport(GfVec4d(0, 0, 128, 128));
+            viewport.setSelectionColor(QColor(255, 0, 255));
+            viewport.setSecondarySelectionColor(QColor(255, 0, 255));
+            const auto draw = [&](const QList<SdfPath>& paths) {
+                viewport.setSelected(paths);
+                require(framebuffer.bind(), "bind coincident selection framebuffer");
+                TfErrorMark mark;
+                for (int i = 0; i < 3; ++i)
+                    require(viewport.renderToCurrentFramebuffer(), "render coincident selection");
+                for (const auto& error : mark)
+                    std::cerr << "RENDER ERROR " << error.GetCommentary() << '\n';
+                require(mark.IsClean(), "coincident selection renders without USD errors");
+                QImage image = framebuffer.toImage();
+                framebuffer.release();
+                int count = 0;
+                for (int y = 0; y < image.height(); ++y) {
+                    for (int x = 0; x < image.width(); ++x) {
+                        const QColor color = image.pixelColor(x, y);
+                        count += color.red() > 220 && color.green() < 70 && color.blue() > 220;
+                    }
+                }
+                return count;
+            };
+            require(draw({}) == 0, "unselected warmup produces no outline");
+            const auto initialized = traceCounts();
+            require(initialized.first > 0 && initialized.second > 0, "selection resources warm before any selection");
+            require(draw({}) == 0 && traceCounts() == initialized, "idle redraw does not repeat selection warmup");
+            require(draw({ SdfPath("/A/Body") }) > 20, "first coincident mesh or instance proxy stays outlined");
+            require(traceCounts() == initialized, "first selection reuses initialized resources and pipelines");
+            require(draw({ SdfPath("/B/Body") }) > 20, "second coincident mesh or instance proxy stays outlined");
+            require(traceCounts() == initialized, "next selection reuses initialized resources and pipelines");
+            require(draw({ SdfPath("/A"), SdfPath("/B") }) > 20, "coincident parent selection stays outlined");
+            UsdGeomXformable(stage->GetPrimAtPath(SdfPath("/A"))).AddTranslateOp().Set(GfVec3d(0, 0, -3));
+            require(draw({ SdfPath("/A/Body") }) == 0, "selected geometry behind an occluder stays hidden");
+            UsdGeomImageable(stage->GetPrimAtPath(SdfPath("/B"))).MakeInvisible();
+            require(draw({ SdfPath("/A/Body") }) > 20, "removing an occluder restores the outline");
+            require(draw({ SdfPath("/B/Body") }) == 0, "invisible selected geometry stays hidden");
+            viewport.setSize(GfVec2i(96));
+            viewport.setViewport(GfVec4d(0, 0, 96, 96));
+            require(draw({ SdfPath("/A") }) > 20, "resizing reallocates selection buffers");
+            viewport.reset();
+        }
+    }
+    context.doneCurrent();
+}
+
+void
 numericEditorApi()
 {
     stageviz::SpinBox spin;
@@ -714,11 +899,15 @@ propertyAssetEditorApi()
     const auto format = dome.GetTextureFormatAttr();
     const auto sync = current->stage()->GetPrimAtPath(SdfPath("/Dome")).GetAttribute(TfToken("light:materialSyncMode"));
     const auto drain = []() {
-        for (int i = 0; i < 6; ++i) {
-            QThreadPool::globalInstance()->waitForDone();
+        QElapsedTimer elapsed;
+        elapsed.start();
+        int settled = 0;
+        while (settled < 6 && elapsed.elapsed() < 5000) {
             QCoreApplication::sendPostedEvents(nullptr, 0);
             QCoreApplication::processEvents(QEventLoop::AllEvents, 25);
+            settled = QThreadPool::globalInstance()->waitForDone(10) ? settled + 1 : 0;
         }
+        require(settled == 6, "asset editor workers settle while Qt events remain responsive");
     };
     drain();
     stageviz::PropertyTree tree;
@@ -780,36 +969,44 @@ propertyAssetEditorApi()
     bool dialogSeen = false;
     const auto browse = [&](bool cancel) {
         QTimer watchdog;
-        watchdog.setSingleShot(true);
+        QElapsedTimer elapsed;
+        elapsed.start();
         bool timedOut = false;
         QObject::connect(&watchdog, &QTimer::timeout, &tree, [&]() {
+            if (elapsed.elapsed() < 5000)
+                return;
             timedOut = true;
             for (auto* widget : QApplication::topLevelWidgets()) {
-                if (auto* dialog = qobject_cast<QFileDialog*>(widget))
+                if (auto* dialog = qobject_cast<QFileDialog*>(widget); dialog && dialog->isVisible())
                     dialog->reject();
             }
         });
-        watchdog.start(5000);
-        QTimer::singleShot(50, &tree, [&, cancel]() {
+        watchdog.start(100);
+        QTimer chooserDriver;
+        QObject::connect(&chooserDriver, &QTimer::timeout, &tree, [&]() {
             for (auto* widget : QApplication::topLevelWidgets()) {
-                if (auto* dialog = qobject_cast<QFileDialog*>(widget)) {
-                    if (!dialog->isVisible())
-                        continue;
-                    dialogSeen = true;
-                    if (cancel)
-                        dialog->reject();
-                    else {
-                        dialog->setDirectory(directory.path());
-                        QTimer::singleShot(100, dialog, [&, dialog]() {
-                            auto* filename = dialog->findChild<QLineEdit*>("fileNameEdit");
-                            require(filename, "Qt file chooser exposes its filename editor");
-                            filename->setText(chosen);
-                            QMetaObject::invokeMethod(dialog, "accept", Qt::QueuedConnection);
-                        });
-                    }
+                auto* dialog = qobject_cast<QFileDialog*>(widget);
+                if (!dialog || !dialog->isVisible())
+                    continue;
+                dialogSeen = true;
+                if (cancel || timedOut) {
+                    dialog->reject();
+                    continue;
                 }
+                // Construction/model loading may process events before the
+                // chooser becomes visible. Keep polling rather than losing a
+                // single timer callback during that work.
+                auto* filename = dialog->findChild<QLineEdit*>("fileNameEdit");
+                if (!filename)
+                    continue;
+                dialog->setDirectory(directory.path());
+                filename->setText(chosen);
+                QMetaObject::invokeMethod(dialog, "accept", Qt::QueuedConnection);
             }
         });
+        chooserDriver.start(25);
+        fileItem = find(asset.GetPath());
+        require(fileItem, "reacquire the asset row after previous edits");
         tree.scrollToItem(fileItem);
         const QPoint position(tree.header()->sectionViewportPosition(stageviz::PropertyItem::Browse) + 16,
                               tree.visualItemRect(fileItem).center().y());
@@ -820,6 +1017,7 @@ propertyAssetEditorApi()
                             QPointF(tree.viewport()->mapToGlobal(position)), Qt::LeftButton, Qt::NoButton,
                             Qt::NoModifier);
         QApplication::sendEvent(tree.viewport(), &release);
+        chooserDriver.stop();
         watchdog.stop();
         drain();
         require(!timedOut, "file chooser automation completes without manual intervention");
@@ -2319,6 +2517,9 @@ outlinerPayloadCheckboxApi(bool rapid)
         require(stage->GetRootLayer()->Save(), "save checkbox scene");
     }
     auto* current = stageviz::session();
+    // This fixture tests checkbox/load policy behavior, independently of the
+    // remembered-state autosaves covered by the dedicated state regressions.
+    current->setPreserveState(false);
     stageviz::OutlinerView view;
     require(current->loadFromFile(scene, stageviz::Session::None), "load checkbox scene in Payloads mode");
     const auto drain = []() {
@@ -3824,7 +4025,22 @@ outlinerDisplayMenuApi()
 int
 main(int argc, char** argv)
 {
+    std::unique_ptr<QTemporaryDir> selectionTrace;
+    if (argc == 2
+        && (std::string(argv[1]) == "render_coincident_selection_api"
+            || std::string(argv[1]) == "render_display_mode_warmup_api")) {
+        selectionTrace = std::make_unique<QTemporaryDir>();
+        require(selectionTrace->isValid(), "create selection warmup trace directory");
+        qputenv("STAGEVIZ_PERF_LOG", (selectionTrace->path() + "/selection.jsonl").toUtf8());
+    }
+    QTemporaryDir testSettings;
+    require(testSettings.isValid(), "create isolated native GUI settings");
+    if (qEnvironmentVariableIsEmpty("STAGEVIZ_TEST_SETTINGS_DIR"))
+        qputenv("STAGEVIZ_TEST_SETTINGS_DIR", testSettings.path().toUtf8());
     stageviz::Application app(argc, argv);
+    // Release builds capture stderr in the application's console. Native test
+    // assertions and timeout diagnostics must remain visible to CTest instead.
+    app.console()->stop();
     const std::map<std::string, std::function<void()>> cases {
         { "outliner_layer_mute_api", outlinerLayerMuteApi },
         { "outliner_display_menu_api", outlinerDisplayMenuApi },
@@ -3847,6 +4063,8 @@ main(int argc, char** argv)
         { "numeric_editor_api", numericEditorApi },
         { "renderengine_api", renderEngineApi },
         { "render_primitive_selection_api", renderPrimitiveSelectionApi },
+        { "render_coincident_selection_api", renderCoincidentSelectionApi },
+        { "render_display_mode_warmup_api", renderDisplayModeWarmupApi },
         { "renderengine_hdri_api", renderEngineHdriApi },
         { "material_browser_api", materialBrowserApi },
         { "material_browser_display_menu_api", materialBrowserDisplayMenuApi },

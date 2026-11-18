@@ -956,7 +956,7 @@ namespace {
         }
 
         void renderBatchWithRenderTask(const SdfPathVector& paths, const UsdImagingGLRenderParams& params,
-                                       const RenderTaskParams& renderTaskParams)
+                                       const RenderTaskParams& renderTaskParams, bool present = true)
         {
             if (!_taskControllerSceneIndex || paths.empty())
                 return;
@@ -967,7 +967,7 @@ namespace {
 
             _SetBBoxParams(params.bboxes, params.bboxLineColor, params.bboxLineDashSize);
             _taskControllerSceneIndex->SetEnableSelection(false);
-            _taskControllerSceneIndex->SetEnablePresentation(true);
+            _taskControllerSceneIndex->SetEnablePresentation(present);
 
             const VtValue selectionValue(_selTracker);
             if (HdEngine* hdEngine = _GetHdEngine())
@@ -1024,6 +1024,58 @@ namespace {
         }
 
 
+
+        void warmDisplayModes(const UsdStageRefPtr& stage, const SdfPathVector& paths,
+                              const UsdImagingGLRenderParams& params, const RenderTaskParams& taskParams)
+        {
+            HdRenderIndex* index = renderIndex();
+            if (!index)
+                return;
+            const auto& tracker = index->GetChangeTracker();
+            const auto& previous = m_displayWarmupParams;
+            if (m_displayWarmupValid && m_displayWarmupRprimVersion == tracker.GetRprimIndexVersion()
+                && m_displayWarmupInstancerVersion == tracker.GetInstancerIndexVersion()
+                && m_displayWarmupSprimVersion == tracker.GetSprimIndexVersion() && m_displayWarmupPaths == paths
+                && previous.complexity == params.complexity && previous.cullStyle == params.cullStyle
+                && previous.flipFrontFacing == params.flipFrontFacing
+                && previous.enableSampleAlphaToCoverage == params.enableSampleAlphaToCoverage
+                && previous.enableLighting == params.enableLighting
+                && previous.enableSceneLights == params.enableSceneLights
+                && previous.enableSceneMaterials == params.enableSceneMaterials
+                && previous.showGuides == params.showGuides && previous.showProxy == params.showProxy
+                && previous.showRender == params.showRender)
+                return;
+
+            PerfScope scope("viewport.display_modes.warmup");
+            for (const auto mode :
+                 { UsdImagingGLDrawMode::DRAW_SHADED_SMOOTH, UsdImagingGLDrawMode::DRAW_WIREFRAME_ON_SURFACE }) {
+                if (mode == params.drawMode)
+                    continue;
+                auto warmParams = params;
+                warmParams.drawMode = mode;
+                auto warmTaskParams = taskParams;
+                warmTaskParams.selectionOutline.enabled = false;
+                warmTaskParams.ambientOcclusion.enabled = false;
+                warmTaskParams.captureVisible = false;
+                warmTaskParams.captureObjects = false;
+                warmTaskParams.captureGpuPick = false;
+                warmTaskParams.captureElementId = false;
+                warmTaskParams.captureProjectionMatrices.clear();
+                // Use the same engine and task resources, but do not present
+                // the alternate mode to the widget's current framebuffer.
+                PrepareBatch(stage->GetPseudoRoot(), warmParams);
+                renderBatchWithRenderTask(paths, warmParams, warmTaskParams, false);
+            }
+            m_displayWarmupParams = params;
+            m_displayWarmupPaths = paths;
+            m_displayWarmupRprimVersion = tracker.GetRprimIndexVersion();
+            m_displayWarmupInstancerVersion = tracker.GetInstancerIndexVersion();
+            m_displayWarmupSprimVersion = tracker.GetSprimIndexVersion();
+            m_displayWarmupValid = true;
+            // The visible submission below restores the requested collection,
+            // task parameters and presentation after this hidden preparation.
+            PrepareBatch(stage->GetPseudoRoot(), params);
+        }
 
         SdfPathVector takeCapturedVisiblePaths()
         {
@@ -1150,6 +1202,12 @@ namespace {
             return params;
         }
 
+        bool m_displayWarmupValid = false;
+        unsigned m_displayWarmupRprimVersion = 0;
+        unsigned m_displayWarmupInstancerVersion = 0;
+        unsigned m_displayWarmupSprimVersion = 0;
+        UsdImagingGLRenderParams m_displayWarmupParams;
+        SdfPathVector m_displayWarmupPaths;
         SceneIndicesPtr m_sceneIndices;
         std::unique_ptr<RenderTaskDelegate> m_renderTaskDelegate;
         const SdfPath m_renderTaskPath = SdfPath("/__Stageviz/Tasks/Render");
@@ -1749,9 +1807,11 @@ RenderEngine::Private::render()
             }
         }
     }
-    renderTaskParams.sceneIds.enabled = renderTaskParams.selectionOutline.enabled || renderTaskParams.captureVisible
-                                        || renderTaskParams.captureElementId || renderTaskParams.captureGpuPick
-                                        || renderTaskParams.captureObjects;
+    renderTaskParams.prepareSelection = !captureObjectsRequested && contextMode == ContextMode::Current
+                                        && settings.aov == HdAovTokens->color;
+    renderTaskParams.sceneIds.enabled = renderTaskParams.prepareSelection || renderTaskParams.selectionOutline.enabled
+                                        || renderTaskParams.captureVisible || renderTaskParams.captureElementId
+                                        || renderTaskParams.captureGpuPick || renderTaskParams.captureObjects;
     if (captureObjectsRequested) {
         switch (documentParams.cullStyle) {
         case UsdImagingGLCullStyle::CULL_STYLE_BACK: renderTaskParams.sceneIds.cullStyle = HdCullStyleBack; break;
@@ -1780,7 +1840,8 @@ RenderEngine::Private::render()
     renderTaskParams.farClip = static_cast<float>(nearFar.GetMax());
     renderTaskParams.orthographic = camera.GetProjection() == GfCamera::Orthographic;
 
-    if (renderTaskParams.ambientOcclusion.enabled || renderTaskParams.selectionOutline.enabled) {
+    if (renderTaskParams.ambientOcclusion.enabled || renderTaskParams.selectionOutline.enabled
+        || renderTaskParams.prepareSelection) {
         const QString shader = renderShaderPath();
         if (!shader.isEmpty()) {
             renderTaskParams.shaderPath = TfToken(shader.toStdString());
@@ -1793,6 +1854,7 @@ RenderEngine::Private::render()
             }
             renderTaskParams.ambientOcclusion.enabled = false;
             renderTaskParams.selectionOutline.enabled = false;
+            renderTaskParams.prepareSelection = false;
             renderTaskParams.sceneIds.enabled = renderTaskParams.captureVisible;
         }
     }
@@ -1810,10 +1872,15 @@ RenderEngine::Private::render()
             }
             renderTaskParams.sceneIds.enabled = false;
             renderTaskParams.selectionOutline.enabled = false;
+            renderTaskParams.prepareSelection = false;
             renderTaskParams.captureVisible = false;
             renderTaskParams.captureObjects = false;
         }
     }
+    if (renderTaskParams.prepareSelection
+        && (documentParams.drawMode == UsdImagingGLDrawMode::DRAW_SHADED_SMOOTH
+            || documentParams.drawMode == UsdImagingGLDrawMode::DRAW_WIREFRAME_ON_SURFACE))
+        engine->warmDisplayModes(stage, renderPaths, documentParams, renderTaskParams);
     engine->renderBatchWithRenderTask(renderPaths, documentParams, renderTaskParams);
 
     if (captureObjectsRequested)
@@ -1858,6 +1925,10 @@ RenderEngine::Private::render()
         auxiliaryHgi->StartFrame();
         auxiliaryEngine->PrepareBatch(auxiliaryRoot, auxiliaryParams);
         updateAuxiliaryRenderSceneIndex();
+        if (settings.aov == HdAovTokens->color
+            && (auxiliaryParams.drawMode == UsdImagingGLDrawMode::DRAW_SHADED_SMOOTH
+                || auxiliaryParams.drawMode == UsdImagingGLDrawMode::DRAW_WIREFRAME_ON_SURFACE))
+            auxiliaryEngine->warmDisplayModes(auxiliary, { paths::auxiliary::display }, auxiliaryParams, {});
         const SdfPath gizmoPath = paths::auxiliary::transform;
         // Draw the gizmo only in its dedicated smooth-shaded, depth-cleared
         // pass. The broader /Display collection otherwise draws it twice.

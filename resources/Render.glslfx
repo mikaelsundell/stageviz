@@ -268,8 +268,9 @@ main(void)
 // Selection outline rendering is derived from the ID-buffer architecture in
 // Autodesk Hydra Viewport Toolbox (Apache-2.0), simplified for Stageviz.
 //
-// Stageviz renders scene primId + instanceId + elementId once with
-// HdCullStyleNothing. Whole-rprim selections use the primId mask; native USD
+// Stageviz renders selected geometry against read-only scene depth with
+// HdCullStyleNothing. Coincident unselected geometry cannot overwrite its IDs.
+// Whole-rprim selections use the primId mask; native USD
 // instance selections use sparse (primId, instanceId) pairs so other copies of
 // the same prototype are not outlined. Geometry subsets remain material data.
 

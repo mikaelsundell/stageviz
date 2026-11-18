@@ -3,12 +3,13 @@
 // https://github.com/mikaelsundell/stageviz
 
 #include "rendertask.h"
+#include "perfscope.h"
+#include "renderresources.h"
 #include <QScopeGuard>
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <limits>
-#include <map>
 #include <memory>
 #include <pxr/base/gf/vec2i.h>
 #include <pxr/base/gf/vec3i.h>
@@ -23,6 +24,8 @@
 #include <pxr/imaging/hd/rprim.h>
 #include <pxr/imaging/hd/sceneDelegate.h>
 #include <pxr/imaging/hd/tokens.h>
+#include <pxr/imaging/hd/vtBufferSource.h>
+#include <pxr/imaging/hdSt/binding.h>
 #include <pxr/imaging/hdSt/renderBuffer.h>
 #include <pxr/imaging/hdSt/renderDelegate.h>
 #include <pxr/imaging/hdSt/renderPassShader.h>
@@ -32,6 +35,8 @@
 #include <pxr/imaging/hdSt/volume.h>
 #include <pxr/imaging/hdx/fullscreenShader.h>
 #include <pxr/imaging/hdx/pickTask.h>
+#include <pxr/imaging/hgi/blitCmds.h>
+#include <pxr/imaging/hgi/blitCmdsOps.h>
 #include <pxr/imaging/hgi/hgi.h>
 #include <pxr/imaging/hgi/shaderFunctionDesc.h>
 #include <pxr/imaging/hgi/texture.h>
@@ -270,53 +275,65 @@ public:
         selectedInstancePairCount = 0;
     }
 
+    bool uploadMask(HgiTextureHandle& texture, const GfVec2i& size, const std::vector<int32_t>& texels,
+                    const char* name)
+    {
+        if (!texture || texture->GetDescriptor().dimensions != GfVec3i(size[0], size[1], 1)) {
+            PerfScope scope("selection.mask.create");
+            if (texture)
+                hgi->DestroyTexture(&texture);
+            HgiTextureDesc desc;
+            desc.debugName = name;
+            desc.type = HgiTextureType2D;
+            desc.dimensions = GfVec3i(size[0], size[1], 1);
+            desc.layerCount = 1;
+            desc.mipLevels = 1;
+            desc.sampleCount = HgiSampleCount1;
+            desc.format = HgiFormatInt32;
+            desc.usage = HgiTextureUsageBitsShaderRead;
+            desc.pixelsByteSize = texels.size() * sizeof(int32_t);
+            desc.initialData = texels.data();
+            texture = hgi->CreateTexture(desc);
+            return static_cast<bool>(texture);
+        }
+        HgiTextureCpuToGpuOp upload;
+        upload.cpuSourceBuffer = texels.data();
+        upload.bufferByteSize = texels.size() * sizeof(int32_t);
+        upload.gpuDestinationTexture = texture;
+        HgiBlitCmdsUniquePtr blit = hgi->CreateBlitCmds();
+        blit->CopyTextureCpuToGpu(upload);
+        hgi->SubmitCmds(blit.get());
+        return true;
+    }
+
     bool ensureSelectedInstanceMask(const std::vector<std::pair<int32_t, int32_t>>& pairs,
-                                    const std::vector<std::pair<int32_t, int32_t>>& leadPairs)
+                                    const std::vector<std::pair<int32_t, int32_t>>& leadPairs, int minimumPairs = 0)
     {
         if (!hgi)
             return false;
-        if (selectedInstanceMask && selectedInstancePairs == pairs && selectedLeadInstancePairs == leadPairs)
+        const size_t capacity = static_cast<size_t>(selectedInstanceMaskSize[0]) * selectedInstanceMaskSize[1];
+        const size_t required = std::max(size_t(1), std::max(pairs.size(), static_cast<size_t>(minimumPairs))) * 3;
+        if (selectedInstanceMask && capacity >= required && selectedInstancePairs == pairs
+            && selectedLeadInstancePairs == leadPairs)
             return true;
 
-        destroySelectedInstanceMask();
-
-        // Store sparse (rprim ID, Hydra instance ID, role) selections as
-        // adjacent texels. Role 2 marks the lead; role 1 marks other selected
-        // objects. Pack triples across rows to stay within the texture limit.
-        std::vector<int32_t> texels;
-        if (pairs.empty())
-            texels = { 0, 0, 0 };
-        else {
-            texels.reserve(pairs.size() * 3);
-            for (const auto& pair : pairs) {
-                texels.push_back(pair.first);
-                texels.push_back(pair.second);
-                const int32_t role = std::binary_search(leadPairs.begin(), leadPairs.end(), pair) ? 2 : 1;
-                texels.push_back(role);
-            }
+        // Keep capacity across deselection. Pad the final row so the upload
+        // always covers the entire texture, including multi-row pair tables.
+        const size_t count = std::max(capacity, required);
+        const int width = static_cast<int>(std::min(size_t(4096), count));
+        const int height = static_cast<int>((count + width - 1) / width);
+        const GfVec2i size(width, height);
+        std::vector<int32_t> texels(static_cast<size_t>(width) * height, 0);
+        for (size_t i = 0; i < pairs.size(); ++i) {
+            texels[i * 3] = pairs[i].first;
+            texels[i * 3 + 1] = pairs[i].second;
+            texels[i * 3 + 2] = std::binary_search(leadPairs.begin(), leadPairs.end(), pairs[i]) ? 2 : 1;
         }
-
-        HgiTextureDesc desc;
-        desc.debugName = "Stageviz Selected Instance Pairs";
-        desc.type = HgiTextureType2D;
-        constexpr int kInstanceMaskWidth = 4096;
-        const int width = std::min(kInstanceMaskWidth, static_cast<int>(texels.size()));
-        const int height = std::max(1, static_cast<int>((texels.size() + width - 1) / width));
-        selectedInstanceMaskSize = GfVec2i(width, height);
-        desc.dimensions = GfVec3i(width, height, 1);
-        desc.layerCount = 1;
-        desc.mipLevels = 1;
-        desc.sampleCount = HgiSampleCount1;
-        desc.format = HgiFormatInt32;
-        desc.usage = HgiTextureUsageBitsShaderRead;
-        desc.pixelsByteSize = texels.size() * sizeof(int32_t);
-        desc.initialData = texels.data();
-        selectedInstanceMask = hgi->CreateTexture(desc);
-        if (!selectedInstanceMask) {
+        if (!uploadMask(selectedInstanceMask, size, texels, "Stageviz Selected Instance Pairs")) {
             destroySelectedInstanceMask();
             return false;
         }
-
+        selectedInstanceMaskSize = size;
         selectedInstancePairs = pairs;
         selectedLeadInstancePairs = leadPairs;
         selectedInstancePairCount = static_cast<int>(pairs.size());
@@ -356,78 +373,34 @@ public:
         return true;
     }
 
-    bool ensureSelectedMask(const std::vector<int32_t>& ids, const std::vector<int32_t>& leadIds)
+    bool ensureSelectedMask(const std::vector<int32_t>& ids, const std::vector<int32_t>& leadIds,
+                            int minimumCapacity = 0)
     {
         if (!hgi)
             return false;
-
-        if (selectedIdMask && selectedIds == ids && selectedLeadIds == leadIds)
+        if (selectedIdMask && selectedMaskCapacity >= minimumCapacity && selectedIds == ids
+            && selectedLeadIds == leadIds)
             return true;
 
-        destroySelectedMask();
-
-        // Instance-only selections still need a valid empty prim-ID texture.
-        if (ids.empty()) {
-            const int32_t zero = 0;
-            HgiTextureDesc desc;
-            desc.debugName = "Stageviz Selected PrimId Mask";
-            desc.type = HgiTextureType2D;
-            desc.dimensions = GfVec3i(1, 1, 1);
-            desc.layerCount = 1;
-            desc.mipLevels = 1;
-            desc.sampleCount = HgiSampleCount1;
-            desc.format = HgiFormatInt32;
-            desc.usage = HgiTextureUsageBitsShaderRead;
-            desc.pixelsByteSize = sizeof(zero);
-            desc.initialData = &zero;
-            selectedIdMask = hgi->CreateTexture(desc);
-            selectedMaskSize = GfVec2i(1);
-            selectedMaskCapacity = 0;
-            selectedIds.clear();
-            selectedLeadIds = leadIds;
-            return static_cast<bool>(selectedIdMask);
-        }
-
-        const int32_t maxId = *std::max_element(ids.begin(), ids.end());
-        if (maxId < 0)
-            return false;
-
-        selectedMaskCapacity = maxId + 1;
-        constexpr int kMaskWidth = 4096;
-        const int width = std::min(kMaskWidth, selectedMaskCapacity);
-        const int height = (selectedMaskCapacity + width - 1) / width;
-        selectedMaskSize = GfVec2i(width, std::max(1, height));
-
-        std::vector<int32_t> mask(static_cast<size_t>(selectedMaskSize[0]) * selectedMaskSize[1], 0);
-        for (const int32_t id : ids) {
-            if (id >= 0 && id < selectedMaskCapacity)
+        const int maxId = ids.empty() ? -1 : *std::max_element(ids.begin(), ids.end());
+        const int capacity = std::max({ 1, selectedMaskCapacity, minimumCapacity, maxId + 1 });
+        const int width = std::min(4096, capacity);
+        const GfVec2i size(width, (capacity + width - 1) / width);
+        std::vector<int32_t> mask(static_cast<size_t>(size[0]) * size[1], 0);
+        for (int32_t id : ids) {
+            if (id >= 0 && id < capacity)
                 mask[static_cast<size_t>(id)] = std::binary_search(leadIds.begin(), leadIds.end(), id) ? 2 : 1;
         }
-
-        HgiTextureDesc desc;
-        desc.debugName = "Stageviz Selected PrimId Mask";
-        desc.type = HgiTextureType2D;
-        desc.dimensions = GfVec3i(selectedMaskSize[0], selectedMaskSize[1], 1);
-        desc.layerCount = 1;
-        desc.mipLevels = 1;
-        desc.sampleCount = HgiSampleCount1;
-        desc.format = HgiFormatInt32;
-        desc.usage = HgiTextureUsageBitsShaderRead;
-        desc.pixelsByteSize = mask.size() * sizeof(int32_t);
-        desc.initialData = mask.data();
-
-        selectedIdMask = hgi->CreateTexture(desc);
-        if (!selectedIdMask) {
+        if (!uploadMask(selectedIdMask, size, mask, "Stageviz Selected PrimId Mask")) {
             destroySelectedMask();
             return false;
         }
-
+        selectedMaskCapacity = capacity;
+        selectedMaskSize = size;
         selectedIds = ids;
         selectedLeadIds = leadIds;
         return true;
     }
-
-
 
     bool ensureAoPrograms(const TfToken& path, HgiFormat colorFormat, HgiFormat depthFormat)
     {
@@ -459,6 +432,7 @@ public:
         if (selectionShaderPath == path && selectionColorFormat == colorFormat && this->sceneIdFormat == sceneIdFormat)
             return true;
 
+        PerfScope scope("selection.composite.create");
         HgiShaderFunctionDesc selectionProgram = selectionDesc(colorFormat, sceneIdFormat);
         selection.SetProgram(path, TfToken("Render::Selection::Outline"), selectionProgram);
 
@@ -490,7 +464,6 @@ public:
     std::vector<std::pair<int32_t, int32_t>> selectedInstancePairs;
     std::vector<std::pair<int32_t, int32_t>> selectedLeadInstancePairs;
 
-
     TfToken aoShaderPath;
     HgiFormat aoColorFormat = HgiFormatInvalid;
     HgiFormat aoDepthFormat = HgiFormatInvalid;
@@ -502,8 +475,9 @@ public:
 
 class RenderTask::SceneIdPass {
 public:
-    explicit SceneIdPass(HdRenderIndex* renderIndex)
+    explicit SceneIdPass(HdRenderIndex* renderIndex, bool selectionOnly = false)
         : m_renderIndex(renderIndex)
+        , m_selectionOnly(selectionOnly)
     {}
 
     ~SceneIdPass() { cleanup(); }
@@ -546,6 +520,113 @@ public:
 
     HgiTextureHandle instanceIdTexture() const { return textureHandle(1); }
     HgiTextureHandle elementIdTexture() const { return textureHandle(2); }
+
+    int idCapacity()
+    {
+        refreshRprimPathCache();
+        return m_rprimIdCapacity;
+    }
+
+    bool needsWarmup(const SceneIdSettings& settings) const
+    {
+        return !m_warmupValid || m_warmupIndexVersion != m_renderIndex->GetChangeTracker().GetRprimIndexVersion()
+               || m_warmupSettings.size != settings.size || m_warmupSettings.roots != settings.roots
+               || m_warmupSettings.reprSelector != settings.reprSelector
+               || m_warmupSettings.renderTags != settings.renderTags
+               || m_warmupSettings.cullStyle != settings.cullStyle;
+    }
+
+    void finishWarmup()
+    {
+        m_warmupSettings = m_settings;
+        m_warmupIndexVersion = m_renderIndex->GetChangeTracker().GetRprimIndexVersion();
+        m_warmupValid = true;
+    }
+
+    bool syncSelection(const SceneIdSettings& settings, SceneIdPass& scene, const std::vector<int32_t>& ids,
+                       const std::vector<std::pair<int32_t, int32_t>>& instances, bool warmup)
+    {
+        const unsigned version = m_renderIndex->GetChangeTracker().GetRprimIndexVersion();
+        const bool changed = !m_passSelectionValid || ids != m_passSelectedIds || instances != m_passSelectedInstances
+                             || version != m_passIndexVersion;
+        if (changed) {
+            m_passEntries = instances;
+            for (int32_t id : ids)
+                m_passEntries.emplace_back(id, -1);
+            std::sort(m_passEntries.begin(), m_passEntries.end());
+            m_passEntries.erase(std::unique(m_passEntries.begin(), m_passEntries.end()), m_passEntries.end());
+            scene.refreshRprimPathCache();
+            m_passRoots.clear();
+            for (const auto& entry : m_passEntries) {
+                const auto found = scene.m_rprimPathsById.find(entry.first);
+                if (found != scene.m_rprimPathsById.end()
+                    && (m_passRoots.empty() || m_passRoots.back() != found->second))
+                    m_passRoots.push_back(found->second);
+            }
+            SdfPath::RemoveDescendentPaths(&m_passRoots);
+            m_passSelectedIds = ids;
+            m_passSelectedInstances = instances;
+            m_passIndexVersion = version;
+            m_passSelectionValid = true;
+        }
+        SceneIdSettings selectedSettings = settings;
+        selectedSettings.roots = warmup ? settings.roots : m_passRoots;
+        selectedSettings.enabled = settings.enabled && (warmup || !m_passRoots.empty());
+        const bool unfiltered = instances.empty() && !warmup;
+        static const TfToken selectionShaderPath(
+            renderresources::path(QStringLiteral("SelectionId.glslfx")).toStdString());
+        if (!sync(selectedSettings, selectionShaderPath))
+            return false;
+        if (scene.m_aovBindings.size() < 6)
+            return false;
+        // Only the scene pass owns depth. Load it without clearing or writing
+        // it: selected fragments at equal depth remain visible regardless of
+        // which coincident object won the scene ID pass.
+        HdRenderPassAovBinding depth = scene.m_aovBindings[5];
+        depth.clearValue = VtValue();
+        if (m_aovBindings.size() == 5)
+            m_aovBindings.push_back(depth);
+        else if (m_aovBindings.size() == 6)
+            m_aovBindings[5] = depth;
+        if (m_renderPassState) {
+            auto registry = std::static_pointer_cast<HdStResourceRegistry>(m_renderIndex->GetResourceRegistry());
+            static const TfToken membership("stagevizSelection");
+            // A dedicated buffer keeps indices independent of aggregation offsets.
+            // Membership updates do not create shader variants.
+            const bool initialize = !m_membershipRange;
+            if (initialize) {
+                PerfScope scope("selection.membership.create");
+                HdBufferSpecVector specs { HdBufferSpec(membership, HdTupleType { HdTypeInt32, 1 }) };
+                m_membershipRange
+                    = registry->AllocateSingleBufferArrayRange(HdTokens->drawingShader, specs,
+                                                               HdBufferArrayUsageHintBitsStorage
+                                                                   | HdBufferArrayUsageHintBitsSizeVarying);
+            }
+            if (initialize || unfiltered != m_membershipUnfiltered
+                || (!unfiltered && m_membershipEntries != m_passEntries)) {
+                const size_t required = unfiltered ? 1 : 1 + m_passEntries.size() * 2;
+                m_membershipCapacity = std::max(
+                    { m_membershipCapacity, required,
+                      size_t(1) + 2 * static_cast<size_t>(std::max(256, scene.idCapacity())) });
+                VtIntArray values(m_membershipCapacity, 0);
+                values[0] = unfiltered ? -1 : static_cast<int>(m_passEntries.size());
+                for (size_t i = 0; !unfiltered && i < m_passEntries.size(); ++i) {
+                    values[1 + i * 2] = m_passEntries[i].first;
+                    values[2 + i * 2] = m_passEntries[i].second;
+                }
+                registry->AddSource(m_membershipRange, std::make_shared<HdVtBufferSource>(membership, VtValue(values)));
+                m_membershipEntries = m_passEntries;
+                m_membershipUnfiltered = unfiltered;
+            }
+            auto* state = static_cast<HdStRenderPassState*>(m_renderPassState.get());
+            if (!m_membershipBound) {
+                state->GetRenderPassShader()->AddBufferBinding(
+                    HdStBindingRequest(HdStBinding::SSBO, membership, m_membershipRange, false));
+                m_membershipBound = true;
+            }
+        }
+        return true;
+    }
 
     // A picking-only collection: exclude previously picked rprims without
     // touching USD visibility, scene indices, or the regular outline ID image.
@@ -599,7 +680,6 @@ public:
         m_collectionValid = false;
         return result;
     }
-
 
     int32_t elementIdAt(const GfVec2i& pixel)
     {
@@ -810,8 +890,6 @@ public:
             *selectedInstances = cachedInstancePairs;
         return cachedIds;
     }
-
-
 
     SdfPathVector captureVisiblePaths(const std::vector<GfMatrix4d>& captureProjectionMatrices,
                                       bool includeViewportPass)
@@ -1028,6 +1106,7 @@ private:
             return;
 
         m_rprimPathsById.clear();
+        m_rprimIdCapacity = 0;
         const SdfPathVector& rprimIds = m_renderIndex->GetRprimIds();
         m_rprimPathsById.reserve(rprimIds.size());
         for (const SdfPath& path : rprimIds) {
@@ -1036,8 +1115,10 @@ private:
                 continue;
 
             const int32_t id = rprim->GetPrimId();
-            if (id >= 0)
+            if (id >= 0) {
                 m_rprimPathsById.emplace(id, path);
+                m_rprimIdCapacity = std::max(m_rprimIdCapacity, id + 1);
+            }
         }
 
         m_rprimPathCacheVersion = version;
@@ -1066,6 +1147,7 @@ private:
 
     bool createBuffers(const GfVec2i& size)
     {
+        PerfScope scope(m_selectionOnly ? "selection.buffers.create" : "selection.scene_buffers.create");
         auto registry = std::static_pointer_cast<HdStResourceRegistry>(m_renderIndex->GetResourceRegistry());
         if (!registry)
             return false;
@@ -1081,6 +1163,8 @@ private:
         const char* names[] = { "primId", "instanceId", "elementId", "edgeId", "pointId", "depth" };
 
         for (size_t i = 0; i < 6; ++i) {
+            if (m_selectionOnly && i == 5)
+                continue;
             HdAovDescriptor desc = m_renderIndex->GetRenderDelegate()->GetDefaultAovDescriptor(aovs[i]);
 
             // The five picking IDs are signed integer render targets. Be
@@ -1096,7 +1180,8 @@ private:
                 desc.clearValue = VtValue(1.0f);
             }
 
-            const SdfPath id(std::string("/__Stageviz/SceneIds/") + names[i]);
+            const SdfPath id(std::string(m_selectionOnly ? "/__Stageviz/SelectionIds/" : "/__Stageviz/SceneIds/")
+                             + names[i]);
             auto buffer = std::make_unique<HdStRenderBuffer>(registry.get(), id);
             if (!buffer->Allocate(GfVec3i(size[0], size[1], 1), desc.format, false)) {
                 cleanupBuffers();
@@ -1126,7 +1211,9 @@ private:
         }
 
         if (!m_renderPassState || m_sceneIdShaderPath != sceneIdShaderPath) {
+            PerfScope scope(m_selectionOnly ? "selection.pass.create" : "selection.scene_pass.create");
             m_renderPassState = m_renderIndex->GetRenderDelegate()->CreateRenderPassState();
+            m_membershipBound = false;
             auto* state = dynamic_cast<HdStRenderPassState*>(m_renderPassState.get());
             if (!state)
                 return false;
@@ -1145,7 +1232,7 @@ private:
 
         state->SetStencilEnabled(false);
         state->SetEnableDepthTest(true);
-        state->SetEnableDepthMask(true);
+        state->SetEnableDepthMask(!m_selectionOnly);
         state->SetDepthFunc(HdCmpFuncLEqual);
         state->SetAlphaThreshold(0.0001f);
         state->SetAlphaToCoverageEnabled(false);
@@ -1169,11 +1256,14 @@ private:
 
         // Camera changes only require SetCameraFramingState above. Avoid
         // resetting/synchronizing the Hydra collection on every camera frame.
+        const unsigned indexVersion = m_renderIndex->GetChangeTracker().GetRprimIndexVersion();
+        if (m_collectionValid && m_settings.roots == m_collectionRoots && m_settings.reprSelector == m_collectionRepr
+            && indexVersion == m_collectionIndexVersion)
+            return;
         SdfPathVector roots = m_settings.roots;
         if (roots.empty())
             roots.push_back(SdfPath::AbsoluteRootPath());
         SdfPath::RemoveDescendentPaths(&roots);
-        const unsigned indexVersion = m_renderIndex->GetChangeTracker().GetRprimIndexVersion();
         if (!m_collectionValid || roots != m_collectionRoots || m_settings.reprSelector != m_collectionRepr
             || indexVersion != m_collectionIndexVersion) {
             m_renderPass->SetRprimCollection(sceneCollection(roots, m_settings.reprSelector));
@@ -1219,6 +1309,21 @@ private:
     }
 
     HdRenderIndex* m_renderIndex = nullptr;
+    bool m_selectionOnly = false;
+    bool m_passSelectionValid = false;
+    bool m_warmupValid = false;
+    unsigned m_warmupIndexVersion = 0;
+    SceneIdSettings m_warmupSettings;
+    bool m_membershipUnfiltered = false;
+    bool m_membershipBound = false;
+    size_t m_membershipCapacity = 0;
+    HdBufferArrayRangeSharedPtr m_membershipRange;
+    std::vector<std::pair<int32_t, int32_t>> m_membershipEntries;
+    std::vector<std::pair<int32_t, int32_t>> m_passEntries;
+    std::vector<int32_t> m_passSelectedIds;
+    std::vector<std::pair<int32_t, int32_t>> m_passSelectedInstances;
+    SdfPathVector m_passRoots;
+    unsigned m_passIndexVersion = std::numeric_limits<unsigned>::max();
     SceneIdSettings m_settings;
     HdRenderPassSharedPtr m_renderPass;
     HdRenderPassStateSharedPtr m_renderPassState;
@@ -1250,16 +1355,16 @@ private:
     std::vector<std::pair<int32_t, int32_t>> m_leadSelectedInstancePairs;
     unsigned m_leadSelectedRprimIndexVersion = std::numeric_limits<unsigned>::max();
 
-
     std::unordered_map<int32_t, SdfPath> m_rprimPathsById;
+    int m_rprimIdCapacity = 0;
     unsigned m_rprimPathCacheVersion = std::numeric_limits<unsigned>::max();
 };
 
 bool
 RenderTaskParams::enabled() const
 {
-    return ambientOcclusion.enabled || sceneIds.enabled || selectionOutline.enabled || captureGpuPick || captureVisible
-           || captureElementId || captureObjects;
+    return prepareSelection || ambientOcclusion.enabled || sceneIds.enabled || selectionOutline.enabled
+           || captureGpuPick || captureVisible || captureElementId || captureObjects;
 }
 
 bool
@@ -1286,10 +1391,10 @@ operator==(const RenderTaskParams& lhs, const RenderTaskParams& rhs)
            && sa.leadHydraMappingResolved == sb.leadHydraMappingResolved && sa.proxyTargets == sb.proxyTargets
            && sa.leadProxyTargets == sb.leadProxyTargets && sa.color == sb.color
            && sa.secondaryColor == sb.secondaryColor && sa.radius == sb.radius
-           && lhs.captureObjects == rhs.captureObjects && lhs.captureVisible == rhs.captureVisible
-           && lhs.captureElementId == rhs.captureElementId && lhs.captureElementPixel == rhs.captureElementPixel
-           && lhs.captureGpuPick == rhs.captureGpuPick && lhs.gpuPickPixel == rhs.gpuPickPixel
-           && lhs.gpuPickExcludes == rhs.gpuPickExcludes
+           && lhs.prepareSelection == rhs.prepareSelection && lhs.captureObjects == rhs.captureObjects
+           && lhs.captureVisible == rhs.captureVisible && lhs.captureElementId == rhs.captureElementId
+           && lhs.captureElementPixel == rhs.captureElementPixel && lhs.captureGpuPick == rhs.captureGpuPick
+           && lhs.gpuPickPixel == rhs.gpuPickPixel && lhs.gpuPickExcludes == rhs.gpuPickExcludes
            && lhs.captureProjectionMatrices == rhs.captureProjectionMatrices && lhs.nearClip == rhs.nearClip
            && lhs.farClip == rhs.farClip && lhs.orthographic == rhs.orthographic
            && lhs.projectionMatrix == rhs.projectionMatrix && lhs.shaderPath == rhs.shaderPath
@@ -1380,6 +1485,7 @@ RenderTask::_Sync(HdSceneDelegate* delegate, HdTaskContext* ctx, HdDirtyBits* di
 
             if (m_sceneIdPass && !m_sceneIdPass->sync(m_params.sceneIds, m_params.sceneIdShaderPath)) {
                 m_params.sceneIds.enabled = false;
+                m_params.prepareSelection = false;
                 m_params.selectionOutline.enabled = false;
                 m_params.captureVisible = false;
                 m_params.captureElementId = false;
@@ -1400,14 +1506,25 @@ RenderTask::Prepare(HdTaskContext* ctx, HdRenderIndex* renderIndex)
     if (!m_params.enabled())
         return;
 
-    if ((m_params.ambientOcclusion.enabled || m_params.selectionOutline.enabled) && !m_shader) {
+    if ((m_params.prepareSelection || m_params.ambientOcclusion.enabled || m_params.selectionOutline.enabled)
+        && !m_shader) {
         if (Hgi* hgi = _GetHgi())
             m_shader = std::make_unique<Shader>(hgi);
     }
 
-    if (m_sceneIdPass)
+    m_selectionUsesSceneIds = false;
+    m_selectionWarmup = false;
+    if (m_params.prepareSelection && m_params.sceneIds.enabled && m_shader) {
+        if (!m_selectionIdPass)
+            m_selectionIdPass = std::make_unique<SceneIdPass>(renderIndex, true);
+        m_selectionWarmup = m_selectionIdPass->needsWarmup(m_params.sceneIds);
+    }
+    // Retain resources while idle, without uploading pass state or drawing IDs.
+    if (m_sceneIdPass
+        && (m_selectionWarmup || m_params.selectionOutline.enabled || m_params.captureVisible || m_params.captureGpuPick
+            || m_params.captureElementId || m_params.captureObjects))
         m_sceneIdPass->prepare(renderIndex);
-
+    const int maskCapacity = m_params.prepareSelection && m_sceneIdPass ? m_sceneIdPass->idCapacity() : 0;
     if (m_params.selectionOutline.enabled && m_sceneIdPass && m_shader) {
         std::vector<std::pair<int32_t, int32_t>> selectedInstances;
         const std::vector<int32_t>& ids
@@ -1420,12 +1537,30 @@ RenderTask::Prepare(HdTaskContext* ctx, HdRenderIndex* renderIndex)
             m_params.selectionOutline.leadPaths, m_params.selectionOutline.leadDirectPaths,
             m_params.selectionOutline.leadProxyTargets, m_params.selectionOutline.leadHydraRprims,
             m_params.selectionOutline.leadHydraMappingResolved, &leadSelectedInstances, true);
-        m_shader->ensureSelectedMask(ids, leadIds);
-        m_shader->ensureSelectedInstanceMask(selectedInstances, leadSelectedInstances);
+        m_shader->ensureSelectedMask(ids, leadIds, maskCapacity);
+        m_shader->ensureSelectedInstanceMask(selectedInstances, leadSelectedInstances, std::max(256, maskCapacity));
+        // No unselected drawable can erase a selection when every rprim is
+        // fully selected. Reuse the scene IDs for Select All and root selections.
+        m_selectionUsesSceneIds = selectedInstances.empty() && !ids.empty()
+                                  && ids.size() == renderIndex->GetRprimIds().size();
+        if (!m_selectionUsesSceneIds || m_selectionWarmup) {
+            if (!m_selectionIdPass)
+                m_selectionIdPass = std::make_unique<SceneIdPass>(renderIndex, true);
+            if (!m_selectionIdPass->syncSelection(m_params.sceneIds, *m_sceneIdPass, ids, selectedInstances,
+                                                  m_selectionWarmup))
+                m_params.selectionOutline.enabled = false;
+            m_selectionIdPass->prepare(renderIndex);
+        }
     }
     else if (m_shader) {
-        m_shader->ensureSelectedMask({}, {});
-        m_shader->ensureSelectedInstanceMask({}, {});
+        m_shader->ensureSelectedMask({}, {}, maskCapacity);
+        m_shader->ensureSelectedInstanceMask({}, {}, std::max(256, maskCapacity));
+        if (m_selectionWarmup && m_sceneIdPass) {
+            if (m_selectionIdPass->syncSelection(m_params.sceneIds, *m_sceneIdPass, {}, {}, true))
+                m_selectionIdPass->prepare(renderIndex);
+            else
+                m_selectionWarmup = false;
+        }
     }
 }
 
@@ -1435,14 +1570,29 @@ RenderTask::Execute(HdTaskContext* ctx)
     if (!ctx || !m_params.enabled())
         return;
 
+    std::unique_ptr<PerfScope> warmupScope;
+    if (m_selectionWarmup)
+        warmupScope = std::make_unique<PerfScope>("selection.warmup");
+
     HgiTextureHandle scenePrimId;
     HgiTextureHandle sceneInstanceId;
-    const bool needsViewportSceneIds = m_params.selectionOutline.enabled || m_params.captureElementId
-                                       || m_params.captureObjects
+    HgiTextureHandle selectedPrimId;
+    HgiTextureHandle selectedInstanceId;
+    const bool needsViewportSceneIds = m_selectionWarmup || m_params.selectionOutline.enabled
+                                       || m_params.captureElementId || m_params.captureObjects
                                        || (m_params.captureVisible && m_params.captureProjectionMatrices.empty());
     if (m_params.sceneIds.enabled && m_sceneIdPass && needsViewportSceneIds) {
         scenePrimId = m_sceneIdPass->execute();
         sceneInstanceId = m_sceneIdPass->instanceIdTexture();
+    }
+    if (((m_params.selectionOutline.enabled && !m_selectionUsesSceneIds) || m_selectionWarmup) && m_selectionIdPass) {
+        selectedPrimId = m_selectionIdPass->execute();
+        selectedInstanceId = m_selectionIdPass->instanceIdTexture();
+    }
+
+    if (m_selectionUsesSceneIds) {
+        selectedPrimId = scenePrimId;
+        selectedInstanceId = sceneInstanceId;
     }
 
     if (m_params.captureElementId && m_sceneIdPass && scenePrimId)
@@ -1530,8 +1680,9 @@ RenderTask::Execute(HdTaskContext* ctx)
         }
     }
 
-    if (m_params.selectionOutline.enabled && m_shader && scenePrimId && sceneInstanceId && m_shader->selectedIdMask
-        && m_shader->selectedInstanceMask && !m_params.shaderPath.IsEmpty()) {
+    if ((m_params.selectionOutline.enabled || m_selectionWarmup) && m_shader && selectedPrimId && selectedInstanceId
+        && scenePrimId && m_shader->selectedIdMask && m_shader->selectedInstanceMask
+        && !m_params.shaderPath.IsEmpty()) {
         HgiTextureHandle inputColor;
         if (_GetTaskContextData(ctx, HdAovTokens->color, &inputColor) && inputColor) {
             const HgiTextureDesc& colorDesc = inputColor->GetDescriptor();
@@ -1554,10 +1705,12 @@ RenderTask::Execute(HdTaskContext* ctx)
                     constants.selectedInstancePairCount = m_shader->selectedInstancePairCount;
                     constants.radius = static_cast<int>(
                         std::clamp(m_params.selectionOutline.radius, 1u, kMaxSelectionRadius));
-                    m_shader->selection.BindTextures({ inputColor, scenePrimId, sceneInstanceId,
+                    m_shader->selection.BindTextures({ inputColor, selectedPrimId, selectedInstanceId,
                                                        m_shader->selectedIdMask, m_shader->selectedInstanceMask });
                     m_shader->selection.SetShaderConstants(sizeof(constants), &constants);
                     m_shader->selection.Draw(outputColor, HgiTextureHandle());
+                    if (m_selectionWarmup)
+                        m_selectionIdPass->finishWarmup();
                 }
                 else {
                     _ToggleRenderTarget(ctx);
