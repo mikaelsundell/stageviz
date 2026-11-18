@@ -1271,6 +1271,7 @@ public:
     bool interactiveNavigation = false;
     QColor selectionColor = ui()->color(UI::ColorRole::Selection);
     QColor secondarySelectionColor = ui()->color(UI::ColorRole::SelectionAlt);
+    bool linearColorCapture = false;
     bool captureVisibleRequested = false;
     bool captureObjectsRequested = false;
     ViewportObjectIds capturedObjects;
@@ -1753,6 +1754,8 @@ RenderEngine::Private::render()
             renderPaths.push_back(path);
     }
     RenderTaskParams renderTaskParams;
+    renderTaskParams.applyColorManagement = !linearColorCapture && settings.aov == HdAovTokens->color;
+    renderTaskParams.colorManagement = settings.colorManagement;
     renderTaskParams.ambientOcclusion = settings.ambientOcclusion;
     renderTaskParams.ambientOcclusion.enabled = settings.ambientOcclusion.enabled && !interactiveNavigation
                                                 && settings.aov == HdAovTokens->color
@@ -2159,10 +2162,7 @@ RenderEngine::renderToCurrentFramebuffer()
 
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-    if (!p->engine->IsColorCorrectionCapable())
-        glEnable(GL_FRAMEBUFFER_SRGB);
-    else
-        glDisable(GL_FRAMEBUFFER_SRGB);
+    glDisable(GL_FRAMEBUFFER_SRGB);
 
 #ifdef WIN32
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
@@ -2355,6 +2355,18 @@ RenderEngine::pickNextIdAt(const GfVec2i& pixel, const QList<SdfPath>& excludedP
 QImage
 RenderEngine::renderImage()
 {
+    return renderImageInternal(false);
+}
+
+QImage
+RenderEngine::renderLinearImage()
+{
+    return renderImageInternal(true);
+}
+
+QImage
+RenderEngine::renderImageInternal(bool linear)
+{
     if (p->contextMode != ContextMode::Offscreen)
         return {};
 
@@ -2368,7 +2380,9 @@ RenderEngine::renderImage()
 
     QOpenGLFramebufferObjectFormat format;
     format.setAttachment(QOpenGLFramebufferObject::CombinedDepthStencil);
-    format.setSamples(4);
+    format.setSamples(linear ? 0 : 4);
+    if (linear)
+        format.setInternalTextureFormat(GL_RGBA32F);
 
     QOpenGLFramebufferObject framebuffer(p->size[0], p->size[1], format);
 
@@ -2378,9 +2392,24 @@ RenderEngine::renderImage()
     if (!framebuffer.bind())
         return {};
 
+    const bool previousCapture = p->linearColorCapture;
+    p->linearColorCapture = linear;
+    auto restoreCapture = qScopeGuard([&]() { p->linearColorCapture = previousCapture; });
     const bool rendered = renderToCurrentFramebuffer();
 
-    const QImage image = rendered ? framebuffer.toImage() : QImage();
+    QImage image;
+    if (rendered && linear && framebuffer.bind()) {
+        image = QImage(p->size[0], p->size[1], QImage::Format_RGBA32FPx4_Premultiplied);
+        if (!image.isNull()) {
+            auto* functions = QOpenGLContext::currentContext()->functions();
+            functions->glPixelStorei(GL_PACK_ALIGNMENT, 4);
+            functions->glReadPixels(0, 0, p->size[0], p->size[1], GL_RGBA, GL_FLOAT, image.bits());
+            image = image.flipped(Qt::Vertical);
+        }
+    }
+    else if (rendered && !linear) {
+        image = framebuffer.toImage();
+    }
 
     framebuffer.release();
     return image;

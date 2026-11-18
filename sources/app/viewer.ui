@@ -797,6 +797,40 @@
      <addaction name="displayRenderShaded"/>
      <addaction name="displayRenderWireframe"/>
     </widget>
+    <widget class="QMenu" name="displayColor">
+     <property name="title"><string>Color</string></property>
+     <widget class="QMenu" name="displayExposure">
+      <property name="title"><string>Exposure</string></property>
+           <addaction name="colorExposurePlus3"/>
+      <addaction name="colorExposurePlus2"/>
+      <addaction name="colorExposurePlus1"/>
+      <addaction name="separator"/>
+      <addaction name="colorExposureZero"/>
+      <addaction name="separator"/>
+      <addaction name="colorExposureMinus1"/>
+      <addaction name="colorExposureMinus2"/>
+      <addaction name="colorExposureMinus3"/>
+     </widget>
+     <widget class="QMenu" name="displayGamma">
+      <property name="title"><string>Gamma</string></property>
+           <addaction name="colorGamma20"/>
+      <addaction name="colorGamma15"/>
+      <addaction name="colorGamma12"/>
+      <addaction name="separator"/>
+      <addaction name="colorGamma10"/>
+      <addaction name="separator"/>
+      <addaction name="colorGamma08"/>
+      <addaction name="colorGamma06"/>
+      <addaction name="colorGamma05"/>
+     </widget>
+     <widget class="QMenu" name="displayColorView">
+      <property name="title"><string>View</string></property>
+     </widget>
+     <addaction name="displayExposure"/>
+     <addaction name="displayGamma"/>
+     <addaction name="separator"/>
+     <addaction name="displayColorView"/>
+    </widget>
     <widget class="QMenu" name="displayComplexity">
      <property name="title">
       <string>Complexity</string>
@@ -818,6 +852,8 @@
     <addaction name="displayIsolate"/>
     <addaction name="separator"/>
     <addaction name="displayRender"/>
+    <addaction name="separator"/>
+    <addaction name="displayColor"/>
     <addaction name="separator"/>
     <addaction name="displayComplexity"/>
     <addaction name="separator"/>
@@ -1090,6 +1126,76 @@
    <addaction name="menuView"/>
    <addaction name="menuHelp"/>
   </widget>
+  <action name="colorExposurePlus3">
+   <property name="checkable"><bool>true</bool></property>
+   <property name="text"><string>+3</string></property>
+   <property name="toolTip"><string>Set viewport exposure to +3 stops.</string></property>
+  </action>
+  <action name="colorExposurePlus2">
+   <property name="checkable"><bool>true</bool></property>
+   <property name="text"><string>+2</string></property>
+   <property name="toolTip"><string>Set viewport exposure to +2 stops.</string></property>
+  </action>
+  <action name="colorExposurePlus1">
+   <property name="checkable"><bool>true</bool></property>
+   <property name="text"><string>+1</string></property>
+   <property name="toolTip"><string>Set viewport exposure to +1 stops.</string></property>
+  </action>
+  <action name="colorExposureZero">
+   <property name="checkable"><bool>true</bool></property>
+   <property name="text"><string>0</string></property>
+   <property name="toolTip"><string>Set viewport exposure to 0 stops.</string></property>
+  </action>
+  <action name="colorExposureMinus1">
+   <property name="checkable"><bool>true</bool></property>
+   <property name="text"><string>-1</string></property>
+   <property name="toolTip"><string>Set viewport exposure to -1 stops.</string></property>
+  </action>
+  <action name="colorExposureMinus2">
+   <property name="checkable"><bool>true</bool></property>
+   <property name="text"><string>-2</string></property>
+   <property name="toolTip"><string>Set viewport exposure to -2 stops.</string></property>
+  </action>
+  <action name="colorExposureMinus3">
+   <property name="checkable"><bool>true</bool></property>
+   <property name="text"><string>-3</string></property>
+   <property name="toolTip"><string>Set viewport exposure to -3 stops.</string></property>
+  </action>
+  <action name="colorGamma20">
+   <property name="checkable"><bool>true</bool></property>
+   <property name="text"><string>2.0</string></property>
+   <property name="toolTip"><string>Set additional viewing gamma to 2.0. Neutral is 1.0.</string></property>
+  </action>
+  <action name="colorGamma15">
+   <property name="checkable"><bool>true</bool></property>
+   <property name="text"><string>1.5</string></property>
+   <property name="toolTip"><string>Set additional viewing gamma to 1.5. Neutral is 1.0.</string></property>
+  </action>
+  <action name="colorGamma12">
+   <property name="checkable"><bool>true</bool></property>
+   <property name="text"><string>1.2</string></property>
+   <property name="toolTip"><string>Set additional viewing gamma to 1.2. Neutral is 1.0.</string></property>
+  </action>
+  <action name="colorGamma10">
+   <property name="checkable"><bool>true</bool></property>
+   <property name="text"><string>1.0</string></property>
+   <property name="toolTip"><string>Set additional viewing gamma to 1.0. Neutral is 1.0.</string></property>
+  </action>
+  <action name="colorGamma08">
+   <property name="checkable"><bool>true</bool></property>
+   <property name="text"><string>0.8</string></property>
+   <property name="toolTip"><string>Set additional viewing gamma to 0.8. Neutral is 1.0.</string></property>
+  </action>
+  <action name="colorGamma06">
+   <property name="checkable"><bool>true</bool></property>
+   <property name="text"><string>0.6</string></property>
+   <property name="toolTip"><string>Set additional viewing gamma to 0.6. Neutral is 1.0.</string></property>
+  </action>
+  <action name="colorGamma05">
+   <property name="checkable"><bool>true</bool></property>
+   <property name="text"><string>0.5</string></property>
+   <property name="toolTip"><string>Set additional viewing gamma to 0.5. Neutral is 1.0.</string></property>
+  </action>
   <action name="displayFrameAll">
    <property name="text">
     <string>Frame all</string>

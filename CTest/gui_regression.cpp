@@ -4,6 +4,7 @@
 #include "application.h"
 #include "bboxutils.h"
 #include "changesdialog.h"
+#include "colormanagement.h"
 #include "commandlayer.h"
 #include "commandlight.h"
 #include "commandmaterial.h"
@@ -54,6 +55,7 @@
 #include "viewporttransform.h"
 #include "viewportwidget.h"
 #include "viewstate.h"
+#include <OpenColorIO/OpenColorIO.h>
 #include <QApplication>
 #include <QColor>
 #include <QComboBox>
@@ -116,6 +118,9 @@
 #include <pxr/base/gf/vec3d.h>
 #include <pxr/base/gf/vec4f.h>
 #include <pxr/base/tf/errorMark.h>
+#include <pxr/imaging/hgi/blitCmds.h>
+#include <pxr/imaging/hgi/blitCmdsOps.h>
+#include <pxr/imaging/hgiGL/hgi.h>
 #include <pxr/usd/sdf/primSpec.h>
 #include <pxr/usd/sdf/schema.h>
 #include <pxr/usd/usd/payloads.h>
@@ -472,6 +477,94 @@ renderPrimitiveSelectionApi()
                     "direct and parent selection outline the same analytic primitive");
             viewport.reset();
         }
+    }
+    context.doneCurrent();
+}
+
+void
+renderColorManagementApi(bool useOpenGL)
+{
+    namespace OCIO = OCIO_NAMESPACE;
+    QOpenGLContext context;
+    if (useOpenGL) {
+        auto format = context.format();
+        format.setVersion(4, 5);
+        format.setProfile(QSurfaceFormat::CoreProfile);
+        context.setFormat(format);
+    }
+    require(context.create(), "create color transform context");
+    QOffscreenSurface surface;
+    surface.setFormat(context.format());
+    surface.create();
+    require(surface.isValid() && context.makeCurrent(&surface), "activate color transform context");
+    {
+        HgiUniquePtr hgi = useOpenGL ? HgiUniquePtr(new HgiGL()) : Hgi::CreatePlatformDefaultHgi();
+        require(bool(hgi), "create color transform Hgi");
+        hgi->StartFrame();
+        // Include negatives, HDR values, alpha coverage and a neutral gray.
+        const std::vector<float> pixels { .18f, .18f, .18f, 1, 0,     0,   0,   1, 1,    1,     1,   1,
+                                          4,    .5f,  .02f, 1, -.01f, .1f, .5f, 1, .09f, .045f, .2f, .5f };
+        HgiTextureDesc desc;
+        desc.debugName = "Color regression input";
+        desc.dimensions = GfVec3i(6, 1, 1);
+        desc.format = HgiFormatFloat32Vec4;
+        desc.usage = HgiTextureUsageBitsShaderRead | HgiTextureUsageBitsColorTarget;
+        desc.pixelsByteSize = pixels.size() * sizeof(float);
+        desc.initialData = pixels.data();
+        auto input = hgi->CreateTexture(desc);
+        desc.initialData = nullptr;
+        auto output = hgi->CreateTexture(desc);
+        require(bool(input) && bool(output), "allocate color regression textures");
+        {
+            stageviz::ColorTransform transform(hgi.get());
+            const auto config = OCIO::Config::CreateFromBuiltinConfig(
+                stageviz::colorManagementConfig().toUtf8().constData());
+            for (const QString& view : stageviz::colorManagementViews()) {
+                for (const auto& adjustment : { std::pair<float, float>(0, 1), { 1, 1 }, { -1, 1.5f } }) {
+                    stageviz::ColorManagementSettings settings;
+                    settings.view = view;
+                    settings.exposure = adjustment.first;
+                    settings.gamma = adjustment.second;
+                    require(transform.prepare(settings, desc.format), "prepare OCIO GPU processor");
+                    transform.draw(input, output, settings);
+                    std::vector<float> actual(pixels.size(), -99);
+                    HgiTextureGpuToCpuOp read;
+                    read.gpuSourceTexture = output;
+                    read.cpuDestinationBuffer = actual.data();
+                    read.destinationBufferByteSize = actual.size() * sizeof(float);
+                    auto blit = hgi->CreateBlitCmds();
+                    blit->CopyTextureGpuToCpu(read);
+                    hgi->SubmitCmds(blit.get(), HgiSubmitWaitTypeWaitUntilCompleted);
+                    OCIO::ConstCPUProcessorRcPtr cpu;
+                    if (view != "Raw") {
+                        auto display = OCIO::DisplayViewTransform::Create();
+                        display->setSrc("Linear Rec.709 (sRGB)");
+                        display->setDisplay("sRGB - Display");
+                        display->setView(view.toUtf8().constData());
+                        cpu = config->getProcessor(display)->getDefaultCPUProcessor();
+                    }
+                    for (size_t i = 0; i < pixels.size(); i += 4) {
+                        const float alpha = pixels[i + 3];
+                        float expected[4] { pixels[i] / alpha, pixels[i + 1] / alpha, pixels[i + 2] / alpha, alpha };
+                        for (int c = 0; c < 3; ++c)
+                            expected[c] *= std::exp2(settings.exposure);
+                        if (cpu)
+                            cpu->applyRGBA(expected);
+                        for (int c = 0; c < 3; ++c) {
+                            const float value = expected[c];
+                            expected[c] = std::copysign(std::pow(std::abs(value), 1.0f / settings.gamma), value)
+                                          * alpha;
+                            require(std::isfinite(actual[i + c]) && std::abs(actual[i + c] - expected[c]) < .003f,
+                                    "OCIO GPU agrees with CPU reference for SDR/HDR/negative/alpha values");
+                        }
+                        require(std::abs(actual[i + 3] - alpha) < .00001f, "display transform preserves alpha");
+                    }
+                }
+            }
+        }
+        hgi->DestroyTexture(&input);
+        hgi->DestroyTexture(&output);
+        hgi->EndFrame();
     }
     context.doneCurrent();
 }
@@ -1186,6 +1279,111 @@ materialNumericEditorApi()
         drain();
         require(authoredValuesEqual(fixture.typed), "scrub release and editingFinished create one undoable edit");
     }
+}
+
+void
+materialSwatchColorViewApi()
+{
+    auto* state = stageviz::session()->viewState();
+    const QString originalView = state->colorView();
+    const float originalExposure = state->exposure(), originalGamma = state->gamma();
+    state->setColorView(QStringLiteral("Raw"));
+    const auto stage = UsdStage::CreateInMemory();
+    const SdfPath path("/Materials/HDR");
+    const auto material = UsdShadeMaterial::Define(stage, path);
+    auto shader = UsdShadeShader::Define(stage, path.AppendChild(TfToken("Surface")));
+    shader.CreateIdAttr(VtValue(TfToken("UsdPreviewSurface")));
+    shader.CreateInput(TfToken("diffuseColor"), SdfValueTypeNames->Color3f).Set(GfVec3f(0));
+    shader.CreateInput(TfToken("emissiveColor"), SdfValueTypeNames->Color3f).Set(GfVec3f(4, .18f, .02f));
+    material.CreateSurfaceOutput().ConnectToSource(shader.CreateOutput(TfToken("surface"), SdfValueTypeNames->Token));
+    const auto cube = UsdGeomCube::Define(stage, SdfPath("/Cube"));
+    UsdShadeMaterialBindingAPI::Apply(cube.GetPrim()).Bind(material);
+    {
+        stageviz::RenderEngine engine(stageviz::RenderEngine::ContextMode::Offscreen);
+        engine.setStage(stage);
+        engine.setSize(GfVec2i(64));
+        GfCamera camera;
+        GfMatrix4d view(1.);
+        view.SetLookAt(GfVec3d(0, 0, 8), GfVec3d(0), GfVec3d(0, 1, 0));
+        camera.SetTransform(view.GetInverse());
+        camera.SetPerspectiveFromAspectRatioAndFieldOfView(1., 45., GfCamera::FOVVertical);
+        engine.setCamera(camera);
+        const QImage linear = engine.renderLinearImage();
+        require(!linear.isNull() && linear.format() == QImage::Format_RGBA32FPx4_Premultiplied,
+                "linear swatch capture retains floating point RGBA");
+        const auto* center = reinterpret_cast<const float*>(linear.constScanLine(32)) + 32 * 4;
+        require(center[0] > 1.0f && center[3] > .99f, "linear capture preserves HDR values above one");
+        const QImage converted = stageviz::colorManagementImage(linear, QStringLiteral("Un-tone-mapped"));
+        const QImage gpu = engine.renderImage();
+        const QColor a = converted.pixelColor(32, 32), b = gpu.pixelColor(32, 32);
+        require(std::abs(a.red() - b.red()) <= 2 && std::abs(a.green() - b.green()) <= 2
+                    && std::abs(a.blue() - b.blue()) <= 2,
+                "cached linear CPU conversion agrees with direct GPU display output");
+    }
+    const auto renderCount = []() {
+        QFile trace(qEnvironmentVariable("STAGEVIZ_PERF_LOG"));
+        require(trace.open(QIODevice::ReadOnly), "material render trace exists");
+        int count = 0;
+        for (const auto& line : trace.readAll().split('\n'))
+            count += QJsonDocument::fromJson(line).object().value("phase").toString()
+                     == "material.swatch.linear_render";
+        return count;
+    };
+    stageviz::MaterialRenderer renderer;
+    QImage image;
+    QString error;
+    int viewChanges = 0;
+    QObject::connect(&renderer, &stageviz::MaterialRenderer::rendered, &renderer,
+                     [&](const QString&, const QImage& value) { image = value; });
+    QObject::connect(&renderer, &stageviz::MaterialRenderer::error, &renderer,
+                     [&](const QString&, const QString& value) { error = value; });
+    QObject::connect(&renderer, &stageviz::MaterialRenderer::colorViewChanged, &renderer, [&]() { ++viewChanges; });
+    const auto request = [&]() {
+        image = {};
+        renderer.request(path, stage->GetRootLayer());
+        QElapsedTimer timer;
+        timer.start();
+        while (image.isNull() && error.isEmpty() && timer.elapsed() < 60000) {
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 25);
+            QThread::msleep(1);
+        }
+        require(error.isEmpty() && !image.isNull(), "render color-managed material swatch");
+    };
+    request();
+    const QImage raw = image;
+    const int renders = renderCount();
+    require(renders == 1, "one geometry render populates the swatch cache");
+    for (int sweep = 0; sweep < 2; ++sweep) {
+        for (const QString& colorView : state->colorViews()) {
+            state->setColorView(colorView);
+            request();
+            require(renderCount() == renders, "view changes reuse the cached linear shaderball");
+            require(image.pixelColor(0, 0).alpha() == 0, "view changes preserve transparent swatch background");
+            if (colorView == "Raw")
+                require(image == raw, "returning to Raw restores identical pixels without cumulative transforms");
+            if (colorView == "ACES 1.0 - SDR Video")
+                require(image != raw, "tone mapping updates the displayed swatch");
+        }
+    }
+    const int changes = viewChanges;
+    const QImage neutral = image;
+    state->setExposure(3);
+    state->setGamma(2);
+    request();
+    require(viewChanges == changes && image == neutral && renderCount() == renders,
+            "viewport exposure and gamma do not affect material swatches");
+    renderer.invalidate(path);
+    renderer.syncAttribute(shader.GetInput(TfToken("emissiveColor")).GetAttr().GetPath(),
+                           VtValue(GfVec3f(.02f, 4, .18f)));
+    request();
+    require(renderCount() == renders + 1 && image != neutral,
+            "material edits invalidate the linear cache and rerender once");
+    state->setColorView(QStringLiteral("ACES 1.0 - SDR Video"));
+    request();
+    require(renderCount() == renders + 1, "view conversion reuses the newly authored material image");
+    state->setColorView(originalView);
+    state->setExposure(originalExposure);
+    state->setGamma(originalGamma);
 }
 
 void
@@ -4028,7 +4226,8 @@ main(int argc, char** argv)
     std::unique_ptr<QTemporaryDir> selectionTrace;
     if (argc == 2
         && (std::string(argv[1]) == "render_coincident_selection_api"
-            || std::string(argv[1]) == "render_display_mode_warmup_api")) {
+            || std::string(argv[1]) == "render_display_mode_warmup_api"
+            || std::string(argv[1]) == "material_swatch_color_view_api")) {
         selectionTrace = std::make_unique<QTemporaryDir>();
         require(selectionTrace->isValid(), "create selection warmup trace directory");
         qputenv("STAGEVIZ_PERF_LOG", (selectionTrace->path() + "/selection.jsonl").toUtf8());
@@ -4065,6 +4264,8 @@ main(int argc, char** argv)
         { "render_primitive_selection_api", renderPrimitiveSelectionApi },
         { "render_coincident_selection_api", renderCoincidentSelectionApi },
         { "render_display_mode_warmup_api", renderDisplayModeWarmupApi },
+        { "render_color_management_api", []() { renderColorManagementApi(false); } },
+        { "render_color_management_gl_api", []() { renderColorManagementApi(true); } },
         { "renderengine_hdri_api", renderEngineHdriApi },
         { "material_browser_api", materialBrowserApi },
         { "material_browser_display_menu_api", materialBrowserDisplayMenuApi },
@@ -4077,6 +4278,7 @@ main(int argc, char** argv)
         { "property_asset_editor_api", propertyAssetEditorApi },
         { "property_material_light_dropdown_api", propertyMaterialLightDropdownApi },
         { "material_swatch_alpha_api", materialSwatchAlphaApi },
+        { "material_swatch_color_view_api", materialSwatchColorViewApi },
         { "geometry_subset_gui_api", geometrySubsetGuiApi },
         { "outliner_reset_opinions_menu_api", outlinerResetOpinionsMenuApi },
         { "outliner_layer_colors_api", outlinerLayerColorsApi },

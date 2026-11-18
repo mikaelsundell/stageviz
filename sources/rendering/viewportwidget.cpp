@@ -344,6 +344,10 @@ ViewportWidgetPrivate::initContext()
         updateRenderEngineSettings();
         d.glwidget->update();
     });
+    connect(viewState(), &ViewState::colorManagementChanged, this, [this]() {
+        updateRenderEngineSettings();
+        d.glwidget->update();
+    });
     connect(viewState(), &ViewState::ambientOcclusionEnabledChanged, this, [this](bool) {
         updateRenderEngineSettings();
         d.glwidget->update();
@@ -1261,6 +1265,7 @@ ViewportWidgetPrivate::updateRenderEngineSettings()
     // Copy the canonical AO state as one unit so renderer defaults and viewport
     // controls cannot drift apart as new look controls are added.
     settings.ambientOcclusion = state->ambientOcclusionSettings();
+    settings.colorManagement = state->colorManagementSettings();
     settings.defaultAmbient = d.defaultAmbient;
     settings.defaultSpecular = d.defaultSpecular;
     settings.defaultShininess = d.defaultShininess;

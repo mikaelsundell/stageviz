@@ -4,9 +4,13 @@
 
 #include "materialrenderer.h"
 #include "application.h"
+#include "perfscope.h"
 #include "renderengine.h"
 #include "renderresources.h"
+#include "session.h"
+#include "viewstate.h"
 #include <QApplication>
+#include <QCache>
 #include <QColor>
 #include <QDir>
 #include <QFile>
@@ -43,7 +47,7 @@ namespace stageviz {
 
 class MaterialRendererPrivate {
 public:
-    enum class RequestKind { Parameters, Placeholder, MaterialNetwork, InteractiveNetwork };
+    enum class RequestKind { Parameters, Placeholder, MaterialNetwork, InteractiveNetwork, DisplayTransform };
     struct Pending;
     struct RenderContext;
 
@@ -58,6 +62,7 @@ public:
     void processNext();
     void receive(const QString& path, const QImage& image, const QString& error, quint64 serial, RequestKind kind);
     void reset();
+    bool sendCached(const QString& path, const Pending& request);
     void resetContext(RenderContext& context);
 
     bool ensureParameterRenderer(QString& error);
@@ -84,6 +89,7 @@ public:
 public:
     struct Pending {
         RequestKind kind = RequestKind::Parameters;
+        RequestKind fallbackKind = RequestKind::Parameters;
         MaterialParameters parameters;
         SdfLayerRefPtr sourceLayer;
         SdfPath inputPath;
@@ -101,6 +107,13 @@ public:
         GfVec2i size { 0, 0 };
     };
 
+    struct CachedImage {
+        QImage linear;
+        QImage display;
+        QString view;
+        bool reusable = false;
+    };
+
     struct Data {
         QPointer<MaterialRenderer> renderer;
 
@@ -110,7 +123,11 @@ public:
         RenderContext parameterContext;
         RenderContext networkContext;
 
-        QHash<QString, QImage> cache;
+        // QCache promotes requested swatches and evicts least recently used
+        // entries. Costs include both float linear and current display pixels,
+        // in KiB; large stages cannot grow this image cache without bound.
+        QCache<QString, CachedImage> cache { 128 * 1024 };
+        QString colorView;
         QHash<QString, Pending> pending;
         QStringList queue;
         QString activePath;
@@ -375,6 +392,14 @@ MaterialRendererPrivate::init()
     // RenderEngine::ContextMode::Offscreen may create a QOffscreenSurface.
     // Keep all rendering on MaterialRenderer's GUI thread so Windows creates
     // and destroys the platform surface on the correct thread.
+    ViewState* state = session()->viewState();
+    d.colorView = state->colorView();
+    QObject::connect(state, &ViewState::colorManagementChanged, d.renderer, [this, state]() {
+        if (d.colorView == state->colorView())
+            return;
+        d.colorView = state->colorView();
+        Q_EMIT d.renderer->colorViewChanged();
+    });
 }
 
 bool
@@ -570,7 +595,8 @@ MaterialRendererPrivate::renderParameters(const MaterialParameters& parameters, 
 
     // The stage remains attached to the same RenderEngine for the lifetime of
     // this context. USD notices propagate the authored parameter changes to Hydra.
-    QImage image = context.renderEngine->renderImage();
+    PerfScope renderScope("material.swatch.linear_render");
+    QImage image = context.renderEngine->renderLinearImage();
     if (image.isNull())
         error = QStringLiteral("Material preview render failed");
     return image;
@@ -599,7 +625,8 @@ MaterialRendererPrivate::renderNetwork(const SdfPath& materialPath, const SdfLay
         return {};
     }
 
-    QImage image = context.renderEngine->renderImage();
+    PerfScope renderScope("material.swatch.linear_render");
+    QImage image = context.renderEngine->renderLinearImage();
     if (image.isNull())
         error = QStringLiteral("Material network preview render failed");
     return image;
@@ -644,7 +671,8 @@ MaterialRendererPrivate::renderInteractiveNetwork(const SdfPath& materialPath, c
         return {};
     }
 
-    QImage image = context.renderEngine->renderImage();
+    PerfScope renderScope("material.swatch.linear_render");
+    QImage image = context.renderEngine->renderLinearImage();
     attribute = context.stage ? context.stage->GetAttributeAtPath(inputPath) : UsdAttribute();
     if (attribute) {
         UsdEditContext editContext(context.stage, UsdEditTarget(context.networkLayer));
@@ -717,9 +745,29 @@ MaterialRendererPrivate::processNext()
         if (it == d.pending.end())
             continue;
 
-        const Pending request = it.value();
+        Pending request = it.value();
         d.pending.erase(it);
         d.activePath = path;
+        if (request.kind == RequestKind::DisplayTransform) {
+            if (auto* cached = d.cache.object(path)) {
+                if (cached->view != d.colorView) {
+                    cached->display = colorManagementImage(cached->linear, d.colorView);
+                    cached->view = d.colorView;
+                }
+                const QImage display = cached->display;
+                if (!display.isNull())
+                    Q_EMIT d.renderer->rendered(path, display);
+                else
+                    Q_EMIT d.renderer->error(path, QStringLiteral("Material display transform failed"));
+                d.activePath.clear();
+                scheduleNext();
+                return;
+            }
+            // A queued conversion can lose its source to LRU eviction. Keep
+            // the ordinary request as a fallback rather than retaining another
+            // unbudgeted copy of its floating-point image in the queue.
+            request.kind = request.fallbackKind;
+        }
         QString error;
         QImage image;
         if (request.kind == RequestKind::MaterialNetwork)
@@ -737,40 +785,54 @@ MaterialRendererPrivate::processNext()
     }
 }
 
+bool
+MaterialRendererPrivate::sendCached(const QString& path, const Pending& request)
+{
+    auto* cached = d.cache.object(path);
+    if (!cached || (!cached->reusable && cached->view == d.colorView))
+        return false;
+    if (cached->view != d.colorView) {
+        // A display transform can still be expensive in a Debug OCIO build.
+        // Reuse the progressive queue so a menu change never converts every
+        // visible thumbnail inside one event-loop callback.
+        Pending pending = request;
+        pending.fallbackKind = request.kind;
+        pending.kind = RequestKind::DisplayTransform;
+        enqueue(path, pending);
+        return true;
+    }
+    const QImage display = cached->display;
+    if (display.isNull())
+        Q_EMIT d.renderer->error(path, QStringLiteral("Material display transform failed"));
+    else
+        Q_EMIT d.renderer->rendered(path, display);
+    return true;
+}
+
 void
 MaterialRendererPrivate::dispatchParameters(const QString& path, const MaterialParameters& parameters, bool forceRender)
 {
-    if (!forceRender) {
-        const auto cached = d.cache.constFind(path);
-        if (cached != d.cache.cend()) {
-            Q_EMIT d.renderer->rendered(path, cached.value());
-            return;
-        }
-    }
-    else {
+    if (forceRender)
         d.cache.remove(path);
-    }
-
     Pending pending;
     pending.kind = RequestKind::Parameters;
     pending.parameters = parameters;
     pending.serial = ++d.serial;
     pending.forceRender = forceRender;
+    if (!forceRender && sendCached(path, pending))
+        return;
     enqueue(path, pending);
 }
 
 void
 MaterialRendererPrivate::dispatchPlaceholder(const QString& path)
 {
-    if (const auto cached = d.cache.constFind(path); cached != d.cache.cend()) {
-        Q_EMIT d.renderer->rendered(path, cached.value());
-        return;
-    }
-
     Pending pending;
     pending.kind = RequestKind::Placeholder;
     pending.serial = ++d.serial;
     pending.forceRender = true;
+    if (sendCached(path, pending))
+        return;
     enqueue(path, pending);
 }
 
@@ -779,23 +841,15 @@ MaterialRendererPrivate::dispatchNetwork(const QString& path, const SdfLayerRefP
 {
     if (!sourceLayer)
         return;
-
-    if (!forceRender) {
-        const auto cached = d.cache.constFind(path);
-        if (cached != d.cache.cend()) {
-            Q_EMIT d.renderer->rendered(path, cached.value());
-            return;
-        }
-    }
-    else {
+    if (forceRender)
         d.cache.remove(path);
-    }
-
     Pending pending;
     pending.kind = RequestKind::MaterialNetwork;
     pending.sourceLayer = sourceLayer;
     pending.serial = ++d.serial;
     pending.forceRender = forceRender;
+    if (!forceRender && sendCached(path, pending))
+        return;
     enqueue(path, pending);
 }
 
@@ -841,10 +895,19 @@ MaterialRendererPrivate::receive(const QString& path, const QImage& image, const
 
     if (!newerRequestExists) {
         if (!image.isNull()) {
-            // Only authored network renders become reusable browser cache entries.
-            if (kind == RequestKind::MaterialNetwork || kind == RequestKind::Placeholder)
-                d.cache.insert(path, image);
-            Q_EMIT d.renderer->rendered(path, image);
+            CachedImage cached;
+            cached.linear = image;
+            cached.display = colorManagementImage(image, d.colorView);
+            cached.view = d.colorView;
+            // Keep transient previews for view changes without treating their
+            // temporary input values as committed authored-network results.
+            cached.reusable = kind == RequestKind::MaterialNetwork || kind == RequestKind::Placeholder;
+            const qsizetype bytes = cached.linear.sizeInBytes() + cached.display.sizeInBytes();
+            d.cache.insert(path, new CachedImage(cached), int((bytes + 1023) / 1024));
+            if (!cached.display.isNull())
+                Q_EMIT d.renderer->rendered(path, cached.display);
+            else
+                Q_EMIT d.renderer->error(path, QStringLiteral("Material display transform failed"));
         }
         else {
             Q_EMIT d.renderer->error(path, error);

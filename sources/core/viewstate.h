@@ -3,6 +3,7 @@
 // https://github.com/mikaelsundell/stageviz
 #pragma once
 
+#include "colormanagement.h"
 #include "stageviz.h"
 #include <QColor>
 #include <QObject>
@@ -466,7 +467,46 @@ public:
      * @}
      */
 
+
+    /**
+     * @brief Returns viewport exposure in stops.
+     */
+    float exposure() const;
+    /**
+     * @brief Sets finite viewport exposure, clamped to -20 through 20 stops.
+     */
+    void setExposure(float value);
+    /**
+     * @brief Returns the extra display gamma adjustment (neutral is one).
+     */
+    float gamma() const;
+    /**
+     * @brief Sets finite viewing gamma, clamped to 0.1 through 4.
+     */
+    void setGamma(float value);
+    /**
+     * @brief Returns the OCIO view for the sRGB display.
+     */
+    QString colorView() const;
+    /**
+     * @brief Selects a supported view; Raw bypasses OCIO while retaining exposure/gamma.
+     */
+    void setColorView(const QString& view);
+    /**
+     * @brief Returns all supported OCIO views for the sRGB display.
+     */
+    QStringList colorViews() const;
+    /**
+     * @brief Returns the viewport's color settings for rendering.
+     */
+    ColorManagementSettings colorManagementSettings() const;
+
 Q_SIGNALS:
+    /**
+     * @brief Emitted when exposure, gamma or the OCIO view changes.
+     */
+    void colorManagementChanged();
+
 
     /**
      * @brief Emitted when the viewport background color changes.

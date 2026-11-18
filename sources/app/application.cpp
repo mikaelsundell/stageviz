@@ -66,7 +66,7 @@ ApplicationPrivate::init()
     d.ui.reset(new UI());
     d.pythonInterpreter.reset(new PythonInterpreter());
     d.mcpServer.reset(new McpServer());
-#ifdef NDEBUG
+#if DEPLOY_BUILD || defined(NDEBUG)
     QStringList pluginDirs;
 #    ifdef __APPLE__
     const QString pluginUsdDir = os::getApplicationPath() + "/PlugIns/usd";

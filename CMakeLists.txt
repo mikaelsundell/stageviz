@@ -30,6 +30,7 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 find_package(OpenUSD REQUIRED)
 find_package(MaterialX CONFIG REQUIRED)
 find_package(OpenImageIO CONFIG REQUIRED)
+find_package(OpenColorIO 2.4 CONFIG REQUIRED)
 find_package(TBB CONFIG REQUIRED)
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake")
@@ -109,6 +110,10 @@ endfunction()
 
 get_filename_component(materialx_prefix "${MaterialX_DIR}/../../.." ABSOLUTE)
 get_filename_component(openimageio_prefix "${OpenImageIO_DIR}/../../.." ABSOLUTE)
+get_filename_component(opencolorio_prefix "${OpenColorIO_DIR}/../../.." ABSOLUTE)
+find_python_package_root(OpenColorIO_PYTHON_DIR OpenColorIO_PACKAGE_DIR
+    "${opencolorio_prefix}" "PyOpenColorIO" "PyOpenColorIO*")
+require_python_package_root(OpenColorIO_PYTHON_DIR "PyOpenColorIO" "${opencolorio_prefix}")
 get_filename_component(qt6_prefix "${Qt6_DIR}/../../.." ABSOLUTE)
 
 find_python_package_root(
@@ -160,6 +165,7 @@ set(python_module_paths
     "${OpenUSD_PYTHON_DIR}"
     "${MaterialX_PYTHON_DIR}"
     "${OpenImageIO_PYTHON_DIR}"
+    "${OpenColorIO_PYTHON_DIR}"
     "${PySide6_PYTHON_DIR}"
     "${Shiboken6_PYTHON_DIR}"
 )
@@ -173,6 +179,9 @@ append_existing_paths(python_runtime_library_paths
     "${materialx_prefix}/bin"
     "${materialx_prefix}/lib"
     "${materialx_prefix}/lib64"
+    "${opencolorio_prefix}/bin"
+    "${opencolorio_prefix}/lib"
+    "${opencolorio_prefix}/lib64"
     "${openimageio_prefix}/bin"
     "${openimageio_prefix}/lib"
     "${openimageio_prefix}/lib64"
@@ -299,6 +308,7 @@ if(APPLE)
         MaterialXCore
         MaterialXFormat
         OpenImageIO::OpenImageIO
+        OpenColorIO::OpenColorIO
         OpenUSD::OpenUSD
         TBB::tbb
         Python3::Python
@@ -339,6 +349,7 @@ elseif(WIN32)
         MaterialXCore
         MaterialXFormat
         OpenImageIO::OpenImageIO
+        OpenColorIO::OpenColorIO
         OpenGL::GL
         OpenUSD::OpenUSD
         python

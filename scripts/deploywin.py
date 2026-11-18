@@ -565,6 +565,8 @@ def main():
         scan_directory_for_binary_dependencies(package_dir, dest_dir, package_extra_paths)
 
     report_summary()
+    if "PyOpenColorIO" in python_packages and "PyOpenColorIO" not in copied_python_packages:
+        raise RuntimeError("Required Python package PyOpenColorIO was not deployed")
 
 
 if __name__ == "__main__":

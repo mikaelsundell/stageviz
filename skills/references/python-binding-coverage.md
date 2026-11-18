@@ -13,7 +13,7 @@ This document records deliberate boundaries rather than claiming C++ parity.
 | Application | Main window, session, UI, queued callable and widget display | No `console()`, `pythonInterpreter()`, `settings()` or `instance()` methods, inherited QApplication interface, or native signals. Use `stageviz.application()` for the singleton. |
 | Session | Stage lifecycle, exports, per-layer saves/copies, companion state, edit target, progress, selection, view state, masks and update policy | No independent Python session construction, native signal binding, Python lock object or CommandStack object. File operations return bool. Composition edits use command functions, not removed Session merge methods. |
 | SelectionList | Nine operations/accessors; paths are strings | Direct changes do not create history; signals are not exposed. |
-| ViewState | Background/grid, lighting, materials, overlays, display quality and all AO settings | Colors use float RGBA in 0..1. No native signals; state controls the viewport rather than a separately created renderer. |
+| ViewState | Background/grid, lighting, materials, overlays, display quality, OCIO view/exposure/gamma and all AO settings | Colors use float RGBA in 0..1. No native signals; state controls the viewport rather than a separately created renderer. |
 | ViewCamera | Current camera navigation, projection, view presets, lens/gate settings and framing | No independent camera creation. Native `cameraView()` getter is not exposed. `camera()` returns an opaque capsule, not `pxr.Gf.Camera`. Bounds use min/max tuples without an oriented-box transform. |
 | UI | Integer colors, nested enums, icon paths/sizes, axis/gizmo sizes, fonts, snap increments, stylesheet, color space and refresh | No QPixmap-returning `icon()`. Use Qt QIcon with `iconPath()`. Color-space conversion accepts named aliases rather than arbitrary QColorSpace objects. Signals are not exposed. |
 | command | Undo/redo/history queries plus selection, composition/layers, metadata, creation, namespace, properties, transforms/pivots and material connection commands | Python functions dispatch commands and return None; they do not return Command objects or generic transactions. Some commands finish asynchronously. Supported attribute values are a limited subset of VtValue. |
@@ -70,7 +70,7 @@ Native APIs not exposed through that wrapper include:
 - Viewport and full settings: `setViewport`, `setSettings`.
 - Selection: `setMask`, `setSelected`, `setSelectionBBoxes`, `setSelectionColor`.
 - Framebuffer/QImage rendering and picking: `renderToCurrentFramebuffer`,
-  `renderImage`, `testIntersection` overloads.
+  `renderImage`, `renderLinearImage`, `testIntersection` overloads.
 - Diagnostics: `renderStats`, `isColorCorrectionCapable`.
 
 `set_camera(path)` copies a USD camera at default time instead of accepting

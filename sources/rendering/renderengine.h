@@ -74,7 +74,8 @@ public:
         // Shared Stageviz AO settings keep defaults identical between the
         // viewport state, renderer and Hydra post-process task.
         ViewState::AmbientOcclusionSettings ambientOcclusion;
-        bool gammaCorrectColors = true;
+        bool gammaCorrectColors = false;
+        ColorManagementSettings colorManagement;
         bool sampleAlphaToCoverageEnabled = true;
         bool flipFrontFacing = true;
         bool showGuides = false;
@@ -349,6 +350,14 @@ public:
     QImage renderImage();
 
     /**
+     * @brief Captures scene-linear premultiplied floating-point RGBA without display conversion.
+     *
+     * Requires ContextMode::Offscreen. Values above one are retained for cached
+     * material previews, so subsequent view changes do not rerender geometry.
+     */
+    QImage renderLinearImage();
+
+    /**
      * @brief Tests intersections using Hydra pick parameters for a root prim.
      */
     bool testIntersection(const UsdImagingGLEngine::PickParams& pickParams, const GfMatrix4d& viewMatrix,
@@ -376,6 +385,7 @@ public:
     bool isColorCorrectionCapable() const;
 
 private:
+    QImage renderImageInternal(bool linear);
     class Private;
     std::unique_ptr<Private> p;
 };

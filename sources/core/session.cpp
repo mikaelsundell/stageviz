@@ -349,6 +349,7 @@ SessionPrivate::init()
     QObject::connect(d.viewState.data(), &ViewState::doubleSidedModeChanged, d.session, [this]() { markStateDirty(); });
     QObject::connect(d.viewState.data(), &ViewState::renderModeChanged, d.session, [this]() { markStateDirty(); });
     QObject::connect(d.viewState.data(), &ViewState::complexityLevelChanged, d.session, [this]() { markStateDirty(); });
+    QObject::connect(d.viewState.data(), &ViewState::colorManagementChanged, d.session, [this]() { markStateDirty(); });
     QObject::connect(d.viewState.data(), &ViewState::rendererAovChanged, d.session, [this]() { markStateDirty(); });
     QObject::connect(d.viewState.data(), &ViewState::sceneStatsEnabledChanged, d.session,
                      [this]() { markStateDirty(); });
@@ -1602,6 +1603,9 @@ SessionPrivate::loadState(const QString& filename)
                 else if (value == "VeryHigh")
                     d.viewState->setComplexityLevel(ViewState::VeryHigh);
             }
+            d.viewState->setExposure(float(viewStateObject.value("exposure").toDouble(0.0)));
+            d.viewState->setGamma(float(viewStateObject.value("gamma").toDouble(1.0)));
+            d.viewState->setColorView(viewStateObject.value("colorView").toString(QStringLiteral("Un-tone-mapped")));
             if (viewStateObject.contains("rendererAov"))
                 d.viewState->setRendererAov(viewStateObject.value("rendererAov").toString(d.viewState->rendererAov()));
             if (viewStateObject.contains("sceneStatsEnabled"))
@@ -1823,6 +1827,9 @@ SessionPrivate::saveState(const QString& filename, bool markSaved, const QString
         viewStateObject["rendererAov"] = d.viewState->rendererAov();
         viewStateObject["sceneStatsEnabled"] = d.viewState->sceneStatsEnabled();
         viewStateObject["performanceStatsEnabled"] = d.viewState->performanceStatsEnabled();
+        viewStateObject["exposure"] = d.viewState->exposure();
+        viewStateObject["gamma"] = d.viewState->gamma();
+        viewStateObject["colorView"] = d.viewState->colorView();
         viewStateObject["cameraAxisEnabled"] = d.viewState->cameraAxisEnabled();
         viewStateObject["ambientOcclusionEnabled"] = d.viewState->ambientOcclusionEnabled();
         viewStateObject["ambientOcclusionContactAmount"] = d.viewState->ambientOcclusionContactAmount();

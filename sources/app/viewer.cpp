@@ -450,6 +450,50 @@ ViewerPrivate::init()
     connect(d.ui->materialReflection, &QAction::triggered, this, &ViewerPrivate::materialReflection);
     connect(d.ui->viewTogglePanels, &QAction::triggered, this, &ViewerPrivate::togglePanels);
     connect(d.ui->displayGrid, &QAction::toggled, this, &ViewerPrivate::grid);
+    {
+        ViewState* state = session()->viewState();
+        auto adjustment = [this, state](bool exposure, const QList<QAction*>& actions, const QList<float>& values) {
+            auto* presets = new QActionGroup(this);
+            presets->setExclusive(true);
+            for (int i = 0; i < actions.size(); ++i) {
+                QAction* action = actions[i];
+                const float value = values[i];
+                action->setData(value);
+                action->setChecked((exposure ? state->exposure() : state->gamma()) == value);
+                presets->addAction(action);
+                connect(action, &QAction::triggered, this, [state, exposure, value]() {
+                    if (exposure)
+                        state->setExposure(value);
+                    else
+                        state->setGamma(value);
+                });
+                connect(state, &ViewState::colorManagementChanged, action, [state, exposure, action, value]() {
+                    action->setChecked((exposure ? state->exposure() : state->gamma()) == value);
+                });
+            }
+        };
+        adjustment(true,
+                   { d.ui->colorExposurePlus3, d.ui->colorExposurePlus2, d.ui->colorExposurePlus1,
+                     d.ui->colorExposureZero, d.ui->colorExposureMinus1, d.ui->colorExposureMinus2,
+                     d.ui->colorExposureMinus3 },
+                   { 3, 2, 1, 0, -1, -2, -3 });
+        adjustment(false,
+                   { d.ui->colorGamma20, d.ui->colorGamma15, d.ui->colorGamma12, d.ui->colorGamma10, d.ui->colorGamma08,
+                     d.ui->colorGamma06, d.ui->colorGamma05 },
+                   { 2.0f, 1.5f, 1.2f, 1.0f, 0.8f, 0.6f, 0.5f });
+        auto* group = new QActionGroup(this);
+        group->setExclusive(true);
+        for (const QString& view : state->colorViews()) {
+            auto* action = d.ui->displayColorView->addAction(view);
+            action->setCheckable(true);
+            action->setChecked(view == state->colorView());
+            action->setData(view);
+            group->addAction(action);
+            connect(action, &QAction::triggered, this, [state, view]() { state->setColorView(view); });
+            connect(state, &ViewState::colorManagementChanged, action,
+                    [state, action, view]() { action->setChecked(view == state->colorView()); });
+        }
+    }
     connect(d.ui->displayRenderShaded, &QAction::triggered, this, &ViewerPrivate::renderShaded);
     connect(d.ui->displayRenderWireframe, &QAction::triggered, this, &ViewerPrivate::renderWireframe);
     connect(d.ui->displayRenderClay, &QAction::toggled, this, &ViewerPrivate::renderClay);

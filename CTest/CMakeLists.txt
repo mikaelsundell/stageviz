@@ -204,6 +204,8 @@ foreach(case IN ITEMS
     renderengine_api
     render_primitive_selection_api
     render_coincident_selection_api
+    render_color_management_gl_api
+    render_color_management_api
     render_display_mode_warmup_api
     renderengine_hdri_api
     material_browser_api
@@ -216,6 +218,7 @@ foreach(case IN ITEMS
     property_asset_editor_api
     property_material_light_dropdown_api
     material_swatch_alpha_api
+    material_swatch_color_view_api
     geometry_subset_gui_api
     outliner_reset_opinions_menu_api
     outliner_layer_colors_api
@@ -230,6 +233,10 @@ foreach(case IN ITEMS
     layer_tree_root_row_api
     layer_tree_multi_selection_api
 )
+    if(APPLE AND case STREQUAL "render_color_management_gl_api")
+        # HgiGL requires OpenGL 4.5; macOS supports at most 4.1 and uses Metal.
+        continue()
+    endif()
     if(APPLE)
         # Qt debug frameworks on macOS use the _debug image suffix. The GUI
         # regression executable links against Qt*_debug, and the Cocoa platform
