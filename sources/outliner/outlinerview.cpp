@@ -240,11 +240,11 @@ OutlinerViewPrivate::showDisplayMenu()
     for (const DisplayEntry& entry : std::as_const(layers)) {
         QAction* action = menu.addAction(entry.label);
         action->setCheckable(true);
-        action->setChecked(activeLayers.isEmpty() || activeLayers.contains(entry.key));
+        action->setChecked(!tree->displayLayersFiltered() || activeLayers.contains(entry.key));
         action->setData(entry.key);
         connect(action, &QAction::toggled, &menu, [tree, allLayerKeys, action](bool checked) {
             QStringList selected = tree->displayLayers();
-            if (selected.isEmpty())
+            if (!tree->displayLayersFiltered())
                 selected = allLayerKeys;
 
             const QString key = action->data().toString();
@@ -253,9 +253,11 @@ OutlinerViewPrivate::showDisplayMenu()
             else if (!checked)
                 selected.removeAll(key);
 
-            if (selected.size() == allLayerKeys.size())
+            const bool filtered = selected.size() != allLayerKeys.size();
+            if (!filtered)
                 selected.clear();
-            tree->setDisplayFilters(selected, tree->displayTypes(), tree->showUntyped());
+            tree->setDisplayFilters(selected, tree->displayTypes(), tree->showUntyped(), filtered,
+                                    tree->displayTypesFiltered());
         });
     }
 
@@ -266,11 +268,11 @@ OutlinerViewPrivate::showDisplayMenu()
     for (const QString& type : std::as_const(types)) {
         QAction* action = menu.addAction(type);
         action->setCheckable(true);
-        action->setChecked(activeTypes.isEmpty() || activeTypes.contains(type));
+        action->setChecked(!tree->displayTypesFiltered() || activeTypes.contains(type));
         action->setData(type);
         connect(action, &QAction::toggled, &menu, [tree, types, action](bool checked) {
             QStringList selected = tree->displayTypes();
-            if (selected.isEmpty())
+            if (!tree->displayTypesFiltered())
                 selected = types;
 
             const QString typeName = action->data().toString();
@@ -279,9 +281,11 @@ OutlinerViewPrivate::showDisplayMenu()
             else if (!checked)
                 selected.removeAll(typeName);
 
-            if (selected.size() == types.size())
+            const bool filtered = selected.size() != types.size();
+            if (!filtered)
                 selected.clear();
-            tree->setDisplayFilters(tree->displayLayers(), selected, tree->showUntyped());
+            tree->setDisplayFilters(tree->displayLayers(), selected, tree->showUntyped(), tree->displayLayersFiltered(),
+                                    filtered);
         });
     }
 
@@ -290,8 +294,10 @@ OutlinerViewPrivate::showDisplayMenu()
     untyped->setCheckable(true);
     untyped->setChecked(tree->showUntyped());
     untyped->setToolTip(tr("Show prims without a schema type"));
-    connect(untyped, &QAction::toggled, &menu,
-            [tree](bool checked) { tree->setDisplayFilters(tree->displayLayers(), tree->displayTypes(), checked); });
+    connect(untyped, &QAction::toggled, &menu, [tree](bool checked) {
+        tree->setDisplayFilters(tree->displayLayers(), tree->displayTypes(), checked, tree->displayLayersFiltered(),
+                                tree->displayTypesFiltered());
+    });
 
     menu.exec(d.ui->display->mapToGlobal(QPoint(0, d.ui->display->height())));
 }

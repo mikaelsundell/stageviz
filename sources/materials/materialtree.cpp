@@ -9,6 +9,7 @@
 #include "commandstack.h"
 #include "materialmenu.h"
 #include "materialutils.h"
+#include "os.h"
 #include "session.h"
 #include "spinbox.h"
 #include "tracelocks.h"
@@ -22,6 +23,7 @@
 #include <QCursor>
 #include <QEvent>
 #include <QFileDialog>
+#include <QFileInfo>
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QIcon>
@@ -1458,6 +1460,7 @@ MaterialTreePrivate::showInputMenu(const QPoint& position)
     UsdStageRefPtr stage;
     MaterialInputInfo info;
     QStringList network;
+    QString revealPath;
     {
         READ_LOCKER(locker, session()->stageLock(), "stageLock");
         stage = session()->stageUnsafe();
@@ -1471,6 +1474,12 @@ MaterialTreePrivate::showInputMenu(const QPoint& position)
             }
         }
         network = MaterialUtils::networkDescription(stage, inputPath, 4);
+        if (info.typeName == SdfValueTypeNames->Asset && info.value.IsHolding<SdfAssetPath>()) {
+            const auto& asset = info.value.UncheckedGet<SdfAssetPath>();
+            revealPath = QString::fromStdString(asset.GetResolvedPath());
+            if (revealPath.isEmpty() && QFileInfo(QString::fromStdString(asset.GetAssetPath())).isAbsolute())
+                revealPath = QString::fromStdString(asset.GetAssetPath());
+        }
     }
 
     QMenu menu(d.tree.data());
@@ -1546,6 +1555,25 @@ MaterialTreePrivate::showInputMenu(const QPoint& position)
                 Q_EMIT d.tree->connectShaderNodeRequested(inputPath, choice.shaderId, choice.nodeName,
                                                           choice.outputName);
             }
+        });
+    }
+    if (QFileInfo(revealPath).isFile()) {
+        revealPath = QFileInfo(revealPath).absoluteFilePath();
+        menu.addSeparator();
+#ifdef Q_OS_MAC
+        QAction* reveal = menu.addAction(tr("Reveal in Finder"));
+#elif defined(Q_OS_WIN)
+        QAction* reveal = menu.addAction(tr("Reveal in Explorer"));
+#else
+        QAction* reveal = menu.addAction(tr("Reveal in folder"));
+#endif
+        reveal->setObjectName("materialRevealFile");
+        reveal->setData(revealPath);
+        reveal->setToolTip(revealPath);
+        connect(reveal, &QAction::triggered, d.tree.data(), [revealPath]() {
+            if (!os::revealFileInFolder(revealPath))
+                session()->notifyStatus(Session::Notify::Status::Warning,
+                                        tr("Could not reveal file in the file browser: %1").arg(revealPath));
         });
     }
     menu.exec(d.tree->viewport()->mapToGlobal(position));

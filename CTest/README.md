@@ -746,3 +746,33 @@ requested, and only visible/requested swatches are reprocessed after view change
 Cached conversions use the same progressive queue as geometry renders, keeping
 menu changes responsive. Queued conversions retain source requests rather than
 extra floating-point images; LRU eviction falls back to a normal render.
+
+### Empty material display filters
+
+`stageviz.gui.material_browser_display_menu_api` covers unchecking every material
+type or layer, reopening the menu, preserving an empty type filter across a
+browser refresh, and re-enabling one or all options. It verifies matching row
+visibility in icon, list and detail modes. An explicit empty selection shows no
+materials; an inactive filter shows all materials.
+
+`stageviz.gui.outliner_display_menu_api` checks the same empty-selection behavior
+for Outliner layers and named prim types, independently of Untyped. It verifies
+menu reopen, tree refresh, and re-enabling filters without losing the other
+filter group's state. Ancestors remain visible when needed for matching children.
+
+### Numeric arrow release
+
+`stageviz.gui.numeric_editor_api` verifies that both spin arrows step normally
+and stop repeating on release, including after dragging outside the control.
+Dragging from either arrow scrubs the value using pointer displacement. The test
+processes events past the style's repeat delay both during the scrub and after
+release to verify that native stepping cannot compete with the drag or continue
+afterward.
+
+### Material input file reveal
+
+`stageviz.gui.material_reveal_file_api` checks the platform-specific file reveal
+action and preceding divider in material input context menus. It covers relative
+assets authored in sublayers, current absolute values, and omission for missing,
+empty, directory and non-asset values. It inspects the action target without
+opening the operating system's file browser.

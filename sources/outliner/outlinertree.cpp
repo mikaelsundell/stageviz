@@ -173,6 +173,8 @@ public:
         bool payloadEnabled = false;
         quint64 payloadCheckRevision = 1;
         QString filter;
+        bool displayLayersFiltered = false;
+        bool displayTypesFiltered = false;
         QStringList displayLayers;
         QStringList displayTypes;
         bool showUntyped = true;
@@ -987,7 +989,7 @@ OutlinerTreePrivate::updateFilter()
             }
         }
 
-        bool matchesLayer = d.displayLayers.isEmpty();
+        bool matchesLayer = !d.displayLayersFiltered;
         if (!matchesLayer) {
             const QStringList layers = item->data(0, PrimItem::CompositionLayers).toStringList();
             for (const QString& layer : layers) {
@@ -1000,7 +1002,7 @@ OutlinerTreePrivate::updateFilter()
 
         const QString type = item->data(0, PrimItem::TypeName).toString();
         const bool matchesType = type.isEmpty() ? d.showUntyped
-                                                : (d.displayTypes.isEmpty() || d.displayTypes.contains(type));
+                                                : (!d.displayTypesFiltered || d.displayTypes.contains(type));
         const bool matches = matchesText && matchesLayer && matchesType;
 
         bool childMatches = false;
@@ -2505,14 +2507,20 @@ OutlinerTree::setFilter(const QString& filter)
 }
 
 void
-OutlinerTree::setDisplayFilters(const QStringList& layers, const QStringList& types, bool showUntyped)
+OutlinerTree::setDisplayFilters(const QStringList& layers, const QStringList& types, bool showUntyped,
+                                bool filterLayers, bool filterTypes)
 {
-    if (p->d.displayLayers == layers && p->d.displayTypes == types && p->d.showUntyped == showUntyped)
+    filterLayers = filterLayers || !layers.isEmpty();
+    filterTypes = filterTypes || !types.isEmpty();
+    if (p->d.displayLayers == layers && p->d.displayTypes == types && p->d.showUntyped == showUntyped
+        && p->d.displayLayersFiltered == filterLayers && p->d.displayTypesFiltered == filterTypes)
         return;
 
     const bool untypedChanged = p->d.showUntyped != showUntyped;
     p->d.displayLayers = layers;
     p->d.displayTypes = types;
+    p->d.displayLayersFiltered = filterLayers;
+    p->d.displayTypesFiltered = filterTypes;
     p->d.showUntyped = showUntyped;
     if (untypedChanged)
         p->updateStage(p->d.stage);
@@ -2530,6 +2538,18 @@ QStringList
 OutlinerTree::displayTypes() const
 {
     return p->d.displayTypes;
+}
+
+bool
+OutlinerTree::displayLayersFiltered() const
+{
+    return p->d.displayLayersFiltered;
+}
+
+bool
+OutlinerTree::displayTypesFiltered() const
+{
+    return p->d.displayTypesFiltered;
 }
 
 bool
