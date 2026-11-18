@@ -228,6 +228,13 @@ SpinBox::updateScrub(QMouseEvent* event)
         if (delta.manhattanLength() < QApplication::startDragDistance())
             return false;
 
+        // A press on an arrow starts Qt's step-repeat timer. End that native
+        // interaction before taking over the drag so repeats cannot compete
+        // with scrubbing or continue after our release handler consumes it.
+        QMouseEvent release(QEvent::MouseButtonRelease, mapFromGlobal(current), event->globalPosition(), Qt::LeftButton,
+                            Qt::NoButton, event->modifiers());
+        QDoubleSpinBox::mouseReleaseEvent(&release);
+
         m_scrubbing = true;
         setCursor(Qt::SizeHorCursor);
         updateValueCursor();

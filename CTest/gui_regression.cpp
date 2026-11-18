@@ -98,6 +98,8 @@
 #include <QSet>
 #include <QSettings>
 #include <QSplitter>
+#include <QStyle>
+#include <QStyleOptionSpinBox>
 #include <QSurfaceFormat>
 #include <QTemporaryDir>
 #include <QThread>
@@ -798,6 +800,64 @@ numericEditorApi()
     shortcut.ignore();
     QApplication::sendEvent(line, &shortcut);
     require(!shortcut.isAccepted(), "unrelated application shortcuts remain available outside text editing");
+
+    class ArrowSpinBox : public stageviz::SpinBox {
+    public:
+        using QDoubleSpinBox::initStyleOption;
+    } arrows;
+    arrows.setRange(-100000., 100000.);
+    arrows.resize(180, 40);
+    arrows.show();
+    QCoreApplication::processEvents();
+    QStyleOptionSpinBox option;
+    arrows.initStyleOption(&option);
+    const int repeatDelay = arrows.style()->styleHint(QStyle::SH_SpinBox_ClickAutoRepeatThreshold, &option, &arrows)
+                            + 3 * arrows.style()->styleHint(QStyle::SH_SpinBox_ClickAutoRepeatRate, &option, &arrows)
+                            + 100;
+    for (const auto control : { QStyle::SC_SpinBoxUp, QStyle::SC_SpinBoxDown }) {
+        const QPoint start = arrows.style()->subControlRect(QStyle::CC_SpinBox, &option, control, &arrows).center();
+        for (const QPoint end : { start, start - QPoint(0, QApplication::startDragDistance() + 30) }) {
+            arrows.setValue(0.);
+            QMouseEvent press(QEvent::MouseButtonPress, start, arrows.mapToGlobal(start), Qt::LeftButton,
+                              Qt::LeftButton, Qt::NoModifier);
+            QApplication::sendEvent(&arrows, &press);
+            require(arrows.value() == (control == QStyle::SC_SpinBoxUp ? arrows.singleStep() : -arrows.singleStep()),
+                    "arrow press retains normal step adjustment");
+            QMouseEvent move(QEvent::MouseMove, end, arrows.mapToGlobal(end), Qt::NoButton, Qt::LeftButton,
+                             Qt::NoModifier);
+            QApplication::sendEvent(&arrows, &move);
+            const bool dragged = end != start;
+            require(arrows.isScrubbing() == dragged, "dragging from either arrow starts value scrubbing");
+            if (dragged) {
+                const auto checkValue = [&](const QPoint& position) {
+                    const QPoint delta = position - start;
+                    const double expected = (delta.x() - delta.y()) * arrows.singleStep() * arrows.scrubSensitivity();
+                    require(qAbs(arrows.value() - expected) < 1e-8, "arrow scrub follows pointer displacement");
+                };
+                checkValue(end);
+                const double heldValue = arrows.value();
+                QEventLoop held;
+                QTimer::singleShot(repeatDelay, &held, &QEventLoop::quit);
+                held.exec();
+                require(arrows.value() == heldValue, "native repeat stops as soon as scrubbing takes over");
+                for (const QPoint position : { end + QPoint(12, 0), end - QPoint(8, 0), end }) {
+                    QMouseEvent drag(QEvent::MouseMove, position, arrows.mapToGlobal(position), Qt::NoButton,
+                                     Qt::LeftButton, Qt::NoModifier);
+                    QApplication::sendEvent(&arrows, &drag);
+                    checkValue(position);
+                }
+            }
+            QMouseEvent release(QEvent::MouseButtonRelease, end, arrows.mapToGlobal(end), Qt::LeftButton, Qt::NoButton,
+                                Qt::NoModifier);
+            QApplication::sendEvent(&arrows, &release);
+            const double releasedValue = arrows.value();
+            QEventLoop idle;
+            QTimer::singleShot(repeatDelay, &idle, &QEventLoop::quit);
+            idle.exec();
+            require(arrows.value() == releasedValue, "arrow stepping stops after release, including a drag outside");
+            require(!arrows.isScrubbing(), "release ends arrow scrubbing");
+        }
+    }
 }
 
 void
@@ -1563,6 +1623,8 @@ materialBrowserDisplayMenuApi()
 
     auto* display = browser.findChild<QToolButton*>("display");
     auto* icons = browser.findChild<QListWidget*>("icons");
+    auto* list = browser.findChild<QListWidget*>("list");
+    auto* details = browser.findChild<QTreeWidget*>("details");
     require(display && icons, "MaterialBrowser exposes Display button and icon list");
 
     const auto openMenu = [&](const std::function<void(const QList<QAction*>&)>& inspect) {
@@ -1639,6 +1701,72 @@ materialBrowserDisplayMenuApi()
     require(icons->item(0)->isHidden() && icons->item(1)->isHidden() && !icons->item(2)->isHidden()
                 && !icons->item(3)->isHidden(),
             "material layer filter hides only materials from the selected layer");
+
+    const QSet<QString> typeIds { preview.shaderId, standard.shaderId, openPbr.shaderId, vray.shaderId };
+    const QSet<QString> layerIds { QStringLiteral("layer-a.usda"), QStringLiteral("layer-b.usda") };
+    const auto setGroup = [&](const QSet<QString>& keys, bool checked) {
+        require(openMenu([&](const QList<QAction*>& actions) {
+                    for (QAction* action : actions) {
+                        if (action->isCheckable() && keys.contains(action->data().toString())
+                            && action->isChecked() != checked)
+                            action->trigger();
+                    }
+                }),
+                "open material Display menu to change a filter group");
+    };
+    const auto checkGroup = [&](const QSet<QString>& keys, bool checked) {
+        require(openMenu([&](const QList<QAction*>& actions) {
+                    int found = 0;
+                    for (QAction* action : actions) {
+                        if (action->isCheckable() && keys.contains(action->data().toString())) {
+                            ++found;
+                            require(action->isChecked() == checked, "Display menu preserves all/none checkbox state");
+                        }
+                    }
+                    require(found == keys.size(), "Display menu retains every available filter option");
+                }),
+                "reopen material Display menu to verify filter state");
+    };
+    const auto checkRows = [&](const QSet<int>& visible) {
+        require(list && details, "material browser exposes every presentation mode");
+        for (int row = 0; row < icons->count(); ++row) {
+            const bool hidden = !visible.contains(row);
+            require(icons->item(row)->isHidden() == hidden && list->item(row)->isHidden() == hidden
+                        && details->topLevelItem(row)->isHidden() == hidden,
+                    "material filters agree in icon, list and detail views");
+        }
+    };
+
+    setGroup(layerIds, true);
+    setGroup(typeIds, false);
+    checkRows({});
+    checkGroup(typeIds, false);
+    browser.setEntries({ preview, standard, openPbr, vray });
+    checkRows({});
+    checkGroup(typeIds, false);
+    require(openMenu([&](const QList<QAction*>& actions) {
+                for (QAction* action : actions)
+                    if (action->isCheckable() && action->data().toString() == standard.shaderId)
+                        action->trigger();
+            }),
+            "select one material type from an empty filter");
+    checkRows({ 1 });
+    setGroup(typeIds, true);
+    checkRows({ 0, 1, 2, 3 });
+    checkGroup(typeIds, true);
+
+    setGroup(layerIds, false);
+    checkRows({});
+    checkGroup(layerIds, false);
+    require(openMenu([&](const QList<QAction*>& actions) {
+                for (QAction* action : actions)
+                    if (action->isCheckable() && action->data().toString() == "layer-a.usda")
+                        action->trigger();
+            }),
+            "select one material layer from an empty filter");
+    checkRows({ 0, 1 });
+    setGroup(layerIds, true);
+    checkRows({ 0, 1, 2, 3 });
 }
 
 void
@@ -1954,6 +2082,93 @@ propertyRevealFileApi()
             "reference reveal resolves relative to its authored sublayer");
     select("");
     require(menuTarget(find("filePath")) == rootFile, "stage filename row reveals its full path");
+}
+
+void
+materialRevealFileApi()
+{
+    QTemporaryDir dir;
+    require(dir.isValid() && QDir(dir.path()).mkdir("nested"), "temporary material reveal fixture");
+    const QString texture = dir.filePath("nested/texture.png");
+    QFile file(texture);
+    require(file.open(QIODevice::WriteOnly) && file.write("fixture") == 7, "create reveal texture file");
+    file.close();
+    const auto child = UsdStage::CreateNew(dir.filePath("nested/material.usda").toStdString());
+    UsdShadeMaterial::Define(child, SdfPath("/Material"));
+    auto shader = UsdShadeShader::Define(child, SdfPath("/Material/Image"));
+    shader.CreateIdAttr(VtValue(TfToken("ND_image_color3")));
+    shader.CreateInput(TfToken("file"), SdfValueTypeNames->Asset).Set(SdfAssetPath("texture.png"));
+    shader.CreateInput(TfToken("missing"), SdfValueTypeNames->Asset).Set(SdfAssetPath("missing.png"));
+    shader.CreateInput(TfToken("empty"), SdfValueTypeNames->Asset).Set(SdfAssetPath());
+    shader.CreateInput(TfToken("text"), SdfValueTypeNames->String).Set(texture.toStdString());
+    require(child->GetRootLayer()->Save(), "save material reveal sublayer");
+    const QString scene = dir.filePath("root.usda");
+    const auto root = UsdStage::CreateNew(scene.toStdString());
+    root->GetRootLayer()->SetSubLayerPaths({ "nested/material.usda" });
+    require(root->GetRootLayer()->Save(), "save material reveal root");
+    auto* current = stageviz::session();
+    require(current->loadFromFile(scene, stageviz::Session::None), "load material reveal fixture");
+    stageviz::MaterialEntry entry;
+    entry.materialPath = SdfPath("/Material");
+    entry.shaderPath = SdfPath("/Material/Image");
+    entry.shaderId = "ND_image_color3";
+    stageviz::MaterialTree tree;
+    tree.resize(640, 800);
+    tree.setMaterials({ entry });
+    tree.show();
+    tree.expandAll();
+    QCoreApplication::processEvents();
+    const auto menuTarget = [&](const char* input) {
+        QTreeWidgetItem* row = nullptr;
+        const QString path = QStringLiteral("/Material/Image.inputs:%1").arg(input);
+        QTreeWidgetItemIterator it(&tree);
+        while (*it) {
+            if ((*it)->data(0, Qt::UserRole).toString() == path)
+                row = *it;
+            ++it;
+        }
+        require(row, "find material file input row");
+        tree.scrollToItem(row);
+        const QPoint point = tree.visualItemRect(row).center();
+        QString target;
+        bool inspected = false;
+        QTimer::singleShot(0, &tree, [&]() {
+            auto* menu = qobject_cast<QMenu*>(QApplication::activePopupWidget());
+            require(menu, "open material input context menu");
+            const auto actions = menu->actions();
+            for (int i = 0; i < actions.size(); ++i) {
+                QAction* action = actions[i];
+                if (action->objectName() != "materialRevealFile")
+                    continue;
+                require(i > 0 && actions[i - 1]->isSeparator(), "file reveal follows a divider");
+                require(action->isEnabled(), "material file reveal is enabled");
+#ifdef Q_OS_MAC
+                require(action->text() == "Reveal in Finder", "macOS file reveal label");
+#elif defined(Q_OS_WIN)
+                require(action->text() == "Reveal in Explorer", "Windows file reveal label");
+#else
+                require(action->text() == "Reveal in folder", "file reveal label");
+#endif
+                target = action->data().toString();
+                require(action->toolTip() == target, "file reveal tooltip contains full path");
+            }
+            inspected = true;
+            menu->close();
+        });
+        QContextMenuEvent event(QContextMenuEvent::Mouse, point, tree.viewport()->mapToGlobal(point));
+        QApplication::sendEvent(tree.viewport(), &event);
+        require(inspected, "inspect material file context menu");
+        return target;
+    };
+    require(menuTarget("file") == texture, "material texture resolves relative to its authored sublayer");
+    require(menuTarget("missing").isEmpty(), "missing material asset has no reveal action");
+    require(menuTarget("empty").isEmpty(), "empty material asset has no reveal action");
+    require(menuTarget("text").isEmpty(), "string inputs are not treated as files");
+    const auto attr = current->stage()->GetAttributeAtPath(SdfPath("/Material/Image.inputs:file"));
+    require(attr.Set(SdfAssetPath(texture.toStdString())), "author absolute texture path");
+    require(menuTarget("file") == texture, "material reveal reads the current absolute asset value");
+    require(attr.Set(SdfAssetPath(dir.path().toStdString())), "author directory asset path");
+    require(menuTarget("file").isEmpty(), "directory assets are not offered as revealable files");
 }
 
 void
@@ -4216,6 +4431,89 @@ outlinerDisplayMenuApi()
     require(sectionsValid, "Display menu separates layer and prim-type options");
     require(cubeFilterApplied, "prim-type menu option filters Outliner rows");
     require(untypedOptionFound && untypedFilterApplied, "Untyped option hides and restores untyped prims");
+
+    const QSet<QString> typeIds { QStringLiteral("Cube"), QStringLiteral("Scope"), QStringLiteral("Xform") };
+    const QString rootLayer = QString::fromStdString(stage->GetRootLayer()->GetIdentifier());
+    const auto openMenu = [&](const std::function<void(const QList<QAction*>&)>& inspect) {
+        bool found = false;
+        QTimer::singleShot(0, &view, [&]() {
+            auto* menu = qobject_cast<QMenu*>(QApplication::activePopupWidget());
+            if (!menu)
+                return;
+            found = true;
+            inspect(menu->actions());
+            menu->close();
+        });
+        display->click();
+        require(found, "open Outliner Display menu for all/none checks");
+    };
+    const auto setGroup = [&](const QSet<QString>& keys, bool checked) {
+        openMenu([&](const QList<QAction*>& actions) {
+            for (QAction* action : actions)
+                if (action->isCheckable() && keys.contains(action->data().toString()) && action->isChecked() != checked)
+                    action->trigger();
+        });
+    };
+    const auto checkGroup = [&](const QSet<QString>& keys, bool checked) {
+        openMenu([&](const QList<QAction*>& actions) {
+            int count = 0;
+            for (QAction* action : actions) {
+                if (action->isCheckable() && keys.contains(action->data().toString())) {
+                    ++count;
+                    require(action->isChecked() == checked, "Outliner menu preserves explicit all/none selections");
+                }
+            }
+            require(count == keys.size(), "Outliner keeps all available filter choices");
+        });
+    };
+    const auto setUntyped = [&](bool checked) {
+        openMenu([&](const QList<QAction*>& actions) {
+            for (QAction* action : actions)
+                if (action->text() == "Untyped" && action->isCheckable() && action->isChecked() != checked)
+                    action->trigger();
+        });
+    };
+    const auto checkEmpty = [&]() {
+        QTreeWidgetItemIterator it(tree);
+        while (*it) {
+            require((*it)->isHidden(), "Outliner has no visible rows when its filter selection is empty");
+            ++it;
+        }
+    };
+
+    setGroup(typeIds, false);
+    checkGroup(typeIds, false);
+    require(tree->displayTypesFiltered() && tree->displayTypes().isEmpty(),
+            "unchecking the last type retains an explicit empty type filter");
+    require(find("/World/Shape")->isHidden() && find("/World/Group")->isHidden() && !find("/World/Untyped")->isHidden(),
+            "untyped prims remain an independent display option");
+    setUntyped(false);
+    checkEmpty();
+    tree->updateStage(stage);
+    checkEmpty();
+    checkGroup(typeIds, false);
+    setUntyped(true);
+    require(tree->displayTypesFiltered() && tree->displayTypes().isEmpty() && find("/World/Shape")->isHidden(),
+            "changing Untyped does not reset an empty named-type selection");
+    setUntyped(false);
+    checkEmpty();
+    setGroup({ QStringLiteral("Cube") }, true);
+    require(!find("/World/Shape")->isHidden() && find("/World/Group")->isHidden(),
+            "one type can be re-enabled from an empty Outliner filter");
+    setGroup(typeIds, true);
+    require(!tree->displayTypesFiltered(), "selecting every type restores the unfiltered state");
+
+    setGroup({ rootLayer }, false);
+    checkEmpty();
+    checkGroup({ rootLayer }, false);
+    require(tree->displayLayersFiltered() && tree->displayLayers().isEmpty(),
+            "unchecking the only layer retains an explicit empty layer filter");
+    setUntyped(true);
+    checkEmpty();
+    require(tree->displayLayersFiltered(), "changing Untyped preserves the layer filter");
+    setGroup({ rootLayer }, true);
+    require(!tree->displayLayersFiltered() && !find("/World/Shape")->isHidden() && !find("/World/Untyped")->isHidden(),
+            "a layer can be re-enabled after all layers were unchecked");
 }
 
 }  // namespace
@@ -4274,6 +4572,7 @@ main(int argc, char** argv)
         { "material_graph_disconnected_network_layout_api", materialGraphDisconnectedNetworkLayoutApi },
         { "material_dialog_refresh_after_layer_removal_api", materialDialogRefreshAfterLayerRemovalApi },
         { "property_reveal_file_api", propertyRevealFileApi },
+        { "material_reveal_file_api", materialRevealFileApi },
         { "material_numeric_editor_api", materialNumericEditorApi },
         { "property_asset_editor_api", propertyAssetEditorApi },
         { "property_material_light_dropdown_api", propertyMaterialLightDropdownApi },

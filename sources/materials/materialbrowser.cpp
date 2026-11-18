@@ -232,6 +232,10 @@ public:
         bool panning = false;
         bool syncingSelection = false;
         bool updatingRows = false;
+        // An inactive filter shows everything. An active filter with no keys
+        // represents an explicit empty selection in the Display menu.
+        bool displayLayersFiltered = false;
+        bool displayTypesFiltered = false;
         QStringList displayLayers;
         QStringList displayTypes;
         MaterialBrowser::ViewMode mode = MaterialBrowser::Icons;
@@ -443,11 +447,11 @@ MaterialBrowserPrivate::showDisplayMenu()
     for (const DisplayEntry& entry : std::as_const(layers)) {
         QAction* action = menu.addAction(entry.label);
         action->setCheckable(true);
-        action->setChecked(d.displayLayers.isEmpty() || d.displayLayers.contains(entry.key));
+        action->setChecked(!d.displayLayersFiltered || d.displayLayers.contains(entry.key));
         action->setData(entry.key);
         connect(action, &QAction::toggled, &menu, [this, allLayerKeys, action](bool checked) {
             QStringList selected = d.displayLayers;
-            if (selected.isEmpty())
+            if (!d.displayLayersFiltered)
                 selected = allLayerKeys;
 
             const QString key = action->data().toString();
@@ -456,7 +460,8 @@ MaterialBrowserPrivate::showDisplayMenu()
             else if (!checked)
                 selected.removeAll(key);
 
-            if (selected.size() == allLayerKeys.size())
+            d.displayLayersFiltered = selected.size() != allLayerKeys.size();
+            if (!d.displayLayersFiltered)
                 selected.clear();
             d.displayLayers = selected;
             applyFilter(d.ui->filter->text());
@@ -487,11 +492,11 @@ MaterialBrowserPrivate::showDisplayMenu()
     auto addTypeAction = [&](const QString& type) {
         QAction* action = menu.addAction(typeLabels.value(type));
         action->setCheckable(true);
-        action->setChecked(d.displayTypes.isEmpty() || d.displayTypes.contains(type));
+        action->setChecked(!d.displayTypesFiltered || d.displayTypes.contains(type));
         action->setData(type);
         connect(action, &QAction::toggled, &menu, [this, types, action](bool checked) {
             QStringList selected = d.displayTypes;
-            if (selected.isEmpty())
+            if (!d.displayTypesFiltered)
                 selected = types;
 
             const QString typeId = action->data().toString();
@@ -500,7 +505,8 @@ MaterialBrowserPrivate::showDisplayMenu()
             else if (!checked)
                 selected.removeAll(typeId);
 
-            if (selected.size() == types.size())
+            d.displayTypesFiltered = selected.size() != types.size();
+            if (!d.displayTypesFiltered)
                 selected.clear();
             d.displayTypes = selected;
             applyFilter(d.ui->filter->text());
@@ -941,7 +947,7 @@ MaterialBrowserPrivate::applyFilter(const QString& text)
         const bool matchesText = filter.isEmpty() || entry.name.contains(filter, Qt::CaseInsensitive)
                                  || type.contains(filter, Qt::CaseInsensitive)
                                  || path.contains(filter, Qt::CaseInsensitive);
-        bool matchesLayer = d.displayLayers.isEmpty();
+        bool matchesLayer = !d.displayLayersFiltered;
         if (!matchesLayer) {
             for (const QString& layer : entry.layerIdentifiers) {
                 if (d.displayLayers.contains(layer)) {
@@ -950,7 +956,7 @@ MaterialBrowserPrivate::applyFilter(const QString& text)
                 }
             }
         }
-        const bool matchesType = d.displayTypes.isEmpty() || d.displayTypes.contains(entry.shaderId);
+        const bool matchesType = !d.displayTypesFiltered || d.displayTypes.contains(entry.shaderId);
         const bool visible = matchesText && matchesLayer && matchesType;
 
         if (QListWidgetItem* item = d.ui->icons->item(row))

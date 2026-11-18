@@ -214,6 +214,7 @@ foreach(case IN ITEMS
     material_graph_disconnected_network_layout_api
     material_dialog_refresh_after_layer_removal_api
     property_reveal_file_api
+    material_reveal_file_api
     material_numeric_editor_api
     property_asset_editor_api
     property_material_light_dropdown_api

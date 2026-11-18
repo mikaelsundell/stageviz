@@ -141,23 +141,37 @@ public:
     /**
      * @brief Sets optional layer and prim-type display filters.
      *
-     * Empty lists mean all layers or prim types are displayed.
+     * Nonempty lists restrict the display. Empty lists show all unless the
+     * corresponding filter flag is true, which explicitly selects nothing.
      *
      * @param layers Included layer identifiers.
      * @param types Included USD type names.
      * @param showUntyped Whether prims without a schema type are displayed.
+     * @param filterLayers Treat an empty layer list as an explicit empty selection.
+     * @param filterTypes Treat an empty type list as an explicit empty selection.
      */
-    void setDisplayFilters(const QStringList& layers, const QStringList& types, bool showUntyped = true);
+    void setDisplayFilters(const QStringList& layers, const QStringList& types, bool showUntyped = true,
+                           bool filterLayers = false, bool filterTypes = false);
 
     /**
-     * @brief Returns the active layer display filter; empty means all layers.
+     * @brief Returns the included layer keys; displayLayersFiltered() distinguishes all from none.
      */
     QStringList displayLayers() const;
 
     /**
-     * @brief Returns the active prim-type display filter; empty means all types.
+     * @brief Returns the included type names; displayTypesFiltered() distinguishes all from none.
      */
     QStringList displayTypes() const;
+
+    /**
+     * @brief Returns whether the layer display filter is active, including an empty selection.
+     */
+    bool displayLayersFiltered() const;
+
+    /**
+     * @brief Returns whether the prim-type display filter is active, including an empty selection.
+     */
+    bool displayTypesFiltered() const;
 
     /**
      * @brief Returns whether untyped prims are included in the display.
