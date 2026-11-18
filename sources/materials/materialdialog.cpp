@@ -557,6 +557,17 @@ MaterialDialogPrivate::init()
                 updateNodeHeader(path, name, type, shaderId);
                 updatePropertySwatch();
             });
+    connect(d.renderer, &MaterialRenderer::colorViewChanged, this, [this]() {
+        const auto count = d.ui->browserWidget->entries().size();
+        for (int row = 0; row < count; ++row)
+            d.ui->browserWidget->invalidateSwatch(row);
+        if (!d.dialog->isVisible())
+            return;
+        d.ui->browserWidget->refreshVisibleSwatches();
+        const QList<int> selected = d.ui->browserWidget->selectedRows();
+        if (selected.size() == 1)
+            requestSwatch(selected.first());
+    });
     connect(d.renderer, &MaterialRenderer::rendered, this,
             [this](const QString& path, const QImage& image) { updateSwatch(path, image); });
 

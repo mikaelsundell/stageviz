@@ -122,6 +122,8 @@ struct SelectionOutlineSettings {
  */
 struct RenderTaskParams {
     ViewState::AmbientOcclusionSettings ambientOcclusion;
+    ColorManagementSettings colorManagement;
+    bool applyColorManagement = false;
     SceneIdSettings sceneIds;
     SelectionOutlineSettings selectionOutline;
     /**

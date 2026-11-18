@@ -987,6 +987,47 @@ The wrapper is non-owning.
 
 `setSceneMaterialsEnabled(enabled) -> None`
 
+### Color management
+
+The viewport renders in scene-linear Rec.709/sRGB primaries. An OCIO display
+transform targets an sRGB display, after scene AO and before selection outlines.
+The pinned built-in configuration is
+`studio-config-v2.2.0_aces-v1.3_ocio-v2.4`; no external config/LUT files are needed.
+These view-only settings participate in remembered session state, not USD undo.
+The Display menu offers exposure/gamma presets; Python accepts custom values
+within the ranges below. No menu preset is checked for a custom value.
+Texture input conversion remains the responsibility of USD/MaterialX.
+Rendered material swatches follow `colorView()` while keeping exposure zero and
+viewing gamma one. Visible swatches reuse cached floating-point linear renders;
+hidden ones refresh when shown. Their linear/display image cache uses a 128 MiB
+LRU budget per material renderer. Texture image thumbnails keep the existing
+OpenImageIO preview conversion.
+
+`exposure() -> float`
+
+`setExposure(value) -> None`
+: Exposure in stops, clamped to -20..20; zero is neutral. Rejects non-finite values.
+
+`gamma() -> float`
+
+`setGamma(value) -> None`
+: Additional viewing gamma after OCIO, clamped to 0.1..4; one is neutral.
+  Rejects non-finite values. This is not the sRGB encoding setting.
+
+`colorView() -> str`
+
+`setColorView(view) -> None`
+: Select an exact name returned by `colorViews()`; unsupported names raise
+  `ValueError`. Default is `Un-tone-mapped`. `Raw` bypasses OCIO while retaining
+  exposure and gamma. Alpha, depth, picking IDs and editor outline colors are preserved.
+
+`colorViews() -> list[str]`
+: Available views for the fixed `sRGB - Display` output display.
+
+The embedded interpreter also provides the upstream `PyOpenColorIO` package:
+`import PyOpenColorIO as OCIO`. It is independent of `stageviz`; changing its
+current global config does not replace the viewport's pinned configuration.
+
 ### Ambient occlusion
 
 Stageviz viewport AO is runtime view state, not USD scene authoring. Numeric

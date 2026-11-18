@@ -172,7 +172,7 @@ REM python package discovery roots
 set "python_roots=%prefix%\site-packages;%prefix_lib%\site-packages;%prefix%\Lib\site-packages;%prefix%\python;%prefix_lib%\python;%prefix%\python\Lib\site-packages;%prefix%\python\lib\site-packages;%prefix_lib%\python3.9\site-packages;%prefix%\python\lib\python3.9\site-packages"
 
 REM python packages to deploy into site-packages
-set "python_packages=pxr;PySide6;shiboken6;MaterialX;OpenImageIO"
+set "python_packages=pxr;PySide6;shiboken6;MaterialX;OpenImageIO;PyOpenColorIO"
 
 echo Deploying stageviz for %current_build_type% to %deploy_dir%
 echo -------------------------------------------------

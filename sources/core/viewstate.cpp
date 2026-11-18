@@ -4,6 +4,7 @@
 #include "viewstate.h"
 #include "viewcamera.h"
 #include <algorithm>
+#include <cmath>
 namespace stageviz {
 class ViewStatePrivate {
 public:
@@ -11,6 +12,7 @@ public:
     struct Data {
         QScopedPointer<ViewCamera> viewCamera;
         QColor backgroundColor;
+        ColorManagementSettings colorManagement;
         QColor gridColor;
         bool gridEnabled = true;
         ViewState::MaterialMode materialMode = ViewState::All;
@@ -471,4 +473,61 @@ ViewState::setCameraAxisEnabled(bool enabled)
     p->d.cameraAxisEnabled = enabled;
     Q_EMIT cameraAxisEnabledChanged(enabled);
 }
+
+float
+ViewState::exposure() const
+{
+    return p->d.colorManagement.exposure;
+}
+void
+ViewState::setExposure(float value)
+{
+    if (!std::isfinite(value))
+        return;
+    value = std::clamp(value, -20.0f, 20.0f);
+    if (value == exposure())
+        return;
+    p->d.colorManagement.exposure = value;
+    Q_EMIT colorManagementChanged();
+}
+float
+ViewState::gamma() const
+{
+    return p->d.colorManagement.gamma;
+}
+void
+ViewState::setGamma(float value)
+{
+    if (!std::isfinite(value))
+        return;
+    value = std::clamp(value, 0.1f, 4.0f);
+    if (value == gamma())
+        return;
+    p->d.colorManagement.gamma = value;
+    Q_EMIT colorManagementChanged();
+}
+QString
+ViewState::colorView() const
+{
+    return p->d.colorManagement.view;
+}
+void
+ViewState::setColorView(const QString& view)
+{
+    if (view == colorView() || !colorViews().contains(view))
+        return;
+    p->d.colorManagement.view = view;
+    Q_EMIT colorManagementChanged();
+}
+QStringList
+ViewState::colorViews() const
+{
+    return colorManagementViews();
+}
+ColorManagementSettings
+ViewState::colorManagementSettings() const
+{
+    return p->d.colorManagement;
+}
+
 }  // namespace stageviz

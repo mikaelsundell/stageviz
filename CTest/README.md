@@ -696,3 +696,53 @@ On macOS the complete runner and disposable app controllers hold a scoped
 native CTests. It ends on completion or interruption and watches the controller
 PID so a crashed controller cannot leave it active. System power preferences
 are unchanged; this does not prevent explicit sleep or closing the lid.
+
+### Viewport color management
+
+`stageviz.gui.render_color_management_api` compares the native GPU processor
+against OCIO's CPU reference for every bundled sRGB display view, including HDR,
+negative and partially transparent samples, exposure and viewing gamma.
+`render_color_management_gl_api` exercises HgiGL explicitly on Windows/Linux;
+macOS uses Metal because HgiGL requires OpenGL 4.5, beyond macOS support.
+`testcolormanagement.py` checks the embedded `PyOpenColorIO` import, Display menu
+structure and preset separators, bidirectional ViewState/Python/preset updates,
+custom values with no checked preset, validation, remembered
+state and selection outline colors. It requires a disposable app process and
+writes viewer captures and a Qt snapshot. Depth/ID capture and coincident-outline
+regressions remain separate focused checks.
+
+The initial viewport OCIO configuration is the built-in
+`studio-config-v2.2.0_aces-v1.3_ocio-v2.4`, with explicit Linear Rec.709 input and
+`sRGB - Display` output. Un-tone-mapped is the default view. Raw bypasses OCIO
+but keeps exposure/gamma adjustments. This does not change USD/MaterialX texture
+input authoring or infer arbitrary source texture color spaces.
+
+For a packaged application, run
+`python3 CTest/benchmark/check_ocio_deployment.py --app <executable>`.
+It verifies that the native Python extension is inside the app, creates an OCIO
+processor and checks a reference gray value. On macOS it also verifies that
+exactly one OCIO library is loaded, from inside the bundle. The macOS build
+preserves versioned OCIO library symlinks so the executable and Python extension
+resolve to that same library. The smoke test verifies OCIO availability and
+imports; deployment checking stays generic and accepts the valid bare
+`@loader_path` rpath. Sanitization removes external
+build-directory rpaths, including Qt's build tree.
+
+### Material swatch view changes
+
+`stageviz.gui.material_swatch_color_view_api` verifies that floating-point linear
+capture retains HDR values, cached CPU OCIO conversion matches GPU display
+output, and view changes reuse shaderball renders. It checks transparent
+backgrounds, repeated view round trips and independence from viewport exposure
+and gamma. `testmaterialcolorview.py` exercises the open material editor and
+lazy refresh after hiding/reopening it, with screenshots and optional render
+trace assertions. Both cases use synthetic materials.
+
+The material renderer keeps one linear image and one current display image per
+cached swatch in a 128 MiB LRU cache. It applies the selected session view with
+neutral exposure/gamma; texture-node image thumbnails retain their existing
+OpenImageIO preview path. Browser images remain visible while replacements are
+requested, and only visible/requested swatches are reprocessed after view changes.
+Cached conversions use the same progressive queue as geometry renders, keeping
+menu changes responsive. Queued conversions retain source requests rather than
+extra floating-point images; LRU eviction falls back to a normal render.

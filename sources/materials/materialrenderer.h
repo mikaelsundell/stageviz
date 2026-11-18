@@ -107,6 +107,14 @@ public:
 
 Q_SIGNALS:
     /**
+     * @brief Emitted when cached display images need the current session's OCIO view.
+     *
+     * Linear renders remain cached. Consumers should request visible swatches;
+     * exposure and gamma changes do not emit this signal.
+     */
+    void colorViewChanged();
+
+    /**
      * @brief Emitted when a material image has been rendered successfully.
      */
     void rendered(const QString& materialPath, const QImage& image);

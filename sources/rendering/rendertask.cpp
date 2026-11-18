@@ -442,6 +442,7 @@ public:
         return true;
     }
 
+    std::unordered_map<std::string, std::unique_ptr<ColorTransform>> colorTransforms;
     Hgi* hgi = nullptr;
     HdxFullscreenShader raw;
     HdxFullscreenShader blur;
@@ -1363,8 +1364,8 @@ private:
 bool
 RenderTaskParams::enabled() const
 {
-    return prepareSelection || ambientOcclusion.enabled || sceneIds.enabled || selectionOutline.enabled
-           || captureGpuPick || captureVisible || captureElementId || captureObjects;
+    return applyColorManagement || prepareSelection || ambientOcclusion.enabled || sceneIds.enabled
+           || selectionOutline.enabled || captureGpuPick || captureVisible || captureElementId || captureObjects;
 }
 
 bool
@@ -1377,7 +1378,8 @@ operator==(const RenderTaskParams& lhs, const RenderTaskParams& rhs)
     const auto& sa = lhs.selectionOutline;
     const auto& sb = rhs.selectionOutline;
 
-    return a.enabled == b.enabled && a.contactAmount == b.contactAmount && a.contactRadius == b.contactRadius
+    return lhs.applyColorManagement == rhs.applyColorManagement && lhs.colorManagement == rhs.colorManagement
+           && a.enabled == b.enabled && a.contactAmount == b.contactAmount && a.contactRadius == b.contactRadius
            && a.broadAmount == b.broadAmount && a.broadRadius == b.broadRadius && a.normalBias == b.normalBias
            && a.falloff == b.falloff && a.contrast == b.contrast && a.edgeSharpness == b.edgeSharpness
            && a.blurEnabled == b.blurEnabled && a.blurRadius == b.blurRadius && a.quality == b.quality
@@ -1506,7 +1508,8 @@ RenderTask::Prepare(HdTaskContext* ctx, HdRenderIndex* renderIndex)
     if (!m_params.enabled())
         return;
 
-    if ((m_params.prepareSelection || m_params.ambientOcclusion.enabled || m_params.selectionOutline.enabled)
+    if ((m_params.applyColorManagement || m_params.prepareSelection || m_params.ambientOcclusion.enabled
+         || m_params.selectionOutline.enabled)
         && !m_shader) {
         if (Hgi* hgi = _GetHgi())
             m_shader = std::make_unique<Shader>(hgi);
@@ -1676,6 +1679,25 @@ RenderTask::Execute(HdTaskContext* ctx)
                         _ToggleRenderTarget(ctx);
                     }
                 }
+            }
+        }
+    }
+
+    // Display conversion follows scene AO and precedes editor outlines. It
+    // changes only color; depth and integer picking/capture AOVs remain raw.
+    if (m_params.applyColorManagement && m_shader) {
+        HgiTextureHandle input;
+        if (_GetTaskContextData(ctx, HdAovTokens->color, &input) && input) {
+            auto& transform = m_shader->colorTransforms[m_params.colorManagement.view.toStdString()];
+            if (!transform)
+                transform = std::make_unique<ColorTransform>(m_shader->hgi);
+            if (transform->prepare(m_params.colorManagement, input->GetDescriptor().format)) {
+                _ToggleRenderTarget(ctx);
+                HgiTextureHandle output;
+                if (_GetTaskContextData(ctx, HdAovTokens->color, &output) && output && input != output)
+                    transform->draw(input, output, m_params.colorManagement);
+                else
+                    _ToggleRenderTarget(ctx);
             }
         }
     }

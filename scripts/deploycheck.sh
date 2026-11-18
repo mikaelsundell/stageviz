@@ -74,7 +74,7 @@ check_rpaths() {
             continue
         fi
 
-        if [[ "$rpath" == @executable_path/* ]] || [[ "$rpath" == @loader_path/* ]] || [[ "$rpath" == @rpath/* ]]; then
+        if [[ "$rpath" == @executable_path || "$rpath" == @loader_path || "$rpath" == @executable_path/* || "$rpath" == @loader_path/* || "$rpath" == @rpath/* ]]; then
             continue
         fi
 

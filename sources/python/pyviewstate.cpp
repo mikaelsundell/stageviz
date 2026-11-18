@@ -5,6 +5,8 @@
 #include "pyviewstate.h"
 #include "pyutils.h"
 #include "pyviewcamera.h"
+#include <algorithm>
+#include <cmath>
 
 namespace stageviz::python {
 
@@ -786,7 +788,108 @@ PyViewState_setCameraAxisEnabled(PyViewStateObject* self, PyObject* args)
     Py_RETURN_NONE;
 }
 
+static PyObject*
+PyViewState_exposure(PyViewStateObject* self, PyObject*)
+{
+    if (!checkViewState(self->viewState))
+        return nullptr;
+    return PyFloat_FromDouble(self->viewState->exposure());
+}
+
+static PyObject*
+PyViewState_setExposure(PyViewStateObject* self, PyObject* args)
+{
+    if (!checkViewState(self->viewState))
+        return nullptr;
+    double value;
+    if (!PyArg_ParseTuple(args, "d", &value))
+        return nullptr;
+    if (!std::isfinite(value)) {
+        PyErr_SetString(PyExc_ValueError, "Value must be finite");
+        return nullptr;
+    }
+    self->viewState->setExposure(float(std::clamp(value, -20.0, 20.0)));
+    Py_RETURN_NONE;
+}
+
+static PyObject*
+PyViewState_gamma(PyViewStateObject* self, PyObject*)
+{
+    if (!checkViewState(self->viewState))
+        return nullptr;
+    return PyFloat_FromDouble(self->viewState->gamma());
+}
+
+static PyObject*
+PyViewState_setGamma(PyViewStateObject* self, PyObject* args)
+{
+    if (!checkViewState(self->viewState))
+        return nullptr;
+    double value;
+    if (!PyArg_ParseTuple(args, "d", &value))
+        return nullptr;
+    if (!std::isfinite(value)) {
+        PyErr_SetString(PyExc_ValueError, "Value must be finite");
+        return nullptr;
+    }
+    self->viewState->setGamma(float(std::clamp(value, 0.1, 4.0)));
+    Py_RETURN_NONE;
+}
+
+static PyObject*
+PyViewState_colorView(PyViewStateObject* self, PyObject*)
+{
+    if (!checkViewState(self->viewState))
+        return nullptr;
+    return PyUnicode_FromString(self->viewState->colorView().toUtf8().constData());
+}
+
+static PyObject*
+PyViewState_colorViews(PyViewStateObject* self, PyObject*)
+{
+    if (!checkViewState(self->viewState))
+        return nullptr;
+    const auto views = self->viewState->colorViews();
+    PyObject* result = PyList_New(views.size());
+    if (!result)
+        return nullptr;
+    for (int i = 0; i < views.size(); ++i) {
+        PyObject* value = PyUnicode_FromString(views[i].toUtf8().constData());
+        if (!value) {
+            Py_DECREF(result);
+            return nullptr;
+        }
+        PyList_SET_ITEM(result, i, value);
+    }
+    return result;
+}
+
+static PyObject*
+PyViewState_setColorView(PyViewStateObject* self, PyObject* args)
+{
+    if (!checkViewState(self->viewState))
+        return nullptr;
+    const char* value;
+    if (!PyArg_ParseTuple(args, "s", &value))
+        return nullptr;
+    const QString view = QString::fromUtf8(value);
+    if (!self->viewState->colorViews().contains(view)) {
+        PyErr_SetString(PyExc_ValueError, "Unsupported OCIO view; use colorViews()");
+        return nullptr;
+    }
+    self->viewState->setColorView(view);
+    Py_RETURN_NONE;
+}
+
 static PyMethodDef PyViewState_methods[] = {
+    { "exposure", reinterpret_cast<PyCFunction>(PyViewState_exposure), METH_NOARGS, "Get viewport exposure" },
+    { "setExposure", reinterpret_cast<PyCFunction>(PyViewState_setExposure), METH_VARARGS, "Set viewport exposure" },
+    { "gamma", reinterpret_cast<PyCFunction>(PyViewState_gamma), METH_NOARGS, "Get viewport gamma" },
+    { "setGamma", reinterpret_cast<PyCFunction>(PyViewState_setGamma), METH_VARARGS, "Set viewport gamma" },
+    { "colorView", reinterpret_cast<PyCFunction>(PyViewState_colorView), METH_NOARGS, "Viewport OCIO view" },
+    { "colorViews", reinterpret_cast<PyCFunction>(PyViewState_colorViews), METH_NOARGS, "Viewport OCIO view" },
+    { "setColorView", reinterpret_cast<PyCFunction>(PyViewState_setColorView), METH_VARARGS, "Viewport OCIO view" },
+
     { "camera", reinterpret_cast<PyCFunction>(PyViewState_camera), METH_NOARGS, "Get the view camera wrapper" },
 
     { "backgroundColor", reinterpret_cast<PyCFunction>(PyViewState_backgroundColor), METH_NOARGS,

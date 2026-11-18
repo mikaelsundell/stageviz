@@ -214,7 +214,9 @@ path_contains_bad_rpath() {
     while IFS= read -r rpath; do
         [[ -z "$rpath" ]] && continue
         case "$rpath" in
-            "$prefix"/*|/Applications/Xcode.app/*)
+            /System/Library/*|/usr/lib/*|"$bundle"/*)
+                ;;
+            /*)
                 echo "$rpath"
                 found=0
                 ;;
@@ -264,7 +266,9 @@ delete_bad_rpaths() {
     while IFS= read -r rpath; do
         [[ -z "$rpath" ]] && continue
         case "$rpath" in
-            "$prefix"/*|/Applications/Xcode.app/*)
+            /System/Library/*|/usr/lib/*|"$bundle"/*)
+                ;;
+            /*)
                 echo "Delete bad rpath:"
                 echo "  file:  $path"
                 echo "  rpath: $rpath"
@@ -585,6 +589,11 @@ verify_no_bad_refs() {
     local path="${1:-}"
     if [[ -z "$path" ]]; then
         echo "Error: missing path argument in verify_no_bad_refs"
+        return 1
+    fi
+
+    if path_contains_bad_rpath "$path" >/dev/null; then
+        echo "Error: external LC_RPATH still present in: $path"
         return 1
     fi
 

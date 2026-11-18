@@ -264,6 +264,10 @@ build_stageviz() {
             "$prefix/lib/libusd_usdSkelImaging.dylib" \
             "$prefix/lib/libusd_hdGp.dylib"
 
+        # The Python extension may reference a major/minor alias while the
+        # executable references the full version. Preserve all OCIO aliases.
+        cp -fP "$prefix"/lib/libOpenColorIO*.dylib "$app_bundle/Contents/Frameworks/"
+
         echo "Deploy usd plugin info"
         local plugininfo="$prefix/lib/usd"
         local frameworks="$app_bundle/Contents/Frameworks"
@@ -297,6 +301,7 @@ build_stageviz() {
             shiboken6
             MaterialX
             OpenImageIO
+            PyOpenColorIO
         )
 
         local python_search_roots=(
