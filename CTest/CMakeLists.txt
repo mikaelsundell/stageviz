@@ -204,6 +204,7 @@ foreach(case IN ITEMS
     renderengine_api
     render_primitive_selection_api
     render_coincident_selection_api
+    render_display_mode_warmup_api
     renderengine_hdri_api
     material_browser_api
     material_browser_display_menu_api
@@ -260,9 +261,11 @@ endforeach()
 # focus changes can dismiss the menu before its inspection timer runs. Keep
 # the C++ selection/command assertions deterministic without relying on OS focus.
 if(NOT WIN32)
-    set_property(TEST stageviz.gui.layer_tree_multi_selection_api APPEND PROPERTY
-        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
-    )
+    foreach(popup_case IN ITEMS layer_tree_multi_selection_api material_select_multi_selection_api)
+        set_property(TEST stageviz.gui.${popup_case} APPEND PROPERTY
+            ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+        )
+    endforeach()
 endif()
 
 if(WIN32)

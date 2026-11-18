@@ -106,6 +106,11 @@ class PayloadHierarchyTest:
     def __init__(self, disposable=False):
         assert disposable, 'payload hierarchy tests replace the current stage'
         self.original_policy = stageviz.session().loadPolicy()
+        self.original_preserve = tb.action_info('filePreserveState')['checked']
+        # Baselines deliberately use LoadNone; remembered rules must not replace
+        # that fixture policy when a previous phase closes its loaded stage.
+        if self.original_preserve:
+            assert tb.trigger_action('filePreserveState')
         self.directory = Path(tempfile.mkdtemp(prefix='stageviz-payload-hierarchy-'))
         self.fixture = make_fixture(self.directory)
         self.checkpoints = []
@@ -584,5 +589,7 @@ class PayloadHierarchyTest:
         assert tb.wait_for_commands(timeout=120)
         self.checkpoint('final_fixture_unchanged')
         assert stageviz.session().newStage(policy=self.original_policy)
+        if tb.action_info('filePreserveState')['checked'] != self.original_preserve:
+            assert tb.trigger_action('filePreserveState')
         print('PAYLOAD_FIXTURE', json.dumps(self.fixture))
         print('PAYLOAD_ARTIFACTS', str(self.directory))

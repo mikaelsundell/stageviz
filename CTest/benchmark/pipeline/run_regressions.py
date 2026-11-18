@@ -272,7 +272,7 @@ def run(args):
             failure = output / name / 'failure.txt'
             failure.parent.mkdir(parents=True, exist_ok=True)
             failure.write_text(str(error), encoding='utf-8')
-            print('FAIL',name,str(error)[:300],flush=True)
+            print('FAIL',name,str(error)[:300], 'Full details:', str(failure),flush=True)
         row['seconds']=time.monotonic()-started
         summary.append(row)
         (output/'summary.json').write_text(json.dumps(summary,indent=2))

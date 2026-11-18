@@ -460,7 +460,10 @@ Use `merge_stage`, `merge_flattened_stage`, `add_sublayer`, `add_reference`, and
 : Enable automatic companion-state saving/restoration with file operations. Muting is stage state; USD files alone do not preserve the mute list.
 
 `reload() -> bool`
-: Reload the current file; discard unsaved edits. Reacquire USD/Qt objects afterward.
+: Reload the current file and discard unsaved USD edits. With Remember state
+  enabled, dirty companion state is saved first and restored, including current
+  payload load rules and muted layers. Use `loadState` to explicitly restore an
+  older saved state snapshot. Reacquire USD/Qt objects afterward.
 
 `close() -> bool`
 : Close the current stage. This is a lifecycle operation, not an undoable edit.

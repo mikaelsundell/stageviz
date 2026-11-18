@@ -182,9 +182,18 @@ registry, covering implicit surfaces, meshes, curves, points, and volumes.
 
 `render_coincident_selection_api` checks either coincident drawable and native
 instance proxy, parent selection, true occlusion, visibility changes and resized
-selection buffers. `python/testselectionoutline.py` checks the same overlapping
-plane workflow in a disposable viewer, including command undo/redo, actual
+selection buffers. It also verifies that unselected startup frames initialize
+selection resources once and that first/next selections reuse them without
+resource creation or another warmup. `python/testselectionoutline.py` checks the
+same overlapping plane workflow in a disposable viewer, including command undo/redo, actual
 outline pixels and Qt/viewer snapshots.
+
+`render_display_mode_warmup_api` checks that shaded and wireframe-on-surface
+pipelines prepare before the first switch, hidden preparation does not change
+the presented shaded image, and quality/new-geometry changes prepare each mode
+once while ordinary transform edits reuse them. The benchmark records
+first/repeated wireframe switches separately and
+saves a wireframe viewer/Qt snapshot for each scene size.
 
 For a focused before/after performance comparison, run
 `python3 CTest/benchmark/benchmark_selection_outline.py --app /path/to/stageviz
@@ -192,9 +201,14 @@ For a focused before/after performance comparison, run
 the old binary to record its known overlap failure. The default 10,000- and
 30,000-object fixtures populate and expand the Outliner, warm each selection
 mode, and record 60 redraw/readback samples, fixed-seed random selection changes,
-and five parent transform/undo cycles. Frame timings include GPU synchronization
-through framebuffer readback; they are not GPU-only timings. Fixture creation,
-load and snapshots are outside the measured intervals. The external MCP
+and five parent transform/undo cycles. `--performance-first` measures the first
+and next selections before the overlap workflow. Stage preparation and first
+selection timings are recorded separately from warmed redraw samples. Use
+`--parent-moves 0` to isolate redraw/selection timings when transform coverage
+is already available. Optional `STAGEVIZ_PERF_LOG` traces distinguish resource
+creation and selection warmup. Frame timings include GPU synchronization through
+framebuffer readback; they are not GPU-only timings. Fixture creation, loading
+and snapshots are excluded from redraw and selection timings. The external MCP
 controller confirms the endpoint with `tools/list` and records independent
 stage, selection and prim observations. Large-scene comparisons are opt-in;
 the discoverable embedded suite runs the focused correctness checks only.
@@ -666,3 +680,19 @@ layer after writing its companion, even without a state-dirty transition;
 The multi-layer selection suite also checks that the Assign color dialog and its
 OK button remain visible and enabled while its Layer Editor owner is modal-blocked,
 then clicks OK and verifies the assigned colors through saved session state.
+
+Native GUI cases isolate their QSettings in a temporary INI directory and keep
+stdout/stderr visible in Release as well as Debug builds. Pure Qt popup action
+cases run offscreen on macOS/Linux to avoid native focus dismissal; they do not
+claim OS popup integration coverage. The asset-editor chooser test polls until
+the Qt dialog is visible, rejects it on a bounded watchdog, and pumps events
+while waiting for workers. Payload-checkbox fixtures disable Remember state so
+LoadNone resets are independent of companion autosaving. The dedicated session
+state tests separately verify current-state autosaving on Reload and explicit
+restoration of older muted-layer/payload-rule snapshots.
+
+On macOS the complete runner and disposable app controllers hold a scoped
+`caffeinate -i` assertion to prevent idle system sleep during the run, including
+native CTests. It ends on completion or interruption and watches the controller
+PID so a crashed controller cannot leave it active. System power preferences
+are unchanged; this does not prevent explicit sleep or closing the lid.

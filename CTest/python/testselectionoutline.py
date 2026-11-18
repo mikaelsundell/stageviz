@@ -72,6 +72,8 @@ class SelectionOutlineTest:
         self.original_filename = stageviz.session().filename()
         self.original_selection = list(stageviz.session().paths())
         self.original_color = stageviz.ui().color(stageviz.UI.ColorRole.Selection)
+        self.original_render_mode = stageviz.session().viewState().renderMode()
+        stageviz.session().viewState().setRenderMode(stageviz.RenderShaded)
         stageviz.ui().setColor(stageviz.UI.ColorRole.Selection, 255, 0, 255)
         fixture = Usd.Stage.CreateNew(str(self.directory / "overlap.usda"))
         world = UsdGeom.Xform.Define(fixture, "/World")
@@ -116,6 +118,15 @@ class SelectionOutlineTest:
         assert pixels["none"] == 0 and pixels["both"] > 20, pixels
         if not self.baseline:
             assert min(pixels["A"], pixels["B"]) > 20, pixels
+        state = stageviz.session().viewState()
+        state.setRenderMode(stageviz.RenderWireframe)
+        for name in ("A", "B"):
+            self.select(["/World/" + name])
+            assert self.selected_pixels() > 20, "coincident selection must remain outlined in wireframe"
+        self.snapshot("wireframe-overlap")
+        state.setRenderMode(stageviz.RenderShaded)
+        assert self.selected_pixels() > 20, "returning to shaded must retain selection"
+        self.select([])
         # A genuinely hidden selected plane must stay hidden. Use commands and
         # verify undo/redo before restoring the coincident baseline.
         stageviz.command.hide_paths(["/World/A"])
@@ -143,7 +154,7 @@ class SelectionOutlineTest:
         self.results["occludedPixels"] = 0
         self.write_results()
 
-    def performance(self, count=10000, samples=60):
+    def performance(self, count=10000, samples=60, parent_moves=5):
         # Direct USD authoring is confined to a synthetic fixture file, before
         # loading it into the live session. All measured edits use commands.
         path = self.directory / ("synthetic-%d.usda" % count)
@@ -159,6 +170,7 @@ class SelectionOutlineTest:
                           'uniform token[] xformOpOrder = ["xformOp:translate"]', '}'])
         lines.extend(['}', 'def Xform "Target" {}', '}'])
         path.write_text('\n'.join(lines) + '\n')
+        stage_start = time.perf_counter()
         assert stageviz.session().loadFromFile(str(path))
         camera = stageviz.session().viewState().camera()
         camera.setCameraView(stageviz.CameraViewTop)
@@ -177,6 +189,40 @@ class SelectionOutlineTest:
                 break
             pending.extend(model.index(i, 0, index) for i in range(model.rowCount(index)))
         assert populated, "benchmark requires every synthetic object in an expanded Outliner branch"
+        self.select([])
+        for _ in range(8):
+            self.image()
+        stage_ready_ms = (time.perf_counter() - stage_start) * 1000
+        start = time.perf_counter()
+        self.select([paths[count // 2]])
+        self.image()
+        first_selection_ms = (time.perf_counter() - start) * 1000
+        start = time.perf_counter()
+        self.select([paths[count // 2 + 1]])
+        self.image()
+        next_selection_ms = (time.perf_counter() - start) * 1000
+        self.results["startup-%d" % count] = {
+            "stageReadyMs": stage_ready_ms,
+            "firstSelectionMs": first_selection_ms,
+            "nextSelectionMs": next_selection_ms,
+        }
+        self.write_results()
+        self.select([])
+        state = stageviz.session().viewState()
+        mode_timings = {}
+        for label, mode in (("firstWireframeMs", stageviz.RenderWireframe),
+                            ("returnShadedMs", stageviz.RenderShaded),
+                            ("nextWireframeMs", stageviz.RenderWireframe)):
+            start = time.perf_counter()
+            state.setRenderMode(mode)
+            self.image()
+            mode_timings[label] = (time.perf_counter() - start) * 1000
+            assert state.renderMode() == mode
+        self.snapshot("wireframe-%d" % count)
+        state.setRenderMode(stageviz.RenderShaded)
+        self.image()
+        self.results["displayModes-%d" % count] = mode_timings
+        self.write_results()
         # Synchronize GPU completion through framebuffer readback. Report it
         # explicitly as redraw+readback wall time, rather than GPU-only timing.
         rng = random.Random(814)
@@ -207,7 +253,7 @@ class SelectionOutlineTest:
         after = Gf.Matrix4d(1).SetTranslate(Gf.Vec3d(.1, 0, 0))
         matrix = lambda m: tuple(tuple(float(m[r][c]) for c in range(4)) for r in range(4))
         self.select(["/World/Group"])
-        for _ in range(5):
+        for _ in range(parent_moves):
             start = time.perf_counter()
             stageviz.command.set_transforms(["/World/Group"], [matrix(before)], [matrix(after)])
             assert tb.wait_for_commands()
@@ -226,6 +272,7 @@ class SelectionOutlineTest:
         (self.directory / "results.json").write_text(json.dumps(self.results, indent=2))
 
     def cleanup(self):
+        stageviz.session().viewState().setRenderMode(self.original_render_mode)
         stageviz.ui().setColor(stageviz.UI.ColorRole.Selection, *self.original_color)
         if self.original_filename:
             assert stageviz.session().loadFromFile(self.original_filename)

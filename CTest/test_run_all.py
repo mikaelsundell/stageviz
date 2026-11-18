@@ -27,6 +27,9 @@ class TestRunner(unittest.TestCase):
         self.app.touch()
         self.args = argparse.Namespace(build_dir=str(self.build), app=str(self.app), cmake=None,
                                        no_build=False, jobs=2, port=0)
+        guard = mock.patch.object(run_all, 'test_desktop', return_value=contextlib.nullcontext())
+        guard.start()
+        self.addCleanup(guard.stop)
 
     def plan(self, statuses):
         calls = []
@@ -171,6 +174,51 @@ class TestRunner(unittest.TestCase):
         user.CloseDesktop.assert_called_once_with(123)
         self.assertEqual(kernel.SetThreadExecutionState.call_args_list,
                          [mock.call(0x80000003), mock.call(0x80000001)])
+
+    def test_macos_idle_sleep_guard_releases_after_failure(self):
+        keeper = mock.MagicMock()
+        keeper.poll.return_value = None
+        with mock.patch.object(mcp_runtime.sys, 'platform', 'darwin'), \
+                mock.patch.object(mcp_runtime.shutil, 'which', return_value='/usr/bin/caffeinate'), \
+                mock.patch.object(mcp_runtime.subprocess, 'Popen', return_value=keeper) as start:
+            with self.assertRaisesRegex(RuntimeError, 'test failure'):
+                with mcp_runtime.test_desktop():
+                    raise RuntimeError('test failure')
+        self.assertEqual(start.call_args.args[0],
+                         ['/usr/bin/caffeinate', '-i', '-w', str(mcp_runtime.os.getpid())])
+        keeper.terminate.assert_called_once()
+        keeper.wait.assert_called_once_with(timeout=5)
+        keeper.stderr.close.assert_called_once()
+
+    def test_complete_run_holds_and_releases_sleep_guard(self):
+        active = []
+        @contextlib.contextmanager
+        def guard():
+            active.append(True)
+            try:
+                yield
+            finally:
+                active.pop()
+        def configuration(*args):
+            self.assertEqual(active, [True])
+            return {'passed': True}
+        with mock.patch.object(run_all, 'test_desktop', guard), \
+                mock.patch.object(run_all, 'run_configuration', side_effect=configuration), \
+                contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(run_all.main(['--output', str(self.directory / 'guarded')]), 0)
+        self.assertEqual(active, [])
+
+    def test_sleep_guard_failure_preserves_failed_summary(self):
+        output = self.directory / 'guard-failed'
+        with mock.patch.object(run_all, 'test_desktop', side_effect=RuntimeError('sleep guard failed')), \
+                mock.patch.object(run_all, 'run_configuration') as configuration, \
+                contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(run_all.main(['--output', str(output)]), 1)
+        configuration.assert_not_called()
+        summary = json.loads((output / 'summary.json').read_text())
+        self.assertFalse(summary['passed'])
+        self.assertEqual(summary['status'], 'failed')
+        self.assertEqual(summary['error'], 'sleep guard failed')
 
     def test_locked_desktop_stops_before_starting_app(self):
         user = mock.MagicMock()

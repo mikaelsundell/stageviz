@@ -124,6 +124,10 @@ struct RenderTaskParams {
     ViewState::AmbientOcclusionSettings ambientOcclusion;
     SceneIdSettings sceneIds;
     SelectionOutlineSettings selectionOutline;
+    /**
+     * @brief Prepares viewport selection resources before the first user selection.
+     */
+    bool prepareSelection = false;
     bool captureGpuPick = false;
     GfVec2i gpuPickPixel = GfVec2i(-1, -1);
     SdfPathVector gpuPickExcludes;
@@ -204,6 +208,7 @@ private:
     std::unique_ptr<SceneIdPass> m_sceneIdPass;
     std::unique_ptr<SceneIdPass> m_selectionIdPass;
     bool m_selectionUsesSceneIds = false;
+    bool m_selectionWarmup = false;
     SdfPathVector m_capturedVisiblePaths;
     int32_t m_capturedElementId = -1;
     GpuPickResult m_gpuPickResult;

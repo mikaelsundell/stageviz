@@ -75,6 +75,8 @@ stagevizSelectedEntry(ivec2 key)
 {
     int low = 0;
     int high = HdGet_stagevizSelection(0);
+    if (high < 0)
+        return true;
     while (low < high) {
         int middle = low + (high - low) / 2;
         ivec2 value = ivec2(HdGet_stagevizSelection(1 + middle * 2),

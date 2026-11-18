@@ -17,6 +17,7 @@ import uuid
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'CTest/benchmark/pipeline'))
 from run_regressions import discover_suites
+from mcp_runtime import test_desktop
 
 
 def configurations(value):
@@ -178,14 +179,21 @@ def main(argv=None):
     summary_file.write_text(json.dumps(summary, indent=2), encoding='utf-8')
     print('Full Stageviz tests. Results:', output, flush=True)
     try:
-        for configuration in configurations(args.configuration):
-            summary['configurations'].append(run_configuration(args, configuration, output / configuration.lower()))
-            summary_file.write_text(json.dumps(summary, indent=2), encoding='utf-8')
+        with test_desktop():
+            for configuration in configurations(args.configuration):
+                summary['configurations'].append(run_configuration(args, configuration, output / configuration.lower()))
+                summary_file.write_text(json.dumps(summary, indent=2), encoding='utf-8')
     except KeyboardInterrupt:
         summary['status'] = 'interrupted'
         summary_file.write_text(json.dumps(summary, indent=2), encoding='utf-8')
         print('\nInterrupted:', summary_file, flush=True)
         return 130
+    except Exception as error:
+        summary['status'] = 'failed'
+        summary['error'] = str(error)
+        summary_file.write_text(json.dumps(summary, indent=2), encoding='utf-8')
+        print('\nFAIL:', error, 'Results:', summary_file, flush=True)
+        return 1
     summary['passed'] = all(row['passed'] for row in summary['configurations'])
     summary['status'] = 'passed' if summary['passed'] else 'failed'
     summary_file.write_text(json.dumps(summary, indent=2), encoding='utf-8')
