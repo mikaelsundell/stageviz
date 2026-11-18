@@ -45,7 +45,7 @@ def run(disposable=False):
     assert OCIO.GetVersion()
     config = OCIO.Config.CreateFromBuiltinConfig('studio-config-v2.2.0_aces-v1.3_ocio-v2.4')
     assert state.colorViews() == list(config.getViews('sRGB - Display'))
-    menu = viewer.findChild(QtWidgets.QMenu, 'displayColorManagement')
+    menu = viewer.findChild(QtWidgets.QMenu, 'displayColor')
     assert menu.title() == 'Color'
     assert [a.text() for a in menu.actions() if not a.isSeparator()] == ['Exposure', 'Gamma', 'View']
     exposure = viewer.findChild(QtWidgets.QMenu, 'displayExposure')

@@ -34,6 +34,10 @@ class NumericEditorTest(_base["ViewportTest"]):
 
     def editor(self):
         QtCore, _, _, QtWidgets = tb.qt()
+        # Selection can be visible in Session before the queued property-tree
+        # refresh. Reacquire the tree while waiting rather than using stale rows.
+        assert tb.wait_until(lambda: bool(self.tree().findItems(
+            "Attributes", QtCore.Qt.MatchFlag.MatchExactly, 0))), "selected prim attributes are presented"
         tree = self.tree()
         attributes = tree.findItems("Attributes", QtCore.Qt.MatchFlag.MatchExactly, 0)[0]
         tree.expandItem(attributes)

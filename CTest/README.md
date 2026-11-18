@@ -776,3 +776,15 @@ action and preceding divider in material input context menus. It covers relative
 assets authored in sublayers, current absolute values, and omission for missing,
 empty, directory and non-asset values. It inspects the action target without
 opening the operating system's file browser.
+
+### Development test runtime paths
+
+The automatic runner configures `DEPLOY_BUILD=OFF` alongside `BUILD_TESTING=ON`,
+including Release. This resets deployment mode left by a previous packaging
+build so embedded Python uses the same dependency prefix as the native app,
+rather than loading stale bundled USD libraries. `stageviz.test_app_runner`
+covers overriding a cached deployment configuration. `--no-build` leaves the
+existing configuration and binaries unchanged.
+
+Release embedded checks also wait for the numeric inspector's queued selection
+refresh and locate the Color menu through its current `displayColor` object name.
