@@ -156,7 +156,7 @@ instances and placements remain fixed. Exact undo/redo preserves references,
 selection, prior metadata, inert specs and the captured edit layer. Locked and
 ineffective weaker edit targets leave no edits behind.
 `testmakeeditable.py` exercises the public command and both root/proxy context
-menus through MCP. It verifies Make editable / divider / Source ordering,
+menus through MCP. It verifies the divider below Select, followed by Make editable / Source,
 locked-layer availability, independent child movement, retained references and
 selection, exact undo/redo, and captured menu/viewer presentation.
 
@@ -250,7 +250,8 @@ authoring/reset with undo/redo. The pseudo-root keeps its normal font.
 
 `outliner_defined_prims_api` checks that flattened prototype roots and other
 undefined prims stay hidden, including after definition changes. Defined untyped
-groups, inactive prims, unloaded payloads, instances and proxies remain visible.
+groups remain in the model and follow the Untyped filter, which starts unchecked.
+Inactive typed prims, unloaded payloads, instances and proxies remain visible.
 
 `new_xform_grouping_api` checks grouping a single selected prim, redundant
 descendant selections, placement under transformed parents, selection and
@@ -776,6 +777,101 @@ action and preceding divider in material input context menus. It covers relative
 assets authored in sublayers, current absolute values, and omission for missing,
 empty, directory and non-asset values. It inspects the action target without
 opening the operating system's file browser.
+
+### Population-mask isolation
+
+`stageviz.render_isolation_instances` verifies private render populations for
+native and nested instances, independent nested selections sharing prototypes,
+external proxy material bindings, scene lighting, live edits and material
+rebinding. It checks that the source population and authored layer contents are
+unchanged. `stageviz.render_isolation_ordinary_prims` checks the same population
+path for meshes, geometric primitives, curves, points, transforms, scopes and
+cameras, including mixed selections and reuse after clearing isolation.
+
+The embedded `testisolationinstances` suite creates Xform instances through the
+public commands and verifies actual captured geometry for instance roots, proxy
+children, mixed ordinary/instanced selections, shared siblings, nested instance
+selections and ancestor roots. It checks undo/redo and clearing isolation, saves
+viewer screenshots and Qt snapshots, and rejects geometry outside the requested
+mask. It also clicks a captured surface to verify that isolated instances remain
+pickable. The suite repeats with ordinary copies instead of instances. Separate
+setup/isolate/cleanup phases retain external MCP state evidence for both cases.
+
+All isolation uses a private population-masked render stage sharing the
+source layers. Scene light paths are cached between structural notices, and
+material lookup caches are shared across each population update. It preserves
+load rules, muted layers, lights and required shader dependencies without
+authoring source visibility. The original stage and one masked stage keep
+separate Hydra engines with a shared GPU backend. Clearing isolation restores
+the original engine; reentering reuses the masked engine and stage. The cache is
+bounded to those two engines rather than growing with the number of masks.
+Masked engines reuse the full scene's display-mode preparation while its source
+topology, shader dependencies and render settings remain compatible.
+`stageviz.gui.render_display_mode_warmup_api` checks isolated shaded/wireframe
+images, that mask changes do not repeat warm-up, and that geometry authored
+while isolated refreshes preparation before it is displayed.
+
+The opt-in performance comparison uses generated ordinary and native-instance
+scenes with 2,000 and 10,000 meshes, two fresh app processes per case, an expanded
+Outliner branch, deterministic leaf/group/multiple selections, parent moves and
+undo, clearing and reentering isolation, and normal-frame samples. Run it before
+and after a build, reusing the fixtures and baseline:
+
+```sh
+DYLD_IMAGE_SUFFIX=_debug python3 CTest/benchmark/pipeline/benchmark_isolation.py \
+  --app build.debug/Debug/Stageviz.app/Contents/MacOS/stageviz \
+  --output build.test-results/isolation-before
+# Rebuild the changed application before the second command.
+DYLD_IMAGE_SUFFIX=_debug python3 CTest/benchmark/pipeline/benchmark_isolation.py \
+  --app build.debug/Debug/Stageviz.app/Contents/MacOS/stageviz \
+  --output build.test-results/isolation-after \
+  --fixtures build.test-results/isolation-before \
+  --baseline build.test-results/isolation-before/summary.json
+```
+
+Timings include command completion and normal viewport framebuffer readback.
+Object-ID captures verify isolated geometry outside the timed intervals; full
+scene restoration checks framebuffer coverage. The controller records external
+MCP state, Qt snapshots, screenshots, fixture hashes, app hashes, memory samples
+and median timing comparisons. Source layer contents and population must remain
+unchanged after the measured moves are undone. This benchmark is separate from
+the automatic suites and must run without other GPU tests or builds competing
+for resources. Add `--max-regression-percent 10` to enforce a comparison budget;
+the default absolute noise allowance is 5 ms, adjustable with
+`--regression-slack-ms`. Both limits must be exceeded to fail, and the comparison
+report is saved before reporting a regression. Cold transitions have only two
+samples per default case; repeated leaf and group switches have sixteen and
+twelve respectively, so interpret small cold-operation differences cautiously.
+
+### Instance menus with multiple selections
+
+The `testmakeeditable` multi-menu phase checks Instance actions for multiple
+roots and proxy children, including duplicate children from one instance.
+Select and Source deduplicate their targets; Make editable converts every
+selected instance in one undoable operation and retains the selected paths.
+The menu places its divider immediately below Select, when Select is present.
+
+The `testmakeeditable` source-availability phase keeps Source enabled for real
+in-stage internal references and disables it for external-only sources, proxy
+children of those instances, and mixed selections containing either case.
+Asset-local paths cannot accidentally select an unrelated same-named stage prim.
+
+### Native material assignment and clearing
+
+`material_assignment_instances_api` checks direct parent bindings, proxy-to-owner
+promotion, shared prototype preservation, variant edit targets, locked layers,
+and exact undo in the original edit layer. `clearMaterial` removes native binding
+relationships without custom markers, including bindings authored outside Assign
+and purpose-specific bindings; unrelated opinions and composition remain intact.
+Generic Reset retains its existing override-only behavior.
+
+`testmaterialassignment` checks rendered colors for ordinary, parent and proxy
+assignments, whole-instance changes, Material Editor Assign/Select, viewport
+material drops, and undo/redo. The Outliner and viewport context menu share
+Material > Source / divider / Clear below Transform. The suite checks these
+labels, Pivot > Center / divider / Reset, source selection, and Clear availability
+when only a weaker binding remains. Captures pair Qt state with composed bindings
+and visible object colors.
 
 ### Development test runtime paths
 

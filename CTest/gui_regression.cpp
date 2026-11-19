@@ -295,6 +295,12 @@ uiApi()
     require(ui.iconPath(stageviz::UI::Display) == QStringLiteral(":/icons/resources/Display.png")
                 && !ui.icon(stageviz::UI::Display).isNull(),
             "ui resolves the Display icon resource");
+    require(ui.iconPath(stageviz::UI::Instance) == QStringLiteral(":/icons/resources/Instance.png")
+                && !ui.icon(stageviz::UI::Instance).isNull(),
+            "ui resolves the instance-parent icon resource");
+    require(ui.iconPath(stageviz::UI::Proxy) == QStringLiteral(":/icons/resources/Proxy.png")
+                && !ui.icon(stageviz::UI::Proxy).isNull(),
+            "ui resolves the separate instance-proxy icon resource");
 
     const QString sheet = QStringLiteral("QWidget { color: rgba(1, 2, 3, 255); }");
     ui.setStyleSheet(sheet);
@@ -655,6 +661,28 @@ renderDisplayModeWarmupApi()
         require(warmupCount() == withHelper, "support geometry also reuses warmed display modes");
         require(draw(UsdImagingGLDrawMode::DRAW_SHADED_SMOOTH) == shadedWithHelper,
                 "hidden support geometry preparation preserves the presented image");
+        viewport.setMask({ SdfPath("/Cube") });
+        const QImage isolatedShaded = draw(UsdImagingGLDrawMode::DRAW_SHADED_SMOOTH);
+        require(draw(UsdImagingGLDrawMode::DRAW_WIREFRAME_ON_SURFACE) != isolatedShaded,
+                "isolated geometry supports the prepared wireframe representation");
+        viewport.setMask({ SdfPath("/Other") });
+        draw(UsdImagingGLDrawMode::DRAW_SHADED_SMOOTH);
+        require(warmupCount() == withHelper, "mask changes reuse full-scene GPU preparation");
+        viewport.setMask({});
+        require(draw(UsdImagingGLDrawMode::DRAW_SHADED_SMOOTH) == shadedWithHelper,
+                "clearing isolation restores the cached full-scene image");
+        require(warmupCount() == withHelper, "clearing isolation retains full-scene preparation");
+        viewport.setMask({ SdfPath("/Cube") });
+        draw(UsdImagingGLDrawMode::DRAW_SHADED_SMOOTH);
+        UsdGeomCube::Define(stage, SdfPath("/AddedWhileIsolated"));
+        viewport.setMask({ SdfPath("/AddedWhileIsolated") });
+        draw(UsdImagingGLDrawMode::DRAW_SHADED_SMOOTH);
+        require(warmupCount() == withHelper + 1, "new source geometry invalidates shared preparation");
+        draw(UsdImagingGLDrawMode::DRAW_WIREFRAME_ON_SURFACE);
+        require(warmupCount() == withHelper + 1, "new isolated geometry prepares both representations once");
+        viewport.setMask({});
+        draw(UsdImagingGLDrawMode::DRAW_SHADED_SMOOTH);
+        require(warmupCount() == withHelper + 2, "restoring an edited full scene refreshes its preparation");
         viewport.reset();
     }
     context.doneCurrent();
@@ -2676,8 +2704,10 @@ outlinerDefinedPrimsApi()
     }
     require(helperCount > 0, "USD flattening produced undefined prototype roots");
     require(!find(SdfPath("/UnresolvedOver/Nested")), "undefined descendants excluded");
-    require(find(SdfPath("/UntypedGroup")), "defined untyped group remains visible");
-    require(find(SdfPath("/Flattened_Prototype_UserGroup")), "defined group with prototype-like name remains visible");
+    require(find(SdfPath("/UntypedGroup")) && find(SdfPath("/UntypedGroup"))->isHidden(),
+            "defined untyped group remains in the model but is hidden by default");
+    require(find(SdfPath("/Flattened_Prototype_UserGroup")),
+            "defined group with prototype-like name remains in the model");
     require(find(SdfPath("/Inactive")), "inactive defined prim remains visible");
     require(find(SdfPath("/Payload")) && !stage->GetPrimAtPath(SdfPath("/Payload")).IsLoaded(),
             "unloaded payload remains visible");
@@ -2698,7 +2728,7 @@ outlinerDefinedPrimsApi()
     stage->DefinePrim(changing);
     stage->DefinePrim(changing.AppendChild(TfToken("Child")));
     drain();
-    require(find(changing) && find(changing.AppendChild(TfToken("Child"))), "newly defined subtree becomes visible");
+    require(find(changing) && find(changing.AppendChild(TfToken("Child"))), "newly defined subtree enters the model");
     stage->GetRootLayer()->GetPrimAtPath(changing)->SetSpecifier(SdfSpecifierOver);
     drain();
     require(!find(changing) && !find(changing.AppendChild(TfToken("Child"))),
@@ -4384,8 +4414,8 @@ outlinerDisplayMenuApi()
         return static_cast<QTreeWidgetItem*>(nullptr);
     };
     auto* untypedPrim = find("/World/Untyped");
-    require(untypedPrim && !untypedPrim->isHidden() && tree->showUntyped(),
-            "defined untyped prims remain visible by default");
+    require(untypedPrim && untypedPrim->isHidden() && !tree->showUntyped(),
+            "Untyped starts disabled and defined untyped prims are hidden by default");
 
     bool sectionsValid = false;
     bool cubeFilterApplied = false;
@@ -4415,12 +4445,12 @@ outlinerDisplayMenuApi()
                                     && tree->displayTypes().contains("Scope");
             }
             else if (action->text() == "Untyped" && action->isCheckable()) {
-                untypedOptionFound = action->isChecked();
+                untypedOptionFound = !action->isChecked();
                 action->trigger();
-                untypedFilterApplied = !tree->showUntyped() && find("/World/Untyped")->isHidden();
+                untypedFilterApplied = tree->showUntyped() && !find("/World/Untyped")->isHidden();
                 action->trigger();
-                untypedFilterApplied = untypedFilterApplied && tree->showUntyped()
-                                       && !find("/World/Untyped")->isHidden();
+                untypedFilterApplied = untypedFilterApplied && !tree->showUntyped()
+                                       && find("/World/Untyped")->isHidden();
             }
         }
         sectionsValid = sectionsValid && untypedOptionFound;
@@ -4430,7 +4460,7 @@ outlinerDisplayMenuApi()
 
     require(sectionsValid, "Display menu separates layer and prim-type options");
     require(cubeFilterApplied, "prim-type menu option filters Outliner rows");
-    require(untypedOptionFound && untypedFilterApplied, "Untyped option hides and restores untyped prims");
+    require(untypedOptionFound && untypedFilterApplied, "Untyped starts unchecked and can show and hide untyped prims");
 
     const QSet<QString> typeIds { QStringLiteral("Cube"), QStringLiteral("Scope"), QStringLiteral("Xform") };
     const QString rootLayer = QString::fromStdString(stage->GetRootLayer()->GetIdentifier());
@@ -4481,6 +4511,7 @@ outlinerDisplayMenuApi()
         }
     };
 
+    setUntyped(true);
     setGroup(typeIds, false);
     checkGroup(typeIds, false);
     require(tree->displayTypesFiltered() && tree->displayTypes().isEmpty(),

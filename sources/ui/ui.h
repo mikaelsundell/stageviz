@@ -76,6 +76,7 @@ public:
         Display,
         Down,
         DropDown,
+        EditLayer,
         Expand,
         Export,
         ExportImage,
@@ -99,6 +100,7 @@ public:
         Pick,
         Pivot,
         Prim,
+        Proxy,
         Redo,
         Right,
         Rotate,
@@ -112,8 +114,7 @@ public:
         Visible,
         Wireframe,
         Lock,
-        Unlock,
-        EditLayer
+        Unlock
     };
     Q_ENUM(IconRole)
 

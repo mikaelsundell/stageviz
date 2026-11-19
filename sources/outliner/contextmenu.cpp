@@ -4,12 +4,14 @@
 
 #include "contextmenu.h"
 #include "commandcomposition.h"
+#include "commandmaterial.h"
 #include "commandpayload.h"
 #include "commandprim.h"
 #include "commandproperty.h"
 #include "commandselection.h"
 #include "commandstage.h"
 #include "commandtransform.h"
+#include "commandutils.h"
 #include "commandvisibility.h"
 #include "qtutils.h"
 #include "tracelocks.h"
@@ -31,6 +33,7 @@
 #include <pxr/usd/usd/variantSets.h>
 #include <pxr/usd/usdGeom/imageable.h>
 #include <pxr/usd/usdGeom/xformable.h>
+#include <pxr/usd/usdShade/materialBindingAPI.h>
 
 namespace stageviz {
 
@@ -53,8 +56,12 @@ namespace {
         if (!stage || !prim)
             return {};
 
+        const auto layers = stage->GetLayerStack();
         for (const SdfPrimSpecHandle& spec : prim.GetPrimStack()) {
-            if (!spec || !spec->HasInfo(SdfFieldKeys->References))
+            // Asset-local reference paths are not selectable sources in this stage.
+            if (!spec || std::find(layers.begin(), layers.end(), spec->GetLayer()) == layers.end()
+                || spec->GetPath().StripAllVariantSelections() != prim.GetPath()
+                || !spec->HasInfo(SdfFieldKeys->References))
                 continue;
 
             const VtValue value = spec->GetInfo(SdfFieldKeys->References);
@@ -63,9 +70,12 @@ namespace {
 
             const SdfReferenceListOp references = value.UncheckedGet<SdfReferenceListOp>();
             for (const SdfReference& ref : references.GetAppliedItems()) {
-                if (ref.GetAssetPath().empty() && !ref.GetPrimPath().IsEmpty()
-                    && stage->GetPrimAtPath(ref.GetPrimPath()))
-                    return ref.GetPrimPath();
+                if (!ref.GetAssetPath().empty() || ref.GetPrimPath().IsEmpty())
+                    continue;
+                const UsdPrim source = stage->GetPrimAtPath(ref.GetPrimPath());
+                if (source && source.IsActive() && !source.IsPrototype() && !source.IsInPrototype()
+                    && !source.IsInstanceProxy() && source.GetPath() != prim.GetPath())
+                    return source.GetPath();
             }
         }
         return {};
@@ -132,9 +142,17 @@ ContextMenu::exec(QWidget* parent, ViewContext* context, UsdStageRefPtr usdStage
     bool canResetPivot = !paths.isEmpty();
     QList<OverrideGroup> resetGroups;
     bool canInstance = !paths.isEmpty();
-    SdfPath instanceRootPath;
-    SdfPath instanceSourcePath;
+    QList<SdfPath> instanceRootPaths;
+    QList<SdfPath> instanceSourcePaths;
+    QSet<SdfPath> seenInstanceRoots;
+    QSet<SdfPath> seenInstanceSources;
+    bool allInstances = !paths.isEmpty();
+    bool allInstanceSources = !paths.isEmpty();
+    bool hasInstanceProxies = false;
     bool canMakeInstanceEditable = false;
+    bool canClearMaterial = false;
+    QList<SdfPath> materialPaths;
+    path::PathCollector materialCollector(materialPaths);
 
     {
         READ_LOCKER(locker, context->stageLock(), "stageLock");
@@ -161,12 +179,34 @@ ContextMenu::exec(QWidget* parent, ViewContext* context, UsdStageRefPtr usdStage
             }
         }
 
+        UsdShadeMaterialBindingAPI::BindingsCache materialBindings;
+        UsdShadeMaterialBindingAPI::CollectionQueryCache materialCollections;
         for (const SdfPath& path : paths) {
             if (stage::isPayload(usdStage, path))
                 hasExactPayloadSelection = true;
 
             const UsdPrim prim = usdStage->GetPrimAtPath(path);
-            if (paths.size() == 1 && prim) {
+            if (prim) {
+                const auto material = UsdShadeMaterialBindingAPI(prim).ComputeBoundMaterial(&materialBindings,
+                                                                                            &materialCollections);
+                if (material)
+                    materialCollector.append(material.GetPath());
+                const auto owner = command::materialAssignmentOwner(usdStage, path);
+                const auto spec = !owner.IsEmpty() && instanceEditLayer && instanceEditLayer->PermissionToEdit()
+                                      ? instanceEditLayer->GetPrimAtPath(usdStage->GetEditTarget().MapToSpecPath(owner))
+                                      : SdfPrimSpecHandle();
+                if (spec) {
+                    for (const auto& property : spec->GetProperties()) {
+                        const auto name = property->GetName();
+                        if (instanceEditLayer->GetRelationshipAtPath(property->GetPath())
+                            && (name == "material:binding" || name.rfind("material:binding:", 0) == 0))
+                            canClearMaterial = true;
+                    }
+                }
+            }
+            SdfPath instanceRootPath;
+            SdfPath instanceSourcePath;
+            if (prim) {
                 if (prim.IsInstanceProxy()) {
                     SdfPath ancestor = path.GetParentPath();
                     while (!ancestor.IsEmpty() && ancestor != SdfPath::AbsoluteRootPath()) {
@@ -191,6 +231,21 @@ ContextMenu::exec(QWidget* parent, ViewContext* context, UsdStageRefPtr usdStage
                     instanceRootPath = path;
                     instanceSourcePath = internalReferencePrimPath(usdStage, prim);
                 }
+            }
+            if (instanceRootPath.IsEmpty()) {
+                allInstances = false;
+            }
+            else if (!seenInstanceRoots.contains(instanceRootPath)) {
+                seenInstanceRoots.insert(instanceRootPath);
+                instanceRootPaths.append(instanceRootPath);
+            }
+            hasInstanceProxies = hasInstanceProxies || (prim && prim.IsInstanceProxy());
+            if (instanceSourcePath.IsEmpty()) {
+                allInstanceSources = false;
+            }
+            else if (!seenInstanceSources.contains(instanceSourcePath)) {
+                seenInstanceSources.insert(instanceSourcePath);
+                instanceSourcePaths.append(instanceSourcePath);
             }
             if (!prim || !prim.IsValid() || prim.IsInstanceProxy() || !UsdGeomXformable(prim)) {
                 canTransform = false;
@@ -352,16 +407,19 @@ ContextMenu::exec(QWidget* parent, ViewContext* context, UsdStageRefPtr usdStage
     QAction* selectInstanceRoot = nullptr;
     QAction* selectInstanceSource = nullptr;
     QAction* makeInstanceEditable = nullptr;
-    if (!instanceRootPath.IsEmpty() || !instanceSourcePath.IsEmpty()) {
+    if (allInstances) {
         QMenu* instanceMenu = menu.addMenu("Instance");
-        if (!instanceRootPath.IsEmpty() && instanceRootPath != paths.value(0))
+        if (hasInstanceProxies) {
             selectInstanceRoot = instanceMenu->addAction("Select");
+            selectInstanceRoot->setObjectName("instanceSelectRoots");
+            instanceMenu->addSeparator();
+        }
         makeInstanceEditable = instanceMenu->addAction("Make editable");
         makeInstanceEditable->setObjectName("instanceMakeEditable");
-        makeInstanceEditable->setEnabled(!instanceRootPath.IsEmpty() && canMakeInstanceEditable);
-        instanceMenu->addSeparator();
+        makeInstanceEditable->setEnabled(canMakeInstanceEditable);
         selectInstanceSource = instanceMenu->addAction("Source");
-        selectInstanceSource->setEnabled(!instanceSourcePath.IsEmpty());
+        selectInstanceSource->setObjectName("instanceSelectSources");
+        selectInstanceSource->setEnabled(allInstanceSources);
     }
 
     menu.addSeparator();
@@ -415,6 +473,7 @@ ContextMenu::exec(QWidget* parent, ViewContext* context, UsdStageRefPtr usdStage
 
     QMenu* pivotMenu = menu.addMenu("Pivot");
     QAction* centerPivot = pivotMenu->addAction("Center");
+    pivotMenu->addSeparator();
     QAction* resetPivot = pivotMenu->addAction("Reset");
     centerPivot->setEnabled(canCenterPivot);
     resetPivot->setEnabled(canResetPivot);
@@ -424,6 +483,19 @@ ContextMenu::exec(QWidget* parent, ViewContext* context, UsdStageRefPtr usdStage
     QAction* identityTransform = transformMenu->addAction("Identity");
     identityTransform->setEnabled(canTransform);
     transformMenu->setEnabled(canTransform);
+
+    menu.addSeparator();
+
+    QMenu* materialMenu = menu.addMenu("Material");
+    materialMenu->setObjectName("materialBindingMenu");
+    QAction* materialSource = materialMenu->addAction("Source");
+    materialSource->setObjectName("materialBindingSource");
+    materialSource->setEnabled(!materialPaths.isEmpty());
+    materialMenu->addSeparator();
+    QAction* clearMaterialAction = materialMenu->addAction("Clear");
+    clearMaterialAction->setObjectName("materialBindingClear");
+    clearMaterialAction->setEnabled(canClearMaterial);
+    materialMenu->setEnabled(!materialPaths.isEmpty() || canClearMaterial);
 
     menu.addSeparator();
 
@@ -504,20 +576,20 @@ ContextMenu::exec(QWidget* parent, ViewContext* context, UsdStageRefPtr usdStage
     }
 
     if (chosen == selectInstanceRoot) {
-        if (!instanceRootPath.IsEmpty())
-            context->execute(new Command(selectPaths(QList<SdfPath> { instanceRootPath })));
+        if (!instanceRootPaths.isEmpty())
+            context->execute(new Command(selectPaths(instanceRootPaths)));
         return;
     }
 
     if (chosen == selectInstanceSource) {
-        if (!instanceSourcePath.IsEmpty())
-            context->execute(new Command(selectPaths(QList<SdfPath> { instanceSourcePath })));
+        if (!instanceSourcePaths.isEmpty())
+            context->execute(new Command(selectPaths(instanceSourcePaths)));
         return;
     }
 
     if (chosen == makeInstanceEditable) {
-        if (!instanceRootPath.IsEmpty())
-            context->execute(new Command(makeEditablePaths({ instanceRootPath })));
+        if (!instanceRootPaths.isEmpty())
+            context->execute(new Command(makeEditablePaths(instanceRootPaths)));
         return;
     }
 
@@ -530,6 +602,16 @@ ContextMenu::exec(QWidget* parent, ViewContext* context, UsdStageRefPtr usdStage
     if (chosen == unloadSelected) {
         if (!payloadPaths.isEmpty())
             context->execute(new Command(unloadPayloads(payloadPaths)));
+        return;
+    }
+
+    if (chosen == materialSource) {
+        context->execute(new Command(selectPaths(materialPaths)));
+        return;
+    }
+
+    if (chosen == clearMaterialAction) {
+        context->execute(new Command(clearMaterial(paths)));
         return;
     }
 

@@ -13,6 +13,18 @@
 namespace stageviz {
 namespace command {
 
+    SdfPath materialAssignmentOwner(const UsdStageRefPtr& stage, const SdfPath& path)
+    {
+        if (!stage)
+            return {};
+        auto prim = stage->GetPrimAtPath(path.GetAbsoluteRootOrPrimPath());
+        while (prim && prim.IsInstanceProxy())
+            prim = prim.GetParent();
+        if (!prim || prim.IsPseudoRoot() || prim.IsPrototype() || prim.IsInPrototype())
+            return {};
+        return prim.GetPath();
+    }
+
     QString pathText(const SdfPath& path) { return qt::SdfPathToQString(path); }
 
     QString appendError(const QString& message, const QString& error)

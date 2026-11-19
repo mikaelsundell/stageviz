@@ -50,6 +50,35 @@ Command
 bindMaterial(const QList<SdfPath>& paths, const SdfPath& materialPath);
 
 /**
+ * @brief Assigns a material using editable hierarchy boundaries.
+ *
+ * Binds selected ordinary prims directly. Proxy children walk up to their
+ * nearest non-proxy ancestor, normally the instance root, and share that root's
+ * binding with all siblings. Parent bindings are stronger than descendant
+ * bindings. Geometry and instancing are never changed. Undo restores exact
+ * original edit-layer opinions, including binding metadata and API schemas.
+ *
+ * @param paths Geometry, subset, group, instance or proxy paths to assign.
+ * @param materialPath Path to an existing UsdShadeMaterial prim.
+ * @return Undoable material-assignment command.
+ */
+Command
+assignMaterial(const QList<SdfPath>& paths, const SdfPath& materialPath);
+
+/**
+ * @brief Removes selected prims' material-binding relationships from the edit layer.
+ *
+ * Proxy selections resolve to their nearest non-proxy ancestor. Only binding
+ * opinions on these owners are removed; weaker and inherited bindings may become
+ * visible. Undo restores exact relationship specs in the original edit target.
+ *
+ * @param paths Prim or proxy paths whose local material bindings should be cleared.
+ * @return Undoable material-binding removal command.
+ */
+Command
+clearMaterial(const QList<SdfPath>& paths);
+
+/**
  * @brief Creates a command that disconnects shader inputs.
  *
  * Incoming connections authored in the current edit layer are removed while

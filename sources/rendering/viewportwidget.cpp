@@ -706,7 +706,7 @@ ViewportWidgetPrivate::dropEvent(QDropEvent* event)
         return;
     }
 
-    d.context->execute(new Command(bindMaterial({ targetPath }, materialPath)));
+    d.context->execute(new Command(assignMaterial({ targetPath }, materialPath)));
 
     event->setDropAction(Qt::CopyAction);
     event->accept();

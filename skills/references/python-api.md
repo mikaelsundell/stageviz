@@ -892,9 +892,28 @@ Other value types are rejected by this binding.
 
 ### Materials
 
+`assign_material(paths, material_path) -> None`
+: Bind an existing material directly to selected ordinary prims, groups or
+  instance roots. Proxy selections resolve upward to their nearest non-proxy
+  ancestor, normally the instance root; duplicate owners are processed once.
+  Assigning through one proxy therefore affects all children of that instance.
+  Parent bindings use stronger-than-descendants strength. No geometry,
+  instancing or source assets are changed. Undo and redo use the original edit
+  target and restore exact authored property/API-schema state.
+  Independent per-proxy materials require making the instance editable first.
+
+`clear_material(paths) -> None`
+: Remove material-binding relationships authored on the selected prims in the
+  current edit layer. Proxy children promote to their nearest non-proxy ancestor,
+  affecting the whole instance. Other prim properties, references and geometry
+  remain unchanged. Weaker or inherited materials may become visible; this does
+  not author an explicit unbind. Undo restores exact relationship specs, including
+  binding purposes and metadata, in the original edit target. Positional-only.
+
 `bind_material(paths, material_path) -> None`
 : Bind an existing material to each valid prim. Authors direct bindings; undo
   restores previous bindings. Expand target descendants yourself when requested.
+  Instance proxies cannot receive direct edits; use `assign_material` for them.
 
 `connect_shader_input(input_path, source_output_path) -> None`
 : Connect existing shader properties, e.g. `/World/Looks/Paint/Surface.inputs:diffuseColor`
@@ -1311,7 +1330,7 @@ stageviz.UI.AxisX
 
 #### IconRole members
 
-`Arrow`, `BranchClosed`, `BranchOpen`, `Checked`, `Clear`, `Code`, `Collapse`, `DefaultPrim`, `Display`, `Down`, `DropDown`, `Expand`, `Export`, `ExportImage`, `Follow`, `FrameAll`, `Geometry`, `Hidden`, `Instance`, `Layer`, `EditLayer`, `Left`, `List`, `Lock`, `Material`, `Move`, `Nested`, `New`, `Open`, `Over`, `Override`, `PartiallyChecked`, `Payload`, `Pick`, `Pivot`, `Prim`, `Redo`, `Right`, `Rotate`, `Run`, `Scale`, `Select`, `Shaded`, `Transform`, `Undo`, `Unlock`, `Up`, `Visible`, `Wireframe`.
+`Arrow`, `BranchClosed`, `BranchOpen`, `Checked`, `Clear`, `Code`, `Collapse`, `DefaultPrim`, `Display`, `Down`, `DropDown`, `Expand`, `Export`, `ExportImage`, `Follow`, `FrameAll`, `Geometry`, `Hidden`, `Instance`, `Layer`, `EditLayer`, `Left`, `List`, `Lock`, `Material`, `Move`, `Nested`, `New`, `Open`, `Over`, `Override`, `PartiallyChecked`, `Payload`, `Pick`, `Pivot`, `Prim`, `Proxy`, `Redo`, `Right`, `Rotate`, `Run`, `Scale`, `Select`, `Shaded`, `Transform`, `Undo`, `Unlock`, `Up`, `Visible`, `Wireframe`.
 
 #### UIScale members
 

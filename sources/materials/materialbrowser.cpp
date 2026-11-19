@@ -668,14 +668,17 @@ MaterialBrowserPrivate::selectMaterials(const QList<MaterialEntry>& materials)
         if (!stage)
             return;
 
-        for (const UsdPrim& prim : stage->Traverse()) {
-            if (!prim || !prim.IsValid() || prim.IsInstanceProxy())
+        UsdShadeMaterialBindingAPI::BindingsCache bindings;
+        UsdShadeMaterialBindingAPI::CollectionQueryCache collections;
+        for (const UsdPrim& prim : stage->Traverse(UsdTraverseInstanceProxies())) {
+            if (!prim || !prim.IsValid())
                 continue;
 
             if (!prim.IsA<UsdGeomGprim>() && !prim.IsA<UsdGeomSubset>())
                 continue;
 
-            const UsdShadeMaterial bound = UsdShadeMaterialBindingAPI(prim).ComputeBoundMaterial();
+            const UsdShadeMaterial bound = UsdShadeMaterialBindingAPI(prim).ComputeBoundMaterial(&bindings,
+                                                                                                 &collections);
             if (bound && materialPaths.find(bound.GetPath()) != materialPaths.end())
                 paths.append(prim.GetPath());
         }
@@ -688,54 +691,9 @@ MaterialBrowserPrivate::selectMaterials(const QList<MaterialEntry>& materials)
 void
 MaterialBrowserPrivate::assignMaterial(const MaterialEntry& material)
 {
-    const QList<SdfPath> selectedPaths = session()->selectionList()->paths();
-    if (selectedPaths.isEmpty())
-        return;
-
-    QList<SdfPath> paths;
-    path::PathCollector collector(paths);
-
-    {
-        READ_LOCKER(locker, session()->stageLock(), "stageLock");
-        const UsdStageRefPtr stage = session()->stageUnsafe();
-        if (!stage)
-            return;
-
-        auto appendDrawable = [&](const UsdPrim& prim) {
-            if (!prim || !prim.IsValid() || prim.IsInstanceProxy())
-                return;
-
-            if (!prim.IsA<UsdGeomGprim>())
-                return;
-
-            collector.append(prim.GetPath());
-        };
-
-        for (const SdfPath& selectedPath : selectedPaths) {
-            const SdfPath primPath = selectedPath.IsPropertyPath() ? selectedPath.GetPrimPath() : selectedPath;
-
-            if (primPath.IsEmpty())
-                continue;
-
-            if (primPath == SdfPath::AbsoluteRootPath()) {
-                for (const UsdPrim& prim : stage->Traverse())
-                    appendDrawable(prim);
-                continue;
-            }
-
-            const UsdPrim root = stage->GetPrimAtPath(primPath);
-            if (!root || !root.IsValid())
-                continue;
-
-            for (const UsdPrim& prim : UsdPrimRange(root))
-                appendDrawable(prim);
-        }
-    }
-
-    if (paths.isEmpty())
-        return;
-
-    session()->commandStack()->execute(new Command(bindMaterial(paths, material.materialPath)));
+    const QList<SdfPath> paths = session()->selectionList()->paths();
+    if (!paths.isEmpty())
+        session()->commandStack()->execute(new Command(stageviz::assignMaterial(paths, material.materialPath)));
 }
 
 

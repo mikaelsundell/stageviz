@@ -22,6 +22,7 @@
 #include "notice.h"
 #include "perfscope.h"
 #include "qtutils.h"
+#include "renderisolation.h"
 #include "renderresources.h"
 #include "rendersceneindex.h"
 #include "selectionlist.h"
@@ -62,6 +63,7 @@
 #include <pxr/usd/sdf/schema.h>
 #include <pxr/usd/sdf/types.h>
 #include <pxr/usd/usd/attribute.h>
+#include <pxr/usd/usd/collectionAPI.h>
 #include <pxr/usd/usd/editContext.h>
 #include <pxr/usd/usd/payloads.h>
 #include <pxr/usd/usd/primRange.h>
@@ -76,6 +78,7 @@
 #include <pxr/usd/usdGeom/xform.h>
 #include <pxr/usd/usdGeom/xformCommonAPI.h>
 #include <pxr/usd/usdGeom/xformable.h>
+#include <pxr/usd/usdLux/distantLight.h>
 #include <pxr/usd/usdLux/lightAPI.h>
 #include <pxr/usd/usdLux/shapingAPI.h>
 #include <pxr/usd/usdShade/material.h>
@@ -3756,6 +3759,307 @@ commandMaterialApi()
     require(bool(stage->GetPrimAtPath(texturePath)), "deleteShaderNode undo restores helper node");
 }
 
+
+void
+materialAssignmentInstancesApi()
+{
+    Session current;
+    require(current.newStage(), "new assignment stage");
+    const auto stage = current.stage();
+    const auto root = stage->GetRootLayer();
+    const SdfPath red = stageviz::MaterialUtils::createPreviewSurfaceMaterial(stage);
+    const SdfPath blue = stageviz::MaterialUtils::createPreviewSurfaceMaterial(stage);
+    const SdfPath green = stageviz::MaterialUtils::createPreviewSurfaceMaterial(stage);
+    UsdGeomXform::Define(stage, SdfPath("/Source/Group"));
+    for (const char* name : { "Left", "Right" }) {
+        const auto mesh = UsdGeomCube::Define(stage, SdfPath(std::string("/Source/Group/") + name));
+        UsdShadeMaterialBindingAPI::Apply(mesh.GetPrim()).Bind(UsdShadeMaterial(stage->GetPrimAtPath(red)));
+    }
+    for (const char* name : { "A", "B" }) {
+        const auto prim = UsdGeomXform::Define(stage, SdfPath(std::string("/World/") + name)).GetPrim();
+        prim.GetReferences().AddInternalReference(SdfPath("/Source"));
+        prim.SetInstanceable(true);
+    }
+    const auto ordinary = UsdGeomCube::Define(stage, SdfPath("/World/Ordinary"));
+    UsdShadeMaterialBindingAPI::Apply(ordinary.GetPrim()).Bind(UsdShadeMaterial(stage->GetPrimAtPath(red)));
+    const SdfPath a("/World/A"), b("/World/B"), left("/World/A/Group/Left"), right("/World/A/Group/Right");
+    const auto base = SdfLayer::CreateAnonymous("material_assignment_base.usda");
+    base->TransferContent(root);
+    root->Clear();
+    const auto look = SdfLayer::CreateAnonymous("material_assignment_look.usda");
+    root->SetSubLayerPaths({ look->GetIdentifier(), base->GetIdentifier() });
+    stage->SetEditTarget(UsdEditTarget(look));
+    const auto owner = stage->OverridePrim(a);
+    owner.CreateAttribute(TfToken("keep"), SdfValueTypeNames->Int, true).Set(7);
+    const auto text = [](const SdfLayerHandle& layer) {
+        std::string result;
+        layer->ExportToString(&result);
+        return result;
+    };
+    const auto bound = [&](const SdfPath& path) {
+        return UsdShadeMaterialBindingAPI(stage->GetPrimAtPath(path)).ComputeBoundMaterial().GetPath();
+    };
+    const auto checkInstances = [&]() {
+        require(stage->GetPrimAtPath(a).IsInstance() && stage->GetPrimAtPath(b).IsInstance()
+                    && stage->GetPrimAtPath(a).GetPrototype() == stage->GetPrimAtPath(b).GetPrototype(),
+                "assignment preserves native prototype sharing");
+        require(stage->GetPrimAtPath(left).IsInstanceProxy(), "selected child remains a proxy");
+    };
+    const auto initial = text(look), baseBefore = text(base), rootBefore = text(root);
+    auto parent = stageviz::assignMaterial({ a }, blue);
+    executeCommand(parent, current);
+    checkInstances();
+    require(bound(left) == blue && bound(right) == blue && bound(SdfPath("/World/B/Group/Left")) == red,
+            "native strong parent binding overrides only its instance children");
+    require(!look->GetPrimAtPath(left) && look->GetRelationshipAtPath(a.AppendProperty(TfToken("material:binding"))),
+            "binding is authored on the instance root, never on proxy children");
+    const auto assigned = text(look);
+    undoCommand(parent, current);
+    require(text(look) == initial, "undo restores exact local properties and schema metadata");
+    executeCommand(parent, current);
+    require(text(look) == assigned, "redo restores exact parent binding");
+    auto child = stageviz::assignMaterial({ left, right }, green);
+    executeCommand(child, current);
+    require(bound(left) == green && bound(right) == green,
+            "proxy children promote to one closest non-proxy ancestor and affect the whole instance");
+    require(look->GetRelationshipAtPath(a.AppendProperty(TfToken("material:binding")))->GetCustomData().empty(),
+            "assignment authors a native binding without custom bookkeeping");
+    const auto childText = text(look);
+    auto reset = stageviz::clearMaterial({ left, right });
+    executeCommand(reset, current);
+    int keep = 0;
+    require(bound(left) == red && bound(right) == red && owner.GetAttribute(TfToken("keep")).Get(&keep) && keep == 7,
+            "proxy Material Clear removes the ancestor binding while preserving unrelated opinions");
+    stage->SetEditTarget(UsdEditTarget(root));
+    undoCommand(reset, current);
+    stage->SetEditTarget(UsdEditTarget(look));
+    require(text(look) == childText && bound(right) == green, "reset undo restores complete binding metadata");
+    undoCommand(child, current);
+    undoCommand(parent, current);
+    require(text(look) == initial, "assignment undo restores the original layer after reset undo");
+    auto mixed = stageviz::assignMaterial({ left, SdfPath("/World/Ordinary") }, blue);
+    executeCommand(mixed, current);
+    require(bound(left) == blue && bound(SdfPath("/World/Ordinary")) == blue,
+            "mixed ordinary and proxy targets assign together");
+    stage->SetEditTarget(UsdEditTarget(root));
+    undoCommand(mixed, current);
+    require(text(look) == initial && text(root) == rootBefore, "undo uses the original edit target");
+    stage->SetEditTarget(UsdEditTarget(look));
+    auto again = stageviz::assignMaterial({ a }, blue);
+    executeCommand(again, current);
+    auto resetAll = stageviz::clearMaterial({ left });
+    executeCommand(resetAll, current);
+    require(bound(right) == red && owner.GetAttribute(TfToken("keep")).Get(&keep) && keep == 7,
+            "proxy Material Clear removes only the promoted material opinion");
+    undoCommand(resetAll, current);
+    undoCommand(again, current);
+    require(text(look) == initial && text(base) == baseBefore, "source bindings and geometry are unchanged");
+    {
+        stage->SetEditTarget(UsdEditTarget(root));
+        auto variants = stage->GetPrimAtPath(b).GetVariantSets().AddVariantSet("look");
+        variants.AddVariant("test");
+        variants.SetVariantSelection("test");
+        UsdEditContext context(variants.GetVariantEditContext());
+        const auto before = text(root);
+        auto variant = stageviz::assignMaterial({ SdfPath("/World/B/Group/Left") }, blue);
+        executeCommand(variant, current);
+        require(bound(SdfPath("/World/B/Group/Right")) == blue, "variant edit target supports promoted parent binding");
+        undoCommand(variant, current);
+        require(
+            text(root) == before,
+            ("variant-target undo restores exact opinions\nExpected:\n" + before + "\nActual:\n" + text(root)).c_str());
+    }
+    // Clear also works on native bindings authored outside Assign on local definitions.
+    stage->SetEditTarget(UsdEditTarget(root));
+    const auto local = UsdGeomXform::Define(stage, SdfPath("/Local")).GetPrim();
+    local.GetReferences().AddInternalReference(SdfPath("/Source"));
+    local.SetInstanceable(true);
+    const auto beforeLocal = text(root);
+    auto localAssign = stageviz::assignMaterial({ SdfPath("/Local/Group/Left") }, blue);
+    executeCommand(localAssign, current);
+    require(!stageviz::resetOverrideGroups(stage, { SdfPath("/Local") }).contains(stageviz::OverrideGroup::Materials),
+            "generic Reset retains its existing protection of local definitions");
+    auto localReset = stageviz::clearMaterial({ SdfPath("/Local/Group/Left") });
+    executeCommand(localReset, current);
+    require(local.IsInstance() && local.HasAuthoredReferences() && bound(SdfPath("/Local/Group/Left")) == red,
+            "Clear on a local definition removes the binding but preserves source composition");
+    undoCommand(localReset, current);
+    undoCommand(localAssign, current);
+    require(text(root) == beforeLocal, "local-definition undo restores exact layer contents");
+    const auto manualBinding = UsdShadeMaterialBindingAPI::Apply(local);
+    manualBinding.Bind(UsdShadeMaterial(stage->GetPrimAtPath(green)), UsdShadeTokens->strongerThanDescendants);
+    manualBinding.Bind(UsdShadeMaterial(stage->GetPrimAtPath(blue)), UsdShadeTokens->strongerThanDescendants,
+                       UsdShadeTokens->preview);
+    manualBinding.GetDirectBindingRel().SetDocumentation("Preserve binding metadata on undo");
+    const auto manualBefore = text(root);
+    auto clearManual = stageviz::clearMaterial({ SdfPath("/Local/Group/Left") });
+    executeCommand(clearManual, current);
+    require(!root->GetRelationshipAtPath(SdfPath("/Local.material:binding"))
+                && !root->GetRelationshipAtPath(SdfPath("/Local.material:binding:preview"))
+                && local.HasAuthoredReferences(),
+            "clear removes unmarked native bindings and preserves composition");
+    undoCommand(clearManual, current);
+    require(text(root) == manualBefore, "clear undo restores all binding purposes and metadata exactly");
+    stage->SetEditTarget(UsdEditTarget(look));
+    look->SetPermissionToEdit(false);
+    auto locked = stageviz::assignMaterial({ left }, blue);
+    executeCommand(locked, current);
+    require(text(look) == initial, "locked layer rejects assignment before authoring");
+    look->SetPermissionToEdit(true);
+}
+
+void
+renderIsolationInstances()
+{
+    auto source = UsdStage::CreateInMemory();
+    UsdGeomXform::Define(source, SdfPath("/Library/Inner"));
+    auto body = UsdGeomCube::Define(source, SdfPath("/Library/Inner/Body"));
+    body.GetSizeAttr().Set(2.0);
+    auto material = UsdShadeMaterial::Define(source, SdfPath("/Looks/Surface"));
+    auto shader = UsdShadeShader::Define(source, SdfPath("/ShaderLibrary/Surface"));
+    shader.CreateIdAttr(VtValue(TfToken("UsdPreviewSurface")));
+    material.CreateSurfaceOutput().ConnectToSource(shader.CreateOutput(TfToken("surface"), SdfValueTypeNames->Token));
+    UsdShadeMaterialBindingAPI::Apply(body.GetPrim()).Bind(material);
+    UsdGeomXform::Define(source, SdfPath("/Library/Outer"));
+    for (const char* name : { "Left", "Right" }) {
+        auto inner = UsdGeomXform::Define(source, SdfPath(std::string("/Library/Outer/") + name)).GetPrim();
+        inner.GetReferences().AddInternalReference(SdfPath("/Library/Inner"));
+        inner.SetInstanceable(true);
+    }
+    for (const char* name : { "A", "B" }) {
+        auto outer = UsdGeomXform::Define(source, SdfPath(std::string("/World/") + name)).GetPrim();
+        outer.GetReferences().AddInternalReference(SdfPath("/Library/Outer"));
+        outer.SetInstanceable(true);
+    }
+    require(source->GetPrimAtPath(SdfPath("/World/A")).GetPrototype()
+                == source->GetPrimAtPath(SdfPath("/World/B")).GetPrototype(),
+            "fixture shares an outer native prototype");
+    auto collectionMaterial = UsdShadeMaterial::Define(source, SdfPath("/Looks/CollectionSurface"));
+    auto collectionOwner = source->DefinePrim(SdfPath("/Collections/Group"));
+    auto collection = UsdCollectionAPI::Apply(collectionOwner, TfToken("parts"));
+    collection.GetIncludesRel().SetTargets({ SdfPath("/World/A/Left/Body") });
+    UsdShadeMaterialBindingAPI::Apply(source->GetPrimAtPath(SdfPath("/World/A")))
+        .Bind(collection, collectionMaterial, TfToken("parts"), UsdShadeTokens->strongerThanDescendants);
+    UsdGeomCube::Define(source, SdfPath("/Other"));
+    source->GetPrimAtPath(SdfPath("/Library/Inner"))
+        .CreateRelationship(TfToken("unrelated"))
+        .SetTargets({ SdfPath("/Other") });
+    UsdLuxDistantLight::Define(source, SdfPath("/Lighting/Key"));
+    std::string original;
+    source->GetRootLayer()->ExportToString(&original);
+    const auto originalPopulation = source->GetPopulationMask();
+
+    stageviz::RenderIsolation isolation;
+    isolation.setStage(source);
+    require(isolation.stage() == source && !isolation.active(), "unisolated stage has no extra population");
+    isolation.setMask({ SdfPath("/World/A") });
+    const auto rendered = isolation.stage();
+    require(rendered && rendered != source && isolation.active(), "native isolation owns a private population");
+    require(rendered->GetPrimAtPath(SdfPath("/World/A/Left/Body")).IsInstanceProxy(),
+            "whole instance isolation retains nested proxy geometry");
+    require(!rendered->GetPrimAtPath(SdfPath("/World/B")) && !rendered->GetPrimAtPath(SdfPath("/Other")),
+            "unselected shared instances and arbitrary relationship targets stay excluded");
+    require(bool(rendered->GetPrimAtPath(SdfPath("/Lighting/Key"))), "isolation retains scene lighting");
+    require(bool(rendered->GetPrimAtPath(shader.GetPath())), "shader connections retain external network dependencies");
+    require(UsdShadeMaterialBindingAPI(rendered->GetPrimAtPath(SdfPath("/World/A/Left/Body")))
+                    .ComputeBoundMaterial()
+                    .GetPath()
+                == collectionMaterial.GetPath(),
+            "external collection bindings retain their collection owner and material");
+    auto isolatedBody = rendered->GetPrimAtPath(SdfPath("/World/A/Right/Body"));
+    require(UsdShadeMaterialBindingAPI(isolatedBody).ComputeBoundMaterial().GetPath() == material.GetPath(),
+            "proxy material bindings retain their external material");
+
+    isolation.setMask({ SdfPath("/World/A/Left"), SdfPath("/World/B/Right") });
+    require(isolation.stage() == rendered, "changing isolation reuses the render stage");
+    require(rendered->GetPrimAtPath(SdfPath("/World/A/Left/Body"))
+                && rendered->GetPrimAtPath(SdfPath("/World/B/Right/Body"))
+                && !rendered->GetPrimAtPath(SdfPath("/World/A/Right"))
+                && !rendered->GetPrimAtPath(SdfPath("/World/B/Left")),
+            "nested selections do not produce a cross-product of shared instances");
+    body.GetSizeAttr().Set(4.0);
+    double size = 0;
+    require(UsdGeomCube(rendered->GetPrimAtPath(SdfPath("/World/A/Left/Body"))).GetSizeAttr().Get(&size) && size == 4.0,
+            "live source values propagate through shared layers");
+    auto replacement = UsdShadeMaterial::Define(source, SdfPath("/Looks/Replacement"));
+    UsdShadeMaterialBindingAPI(body.GetPrim()).Bind(replacement);
+    require(isolation.stage() == rendered
+                && UsdShadeMaterialBindingAPI(rendered->GetPrimAtPath(SdfPath("/World/B/Right/Body")))
+                           .ComputeBoundMaterial()
+                           .GetPath()
+                       == replacement.GetPath(),
+            "dependency notices update the private material population");
+    const SdfPath addedLight("/Lighting/Added");
+    UsdLuxDistantLight::Define(source, addedLight);
+    require(isolation.stage() == rendered && rendered->GetPrimAtPath(addedLight),
+            "structural notices invalidate the cached scene lights");
+    source->RemovePrim(addedLight);
+    isolation.setMask({});
+    require(isolation.stage() == source && !isolation.active() && source->GetPrimAtPath(SdfPath("/Other"))
+                && source->GetPrimAtPath(SdfPath("/World/B/Left/Body")),
+            "clearing isolation returns the original full stage");
+    isolation.setMask({ SdfPath("/World/A/Left") });
+    require(isolation.stage() == rendered && !rendered->GetPrimAtPath(SdfPath("/World/B")),
+            "re-entering isolation reuses its private population");
+    isolation.setMask({});
+    require(source->GetPopulationMask() == originalPopulation, "source population never changes");
+    body.GetSizeAttr().Set(2.0);
+    UsdShadeMaterialBindingAPI(body.GetPrim()).Bind(material);
+    source->RemovePrim(replacement.GetPath());
+    std::string after;
+    source->GetRootLayer()->ExportToString(&after);
+    require(after == original, "isolation leaves no authored USD changes");
+    auto ordinary = UsdStage::CreateInMemory();
+    UsdGeomCube::Define(ordinary, SdfPath("/Cube"));
+    isolation.setStage(ordinary);
+    isolation.setMask({ SdfPath("/Cube") });
+    require(isolation.stage() != ordinary && isolation.active(),
+            "ordinary geometry uses the same private population as instances");
+}
+
+void
+renderIsolationOrdinaryPrims()
+{
+    auto source = UsdStage::CreateInMemory();
+    UsdGeomXform::Define(source, SdfPath("/World"));
+    const std::vector<TfToken> types { TfToken("Mesh"),   TfToken("Cube"),  TfToken("Sphere"), TfToken("BasisCurves"),
+                                       TfToken("Points"), TfToken("Xform"), TfToken("Scope"),  TfToken("Camera") };
+    for (const TfToken& type : types)
+        source->DefinePrim(SdfPath("/World").AppendChild(type), type);
+    std::string original;
+    source->GetRootLayer()->ExportToString(&original);
+    stageviz::RenderIsolation isolation;
+    isolation.setStage(source);
+    require(isolation.stage() == source && !isolation.active(), "no private stage is needed before isolation");
+    UsdStageRefPtr rendered;
+    for (const TfToken& type : types) {
+        const SdfPath root = SdfPath("/World").AppendChild(type);
+        isolation.setMask({ root });
+        const auto current = isolation.stage();
+        require(current && current != source && isolation.active(), "every prim type uses a private population");
+        require(!rendered || current == rendered, "different prim types reuse the same private stage");
+        rendered = current;
+        require(current->GetPrimAtPath(root).GetTypeName() == type, "isolation retains the requested prim type");
+        for (const TfToken& other : types)
+            require(bool(current->GetPrimAtPath(SdfPath("/World").AppendChild(other))) == (other == type),
+                    "ordinary isolation excludes unselected siblings");
+    }
+    isolation.setMask({ SdfPath("/World/Mesh"), SdfPath("/World/Points") });
+    require(isolation.stage() == rendered && rendered->GetPrimAtPath(SdfPath("/World/Mesh"))
+                && rendered->GetPrimAtPath(SdfPath("/World/Points"))
+                && !rendered->GetPrimAtPath(SdfPath("/World/Cube")),
+            "mixed ordinary prim types share a population mask");
+    isolation.setMask({});
+    require(isolation.stage() == source && !isolation.active(), "clearing ordinary isolation restores the full source");
+    isolation.setMask({ SdfPath("/World/Cube") });
+    require(isolation.stage() == rendered && !rendered->GetPrimAtPath(SdfPath("/World/Mesh")),
+            "ordinary re-entry reuses a narrowed private stage");
+    std::string after;
+    source->GetRootLayer()->ExportToString(&after);
+    require(after == original && source->GetPopulationMask() == UsdStagePopulationMask::All(),
+            "ordinary isolation never authors source changes or changes its population");
+}
+
 void
 commandSelectionApi()
 {
@@ -5521,9 +5825,12 @@ main(int argc, char** argv)
         { "geometry_subset_api", geometrySubsetApi },
         { "material_menu_api", materialMenuApi },
         { "command_material_api", commandMaterialApi },
+        { "material_assignment_instances_api", materialAssignmentInstancesApi },
         { "reset_opinion_groups_api", resetOpinionGroupsApi },
         { "make_editable_instance_api", makeEditableInstanceApi },
         { "command_selection_api", commandSelectionApi },
+        { "render_isolation_instances", renderIsolationInstances },
+        { "render_isolation_ordinary_prims", renderIsolationOrdinaryPrims },
         { "command_authoring_api", commandAuthoringApi },
         { "new_xform_grouping_api", newXformGroupingApi },
         { "command_generated_geometry_api", commandGeneratedGeometryApi },

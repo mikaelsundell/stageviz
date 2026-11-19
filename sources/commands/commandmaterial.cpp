@@ -10,15 +10,20 @@
 #include "tracelocks.h"
 #include "usdutils.h"
 #include <memory>
+#include <pxr/usd/sdf/changeBlock.h>
 #include <pxr/usd/sdf/copyUtils.h>
 #include <pxr/usd/sdf/layer.h>
 #include <pxr/usd/usd/attribute.h>
 #include <pxr/usd/usd/editContext.h>
 #include <pxr/usd/usd/editTarget.h>
 #include <pxr/usd/usd/prim.h>
+#include <pxr/usd/usd/primRange.h>
+#include <pxr/usd/usdGeom/gprim.h>
+#include <pxr/usd/usdGeom/subset.h>
 #include <pxr/usd/usdShade/material.h>
 #include <pxr/usd/usdShade/materialBindingAPI.h>
 #include <pxr/usd/usdShade/shader.h>
+#include <set>
 
 namespace stageviz {
 
@@ -72,6 +77,9 @@ namespace {
             error = QString("target prim missing: %1").arg(pathText(primPath));
             return false;
         }
+
+        if (!validateNotInstanceProxy(stage, primPath, error))
+            return false;
 
         const UsdPrim materialPrim = stage->GetPrimAtPath(materialPath);
         if (!materialPrim || !materialPrim.IsA<UsdShadeMaterial>()) {
@@ -134,14 +142,14 @@ namespace {
         return true;
     }
 
-    struct ShaderInputPropertyState {
+    struct MaterialPropertyState {
         SdfPath propertyPath;
         bool hadSpec = false;
         SdfLayerRefPtr snapshotLayer;
     };
 
-    bool captureShaderInputProperty(const SdfLayerHandle& editLayer, const SdfPath& propertyPath,
-                                    ShaderInputPropertyState& state, QString& error)
+    bool captureMaterialProperty(const SdfLayerHandle& editLayer, const SdfPath& propertyPath,
+                                 MaterialPropertyState& state, QString& error)
     {
         if (!editLayer || propertyPath.IsEmpty() || !propertyPath.IsPropertyPath()) {
             error = "invalid shader input property";
@@ -159,7 +167,7 @@ namespace {
             return false;
         }
 
-        SdfCreatePrimInLayer(state.snapshotLayer, propertyPath.GetPrimPath());
+        SdfCreatePrimInLayer(state.snapshotLayer, propertyPath.GetParentPath());
         if (!SdfCopySpec(editLayer, propertyPath, state.snapshotLayer, propertyPath)) {
             error = QString("failed to snapshot shader input: %1").arg(pathText(propertyPath));
             return false;
@@ -167,8 +175,7 @@ namespace {
         return true;
     }
 
-    bool restoreShaderInputProperty(const SdfLayerHandle& editLayer, const ShaderInputPropertyState& state,
-                                    QString& error)
+    bool restoreMaterialProperty(const SdfLayerHandle& editLayer, const MaterialPropertyState& state, QString& error)
     {
         if (!editLayer || state.propertyPath.IsEmpty()) {
             error = "invalid shader input snapshot";
@@ -188,8 +195,8 @@ namespace {
             return false;
         }
 
-        if (!editLayer->GetPrimAtPath(state.propertyPath.GetPrimPath()))
-            SdfCreatePrimInLayer(editLayer, state.propertyPath.GetPrimPath());
+        if (!editLayer->GetPrimAtPath(state.propertyPath.GetParentPath()))
+            SdfCreatePrimInLayer(editLayer, state.propertyPath.GetParentPath());
 
         if (!SdfCopySpec(state.snapshotLayer, state.propertyPath, editLayer, state.propertyPath)) {
             error = QString("failed to restore shader input: %1").arg(pathText(state.propertyPath));
@@ -496,9 +503,284 @@ bindMaterial(const QList<SdfPath>& inPaths, const SdfPath& materialPath)
 }
 
 Command
+assignMaterial(const QList<SdfPath>& paths, const SdfPath& materialPath)
+{
+    struct State {
+        struct Item {
+            SdfPath scenePath;
+            MaterialPropertyState binding;
+            bool hadSchemas = false;
+            VtValue schemas;
+        };
+        UsdEditTarget target;
+        QList<Item> items;
+        std::set<SdfPath> createdPrims;
+    };
+    auto state = std::make_shared<State>();
+    const auto restore = [state](QString& error) {
+        const auto layer = state->target.GetLayer();
+        if (!layer || !layer->PermissionToEdit()) {
+            error = "original material assignment layer is not editable";
+            return false;
+        }
+        SdfChangeBlock block;
+        for (const auto& item : state->items) {
+            if (!restoreMaterialProperty(layer, item.binding, error))
+                return false;
+            const auto owner = item.binding.propertyPath.GetParentPath();
+            if (item.hadSchemas)
+                layer->SetField(owner, TfToken("apiSchemas"), item.schemas);
+            else if (layer->GetPrimAtPath(owner))
+                layer->EraseField(owner, TfToken("apiSchemas"));
+        }
+        for (auto it = state->createdPrims.rbegin(); it != state->createdPrims.rend(); ++it) {
+            const auto spec = layer->GetPrimAtPath(*it);
+            if (spec && spec->IsInert())
+                stage::removePrimSpec(layer, *it);
+        }
+        return true;
+    };
+    const auto execute = [state, paths, materialPath, restore](Session* session, bool undo) {
+        if (!session || paths.isEmpty())
+            return;
+        command::beginDeferred(session, undo ? "Undo assign material" : "Assign material",
+                               static_cast<int>(paths.size()));
+        command::runWorker([session, state, paths, materialPath, restore, undo]() {
+            QList<SdfPath> affected;
+            QString error;
+            bool success = false;
+            {
+                WRITE_LOCKER(locker, session->stageLock(), "stageLock");
+                const auto stage = session->stageUnsafe();
+                if (!stage)
+                    error = "stage missing";
+                else if (undo) {
+                    success = restore(error);
+                    for (const auto& item : state->items)
+                        affected.append(item.scenePath);
+                }
+                else {
+                    state->items.clear();
+                    state->createdPrims.clear();
+                    if (!state->target.GetLayer())
+                        state->target = stage->GetEditTarget();
+                    const auto layer = state->target.GetLayer();
+                    const UsdShadeMaterial material(stage->GetPrimAtPath(materialPath));
+                    if (!layer || !layer->PermissionToEdit())
+                        error = "material assignment edit layer is not editable";
+                    else if (!material)
+                        error = "material assignment requires an existing material";
+                    else {
+                        UsdEditContext context(stage, state->target);
+                        QList<SdfPath> owners;
+                        path::PathCollector collector(owners);
+                        for (const auto& path : paths) {
+                            if (path.IsAbsoluteRootPath()) {
+                                for (const auto& root : stage->GetPseudoRoot().GetChildren()) {
+                                    for (const auto& child : UsdPrimRange(root, UsdTraverseInstanceProxies())) {
+                                        if (child.IsA<UsdGeomGprim>()) {
+                                            collector.append(root.GetPath());
+                                            break;
+                                        }
+                                    }
+                                }
+                                continue;
+                            }
+                            const auto owner = command::materialAssignmentOwner(stage, path);
+                            if (owner.IsEmpty()) {
+                                error = "selection contains a missing or non-authorable prim";
+                                break;
+                            }
+                            collector.append(owner);
+                        }
+                        for (const auto& owner : path::minimalRootPaths(owners)) {
+                            if (!error.isEmpty())
+                                break;
+                            const auto specPath = state->target.MapToSpecPath(owner);
+                            if (specPath.IsEmpty()) {
+                                error = "material assignment owner cannot be mapped into the edit target";
+                                break;
+                            }
+                            State::Item item;
+                            item.scenePath = owner;
+                            if (!captureMaterialProperty(layer, specPath.AppendProperty(TfToken("material:binding")),
+                                                         item.binding, error))
+                                break;
+                            item.hadSchemas = layer->HasField(specPath, TfToken("apiSchemas"));
+                            if (item.hadSchemas)
+                                item.schemas = layer->GetField(specPath, TfToken("apiSchemas"));
+                            state->items.append(item);
+                            for (const auto& prefix : specPath.GetPrefixes())
+                                if ((prefix.IsPrimPath() || prefix.IsPrimVariantSelectionPath())
+                                    && !layer->GetPrimAtPath(prefix))
+                                    state->createdPrims.insert(prefix);
+                        }
+                        if (error.isEmpty() && state->items.isEmpty())
+                            error = "selection contains no assignable prims";
+                        if (error.isEmpty()) {
+                            for (const auto& item : state->items) {
+                                const auto prim = stage->GetPrimAtPath(item.scenePath);
+                                const bool inherited = prim.IsInstance()
+                                                       || (!prim.IsA<UsdGeomGprim>() && !prim.IsA<UsdGeomSubset>());
+                                const auto api = UsdShadeMaterialBindingAPI::Apply(prim);
+                                if (!api.Bind(material, inherited ? UsdShadeTokens->strongerThanDescendants
+                                                                  : UsdShadeTokens->fallbackStrength)) {
+                                    error = "failed to author material binding";
+                                    break;
+                                }
+                                affected.append(item.scenePath);
+                            }
+                            UsdShadeMaterialBindingAPI::BindingsCache bindings;
+                            UsdShadeMaterialBindingAPI::CollectionQueryCache collections;
+                            for (const auto& item : state->items) {
+                                const auto root = stage->GetPrimAtPath(item.scenePath);
+                                auto range = UsdPrimRange(root, UsdTraverseInstanceProxies());
+                                for (auto it = range.begin(); it != range.end(); ++it) {
+                                    const auto prim = *it;
+                                    if (prim.IsA<UsdGeomGprim>() || prim.IsA<UsdGeomSubset>()) {
+                                        const auto bound
+                                            = UsdShadeMaterialBindingAPI(prim).ComputeBoundMaterial(&bindings,
+                                                                                                    &collections);
+                                        if (!bound || bound.GetPath() != materialPath) {
+                                            error
+                                                = "an existing stronger or collection binding prevents this assignment";
+                                            break;
+                                        }
+                                        if (prim == root)
+                                            it.PruneChildren();
+                                    }
+                                }
+                                if (!error.isEmpty())
+                                    break;
+                            }
+                        }
+                        success = error.isEmpty();
+                        if (!success && !state->items.isEmpty()) {
+                            QString rollbackError;
+                            if (!restore(rollbackError))
+                                error += "; rollback: " + rollbackError;
+                        }
+                    }
+                }
+            }
+            command::queueToSession(session, [session, affected, success, error, undo]() {
+                using Status = Session::Notify::Status;
+                command::finishDeferred(session,
+                                        success ? (undo ? "Material assignment undone" : "Material assigned")
+                                                : command::appendError("Material assignment failed", error),
+                                        affected, success ? Status::Success : Status::Error);
+            });
+        });
+    };
+    return Command([execute](Session* session) { execute(session, false); },
+                   [execute](Session* session) { execute(session, true); });
+}
+
+Command
+clearMaterial(const QList<SdfPath>& paths)
+{
+    struct State {
+        UsdEditTarget target;
+        QList<MaterialPropertyState> properties;
+        QList<SdfPath> owners;
+    };
+    auto state = std::make_shared<State>();
+    const auto execute = [state, paths](Session* session, bool undo) {
+        if (!session || paths.isEmpty())
+            return;
+        command::beginDeferred(session, undo ? "Undo clear material" : "Clear material",
+                               static_cast<int>(paths.size()));
+        command::runWorker([session, state, paths, undo]() {
+            QString error;
+            bool success = false;
+            {
+                WRITE_LOCKER(locker, session->stageLock(), "stageLock");
+                const auto stage = session->stageUnsafe();
+                if (!stage)
+                    error = "stage missing";
+                else {
+                    if (!state->target.GetLayer())
+                        state->target = stage->GetEditTarget();
+                    const auto layer = state->target.GetLayer();
+                    if (!layer || !layer->PermissionToEdit())
+                        error = "original material edit layer is not editable";
+                    else if (undo) {
+                        SdfChangeBlock block;
+                        for (const auto& property : state->properties)
+                            if (!restoreMaterialProperty(layer, property, error))
+                                break;
+                    }
+                    else {
+                        state->properties.clear();
+                        state->owners.clear();
+                        path::PathCollector collector(state->owners);
+                        for (const auto& path : paths) {
+                            const auto owner = command::materialAssignmentOwner(stage, path);
+                            if (owner.IsEmpty()) {
+                                error = "selection contains a missing or non-authorable prim";
+                                break;
+                            }
+                            collector.append(owner);
+                        }
+                        for (const auto& owner : state->owners) {
+                            if (!error.isEmpty())
+                                break;
+                            const auto specPath = state->target.MapToSpecPath(owner);
+                            if (specPath.IsEmpty()) {
+                                error = "material owner cannot be mapped into the edit target";
+                                break;
+                            }
+                            const auto spec = layer->GetPrimAtPath(specPath);
+                            if (!spec)
+                                continue;
+                            for (const auto& property : spec->GetProperties()) {
+                                const auto name = property->GetName();
+                                if (!layer->GetRelationshipAtPath(property->GetPath())
+                                    || (name != "material:binding" && name.rfind("material:binding:", 0) != 0))
+                                    continue;
+                                MaterialPropertyState snapshot;
+                                if (!captureMaterialProperty(layer, property->GetPath(), snapshot, error))
+                                    break;
+                                state->properties.append(snapshot);
+                            }
+                        }
+                        if (error.isEmpty()) {
+                            SdfChangeBlock block;
+                            for (const auto& property : state->properties) {
+                                if (!removePropertySpec(layer, property.propertyPath)) {
+                                    error = "failed to clear material binding";
+                                    break;
+                                }
+                            }
+                            if (!error.isEmpty()) {
+                                QString rollbackError;
+                                for (const auto& property : state->properties)
+                                    restoreMaterialProperty(layer, property, rollbackError);
+                                if (!rollbackError.isEmpty())
+                                    error += "; rollback: " + rollbackError;
+                            }
+                        }
+                    }
+                    success = error.isEmpty();
+                }
+            }
+            command::queueToSession(session, [session, state, success, error, undo]() {
+                using Status = Session::Notify::Status;
+                command::finishDeferred(session,
+                                        success ? (undo ? "Clear material undone" : "Material cleared")
+                                                : command::appendError("Clear material failed", error),
+                                        state->owners, success ? Status::Success : Status::Error);
+            });
+        });
+    };
+    return Command([execute](Session* session) { execute(session, false); },
+                   [execute](Session* session) { execute(session, true); });
+}
+
+Command
 disconnectShaderInputs(const QList<SdfPath>& inputPaths)
 {
-    auto states = std::make_shared<QList<ShaderInputPropertyState>>();
+    auto states = std::make_shared<QList<MaterialPropertyState>>();
 
     return Command(
         [inputPaths, states](Session* session) {
@@ -533,9 +815,9 @@ disconnectShaderInputs(const QList<SdfPath>& inputPaths)
                                     continue;
                                 }
 
-                                ShaderInputPropertyState state;
+                                MaterialPropertyState state;
                                 QString error;
-                                if (!captureShaderInputProperty(editLayer, propertyPath, state, error)) {
+                                if (!captureMaterialProperty(editLayer, propertyPath, state, error)) {
                                     errors.append(error);
                                     continue;
                                 }
@@ -552,7 +834,7 @@ disconnectShaderInputs(const QList<SdfPath>& inputPaths)
                                 }
 
                                 states->append(state);
-                                collector.append(propertyPath.GetPrimPath());
+                                collector.append(propertyPath.GetParentPath());
                             }
                         }
                     }
@@ -589,10 +871,10 @@ disconnectShaderInputs(const QList<SdfPath>& inputPaths)
                         errors.append(!editError.isEmpty() ? editError : QStringLiteral("stage missing"));
                     }
                     else {
-                        for (const ShaderInputPropertyState& state : *states) {
+                        for (const MaterialPropertyState& state : *states) {
                             QString error;
-                            if (restoreShaderInputProperty(editLayer, state, error))
-                                collector.append(state.propertyPath.GetPrimPath());
+                            if (restoreMaterialProperty(editLayer, state, error))
+                                collector.append(state.propertyPath.GetParentPath());
                             else
                                 errors.append(error);
                         }
@@ -614,7 +896,7 @@ disconnectShaderInputs(const QList<SdfPath>& inputPaths)
 Command
 connectShaderInput(const SdfPath& inputPath, const SdfPath& sourceOutputPath)
 {
-    auto state = std::make_shared<ShaderInputPropertyState>();
+    auto state = std::make_shared<MaterialPropertyState>();
     auto captured = std::make_shared<bool>(false);
 
     return Command(
@@ -648,7 +930,7 @@ connectShaderInput(const SdfPath& inputPath, const SdfPath& sourceOutputPath)
                         }
                         else {
                             QString captureError;
-                            if (!captureShaderInputProperty(editLayer, inputPath, *state, captureError)) {
+                            if (!captureMaterialProperty(editLayer, inputPath, *state, captureError)) {
                                 error = captureError;
                             }
                             else {
@@ -731,7 +1013,7 @@ connectShaderInput(const SdfPath& inputPath, const SdfPath& sourceOutputPath)
 
                                 if (!success && repairedInputType) {
                                     QString restoreError;
-                                    if (!restoreShaderInputProperty(editLayer, *state, restoreError) && error.isEmpty())
+                                    if (!restoreMaterialProperty(editLayer, *state, restoreError) && error.isEmpty())
                                         error = restoreError;
                                 }
                             }
@@ -765,9 +1047,9 @@ connectShaderInput(const SdfPath& inputPath, const SdfPath& sourceOutputPath)
                         error = !editError.isEmpty() ? editError : QStringLiteral("stage missing");
                     }
                     else {
-                        success = restoreShaderInputProperty(editLayer, *state, error);
+                        success = restoreMaterialProperty(editLayer, *state, error);
                         if (success)
-                            path::appendUnique(changed, state->propertyPath.GetPrimPath());
+                            path::appendUnique(changed, state->propertyPath.GetParentPath());
                     }
                 }
 
@@ -785,7 +1067,7 @@ connectShaderInput(const SdfPath& inputPath, const SdfPath& sourceOutputPath)
 Command
 resetShaderInputs(const QList<SdfPath>& inputPaths)
 {
-    auto states = std::make_shared<QList<ShaderInputPropertyState>>();
+    auto states = std::make_shared<QList<MaterialPropertyState>>();
 
     return Command(
         [inputPaths, states](Session* session) {
@@ -814,9 +1096,9 @@ resetShaderInputs(const QList<SdfPath>& inputPaths)
                             }
                             if (!editLayer->GetPropertyAtPath(propertyPath))
                                 continue;
-                            ShaderInputPropertyState state;
+                            MaterialPropertyState state;
                             QString error;
-                            if (!captureShaderInputProperty(editLayer, propertyPath, state, error)) {
+                            if (!captureMaterialProperty(editLayer, propertyPath, state, error)) {
                                 errors.append(error);
                                 continue;
                             }
@@ -825,7 +1107,7 @@ resetShaderInputs(const QList<SdfPath>& inputPaths)
                                 continue;
                             }
                             states->append(state);
-                            collector.append(propertyPath.GetPrimPath());
+                            collector.append(propertyPath.GetParentPath());
                         }
                     }
                 }
@@ -859,12 +1141,12 @@ resetShaderInputs(const QList<SdfPath>& inputPaths)
                         errors.append(!editError.isEmpty() ? editError : QStringLiteral("stage missing"));
                     }
                     else {
-                        for (const ShaderInputPropertyState& state : *states) {
+                        for (const MaterialPropertyState& state : *states) {
                             QString error;
                             if (!validateNotInstanceProxy(stage, state.propertyPath, error))
                                 errors.append(error);
-                            else if (restoreShaderInputProperty(editLayer, state, error))
-                                collector.append(state.propertyPath.GetPrimPath());
+                            else if (restoreMaterialProperty(editLayer, state, error))
+                                collector.append(state.propertyPath.GetParentPath());
                             else
                                 errors.append(error);
                         }
@@ -887,7 +1169,7 @@ Command
 connectShaderNode(const SdfPath& inputPath, const QString& shaderId, const QString& nodeName, const TfToken& outputName)
 {
     struct State {
-        ShaderInputPropertyState input;
+        MaterialPropertyState input;
         SdfPath nodePath;
         bool captured = false;
     };
@@ -920,7 +1202,7 @@ connectShaderNode(const SdfPath& inputPath, const QString& shaderId, const QStri
                         }
                         else {
                             if (!state->captured) {
-                                if (!captureShaderInputProperty(editLayer, inputPath, state->input, error)) {
+                                if (!captureMaterialProperty(editLayer, inputPath, state->input, error)) {
                                     // error already set
                                 }
                                 else {
@@ -1013,7 +1295,7 @@ connectShaderNode(const SdfPath& inputPath, const QString& shaderId, const QStri
                                             "shader socket types are incompatible: float3 -> color3f");
                                         stage::removePrimSpec(editLayer, state->nodePath);
                                         QString restoreError;
-                                        restoreShaderInputProperty(editLayer, state->input, restoreError);
+                                        restoreMaterialProperty(editLayer, state->input, restoreError);
                                         state->captured = false;
                                         state->nodePath = SdfPath();
                                     }
@@ -1021,7 +1303,7 @@ connectShaderNode(const SdfPath& inputPath, const QString& shaderId, const QStri
                                         error = "failed to connect shader node";
                                         stage::removePrimSpec(editLayer, state->nodePath);
                                         QString restoreError;
-                                        restoreShaderInputProperty(editLayer, state->input, restoreError);
+                                        restoreMaterialProperty(editLayer, state->input, restoreError);
                                         state->captured = false;
                                         state->nodePath = SdfPath();
                                     }
@@ -1067,11 +1349,11 @@ connectShaderNode(const SdfPath& inputPath, const QString& shaderId, const QStri
                             error = QString("failed to remove shader node: %1").arg(pathText(state->nodePath));
                         else {
                             QString restoreError;
-                            if (!restoreShaderInputProperty(editLayer, state->input, restoreError) && error.isEmpty())
+                            if (!restoreMaterialProperty(editLayer, state->input, restoreError) && error.isEmpty())
                                 error = restoreError;
                         }
                         success = error.isEmpty();
-                        path::appendUnique(changed, state->input.propertyPath.GetPrimPath());
+                        path::appendUnique(changed, state->input.propertyPath.GetParentPath());
                         path::appendUnique(changed, state->nodePath);
                     }
                 }
@@ -1090,7 +1372,7 @@ Command
 connectMaterialXNode(const SdfPath& inputPath, const QString& nodeDef, const QString& nodeName)
 {
     struct State {
-        ShaderInputPropertyState input;
+        MaterialPropertyState input;
         SdfPath nodePath;
         bool captured = false;
     };
@@ -1144,7 +1426,7 @@ connectMaterialXNode(const SdfPath& inputPath, const QString& nodeDef, const QSt
                                 }
                                 else {
                                     if (!state->captured) {
-                                        if (!captureShaderInputProperty(editLayer, inputPath, state->input, error)) {
+                                        if (!captureMaterialProperty(editLayer, inputPath, state->input, error)) {
                                             // error already set
                                         }
                                         else {
@@ -1189,7 +1471,7 @@ connectMaterialXNode(const SdfPath& inputPath, const QString& nodeDef, const QSt
                         if (!success && state->captured && !state->nodePath.IsEmpty()) {
                             stage::removePrimSpec(editLayer, state->nodePath);
                             QString restoreError;
-                            restoreShaderInputProperty(editLayer, state->input, restoreError);
+                            restoreMaterialProperty(editLayer, state->input, restoreError);
                             state->captured = false;
                             state->nodePath = SdfPath();
                             if (error.isEmpty())
@@ -1231,12 +1513,12 @@ connectMaterialXNode(const SdfPath& inputPath, const QString& nodeDef, const QSt
                             error = QStringLiteral("failed to remove MaterialX node: %1").arg(pathText(state->nodePath));
                         else {
                             QString restoreError;
-                            if (!restoreShaderInputProperty(editLayer, state->input, restoreError) && error.isEmpty())
+                            if (!restoreMaterialProperty(editLayer, state->input, restoreError) && error.isEmpty())
                                 error = restoreError;
                         }
 
                         success = error.isEmpty();
-                        path::appendUnique(changed, state->input.propertyPath.GetPrimPath());
+                        path::appendUnique(changed, state->input.propertyPath.GetParentPath());
                         path::appendUnique(changed, state->nodePath);
                     }
                 }

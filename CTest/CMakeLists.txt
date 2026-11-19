@@ -125,9 +125,12 @@ foreach(case IN ITEMS
     geometry_subset_api
     material_menu_api
     command_material_api
+    material_assignment_instances_api
     reset_opinion_groups_api
     make_editable_instance_api
     command_selection_api
+    render_isolation_instances
+    render_isolation_ordinary_prims
     command_authoring_api
     new_xform_grouping_api
     command_generated_geometry_api
