@@ -177,7 +177,7 @@ public:
         bool displayTypesFiltered = false;
         QStringList displayLayers;
         QStringList displayTypes;
-        bool showUntyped = true;
+        bool showUntyped = false;
         QMap<SdfPath, bool> payloadRequests;
         QList<SdfPath> maskPaths;
         QSet<SdfPath> directOverridePaths;

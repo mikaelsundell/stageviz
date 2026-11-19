@@ -65,6 +65,7 @@
 #include <pxr/usd/sdf/layerUtils.h>
 #include <pxr/usd/usd/primRange.h>
 #include <pxr/usd/usdShade/materialBindingAPI.h>
+#include <set>
 #include <vector>
 
 // generated files
@@ -1915,7 +1916,7 @@ MaterialDialogPrivate::applyToSelection()
     }
 
     if (!paths.isEmpty())
-        session()->commandStack()->execute(new Command(bindMaterial(paths, materials.first().materialPath)));
+        session()->commandStack()->execute(new Command(assignMaterial(paths, materials.first().materialPath)));
 }
 
 void
@@ -1936,14 +1937,21 @@ MaterialDialogPrivate::selectFromStage()
             return;
         }
 
+        UsdShadeMaterialBindingAPI::BindingsCache bindings;
+        UsdShadeMaterialBindingAPI::CollectionQueryCache collections;
+        std::set<SdfPath> inspected;
         for (const SdfPath& path : paths) {
-            const UsdPrim prim = stage->GetPrimAtPath(path.IsPropertyPath() ? path.GetPrimPath() : path);
-            if (!prim)
+            const UsdPrim root = stage->GetPrimAtPath(path.IsPropertyPath() ? path.GetPrimPath() : path);
+            if (!root)
                 continue;
-
-            const UsdShadeMaterial bound = UsdShadeMaterialBindingAPI(prim).ComputeBoundMaterial();
-            if (bound)
-                materialPaths.insert(bound.GetPath());
+            for (const UsdPrim& prim : UsdPrimRange(root, UsdTraverseInstanceProxies())) {
+                if (!inspected.insert(prim.GetPath()).second)
+                    continue;
+                const UsdShadeMaterial bound = UsdShadeMaterialBindingAPI(prim).ComputeBoundMaterial(&bindings,
+                                                                                                     &collections);
+                if (bound)
+                    materialPaths.insert(bound.GetPath());
+            }
         }
     }
 

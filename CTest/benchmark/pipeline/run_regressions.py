@@ -38,6 +38,15 @@ def phases(root, name, performance=False, performance_baseline=None):
     if name == 'testselectionoutline':
         return [('setup', load + "; test=ns['SelectionOutlineTest'](disposable=True); test.setup()"),
                 ('overlap', 'test.overlap()'), ('cleanup', 'test.cleanup()')]
+    if name == 'testisolationinstances':
+        return [('setup', load + "; test=ns['IsolationInstancesTest'](disposable=True); test.setup()"),
+                ('isolate', 'test.isolate()'), ('cleanup', 'test.cleanup()'),
+                ('ordinary-setup', "test=ns['IsolationInstancesTest'](disposable=True,instanced=False); test.setup()"),
+                ('ordinary-isolate', 'test.isolate()'), ('ordinary-cleanup', 'test.cleanup()')]
+    if name == 'testmaterialassignment':
+        return [('setup', load + "; test=ns['MaterialAssignmentTest'](disposable=True); test.setup()"),
+                ('api', 'test.api()'), ('editor-material-menu', 'test.ui()'),
+                ('viewport-drop', 'test.drop()'), ('cleanup', 'test.cleanup()')]
     if name == 'testexportinstances':
         return [('setup', load + "; test=ns['ExportInstancesTest'](disposable=True); test.setup()"),
                 ('selected', 'test.selected()'), ('cleanup', 'test.cleanup()')]
@@ -54,6 +63,8 @@ def phases(root, name, performance=False, performance_baseline=None):
                 ('root-menu', "test.exercise('context',test.root)"),
                 ('proxy-menu', "test.exercise('context',test.child)"),
                 ('gizmo', 'test.gizmo()'),
+                ('multi-menu', 'test.multiple()'),
+                ('source-availability', 'test.source_availability()'),
                 ('locked-menu', 'test.locked()'), ('cleanup', 'test.cleanup()')]
     if name == 'testpayloadhierarchy':
         return [('setup', load + "; test=ns['PayloadHierarchyTest'](disposable=True); test.setup()")] + [
@@ -257,6 +268,17 @@ def run(args):
                         after['prims'] = app.tool('stageviz_list_prims', {'path': '/', 'maxDepth': 3, 'limit': 30})
                     if name == 'testresetopinions' and label != 'cleanup':
                         after['prim'] = app.tool('stageviz_get_prim_info', {'path': '/Group/Sphere'})
+                    if name == 'testmaterialassignment' and label != 'cleanup':
+                        after['instances'] = {}
+                        prototypes = []
+                        for path in ('/World/A', '/World/B', '/World/A/Group/Left'):
+                            response = app.tool('stageviz_get_prim_info', {'path': path})
+                            prim = json.loads(response['result']['content'][0]['text'])
+                            assert prim['instanceProxy'] if path.endswith('/Left') else prim['instance'], prim
+                            if prim['instance']:
+                                prototypes.append(prim['prototype'])
+                            after['instances'][path] = response
+                        assert len(set(prototypes)) == 1, prototypes
                     if name == 'testmakeeditable' and label != 'cleanup':
                         after['instance'] = app.tool('stageviz_get_prim_info', {'path': '/World/First'})
                         after['child'] = app.tool('stageviz_get_prim_info', {'path': '/World/First/Cube'})

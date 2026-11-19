@@ -268,8 +268,10 @@ PrimItem::data(int column, int role) const
         if (p->d.hasPayload)
             iconRole = UI::IconRole::Payload;
 
-        if (p->d.isInstance)
+        if (p->d.isInstance && !p->d.isInstanceProxy)
             iconRole = UI::IconRole::Instance;
+        else if (p->d.isInstanceProxy && p->d.isGroup && iconRole == UI::IconRole::Prim)
+            iconRole = UI::IconRole::Proxy;
 
         if (p->d.isDefaultPrim)
             iconRole = UI::IconRole::DefaultPrim;

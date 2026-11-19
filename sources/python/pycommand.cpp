@@ -1502,6 +1502,32 @@ PyCommand_bindMaterial(PyObject*, PyObject* args)
     return runCommand(bindMaterial(paths, materialPath));
 }
 
+static PyObject*
+PyCommand_assignMaterial(PyObject*, PyObject* args)
+{
+    PyObject* pyPaths = nullptr;
+    PyObject* pyMaterialPath = nullptr;
+    if (!PyArg_ParseTuple(args, "OO", &pyPaths, &pyMaterialPath))
+        return nullptr;
+    QList<SdfPath> paths;
+    SdfPath materialPath;
+    if (!parsePathListArg(pyPaths, "paths", &paths) || !parsePathArg(pyMaterialPath, "material_path", &materialPath))
+        return nullptr;
+    return runCommand(assignMaterial(paths, materialPath));
+}
+
+static PyObject*
+PyCommand_clearMaterial(PyObject*, PyObject* args)
+{
+    PyObject* pyPaths = nullptr;
+    if (!PyArg_ParseTuple(args, "O", &pyPaths))
+        return nullptr;
+    QList<SdfPath> paths;
+    if (!parsePathListArg(pyPaths, "paths", &paths))
+        return nullptr;
+    return runCommand(clearMaterial(paths));
+}
+
 static PyMethodDef PyCommand_methods[] = {
     { "undo", reinterpret_cast<PyCFunction>(PyCommand_undo), METH_NOARGS, "Undo the most recent command." },
     { "redo", reinterpret_cast<PyCFunction>(PyCommand_redo), METH_NOARGS, "Redo the most recently undone command." },
@@ -1640,6 +1666,10 @@ static PyMethodDef PyCommand_methods[] = {
       "Reset edit-layer shader-input opinions with undo support." },
     { "connect_materialx_node", reinterpret_cast<PyCFunction>(PyCommand_connectMaterialXNode), METH_VARARGS,
       "Create a MaterialX node and connect it to a shader input with undo support." },
+    { "clear_material", reinterpret_cast<PyCFunction>(PyCommand_clearMaterial), METH_VARARGS,
+      "Clear current edit-layer material bindings, promoting proxy selections to their instance root." },
+    { "assign_material", reinterpret_cast<PyCFunction>(PyCommand_assignMaterial), METH_VARARGS,
+      "Assign a material to ordinary or instanced geometry with undo support." },
     { "bind_material", reinterpret_cast<PyCFunction>(PyCommand_bindMaterial), METH_VARARGS,
       "Bind an existing USD material to prims in the active edit layer." },
     { nullptr, nullptr, 0, nullptr }

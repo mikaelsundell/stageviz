@@ -27,6 +27,14 @@ values; code should use their names instead of maintaining its own ordinals.
 `command.make_editable_paths` exposes undoable native-instance conversion for
 instance roots and proxy selections, retaining references and exact selection.
 
+`command.assign_material` shares the Material Editor and viewport assignment
+workflow. Proxy children promote to the closest non-proxy ancestor and receive
+that instance's shared direct binding. Geometry remains instanced.
+`command.bind_material` remains an explicit direct-binding operation.
+`command.clear_material` removes native material-binding relationships in the
+current edit layer, using the same proxy-owner promotion. Undo restores exact
+binding specs without custom metadata. Generic Reset remains unchanged.
+
 `command.update_layer` reloads a selected layer or batch from disk with undoable
 content snapshots; redo uses the captured content. It does not reload the stage
 or unselected sublayers.

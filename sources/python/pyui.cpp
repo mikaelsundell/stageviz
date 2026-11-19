@@ -188,6 +188,7 @@ addUIEnums()
                                            { "Pick", static_cast<long>(UI::IconRole::Pick) },
                                            { "Pivot", static_cast<long>(UI::IconRole::Pivot) },
                                            { "Prim", static_cast<long>(UI::IconRole::Prim) },
+                                           { "Proxy", static_cast<long>(UI::IconRole::Proxy) },
                                            { "Redo", static_cast<long>(UI::IconRole::Redo) },
                                            { "Right", static_cast<long>(UI::IconRole::Right) },
                                            { "Rotate", static_cast<long>(UI::IconRole::Rotate) },

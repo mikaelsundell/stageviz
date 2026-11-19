@@ -150,7 +150,7 @@ public:
      * @param filterLayers Treat an empty layer list as an explicit empty selection.
      * @param filterTypes Treat an empty type list as an explicit empty selection.
      */
-    void setDisplayFilters(const QStringList& layers, const QStringList& types, bool showUntyped = true,
+    void setDisplayFilters(const QStringList& layers, const QStringList& types, bool showUntyped = false,
                            bool filterLayers = false, bool filterTypes = false);
 
     /**

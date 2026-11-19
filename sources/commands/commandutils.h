@@ -16,6 +16,15 @@ PXR_NAMESPACE_USING_DIRECTIVE
 namespace stageviz {
 namespace command {
     /**
+     * @brief Resolves proxy selections to their closest non-proxy, editable ancestor.
+     *
+     * Ordinary prim paths are retained. Missing paths, generated prototypes and
+     * the pseudo-root are rejected. The active layer may author an over on the
+     * resolved prim even when that layer has no existing spec there.
+     */
+    SdfPath materialAssignmentOwner(const UsdStageRefPtr& stage, const SdfPath& path);
+
+    /**
      * @brief Formats a USD path for command progress and error messages.
      */
     QString pathText(const SdfPath& path);

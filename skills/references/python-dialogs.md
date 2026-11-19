@@ -531,7 +531,9 @@ Before returning a Stageviz dialog script, verify:
 - Large direct USD authoring restores the previous prim-update policy in `finally`; never manually flush session prim updates.
 - `QColor` handling uses actual `QtGui.QColor` instances.
 - `Sdf.ValueTypeNames.Int` is used for integer shader inputs.
-- Material binding uses `stageviz.command.bind_material` for undoable binding or `UsdShade.MaterialBindingAPI` for intentional direct authoring.
+- Material assignment uses `stageviz.command.assign_material` for undoable group
+  and instance-aware assignment. Use `stageviz.command.bind_material` for explicit
+  direct bindings, or `UsdShade.MaterialBindingAPI` for intentional direct authoring.
 - Material paths are absolute valid `Sdf.Path` values.
 - MaterialX outputs are connected to the material surface output.
 - Standalone dialogs are non-modal and retain a global reference.

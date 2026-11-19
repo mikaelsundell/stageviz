@@ -9,6 +9,7 @@
 #include "perfscope.h"
 #include "qtutils.h"
 #include "renderdiagnostics.h"
+#include "renderisolation.h"
 #include "renderresources.h"
 #include "rendersceneindex.h"
 #include "rendertask.h"
@@ -53,6 +54,7 @@
 #include <pxr/imaging/hdx/taskControllerSceneIndex.h>
 #include <pxr/imaging/hdx/tokens.h>
 #include <pxr/imaging/hgi/hgi.h>
+#include <pxr/imaging/hgi/tokens.h>
 #include <pxr/usd/sdf/assetPath.h>
 #include <pxr/usd/usd/prim.h>
 #include <pxr/usd/usdGeom/gprim.h>
@@ -870,6 +872,16 @@ namespace {
         ~ImagingGLEngine() { removeRenderTask(); }
 
         HdRenderIndex* renderIndex() { return _GetRenderIndex(); }
+
+        Hgi* hgi()
+        {
+            if (!_GetRenderIndex())
+                return nullptr;
+            // GetHgi() only returns UsdImagingGLEngine's owned Hgi. A shared
+            // driver is supplied externally and remains in _hgiDriver.
+            return _hgiDriver.driver.IsHolding<Hgi*>() ? _hgiDriver.driver.UncheckedGet<Hgi*>() : GetHgi();
+        }
+
         const HdRprimCollection& renderCollection() const { return _renderCollection; }
 
         SceneIndices& sceneIndices() { return *m_sceneIndices; }
@@ -1025,25 +1037,41 @@ namespace {
 
 
 
-        void warmDisplayModes(const UsdStageRefPtr& stage, const SdfPathVector& paths,
-                              const UsdImagingGLRenderParams& params, const RenderTaskParams& taskParams)
+        bool displayModesPrepared(const SdfPathVector& paths, const UsdImagingGLRenderParams& params)
         {
             HdRenderIndex* index = renderIndex();
             if (!index)
-                return;
+                return false;
             const auto& tracker = index->GetChangeTracker();
             const auto& previous = m_displayWarmupParams;
-            if (m_displayWarmupValid && m_displayWarmupRprimVersion == tracker.GetRprimIndexVersion()
-                && m_displayWarmupInstancerVersion == tracker.GetInstancerIndexVersion()
-                && m_displayWarmupSprimVersion == tracker.GetSprimIndexVersion() && m_displayWarmupPaths == paths
-                && previous.complexity == params.complexity && previous.cullStyle == params.cullStyle
-                && previous.flipFrontFacing == params.flipFrontFacing
-                && previous.enableSampleAlphaToCoverage == params.enableSampleAlphaToCoverage
-                && previous.enableLighting == params.enableLighting
-                && previous.enableSceneLights == params.enableSceneLights
-                && previous.enableSceneMaterials == params.enableSceneMaterials
-                && previous.showGuides == params.showGuides && previous.showProxy == params.showProxy
-                && previous.showRender == params.showRender)
+            return m_displayWarmupValid && m_displayWarmupRprimVersion == tracker.GetRprimIndexVersion()
+                   && m_displayWarmupInstancerVersion == tracker.GetInstancerIndexVersion()
+                   && m_displayWarmupSprimVersion == tracker.GetSprimIndexVersion() && m_displayWarmupPaths == paths
+                   && previous.complexity == params.complexity && previous.cullStyle == params.cullStyle
+                   && previous.flipFrontFacing == params.flipFrontFacing
+                   && previous.enableSampleAlphaToCoverage == params.enableSampleAlphaToCoverage
+                   && previous.enableLighting == params.enableLighting
+                   && previous.enableSceneLights == params.enableSceneLights
+                   && previous.enableSceneMaterials == params.enableSceneMaterials
+                   && previous.showGuides == params.showGuides && previous.showProxy == params.showProxy
+                   && previous.showRender == params.showRender;
+        }
+
+        void markDisplayModesPrepared(const SdfPathVector& paths, const UsdImagingGLRenderParams& params)
+        {
+            const auto& tracker = renderIndex()->GetChangeTracker();
+            m_displayWarmupParams = params;
+            m_displayWarmupPaths = paths;
+            m_displayWarmupRprimVersion = tracker.GetRprimIndexVersion();
+            m_displayWarmupInstancerVersion = tracker.GetInstancerIndexVersion();
+            m_displayWarmupSprimVersion = tracker.GetSprimIndexVersion();
+            m_displayWarmupValid = true;
+        }
+
+        void warmDisplayModes(const UsdStageRefPtr& stage, const SdfPathVector& paths,
+                              const UsdImagingGLRenderParams& params, const RenderTaskParams& taskParams)
+        {
+            if (!renderIndex() || displayModesPrepared(paths, params))
                 return;
 
             PerfScope scope("viewport.display_modes.warmup");
@@ -1066,12 +1094,7 @@ namespace {
                 PrepareBatch(stage->GetPseudoRoot(), warmParams);
                 renderBatchWithRenderTask(paths, warmParams, warmTaskParams, false);
             }
-            m_displayWarmupParams = params;
-            m_displayWarmupPaths = paths;
-            m_displayWarmupRprimVersion = tracker.GetRprimIndexVersion();
-            m_displayWarmupInstancerVersion = tracker.GetInstancerIndexVersion();
-            m_displayWarmupSprimVersion = tracker.GetSprimIndexVersion();
-            m_displayWarmupValid = true;
+            markDisplayModesPrepared(paths, params);
             // The visible submission below restores the requested collection,
             // task parameters and presentation after this hidden preparation.
             PrepareBatch(stage->GetPseudoRoot(), params);
@@ -1235,6 +1258,7 @@ public:
     {}
 
     bool initialize();
+    UsdStageRefPtr documentStage();
     bool ensureCurrentContext();
     void resetEngine();
     void reset();
@@ -1249,6 +1273,10 @@ public:
     ContextMode contextMode = ContextMode::Current;
     Settings settings;
     UsdStageRefPtr stage;
+    RenderIsolation isolation;
+    UsdStageWeakPtr imagingStage;
+    UsdStageWeakPtr cachedImagingStage;
+    uint64_t documentWarmupSourceVersion = 0;
     UsdStageRefPtr auxiliary;
     GfCamera camera;
     GfVec2i size = GfVec2i(512, 512);
@@ -1285,7 +1313,9 @@ public:
     int captureVisibleGridSize = 4;
     SdfPathVector capturedVisiblePaths;
     UsdImagingGLRenderParams params;
+    HgiUniquePtr sharedDocumentHgi;
     std::unique_ptr<ImagingGLEngine> engine;
+    std::unique_ptr<ImagingGLEngine> cachedEngine;
     std::unique_ptr<ImagingGLEngine> auxiliaryEngine;
     std::unique_ptr<ImagingGLEngine> gizmoEngine;
     bool gizmoRendered = false;
@@ -1345,8 +1375,17 @@ RenderEngine::Private::initialize()
     // applied during PrepareBatch before dependent work such as selection mapping.
     documentParams.allowAsynchronousSceneProcessing = false;
 
-    engine = std::make_unique<ImagingGLEngine>(documentParams);
-    if (!engine->GetHgi()) {
+    // Full and isolated documents keep independent scene indices but share
+    // their Hgi so Storm can reuse shader and geometry resource registries.
+    if (!sharedDocumentHgi)
+        sharedDocumentHgi = Hgi::CreatePlatformDefaultHgi();
+    if (!sharedDocumentHgi)
+        return false;
+    documentParams.driver.name = HgiTokens->renderDriver;
+    documentParams.driver.driver = VtValue(sharedDocumentHgi.get());
+    if (!engine)
+        engine = std::make_unique<ImagingGLEngine>(documentParams);
+    if (!engine->hgi()) {
         engine.reset();
         return false;
     }
@@ -1357,17 +1396,20 @@ RenderEngine::Private::initialize()
     if (contextMode == ContextMode::Current) {
         UsdImagingGLEngine::Parameters overlayParams = documentParams;
         overlayParams.allowAsynchronousSceneProcessing = false;
+        overlayParams.driver = HdDriver();
 
-        auxiliaryEngine = std::make_unique<ImagingGLEngine>(overlayParams);
-        if (!auxiliaryEngine->GetHgi()) {
+        if (!auxiliaryEngine)
+            auxiliaryEngine = std::make_unique<ImagingGLEngine>(overlayParams);
+        if (!auxiliaryEngine->hgi()) {
             auxiliaryEngine.reset();
             engine.reset();
             return false;
         }
         // Keep the grid and gizmo in independent imaging engines so their
         // camera, collection and GPU resources are not reused between passes.
-        gizmoEngine = std::make_unique<ImagingGLEngine>(overlayParams);
-        if (!gizmoEngine->GetHgi()) {
+        if (!gizmoEngine)
+            gizmoEngine = std::make_unique<ImagingGLEngine>(overlayParams);
+        if (!gizmoEngine->hgi()) {
             gizmoEngine.reset();
             auxiliaryEngine.reset();
             engine.reset();
@@ -1385,10 +1427,11 @@ RenderEngine::Private::initialize()
 void
 RenderEngine::Private::resetEngine()
 {
-    if (!engine && !auxiliaryEngine && !gizmoEngine)
+    if (!engine && !cachedEngine && !auxiliaryEngine && !gizmoEngine)
         return;
 
     gizmoRendered = false;
+    selectionCacheValid = false;
 
     if (contextMode == ContextMode::Offscreen) {
         OpenGLContextRestore contextRestore;
@@ -1400,12 +1443,14 @@ RenderEngine::Private::resetEngine()
 
         gizmoEngine.reset();
         auxiliaryEngine.reset();
+        cachedEngine.reset();
         engine.reset();
         return;
     }
 
     gizmoEngine.reset();
     auxiliaryEngine.reset();
+    cachedEngine.reset();
     engine.reset();
 }
 
@@ -1417,7 +1462,7 @@ RenderEngine::Private::reset()
         {
             OpenGLContextRestore contextRestore;
 
-            if ((engine || auxiliaryEngine || gizmoEngine)
+            if ((engine || cachedEngine || auxiliaryEngine || gizmoEngine)
                 && (!offscreenContext || !offscreenSurface || !offscreenContext->makeCurrent(offscreenSurface.get()))) {
                 qWarning() << "could not make offscreen context current while releasing render engine";
                 return;
@@ -1425,7 +1470,9 @@ RenderEngine::Private::reset()
 
             gizmoEngine.reset();
             auxiliaryEngine.reset();
+            cachedEngine.reset();
             engine.reset();
+            sharedDocumentHgi.reset();
         }
 
         offscreenContext.reset();
@@ -1435,7 +1482,9 @@ RenderEngine::Private::reset()
 
     gizmoEngine.reset();
     auxiliaryEngine.reset();
+    cachedEngine.reset();
     engine.reset();
+    sharedDocumentHgi.reset();
 }
 
 void
@@ -1611,6 +1660,29 @@ RenderEngine::Private::updateLighting()
         gizmoEngine->SetLightingState(lights, material, ambient);
 }
 
+UsdStageRefPtr
+RenderEngine::Private::documentStage()
+{
+    const UsdStageRefPtr rendered = isolation.stage();
+    if (imagingStage != rendered) {
+        if (!imagingStage) {
+            imagingStage = rendered;
+        }
+        else if (cachedEngine && cachedImagingStage == rendered) {
+            engine.swap(cachedEngine);
+            std::swap(imagingStage, cachedImagingStage);
+        }
+        else {
+            cachedEngine = std::move(engine);
+            cachedImagingStage = imagingStage;
+            imagingStage = rendered;
+        }
+        selectionCacheValid = false;
+        gizmoRendered = false;
+    }
+    return rendered;
+}
+
 bool
 RenderEngine::Private::render()
 {
@@ -1618,6 +1690,9 @@ RenderEngine::Private::render()
     if (!stage || size[0] <= 0 || size[1] <= 0)
         return false;
 
+    const UsdStageRefPtr renderStage = documentStage();
+    if (!renderStage)
+        return false;
     if ((!engine || (contextMode == ContextMode::Current && (!auxiliaryEngine || !gizmoEngine))) && !initialize())
         return false;
 
@@ -1668,10 +1743,10 @@ RenderEngine::Private::render()
     if (gizmoEngine)
         configureEngine(gizmoEngine.get());
 
-    const UsdPrim root = stage->GetPseudoRoot();
+    const UsdPrim root = renderStage->GetPseudoRoot();
     UsdImagingGLRenderParams documentParams = params;
     documentParams.highlight = false;
-    Hgi* documentHgi = engine->GetHgi();
+    Hgi* documentHgi = engine->hgi();
     if (!documentHgi)
         return false;
 
@@ -1744,15 +1819,9 @@ RenderEngine::Private::render()
     }
     const auto& selectedPaths = cachedSelectedPaths;
 
-    SdfPathVector renderPaths;
-    if (mask.isEmpty()) {
-        renderPaths.push_back(root.GetPath());
-    }
-    else {
-        renderPaths.reserve(mask.size());
-        for (const SdfPath& path : mask)
-            renderPaths.push_back(path);
-    }
+    // Isolation is represented by the rendering stage's population for every
+    // prim type. Both beauty and scene-ID passes render that complete input.
+    const SdfPathVector renderPaths { root.GetPath() };
     RenderTaskParams renderTaskParams;
     renderTaskParams.applyColorManagement = !linearColorCapture && settings.aov == HdAovTokens->color;
     renderTaskParams.colorManagement = settings.colorManagement;
@@ -1882,8 +1951,19 @@ RenderEngine::Private::render()
     }
     if (renderTaskParams.prepareSelection
         && (documentParams.drawMode == UsdImagingGLDrawMode::DRAW_SHADED_SMOOTH
-            || documentParams.drawMode == UsdImagingGLDrawMode::DRAW_WIREFRAME_ON_SURFACE))
-        engine->warmDisplayModes(stage, renderPaths, documentParams, renderTaskParams);
+            || documentParams.drawMode == UsdImagingGLDrawMode::DRAW_WIREFRAME_ON_SURFACE)) {
+        // Population changes do not introduce new source geometry. Reuse the
+        // full document's shared GPU preparation when its topology, shader
+        // dependencies and render settings have not changed while inactive.
+        if (isolation.active() && cachedEngine && cachedImagingStage == stage
+            && documentWarmupSourceVersion == isolation.sourceVersion()
+            && cachedEngine->displayModesPrepared(renderPaths, documentParams))
+            engine->markDisplayModesPrepared(renderPaths, documentParams);
+        else
+            engine->warmDisplayModes(renderStage, renderPaths, documentParams, renderTaskParams);
+        if (!isolation.active())
+            documentWarmupSourceVersion = isolation.sourceVersion();
+    }
     engine->renderBatchWithRenderTask(renderPaths, documentParams, renderTaskParams);
 
     if (captureObjectsRequested)
@@ -1911,7 +1991,7 @@ RenderEngine::Private::render()
     // grid and helper presentation in the final viewport.
     if (!captureObjectsRequested && auxiliaryEngine && auxiliary
         && auxiliary->GetPrimAtPath(paths::auxiliary::display)) {
-        Hgi* auxiliaryHgi = auxiliaryEngine->GetHgi();
+        Hgi* auxiliaryHgi = auxiliaryEngine->hgi();
         if (!auxiliaryHgi)
             return false;
 
@@ -1939,7 +2019,7 @@ RenderEngine::Private::render()
 
         if (gizmoEngine && auxiliary->GetPrimAtPath(gizmoPath)) {
             auto* gizmoTarget = gizmoEngine.get();
-            Hgi* gizmoHgi = gizmoTarget->GetHgi();
+            Hgi* gizmoHgi = gizmoTarget->hgi();
             // Gizmo shading must not inherit the document's wireframe mode.
             UsdImagingGLRenderParams gizmoParams = auxiliaryParams;
             gizmoParams.drawMode = UsdImagingGLDrawMode::DRAW_SHADED_SMOOTH;
@@ -2009,6 +2089,7 @@ RenderEngine::setStage(UsdStageRefPtr stage)
         return;
 
     p->stage = stage;
+    p->isolation.setStage(stage);
     p->selectionCacheValid = false;
     p->resetEngine();
 }
@@ -2100,6 +2181,7 @@ void
 RenderEngine::setMask(const QList<SdfPath>& paths)
 {
     p->mask = paths;
+    p->isolation.setMask(paths);
 }
 
 void
@@ -2425,6 +2507,9 @@ RenderEngine::testIntersection(const UsdImagingGLEngine::PickParams& pickParams,
 
     OpenGLContextRestore contextRestore;
 
+    const UsdStageRefPtr documentStage = p->documentStage();
+    if (!documentStage || !root)
+        return false;
     if (!p->engine && !p->initialize())
         return false;
 
@@ -2432,7 +2517,9 @@ RenderEngine::testIntersection(const UsdImagingGLEngine::PickParams& pickParams,
 
     UsdImagingGLEngine::IntersectionResultVector rawResults;
 
-    if (!p->engine->TestIntersection(pickParams, viewMatrix, projectionMatrix, root, p->params, &rawResults)) {
+    const UsdPrim pickRoot = p->isolation.active() ? documentStage->GetPseudoRoot()
+                                                   : documentStage->GetPrimAtPath(root.GetPath());
+    if (!p->engine->TestIntersection(pickParams, viewMatrix, projectionMatrix, pickRoot, p->params, &rawResults)) {
         results->clear();
         return false;
     }
@@ -2445,6 +2532,12 @@ RenderEngine::testIntersection(const UsdImagingGLEngine::PickParams& pickParams,
             continue;
 
         if (p->stage && !p->stage->GetPrimAtPath(result.hitPrimPath))
+            continue;
+        if (!result.hitPrimPath.HasPrefix(root.GetPath()))
+            continue;
+        if (!p->mask.isEmpty() && std::none_of(p->mask.begin(), p->mask.end(), [&](const SdfPath& path) {
+                return result.hitPrimPath.HasPrefix(path);
+            }))
             continue;
 
         results->push_back(result);
@@ -2479,7 +2572,7 @@ RenderEngine::hgiApiName() const
     if (!p->engine)
         return {};
 
-    Hgi* hgi = p->engine->GetHgi();
+    Hgi* hgi = p->engine->hgi();
     return hgi ? QString::fromStdString(hgi->GetAPIName().GetString()) : QString();
 }
 
