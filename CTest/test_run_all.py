@@ -80,6 +80,12 @@ class TestRunner(unittest.TestCase):
         self.assertIn('STAGEVIZ_TEST_SETTINGS_DIR', calls[2][1])
         self.assertIn('--port', calls[3][0])
 
+    def test_development_run_overrides_cached_deployment_mode(self):
+        (self.build / 'CMakeCache.txt').write_text('DEPLOY_BUILD:BOOL=ON\n')
+        row, calls = self.plan([0, 0, 0, 0])
+        self.assertTrue(row['passed'])
+        self.assertIn('-DDEPLOY_BUILD=OFF', calls[0][0])
+
     def test_ctest_failure_does_not_skip_python_or_pass(self):
         row, calls = self.plan([0, 0, 7, 0])
         self.assertFalse(row['passed'])

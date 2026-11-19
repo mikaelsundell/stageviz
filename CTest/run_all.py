@@ -106,7 +106,10 @@ def run_configuration(args, configuration, output):
             # Refresh the cached project before starting an IDE build. Otherwise
             # regeneration inside MSBuild/Xcode may leave new .cpp files out of
             # the project already loaded by that build invocation.
-            step = run_logged([cmake, '-S', ROOT, '-B', directory, '-DBUILD_TESTING=ON'],
+            # A previous packaged build may leave DEPLOY_BUILD enabled. Native
+            # libraries still link to the development prefix here, so embedded
+            # Python must use that same prefix rather than stale bundled copies.
+            step = run_logged([cmake, '-S', ROOT, '-B', directory, '-DBUILD_TESTING=ON', '-DDEPLOY_BUILD=OFF'],
                               output / 'configure.log', environment)
             row['steps'].append(dict(name='configure', **step))
             if step['returncode']:

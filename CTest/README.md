@@ -872,3 +872,15 @@ Material > Source / divider / Clear below Transform. The suite checks these
 labels, Pivot > Center / divider / Reset, source selection, and Clear availability
 when only a weaker binding remains. Captures pair Qt state with composed bindings
 and visible object colors.
+
+### Development test runtime paths
+
+The automatic runner configures `DEPLOY_BUILD=OFF` alongside `BUILD_TESTING=ON`,
+including Release. This resets deployment mode left by a previous packaging
+build so embedded Python uses the same dependency prefix as the native app,
+rather than loading stale bundled USD libraries. `stageviz.test_app_runner`
+covers overriding a cached deployment configuration. `--no-build` leaves the
+existing configuration and binaries unchanged.
+
+Release embedded checks also wait for the numeric inspector's queued selection
+refresh and locate the Color menu through its current `displayColor` object name.
