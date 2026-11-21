@@ -320,6 +320,11 @@ ViewportWidgetPrivate::initContext()
         updateRenderEngineSettings();
         d.glwidget->update();
     });
+    connect(viewState(), &ViewState::purposesChanged, this, [this]() {
+        d.selectionTool->invalidateVisibleSelection();
+        updateRenderEngineSettings();
+        d.glwidget->update();
+    });
     connect(viewState(), &ViewState::sceneMaterialsEnabledChanged, this, [this](bool) {
         updateRenderEngineSettings();
         d.glwidget->update();
@@ -1046,6 +1051,8 @@ ViewportWidgetPrivate::updateBoundingBox(const GfBBox3d& bbox)
 {
     SignalGuard::Scope guard(this);
     d.bbox = bbox;
+    if (viewCamera())
+        viewCamera()->setSceneRange(bbox.ComputeAlignedRange());
     d.glwidget->update();
 }
 
@@ -1093,7 +1100,7 @@ ViewportWidgetPrivate::updatePrims(const NoticeBatch& batch)
     {
         SignalGuard::Scope guard(this);
         if (d.renderEngine)
-            d.renderEngine->invalidateSelectionCache();
+            d.renderEngine->updatePrims(batch);
     }
 
     // A transform changed outside the active gizmo operation (for example Undo
@@ -1258,6 +1265,9 @@ ViewportWidgetPrivate::updateRenderEngineSettings()
     settings.overrideMaterial = state->overrideMaterial();
     settings.sceneLightsEnabled = state->sceneLightsEnabled();
     settings.sceneMaterialsEnabled = state->sceneMaterialsEnabled();
+    settings.showGuides = state->showGuides();
+    settings.showProxy = state->showProxy();
+    settings.showRender = state->showRender();
     settings.defaultCameraLightEnabled = state->defaultCameraLightEnabled();
     settings.defaultDomeLightEnabled = state->defaultDomeLightEnabled();
     settings.domeLightTexture = state->domeLightTexture();

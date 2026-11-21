@@ -237,8 +237,8 @@ public:
     static void configureEditor(PropertyItem* item, const UsdAttribute& attr, const VtValue& value);
     static bool hasUnderlyingPrimOpinion(const UsdPrim& prim, const SdfLayerHandle& rootLayer);
     bool isOverrideItem(const PropertyItem* item) const;
-    bool hasResettableValue(const PropertyItem* item) const;
-    bool hasResettableDependency(const PropertyItem* item) const;
+    bool hasClearableValue(const PropertyItem* item) const;
+    bool hasClearableDependency(const PropertyItem* item) const;
     bool isMaterialBindingItem(const PropertyItem* item) const;
     SdfPath selectableValuePath(const PropertyItem* item) const;
 
@@ -2171,7 +2171,7 @@ PropertyTreePrivate::isOverrideItem(const PropertyItem* item) const
 }
 
 bool
-PropertyTreePrivate::hasResettableValue(const PropertyItem* item) const
+PropertyTreePrivate::hasClearableValue(const PropertyItem* item) const
 {
     if (!item || item->kind() != PropertyItem::Attribute || !d.stage)
         return false;
@@ -2189,7 +2189,7 @@ PropertyTreePrivate::hasResettableValue(const PropertyItem* item) const
 }
 
 bool
-PropertyTreePrivate::hasResettableDependency(const PropertyItem* item) const
+PropertyTreePrivate::hasClearableDependency(const PropertyItem* item) const
 {
     if (!item || !d.stage || item->propertyPaths().isEmpty())
         return false;
@@ -2927,7 +2927,7 @@ PropertyTreePrivate::addRelationshipsSection(const UsdPrim& prim)
             continue;
 
         // Relationships are Sdf properties just like attributes. Keep the
-        // property path on the row so edit-layer override detection and Reset >
+        // property path on the row so edit-layer override detection and Clear >
         // Override work for material:binding and any other relationship.
         item->setPropertyPath(relationship.GetPath());
 
@@ -4178,9 +4178,9 @@ PropertyTree::contextMenuEvent(QContextMenuEvent* event)
     QAction* selectAction = nullptr;
     QAction* copyNameAction = nullptr;
     QAction* copyValueAction = nullptr;
-    QAction* resetValueAction = nullptr;
-    QAction* resetOverrideAction = nullptr;
-    QAction* resetDependencyAction = nullptr;
+    QAction* clearValueAction = nullptr;
+    QAction* clearOpinionAction = nullptr;
+    QAction* clearDependencyAction = nullptr;
     QAction* removeAttributeAction = nullptr;
     QAction* revealAction = nullptr;
     QString revealPath = item->data(PropertyItem::Value, PropertyItem::FilePathRole).toString();
@@ -4216,22 +4216,22 @@ PropertyTree::contextMenuEvent(QContextMenuEvent* event)
     if (!item->text(PropertyItem::Value).isEmpty())
         copyValueAction = menu.addAction("Copy Value");
 
-    const bool resetValue = p->hasResettableValue(item);
-    const bool resetDependency = p->hasResettableDependency(item);
-    const bool resetOverride = p->isOverrideItem(item) && !resetDependency;
+    const bool clearValue = p->hasClearableValue(item);
+    const bool clearDependency = p->hasClearableDependency(item);
+    const bool clearOpinion = p->isOverrideItem(item) && !clearDependency;
 
-    if (resetValue || resetOverride || resetDependency) {
+    if (clearValue || clearOpinion || clearDependency) {
         menu.addSeparator();
-        QMenu* resetMenu = menu.addMenu("Reset");
+        QMenu* clearMenu = menu.addMenu("Clear");
 
-        if (resetValue)
-            resetValueAction = resetMenu->addAction("Value");
+        if (clearValue)
+            clearValueAction = clearMenu->addAction("Value");
 
-        if (resetDependency)
-            resetDependencyAction = resetMenu->addAction(p->isMaterialBindingItem(item) ? "Binding" : "Dependency");
+        if (clearDependency)
+            clearDependencyAction = clearMenu->addAction(p->isMaterialBindingItem(item) ? "Binding" : "Dependency");
 
-        if (resetOverride)
-            resetOverrideAction = resetMenu->addAction("Override");
+        if (clearOpinion)
+            clearOpinionAction = clearMenu->addAction("Opinion");
     }
 
     if (item->kind() == PropertyItem::Attribute && !item->propertyPaths().isEmpty()) {
@@ -4290,18 +4290,18 @@ PropertyTree::contextMenuEvent(QContextMenuEvent* event)
         return;
     }
 
-    if (chosen == resetValueAction) {
-        runCommand(resetAttributeValues(item->propertyPaths()));
+    if (chosen == clearValueAction) {
+        runCommand(clearAttributeValues(item->propertyPaths()));
         return;
     }
 
-    if (chosen == resetDependencyAction) {
-        runCommand(resetDependencies(item->propertyPaths()));
+    if (chosen == clearDependencyAction) {
+        runCommand(clearDependencies(item->propertyPaths()));
         return;
     }
 
-    if (chosen == resetOverrideAction)
-        runCommand(resetAttributeOverrides(item->propertyPaths()));
+    if (chosen == clearOpinionAction)
+        runCommand(clearAttributeOpinions(item->propertyPaths()));
 }
 
 void

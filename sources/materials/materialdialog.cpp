@@ -80,6 +80,7 @@ namespace {
     bool usesNativeSurfacePreview(const QString& shaderId)
     {
         return shaderId == QStringLiteral("UsdPreviewSurface")
+               || shaderId == QStringLiteral("ND_UsdPreviewSurface_surfaceshader")
                || shaderId == QStringLiteral("ND_standard_surface_surfaceshader")
                || shaderId == QStringLiteral("ND_open_pbr_surface_surfaceshader");
     }
@@ -119,7 +120,7 @@ public:
     void editColorInputs(const QList<SdfPath>& inputPaths, const QColor& value);
     bool ensureInputs(const QList<SdfPath>& inputPaths);
     void disconnectInputs(const QList<SdfPath>& inputPaths);
-    void resetInputs(const QList<SdfPath>& inputPaths);
+    void clearInputs(const QList<SdfPath>& inputPaths);
     void connectShaderNode(const SdfPath& inputPath, const QString& shaderId, const QString& nodeName,
                            const TfToken& outputName);
     void connectMaterialXNode(const SdfPath& inputPath, const QString& nodeDef, const QString& nodeName);
@@ -129,7 +130,7 @@ public:
     void createOpenPBRSurface();
     void loadMaterialX();
     void applyToSelection();
-    void selectFromStage();
+    void selectFromStage(bool materialsOnly = false);
     void deleteMaterials();
     void renameMaterial(const SdfPath& path, const QString& name);
     void setStatus(const QString& text);
@@ -477,6 +478,14 @@ MaterialDialogPrivate::init()
     // connect
     connect(d.refreshTimer, &QTimer::timeout, this, [this]() { refresh(); });
     connect(d.ui->browserWidget, &MaterialBrowser::selectionChanged, this, [this]() { updateSelection(); });
+    connect(d.ui->browserWidget, &MaterialBrowser::followChanged, this, [this](bool enabled) {
+        if (enabled && d.dialog->isVisible())
+            selectFromStage(true);
+    });
+    connect(session()->selectionList(), &SelectionList::selectionChanged, this, [this](const QList<SdfPath>&) {
+        if (d.dialog->isVisible() && d.ui->browserWidget->followEnabled())
+            selectFromStage(true);
+    });
 
     connect(d.ui->browserWidget, &MaterialBrowser::materialActivated, this,
             [this](const SdfPath& path) { openMaterialGraph(path); });
@@ -530,8 +539,8 @@ MaterialDialogPrivate::init()
             [this](const QList<SdfPath>& paths, const QColor& value) { editColorInputs(paths, value); });
     connect(d.ui->tree, &MaterialTree::disconnectInputsRequested, this,
             [this](const QList<SdfPath>& paths) { disconnectInputs(paths); });
-    connect(d.ui->tree, &MaterialTree::resetInputsRequested, this,
-            [this](const QList<SdfPath>& paths) { resetInputs(paths); });
+    connect(d.ui->tree, &MaterialTree::clearInputsRequested, this,
+            [this](const QList<SdfPath>& paths) { clearInputs(paths); });
     connect(d.ui->tree, &MaterialTree::connectShaderNodeRequested, this,
             [this](const SdfPath& path, const QString& shaderId, const QString& nodeName, const TfToken& outputName) {
                 connectShaderNode(path, shaderId, nodeName, outputName);
@@ -593,6 +602,8 @@ MaterialDialogPrivate::init()
         while (d.tabs->count() > 0)
             closeMaterialGraph(0);
 
+        // A new document can reuse material paths and parameters with a different network.
+        d.ui->browserWidget->setEntries({});
         d.refreshTimer->start(0);
     });
     connect(session(), &Session::primsChanged, this, [this](const NoticeBatch& batch) {
@@ -633,6 +644,11 @@ MaterialDialogPrivate::eventFilter(QObject* object, QEvent* event)
                 d.ui->browserSplitter->setSizes({ browserHeight, graphHeight });
             }
         }
+        // Scroll after the dialog and browser splitters have their visible geometry.
+        QTimer::singleShot(0, this, [this]() {
+            if (d.dialog->isVisible() && d.ui->browserWidget->followEnabled())
+                selectFromStage(true);
+        });
     }
 
     const bool graphDropTarget = object == d.tabs || object == d.ui->graphWidget || object == d.graphView
@@ -761,7 +777,10 @@ MaterialDialogPrivate::refresh()
         }
     }
 
-    updateSelection();
+    if (d.dialog->isVisible() && d.ui->browserWidget->followEnabled())
+        selectFromStage(true);
+    else
+        updateSelection();
 }
 
 void
@@ -773,6 +792,7 @@ MaterialDialogPrivate::updatePrims(const NoticeBatch& batch)
     QSet<QString> dirtyMaterials;
     QList<SdfPath> dirtyProperties;
     bool structuralChange = false;
+    bool ancestorResync = false;
 
     auto knownMaterialForPath = [this](SdfPath path) -> SdfPath {
         if (path.IsPropertyPath())
@@ -802,26 +822,40 @@ MaterialDialogPrivate::updatePrims(const NoticeBatch& batch)
                 // cached swatch is stale; unrelated materials remain valid.
                 dirtyMaterials.insert(QString::fromStdString(known.GetString()));
                 structuralChange = true;
-                break;
+                continue;
             }
 
-            // A composition change can remove a material without leaving a
-            // composed prim at the resync path. Check the browser's previous
-            // material paths before relying on the new stage contents, so a
-            // layer removal still refreshes entries and closes orphaned tabs.
-            for (const MaterialEntry& entry : d.ui->browserWidget->entries()) {
-                if (entry.materialPath.HasPrefix(changedPrim)) {
-                    structuralChange = true;
-                    break;
+            // Ancestor resyncs can change a material's composed network while its path,
+            // chosen surface shader and scalar parameters remain unchanged. Compare only
+            // previously requested compact networks, retaining unrelated swatch caches.
+            bool containsKnownMaterial = false;
+            for (const MaterialEntry& previous : d.ui->browserWidget->entries()) {
+                if (!previous.materialPath.HasPrefix(changedPrim))
+                    continue;
+                containsKnownMaterial = true;
+                const QString key = QString::fromStdString(previous.materialPath.GetString());
+                const auto cached = d.swatchNetworks.value(key);
+                bool unchanged = false;
+                if (cached) {
+                    READ_LOCKER(locker, session()->stageLock(), "stageLock");
+                    QString error;
+                    const auto current = MaterialUtils::materialNetworkLayer(session()->stageUnsafe(),
+                                                                             previous.materialPath, error);
+                    if (current) {
+                        std::string before, after;
+                        cached->ExportToString(&before);
+                        current->ExportToString(&after);
+                        unchanged = before == after;
+                    }
                 }
+                if (!unchanged)
+                    dirtyMaterials.insert(key);
             }
-            if (structuralChange)
-                break;
-
-            // An ancestor resync (for example /Materials when a sibling material
-            // is added or removed) is structural, but it does not mean every
-            // existing descendant material changed. Preserve their swatches and
-            // let setEntries() add/remove rows while retaining unchanged caches.
+            if (containsKnownMaterial) {
+                structuralChange = true;
+                ancestorResync = true;
+                continue;
+            }
 
             READ_LOCKER(locker, session()->stageLock(), "stageLock");
             const UsdStageRefPtr stage = session()->stageUnsafe();
@@ -845,7 +879,7 @@ MaterialDialogPrivate::updatePrims(const NoticeBatch& batch)
             }
 
             if (structuralChange)
-                break;
+                ancestorResync = true;
             continue;
         }
 
@@ -874,7 +908,7 @@ MaterialDialogPrivate::updatePrims(const NoticeBatch& batch)
         // Keep the full refresh only for material-list changes such as create,
         // delete or rename, where the affected material can no longer be resolved
         // from the browser's current rows.
-        if (!dirtyMaterials.isEmpty()) {
+        if (!dirtyMaterials.isEmpty() && !ancestorResync) {
             QList<QPair<QString, MaterialEntry>> updatedEntries;
             bool requiresFullRefresh = false;
             {
@@ -962,7 +996,7 @@ MaterialDialogPrivate::updatePrims(const NoticeBatch& batch)
             if (row >= 0)
                 d.ui->browserWidget->invalidateSwatch(row);
             d.swatchNetworks.remove(pathString);
-            d.renderer->invalidateNetwork(materialPath);
+            d.renderer->invalidateNetwork(materialPath, ancestorResync);
         }
 
         d.refreshTimer->start();
@@ -1795,17 +1829,17 @@ MaterialDialogPrivate::disconnectInputs(const QList<SdfPath>& inputPaths)
 }
 
 void
-MaterialDialogPrivate::resetInputs(const QList<SdfPath>& inputPaths)
+MaterialDialogPrivate::clearInputs(const QList<SdfPath>& inputPaths)
 {
     if (!inputPaths.isEmpty()) {
-        // A reset may reveal a weaker opinion/default. updatePrims() detects that
+        // Clearing may reveal a weaker opinion/default. updatePrims() detects that
         // the property no longer has a value and refreshes only this material's
         // compact network snapshot.
-        // Reset the authored value only. Do not remove the UsdShade input
+        // Clear the authored value only. Do not remove the UsdShade input
         // property: NodeDef/schema-defined slots must remain part of the node
-        // interface after a reset. This matches PropertyTree's Reset Value
+        // interface after clearing. This matches PropertyTree's Clear Value
         // semantics.
-        session()->commandStack()->execute(new Command(resetAttributeValues(inputPaths)));
+        session()->commandStack()->execute(new Command(clearAttributeValues(inputPaths)));
     }
 }
 
@@ -1920,11 +1954,12 @@ MaterialDialogPrivate::applyToSelection()
 }
 
 void
-MaterialDialogPrivate::selectFromStage()
+MaterialDialogPrivate::selectFromStage(bool materialsOnly)
 {
     const QList<SdfPath> paths = session()->selectionList()->paths();
     if (paths.isEmpty()) {
-        d.ui->browserWidget->selectRows({});
+        if (!materialsOnly)
+            d.ui->browserWidget->selectRows({});
         return;
     }
 
@@ -1933,7 +1968,8 @@ MaterialDialogPrivate::selectFromStage()
         READ_LOCKER(locker, session()->stageLock(), "stageLock");
         const UsdStageRefPtr stage = session()->stageUnsafe();
         if (!stage) {
-            d.ui->browserWidget->selectRows({});
+            if (!materialsOnly)
+                d.ui->browserWidget->selectRows({});
             return;
         }
 
@@ -1943,6 +1979,12 @@ MaterialDialogPrivate::selectFromStage()
         for (const SdfPath& path : paths) {
             const UsdPrim root = stage->GetPrimAtPath(path.IsPropertyPath() ? path.GetPrimPath() : path);
             if (!root)
+                continue;
+            if (root.IsA<UsdShadeMaterial>()) {
+                materialPaths.insert(root.GetPath());
+                continue;
+            }
+            if (materialsOnly)
                 continue;
             for (const UsdPrim& prim : UsdPrimRange(root, UsdTraverseInstanceProxies())) {
                 if (!inspected.insert(prim.GetPath()).second)
@@ -1963,7 +2005,8 @@ MaterialDialogPrivate::selectFromStage()
     }
 
     std::sort(rows.begin(), rows.end());
-    d.ui->browserWidget->selectRows(rows);
+    if (!materialsOnly || !rows.isEmpty())
+        d.ui->browserWidget->selectRows(rows);
 }
 
 void

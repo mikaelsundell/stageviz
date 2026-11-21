@@ -376,6 +376,21 @@ RenderSceneIndex::dirtyDoubleSided()
 }
 
 void
+RenderSceneIndex::refreshMaterials(const std::set<SdfPath>& paths)
+{
+    HdSceneIndexObserver::AddedPrimEntries entries;
+    for (const auto& path : paths) {
+        if (_GetInputSceneIndex()->GetPrim(path).primType == HdPrimTypeTokens->material)
+            entries.push_back({ path, HdPrimTypeTokens->material });
+    }
+    // Shader removal can arrive without a material-root resync when the root
+    // is an over. Resync only the owning material so native Hydra caches drop
+    // the removed render context and resolve the newly composed network.
+    if (!entries.empty())
+        _SendPrimsAdded(entries);
+}
+
+void
 RenderSceneIndex::_PrimsAdded(const HdSceneIndexBase& sender, const HdSceneIndexObserver::AddedPrimEntries& entries)
 {
     PerfScope perfScope("scene_index.added");

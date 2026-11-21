@@ -1212,6 +1212,12 @@ MaterialTreePrivate::rebuildSingle()
             d.currentNode = material.shaderPath;
 
         node = MaterialUtils::nodeInfo(stage, d.currentNode);
+        if (node.path.IsEmpty() && d.currentNode != material.shaderPath) {
+            d.currentNode = material.shaderPath;
+            d.history = { d.currentNode };
+            d.historyIndex = 0;
+            node = MaterialUtils::nodeInfo(stage, d.currentNode);
+        }
     }
 
     if (node.path.IsEmpty())
@@ -1507,29 +1513,30 @@ MaterialTreePrivate::showInputMenu(const QPoint& position)
     }
 
     // Keep the two operations explicit and independent. Disconnect only breaks
-    // an incoming connection; Reset Value clears the authored value while
+    // an incoming connection; Clear Value removes the authored value while
     // preserving the shader input property itself.
     QAction* disconnect = menu.addAction(QStringLiteral("Disconnect"));
     disconnect->setEnabled(info.connected);
     connect(disconnect, &QAction::triggered, d.tree.data(),
             [this, inputPath]() { Q_EMIT d.tree->disconnectInputsRequested({ inputPath }); });
 
-    QAction* reset = menu.addAction(QStringLiteral("Reset Value"));
-    // For NodeDef-declared inputs, Reset means reset to the NodeDef default,
+    QAction* clear = menu.addAction(info.declared && info.hasDefaultValue ? QStringLiteral("Default Value")
+                                                                          : QStringLiteral("Clear Value"));
+    // For NodeDef-declared inputs, Default Value means restore to the NodeDef default,
     // even when the currently composed value originates in an imported/weaker
     // layer. Clearing only the edit-layer opinion would simply reveal that same
     // imported value again. For custom/non-NodeDef inputs, keep the original
     // behavior of clearing the edit-layer value opinion.
-    const bool resetToDeclaredDefault = info.declared && info.hasDefaultValue;
-    reset->setEnabled(resetToDeclaredDefault || info.hasAuthoredValue);
-    reset->setToolTip(resetToDeclaredDefault ? QStringLiteral("Reset to the shader NodeDef default")
-                                             : QStringLiteral("Clear the authored value and keep the input slot"));
-    connect(reset, &QAction::triggered, d.tree.data(), [this, inputPath, info, resetToDeclaredDefault]() {
-        if (resetToDeclaredDefault) {
+    const bool useDeclaredDefault = info.declared && info.hasDefaultValue;
+    clear->setEnabled(useDeclaredDefault || info.hasAuthoredValue);
+    clear->setToolTip(useDeclaredDefault ? QStringLiteral("Restore the shader NodeDef default")
+                                         : QStringLiteral("Clear the authored value and keep the input slot"));
+    connect(clear, &QAction::triggered, d.tree.data(), [this, inputPath, info, useDeclaredDefault]() {
+        if (useDeclaredDefault) {
             setInputValues({ inputPath }, info.defaultValue);
             return;
         }
-        Q_EMIT d.tree->resetInputsRequested({ inputPath });
+        Q_EMIT d.tree->clearInputsRequested({ inputPath });
     });
     if (d.materials.size() == 1) {
         QMenu* add = menu.addMenu(QStringLiteral("Connect node"));
@@ -1593,6 +1600,7 @@ MaterialTree::setMaterials(const QList<MaterialEntry>& materials)
 {
     p->ensureInitialized();
     const SdfPath previousMaterial = p->d.materials.size() == 1 ? p->d.materials.first().materialPath : SdfPath();
+    const SdfPath previousShader = p->d.materials.size() == 1 ? p->d.materials.first().shaderPath : SdfPath();
     const SdfPath newMaterial = materials.size() == 1 ? materials.first().materialPath : SdfPath();
     const bool sameSingleMaterial = !previousMaterial.IsEmpty() && previousMaterial == newMaterial
                                     && p->d.materials.size() == 1 && materials.size() == 1;
@@ -1600,7 +1608,9 @@ MaterialTree::setMaterials(const QList<MaterialEntry>& materials)
 
     p->d.materials = materials;
 
-    if (previousMaterial != newMaterial) {
+    const bool surfaceChanged = sameSingleMaterial && p->d.currentNode == previousShader
+                                && previousShader != materials.first().shaderPath;
+    if (previousMaterial != newMaterial || surfaceChanged) {
         p->d.history.clear();
         p->d.historyIndex = -1;
         p->d.currentNode = materials.size() == 1 ? materials.first().shaderPath : SdfPath();

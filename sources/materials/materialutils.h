@@ -187,6 +187,15 @@ struct MaterialEntry {
      * @brief Identifiers of layers contributing opinions to the material prim.
      */
     QStringList layerIdentifiers;
+    /**
+     * @brief Layer containing the material definition, independent of stronger overrides.
+     */
+    QString definingLayerIdentifier;
+    /**
+     * @brief Source stage root used to describe layer provenance in the browser.
+     */
+    QString rootLayerIdentifier;
+
     MaterialParameters parameters;
     QHash<QString, MaterialInputInfo> inputs;
 };
@@ -373,7 +382,7 @@ public:
     static QList<ShaderNodeDefinition> compatibleUsdShaderNodes(const SdfValueTypeName& targetType);
 
     /**
-     * @brief Returns a unique material path below the stage's material location.
+     * @brief Returns a unique material path and defines its container in the current edit target.
      */
     static SdfPath uniqueMaterialPath(UsdStageRefPtr stage, const QString& baseName = QStringLiteral("Material"));
 

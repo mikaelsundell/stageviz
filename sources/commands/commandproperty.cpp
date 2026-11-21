@@ -49,42 +49,42 @@ namespace {
     using command::detail::restoreTransformPropertyState;
     using command::detail::TransformPropertyState;
 
-    OverrideGroup propertyOverrideGroup(const UsdPrim& prim, const TfToken& property)
+    OpinionGroup propertyOpinionGroup(const UsdPrim& prim, const TfToken& property)
     {
         const std::string& name = property.GetString();
         if (name == "xformOpOrder" || name.rfind("xformOp:", 0) == 0)
-            return OverrideGroup::Transforms;
+            return OpinionGroup::Transforms;
         if (name == "visibility" || name.rfind("visibility:", 0) == 0)
-            return OverrideGroup::Visibility;
+            return OpinionGroup::Visibility;
         if (name.rfind("material:binding", 0) == 0
             || ((name.rfind("inputs:", 0) == 0 || name.rfind("outputs:", 0) == 0 || name.rfind("info:", 0) == 0)
                 && UsdShadeConnectableAPI(prim) && !UsdLuxLightAPI(prim)))
-            return OverrideGroup::Materials;
+            return OpinionGroup::Materials;
         if (name.rfind("primvars:", 0) == 0)
-            return OverrideGroup::Primvars;
+            return OpinionGroup::Primvars;
         if (UsdLuxLightAPI(prim)
             && (name.rfind("inputs:", 0) == 0 || name.rfind("light:", 0) == 0
                 || name.rfind("collection:lightLink", 0) == 0 || name.rfind("collection:shadowLink", 0) == 0))
-            return OverrideGroup::Lights;
+            return OpinionGroup::Lights;
         const auto schemaContains = [&property](const TfTokenVector& names) {
             return std::find(names.begin(), names.end(), property) != names.end();
         };
         if (prim.IsA<UsdGeomCamera>() && schemaContains(UsdGeomCamera::GetSchemaAttributeNames(false)))
-            return OverrideGroup::Cameras;
+            return OpinionGroup::Cameras;
         // Concrete geometry schemas include mesh topology, shape dimensions, points and curves.
         if (prim.IsA<UsdGeomGprim>() && prim.GetPrimDefinition().GetSchemaPropertySpec(property)
             && !schemaContains(UsdGeomImageable::GetSchemaAttributeNames(true)))
-            return OverrideGroup::Geometry;
-        return OverrideGroup::Other;
+            return OpinionGroup::Geometry;
+        return OpinionGroup::Other;
     }
 
-    SdfPrimSpecHandle resettableOverrideSpec(const UsdPrim& prim, const UsdEditTarget& target)
+    SdfPrimSpecHandle clearableOpinionSpec(const UsdPrim& prim, const UsdEditTarget& target)
     {
         const SdfLayerHandle layer = target.GetLayer();
         if (!prim || prim.IsInstanceProxy() || !layer || !layer->PermissionToEdit())
             return {};
         const SdfPrimSpecHandle spec = layer->GetPrimAtPath(target.MapToSpecPath(prim.GetPath()));
-        if (!spec || spec->GetSpecifier() != SdfSpecifierOver || spec->GetProperties().empty())
+        if (!spec || spec->GetSpecifier() != SdfSpecifierOver)
             return {};
         for (const auto& opinion : prim.GetPrimStack()) {
             if (opinion && opinion->GetLayer() != layer)
@@ -93,7 +93,7 @@ namespace {
         return {};
     }
 
-    QList<SdfPath> resettablePrimPaths(const UsdStageRefPtr& stage, const QList<SdfPath>& paths)
+    QList<SdfPath> clearablePrimPaths(const UsdStageRefPtr& stage, const QList<SdfPath>& paths)
     {
         QList<SdfPath> result;
         if (!stage)
@@ -111,7 +111,7 @@ namespace {
             // Visit authored specs only: a sparse override layer need not scan its composed payloads.
             layer->Traverse(specRoot, [&](const SdfPath& specPath) {
                 const auto spec = layer->GetPrimAtPath(specPath);
-                if (!spec || spec->GetSpecifier() != SdfSpecifierOver || spec->GetProperties().empty())
+                if (!spec || spec->GetSpecifier() != SdfSpecifierOver)
                     return;
                 const SdfPath scenePath
                     = specPath.StripAllVariantSelections().ReplacePrefix(specRoot.StripAllVariantSelections(),
@@ -119,7 +119,7 @@ namespace {
                 if (!scenePath.IsPrimPath() || target.MapToSpecPath(scenePath) != specPath)
                     return;
                 const UsdPrim prim = stage->GetPrimAtPath(scenePath);
-                if (resettableOverrideSpec(prim, target))
+                if (clearableOpinionSpec(prim, target))
                     collector.append(scenePath);
             });
         }
@@ -159,7 +159,96 @@ namespace {
 }  // namespace
 
 Command
-resetDependencies(const QList<SdfPath>& propertyPaths)
+clearRelationships(const QList<SdfPath>& propertyPaths)
+{
+    struct State {
+        UsdEditTarget target;
+        QList<DependencyPropertyState> properties;
+        QList<SdfPath> owners;
+    };
+    auto state = std::make_shared<State>();
+    const auto execute = [state, propertyPaths](Session* session, bool undo) {
+        if (!session || propertyPaths.isEmpty())
+            return;
+        command::beginDeferred(session, undo ? "Undo clear relationships" : "Clear relationships",
+                               static_cast<int>(propertyPaths.size()));
+        command::runWorker([session, state, propertyPaths, undo]() {
+            QString error;
+            {
+                WRITE_LOCKER(locker, session->stageLock(), "stageLock");
+                const auto stage = session->stageUnsafe();
+                if (!stage)
+                    error = "stage missing";
+                else {
+                    if (!state->target.GetLayer())
+                        state->target = stage->GetEditTarget();
+                    const auto layer = state->target.GetLayer();
+                    if (!layer || !layer->PermissionToEdit())
+                        error = "original relationship layer is not editable";
+                    else if (undo) {
+                        SdfChangeBlock block;
+                        for (const auto& property : state->properties)
+                            if (!restoreDependencyProperty(layer, property, error))
+                                break;
+                    }
+                    else {
+                        state->properties.clear();
+                        state->owners.clear();
+                        for (const auto& path : path::uniquePaths(propertyPaths)) {
+                            const auto prim = stage->GetPrimAtPath(path.GetPrimPath());
+                            if (!path.IsPropertyPath() || !prim || prim.IsInstanceProxy() || prim.IsPrototype()
+                                || prim.IsInPrototype()) {
+                                error = "relationship selection is missing or read-only";
+                                break;
+                            }
+                            const auto specPath = state->target.MapToSpecPath(path);
+                            if (specPath.IsEmpty()) {
+                                error = "relationship cannot be mapped into the edit target";
+                                break;
+                            }
+                            if (!layer->GetRelationshipAtPath(specPath))
+                                continue;
+                            DependencyPropertyState property;
+                            if (!snapshotDependencyProperty(layer, specPath, property, error))
+                                break;
+                            state->properties.append(property);
+                            if (!state->owners.contains(prim.GetPath()))
+                                state->owners.append(prim.GetPath());
+                        }
+                        if (error.isEmpty()) {
+                            SdfChangeBlock block;
+                            for (const auto& property : state->properties)
+                                if (!removePropertySpec(layer, property.propertyPath)) {
+                                    error = "failed to remove relationship opinion";
+                                    break;
+                                }
+                            if (!error.isEmpty()) {
+                                QString rollback;
+                                for (const auto& property : state->properties)
+                                    restoreDependencyProperty(layer, property, rollback);
+                                if (!rollback.isEmpty())
+                                    error += "; rollback: " + rollback;
+                            }
+                        }
+                    }
+                }
+            }
+            command::queueToSession(session, [session, state, error, undo]() {
+                using Status = Session::Notify::Status;
+                command::finishDeferred(session,
+                                        error.isEmpty()
+                                            ? (undo ? "Relationship clearing undone" : "Relationships cleared")
+                                            : appendError("Clear relationships failed", error),
+                                        state->owners, error.isEmpty() ? Status::Success : Status::Error);
+            });
+        });
+    };
+    return Command([execute](Session* session) { execute(session, false); },
+                   [execute](Session* session) { execute(session, true); });
+}
+
+Command
+clearDependencies(const QList<SdfPath>& propertyPaths)
 {
     auto states = std::make_shared<QList<DependencyPropertyState>>();
 
@@ -169,7 +258,7 @@ resetDependencies(const QList<SdfPath>& propertyPaths)
                 return;
 
             const QList<SdfPath> paths = path::uniquePaths(propertyPaths);
-            command::beginDeferred(session, "Reset dependencies", static_cast<int>(paths.size()));
+            command::beginDeferred(session, "Clear dependencies", static_cast<int>(paths.size()));
 
             command::runWorker([session, paths, states]() {
                 QList<SdfPath> affected;
@@ -244,10 +333,10 @@ resetDependencies(const QList<SdfPath>& propertyPaths)
                 command::queueToSession(session, [session, affected, success, errorText]() {
                     using Status = Session::Notify::Status;
 
-                    const QString message = success ? QStringLiteral("Dependencies reset")
+                    const QString message = success ? QStringLiteral("Dependencies cleared")
                                                     : (errorText.isEmpty()
-                                                           ? QStringLiteral("No dependencies to reset")
-                                                           : appendError("Reset dependencies failed", errorText));
+                                                           ? QStringLiteral("No dependencies to clear")
+                                                           : appendError("Clear dependencies failed", errorText));
 
                     command::finishDeferred(session, message, affected, success ? Status::Success : Status::Error);
                 });
@@ -257,7 +346,7 @@ resetDependencies(const QList<SdfPath>& propertyPaths)
             if (!session || states->isEmpty())
                 return;
 
-            command::beginDeferred(session, "Undo reset dependencies", static_cast<int>(states->size()));
+            command::beginDeferred(session, "Undo clear dependencies", static_cast<int>(states->size()));
 
             command::runWorker([session, states]() {
                 QList<SdfPath> restored;
@@ -296,8 +385,8 @@ resetDependencies(const QList<SdfPath>& propertyPaths)
                 command::queueToSession(session, [session, restored, success, errorText]() {
                     using Status = Session::Notify::Status;
                     command::finishDeferred(session,
-                                            success ? "Reset dependencies undone"
-                                                    : appendError("Undo reset dependencies failed", errorText),
+                                            success ? "Clear dependencies undone"
+                                                    : appendError("Undo clear dependencies failed", errorText),
                                             restored, success ? Status::Success : Status::Error);
                 });
             });
@@ -928,13 +1017,13 @@ setAttributeValue(const SdfPath& attributePath, const VtValue& value)
 }
 
 Command
-resetAttributeValues(const QList<SdfPath>& attributePaths)
+clearAttributeValues(const QList<SdfPath>& attributePaths)
 {
-    struct ResetAttributeValueState {
+    struct ClearAttributeValueState {
         QList<RootPropertyState> states;
     };
 
-    auto state = std::make_shared<ResetAttributeValueState>();
+    auto state = std::make_shared<ClearAttributeValueState>();
 
     return Command(
         [attributePaths, state](Session* session) {
@@ -942,7 +1031,7 @@ resetAttributeValues(const QList<SdfPath>& attributePaths)
                 return;
 
             const QList<SdfPath> paths = path::uniquePaths(attributePaths);
-            command::beginDeferred(session, "Reset attribute values", static_cast<int>(paths.size()));
+            command::beginDeferred(session, "Clear attribute values", static_cast<int>(paths.size()));
 
             command::runWorker([session, paths, state]() {
                 QList<SdfPath> affected;
@@ -988,10 +1077,10 @@ resetAttributeValues(const QList<SdfPath>& attributePaths)
                 command::queueToSession(session, [session, affected, errors, success]() {
                     using Status = Session::Notify::Status;
                     const QString message
-                        = success ? QStringLiteral("Attribute values reset")
+                        = success ? QStringLiteral("Attribute values cleared")
                                   : (errors.isEmpty()
-                                         ? QStringLiteral("No authored attribute values to reset")
-                                         : appendError("Reset attribute values failed", summarizeErrors(errors)));
+                                         ? QStringLiteral("No authored attribute values to clear")
+                                         : appendError("Clear attribute values failed", summarizeErrors(errors)));
                     command::finishDeferred(session, message, affected, success ? Status::Success : Status::Error);
                 });
             });
@@ -1000,7 +1089,7 @@ resetAttributeValues(const QList<SdfPath>& attributePaths)
             if (!session || state->states.isEmpty())
                 return;
 
-            command::beginDeferred(session, "Undo reset attribute values", static_cast<int>(state->states.size()));
+            command::beginDeferred(session, "Undo clear attribute values", static_cast<int>(state->states.size()));
 
             command::runWorker([session, state]() {
                 QList<SdfPath> affected;
@@ -1039,8 +1128,8 @@ resetAttributeValues(const QList<SdfPath>& attributePaths)
                 command::queueToSession(session, [session, affected, errors, success]() {
                     using Status = Session::Notify::Status;
                     command::finishDeferred(session,
-                                            success ? "Reset attribute values undone"
-                                                    : appendError("Undo reset attribute values failed",
+                                            success ? "Clear attribute values undone"
+                                                    : appendError("Undo clear attribute values failed",
                                                                   summarizeErrors(errors)),
                                             affected, success ? Status::Success : Status::Error);
                 });
@@ -1049,9 +1138,9 @@ resetAttributeValues(const QList<SdfPath>& attributePaths)
 }
 
 Command
-resetAttributeOverrides(const QList<SdfPath>& attributePaths)
+clearAttributeOpinions(const QList<SdfPath>& attributePaths)
 {
-    struct ResetAttributeOverrideState {
+    struct ClearAttributeOpinionState {
         struct Item {
             SdfPath attributePath;
             SdfPath primPath;
@@ -1061,7 +1150,7 @@ resetAttributeOverrides(const QList<SdfPath>& attributePaths)
         QList<Item> items;
     };
 
-    auto state = std::make_shared<ResetAttributeOverrideState>();
+    auto state = std::make_shared<ClearAttributeOpinionState>();
 
     return Command(
         [attributePaths, state](Session* session) {
@@ -1069,7 +1158,7 @@ resetAttributeOverrides(const QList<SdfPath>& attributePaths)
                 return;
 
             const QList<SdfPath> paths = path::uniquePaths(attributePaths);
-            command::beginDeferred(session, "Reset attribute overrides", static_cast<int>(paths.size()));
+            command::beginDeferred(session, "Clear attribute overrides", static_cast<int>(paths.size()));
 
             command::runWorker([session, paths, state]() {
                 QList<SdfPath> affected;
@@ -1119,7 +1208,7 @@ resetAttributeOverrides(const QList<SdfPath>& attributePaths)
                                 if (!hasUnderlyingPrimOpinion)
                                     continue;
 
-                                ResetAttributeOverrideState::Item item;
+                                ClearAttributeOpinionState::Item item;
                                 item.attributePath = attributePath;
                                 item.primPath = primPath;
                                 item.snapshotLayer = SdfLayer::CreateAnonymous(
@@ -1159,9 +1248,9 @@ resetAttributeOverrides(const QList<SdfPath>& attributePaths)
                 command::queueToSession(session, [session, affected, errors, success]() {
                     using Status = Session::Notify::Status;
                     const QString message = success
-                                                ? QStringLiteral("Attribute overrides reset")
-                                                : (errors.isEmpty() ? QStringLiteral("No attribute overrides to reset")
-                                                                    : appendError("Reset attribute overrides failed",
+                                                ? QStringLiteral("Attribute opinions cleared")
+                                                : (errors.isEmpty() ? QStringLiteral("No attribute overrides to clear")
+                                                                    : appendError("Clear attribute overrides failed",
                                                                                   summarizeErrors(errors)));
                     command::finishDeferred(session, message, affected, success ? Status::Success : Status::Error);
                 });
@@ -1171,7 +1260,7 @@ resetAttributeOverrides(const QList<SdfPath>& attributePaths)
             if (!session || state->items.isEmpty())
                 return;
 
-            command::beginDeferred(session, "Undo reset attribute overrides", static_cast<int>(state->items.size()));
+            command::beginDeferred(session, "Undo clear attribute overrides", static_cast<int>(state->items.size()));
 
             command::runWorker([session, state]() {
                 QList<SdfPath> affected;
@@ -1193,7 +1282,7 @@ resetAttributeOverrides(const QList<SdfPath>& attributePaths)
                             errors.append(editError);
                         }
                         else {
-                            for (const ResetAttributeOverrideState::Item& item : state->items) {
+                            for (const ClearAttributeOpinionState::Item& item : state->items) {
                                 if (!editLayer->GetPrimAtPath(item.primPath))
                                     SdfCreatePrimInLayer(editLayer, item.primPath);
 
@@ -1214,8 +1303,8 @@ resetAttributeOverrides(const QList<SdfPath>& attributePaths)
                 command::queueToSession(session, [session, affected, errors, success]() {
                     using Status = Session::Notify::Status;
                     command::finishDeferred(session,
-                                            success ? "Attribute overrides reset undone"
-                                                    : appendError("Undo reset attribute overrides failed",
+                                            success ? "Attribute overrides clear undone"
+                                                    : appendError("Undo clear attribute overrides failed",
                                                                   summarizeErrors(errors)),
                                             affected, success ? Status::Success : Status::Error);
                 });
@@ -1224,44 +1313,47 @@ resetAttributeOverrides(const QList<SdfPath>& attributePaths)
 }
 
 Command
-resetAttributeOverride(const SdfPath& attributePath)
+clearAttributeOpinion(const SdfPath& attributePath)
 {
-    return resetAttributeOverrides({ attributePath });
+    return clearAttributeOpinions({ attributePath });
 }
 
-QList<OverrideGroup>
-resetOverrideGroups(const UsdStageRefPtr& stage, const QList<SdfPath>& paths)
+QList<OpinionGroup>
+clearOpinionGroups(const UsdStageRefPtr& stage, const QList<SdfPath>& paths)
 {
     QSet<int> groups;
     if (!stage)
         return {};
     const auto inspect = [&](const UsdPrim& prim) {
-        if (const auto spec = resettableOverrideSpec(prim, stage->GetEditTarget())) {
+        if (const auto spec = clearableOpinionSpec(prim, stage->GetEditTarget())) {
             for (const auto& property : spec->GetProperties())
-                groups.insert(static_cast<int>(propertyOverrideGroup(prim, property->GetNameToken())));
+                groups.insert(static_cast<int>(propertyOpinionGroup(prim, property->GetNameToken())));
+            if (spec->IsInert())
+                groups.insert(static_cast<int>(OpinionGroup::Other));
         }
     };
-    for (const auto& path : resettablePrimPaths(stage, paths))
+    for (const auto& path : clearablePrimPaths(stage, paths))
         inspect(stage->GetPrimAtPath(path));
-    QList<OverrideGroup> result;
-    for (int group = static_cast<int>(OverrideGroup::Transforms); group <= static_cast<int>(OverrideGroup::Other);
+    QList<OpinionGroup> result;
+    for (int group = static_cast<int>(OpinionGroup::Transforms); group <= static_cast<int>(OpinionGroup::Other);
          ++group) {
         if (groups.contains(group))
-            result.append(static_cast<OverrideGroup>(group));
+            result.append(static_cast<OpinionGroup>(group));
     }
     return result;
 }
 
 Command
-resetOverrides(const QList<SdfPath>& paths, OverrideGroup group)
+clearOpinions(const QList<SdfPath>& paths, OpinionGroup group)
 {
-    struct ResetOverrideState {
+    struct ClearOpinionState {
         struct Item {
             SdfPath path;
             SdfPath scenePath;
             SdfLayerRefPtr snapshotLayer;
             QList<SdfPath> propertyPaths;
             bool removedPrimSpec = false;
+            bool inertSnapshot = false;
         };
 
         QList<Item> items;
@@ -1269,14 +1361,14 @@ resetOverrides(const QList<SdfPath>& paths, OverrideGroup group)
         std::map<SdfPath, TfTokenVector> childOrders;
     };
 
-    auto state = std::make_shared<ResetOverrideState>();
+    auto state = std::make_shared<ClearOpinionState>();
 
     return Command(
         [paths, state, group](Session* session) {
             if (!session || paths.isEmpty())
                 return;
 
-            command::beginDeferred(session, "Reset overrides", static_cast<int>(paths.size()));
+            command::beginDeferred(session, "Clear overrides", static_cast<int>(paths.size()));
 
             command::runWorker([session, paths, state, group]() {
                 QList<SdfPath> affected;
@@ -1302,17 +1394,17 @@ resetOverrides(const QList<SdfPath>& paths, OverrideGroup group)
                             state->editLayer = editLayer;
                             state->childOrders.clear();
 
-                            const QList<SdfPath> primPaths = resettablePrimPaths(stage, paths);
+                            const QList<SdfPath> primPaths = clearablePrimPaths(stage, paths);
                             for (const SdfPath& primPath : primPaths) {
                                 const UsdPrim prim = stage->GetPrimAtPath(primPath);
                                 if (!prim || !prim.IsValid() || prim.IsInstanceProxy())
                                     continue;
 
-                                const SdfPrimSpecHandle rootSpec = resettableOverrideSpec(prim, stage->GetEditTarget());
+                                const SdfPrimSpecHandle rootSpec = clearableOpinionSpec(prim, stage->GetEditTarget());
                                 if (!rootSpec)
                                     continue;
 
-                                ResetOverrideState::Item item;
+                                ClearOpinionState::Item item;
                                 item.path = rootSpec->GetPath();
                                 item.scenePath = primPath;
                                 item.snapshotLayer = SdfLayer::CreateAnonymous("stageviz_override_snapshot.usda");
@@ -1330,8 +1422,8 @@ resetOverrides(const QList<SdfPath>& paths, OverrideGroup group)
                                 bool snapshotFailed = false;
                                 for (const SdfPropertySpecHandle& property : properties) {
                                     if (!property
-                                        || (group != OverrideGroup::All
-                                            && propertyOverrideGroup(prim, property->GetNameToken()) != group))
+                                        || (group != OpinionGroup::All
+                                            && propertyOpinionGroup(prim, property->GetNameToken()) != group))
                                         continue;
 
                                     const SdfPath propertyPath = property->GetPath();
@@ -1345,20 +1437,31 @@ resetOverrides(const QList<SdfPath>& paths, OverrideGroup group)
                                     item.propertyPaths.append(propertyPath);
                                 }
 
-                                if (snapshotFailed || item.propertyPaths.isEmpty())
+                                if (snapshotFailed)
                                     continue;
+                                if (item.propertyPaths.isEmpty()) {
+                                    if ((group != OpinionGroup::All && group != OpinionGroup::Other)
+                                        || !rootSpec->IsInert())
+                                        continue;
+                                    if (!SdfCopySpec(editLayer, item.path, item.snapshotLayer, item.path)) {
+                                        errors.append(
+                                            QString("failed to snapshot empty override: %1").arg(pathText(primPath)));
+                                        continue;
+                                    }
+                                    item.inertSnapshot = true;
+                                }
 
-                                bool reset = true;
+                                bool clear = true;
                                 for (const SdfPath& propertyPath : item.propertyPaths) {
                                     if (!removePropertySpec(editLayer, propertyPath)) {
                                         errors.append(QString("failed to remove override property: %1")
                                                           .arg(pathText(propertyPath)));
-                                        reset = false;
+                                        clear = false;
                                         break;
                                     }
                                 }
 
-                                if (!reset)
+                                if (!clear)
                                     continue;
 
                                 const SdfPrimSpecHandle remainingSpec = editLayer->GetPrimAtPath(item.path);
@@ -1391,8 +1494,8 @@ resetOverrides(const QList<SdfPath>& paths, OverrideGroup group)
                 const bool success = errors.isEmpty();
                 command::queueToSession(session, [session, affected, errors, success]() {
                     using Status = Session::Notify::Status;
-                    const QString message = success ? QStringLiteral("Overrides reset")
-                                                    : appendError("Reset overrides finished with errors",
+                    const QString message = success ? QStringLiteral("Opinions cleared")
+                                                    : appendError("Clear overrides finished with errors",
                                                                   summarizeErrors(errors));
 
                     command::finishDeferred(session, message, affected, success ? Status::Success : Status::Error);
@@ -1403,7 +1506,7 @@ resetOverrides(const QList<SdfPath>& paths, OverrideGroup group)
             if (!session || state->items.isEmpty())
                 return;
 
-            command::beginDeferred(session, "Undo reset overrides", static_cast<int>(state->items.size()));
+            command::beginDeferred(session, "Undo clear overrides", static_cast<int>(state->items.size()));
 
             command::runWorker([session, state]() {
                 QList<SdfPath> restored;
@@ -1428,7 +1531,19 @@ resetOverrides(const QList<SdfPath>& paths, OverrideGroup group)
                             errors.append(editError);
                         }
                         else {
-                            for (const ResetOverrideState::Item& item : state->items) {
+                            // Authored traversal is child-first; restore pruned containers before their children.
+                            for (auto it = state->items.crbegin(); it != state->items.crend(); ++it) {
+                                const ClearOpinionState::Item& item = *it;
+                                if (item.inertSnapshot) {
+                                    SdfCreatePrimInLayer(editLayer, item.path);
+                                    if (!SdfCopySpec(item.snapshotLayer, item.path, editLayer, item.path)) {
+                                        errors.append(QString("failed to restore empty override: %1")
+                                                          .arg(pathText(item.scenePath)));
+                                        continue;
+                                    }
+                                    restoredCollector.append(item.scenePath);
+                                    continue;
+                                }
                                 SdfPrimSpecHandle rootSpec = editLayer->GetPrimAtPath(item.path);
                                 if (!rootSpec)
                                     rootSpec = SdfCreatePrimInLayer(editLayer, item.path);
@@ -1477,8 +1592,8 @@ resetOverrides(const QList<SdfPath>& paths, OverrideGroup group)
                 const bool success = errors.isEmpty();
                 command::queueToSession(session, [session, restored, errors, success]() {
                     using Status = Session::Notify::Status;
-                    const QString message = success ? QStringLiteral("Reset overrides undone")
-                                                    : appendError("Undo reset overrides finished with errors",
+                    const QString message = success ? QStringLiteral("Clear overrides undone")
+                                                    : appendError("Undo clear overrides finished with errors",
                                                                   summarizeErrors(errors));
 
                     command::finishDeferred(session, message, restored, success ? Status::Success : Status::Error);

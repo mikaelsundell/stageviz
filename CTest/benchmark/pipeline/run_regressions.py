@@ -11,7 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from mcp_runtime import DisposableStageviz, WindowsDesktopUnavailable
 
 
-DEFAULT_SUITES = ['testapi','testui','testlayers','testpayloadhierarchy','testpayloadindicator','testviewport','testgizmostability','testsubsets','testlights','testnumericeditors','testviewporthdri','testviewportcapture','testscenestats','testaxissize','testconsole','testhierarchytransforms','testtransformoperation','testpivot','testsharedviewport','testxformgrouping','testlayercolors','testexportinstances','testsourcechild','testmakeeditable','testlayermultiselection','testlayerupdate','testresetopinions','testpreservestate','testchangesdialog']
+DEFAULT_SUITES = ['testapi','testui','testlayers','testpayloadhierarchy','testpayloadindicator','testviewport','testgizmostability','testsubsets','testlights','testnumericeditors','testviewporthdri','testviewportcapture','testscenestats','testaxissize','testconsole','testhierarchytransforms','testtransformoperation','testpivot','testsharedviewport','testxformgrouping','testlayercolors','testexportinstances','testsourcechild','testmakeeditable','testlayermultiselection','testlayerupdate','testclearopinions','testpreservestate','testchangesdialog']
 
 
 def discover_suites(root):
@@ -88,8 +88,52 @@ def phases(root, name, performance=False, performance_baseline=None):
         return [('setup', load + "; test=ns['LayerMultiSelectionTest'](disposable=True); test.setup()"),
                 ('selection', 'test.selection()'), ('actions', 'test.actions()'),
                 ('batch-api', 'test.batches()'), ('cleanup', 'test.cleanup()')]
-    if name == 'testresetopinions':
-        return [('setup', load + "; test=ns['ResetOpinionsTest'](disposable=True); test.setup()"),
+    if name == 'testpackagedmaterialassignment':
+        return [('setup', load + "; test=ns['PackagedMaterialAssignmentTest'](disposable=True); test.setup()"),
+                ('menu', 'test.menu()'), ('assignment', 'test.assignment()'),
+                ('subsets', 'test.subsets()'), ('follow', 'test.follow()'), ('cleanup', 'test.cleanup()')]
+    if name == 'testcrosslayercreation':
+        return [('setup', load + "; test=ns['CrossLayerCreationTest'](disposable=True); test.setup()"),
+                ('create-history', 'test.create(); test.history()'), ('cleanup', 'test.cleanup()')]
+    if name == 'testviewportpurpose':
+        return [('setup', load + "; test=ns['ViewportPurposeTest'](disposable=True); test.setup()"),
+                ('menu', 'test.menu()'), ('isolation', 'test.isolation()'),
+                ('persistence', 'test.persistence()'), ('cleanup', 'test.cleanup()')]
+    if name == 'testmaterialviewportcomposition':
+        return [('setup', load + "; test=ns['MaterialViewportCompositionTest'](disposable=True); test.setup()"),
+                ('toggle', 'test.toggle()'), ('isolated', 'test.isolated()'), ('availability', 'test.availability()'), ('cleanup', 'test.cleanup()')]
+    if name == 'testinstancecleanup':
+        return [('setup', load + "; test=ns['InstanceCleanupTest'](disposable=True); test.setup()"),
+                ('shared', 'test.shared()'), ('last', 'test.last()'), ('cleanup', 'test.cleanup()')]
+    if name == 'testcameraclipping':
+        return [('setup', load + "; test=ns['CameraClippingTest'](disposable=True); test.setup()"),
+                ('move-tumble', 'test.move_and_tumble()'), ('cleanup', 'test.cleanup()')]
+    if name == 'testlayerauthoring':
+        return [('setup', load + "; test=ns['LayerAuthoringTest'](disposable=True); test.setup()"),
+                ('override', 'test.override()'), ('outliner-replace', 'test.outliner_replace()'),
+                ('browser-replace', 'test.browser_replace()'), ('bindings', 'test.bindings()'),
+                ('cleanup', 'test.cleanup()')]
+    if name == 'testmaterialcomposition':
+        return [('setup', load + "; test=ns['MaterialCompositionTest'](disposable=True); test.setup()"),
+                ('references', 'test.references_phase()'), ('switching', 'test.switching()'),
+                ('reload', 'test.reload_composition()'), ('opinions', 'test.opinions()'), ('cleanup', 'test.cleanup()')]
+    if name == 'testmaterialcontainer':
+        return [('setup', load + "; test=ns['MaterialContainerTest'](disposable=True); test.setup()"),
+                ('create', 'test.create()'), ('mute', 'test.mute()'), ('restore', 'test.restore()'), ('cleanup', 'test.cleanup()')]
+    if name == 'testmateriallayerrename':
+        return [('setup', load + "; test=ns['MaterialLayerRenameTest'](disposable=True); test.setup()"),
+                ('rename-tooltips', 'test.exercise()'), ('cleanup', 'test.cleanup()')]
+    if name == 'testtooltips':
+        return [('setup', load + "; test=ns['TooltipsTest'](disposable=True); test.setup()"),
+                ('tooltips', 'test.exercise()'), ('cleanup', 'test.cleanup()')]
+    if name == 'testoutlinerpurpose':
+        return [('setup', load + "; test=ns['OutlinerPurposeTest'](disposable=True); test.setup()"),
+                ('filters', 'test.exercise()'), ('cleanup', 'test.cleanup()')]
+    if name == 'testcontextmenu':
+        return [('setup', load + "; test=ns['ContextMenuTest'](disposable=True); test.setup()"),
+                ('structure', 'test.structure()'), ('actions', 'test.actions()'), ('cleanup', 'test.cleanup()')]
+    if name == 'testclearopinions':
+        return [('setup', load + "; test=ns['ClearOpinionsTest'](disposable=True); test.setup()"),
                 ('groups-menu', 'test.exercise()'), ('cleanup', 'test.cleanup()')]
     if name == 'testlayercolors':
         return [('setup', load + "; test=ns['LayerColorsTest'](disposable=True); test.setup()"),
@@ -266,7 +310,109 @@ def run(args):
                             assert payload['loaded'] == checkpoint['payloadLoaded'], (payload, checkpoint)
                     if name == 'testlayermultiselection' and label != 'cleanup':
                         after['prims'] = app.tool('stageviz_list_prims', {'path': '/', 'maxDepth': 3, 'limit': 30})
-                    if name == 'testresetopinions' and label != 'cleanup':
+                    if name == 'testpackagedmaterialassignment' and label != 'cleanup':
+                        after['mesh']=app.tool('stageviz_get_prim_info', {'path':'/Asset/Mesh'})
+                        assert json.loads(after['mesh']['result']['content'][0]['text'])['type']=='Mesh'
+                        after['subsets']=app.tool('stageviz_list_prims', {'path':'/Asset/Mesh','maxDepth':1,'limit':10})
+                        assert len([p for p in json.loads(after['subsets']['result']['content'][0]['text'])['prims'] if p['type']=='GeomSubset'])==2, after['subsets']
+                    if name == 'testcrosslayercreation' and label != 'cleanup':
+                        after['children']=app.tool('stageviz_list_prims', {'path':'/World','maxDepth':1,'limit':10})
+                        paths={p['path'] for p in json.loads(after['children']['result']['content'][0]['text'])['prims']}
+                        assert '/World/Existing' in paths
+                        assert '/World/Xform' not in paths, paths
+                    if name == 'testviewportpurpose' and label != 'cleanup':
+                        lines = [line for block in result['result']['content'] for line in block.get('text','').splitlines()
+                                 if line.startswith('VIEWPORT_PURPOSE_CHECKPOINT ')]
+                        expected=json.loads(lines[-1].split(' ',1)[1])
+                        after['prims']=app.tool('stageviz_list_prims', {'path':'/World','maxDepth':3,'limit':30})
+                        prims=json.loads(after['prims']['result']['content'][0]['text'])['prims']
+                        assert len([p for p in prims if p['type']=='Sphere'])==4, prims
+                    if name == 'testmaterialviewportcomposition' and label != 'cleanup':
+                        lines = [line for block in result['result']['content'] for line in block.get('text','').splitlines()
+                                 if line.startswith('MATERIAL_VIEWPORT_CHECKPOINT ')]
+                        expected = json.loads(lines[-1].split(' ',1)[1])
+                        after['material'] = app.tool('stageviz_get_prim_info', {'path':'/Materials/Paint'})
+                        after['prims'] = app.tool('stageviz_list_prims', {'path':'/Materials/Paint','maxDepth':2,'limit':10})
+                        material = json.loads(after['material']['result']['content'][0]['text'])
+                        assert (material['strongestLayer']==expected['layer']) == (not expected['muted']), (material, expected)
+                    if name == 'testinstancecleanup' and label != 'cleanup':
+                        lines = [line for block in result['result']['content'] for line in block.get('text', '').splitlines()
+                                 if line.startswith('INSTANCE_CLEANUP_CHECKPOINT ')]
+                        expected = json.loads(lines[-1].split(' ', 1)[1])
+                        after['prims'] = app.tool('stageviz_list_prims', {'path': '/', 'maxDepth': 1, 'limit': 30})
+                        prims = json.loads(after['prims']['result']['content'][0]['text'])['prims']
+                        assert sorted(p['path'] for p in prims) == expected['roots'], (prims, expected)
+                        after['helper'] = app.rpc('tools/call', {'name': 'stageviz_get_prim_info', 'arguments': {'path': expected['helper']}})
+                        helper = after['helper']['result']
+                        assert (not helper.get('isError', False)) == expected['helperExists'], (helper, expected)
+                    if name == 'testcameraclipping' and label != 'cleanup':
+                        after['prims'] = app.tool('stageviz_list_prims', {'path':'/World', 'maxDepth':2, 'limit':10})
+                        prims = json.loads(after['prims']['result']['content'][0]['text'])['prims']
+                        assert {'/World/Left','/World/Right'}.issubset({p['path'] for p in prims})
+                        after['right'] = app.tool('stageviz_get_prim_info', {'path':'/World/Right'})
+                        assert json.loads(after['right']['result']['content'][0]['text'])['defined']
+                    if name == 'testlayerauthoring' and label != 'cleanup':
+                        lines = [line for block in result['result']['content'] for line in block.get('text','').splitlines()
+                                 if line.startswith('AUTHORING_CHECKPOINT ')]
+                        expected = json.loads(lines[-1].split(' ',1)[1])
+                        after['material'] = app.tool('stageviz_get_prim_info', {'path':expected['material']})
+                        material = json.loads(after['material']['result']['content'][0]['text'])
+                        assert material['defined'] and not expected['muted']
+                        selection = json.loads(after['stageviz_get_selection']['result']['content'][0]['text'])
+                        assert selection == expected['selection']
+                    if name == 'testmaterialcomposition' and label in ('references', 'switching'):
+                        lines = [line for block in result['result']['content']
+                                 for line in block.get('text','').splitlines() if line.startswith('COMPOSITION_CHECKPOINT ')]
+                        expected = json.loads(lines[-1].split(' ',1)[1])
+                        after['prims'] = app.tool('stageviz_list_prims', {'path':'/', 'maxDepth':4, 'limit':100})
+                        prims = json.loads(after['prims']['result']['content'][0]['text'])['prims']
+                        assert any(p['path'] == expected['path'] for p in prims) == expected['present']
+                        if expected['present']:
+                            after['material'] = app.tool('stageviz_get_prim_info', {'path': expected['path']})
+                            material = json.loads(after['material']['result']['content'][0]['text'])
+                            assert material['defined']
+                    if name == 'testmaterialcontainer' and label in ('create', 'mute'):
+                        checkpoints = [line for block in result['result']['content']
+                                       for line in block.get('text', '').splitlines()
+                                       if line.startswith('CONTAINER_CHECKPOINT ')]
+                        assert checkpoints
+                        expected = json.loads(checkpoints[-1].split(' ', 1)[1])
+                        after['material'] = app.tool('stageviz_get_prim_info', {'path': expected['path']})
+                        material = json.loads(after['material']['result']['content'][0]['text'])
+                        assert material['defined'] and material['definingLayer'] == expected['layer']
+                    if name == 'testmateriallayerrename' and label != 'cleanup':
+                        checkpoints = [line for block in result['result']['content']
+                                       for line in block.get('text', '').splitlines()
+                                       if line.startswith('RENAME_CHECKPOINT ')]
+                        assert checkpoints, 'Missing layered rename checkpoint'
+                        expected = json.loads(checkpoints[-1].split(' ', 1)[1])
+                        after['material'] = app.tool('stageviz_get_prim_info', {'path': expected['path']})
+                        actual = json.loads(after['material']['result']['content'][0]['text'])
+                        assert all(actual[key] == expected[key] for key in ('definingLayer', 'strongestLayer', 'editLayer')), (actual, expected)
+                        after['parent'] = app.tool('stageviz_get_prim_info', {'path': '/Materials'})
+                        parent = json.loads(after['parent']['result']['content'][0]['text'])
+                        assert parent['strongestLayer'] != actual['editLayer'], (parent, actual)
+                    if name == 'testtooltips' and label != 'cleanup':
+                        after['shape'] = app.tool('stageviz_get_prim_info', {'path': '/World/Group/Shape'})
+                        after['material'] = app.tool('stageviz_get_prim_info', {'path': '/Materials/Paint'})
+                        assert json.loads(after['shape']['result']['content'][0]['text'])['defined']
+                    if name == 'testoutlinerpurpose' and label != 'cleanup':
+                        after['proxy'] = app.tool('stageviz_get_prim_info', {'path': '/World/Instance/Cube'})
+                        assert json.loads(after['proxy']['result']['content'][0]['text'])['instanceProxy']
+                    if name == 'testcontextmenu' and label != 'cleanup':
+                        after['child'] = app.tool('stageviz_get_prim_info', {'path': '/World/Group/Cube'})
+                        after['proxy'] = app.tool('stageviz_get_prim_info', {'path': '/World/Instance/Cube'})
+                        assert json.loads(after['proxy']['result']['content'][0]['text'])['instanceProxy']
+                        child = json.loads(after['child']['result']['content'][0]['text'])
+                        assert child['defined'] and 'link' in child['relationships'], child
+                        checkpoints = [line for block in result['result']['content']
+                                       for line in block.get('text', '').splitlines()
+                                       if line.startswith('CONTEXT_CHECKPOINT ')]
+                        if checkpoints:
+                            expected = json.loads(checkpoints[-1].split(' ', 1)[1])
+                            actual = json.loads(after['stageviz_get_selection']['result']['content'][0]['text'])
+                            assert actual == expected['selection'], (actual, expected)
+                    if name == 'testclearopinions' and label != 'cleanup':
                         after['prim'] = app.tool('stageviz_get_prim_info', {'path': '/Group/Sphere'})
                     if name == 'testmaterialassignment' and label != 'cleanup':
                         after['instances'] = {}

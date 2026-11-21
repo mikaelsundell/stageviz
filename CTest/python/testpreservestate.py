@@ -294,8 +294,12 @@ class PreserveStateTest(_base['ViewportTest']):
         root = model.index(0, 0)
         role = QtCore.Qt.ItemDataRole
         assert model.data(model.index(0, 0, root), role.DisplayRole) == self.layer.name
-        assert model.data(model.index(0, 1, root), role.ToolTipRole).startswith('Layer is muted.')
-        assert model.data(model.index(0, 2, root), role.ToolTipRole).startswith('Layer is locked.')
+        muted_tip = model.data(model.index(0, 1, root), role.ToolTipRole)
+        locked_tip = model.data(model.index(0, 2, root), role.ToolTipRole)
+        for tooltip in (muted_tip, locked_tip):
+            assert tooltip.startswith('<qt>') and '<b>' + self.layer.name + '</b>' in tooltip
+        assert 'Visibility' in muted_tip and 'Layer is muted. Click to unmute.' in muted_tip
+        assert 'Permission' in locked_tip and 'Layer is locked. Click to allow editing.' in locked_tip
         assert not model.data(model.index(0, 1, root), role.DecorationRole).isNull()
         assert not model.data(model.index(0, 2, root), role.DecorationRole).isNull()
         del model, root

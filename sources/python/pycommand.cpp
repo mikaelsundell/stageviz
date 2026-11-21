@@ -565,21 +565,7 @@ PyCommand_copyTransforms(PyObject*, PyObject* args)
 
 
 static PyObject*
-PyCommand_resetTransforms(PyObject*, PyObject* args)
-{
-    PyObject* pyPaths = nullptr;
-    if (!PyArg_ParseTuple(args, "O", &pyPaths))
-        return nullptr;
-
-    QList<SdfPath> paths;
-    if (!parsePathListArg(pyPaths, "paths", &paths))
-        return nullptr;
-
-    return runCommand(resetTransforms(paths));
-}
-
-static PyObject*
-PyCommand_resetOverrides(PyObject*, PyObject* args)
+PyCommand_clearOpinions(PyObject*, PyObject* args)
 {
     PyObject* pyPaths = nullptr;
     const char* groupName = "all";
@@ -594,10 +580,10 @@ PyCommand_resetOverrides(PyObject*, PyObject* args)
                                 "primvars", "lights",     "cameras",    "other" };
     const qsizetype index = names.indexOf(QString::fromUtf8(groupName));
     if (index < 0) {
-        PyErr_SetString(PyExc_ValueError, "unknown reset opinion group");
+        PyErr_SetString(PyExc_ValueError, "unknown clear opinion group");
         return nullptr;
     }
-    return runCommand(resetOverrides(paths, static_cast<OverrideGroup>(index)));
+    return runCommand(clearOpinions(paths, static_cast<OpinionGroup>(index)));
 }
 
 static PyObject*
@@ -998,6 +984,43 @@ PyCommand_newPointInstancer(PyObject*, PyObject* args)
 }
 
 static PyObject*
+PyCommand_overridePaths(PyObject*, PyObject* args)
+{
+    PyObject* pyPaths = nullptr;
+    if (!PyArg_ParseTuple(args, "O", &pyPaths))
+        return nullptr;
+    QList<SdfPath> paths;
+    if (!parsePathListArg(pyPaths, "paths", &paths))
+        return nullptr;
+    return runCommand(overridePaths(paths));
+}
+
+static PyObject*
+PyCommand_replaceMaterialNetwork(PyObject*, PyObject* args)
+{
+    PyObject* pyPaths = nullptr;
+    const char* type = "preview_surface";
+    if (!PyArg_ParseTuple(args, "O|s", &pyPaths, &type))
+        return nullptr;
+    QList<SdfPath> paths;
+    if (!parsePathListArg(pyPaths, "paths", &paths))
+        return nullptr;
+    const QString name = QString::fromUtf8(type);
+    MaterialType materialType;
+    if (name == "preview_surface")
+        materialType = MaterialType::PreviewSurface;
+    else if (name == "standard_surface")
+        materialType = MaterialType::StandardSurface;
+    else if (name == "open_pbr_surface")
+        materialType = MaterialType::OpenPBRSurface;
+    else {
+        PyErr_SetString(PyExc_ValueError, "type must be preview_surface, standard_surface or open_pbr_surface");
+        return nullptr;
+    }
+    return runCommand(replaceMaterialNetwork(paths, materialType));
+}
+
+static PyObject*
 PyCommand_newMaterial(PyObject*, PyObject* args)
 {
     PyObject* pyParentPath = nullptr;
@@ -1199,7 +1222,7 @@ PyCommand_renameAttributes(PyObject*, PyObject* args)
 }
 
 static PyObject*
-PyCommand_resetAttributeOverride(PyObject*, PyObject* args)
+PyCommand_clearAttributeOpinion(PyObject*, PyObject* args)
 {
     PyObject* pyAttributePath = nullptr;
     if (!PyArg_ParseTuple(args, "O", &pyAttributePath))
@@ -1214,11 +1237,11 @@ PyCommand_resetAttributeOverride(PyObject*, PyObject* args)
         return nullptr;
     }
 
-    return runCommand(resetAttributeOverride(attributePath));
+    return runCommand(clearAttributeOpinion(attributePath));
 }
 
 static PyObject*
-PyCommand_resetAttributeOverrides(PyObject*, PyObject* args)
+PyCommand_clearAttributeOpinions(PyObject*, PyObject* args)
 {
     PyObject* pyAttributePaths = nullptr;
     if (!PyArg_ParseTuple(args, "O", &pyAttributePaths))
@@ -1235,7 +1258,7 @@ PyCommand_resetAttributeOverrides(PyObject*, PyObject* args)
         }
     }
 
-    return runCommand(resetAttributeOverrides(attributePaths));
+    return runCommand(clearAttributeOpinions(attributePaths));
 }
 
 static PyObject*
@@ -1289,7 +1312,7 @@ PyCommand_setAttributeValues(PyObject*, PyObject* args)
 }
 
 static PyObject*
-PyCommand_resetAttributeValues(PyObject*, PyObject* args)
+PyCommand_clearAttributeValues(PyObject*, PyObject* args)
 {
     PyObject* pyAttributePaths = nullptr;
     if (!PyArg_ParseTuple(args, "O", &pyAttributePaths))
@@ -1306,7 +1329,7 @@ PyCommand_resetAttributeValues(PyObject*, PyObject* args)
         }
     }
 
-    return runCommand(resetAttributeValues(attributePaths));
+    return runCommand(clearAttributeValues(attributePaths));
 }
 
 static PyObject*
@@ -1324,7 +1347,7 @@ PyCommand_centerPivots(PyObject*, PyObject* args)
 }
 
 static PyObject*
-PyCommand_resetPivots(PyObject*, PyObject* args)
+PyCommand_clearPivots(PyObject*, PyObject* args)
 {
     PyObject* pyPaths = nullptr;
     if (!PyArg_ParseTuple(args, "O", &pyPaths))
@@ -1334,7 +1357,7 @@ PyCommand_resetPivots(PyObject*, PyObject* args)
     if (!parsePathListArg(pyPaths, "paths", &paths))
         return nullptr;
 
-    return runCommand(resetPivots(paths));
+    return runCommand(clearPivots(paths));
 }
 
 static PyObject*
@@ -1406,7 +1429,7 @@ PyCommand_connectShaderNode(PyObject*, PyObject* args)
 }
 
 static PyObject*
-PyCommand_resetDependencies(PyObject*, PyObject* args)
+PyCommand_clearDependencies(PyObject*, PyObject* args)
 {
     PyObject* pyPropertyPaths = nullptr;
     if (!PyArg_ParseTuple(args, "O", &pyPropertyPaths))
@@ -1423,7 +1446,7 @@ PyCommand_resetDependencies(PyObject*, PyObject* args)
         }
     }
 
-    return runCommand(resetDependencies(propertyPaths));
+    return runCommand(clearDependencies(propertyPaths));
 }
 
 static PyObject*
@@ -1446,7 +1469,7 @@ PyCommand_disconnectShaderInputs(PyObject*, PyObject* args)
 }
 
 static PyObject*
-PyCommand_resetShaderInputs(PyObject*, PyObject* args)
+PyCommand_clearShaderInputs(PyObject*, PyObject* args)
 {
     PyObject* pyPaths = nullptr;
     if (!PyArg_ParseTuple(args, "O", &pyPaths))
@@ -1461,7 +1484,7 @@ PyCommand_resetShaderInputs(PyObject*, PyObject* args)
             return nullptr;
         }
     }
-    return runCommand(resetShaderInputs(paths));
+    return runCommand(clearShaderInputs(paths));
 }
 
 static PyObject*
@@ -1528,6 +1551,18 @@ PyCommand_clearMaterial(PyObject*, PyObject* args)
     return runCommand(clearMaterial(paths));
 }
 
+static PyObject*
+PyCommand_clearRelationships(PyObject*, PyObject* args)
+{
+    PyObject* pyPaths = nullptr;
+    if (!PyArg_ParseTuple(args, "O", &pyPaths))
+        return nullptr;
+    QList<SdfPath> paths;
+    if (!parsePathListArg(pyPaths, "property_paths", &paths))
+        return nullptr;
+    return runCommand(clearRelationships(paths));
+}
+
 static PyMethodDef PyCommand_methods[] = {
     { "undo", reinterpret_cast<PyCFunction>(PyCommand_undo), METH_NOARGS, "Undo the most recent command." },
     { "redo", reinterpret_cast<PyCFunction>(PyCommand_redo), METH_NOARGS, "Redo the most recently undone command." },
@@ -1588,6 +1623,10 @@ static PyMethodDef PyCommand_methods[] = {
       "Set the default prim." },
     { "clear_default_prim", reinterpret_cast<PyCFunction>(PyCommand_clearDefaultPrim), METH_NOARGS,
       "Clear the default prim." },
+    { "override_paths", reinterpret_cast<PyCFunction>(PyCommand_overridePaths), METH_VARARGS,
+      "Author explicit over specs in the current edit layer without duplicating prims." },
+    { "replace_material_network", reinterpret_cast<PyCFunction>(PyCommand_replaceMaterialNetwork), METH_VARARGS,
+      "Replace material terminal networks with preview_surface, standard_surface or open_pbr_surface." },
     { "delete_paths", reinterpret_cast<PyCFunction>(PyCommand_deletePaths), METH_VARARGS, "Delete paths." },
     { "copy_transforms", reinterpret_cast<PyCFunction>(PyCommand_copyTransforms), METH_VARARGS,
       "Copy resolved objects as siblings with a world-space delta and select the copies." },
@@ -1636,33 +1675,33 @@ static PyMethodDef PyCommand_methods[] = {
       "Set one USD attribute value in the active edit layer." },
     { "set_attribute_values", reinterpret_cast<PyCFunction>(PyCommand_setAttributeValues), METH_VARARGS,
       "Set one value on several USD attributes in the active edit layer." },
-    { "reset_attribute_values", reinterpret_cast<PyCFunction>(PyCommand_resetAttributeValues), METH_VARARGS,
+    { "clear_attribute_values", reinterpret_cast<PyCFunction>(PyCommand_clearAttributeValues), METH_VARARGS,
       "Clear authored default values from USD attributes in the active edit layer." },
-    { "reset_attribute_override", reinterpret_cast<PyCFunction>(PyCommand_resetAttributeOverride), METH_VARARGS,
-      "Reset one USD attribute override in the active edit layer." },
-    { "reset_attribute_overrides", reinterpret_cast<PyCFunction>(PyCommand_resetAttributeOverrides), METH_VARARGS,
-      "Reset several USD attribute overrides in the active edit layer." },
+    { "clear_attribute_opinion", reinterpret_cast<PyCFunction>(PyCommand_clearAttributeOpinion), METH_VARARGS,
+      "Clear one USD attribute opinion in the active edit layer." },
+    { "clear_attribute_opinions", reinterpret_cast<PyCFunction>(PyCommand_clearAttributeOpinions), METH_VARARGS,
+      "Clear several USD attribute opinions in the active edit layer." },
     { "center_pivots", reinterpret_cast<PyCFunction>(PyCommand_centerPivots), METH_VARARGS,
       "Center transform pivots on prim bounds." },
     { "transform_pivots", reinterpret_cast<PyCFunction>(PyCommand_transformPivots), METH_VARARGS,
       "Apply a world-space delta to pivot frames while preserving geometry." },
-    { "reset_pivots", reinterpret_cast<PyCFunction>(PyCommand_resetPivots), METH_VARARGS,
-      "Reset Stageviz-authored pivots while preserving local transforms." },
-    { "reset_transforms", reinterpret_cast<PyCFunction>(PyCommand_resetTransforms), METH_VARARGS,
-      "Reset local transforms in the active edit layer." },
+    { "clear_pivots", reinterpret_cast<PyCFunction>(PyCommand_clearPivots), METH_VARARGS,
+      "Clear Stageviz-authored pivots while preserving local transforms." },
     { "identity_transforms", reinterpret_cast<PyCFunction>(PyCommand_identityTransforms), METH_VARARGS,
-      "Set local transforms to identity using edit-layer-aware transform reset behavior." },
-    { "reset_overrides", reinterpret_cast<PyCFunction>(PyCommand_resetOverrides), METH_VARARGS,
-      "Reset direct overrides in the active edit layer." },
+      "Set local transforms to identity using edit-layer-aware transform clearing behavior." },
+    { "clear_opinions", reinterpret_cast<PyCFunction>(PyCommand_clearOpinions), METH_VARARGS,
+      "Clear property opinions in the active edit layer." },
     { "connect_shader_input", reinterpret_cast<PyCFunction>(PyCommand_connectShaderInput), METH_VARARGS,
       "Connect an existing shader output to an existing shader input with undo support." },
     { "connect_shader_node", reinterpret_cast<PyCFunction>(PyCommand_connectShaderNode), METH_VARARGS,
       "Create a shader node and connect one of its outputs to a shader input with undo support." },
-    { "reset_dependencies", reinterpret_cast<PyCFunction>(PyCommand_resetDependencies), METH_VARARGS,
-      "Reset authored relationship targets and attribute connections with undo support." },
+    { "clear_relationships", reinterpret_cast<PyCFunction>(PyCommand_clearRelationships), METH_VARARGS,
+      "Clear edit-layer relationship opinions with exact undo in the original edit target." },
+    { "clear_dependencies", reinterpret_cast<PyCFunction>(PyCommand_clearDependencies), METH_VARARGS,
+      "Clear authored relationship targets and attribute connections with undo support." },
     { "disconnect_shader_inputs", reinterpret_cast<PyCFunction>(PyCommand_disconnectShaderInputs), METH_VARARGS,
       "Disconnect incoming shader-input connections with undo support." },
-    { "reset_shader_inputs", reinterpret_cast<PyCFunction>(PyCommand_resetShaderInputs), METH_VARARGS,
+    { "clear_shader_inputs", reinterpret_cast<PyCFunction>(PyCommand_clearShaderInputs), METH_VARARGS,
       "Reset edit-layer shader-input opinions with undo support." },
     { "connect_materialx_node", reinterpret_cast<PyCFunction>(PyCommand_connectMaterialXNode), METH_VARARGS,
       "Create a MaterialX node and connect it to a shader input with undo support." },

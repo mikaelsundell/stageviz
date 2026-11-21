@@ -12,7 +12,7 @@ _base = runpy.run_path(str(Path(__file__).with_name('testviewport.py')),
 tb = _base['tb']
 
 
-class ResetOpinionsTest(_base['ViewportTest']):
+class ClearOpinionsTest(_base['ViewportTest']):
     def setup(self):
         assert self.disposable
         self.original_filename = stageviz.session().filename()
@@ -48,7 +48,7 @@ class ResetOpinionsTest(_base['ViewportTest']):
         assert tb.wait_for_commands()
         stageviz.command.select_paths(['/Group'])
         assert tb.wait_for_commands()
-        self.snapshot('reset_opinions_loaded')
+        self.snapshot('clear_opinions_loaded')
 
     def menu(self, group=None, locked=False):
         QtCore, QtGui, QtTest, QtWidgets = tb.qt()
@@ -68,11 +68,11 @@ class ResetOpinionsTest(_base['ViewportTest']):
         def inspect():
             try:
                 reset = next(w for w in QtWidgets.QApplication.allWidgets()
-                             if isinstance(w, QtWidgets.QMenu) and w.objectName() == 'resetOpinionsMenu')
+                             if isinstance(w, QtWidgets.QMenu) and w.objectName() == 'clearOpinionsMenu')
                 labels = ['separator' if a.isSeparator() else a.text() for a in reset.actions()]
-                assert labels == (['All'] if locked else [
-                    'All', 'separator', 'Transforms', 'Visibility', 'Materials',
-                    'Geometry', 'Primvars', 'Other']), labels
+                assert labels == (['Clear', 'All'] if locked else [
+                    'Clear', 'All', 'separator', 'Transforms', 'Visibility', 'Materials',
+                    'Geometry', 'Primvars', 'separator', 'Other']), labels
                 assert reset.menuAction().isEnabled() != locked
                 result.extend(labels)
                 if locked:
@@ -83,7 +83,7 @@ class ResetOpinionsTest(_base['ViewportTest']):
                               and any(a.menu() == reset for a in w.actions()))
                 parent.setActiveAction(reset.menuAction())
                 reset.popup(parent.mapToGlobal(parent.actionGeometry(reset.menuAction()).topRight()))
-                self.snapshot('reset_opinions_menu')
+                self.snapshot('clear_opinions_menu')
                 assert reset.grab().save(str(self.directory / 'reset_menu.png'))
                 if group is None:
                     close()
@@ -121,7 +121,7 @@ class ResetOpinionsTest(_base['ViewportTest']):
                   'geometry': ['radius'], 'primvars': ['primvars:test'], 'other': ['customNote']}
         self.menu()
         for group, names in groups.items():
-            stageviz.command.reset_overrides(['/Group', '/Group/Sphere', '/Owned'], group)
+            stageviz.command.clear_opinions(['/Group', '/Group/Sphere', '/Owned'], group)
             assert tb.wait_for_commands()
             for name in names:
                 assert not root.GetPropertyAtPath(spec + '.' + name)
@@ -142,11 +142,11 @@ class ResetOpinionsTest(_base['ViewportTest']):
         stageviz.command.undo()
         assert tb.wait_for_commands()
         assert root.ExportToString() == original
-        stageviz.command.reset_overrides(['/Group'])
+        stageviz.command.clear_opinions(['/Group'])
         assert tb.wait_for_commands()
         assert not list(root.GetPrimAtPath(spec).properties)
         assert stage.GetPrimAtPath(spec).IsDefined()
-        self.snapshot('reset_opinions_all')
+        self.snapshot('clear_opinions_all')
         stageviz.command.undo()
         assert tb.wait_for_commands()
         assert root.ExportToString() == original
@@ -155,10 +155,10 @@ class ResetOpinionsTest(_base['ViewportTest']):
         self.menu(locked=True)
         root.SetPermissionToEdit(True)
         try:
-            stageviz.command.reset_overrides(['/Group'], 'invalid')
+            stageviz.command.clear_opinions(['/Group'], 'invalid')
             raise AssertionError('invalid reset group accepted')
         except ValueError:
             pass
         assert list(session.paths()) == ['/Group']
         assert self.fixture.read_text().startswith('#usda 1.0')
-        self.snapshot('reset_opinions_restored')
+        self.snapshot('clear_opinions_restored')

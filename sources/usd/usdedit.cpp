@@ -227,7 +227,9 @@ namespace edit {
             return false;
         }
 
-        if (!layer::validateParent(stage_, editTarget_.GetLayer(), parentPath, validationError)) {
+        // A same-parent rename does not edit the parent scope. Its strongest
+        // opinion may legitimately live above the child in another local layer.
+        if (!layer::validateParent(stage_, editTarget_.GetLayer(), parentPath, validationError, false)) {
             error = validationError;
             return false;
         }

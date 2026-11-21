@@ -5,7 +5,11 @@
 #pragma once
 
 #include "stageviz.h"
+#include <QList>
 #include <QOpenGLFunctions>
+#include <QPair>
+#include <QString>
+#include <QStringList>
 #include <pxr/base/gf/frustum.h>
 #include <pxr/base/gf/matrix4d.h>
 #include <pxr/base/gf/quaternion.h>
@@ -21,8 +25,58 @@
 
 PXR_NAMESPACE_USING_DIRECTIVE
 
+class QAction;
+class QMenu;
+
 namespace stageviz {
 namespace qt {
+
+    /**
+     * @brief Adds grouped layer-source filters beneath a Sources submenu.
+     *
+     * Empty groups are omitted and package members appear only under Packages.
+     *
+     * @param parent Display menu that owns the Sources submenu.
+     * @param localLayers Local layer identifier and display-label pairs in stack order.
+     * @param contributors Additional contributing layer identifiers.
+     * @param active Included identifiers when filtering is enabled.
+     * @param filtered Whether the explicit included-identifier list is active.
+     * @return Checkable source actions, with full identifiers in data and tooltips.
+     */
+    QList<QAction*> sourceFilterMenu(QMenu* parent, const QList<QPair<QString, QString>>& localLayers,
+                                     const QStringList& contributors, const QStringList& active, bool filtered);
+
+    /**
+     * @brief Returns readable defining and strongest-opinion layer fields for a tooltip.
+     *
+     * @param definingIdentifier Layer containing the strongest definition, or empty.
+     * @param strongestIdentifier Layer containing the strongest prim opinion, or empty.
+     * @param rootIdentifier Root layer identifier used to label anonymous roots.
+     * @return Plain-text provenance fields, with stronger overrides distinguished.
+     */
+    QList<QPair<QString, QString>> layerToolTipFields(const QString& definingIdentifier,
+                                                      const QString& strongestIdentifier,
+                                                      const QString& rootIdentifier);
+
+    /**
+     * @brief Returns tooltip layer provenance for a composed prim.
+     *
+     * @param prim Prim whose definition and strongest opinions are described.
+     * @return Plain-text layer fields for toolTip().
+     */
+    QList<QPair<QString, QString>> primLayerToolTipFields(const UsdPrim& prim);
+
+    /**
+     * @brief Formats a rich-text tooltip with a heading and aligned information fields.
+     *
+     * Text is HTML-escaped and long paths can wrap without losing their contents.
+     * A field with an empty value introduces a section heading.
+     *
+     * @param title Tooltip heading.
+     * @param fields Plain-text labels and values, in display order.
+     * @return Escaped Qt rich text for a tooltip.
+     */
+    QString toolTip(const QString& title, const QList<QPair<QString, QString>>& fields);
 
     /**
      * @name Qt / Image Conversions

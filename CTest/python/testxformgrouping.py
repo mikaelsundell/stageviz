@@ -45,7 +45,7 @@ class XformGroupingTest(_base["ViewportTest"]):
                 if not isinstance(widget, QtWidgets.QMenu) or not widget.isVisible():
                     continue
                 for action in widget.actions():
-                    if action.text() == label and action.isEnabled():
+                    if action.text() == ({"New": "Xform", "Parent": "Parent Xform"}.get(label, label)) and action.isEnabled():
                         widget.setActiveAction(action)
                         chosen.append(True)
                         QtTest.QTest.keyClick(widget, QtCore.Qt.Key.Key_Return)
@@ -56,8 +56,8 @@ class XformGroupingTest(_base["ViewportTest"]):
                 if not isinstance(widget, QtWidgets.QMenu) or not widget.isVisible():
                     continue
                 for action in widget.actions():
-                    if action.text() == "Xform" and action.menu():
-                        assert [item.text() for item in action.menu().actions()] == ["New", "Parent"]
+                    if action.text() == "Create" and action.menu():
+                        assert [item.text() for item in action.menu().actions()] == ["Xform", "Parent Xform"]
                         widget.setActiveAction(action)
                         action.menu().popup(widget.mapToGlobal(widget.actionGeometry(action).topRight()))
                         QtCore.QTimer.singleShot(50, choose_action)
@@ -94,15 +94,13 @@ class XformGroupingTest(_base["ViewportTest"]):
                     menus[menu.objectName()] = menu
             except RuntimeError:
                 continue
-        assert len(menus) == 4
-        for parent_name, submenu_name in (("menuEdit", "menuXform"), ("menuCreate", "menuCreateXform")):
-            submenu = menus[submenu_name]
-            assert submenu.parent() is menus[parent_name]
-            assert submenu.menuAction() in menus[parent_name].actions()
-            assert [action.objectName() for action in submenu.actions()] == ["createXform", "parentXform"]
-        assert menus["menuXform"] is not menus["menuCreateXform"]
-        # Native macOS menus require a separate QMenu for every attachment.
-        # Sharing ordinary QAction objects between those menus remains safe.
+        assert set(menus) == {"menuEdit", "menuCreate", "menuXform"}
+        submenu = menus["menuXform"]
+        assert submenu.parent() is menus["menuEdit"]
+        assert submenu.menuAction() in menus["menuEdit"].actions()
+        assert [action.objectName() for action in submenu.actions()] == ["createXform", "parentXform"]
+        assert all(action.menu() is None or action.menu().title() != "Xform"
+                   for action in menus["menuCreate"].actions())
         owners = {}
         graph = {}
         for key, menu in menus.items():

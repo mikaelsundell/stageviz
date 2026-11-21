@@ -740,7 +740,7 @@ the composed layer stack, so retain their identifier before muting.
 ### Namespace and prim creation
 
 `delete_paths(paths) -> None`
-: Delete eligible strongest-editable prims, reducing overlapping selections to root paths. Remove affected authored dependencies; undo restores specs, ordering, selection and mask.
+: Delete eligible strongest-editable prims, reducing overlapping selections to root paths. Remove affected authored dependencies and unused local flattened instance sources associated with the deleted instances. Surviving authored users in inactive variants and muted or unloaded layer assets protect shared sources; unresolved assets conservatively prevent cleanup. Undo restores deleted prims and cleaned sources, ordering, selection and mask.
 
 `copy_paths(paths) -> None`
 : Copy one or more prim paths as sibling prims.
@@ -762,6 +762,12 @@ the composed layer stack, so retain their identifier before muting.
   select the created prim, so read `session.paths()` for the actual resulting path.
   Mesh/curve schemas created here do not imply populated topology; use the
   dedicated creation commands when you want their built-in geometry.
+  Creation can add children beneath composed parents defined in other layers,
+  including stronger root-layer definitions and referenced structures. Parent
+  specs are authored as needed in the edit layer; source definitions are retained.
+  Native instance/prototype namespaces and inactive parents are rejected. Creation
+  undo/redo restores local child-order opinions and removes newly created inert
+  parent specs. This does not relax move/rename ownership rules.
 
 `new_scope(parent_path, name) -> None`
 : Create a Scope container.
@@ -842,13 +848,13 @@ Supported Python values for the two setter functions are:
 
 Other value types are rejected by this binding.
 
-`reset_attribute_values(attribute_paths) -> None`
+`clear_attribute_values(attribute_paths) -> None`
 : Clear authored default values from attributes in the active edit layer.
 
-`reset_attribute_override(attribute_path) -> None`
+`clear_attribute_opinion(attribute_path) -> None`
 : Remove the eligible edit-layer attribute override to expose its weaker property opinion.
 
-`reset_attribute_overrides(attribute_paths) -> None`
+`clear_attribute_opinions(attribute_paths) -> None`
 : Apply the same override reset to several attributes.
 
 ### Transforms and pivots
@@ -878,26 +884,44 @@ Other value types are rejected by this binding.
 `center_pivots(paths) -> None`
 : Center pivots on target bounds.
 
-`reset_pivots(paths) -> None`
-: Reset Stageviz-authored pivots while preserving local transforms.
-
-`reset_transforms(paths) -> None`
-: Reset local transforms in the active edit layer.
+`clear_pivots(paths) -> None`
+: Clear Stageviz-authored pivots while preserving local transforms.
 
 `identity_transforms(paths) -> None`
-: Set local transforms to identity using edit-layer-aware transform reset behavior.
+: Remove local transform opinions, exposing weaker transforms or authoring identity when none exist.
 
-`reset_overrides(paths, group="all") -> None`
-: Recursively remove edit-layer property overrides on composed prims, exposing weaker opinions. Preserve metadata, composition arcs and edit-layer-owned definitions. Optional positional `group` is `all`, `transforms`, `visibility`, `materials`, `geometry`, `primvars`, `lights`, `cameras`, or `other`. Materials includes bindings and shading inputs/outputs; geometry uses USD schema properties. Undo restores the removed property specs in the original authoring layer, even after switching edit targets.
+`clear_opinions(paths, group="all") -> None`
+: Recursively remove edit-layer property overrides on composed prims, exposing weaker opinions. All and Other also remove inert `over` containers. Preserve metadata, composition arcs and edit-layer-owned definitions. Optional positional `group` is `all`, `transforms`, `visibility`, `materials`, `geometry`, `primvars`, `lights`, `cameras`, or `other`. Materials includes bindings and shading inputs/outputs; geometry uses USD schema properties. Undo restores the removed property specs in the original authoring layer, even after switching edit targets.
 
 ### Materials
+
+`override_paths(paths) -> None`
+: Author explicit `over` specs for existing ordinary prims in the current edit
+  target. Preserve existing local definitions and metadata; reject proxies,
+  prototypes and `/`. Undo removes newly created inert specs and ancestor overs
+  in the original target. Positional-only.
+
+`replace_material_network(paths, type="preview_surface") -> None`
+: Replace existing materials' connected networks in the active edit target.
+  Type is `preview_surface`, `standard_surface`, or `open_pbr_surface`. Retain
+  material paths, bindings and metadata, author fresh shader nodes and explicit
+  connections, and disconnect weaker outputs in every render context. Weaker
+  nodes remain unchanged. Reject proxies, locked targets and stronger terminal
+  opinions that the current target cannot override. Undo restores the exact
+  previous local material subtree in the original target. Positional-only.
 
 `assign_material(paths, material_path) -> None`
 : Bind an existing material directly to selected ordinary prims, groups or
   instance roots. Proxy selections resolve upward to their nearest non-proxy
   ancestor, normally the instance root; duplicate owners are processed once.
   Assigning through one proxy therefore affects all children of that instance.
-  Parent bindings use stronger-than-descendants strength. No geometry,
+  Parent bindings and whole-mesh assignments with material-binding face subsets
+  use stronger-than-descendants strength. Existing subset bindings are retained;
+  clearing the mesh assignment reveals them again. Assigning a face subset under
+  a strong direct mesh binding automatically preserves all other subsets' visible
+  materials in the edit layer and makes the mesh binding weaker than descendants.
+  The selected subset can then use its own material; one undo restores the exact
+  mesh and subset opinions. No geometry,
   instancing or source assets are changed. Undo and redo use the original edit
   target and restore exact authored property/API-schema state.
   Independent per-proxy materials require making the instance editable first.
@@ -933,10 +957,16 @@ Other value types are rejected by this binding.
 `disconnect_shader_inputs(input_paths) -> None`
 : Remove incoming connections authored in the edit layer while retaining input properties.
 
-`reset_shader_inputs(input_paths) -> None`
+`clear_shader_inputs(input_paths) -> None`
 : Remove edit-layer input properties to expose weaker opinions/schema defaults.
 
-`reset_dependencies(property_paths) -> None`
+`clear_relationships(property_paths) -> None`
+: Remove complete relationship specs in the current edit target. Proxy and
+  prototype properties are read-only. Weaker relationship targets may reappear;
+  no empty-target blocking opinion is authored. Undo/redo use the original edit
+  target and preserve exact targets and metadata. Positional-only.
+
+`clear_dependencies(property_paths) -> None`
 : Remove edit-layer relationship targets and attribute connections; retain the
   properties and values. Undo restores previous property specs.
 
@@ -1002,6 +1032,24 @@ The wrapper is non-owning.
 
 `setSceneLightsEnabled(enabled) -> None`
 
+`showGuides() -> bool`
+: Return whether viewport guides purpose geometry is displayed.
+
+`setShowGuides(enabled) -> None`
+: Set viewport guides purpose visibility through native Hydra controls. Saved with preserved view state; independent of Outliner filtering and isolation. Default-purpose geometry remains included.
+
+`showProxy() -> bool`
+: Return whether viewport proxy purpose geometry is displayed.
+
+`setShowProxy(enabled) -> None`
+: Set viewport proxy purpose visibility through native Hydra controls. Saved with preserved view state; independent of Outliner filtering and isolation. Default-purpose geometry remains included.
+
+`showRender() -> bool`
+: Return whether viewport render purpose geometry is displayed.
+
+`setShowRender(enabled) -> None`
+: Set viewport render purpose visibility through native Hydra controls. Saved with preserved view state; independent of Outliner filtering and isolation. Default-purpose geometry remains included.
+
 `sceneMaterialsEnabled() -> bool`
 
 `setSceneMaterialsEnabled(enabled) -> None`
@@ -1019,8 +1067,9 @@ Texture input conversion remains the responsibility of USD/MaterialX.
 Rendered material swatches follow `colorView()` while keeping exposure zero and
 viewing gamma one. Visible swatches reuse cached floating-point linear renders;
 hidden ones refresh when shown. Their linear/display image cache uses a 128 MiB
-LRU budget per material renderer. Texture image thumbnails keep the existing
-OpenImageIO preview conversion.
+LRU budget per material renderer. Previously rendered layer compositions share
+that budget and can be reused when their composed networks match. Texture image
+thumbnails keep the existing OpenImageIO preview conversion.
 
 `exposure() -> float`
 

@@ -8,6 +8,7 @@
 #include "outlinertree.h"
 #include "perfscope.h"
 #include "primitem.h"
+#include "qtutils.h"
 #include "signalguard.h"
 #include "tracelocks.h"
 #include "ui.h"
@@ -43,6 +44,7 @@ public Q_SLOTS:
     void expand();
     void follow(bool enabled);
     void showDisplayMenu();
+    void updateDisplayButton();
     void filterChanged(const QString& filter);
     void colorsChanged();
     void editLayerChanged(SdfLayerHandle layer);
@@ -57,6 +59,7 @@ public:
 
     struct Data {
         bool followEnabled;
+        bool displayMenuOpen = false;
         QScopedPointer<ViewContext> context;
         QScopedPointer<Ui_OutlinerView> ui;
         QPointer<OutlinerView> view;
@@ -76,6 +79,7 @@ OutlinerViewPrivate::init()
     d.context->setStageLock(session()->stageLock());
     d.context->setCommandStack(session()->commandStack());
     d.context->setSelectionList(session()->selectionList());
+    d.context->setViewState(session()->viewState());
     attach(d.ui->depth);
     outlinerTree()->setColumnCount(3);
     outlinerTree()->setHeaderLabels(QStringList() << "Name"
@@ -95,6 +99,8 @@ OutlinerViewPrivate::init()
     connect(d.ui->expand, &QToolButton::clicked, this, &OutlinerViewPrivate::expand);
     connect(d.ui->follow, &QToolButton::toggled, this, &OutlinerViewPrivate::follow);
     connect(d.ui->display, &QToolButton::clicked, this, &OutlinerViewPrivate::showDisplayMenu);
+    connect(d.ui->display, &QWidget::customContextMenuRequested, this, [this](const QPoint&) { showDisplayMenu(); });
+    connect(outlinerTree(), &OutlinerTree::displayFiltersChanged, this, &OutlinerViewPrivate::updateDisplayButton);
     connect(d.ui->depth, &QSlider::valueChanged, this, &OutlinerViewPrivate::depthChanged);
     connect(session(), &Session::colorsChanged, this, &OutlinerViewPrivate::colorsChanged);
     connect(session(), &Session::editLayerChanged, this, &OutlinerViewPrivate::editLayerChanged);
@@ -102,6 +108,7 @@ OutlinerViewPrivate::init()
     connect(session(), &Session::primsChanged, this, &OutlinerViewPrivate::primsChanged);
     connect(session(), &Session::stageChanged, this, &OutlinerViewPrivate::stageChanged);
     connect(session()->selectionList(), &SelectionList::selectionChanged, this, &OutlinerViewPrivate::selectionChanged);
+    updateDisplayButton();
 }
 
 OutlinerTree*
@@ -186,7 +193,8 @@ OutlinerViewPrivate::showDisplayMenu()
         QString label;
     };
 
-    QList<DisplayEntry> layers;
+    QList<QPair<QString, QString>> layers;
+    QStringList contributors;
     QStringList types;
     const bool untitledStage = session()->filename().isEmpty();
     {
@@ -215,6 +223,11 @@ OutlinerViewPrivate::showDisplayMenu()
             layers.append({ identifier, label });
         }
 
+        for (const auto& layer : stage->GetUsedLayers()) {
+            if (layer && layer != stage->GetSessionLayer())
+                contributors.append(QString::fromStdString(layer->GetIdentifier()));
+        }
+
         QSet<QString> seenTypes;
         for (const UsdPrim& prim : UsdPrimRange(stage->GetPseudoRoot())) {
             const QString type = QString::fromStdString(prim.GetTypeName().GetString());
@@ -231,17 +244,14 @@ OutlinerViewPrivate::showDisplayMenu()
         return;
 
     QMenu menu(d.ui->display);
-    menu.addAction(tr("Layers"))->setEnabled(false);
-
+    menu.setObjectName("outlinerDisplayMenu");
+    menu.setToolTipsVisible(true);
+    const auto sourceActions = qt::sourceFilterMenu(&menu, layers, contributors, tree->displayLayers(),
+                                                    tree->displayLayersFiltered());
     QStringList allLayerKeys;
-    for (const DisplayEntry& entry : std::as_const(layers))
-        allLayerKeys.append(entry.key);
-    const QStringList activeLayers = tree->displayLayers();
-    for (const DisplayEntry& entry : std::as_const(layers)) {
-        QAction* action = menu.addAction(entry.label);
-        action->setCheckable(true);
-        action->setChecked(!tree->displayLayersFiltered() || activeLayers.contains(entry.key));
-        action->setData(entry.key);
+    for (auto* action : sourceActions)
+        allLayerKeys.append(action->data().toString());
+    for (auto* action : sourceActions) {
         connect(action, &QAction::toggled, &menu, [tree, allLayerKeys, action](bool checked) {
             QStringList selected = tree->displayLayers();
             if (!tree->displayLayersFiltered())
@@ -299,7 +309,42 @@ OutlinerViewPrivate::showDisplayMenu()
                                 tree->displayTypesFiltered());
     });
 
+    menu.addSeparator();
+    menu.addAction(tr("Purpose"))->setEnabled(false);
+    const QList<DisplayEntry> purposes { { QStringLiteral("default"), tr("Default") },
+                                         { QStringLiteral("render"), tr("Render") },
+                                         { QStringLiteral("proxy"), tr("Proxy") },
+                                         { QStringLiteral("guide"), tr("Guide") } };
+    for (const auto& purpose : purposes) {
+        QAction* action = menu.addAction(purpose.label);
+        action->setObjectName(QStringLiteral("outlinerPurpose_%1").arg(purpose.key));
+        action->setCheckable(true);
+        action->setChecked(tree->displayPurposes().contains(purpose.key));
+        action->setData(QStringLiteral("purpose:%1").arg(purpose.key));
+        connect(action, &QAction::toggled, &menu, [tree, purpose](bool checked) {
+            QStringList selected = tree->displayPurposes();
+            if (checked && !selected.contains(purpose.key))
+                selected.append(purpose.key);
+            else if (!checked)
+                selected.removeAll(purpose.key);
+            tree->setDisplayPurposes(selected);
+        });
+    }
+
+    d.displayMenuOpen = true;
+    updateDisplayButton();
     menu.exec(d.ui->display->mapToGlobal(QPoint(0, d.ui->display->height())));
+    d.displayMenuOpen = false;
+    updateDisplayButton();
+}
+
+void
+OutlinerViewPrivate::updateDisplayButton()
+{
+    const auto* tree = outlinerTree();
+    const bool customized = tree->displayLayersFiltered() || tree->displayTypesFiltered() || tree->showUntyped()
+                            || tree->displayPurposes().size() != 4;
+    d.ui->display->setChecked(d.displayMenuOpen || (d.ui->display->isEnabled() && customized));
 }
 
 void
@@ -367,6 +412,7 @@ OutlinerViewPrivate::stageChanged(UsdStageRefPtr stage, Session::LoadPolicy poli
     d.ui->depth->setEnabled(loaded);
     d.ui->follow->setEnabled(loaded);
     d.ui->display->setEnabled(loaded);
+    updateDisplayButton();
 
     if (loaded) {
         outlinerTree()->setDisplayFilters({}, {});

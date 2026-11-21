@@ -356,6 +356,16 @@ public:
     void setBoundingBox(const GfBBox3d& boundingBox);
 
     /**
+     * @brief Updates current document bounds for adaptive clipping without changing the view.
+     *
+     * Framing bounds, focus, distance, orientation and projection remain unchanged.
+     * Render views supply the latest scene bounds after geometry edits.
+     *
+     * @param range Current document geometry bounds in world space.
+     */
+    void setSceneRange(const GfRange3d& range);
+
+    /**
      * @brief Sets additional viewport bounds used to calculate the far clip.
      *
      * Auxiliary geometry can extend beyond the document bounds. These bounds

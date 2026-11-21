@@ -124,3 +124,16 @@ times and process RSS. These timings include CPU submission and driver stalls,
 not GPU hardware execution. No readback, synchronization wait or diagnostic
 logging is added during measurement. RSS is sampled after each scene's measured
 conditions and final checkpoint, so it includes allocated checkpoint resources.
+
+## First transform-handle presentation
+
+`benchmark_gizmo_first_show.py --app /absolute/path/to/stageviz --output /new/output`
+starts a fresh disposable process for each first tool (Move, Rotate, Scale) and
+round. It compares the first `renderReady` response with repeated switches,
+records unchanged document root/session layers and selection, and saves rendered
+handles, a Select-mode frame, Qt snapshots and independent MCP session oracles.
+Run builds serially with equal viewport sizes; use `--rounds` for replication.
+Timings include CPU submission and driver stalls, not GPU hardware execution.
+The first frame of the stage pays for hidden renderer preparation, so this moves
+the first-interaction cost to viewport initialization. No OS/shader caches are
+cleared, and screenshots/readbacks occur outside measured spans.

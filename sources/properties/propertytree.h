@@ -125,7 +125,7 @@ protected:
      * @brief Shows actions for the property under the cursor.
      *
      * The menu provides semantic Select for SdfPath-valued rows, Copy Name
-     * and Copy Value, and a Reset submenu for authored values, relationship/
+     * and Copy Value, and a Clear submenu for authored values, relationship/
      * connection dependencies (including material bindings), and edit-layer
      * overrides when those operations are applicable.
      *

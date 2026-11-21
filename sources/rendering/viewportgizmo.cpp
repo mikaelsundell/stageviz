@@ -6,6 +6,7 @@
 #include "application.h"
 #include "gizmoprojection.h"
 #include "paths.h"
+#include "perfscope.h"
 #include "renderengine.h"
 #include "session.h"
 #include "tracelocks.h"
@@ -47,6 +48,7 @@ public:
     bool rotationAngle(int axis, const QPointF& pos, double& angle, double* distance);
     int hitTest(const QPointF& pos);
     void clearGeometry();
+    void ensureMeshes();
     void updateGeometry();
     void draw(QPainter& painter);
     void drawRotationFeedback(QPainter& painter);
@@ -391,9 +393,143 @@ ViewportGizmoPrivate::clearGeometry()
 }
 
 void
+ViewportGizmoPrivate::ensureMeshes()
+{
+    if (!d.host->auxiliaryStage() || d.meshesBuilt)
+        return;
+    const double fullCircle = GfDegreesToRadians(360.0);
+    const SdfPath root = paths::auxiliary::transform;
+    const GfVec3f colors[] = { GfVec3f(0.0f), GfVec3f(0.80f, 0.18f, 0.20f), GfVec3f(0.16f, 0.75f, 0.24f),
+                               GfVec3f(0.22f, 0.40f, 0.91f) };
+    constexpr int sides = 12;
+    constexpr int ringSegments = 96;
+    WRITE_LOCKER(locker, session()->auxiliaryLock(), "auxiliaryLock");
+    PerfScope buildScope("gizmo.geometry.build");
+    UsdGeomScope::Define(d.host->auxiliaryStage(), paths::auxiliary::display);
+    UsdGeomScope::Define(d.host->auxiliaryStage(), paths::auxiliary::materials);
+    UsdGeomXform::Define(d.host->auxiliaryStage(), root);
+    // Build all three modes in local unit coordinates once. Hydra keeps
+    // the meshes across mode switches and pivot/zoom updates.
+    for (const auto mode : { Mode::Move, Mode::Rotate, Mode::Scale }) {
+        const char* modeName = mode == Mode::Move ? "Move" : (mode == Mode::Rotate ? "Rotate" : "Scale");
+        const SdfPath modePath = root.AppendChild(TfToken(modeName));
+        UsdGeomXform::Define(d.host->auxiliaryStage(), modePath).CreateVisibilityAttr(VtValue(UsdGeomTokens->inherited));
+        constexpr double radius = 1.0;
+        for (int axis = 1; axis <= 3; ++axis) {
+            const GfVec3d normal = ViewportGizmo::axisVector(axis);
+            const GfVec3d a = ViewportGizmo::axisVector(axis % 3 + 1);
+            const GfVec3d b = GfCross(normal, a);
+            VtVec3fArray points;
+            VtIntArray counts;
+            VtIntArray indices;
+            auto vertex = [&](const GfVec3d& point) {
+                points.push_back(
+                    GfVec3f(static_cast<float>(point[0]), static_cast<float>(point[1]), static_cast<float>(point[2])));
+            };
+            auto face = [&](int i, int j, int k, int l) {
+                counts.push_back(4);
+                indices.push_back(i);
+                indices.push_back(j);
+                indices.push_back(k);
+                indices.push_back(l);
+            };
+            auto tube = [&](const GfVec3d& from, const GfVec3d& to, double r, int segments) {
+                const GfVec3d direction = (to - from).GetNormalized();
+                const GfVec3d u = std::abs(GfDot(direction, GfVec3d::ZAxis())) < 0.9
+                                      ? GfCross(direction, GfVec3d::ZAxis()).GetNormalized()
+                                      : GfCross(direction, GfVec3d::YAxis()).GetNormalized();
+                const GfVec3d v = GfCross(direction, u);
+                const int base = static_cast<int>(points.size());
+                for (int i = 0; i < 2; ++i)
+                    for (int j = 0; j < segments; ++j) {
+                        const double angle = fullCircle * j / segments;
+                        vertex((i ? to : from) + r * (u * std::cos(angle) + v * std::sin(angle)));
+                    }
+                for (int j = 0; j < segments; ++j) {
+                    const int next = (j + 1) % segments;
+                    face(base + j, base + next, base + segments + next, base + segments + j);
+                }
+            };
+            if (mode == Mode::Rotate) {
+                const double ringRadius = radius;
+                const double tubeRadius = radius * 0.018;
+                for (int i = 0; i < ringSegments; ++i) {
+                    const double theta = fullCircle * i / ringSegments;
+                    const GfVec3d radial = a * std::cos(theta) + b * std::sin(theta);
+                    for (int j = 0; j < sides; ++j) {
+                        const double phi = fullCircle * j / sides;
+                        vertex((ringRadius + tubeRadius * std::cos(phi)) * radial
+                               + tubeRadius * std::sin(phi) * normal);
+                    }
+                }
+                for (int i = 0; i < ringSegments; ++i)
+                    for (int j = 0; j < sides; ++j) {
+                        const int nextI = (i + 1) % ringSegments;
+                        const int nextJ = (j + 1) % sides;
+                        face(i * sides + j, nextI * sides + j, nextI * sides + nextJ, i * sides + nextJ);
+                    }
+            }
+            else {
+                // Scale shafts terminate at the near face of the endpoint cube.
+                // Move shafts extend into the cone so there is no visible gap.
+                const double shaftEnd = mode == Mode::Scale ? 0.925 : 0.82;
+                tube(GfVec3d(0.0), normal * (radius * shaftEnd), radius * 0.023, sides);
+                if (mode == Mode::Move) {
+                    const int base = static_cast<int>(points.size());
+                    const GfVec3d bottom = normal * (radius * 0.77);
+                    for (int j = 0; j < sides; ++j) {
+                        const double angle = fullCircle * j / sides;
+                        vertex(bottom + radius * 0.095 * (a * std::cos(angle) + b * std::sin(angle)));
+                    }
+                    vertex(normal * radius);
+                    const int tip = static_cast<int>(points.size()) - 1;
+                    for (int j = 0; j < sides; ++j) {
+                        counts.push_back(3);
+                        indices.push_back(base + j);
+                        indices.push_back(base + (j + 1) % sides);
+                        indices.push_back(tip);
+                    }
+                }
+                else {
+                    const GfVec3d center = normal * radius;
+                    const double half = radius * 0.075;
+                    const int base = static_cast<int>(points.size());
+                    for (int sign = -1; sign <= 1; sign += 2)
+                        for (int j = 0; j < 4; ++j)
+                            vertex(center + normal * (half * sign) + a * (half * (j == 0 || j == 3 ? -1.0 : 1.0))
+                                   + b * (half * (j < 2 ? -1.0 : 1.0)));
+                    face(base, base + 3, base + 2, base + 1);
+                    face(base + 4, base + 5, base + 6, base + 7);
+                    for (int j = 0; j < 4; ++j)
+                        face(base + j, base + (j + 1) % 4, base + 4 + (j + 1) % 4, base + 4 + j);
+                }
+            }
+            const SdfPath meshPath = modePath.AppendChild(TfToken(axis == 1 ? "X" : (axis == 2 ? "Y" : "Z")));
+            UsdGeomMesh mesh = UsdGeomMesh::Define(d.host->auxiliaryStage(), meshPath);
+            mesh.CreatePointsAttr(VtValue(points));
+            mesh.CreateFaceVertexCountsAttr(VtValue(counts));
+            mesh.CreateFaceVertexIndicesAttr(VtValue(indices));
+            // Handles are fully tessellated polygon meshes. USD's
+            // default Catmull-Clark scheme would refine them again.
+            mesh.CreateSubdivisionSchemeAttr(VtValue(UsdGeomTokens->none));
+            mesh.CreateDoubleSidedAttr(VtValue(true));
+            const GfVec3f color = colors[axis];
+            const SdfPath materialPath = paths::auxiliary::materials.AppendChild(
+                TfToken((mode == Mode::Move ? "Move" : (mode == Mode::Rotate ? "Rotate" : "Scale"))
+                        + std::string(axis == 1 ? "X" : (axis == 2 ? "Y" : "Z"))));
+            ViewportAuxiliary::authorGridMaterial(d.host->auxiliaryStage(), materialPath, color);
+            UsdShadeMaterialBindingAPI::Apply(mesh.GetPrim())
+                .Bind(UsdShadeMaterial(d.host->auxiliaryStage()->GetPrimAtPath(materialPath)));
+        }
+    }
+    d.meshesBuilt = true;
+    UsdGeomImageable(d.host->auxiliaryStage()->GetPrimAtPath(root)).MakeInvisible();
+}
+
+void
 ViewportGizmoPrivate::updateGeometry()
 {
-    const double fullCircle = GfDegreesToRadians(360.0);
+    ensureMeshes();
     if (!d.host->auxiliaryStage())
         return;
     if (!d.frame.enabled || d.frame.mode == Mode::None || !d.host->stage() || !d.host->context()) {
@@ -419,135 +555,13 @@ ViewportGizmoPrivate::updateGeometry()
         return;
 
     const SdfPath root = paths::auxiliary::transform;
+    PerfScope geometryScope("gizmo.geometry.update");
     const GfVec3f colors[] = { GfVec3f(0.0f), GfVec3f(0.80f, 0.18f, 0.20f), GfVec3f(0.16f, 0.75f, 0.24f),
                                GfVec3f(0.22f, 0.40f, 0.91f) };
     const QColor selected = ui()->color(UI::ColorRole::Selection);
     const GfVec3f highlight(selected.redF(), selected.greenF(), selected.blueF());
-    constexpr int sides = 12;
-    constexpr int ringSegments = 96;
     {
         WRITE_LOCKER(locker, session()->auxiliaryLock(), "auxiliaryLock");
-        if (!d.meshesBuilt) {
-            UsdGeomScope::Define(d.host->auxiliaryStage(), paths::auxiliary::display);
-            UsdGeomScope::Define(d.host->auxiliaryStage(), paths::auxiliary::materials);
-            UsdGeomXform::Define(d.host->auxiliaryStage(), root);
-            // Build all three modes in local unit coordinates once. Hydra keeps
-            // the meshes across mode switches and pivot/zoom updates.
-            for (const auto mode : { Mode::Move, Mode::Rotate, Mode::Scale }) {
-                const char* modeName = mode == Mode::Move ? "Move" : (mode == Mode::Rotate ? "Rotate" : "Scale");
-                const SdfPath modePath = root.AppendChild(TfToken(modeName));
-                UsdGeomXform::Define(d.host->auxiliaryStage(), modePath);
-                constexpr double radius = 1.0;
-                for (int axis = 1; axis <= 3; ++axis) {
-                    const GfVec3d normal = ViewportGizmo::axisVector(axis);
-                    const GfVec3d a = ViewportGizmo::axisVector(axis % 3 + 1);
-                    const GfVec3d b = GfCross(normal, a);
-                    VtVec3fArray points;
-                    VtIntArray counts;
-                    VtIntArray indices;
-                    auto vertex = [&](const GfVec3d& point) {
-                        points.push_back(GfVec3f(static_cast<float>(point[0]), static_cast<float>(point[1]),
-                                                 static_cast<float>(point[2])));
-                    };
-                    auto face = [&](int i, int j, int k, int l) {
-                        counts.push_back(4);
-                        indices.push_back(i);
-                        indices.push_back(j);
-                        indices.push_back(k);
-                        indices.push_back(l);
-                    };
-                    auto tube = [&](const GfVec3d& from, const GfVec3d& to, double r, int segments) {
-                        const GfVec3d direction = (to - from).GetNormalized();
-                        const GfVec3d u = std::abs(GfDot(direction, GfVec3d::ZAxis())) < 0.9
-                                              ? GfCross(direction, GfVec3d::ZAxis()).GetNormalized()
-                                              : GfCross(direction, GfVec3d::YAxis()).GetNormalized();
-                        const GfVec3d v = GfCross(direction, u);
-                        const int base = static_cast<int>(points.size());
-                        for (int i = 0; i < 2; ++i)
-                            for (int j = 0; j < segments; ++j) {
-                                const double angle = fullCircle * j / segments;
-                                vertex((i ? to : from) + r * (u * std::cos(angle) + v * std::sin(angle)));
-                            }
-                        for (int j = 0; j < segments; ++j) {
-                            const int next = (j + 1) % segments;
-                            face(base + j, base + next, base + segments + next, base + segments + j);
-                        }
-                    };
-                    if (mode == Mode::Rotate) {
-                        const double ringRadius = radius;
-                        const double tubeRadius = radius * 0.018;
-                        for (int i = 0; i < ringSegments; ++i) {
-                            const double theta = fullCircle * i / ringSegments;
-                            const GfVec3d radial = a * std::cos(theta) + b * std::sin(theta);
-                            for (int j = 0; j < sides; ++j) {
-                                const double phi = fullCircle * j / sides;
-                                vertex((ringRadius + tubeRadius * std::cos(phi)) * radial
-                                       + tubeRadius * std::sin(phi) * normal);
-                            }
-                        }
-                        for (int i = 0; i < ringSegments; ++i)
-                            for (int j = 0; j < sides; ++j) {
-                                const int nextI = (i + 1) % ringSegments;
-                                const int nextJ = (j + 1) % sides;
-                                face(i * sides + j, nextI * sides + j, nextI * sides + nextJ, i * sides + nextJ);
-                            }
-                    }
-                    else {
-                        // Scale shafts terminate at the near face of the endpoint cube.
-                        // Move shafts extend into the cone so there is no visible gap.
-                        const double shaftEnd = mode == Mode::Scale ? 0.925 : 0.82;
-                        tube(GfVec3d(0.0), normal * (radius * shaftEnd), radius * 0.023, sides);
-                        if (mode == Mode::Move) {
-                            const int base = static_cast<int>(points.size());
-                            const GfVec3d bottom = normal * (radius * 0.77);
-                            for (int j = 0; j < sides; ++j) {
-                                const double angle = fullCircle * j / sides;
-                                vertex(bottom + radius * 0.095 * (a * std::cos(angle) + b * std::sin(angle)));
-                            }
-                            vertex(normal * radius);
-                            const int tip = static_cast<int>(points.size()) - 1;
-                            for (int j = 0; j < sides; ++j) {
-                                counts.push_back(3);
-                                indices.push_back(base + j);
-                                indices.push_back(base + (j + 1) % sides);
-                                indices.push_back(tip);
-                            }
-                        }
-                        else {
-                            const GfVec3d center = normal * radius;
-                            const double half = radius * 0.075;
-                            const int base = static_cast<int>(points.size());
-                            for (int sign = -1; sign <= 1; sign += 2)
-                                for (int j = 0; j < 4; ++j)
-                                    vertex(center + normal * (half * sign)
-                                           + a * (half * (j == 0 || j == 3 ? -1.0 : 1.0))
-                                           + b * (half * (j < 2 ? -1.0 : 1.0)));
-                            face(base, base + 3, base + 2, base + 1);
-                            face(base + 4, base + 5, base + 6, base + 7);
-                            for (int j = 0; j < 4; ++j)
-                                face(base + j, base + (j + 1) % 4, base + 4 + (j + 1) % 4, base + 4 + j);
-                        }
-                    }
-                    const SdfPath meshPath = modePath.AppendChild(TfToken(axis == 1 ? "X" : (axis == 2 ? "Y" : "Z")));
-                    UsdGeomMesh mesh = UsdGeomMesh::Define(d.host->auxiliaryStage(), meshPath);
-                    mesh.CreatePointsAttr(VtValue(points));
-                    mesh.CreateFaceVertexCountsAttr(VtValue(counts));
-                    mesh.CreateFaceVertexIndicesAttr(VtValue(indices));
-                    // Handles are fully tessellated polygon meshes. USD's
-                    // default Catmull-Clark scheme would refine them again.
-                    mesh.CreateSubdivisionSchemeAttr(VtValue(UsdGeomTokens->none));
-                    mesh.CreateDoubleSidedAttr(VtValue(true));
-                    const GfVec3f color = colors[axis];
-                    const SdfPath materialPath = paths::auxiliary::materials.AppendChild(
-                        TfToken((mode == Mode::Move ? "Move" : (mode == Mode::Rotate ? "Rotate" : "Scale"))
-                                + std::string(axis == 1 ? "X" : (axis == 2 ? "Y" : "Z"))));
-                    ViewportAuxiliary::authorGridMaterial(d.host->auxiliaryStage(), materialPath, color);
-                    UsdShadeMaterialBindingAPI::Apply(mesh.GetPrim())
-                        .Bind(UsdShadeMaterial(d.host->auxiliaryStage()->GetPrimAtPath(materialPath)));
-                }
-            }
-            d.meshesBuilt = true;
-        }
         UsdGeomXform gizmo(d.host->auxiliaryStage()->GetPrimAtPath(root));
         GfMatrix4d matrix(1.0);
         matrix.SetScale(radius);
@@ -739,6 +753,7 @@ ViewportGizmo::reset()
 void
 ViewportGizmo::clear()
 {
+    p->ensureMeshes();
     p->clearGeometry();
 }
 

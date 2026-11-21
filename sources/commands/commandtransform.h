@@ -231,24 +231,24 @@ centerPivots(const QList<SdfPath>& paths);
  * Stageviz's canonical matrix-only transform while preserving its evaluated
  * local transform. No zero-valued pivot attribute is left behind.
  *
- * After reset, stage::worldPivot() resolves a weaker authored paired pivot when
+ * After clearing, stage::worldPivot() resolves a weaker authored paired pivot when
  * one exists. If no authored pivot exists in the composed stack, the gizmo
  * falls back to the prim's transformed local origin.
  *
  * Undo restores the previous edit-layer transform property specs exactly.
  *
- * @param paths Prim paths whose pivots should be reset.
+ * @param paths Prim paths whose pivots should be cleared.
  */
 Command
-resetPivots(const QList<SdfPath>& paths);
+clearPivots(const QList<SdfPath>& paths);
 
 /**
- * @brief Creates a command that resets local transforms for xformable prims.
+ * @brief Applies edit-layer-aware identity transforms to xformable prims.
  *
  * All transform properties authored in the active edit layer are removed,
  * including xformOpOrder and every xformOp:* property. This prevents stale
  * translate, rotate, scale, pivot, or matrix operations from remaining after
- * the reset.
+ * clearing.
  *
  * When a weaker composed transform opinion exists, removing the edit-layer
  * transform properties exposes that weaker transform again. When no weaker
@@ -258,17 +258,7 @@ resetPivots(const QList<SdfPath>& paths);
  * Undo restores the complete previous set of edit-layer transform properties
  * exactly.
  *
- * @param paths Prim paths whose local transforms should be reset.
- */
-Command
-resetTransforms(const QList<SdfPath>& paths);
-
-/**
- * @brief UI-named wrapper for resetTransforms().
- *
- * Transform > Identity uses the same edit-layer-aware reset behavior: stale
- * transform ops are removed, weaker composed transforms are exposed when they
- * exist, otherwise a single identity matrix op is authored.
+ * @param paths Prim paths whose local transforms should be cleared.
  */
 Command
 identityTransforms(const QList<SdfPath>& paths);

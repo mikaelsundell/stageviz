@@ -105,6 +105,9 @@
       </item>
       <item>
        <widget class="QToolButton" name="display">
+        <property name="checkable"><bool>true</bool></property>
+        <property name="contextMenuPolicy"><enum>Qt::ContextMenuPolicy::CustomContextMenu</enum></property>
+        <property name="toolTip"><string>Display settings. Highlighted when settings differ from defaults or the menu is open.</string></property>
         <property name="text">
          <string>...</string>
         </property>

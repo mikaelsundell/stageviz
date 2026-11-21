@@ -3,6 +3,7 @@
 
 #include "bboxutils.h"
 #include "commandcomposition.h"
+#include "commandinstanceutils.h"
 #include "commandlayer.h"
 #include "commandlight.h"
 #include "commandmaterial.h"
@@ -74,6 +75,7 @@
 #include <pxr/usd/usdGeom/cube.h>
 #include <pxr/usd/usdGeom/mesh.h>
 #include <pxr/usd/usdGeom/scope.h>
+#include <pxr/usd/usdGeom/sphere.h>
 #include <pxr/usd/usdGeom/subset.h>
 #include <pxr/usd/usdGeom/xform.h>
 #include <pxr/usd/usdGeom/xformCommonAPI.h>
@@ -540,6 +542,347 @@ reparentDependencies()
 }
 
 void
+renameMaterialLayerParent()
+{
+    Session current;
+    require(current.newStage(), "new layered material rename fixture");
+    const auto stage = current.stage();
+    const auto root = stage->GetRootLayer();
+    stage->DefinePrim(SdfPath("/Materials"), TfToken("Scope"));
+    const auto shape = UsdGeomCube::Define(stage, SdfPath("/World/Shape"));
+    const auto first = SdfLayer::CreateAnonymous("material_layer1.usda");
+    const auto second = SdfLayer::CreateAnonymous("material_layer2.usda");
+    root->SetSubLayerPaths({ first->GetIdentifier(), second->GetIdentifier() });
+    require(current.setEditLayer(first), "activate material definition layer");
+    const auto material = UsdShadeMaterial::Define(stage, SdfPath("/Materials/Material2"));
+    stage->GetPrimAtPath(SdfPath("/Materials")).SetChildrenReorder({ TfToken("Material2") });
+    require(stageviz::stage::primLayerInfo(material.GetPrim()).definingLayer == first,
+            "material definition belongs to the active sublayer");
+    require(stageviz::stage::primLayerInfo(stage->GetPrimAtPath(SdfPath("/Materials"))).strongestLayer == root,
+            "parent scope has a stronger root-layer definition");
+    stage->SetEditTarget(UsdEditTarget(root));
+    UsdShadeMaterialBindingAPI::Apply(shape.GetPrim()).Bind(material);
+    stage->SetEditTarget(UsdEditTarget(first));
+    const auto contents = [](const SdfLayerHandle& layer) {
+        std::string value;
+        layer->ExportToString(&value);
+        return value;
+    };
+    const auto rootBefore = contents(root), firstBefore = contents(first), secondBefore = contents(second);
+    auto rename = stageviz::renamePath(material.GetPath(), "Renamed");
+    executeCommand(rename, current);
+    require(stage->GetPrimAtPath(SdfPath("/Materials/Renamed"))
+                && !stage->GetPrimAtPath(SdfPath("/Materials/Material2")),
+            "renaming an owned child does not require owning its parent's strongest opinion");
+    require(UsdShadeMaterialBindingAPI(shape.GetPrim()).ComputeBoundMaterial().GetPath()
+                == SdfPath("/Materials/Renamed"),
+            "namespace rename updates material bindings");
+    undoCommand(rename, current);
+    require(contents(root) == rootBefore && contents(first) == firstBefore && contents(second) == secondBefore,
+            "layered material rename undo restores all affected layers exactly");
+    require(current.setEditLayer(second), "activate unrelated material layer");
+    auto wrongLayer = stageviz::renamePath(SdfPath("/Materials/Material2"), "Wrong");
+    executeCommand(wrongLayer, current);
+    require(!stage->GetPrimAtPath(SdfPath("/Materials/Wrong")) && contents(second) == secondBefore,
+            "rename still rejects a material absent from the active layer");
+    stage->SetEditTarget(UsdEditTarget(root));
+    stage->OverridePrim(SdfPath("/Materials/Material2")).SetDisplayName("Look override");
+    const auto provenance = stageviz::stage::primLayerInfo(stage->GetPrimAtPath(SdfPath("/Materials/Material2")));
+    require(provenance.definingLayer == first && provenance.strongestLayer == root,
+            "defining layer and stronger override layer remain distinct");
+    require(current.setEditLayer(first), "restore material definition edit layer");
+    auto strongerOverride = stageviz::renamePath(SdfPath("/Materials/Material2"), "Blocked");
+    executeCommand(strongerOverride, current);
+    require(!stage->GetPrimAtPath(SdfPath("/Materials/Blocked")),
+            "the material itself must still pass strongest-opinion validation");
+}
+
+void
+explicitOverridePathsApi()
+{
+    Session current;
+    require(current.newStage(), "new explicit override fixture");
+    const auto stage = current.stage();
+    const auto root = stage->GetRootLayer();
+    const auto base = SdfLayer::CreateAnonymous("override_source.usda");
+    root->SetSubLayerPaths({ base->GetIdentifier() });
+    stage->SetEditTarget(UsdEditTarget(base));
+    UsdGeomCube::Define(stage, SdfPath("/World/Group/Child"));
+    stage->SetEditTarget(UsdEditTarget(root));
+    const auto text = [](const SdfLayerHandle& layer) {
+        std::string result;
+        layer->ExportToString(&result);
+        return result;
+    };
+    const auto before = text(root), baseBefore = text(base);
+    auto command = stageviz::overridePaths({ SdfPath("/World/Group/Child") });
+    executeCommand(command, current);
+    require(root->GetPrimAtPath(SdfPath("/World/Group/Child"))
+                && root->GetPrimAtPath(SdfPath("/World/Group/Child"))->GetSpecifier() == SdfSpecifierOver,
+            "explicit override authors an over despite an existing composed definition");
+    require(stage->GetPrimAtPath(SdfPath("/World/Group/Child")).IsA<UsdGeomCube>(), "override preserves composed type");
+    stage->SetEditTarget(UsdEditTarget(base));
+    undoCommand(command, current);
+    require(text(root) == before && text(base) == baseBefore, "override undo restores its original layer exactly");
+    executeCommand(command, current);
+    require(root->GetPrimAtPath(SdfPath("/World/Group/Child")), "override redo retains its original edit target");
+    undoCommand(command, current);
+    require(text(root) == before, "override redo undo prunes only newly created containers");
+    stage->SetEditTarget(UsdEditTarget(root));
+    auto invalid = stageviz::overridePaths({ SdfPath("/World/Group/Child"), SdfPath::AbsoluteRootPath() });
+    executeCommand(invalid, current);
+    require(text(root) == before, "invalid override batch authors nothing");
+}
+
+void
+replaceMaterialNetworkApi()
+{
+    for (const auto type : { stageviz::MaterialType::PreviewSurface, stageviz::MaterialType::StandardSurface,
+                             stageviz::MaterialType::OpenPBRSurface }) {
+        Session current;
+        require(current.newStage(), "new material replacement fixture");
+        const auto stage = current.stage();
+        const auto root = stage->GetRootLayer();
+        const auto base = SdfLayer::CreateAnonymous("replace_source.usda");
+        root->SetSubLayerPaths({ base->GetIdentifier() });
+        stage->SetEditTarget(UsdEditTarget(base));
+        const SdfPath path("/Looks/Paint");
+        const auto material = UsdShadeMaterial::Define(stage, path);
+        auto preview = UsdShadeShader::Define(stage, path.AppendChild(TfToken("PreviewSurface")));
+        preview.CreateIdAttr(VtValue(TfToken("UsdPreviewSurface")));
+        material.CreateSurfaceOutput().ConnectToSource(
+            preview.CreateOutput(TfToken("surface"), SdfValueTypeNames->Token));
+        auto standard = UsdShadeShader::Define(stage, path.AppendChild(TfToken("StandardSurface")));
+        standard.CreateIdAttr(VtValue(TfToken("ND_standard_surface_surfaceshader")));
+        material.CreateSurfaceOutput(TfToken("mtlx"))
+            .ConnectToSource(standard.CreateOutput(TfToken("out"), SdfValueTypeNames->Token));
+        const auto shape = UsdGeomCube::Define(stage, SdfPath("/World/Shape"));
+        UsdShadeMaterialBindingAPI::Apply(shape.GetPrim()).Bind(material);
+        stage->SetEditTarget(UsdEditTarget(root));
+        material.GetPrim().SetDisplayName("Preserved paint");
+        UsdShadeShader::Define(stage, path.AppendChild(TfToken("LocalUnused")));
+        const auto text = [](const SdfLayerHandle& layer) {
+            std::string result;
+            layer->ExportToString(&result);
+            return result;
+        };
+        const auto before = text(root), baseBefore = text(base);
+        require(stageviz::canReplaceMaterialNetwork(stage, { path }), "root can replace mixed-context material");
+        auto replace = stageviz::replaceMaterialNetwork({ path }, type);
+        executeCommand(replace, current);
+        int connected = 0;
+        SdfPath newShader;
+        for (const auto& output : material.GetOutputs()) {
+            SdfPathVector connections;
+            output.GetAttr().GetConnections(&connections);
+            if (!connections.empty()) {
+                ++connected;
+                newShader = connections.front().GetPrimPath();
+                require(output.GetAttr().GetName()
+                            == (type == stageviz::MaterialType::PreviewSurface ? TfToken("outputs:surface")
+                                                                               : TfToken("outputs:mtlx:surface")),
+                        "only the replacement render context remains connected");
+            }
+        }
+        require(connected == 1 && root->GetPrimAtPath(newShader), "replacement authors a fresh local shader");
+        require(newShader != preview.GetPath() && newShader != standard.GetPath(),
+                "replacement does not merge weaker shader inputs");
+        TfToken id;
+        UsdShadeShader(stage->GetPrimAtPath(newShader)).GetIdAttr().Get(&id);
+        require(id
+                    == (type == stageviz::MaterialType::PreviewSurface ? TfToken("UsdPreviewSurface")
+                        : type == stageviz::MaterialType::StandardSurface
+                            ? TfToken("ND_standard_surface_surfaceshader")
+                            : TfToken("ND_open_pbr_surface_surfaceshader")),
+                "replacement shader has the requested definition");
+        require(UsdShadeMaterialBindingAPI(shape.GetPrim()).ComputeBoundMaterial().GetPath() == path,
+                "geometry bindings remain attached to the same material");
+        require(text(base) == baseBefore, "weaker material network is unchanged");
+        stage->SetEditTarget(UsdEditTarget(base));
+        require(!stageviz::canReplaceMaterialNetwork(stage, { path }),
+                "weaker layer cannot replace stronger terminals");
+        undoCommand(replace, current);
+        require(text(root) == before && text(base) == baseBefore,
+                "replacement undo restores exact local subtree and metadata");
+        executeCommand(replace, current);
+        require(text(base) == baseBefore && text(root) != before, "replacement redo uses the original edit target");
+        undoCommand(replace, current);
+        require(text(root) == before, "replacement redo undo is exact");
+    }
+}
+
+void
+layerAuthoringVariantsApi()
+{
+    Session current;
+    require(current.newStage(), "new variant layer-authoring fixture");
+    const auto stage = current.stage();
+    const auto root = stage->GetRootLayer();
+    const auto base = SdfLayer::CreateAnonymous("variant_material_source.usda");
+    root->SetSubLayerPaths({ base->GetIdentifier() });
+    stage->SetEditTarget(UsdEditTarget(base));
+    const auto asset = UsdGeomXform::Define(stage, SdfPath("/Asset")).GetPrim();
+    auto material = UsdShadeMaterial::Define(stage, SdfPath("/Asset/Paint"));
+    auto shader = UsdShadeShader::Define(stage, SdfPath("/Asset/Paint/Surface"));
+    shader.CreateIdAttr(VtValue(TfToken("UsdPreviewSurface")));
+    material.CreateSurfaceOutput().ConnectToSource(shader.CreateOutput(TfToken("surface"), SdfValueTypeNames->Token));
+    stage->SetEditTarget(UsdEditTarget(root));
+    auto variants = asset.GetVariantSets().AddVariantSet("look");
+    require(variants.AddVariant("replacement") && variants.SetVariantSelection("replacement"), "create look variant");
+    const auto target = variants.GetVariantEditTarget();
+    stage->SetEditTarget(target);
+    require(!stageviz::canReplaceMaterialNetwork(stage, { material.GetPath() }),
+            "variant replacement rejects stronger direct opinions even from a weaker sublayer");
+    stage->SetEditTarget(UsdEditTarget(root));
+    root->SetSubLayerPaths({});
+    auto referencedAsset = UsdGeomXform::Define(stage, SdfPath("/Asset")).GetPrim();
+    referencedAsset.GetReferences().AddReference(base->GetIdentifier(), SdfPath("/Asset"));
+    material = UsdShadeMaterial(stage->GetPrimAtPath(SdfPath("/Asset/Paint")));
+    stage->SetEditTarget(target);
+    require(stageviz::canReplaceMaterialNetwork(stage, { SdfPath("/Asset/Paint") }),
+            "variant replacement can override referenced material outputs");
+    const auto text = [](const SdfLayerHandle& layer) {
+        std::string result;
+        layer->ExportToString(&result);
+        return result;
+    };
+    const auto before = text(root), baseBefore = text(base);
+    auto over = stageviz::overridePaths({ material.GetPath() });
+    executeCommand(over, current);
+    require(root->GetPrimAtPath(target.MapToSpecPath(material.GetPath())), "override uses the variant mapping");
+    undoCommand(over, current);
+    require(text(root) == before, "variant override undo restores its container exactly");
+    auto replace = stageviz::replaceMaterialNetwork({ material.GetPath() }, stageviz::MaterialType::StandardSurface);
+    executeCommand(replace, current);
+    SdfPathVector connections;
+    material.GetSurfaceOutput(TfToken("mtlx")).GetAttr().GetConnections(&connections);
+    require(connections.size() == 1, "variant replacement connects the MaterialX terminal");
+    material.GetSurfaceOutput().GetAttr().GetConnections(&connections);
+    require(connections.empty(), "variant replacement blocks the weaker universal terminal");
+    const auto replaced = text(root);
+    require(replaced != before, "variant replacement authors local opinions");
+    stage->SetEditTarget(UsdEditTarget(root));
+    undoCommand(replace, current);
+    require(text(root) == before && text(base) == baseBefore, "variant replacement undo preserves exact layers");
+    executeCommand(replace, current);
+    require(text(root) == replaced, "variant replacement redo retains its original target mapping");
+    undoCommand(replace, current);
+    root->SetPermissionToEdit(false);
+    require(!stageviz::canReplaceMaterialNetwork(stage, { material.GetPath() }), "locked layer rejects replacement");
+    root->SetPermissionToEdit(true);
+    auto instance = UsdShadeMaterial::Define(stage, SdfPath("/MaterialInstance")).GetPrim();
+    instance.GetReferences().AddInternalReference(material.GetPath());
+    instance.SetInstanceable(true);
+    require(instance.IsInstance() && !stageviz::canReplaceMaterialNetwork(stage, { instance.GetPath() }),
+            "instance-root materials require make editable before adding shader children");
+    auto assetInstance = UsdGeomXform::Define(stage, SdfPath("/AssetInstance")).GetPrim();
+    assetInstance.GetReferences().AddInternalReference(SdfPath("/Asset"));
+    assetInstance.SetInstanceable(true);
+    const SdfPath proxy("/AssetInstance/Paint");
+    require(stage->GetPrimAtPath(proxy).IsInstanceProxy() && !stageviz::canReplaceMaterialNetwork(stage, { proxy }),
+            "proxy materials are read-only replacement targets");
+}
+
+void
+clearInertMaterialOpinions()
+{
+    Session current;
+    require(current.newStage(), "new inert material opinion fixture");
+    const auto stage = current.stage();
+    const auto root = stage->GetRootLayer();
+    const auto base = SdfLayer::CreateAnonymous("material_definitions.usda");
+    root->SetSubLayerPaths({ base->GetIdentifier() });
+    stage->SetEditTarget(UsdEditTarget(base));
+    stage->DefinePrim(SdfPath("/Materials"), TfToken("Scope"));
+    UsdShadeMaterial::Define(stage, SdfPath("/Materials/Material1"));
+    stage->SetEditTarget(UsdEditTarget(root));
+    SdfCreatePrimInLayer(root, SdfPath("/Materials/Material1"));
+    stage->DefinePrim(SdfPath("/After"), TfToken("Scope"));
+    const auto text = [](const SdfLayerHandle& layer) {
+        std::string result;
+        layer->ExportToString(&result);
+        return result;
+    };
+    const auto before = text(root), baseBefore = text(base);
+    require(stageviz::clearOpinionGroups(stage, { SdfPath("/Materials") }).contains(stageviz::OpinionGroup::Other),
+            "inert overrides offer Clear All and Other");
+    auto clear = stageviz::clearOpinions({ SdfPath("/Materials") });
+    executeCommand(clear, current);
+    require(!root->GetPrimAtPath(SdfPath("/Materials")), "clear removes nested empty override containers");
+    require(stage->GetPrimAtPath(SdfPath("/Materials/Material1")).IsDefined(), "weaker material remains defined");
+    undoCommand(clear, current);
+    require(text(root) == before && text(base) == baseBefore, "undo exactly restores nested empty overrides");
+    executeCommand(clear, current);
+    require(!root->GetPrimAtPath(SdfPath("/Materials")), "redo removes empty containers");
+    undoCommand(clear, current);
+    stage->GetPrimAtPath(SdfPath("/Materials/Material1")).SetDisplayName("Keep metadata");
+    const auto metadataBefore = text(root);
+    auto metadata = stageviz::clearOpinions({ SdfPath("/Materials") });
+    executeCommand(metadata, current);
+    require(text(root) == metadataBefore, "clear preserves metadata on overrides and their ancestors");
+    require(text(base) == baseBefore, "clear never edits material definitions in other layers");
+}
+
+void
+materialContainerLayers()
+{
+    for (const auto type : { stageviz::MaterialType::PreviewSurface, stageviz::MaterialType::StandardSurface,
+                             stageviz::MaterialType::OpenPBRSurface }) {
+        for (int mode = 0; mode < 3; ++mode) {
+            Session current;
+            require(current.newStage(), "new layered material fixture");
+            const auto stage = current.stage();
+            const auto root = stage->GetRootLayer();
+            const auto first = SdfLayer::CreateAnonymous("material_owner.usda");
+            const auto second = SdfLayer::CreateAnonymous("material_container.usda");
+            root->SetSubLayerPaths({ first->GetIdentifier(), second->GetIdentifier() });
+            stage->SetEditTarget(UsdEditTarget(second));
+            stage->DefinePrim(SdfPath("/Materials"), TfToken("Scope"));
+            UsdShadeMaterial::Define(stage, SdfPath("/Materials/Original"));
+            require(current.setEditLayer(first), "activate new material layer");
+            if (mode != 0) {
+                const auto parent = stage->OverridePrim(SdfPath("/Materials"));
+                parent.SetChildrenReorder({ TfToken("Original") });
+                parent.SetCustomDataByKey(TfToken("containerNote"), VtValue(std::string("preserve")));
+                if (mode == 2)
+                    first->GetPrimAtPath(SdfPath("/Materials"))->SetSpecifier(SdfSpecifierDef);
+            }
+            const auto contents = [](const SdfLayerHandle& layer) {
+                std::string value;
+                layer->ExportToString(&value);
+                return value;
+            };
+            const auto before = contents(first), otherBefore = contents(second);
+            auto command = stageviz::newMaterial(type);
+            executeCommand(command, current);
+            require(first->GetPrimAtPath(SdfPath("/Materials"))->GetSpecifier() == SdfSpecifierDef,
+                    "new material defines its local container");
+            SdfPath created;
+            for (const auto& child : stage->GetPrimAtPath(SdfPath("/Materials")).GetChildren()) {
+                if (child.GetName() != TfToken("Original"))
+                    created = child.GetPath();
+            }
+            require(!created.IsEmpty(), "new material was created");
+            stage->MuteLayer(second->GetIdentifier());
+            const auto material = stage->GetPrimAtPath(created);
+            require(material && material.IsDefined() && material.IsA<UsdShadeMaterial>(),
+                    "new material survives muting the original container layer");
+            require(!stage->GetPrimAtPath(SdfPath("/Materials/Original")), "original material is muted");
+            stage->UnmuteLayer(second->GetIdentifier());
+            undoCommand(command, current);
+            require(contents(first) == before && contents(second) == otherBefore,
+                    "undo restores exact container specifier, metadata and original layer contents");
+            executeCommand(command, current);
+            stage->MuteLayer(second->GetIdentifier());
+            require(stage->GetPrimAtPath(created).IsDefined(), "redo retains independent material definition");
+            stage->UnmuteLayer(second->GetIdentifier());
+            undoCommand(command, current);
+            require(contents(first) == before, "redo undo restores exact contents");
+        }
+    }
+}
+
+void
 renameDependencies()
 {
     const auto stage = UsdStage::CreateInMemory();
@@ -634,6 +977,36 @@ reparentBatch()
     stage->GetRootLayer()->ExportToString(&after);
     require(before == after, "failed multi-move restores all layers");
 }
+void
+renderMaterialContextInvalidationApi()
+{
+    struct Observer final : HdSceneIndexObserver {
+        std::set<SdfPath> added;
+        void PrimsAdded(const HdSceneIndexBase&, const AddedPrimEntries& entries) override
+        {
+            for (const auto& entry : entries)
+                added.insert(entry.primPath);
+        }
+        void PrimsRemoved(const HdSceneIndexBase&, const RemovedPrimEntries&) override {}
+        void PrimsRenamed(const HdSceneIndexBase&, const RenamedPrimEntries&) override {}
+        void PrimsDirtied(const HdSceneIndexBase&, const DirtiedPrimEntries&) override {}
+    } observer;
+    const auto input = HdRetainedSceneIndex::New();
+    input->AddPrims({ { SdfPath("/Paint"), HdPrimTypeTokens->material, nullptr },
+                      { SdfPath("/Paint/Surface"), TfToken(), nullptr },
+                      { SdfPath("/Shape"), HdPrimTypeTokens->mesh, nullptr } });
+    const auto filter = stageviz::RenderSceneIndex::New(input);
+    filter->AddObserver(HdSceneIndexObserverPtr(&observer));
+    input->RemovePrims({ { SdfPath("/Paint/Surface") } });
+    filter->refreshMaterials({ SdfPath("/Paint"), SdfPath("/Shape"), SdfPath("/Missing") });
+    require(observer.added == std::set<SdfPath> { SdfPath("/Paint") }, "refresh resyncs only surviving material roots");
+    observer.added.clear();
+    input->RemovePrims({ { SdfPath("/Paint") } });
+    filter->refreshMaterials({ SdfPath("/Paint") });
+    require(observer.added.empty(), "deleted material is not reintroduced");
+    filter->RemoveObserver(HdSceneIndexObserverPtr(&observer));
+}
+
 void
 renderSceneIndexRemoval()
 {
@@ -1367,6 +1740,101 @@ viewCameraApi()
 }
 
 void
+cameraLiveSceneClippingApi()
+{
+    ViewCamera camera(1.5, 40.0);
+    const GfBBox3d framing(GfRange3d(GfVec3d(-23, -3, -3), GfVec3d(23, 3, 3)));
+    camera.setBoundingBox(framing);
+    camera.setCameraUp(ViewCamera::Z);
+    camera.setCameraDistance(350);
+    camera.setCameraView(ViewCamera::FrontView);
+    camera.tumble(30, 0);
+    const GfRange3d expanded(GfVec3d(-103, -3, -3), GfVec3d(-17, 3, 3));
+    const auto before = camera.camera();
+    const auto view = before.GetFrustum().ComputeViewMatrix();
+    double farthest = 0;
+    for (size_t corner = 0; corner < 8; ++corner)
+        farthest = std::max(farthest, -view.Transform(expanded.GetCorner(corner))[2]);
+    require(farthest > before.GetClippingRange().GetMax(), "stale framing bounds reproduce the clipping failure");
+    const auto focus = camera.focusPoint();
+    const auto distance = camera.cameraDistance();
+    camera.setSceneRange(expanded);
+    require(camera.boundingBox() == framing && camera.focusPoint() == focus && camera.cameraDistance() == distance,
+            "current clipping bounds do not change framing, focus or zoom");
+    require(camera.camera().GetTransform() == before.GetTransform(), "updating clipping does not move the camera");
+    for (const auto mode : { ViewCamera::FieldOfView, ViewCamera::Orthographic, ViewCamera::Physical }) {
+        camera.setProjectionMode(mode);
+        for (int angle = 0; angle < 360; angle += 15) {
+            camera.setAxisRoll(angle);
+            const auto usdCamera = camera.camera();
+            const auto matrix = usdCamera.GetFrustum().ComputeViewMatrix();
+            for (size_t corner = 0; corner < 8; ++corner) {
+                const double depth = -matrix.Transform(expanded.GetCorner(corner))[2];
+                if (depth > 0)
+                    require(depth >= usdCamera.GetClippingRange().GetMin()
+                                && depth <= usdCamera.GetClippingRange().GetMax(),
+                            "all current document corners survive a complete orbit");
+            }
+        }
+    }
+    camera.setFarClipping(100);
+    require(camera.camera().GetClippingRange().GetMax() <= 100, "explicit far clipping remains an intentional limit");
+}
+
+void
+sessionGeometryBoundsNotificationsApi()
+{
+    Session current;
+    require(current.newStage(), "new changing scene bounds fixture");
+    const auto stage = current.stage();
+    auto sphere = UsdGeomSphere::Define(stage, SdfPath("/World/Sphere"));
+    auto move = sphere.AddTranslateOp();
+    move.Set(GfVec3d(20, 0, 0));
+    sphere.GetRadiusAttr().Set(3.0);
+    drainWorkers();
+    int updates = 0;
+    GfBBox3d notified;
+    QObject::connect(&current, &Session::boundingBoxChanged, &current, [&](const GfBBox3d& box) {
+        ++updates;
+        notified = box;
+    });
+    move.Set(GfVec3d(-100, 0, 0));
+    drainWorkers();
+    require(updates > 0 && notified.ComputeAlignedRange().GetMin()[0] <= -103,
+            "transform value changes notify views of current scene bounds");
+    updates = 0;
+    sphere.GetRadiusAttr().Set(8.0);
+    drainWorkers();
+    require(updates > 0 && notified.ComputeAlignedRange().GetMin()[0] <= -108,
+            "primitive dimensions notify views of expanded geometry bounds");
+}
+
+void
+viewportPurposeStateApi()
+{
+    QTemporaryDir dir;
+    Session current;
+    require(current.newStage(), "new purpose state stage");
+    const auto state = current.viewState();
+    require(state->showGuides() && state->showProxy() && state->showRender(),
+            "all viewport purposes are enabled by default");
+    int changes = 0;
+    QObject::connect(state, &ViewState::purposesChanged, state, [&]() { ++changes; });
+    state->setShowGuides(false);
+    state->setShowGuides(false);
+    state->setShowProxy(false);
+    state->setShowRender(false);
+    require(changes == 3, "purpose setters emit only for changed values");
+    const QString filename = dir.filePath("purpose.session");
+    require(current.saveState(filename), "save purpose state");
+    state->setShowGuides(true);
+    state->setShowProxy(true);
+    state->setShowRender(true);
+    require(current.loadState(filename), "reload purpose state");
+    require(!state->showGuides() && !state->showProxy() && !state->showRender(), "purpose state restored");
+}
+
+void
 viewStateApi()
 {
     ViewState state;
@@ -1621,6 +2089,61 @@ sessionEditLayerApi()
 
     const SdfLayerRefPtr foreign = SdfLayer::CreateAnonymous("foreign.usda");
     require(!session.setEditLayer(foreign), "foreign layer rejected as edit target");
+}
+
+void
+createSublayerReplaceApi()
+{
+    QTemporaryDir dir;
+    require(dir.isValid(), "temporary layer replacement directory");
+    for (const QString& suffix : { QString("usd"), QString("usda"), QString("usdc") }) {
+        for (bool cached : { false, true }) {
+            Session session;
+            require(session.newStage(), "new layer replacement stage");
+            const auto stage = session.stage();
+            const QString filename = dir.filePath(QString("layer-%1.%2").arg(cached).arg(suffix));
+            SdfLayerRefPtr old = SdfLayer::CreateNew(filename.toStdString());
+            SdfCreatePrimInLayer(old, SdfPath("/Old"))->SetSpecifier(SdfSpecifierDef);
+            require(old->Save(), "save nonempty destination fixture");
+            std::string before;
+            old->ExportToString(&before);
+            if (cached)
+                stage->GetRootLayer()->SetSubLayerPaths({ old->GetIdentifier() });
+            else
+                old.Reset();
+            const auto parentPaths = stage->GetRootLayer()->GetSubLayerPaths();
+            auto command = stageviz::createSublayer(filename);
+            executeCommand(command, session);
+            const SdfLayerRefPtr created = SdfLayer::Find(filename.toStdString());
+            require(created && stage->HasLocalLayer(created), "replacement destination is attached to the stage");
+            require(!created->GetPrimAtPath(SdfPath("/Old")), "new layer replaces previous destination contents");
+            const auto disk = SdfLayer::OpenAsAnonymous(filename.toStdString());
+            require(disk && !disk->GetPrimAtPath(SdfPath("/Old")),
+                    "empty replacement is persisted for every USD format");
+            undoCommand(command, session);
+            require(stage->GetRootLayer()->GetSubLayerPaths() == parentPaths, "undo restores previous layer arcs");
+            if (cached) {
+                std::string restored;
+                old->ExportToString(&restored);
+                require(restored == before && stage->GetPrimAtPath(SdfPath("/Old")),
+                        "undo restores cached layer contents and composed prims");
+            }
+            executeCommand(command, session);
+            require(stage->HasLocalLayer(created) && !created->GetPrimAtPath(SdfPath("/Old")),
+                    "redo restores the empty layer and its attachment");
+        }
+    }
+    Session session;
+    const QString rootFile = dir.filePath("root.usda");
+    require(session.newStage() && session.saveToFile(rootFile), "save root replacement rejection fixture");
+    const auto root = session.stage()->GetRootLayer();
+    SdfCreatePrimInLayer(root, SdfPath("/Keep"))->SetSpecifier(SdfSpecifierDef);
+    require(root->Save(), "save prim to protect from self replacement");
+    auto self = stageviz::createSublayer(rootFile);
+    executeCommand(self, session);
+    require(root->GetPrimAtPath(SdfPath("/Keep"))
+                && SdfLayer::OpenAsAnonymous(rootFile.toStdString())->GetPrimAtPath(SdfPath("/Keep")),
+            "creating a sublayer cannot overwrite its own parent or the stage root");
 }
 
 void
@@ -3230,6 +3753,45 @@ materialUtilsApi()
     const SdfPath unique = stageviz::MaterialUtils::uniqueMaterialPath(stage, "123 bad material");
     require(unique.GetName() == "_123_bad_material", "unique material path sanitizes identifier");
 
+    // Imported exporters can use the same leaf name for a Material and Shader.
+    // They occupy separate USD namespaces but share the exported MX namespace.
+    const auto collisionStage = UsdStage::CreateInMemory();
+    const SdfPath collisionPath("/Materials/carpaint");
+    const auto collisionMaterial = UsdShadeMaterial::Define(collisionStage, collisionPath);
+    auto collisionShader = UsdShadeShader::Define(collisionStage, collisionPath.AppendChild(TfToken("carpaint")));
+    collisionShader.CreateIdAttr(VtValue(TfToken("ND_UsdPreviewSurface_surfaceshader")));
+    collisionShader.CreateInput(TfToken("diffuseColor"), SdfValueTypeNames->Color3f).Set(GfVec3f(.562f, .355f, .402f));
+    collisionShader.CreateInput(TfToken("roughness"), SdfValueTypeNames->Float).Set(.5f);
+    collisionShader.CreateOutput(TfToken("surface"), SdfValueTypeNames->Token);
+    collisionMaterial.CreateSurfaceOutput(TfToken("mtlx"))
+        .ConnectToSource(collisionShader.CreateOutput(TfToken("out"), SdfValueTypeNames->Token));
+    QTemporaryDir collisionDir;
+    require(collisionDir.isValid(), "collision export directory");
+    const QString collisionFile = collisionDir.filePath("carpaint.mtlx");
+    QString collisionError;
+    const bool collisionExport = stageviz::MaterialUtils::exportMaterialX(collisionStage, collisionPath, collisionFile,
+                                                                          collisionError);
+    if (!collisionExport)
+        std::cerr << collisionError.toStdString() << '\n';
+    require(collisionExport, "MaterialX export accepts a material and surface shader with matching names");
+    const auto collisionImported = UsdStage::CreateInMemory();
+    QList<SdfPath> collisionMaterials;
+    require(stageviz::MaterialUtils::importMaterialX(collisionImported, collisionFile, collisionMaterials,
+                                                     collisionError)
+                && collisionMaterials.size() == 1 && collisionMaterials.first().GetName() == "carpaint",
+            "collision export preserves the material name on roundtrip");
+    QString collisionId;
+    const auto roundtripShader = stageviz::MaterialUtils::surfaceShader(
+        UsdShadeMaterial(collisionImported->GetPrimAtPath(collisionMaterials.first())), &collisionId);
+    GfVec3f roundtripColor;
+    const auto valueSources = roundtripShader.GetInput(TfToken("diffuseColor")).GetValueProducingAttributes();
+    require(roundtripShader && collisionId == "ND_UsdPreviewSurface_surfaceshader" && valueSources.size() == 1
+                && valueSources.front().Get(&roundtripColor)
+                && GfIsClose(roundtripColor, GfVec3f(.562f, .355f, .402f), 1e-5f),
+            "collision export reconnects the renamed shader through the imported material interface");
+    require(collisionShader.GetPrim().GetName() == TfToken("carpaint"),
+            "export does not rename the shader in the source USD stage");
+
     // Exercise the supported Stageviz MaterialX path end-to-end: author a
     // MaterialX Standard Surface in USD, export it using Stageviz's MaterialX
     // serializer, import that file into a clean stage through UsdMtlxRead, and
@@ -3457,7 +4019,7 @@ materialMenuApi()
 }
 
 void
-resetOpinionGroupsApi()
+clearOpinionGroupsApi()
 {
     Session current;
     require(current.newStage(), "new grouped reset fixture");
@@ -3509,15 +4071,15 @@ resetOpinionGroupsApi()
     root->ExportToString(&original);
     weak->ExportToString(&base);
     const QList<SdfPath> paths { SdfPath("/Group"), SdfPath("/Group/Sphere"), SdfPath("/Owned") };
-    const auto groups = stageviz::resetOverrideGroups(stage, paths);
+    const auto groups = stageviz::clearOpinionGroups(stage, paths);
     require(groups.size() == 8, "all authored property groups discovered once");
-    require(stageviz::resetOverrideGroups(stage, { SdfPath::AbsoluteRootPath() }) == groups,
+    require(stageviz::clearOpinionGroups(stage, { SdfPath::AbsoluteRootPath() }) == groups,
             "stage-root selection discovers descendant override groups");
     for (const auto group : groups) {
-        auto command = stageviz::resetOverrides(paths, group);
+        auto command = stageviz::clearOpinions(paths, group);
         executeCommand(command, current);
-        require(!stageviz::resetOverrideGroups(stage, paths).contains(group), "only chosen group removed");
-        require(stageviz::resetOverrideGroups(stage, paths).size() == 7, "unrelated groups retained");
+        require(!stageviz::clearOpinionGroups(stage, paths).contains(group), "only chosen group removed");
+        require(stageviz::clearOpinionGroups(stage, paths).size() == 7, "unrelated groups retained");
         require(root->GetPropertyAtPath(SdfPath("/Owned.radius")), "owned definition properties retained");
         stage->SetEditTarget(UsdEditTarget(weak));
         undoCommand(command, current);
@@ -3527,16 +4089,16 @@ resetOpinionGroupsApi()
         require(restored == original && unchanged == base, "exact undo uses captured layer after target switch");
         stage->SetEditTarget(UsdEditTarget(root));
         executeCommand(command, current);
-        require(!stageviz::resetOverrideGroups(stage, paths).contains(group), "group reset redo");
+        require(!stageviz::clearOpinionGroups(stage, paths).contains(group), "group reset redo");
         undoCommand(command, current);
     }
-    auto all = stageviz::resetOverrides(paths);
+    auto all = stageviz::clearOpinions(paths);
     executeCommand(all, current);
-    require(stageviz::resetOverrideGroups(stage, paths).isEmpty(), "All removes all eligible property opinions");
+    require(stageviz::clearOpinionGroups(stage, paths).isEmpty(), "All removes all eligible property opinions");
     require(stage->GetPrimAtPath(SdfPath("/Group/Sphere")).IsDefined(), "base geometry survives All");
     undoCommand(all, current);
     root->SetPermissionToEdit(false);
-    require(stageviz::resetOverrideGroups(stage, paths).isEmpty(), "locked edit layer offers no resets");
+    require(stageviz::clearOpinionGroups(stage, paths).isEmpty(), "locked edit layer offers no resets");
     root->SetPermissionToEdit(true);
     auto variants = stage->GetPrimAtPath(SdfPath("/Group/Sphere")).GetVariantSets().AddVariantSet("edit");
     variants.AddVariant("test");
@@ -3546,7 +4108,7 @@ resetOpinionGroupsApi()
         stage->GetPrimAtPath(SdfPath("/Group/Sphere")).GetAttribute(TfToken("radius")).Set(12.0);
         const auto mapped = stage->GetEditTarget().MapToSpecPath(SdfPath("/Group/Sphere.radius"));
         root->ExportToString(&original);
-        auto reset = stageviz::resetOverrides({ SdfPath("/Group") }, stageviz::OverrideGroup::Geometry);
+        auto reset = stageviz::clearOpinions({ SdfPath("/Group") }, stageviz::OpinionGroup::Geometry);
         executeCommand(reset, current);
         require(!root->GetPropertyAtPath(mapped), "ancestor selection resets mapped variant-target properties");
         undoCommand(reset, current);
@@ -3745,12 +4307,12 @@ commandMaterialApi()
     const SdfLayerHandle editLayer = stage->GetEditTarget().GetLayer();
     const SdfPath roughnessPath = entry.shaderPath.AppendProperty(TfToken("inputs:roughness"));
     require(editLayer && editLayer->GetPropertyAtPath(roughnessPath),
-            "resetShaderInputs fixture has authored roughness");
-    stageviz::Command resetInput = stageviz::resetShaderInputs({ roughnessPath });
+            "clearShaderInputs fixture has authored roughness");
+    stageviz::Command resetInput = stageviz::clearShaderInputs({ roughnessPath });
     executeCommand(resetInput, session);
-    require(!editLayer->GetPropertyAtPath(roughnessPath), "resetShaderInputs removes current edit-layer input opinion");
+    require(!editLayer->GetPropertyAtPath(roughnessPath), "clearShaderInputs removes current edit-layer input opinion");
     undoCommand(resetInput, session);
-    require(bool(editLayer->GetPropertyAtPath(roughnessPath)), "resetShaderInputs undo restores exact input property");
+    require(bool(editLayer->GetPropertyAtPath(roughnessPath)), "clearShaderInputs undo restores exact input property");
 
     stageviz::Command deleteNode = stageviz::deleteShaderNode(texturePath);
     executeCommand(deleteNode, session);
@@ -3759,6 +4321,153 @@ commandMaterialApi()
     require(bool(stage->GetPrimAtPath(texturePath)), "deleteShaderNode undo restores helper node");
 }
 
+
+void
+relationshipOpinionsApi()
+{
+    Session current;
+    require(current.newStage(), "new relationship opinion stage");
+    const auto stage = current.stage();
+    const auto root = stage->GetRootLayer();
+    const auto weak = SdfLayer::CreateAnonymous("relationship_base.usda");
+    require(
+        weak->ImportFromString(
+            "#usda 1.0\ndef Xform \"Object\" {\n    rel link = </WeakTarget>\n}\ndef Xform \"WeakTarget\" {}\ndef Xform \"LocalTarget\" {}\n"),
+        "relationship source fixture");
+    root->SetSubLayerPaths({ weak->GetIdentifier() });
+    const auto prim = stage->GetPrimAtPath(SdfPath("/Object"));
+    const auto rel = prim.GetRelationship(TfToken("link"));
+    rel.SetTargets({ SdfPath("/LocalTarget") });
+    rel.SetDocumentation("Local relationship metadata");
+    const auto text = [](const SdfLayerHandle& layer) {
+        std::string value;
+        layer->ExportToString(&value);
+        return value;
+    };
+    const auto before = text(root);
+    auto clear = stageviz::clearRelationships({ rel.GetPath(), rel.GetPath() });
+    executeCommand(clear, current);
+    SdfPathVector targets;
+    rel.GetTargets(&targets);
+    require(targets == SdfPathVector { SdfPath("/WeakTarget") } && !root->GetRelationshipAtPath(rel.GetPath()),
+            "clear reveals weaker targets without authoring an unbind");
+    stage->SetEditTarget(UsdEditTarget(weak));
+    undoCommand(clear, current);
+    require(text(root) == before, "relationship undo restores metadata and targets in the original edit layer");
+    executeCommand(clear, current);
+    require(!root->GetRelationshipAtPath(rel.GetPath()), "relationship redo retains original edit target");
+    undoCommand(clear, current);
+    stage->SetEditTarget(UsdEditTarget(root));
+    auto variants = prim.GetVariantSets().AddVariantSet("look");
+    variants.AddVariant("test");
+    variants.SetVariantSelection("test");
+    {
+        UsdEditContext context(variants.GetVariantEditContext());
+        rel.SetTargets({ SdfPath("/WeakTarget") });
+        const auto variantBefore = text(root);
+        auto variantClear = stageviz::clearRelationships({ rel.GetPath() });
+        executeCommand(variantClear, current);
+        require(!root->GetRelationshipAtPath(stage->GetEditTarget().MapToSpecPath(rel.GetPath())),
+                "clear maps relationship scene paths into the variant edit target");
+        undoCommand(variantClear, current);
+        require(text(root) == variantBefore, "variant relationship undo is exact");
+    }
+    const auto lockedBefore = text(root);
+    root->SetPermissionToEdit(false);
+    auto locked = stageviz::clearRelationships({ rel.GetPath() });
+    executeCommand(locked, current);
+    require(text(root) == lockedBefore, "locked relationship layer remains unchanged");
+    root->SetPermissionToEdit(true);
+    const auto instance = UsdGeomXform::Define(stage, SdfPath("/Instance")).GetPrim();
+    instance.GetReferences().AddInternalReference(SdfPath("/Object"));
+    // Put a relationship on a descendant to exercise read-only proxy rejection.
+    UsdGeomXform::Define(stage, SdfPath("/Object/Child"))
+        .GetPrim()
+        .CreateRelationship(TfToken("link"))
+        .SetTargets({ SdfPath("/WeakTarget") });
+    instance.SetInstanceable(true);
+    const auto proxyBefore = text(root);
+    auto proxy = stageviz::clearRelationships({ SdfPath("/Instance/Child.link") });
+    executeCommand(proxy, current);
+    require(text(root) == proxyBefore, "generic proxy relationships remain read-only without ancestor promotion");
+}
+
+void
+materialAssignmentSubsetsApi()
+{
+    Session current;
+    require(current.newStage(), "new subset assignment stage");
+    const auto stage = current.stage();
+    const auto layer = stage->GetRootLayer();
+    const auto mesh = UsdGeomMesh::Define(stage, SdfPath("/Mesh"));
+    mesh.CreatePointsAttr().Set(VtVec3fArray { { -1, -1, 0 }, { 1, -1, 0 }, { 1, 1, 0 }, { -1, 1, 0 } });
+    mesh.CreateFaceVertexCountsAttr().Set(VtIntArray { 3, 3 });
+    mesh.CreateFaceVertexIndicesAttr().Set(VtIntArray { 0, 1, 2, 0, 2, 3 });
+    const auto left = UsdGeomSubset::CreateGeomSubset(mesh, TfToken("Left"), UsdGeomTokens->face, VtIntArray { 0 },
+                                                      TfToken("materialBind"));
+    const auto right = UsdGeomSubset::CreateGeomSubset(mesh, TfToken("Right"), UsdGeomTokens->face, VtIntArray { 1 },
+                                                       TfToken("materialBind"));
+    const auto red = stageviz::MaterialUtils::createPreviewSurfaceMaterial(stage);
+    const auto blue = stageviz::MaterialUtils::createPreviewSurfaceMaterial(stage);
+    const auto green = stageviz::MaterialUtils::createPreviewSurfaceMaterial(stage);
+    UsdShadeMaterialBindingAPI::Apply(left.GetPrim()).Bind(UsdShadeMaterial(stage->GetPrimAtPath(red)));
+    UsdShadeMaterialBindingAPI::Apply(right.GetPrim()).Bind(UsdShadeMaterial(stage->GetPrimAtPath(blue)));
+    const auto bound = [&](const UsdPrim& prim) {
+        return UsdShadeMaterialBindingAPI(prim).ComputeBoundMaterial().GetPath();
+    };
+    const auto text = [&]() {
+        std::string result;
+        layer->ExportToString(&result);
+        return result;
+    };
+    const auto original = text();
+    auto assign = stageviz::assignMaterial({ mesh.GetPath() }, green);
+    executeCommand(assign, current);
+    require(bound(mesh.GetPrim()) == green && bound(left.GetPrim()) == green && bound(right.GetPrim()) == green,
+            "mesh assignment overrides every material-binding subset");
+    require(UsdShadeMaterialBindingAPI(left.GetPrim()).GetDirectBinding().GetMaterialPath() == red
+                && UsdShadeMaterialBindingAPI(right.GetPrim()).GetDirectBinding().GetMaterialPath() == blue,
+            "mesh assignment preserves underlying face bindings");
+    undoCommand(assign, current);
+    require(text() == original && bound(left.GetPrim()) == red && bound(right.GetPrim()) == blue,
+            "undo restores exact preassignment face materials");
+    executeCommand(assign, current);
+    auto clear = stageviz::clearMaterial({ mesh.GetPath() });
+    executeCommand(clear, current);
+    require(bound(left.GetPrim()) == red && bound(right.GetPrim()) == blue, "clear reveals original face materials");
+    undoCommand(clear, current);
+    require(bound(right.GetPrim()) == green, "clear undo restores whole-mesh assignment");
+    const auto wholeMesh = text();
+    auto face = stageviz::assignMaterial({ left.GetPath() }, blue);
+    executeCommand(face, current);
+    require(bound(left.GetPrim()) == blue && bound(right.GetPrim()) == green && bound(mesh.GetPrim()) == green,
+            "subset assignment automatically weakens mesh override and preserves sibling appearance");
+    require(UsdShadeMaterialBindingAPI::GetMaterialBindingStrength(
+                UsdShadeMaterialBindingAPI(mesh.GetPrim()).GetDirectBindingRel())
+                == UsdShadeTokens->weakerThanDescendants,
+            "subset bindings can win after mesh assignment");
+    undoCommand(face, current);
+    require(text() == wholeMesh && bound(left.GetPrim()) == green && bound(right.GetPrim()) == green,
+            "one undo restores exact mesh override and original face bindings");
+    executeCommand(face, current);
+    require(bound(left.GetPrim()) == blue && bound(right.GetPrim()) == green, "redo restores face assignment");
+    undoCommand(face, current);
+    auto both = stageviz::assignMaterial({ left.GetPath(), right.GetPath() }, red);
+    executeCommand(both, current);
+    require(bound(left.GetPrim()) == red && bound(right.GetPrim()) == red,
+            "multiple selected subsets are not overwritten by sibling preservation");
+    undoCommand(both, current);
+    require(text() == wholeMesh, "multi-subset undo restores exact layer");
+    stage->SetEditTarget(stage->GetSessionLayer());
+    auto layeredFace = stageviz::assignMaterial({ right.GetPath() }, red);
+    executeCommand(layeredFace, current);
+    require(bound(left.GetPrim()) == green && bound(right.GetPrim()) == red && text() == wholeMesh,
+            "subset assignment overrides weaker mesh binding without changing its source layer");
+    undoCommand(layeredFace, current);
+    require(bound(left.GetPrim()) == green && bound(right.GetPrim()) == green
+                && !stage->GetSessionLayer()->GetPrimAtPath(mesh.GetPath()),
+            "layered subset undo removes created opinions and prim specs");
+}
 
 void
 materialAssignmentInstancesApi()
@@ -3877,7 +4586,7 @@ materialAssignmentInstancesApi()
     const auto beforeLocal = text(root);
     auto localAssign = stageviz::assignMaterial({ SdfPath("/Local/Group/Left") }, blue);
     executeCommand(localAssign, current);
-    require(!stageviz::resetOverrideGroups(stage, { SdfPath("/Local") }).contains(stageviz::OverrideGroup::Materials),
+    require(!stageviz::clearOpinionGroups(stage, { SdfPath("/Local") }).contains(stageviz::OpinionGroup::Materials),
             "generic Reset retains its existing protection of local definitions");
     auto localReset = stageviz::clearMaterial({ SdfPath("/Local/Group/Left") });
     executeCommand(localReset, current);
@@ -4155,6 +4864,83 @@ newXformGroupingApi()
 }
 
 void
+crossLayerChildCreationApi()
+{
+    Session current;
+    require(current.newStage(), "new cross-layer child fixture");
+    const auto stage = current.stage();
+    const auto root = stage->GetRootLayer();
+    const auto look = SdfLayer::CreateAnonymous("children.usda");
+    root->SetSubLayerPaths({ look->GetIdentifier() });
+    UsdGeomXform::Define(stage, SdfPath("/World"));
+    UsdGeomCube::Define(stage, SdfPath("/World/Existing"));
+    const auto asset = UsdStage::CreateInMemory();
+    UsdGeomXform::Define(asset, SdfPath("/Asset/Nested"));
+    UsdGeomCube::Define(asset, SdfPath("/Asset/Nested/Original"));
+    const auto reference = UsdGeomXform::Define(stage, SdfPath("/Referenced")).GetPrim();
+    reference.GetReferences().AddReference(asset->GetRootLayer()->GetIdentifier(), SdfPath("/Asset"));
+    const auto instance = UsdGeomXform::Define(stage, SdfPath("/Instance")).GetPrim();
+    instance.GetReferences().AddReference(asset->GetRootLayer()->GetIdentifier(), SdfPath("/Asset"));
+    instance.SetInstanceable(true);
+    const auto text = [](const SdfLayerHandle& layer) {
+        std::string value;
+        layer->ExportToString(&value);
+        return value;
+    };
+    const auto rootBefore = text(root), sourceBefore = text(asset->GetRootLayer());
+    const QString assetId = QString::fromStdString(asset->GetRootLayer()->GetIdentifier());
+    for (const auto& parent : { SdfPath("/World"), SdfPath("/Referenced/Nested") }) {
+        for (bool seeded : { false, true }) {
+            stage->SetEditTarget(look);
+            if (seeded)
+                stage->OverridePrim(parent).CreateAttribute(TfToken("keep"), SdfValueTypeNames->Int, true).Set(7);
+            const auto before = text(look);
+            const std::vector<std::function<stageviz::Command()>> commands {
+                [&]() { return stageviz::newPrimPath(parent, "Added", TfToken("Xform")); },
+                [&]() { return stageviz::newScopePath(parent, "Added"); },
+                [&]() { return stageviz::newMeshPath(parent, "Added"); },
+                [&]() { return stageviz::newLightPath(parent, "Added", stageviz::LightType::Point); },
+                [&]() { return stageviz::newMaterialPath(parent, "Added"); },
+                [&]() { return stageviz::newReferencePath(parent, "Added", assetId, SdfPath("/Asset")); },
+                [&]() { return stageviz::newPayloadPath(parent, "Added", assetId, SdfPath("/Asset")); }
+            };
+            for (const auto& make : commands) {
+                stage->SetEditTarget(look);
+                auto command = make();
+                executeCommand(command, current);
+                const auto path = parent.AppendChild(TfToken("Added"));
+                require(stage->GetPrimAtPath(path).IsDefined() && look->GetPrimAtPath(path),
+                        "new child is defined in selected sublayer beneath another layer's parent");
+                require(look->GetPrimAtPath(parent)->GetSpecifier() == SdfSpecifierOver,
+                        "existing composed parent receives an over, not a replacement definition");
+                stage->SetEditTarget(root);
+                undoCommand(command, current);
+                require(!stage->GetPrimAtPath(path) && text(look) == before,
+                        "undo restores exact destination opinions after edit-target switch");
+                executeCommand(command, current);
+                require(bool(look->GetPrimAtPath(path)), "redo uses original creation layer after edit-target switch");
+                undoCommand(command, current);
+                require(text(look) == before && text(root) == rootBefore && text(asset->GetRootLayer()) == sourceBefore,
+                        "creation leaves defining and referenced source layers unchanged");
+            }
+            look->Clear();
+        }
+    }
+    stage->SetEditTarget(look);
+    const auto emptyLook = text(look);
+    QString error;
+    require(!stageviz::layer::validateChildParent(stage, look, SdfPath("/Instance"), error),
+            "reject instance root children");
+    require(!stageviz::layer::validateChildParent(stage, look, SdfPath("/Instance/Nested"), error),
+            "reject instance proxy children");
+    auto rename = stageviz::renamePath(SdfPath("/World/Existing"), "Moved");
+    executeCommand(rename, current);
+    require(stage->GetPrimAtPath(SdfPath("/World/Existing")) && !stage->GetPrimAtPath(SdfPath("/World/Moved"))
+                && text(root) == rootBefore && text(look) == emptyLook,
+            "cross-layer rename keeps its original ownership restrictions");
+}
+
+void
 commandAuthoringApi()
 {
     Session session;
@@ -4217,6 +5003,217 @@ commandAuthoringApi()
     // accessor. Native regression tests exercise command execute/undo directly
     // against their explicit Session; stack history behavior belongs in an
     // Application-backed integration test.
+}
+
+void
+flattenedInstanceCleanupApi()
+{
+    Session current;
+    require(current.newStage(), "new flattened cleanup stage");
+    const auto stage = current.stage();
+    const auto layer = stage->GetRootLayer();
+    require(layer->ImportFromString(R"USD(#usda 1.0
+ over "Flattened_Prototype_1" {
+ def Cube "Geom" {
+
+}
+}
+ over "Flattened_Prototype_99" {
+ def Cube "Unrelated" {
+
+}
+}
+ def Xform "One" (instanceable = true
+ prepend references = </Flattened_Prototype_1>) {
+
+}
+ def Xform "Two" (instanceable = true
+ prepend references = </Flattened_Prototype_1>) {
+
+}
+)USD"),
+            "flattened cleanup fixture");
+    require(stage->GetPrimAtPath(SdfPath("/One")).IsInstance(), "fixture has native instances");
+    auto first = stageviz::deletePaths({ SdfPath("/One") });
+    executeCommand(first, current);
+    require(bool(layer->GetPrimAtPath(SdfPath("/Flattened_Prototype_1"))), "shared source retained");
+    auto last = stageviz::deletePaths({ SdfPath("/Two") });
+    executeCommand(last, current);
+    require(!layer->GetPrimAtPath(SdfPath("/Flattened_Prototype_1")), "last instance removes its flattened source");
+    require(bool(layer->GetPrimAtPath(SdfPath("/Flattened_Prototype_99"))), "unrelated hidden source retained");
+    undoCommand(last, current);
+    require(stage->GetPrimAtPath(SdfPath("/Two/Geom")).IsInstanceProxy(), "undo restores source and instance");
+    executeCommand(last, current);
+    require(!layer->GetPrimAtPath(SdfPath("/Flattened_Prototype_1")), "redo cleans source again");
+    undoCommand(last, current);
+    undoCommand(first, current);
+    require(stage->GetPrimAtPath(SdfPath("/One/Geom")).IsInstanceProxy(), "undo restores shared instances");
+    stage->GetPrimAtPath(SdfPath("/One")).SetInstanceable(false);
+    stage->GetPrimAtPath(SdfPath("/Two")).SetInstanceable(false);
+    auto editable = stageviz::deletePaths({ SdfPath("/One"), SdfPath("/Two") });
+    executeCommand(editable, current);
+    require(!layer->GetPrimAtPath(SdfPath("/Flattened_Prototype_1")), "editable reference users also clean source");
+    undoCommand(editable, current);
+    require(bool(stage->GetPrimAtPath(SdfPath("/One/Geom"))), "editable cleanup undo");
+}
+
+void
+flattenedInstanceDependenciesApi()
+{
+    const std::vector<std::string> users {
+        R"USD(def Xform "User" (prepend references = </Flattened_Prototype_1>) {
+
+})USD",
+        R"USD(def Xform "User" (active = false
+ prepend references = </Flattened_Prototype_1>) {
+
+})USD",
+        R"USD(def Xform "User" (prepend payload = </Flattened_Prototype_1>) {
+
+})USD",
+        R"USD(def Xform "User" (prepend inherits = </Flattened_Prototype_1>) {
+
+})USD",
+        R"USD(def Xform "User" (prepend specializes = </Flattened_Prototype_1>) {
+
+})USD",
+        R"USD(def Xform "User" {
+ rel target = </Flattened_Prototype_1/Geom>
+})USD",
+        R"USD(def Xform "User" {
+ float input.connect = </Flattened_Prototype_1/Geom.output>
+})USD",
+        R"USD(def Xform "User" (variants = {
+string look = "off"
+}
+ prepend variantSets = "look") {
+
+            variantSet "look" = {
+ "off" {
+
+} "on" (prepend references = </Flattened_Prototype_1>) {
+
+}
+}
+
+})USD"
+    };
+    for (const auto& user : users) {
+        Session current;
+        require(current.newStage(), "new dependency stage");
+        const auto stage = current.stage();
+        const auto layer = stage->GetRootLayer();
+        require(layer->ImportFromString(std::string(R"USD(#usda 1.0
+ over "Flattened_Prototype_1" {
+ def Cube "Geom" {
+
+}
+}
+ def Xform "One" (instanceable = true
+ prepend references = </Flattened_Prototype_1>) {
+
+}
+)USD") + user),
+                "authored dependency fixture");
+        auto remove = stageviz::deletePaths({ SdfPath("/One") });
+        executeCommand(remove, current);
+        require(bool(layer->GetPrimAtPath(SdfPath("/Flattened_Prototype_1"))),
+                "surviving authored user protects source");
+        undoCommand(remove, current);
+        require(stage->GetPrimAtPath(SdfPath("/One/Geom")).IsInstanceProxy(), "protected cleanup undo");
+        if (user == users.front()) {
+            executeCommand(remove, current);
+            auto lastUser = stageviz::deletePaths({ SdfPath("/User") });
+            executeCommand(lastUser, current);
+            require(!layer->GetPrimAtPath(SdfPath("/Flattened_Prototype_1")), "last ordinary reference cleans source");
+        }
+    }
+    for (bool muted : { false, true }) {
+        Session current;
+        require(current.newStage(), "new layered dependency stage");
+        const auto stage = current.stage();
+        const auto layer = stage->GetRootLayer();
+        const auto weak = SdfLayer::CreateAnonymous("hidden-user.usda");
+        require(weak->ImportFromString(R"USD(#usda 1.0
+ def Xform "HiddenUser" (prepend references = </Flattened_Prototype_1>) {
+
+}
+)USD"),
+                "hidden user layer");
+        require(layer->ImportFromString(R"USD(#usda 1.0
+ over "Flattened_Prototype_1" {
+ def Cube "Geom" {
+
+}
+}
+ def Xform "One" (instanceable = true
+ prepend references = </Flattened_Prototype_1>) {
+
+}
+)USD"),
+                "layered source fixture");
+        layer->SetSubLayerPaths({ weak->GetIdentifier() });
+        if (muted)
+            stage->MuteLayer(weak->GetIdentifier());
+        auto remove = stageviz::deletePaths({ SdfPath("/One") });
+        executeCommand(remove, current);
+        require(bool(layer->GetPrimAtPath(SdfPath("/Flattened_Prototype_1"))),
+                "muted and active layer users protect source");
+    }
+}
+
+void
+flattenedInstanceNestedCleanupApi()
+{
+    Session current;
+    require(current.newStage(), "new nested flattened stage");
+    const auto stage = current.stage();
+    const auto layer = stage->GetRootLayer();
+    require(layer->ImportFromString(R"USD(#usda 1.0
+ over "Flattened_Prototype_1" {
+ def Cube "Geom" {
+
+}
+}
+ over "Flattened_Prototype_2" {
+
+    def Xform "Inner" (instanceable = true
+ prepend references = </Flattened_Prototype_1>) {
+
+}
+
+}
+ def Xform "Group" {
+
+    def Xform "One" (instanceable = true
+ prepend references = </Flattened_Prototype_2>) {
+
+}
+
+}
+)USD"),
+            "nested instance fixture");
+    const auto sources = stageviz::command::flattenedInstanceSources(stage, layer, { SdfPath("/Group") });
+    require(sources.contains(SdfPath("/Flattened_Prototype_2")), "collect outer source");
+    require(sources.contains(SdfPath("/Flattened_Prototype_1")), "collect nested source");
+    auto remove = stageviz::deletePaths({ SdfPath("/Group") });
+    executeCommand(remove, current);
+    require(!stage->GetPrimAtPath(SdfPath("/Group")), "group deleted");
+    require(!layer->GetPrimAtPath(SdfPath("/Flattened_Prototype_2")), "outer helper removed");
+    require(!layer->GetPrimAtPath(SdfPath("/Flattened_Prototype_1")), "nested helper removed");
+    undoCommand(remove, current);
+    require(stage->GetPrimAtPath(SdfPath("/Group/One/Inner/Geom")).IsInstanceProxy(), "nested cleanup undo");
+    const auto user = stage->DefinePrim(SdfPath("/User"), TfToken("Xform"));
+    user.GetReferences().AddInternalReference(SdfPath("/Flattened_Prototype_2"));
+    executeCommand(remove, current);
+    require(bool(layer->GetPrimAtPath(SdfPath("/Flattened_Prototype_2")))
+                && bool(layer->GetPrimAtPath(SdfPath("/Flattened_Prototype_1"))),
+            "surviving outer user protects its nested dependency");
+    auto last = stageviz::deletePaths({ SdfPath("/User") });
+    executeCommand(last, current);
+    require(!layer->GetPrimAtPath(SdfPath("/Flattened_Prototype_2"))
+                && !layer->GetPrimAtPath(SdfPath("/Flattened_Prototype_1")),
+            "last nested user removes both helpers");
 }
 
 void
@@ -4325,11 +5322,11 @@ commandPropertyApi()
     require(attr.Get(&value) && second.Get(&secondValue) && closeEnough(value, 1.0) && closeEnough(secondValue, 3.0),
             "setAttributeValues undo");
 
-    stageviz::Command reset = stageviz::resetAttributeValues({ attrPath });
+    stageviz::Command reset = stageviz::clearAttributeValues({ attrPath });
     executeCommand(reset, session);
-    require(!attr.HasAuthoredValueOpinion(), "resetAttributeValues removes authored default");
+    require(!attr.HasAuthoredValueOpinion(), "clearAttributeValues removes authored default");
     undoCommand(reset, session);
-    require(attr.Get(&value) && closeEnough(value, 1.0), "resetAttributeValues undo restores value");
+    require(attr.Get(&value) && closeEnough(value, 1.0), "clearAttributeValues undo restores value");
 }
 
 void
@@ -5516,11 +6513,11 @@ commandPivotLifecycleApi()
     undoCommand(center, session);
     require(bool(session.stage()->GetPrimAtPath(path)), "centerPivots undo preserves prim");
     executeCommand(center, session);
-    stageviz::Command reset = stageviz::resetPivots({ path });
+    stageviz::Command reset = stageviz::clearPivots({ path });
     executeCommand(reset, session);
-    require(bool(session.stage()->GetPrimAtPath(path)), "resetPivots preserves prim");
+    require(bool(session.stage()->GetPrimAtPath(path)), "clearPivots preserves prim");
     undoCommand(reset, session);
-    require(bool(session.stage()->GetPrimAtPath(path)), "resetPivots undo preserves prim");
+    require(bool(session.stage()->GetPrimAtPath(path)), "clearPivots undo preserves prim");
 }
 
 void
@@ -5761,6 +6758,7 @@ main(int argc, char** argv)
         { "perf_scope_unset", [] { perfScopeLog(0); } },
         { "perf_scope_empty", [] { perfScopeLog(1); } },
         { "perf_scope_enabled", [] { perfScopeLog(2); } },
+        { "render_material_context_invalidation_api", renderMaterialContextInvalidationApi },
         { "render_scene_index_removal", renderSceneIndexRemoval },
         { "save_twice_usda", [] { saveTwice("usda"); } },
         { "save_twice_usdc", [] { saveTwice("usdc"); } },
@@ -5779,6 +6777,12 @@ main(int argc, char** argv)
         { "legacy_payload_state", [] { payloadState(true); } },
         { "reparent_dependencies", reparentDependencies },
         { "rename_dependencies", renameDependencies },
+        { "rename_material_layer_parent", renameMaterialLayerParent },
+        { "material_container_layers", materialContainerLayers },
+        { "clear_inert_material_opinions", clearInertMaterialOpinions },
+        { "explicit_override_paths_api", explicitOverridePathsApi },
+        { "replace_material_network_api", replaceMaterialNetworkApi },
+        { "layer_authoring_variants_api", layerAuthoringVariantsApi },
         { "reparent_collision", reparentCollision },
         { "reparent_into_descendant", reparentIntoDescendant },
         { "reparent_batch", reparentBatch },
@@ -5796,12 +6800,16 @@ main(int argc, char** argv)
         { "selection_list_semantics", selectionListSemantics },
         { "selection_list_large", selectionListLarge },
         { "view_camera_api", viewCameraApi },
+        { "camera_live_scene_clipping_api", cameraLiveSceneClippingApi },
+        { "session_geometry_bounds_notifications_api", sessionGeometryBoundsNotificationsApi },
+        { "viewport_purpose_state_api", viewportPurposeStateApi },
         { "view_state_api", viewStateApi },
         { "session_core_api", sessionCoreApi },
         { "session_file_api", sessionFileApi },
         { "session_layer_colors_api", sessionLayerColorsApi },
         { "session_edit_layer_api", sessionEditLayerApi },
         { "session_layer_commands", sessionLayerCommands },
+        { "create_sublayer_replace_api", createSublayerReplaceApi },
         { "session_layer_batch_api", sessionLayerBatchApi },
         { "session_layer_update_api", sessionLayerUpdateApi },
         { "session_state_api", sessionStateApi },
@@ -5825,13 +6833,19 @@ main(int argc, char** argv)
         { "geometry_subset_api", geometrySubsetApi },
         { "material_menu_api", materialMenuApi },
         { "command_material_api", commandMaterialApi },
+        { "material_assignment_subsets_api", materialAssignmentSubsetsApi },
         { "material_assignment_instances_api", materialAssignmentInstancesApi },
-        { "reset_opinion_groups_api", resetOpinionGroupsApi },
+        { "relationship_opinions_api", relationshipOpinionsApi },
+        { "clear_opinion_groups_api", clearOpinionGroupsApi },
         { "make_editable_instance_api", makeEditableInstanceApi },
+        { "flattened_instance_cleanup_api", flattenedInstanceCleanupApi },
+        { "flattened_instance_dependencies_api", flattenedInstanceDependenciesApi },
+        { "flattened_instance_nested_cleanup_api", flattenedInstanceNestedCleanupApi },
         { "command_selection_api", commandSelectionApi },
         { "render_isolation_instances", renderIsolationInstances },
         { "render_isolation_ordinary_prims", renderIsolationOrdinaryPrims },
         { "command_authoring_api", commandAuthoringApi },
+        { "cross_layer_child_creation_api", crossLayerChildCreationApi },
         { "new_xform_grouping_api", newXformGroupingApi },
         { "command_generated_geometry_api", commandGeneratedGeometryApi },
         { "command_property_api", commandPropertyApi },

@@ -122,6 +122,49 @@ namespace layer {
         return validatePrim(stage, layer, parentPath, error, requireStrongest);
     }
 
+    bool validateChildParent(const UsdStageRefPtr& stage, const SdfLayerHandle& layer, const SdfPath& parentPath,
+                             QString& error)
+    {
+        if (!stage || !layer || !layer->PermissionToEdit()) {
+            error = !stage ? "stage missing" : "destination layer is not editable";
+            return false;
+        }
+        if (parentPath == SdfPath::AbsoluteRootPath())
+            return true;
+        if (!parentPath.IsAbsolutePath() || !parentPath.IsPrimPath()) {
+            error = "invalid parent path";
+            return false;
+        }
+        const auto parent = stage->GetPrimAtPath(parentPath);
+        if (!parent || !parent.IsActive()) {
+            error = QString("parent is missing or inactive: %1").arg(qt::SdfPathToQString(parentPath));
+            return false;
+        }
+        if (parent.IsInstance() || parent.IsInstanceProxy() || parent.IsPrototype() || parent.IsInPrototype()) {
+            error = QString("cannot add children inside an instance or prototype: %1")
+                        .arg(qt::SdfPathToQString(parentPath));
+            return false;
+        }
+        return true;
+    }
+
+    VtValue childOrderOpinion(const SdfLayerHandle& layer, const SdfPath& parentPath)
+    {
+        return layer && layer->HasField(parentPath, SdfFieldKeys->PrimOrder)
+                   ? layer->GetField(parentPath, SdfFieldKeys->PrimOrder)
+                   : VtValue();
+    }
+
+    void restoreChildOrderOpinion(const SdfLayerHandle& layer, const SdfPath& parentPath, const VtValue& value)
+    {
+        if (!layer || (parentPath != SdfPath::AbsoluteRootPath() && !layer->GetPrimAtPath(parentPath)))
+            return;
+        if (value.IsEmpty())
+            layer->EraseField(parentPath, SdfFieldKeys->PrimOrder);
+        else
+            layer->SetField(parentPath, SdfFieldKeys->PrimOrder, value);
+    }
+
 }  // namespace layer
 
 namespace identifier {

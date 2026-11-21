@@ -588,6 +588,66 @@ PyViewState_setSceneLightsEnabled(PyViewStateObject* self, PyObject* args)
 }
 
 static PyObject*
+PyViewState_showGuides(PyViewStateObject* self, PyObject*)
+{
+    if (!checkViewState(self->viewState))
+        return nullptr;
+    return PyBool_FromLong(self->viewState->showGuides());
+}
+
+static PyObject*
+PyViewState_setShowGuides(PyViewStateObject* self, PyObject* args)
+{
+    if (!checkViewState(self->viewState))
+        return nullptr;
+    int enabled = 0;
+    if (!PyArg_ParseTuple(args, "p", &enabled))
+        return nullptr;
+    self->viewState->setShowGuides(enabled != 0);
+    Py_RETURN_NONE;
+}
+
+static PyObject*
+PyViewState_showProxy(PyViewStateObject* self, PyObject*)
+{
+    if (!checkViewState(self->viewState))
+        return nullptr;
+    return PyBool_FromLong(self->viewState->showProxy());
+}
+
+static PyObject*
+PyViewState_setShowProxy(PyViewStateObject* self, PyObject* args)
+{
+    if (!checkViewState(self->viewState))
+        return nullptr;
+    int enabled = 0;
+    if (!PyArg_ParseTuple(args, "p", &enabled))
+        return nullptr;
+    self->viewState->setShowProxy(enabled != 0);
+    Py_RETURN_NONE;
+}
+
+static PyObject*
+PyViewState_showRender(PyViewStateObject* self, PyObject*)
+{
+    if (!checkViewState(self->viewState))
+        return nullptr;
+    return PyBool_FromLong(self->viewState->showRender());
+}
+
+static PyObject*
+PyViewState_setShowRender(PyViewStateObject* self, PyObject* args)
+{
+    if (!checkViewState(self->viewState))
+        return nullptr;
+    int enabled = 0;
+    if (!PyArg_ParseTuple(args, "p", &enabled))
+        return nullptr;
+    self->viewState->setShowRender(enabled != 0);
+    Py_RETURN_NONE;
+}
+
+static PyObject*
 PyViewState_sceneMaterialsEnabled(PyViewStateObject* self, PyObject*)
 {
     if (!checkViewState(self->viewState))
@@ -995,6 +1055,18 @@ static PyMethodDef PyViewState_methods[] = {
     { "setSceneLightsEnabled", reinterpret_cast<PyCFunction>(PyViewState_setSceneLightsEnabled), METH_VARARGS,
       "Set the scene light state" },
 
+    { "showGuides", reinterpret_cast<PyCFunction>(PyViewState_showGuides), METH_NOARGS,
+      "Get viewport guides purpose visibility" },
+    { "setShowGuides", reinterpret_cast<PyCFunction>(PyViewState_setShowGuides), METH_VARARGS,
+      "Set viewport guides purpose visibility" },
+    { "showProxy", reinterpret_cast<PyCFunction>(PyViewState_showProxy), METH_NOARGS,
+      "Get viewport proxy purpose visibility" },
+    { "setShowProxy", reinterpret_cast<PyCFunction>(PyViewState_setShowProxy), METH_VARARGS,
+      "Set viewport proxy purpose visibility" },
+    { "showRender", reinterpret_cast<PyCFunction>(PyViewState_showRender), METH_NOARGS,
+      "Get viewport render purpose visibility" },
+    { "setShowRender", reinterpret_cast<PyCFunction>(PyViewState_setShowRender), METH_VARARGS,
+      "Set viewport render purpose visibility" },
     { "sceneMaterialsEnabled", reinterpret_cast<PyCFunction>(PyViewState_sceneMaterialsEnabled), METH_NOARGS,
       "Get the scene material state" },
     { "setSceneMaterialsEnabled", reinterpret_cast<PyCFunction>(PyViewState_setSceneMaterialsEnabled), METH_VARARGS,

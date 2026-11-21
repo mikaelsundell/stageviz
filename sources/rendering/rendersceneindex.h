@@ -52,6 +52,11 @@ public:
     ~RenderSceneIndex() override;
 
     /**
+     * @brief Resyncs surviving material roots after shader topology changes.
+     */
+    void refreshMaterials(const std::set<pxr::SdfPath>& paths);
+
+    /**
      * @name Scene Materials
      */
     /**

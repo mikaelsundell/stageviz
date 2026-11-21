@@ -33,7 +33,7 @@ that instance's shared direct binding. Geometry remains instanced.
 `command.bind_material` remains an explicit direct-binding operation.
 `command.clear_material` removes native material-binding relationships in the
 current edit layer, using the same proxy-owner promotion. Undo restores exact
-binding specs without custom metadata. Generic Reset remains unchanged.
+binding specs without custom metadata. Generic opinion clearing retains its override-only behavior.
 
 `command.update_layer` reloads a selected layer or batch from disk with undoable
 content snapshots; redo uses the captured content. It does not reload the stage
@@ -127,8 +127,29 @@ Keep API prose, [agent instructions](../SKILL.md), the [start guide](python-star
 and this boundary document consistent. Behavior changes still need focused
 native/GUI and embedded Python regressions as described in [Qt testing](python-qt-testing.md).
 
-Reset opinion groups are covered by `CTest/python/testresetopinions.py` and the native `reset_opinion_groups_api` case, including active-layer isolation and undo/redo.
+Clear opinion groups are covered by `CTest/python/testclearopinions.py` and the native `clear_opinion_groups_api` case, including active-layer isolation and undo/redo.
 
 Layer remove, mute and permission bindings accept one identifier or a sequence; `testlayermultiselection.py` covers one-step batch undo/redo and the multi-selection Layer Editor UI.
 
 Companion-state dirtiness and root-stage pairing are exercised by `session_state_dirty_api` and `testpreservestate.py`, including state-only save prompts, camera/view changes, payloads, failed writes, copying and preservation disabled.
+
+## Clear command naming
+
+Opinion removal uses `clear_opinions`, `clear_pivots`,
+`clear_attribute_values`, `clear_attribute_opinion`, `clear_attribute_opinions`,
+`clear_dependencies`, and `clear_shader_inputs` in place of the former reset
+names. `clear_relationships` removes complete local relationship specs and uses
+the original edit target for undo/redo. `identity_transforms` is the single
+transform-identity entry point; the redundant reset entry point was removed.
+View/camera reset operations retain their names because they restore view state,
+rather than remove USD property opinions.
+
+## Explicit layer authoring
+
+`override_paths` authors inert overs without duplicating existing prims.
+`replace_material_network` authors a built-in replacement network and terminal
+connection overrides while retaining material paths and bindings. Both are
+undoable, positional-only commands; replacement type choices are documented in
+the API reference. Native and embedded regressions cover their layer isolation.
+
+Viewport purpose visibility is exposed through ViewState.showGuides/showProxy/showRender and their setters; these use native renderer purpose controls.

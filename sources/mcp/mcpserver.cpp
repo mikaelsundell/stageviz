@@ -3,6 +3,7 @@
 // https://github.com/mikaelsundell/stageviz
 
 #include "mcpserver.h"
+#include "primutils.h"
 
 #include "application.h"
 #include "pythoninterpreter.h"
@@ -383,6 +384,7 @@ public:
             const SdfLayerHandle rootLayer = stage->GetRootLayer();
             const UsdPrim defaultPrim = stage->GetDefaultPrim();
             info.insert("loaded", true);
+            info.insert("editLayer", QString::fromStdString(stage->GetEditTarget().GetLayer()->GetIdentifier()));
             info.insert("rootLayer", rootLayer ? QString::fromStdString(rootLayer->GetIdentifier()) : QString());
             info.insert("defaultPrim",
                         defaultPrim ? QString::fromStdString(defaultPrim.GetPath().GetString()) : QString());
@@ -512,6 +514,14 @@ public:
             info.insert("active", prim.IsActive());
             info.insert("defined", prim.IsDefined());
             info.insert("abstract", prim.IsAbstract());
+            const auto layers = stage::primLayerInfo(prim);
+            info.insert("definingLayer", layers.definingLayer
+                                             ? QString::fromStdString(layers.definingLayer->GetIdentifier())
+                                             : QString());
+            info.insert("strongestLayer", layers.strongestLayer
+                                              ? QString::fromStdString(layers.strongestLayer->GetIdentifier())
+                                              : QString());
+            info.insert("editLayer", QString::fromStdString(stage->GetEditTarget().GetLayer()->GetIdentifier()));
             info.insert("attributes", attributes);
             info.insert("relationships", relationships);
             if (prim.IsInstance())

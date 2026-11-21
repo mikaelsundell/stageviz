@@ -3,6 +3,7 @@
 // https://github.com/mikaelsundell/stageviz
 
 #include "materialutils.h"
+#include "primutils.h"
 #include <MaterialXCore/Document.h>
 #include <MaterialXFormat/XmlIo.h>
 #include <QCoreApplication>
@@ -1170,6 +1171,11 @@ MaterialUtils::sceneMaterials(UsdStageRefPtr stage)
         entry.name = QString::fromStdString(prim.GetName().GetString());
         entry.shaderId = shaderId;
         entry.layerIdentifiers = materialLayerIdentifiers(prim);
+        const auto layers = stage::primLayerInfo(prim);
+        entry.definingLayerIdentifier = layers.definingLayer
+                                            ? QString::fromStdString(layers.definingLayer->GetIdentifier())
+                                            : QString();
+        entry.rootLayerIdentifier = QString::fromStdString(stage->GetRootLayer()->GetIdentifier());
         entry.parameters = readParameters(shader, shaderId);
 
         for (const CanonicalParameter& mapping : kParameters) {
@@ -1216,6 +1222,11 @@ MaterialUtils::materialEntry(UsdStageRefPtr stage, const SdfPath& materialPath, 
     result.name = QString::fromStdString(prim.GetName().GetString());
     result.shaderId = shaderId;
     result.layerIdentifiers = materialLayerIdentifiers(prim);
+    const auto layers = stage::primLayerInfo(prim);
+    result.definingLayerIdentifier = layers.definingLayer
+                                         ? QString::fromStdString(layers.definingLayer->GetIdentifier())
+                                         : QString();
+    result.rootLayerIdentifier = QString::fromStdString(stage->GetRootLayer()->GetIdentifier());
     result.parameters = readParameters(shader, shaderId);
 
     for (const CanonicalParameter& mapping : kParameters) {
@@ -2244,8 +2255,19 @@ MaterialUtils::uniqueMaterialPath(UsdStageRefPtr stage, const QString& baseName)
         return {};
 
     const SdfPath root("/Materials");
+    // Each layer creating materials must retain a defined container when other layers are muted.
     if (!stage->GetPrimAtPath(root))
         stage->DefinePrim(root, TfToken("Scope"));
+    else {
+        const auto typeName = stage->GetPrimAtPath(root).GetTypeName();
+        const auto spec = SdfCreatePrimInLayer(stage->GetEditTarget().GetLayer(),
+                                               stage->GetEditTarget().MapToSpecPath(root));
+        if (!spec)
+            return {};
+        spec->SetSpecifier(SdfSpecifierDef);
+        if (spec->GetTypeName().IsEmpty() && !typeName.IsEmpty())
+            spec->SetTypeName(typeName);
+    }
 
     const QString cleanBase = sanitizeIdentifier(baseName);
     QString name = cleanBase;
@@ -2671,7 +2693,12 @@ MaterialUtils::exportMaterialX(UsdStageRefPtr stage, const SdfPath& materialPath
     QList<ExportNode> nodes;
     QHash<QString, int> nodeIndex;
     QSet<QString> visiting;
-    QSet<QString> usedNames;
+    // USD nests shader prims under materials, while MaterialX exports them
+    // as siblings. Reserve the material name before naming graph nodes.
+    QString materialName = sanitizeIdentifier(QString::fromStdString(materialPrim.GetName().GetString()));
+    if (materialName.isEmpty())
+        materialName = QStringLiteral("Material");
+    QSet<QString> usedNames { materialName };
 
     auto uniqueNodeName = [&](QString base) {
         base = sanitizeIdentifier(base);
@@ -2887,7 +2914,6 @@ MaterialUtils::exportMaterialX(UsdStageRefPtr stage, const SdfPath& materialPath
             }
         }
 
-        const QString materialName = sanitizeIdentifier(QString::fromStdString(materialPrim.GetName().GetString()));
         const QString surfaceKey = QString::fromStdString(surface.GetPath().GetString());
         const auto surfaceIt = materialXNodes.constFind(surfaceKey);
         if (surfaceIt == materialXNodes.cend() || !surfaceIt.value()) {
@@ -2895,10 +2921,7 @@ MaterialUtils::exportMaterialX(UsdStageRefPtr stage, const SdfPath& materialPath
             return false;
         }
 
-        MaterialX::NodePtr mxMaterial
-            = document->addNode("surfacematerial",
-                                (materialName.isEmpty() ? QStringLiteral("Material") : materialName).toStdString(),
-                                "material");
+        MaterialX::NodePtr mxMaterial = document->addNode("surfacematerial", materialName.toStdString(), "material");
         if (!mxMaterial) {
             error = QStringLiteral("Could not create MaterialX surface material");
             return false;

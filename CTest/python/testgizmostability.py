@@ -26,6 +26,14 @@ class GizmoStabilityTest(_base['ViewportTest']):
         self.original_filename = ''
         self.original_selection = []
         assert stageviz.session().newStage()
+        self.activate_mode('Select')
+        tb.process_events(100)
+        aux = stageviz.session().auxiliary()
+        assert UsdGeom.Imageable(aux.GetPrimAtPath('/Display/Transform')).ComputeVisibility() == 'invisible'
+        for mode in ('Move', 'Rotate', 'Scale'):
+            for axis in 'XYZ':
+                assert aux.GetPrimAtPath('/Display/Transform/' + mode + '/' + axis), 'handles prepared before selection'
+        self.snapshot('gizmo_hidden_warmup')
         self.activate_mode('Rotate')
         for name in ('Plane', 'Sphere'):
             stageviz.command.new_prim('/World', name, type_name=name)

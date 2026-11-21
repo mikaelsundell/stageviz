@@ -344,6 +344,7 @@ SessionPrivate::init()
                      [this]() { markStateDirty(); });
     QObject::connect(d.viewState.data(), &ViewState::sceneLightsEnabledChanged, d.session,
                      [this]() { markStateDirty(); });
+    QObject::connect(d.viewState.data(), &ViewState::purposesChanged, d.session, [this]() { markStateDirty(); });
     QObject::connect(d.viewState.data(), &ViewState::sceneMaterialsEnabledChanged, d.session,
                      [this]() { markStateDirty(); });
     QObject::connect(d.viewState.data(), &ViewState::doubleSidedModeChanged, d.session, [this]() { markStateDirty(); });
@@ -1573,6 +1574,12 @@ SessionPrivate::loadState(const QString& filename)
             if (viewStateObject.contains("sceneLightsEnabled"))
                 d.viewState->setSceneLightsEnabled(
                     viewStateObject.value("sceneLightsEnabled").toBool(d.viewState->sceneLightsEnabled()));
+            if (viewStateObject.contains("showGuides"))
+                d.viewState->setShowGuides(viewStateObject.value("showGuides").toBool(d.viewState->showGuides()));
+            if (viewStateObject.contains("showProxy"))
+                d.viewState->setShowProxy(viewStateObject.value("showProxy").toBool(d.viewState->showProxy()));
+            if (viewStateObject.contains("showRender"))
+                d.viewState->setShowRender(viewStateObject.value("showRender").toBool(d.viewState->showRender()));
             if (viewStateObject.contains("sceneMaterialsEnabled"))
                 d.viewState->setSceneMaterialsEnabled(
                     viewStateObject.value("sceneMaterialsEnabled").toBool(d.viewState->sceneMaterialsEnabled()));
@@ -1821,6 +1828,9 @@ SessionPrivate::saveState(const QString& filename, bool markSaved, const QString
         viewStateObject["domeLightCameraVisibility"] = d.viewState->domeLightCameraVisibility();
         viewStateObject["sceneLightsEnabled"] = d.viewState->sceneLightsEnabled();
         viewStateObject["sceneMaterialsEnabled"] = d.viewState->sceneMaterialsEnabled();
+        viewStateObject["showGuides"] = d.viewState->showGuides();
+        viewStateObject["showProxy"] = d.viewState->showProxy();
+        viewStateObject["showRender"] = d.viewState->showRender();
         viewStateObject["doubleSidedMode"] = doubleSidedMode(d.viewState->doubleSidedMode());
         viewStateObject["renderMode"] = renderMode(d.viewState->renderMode());
         viewStateObject["complexityLevel"] = complexityLevel(d.viewState->complexityLevel());
@@ -2164,6 +2174,14 @@ SessionPrivate::needsBoundingBoxUpdate(const NoticeBatch& batch) const
 
         if (entry.changedInfoOnly && !entry.path.IsPropertyPath())
             return true;
+        if (entry.path.IsPropertyPath()) {
+            const auto& name = entry.path.GetName();
+            if (name.rfind("xformOp:", 0) == 0 || name == "xformOpOrder" || name == "points" || name == "extent"
+                || name == "extentsHint" || name == "visibility" || name == "purpose" || name == "radius"
+                || name == "height" || name == "size" || name == "widths" || name == "axis" || name == "positions"
+                || name == "orientations" || name == "scales" || name == "protoIndices")
+                return true;
+        }
     }
     return false;
 }

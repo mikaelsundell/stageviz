@@ -42,7 +42,9 @@ public:
         QString identifier;
         QString parentIdentifier;
         QString name;
-        QString tooltip;
+        bool dirty = false;
+        bool anonymous = false;
+        bool saveable = true;
         int primSpecCount = 0;
         bool root = false;
         bool editTarget = false;

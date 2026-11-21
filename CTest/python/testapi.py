@@ -1259,18 +1259,17 @@ def test_command_api():
         "move_path",
         "set_attribute_value",
         "set_attribute_values",
-        "reset_attribute_values",
-        "reset_attribute_override",
-        "reset_attribute_overrides",
+        "clear_attribute_values",
+        "clear_attribute_opinion",
+        "clear_attribute_opinions",
         "center_pivots",
-        "reset_pivots",
-        "reset_transforms",
+        "clear_pivots",
         "identity_transforms",
         "connect_shader_input",
         "connect_shader_node",
-        "reset_dependencies",
+        "clear_dependencies",
         "disconnect_shader_inputs",
-        "reset_shader_inputs",
+        "clear_shader_inputs",
         "connect_materialx_node",
         "bind_material",
         "merge_stage",
@@ -1280,9 +1279,9 @@ def test_command_api():
         "add_payload",
     ]
 
-    # reset_overrides was added after the original Python command surface.
-    if _has_command("reset_overrides"):
-        expected.append("reset_overrides")
+    # clear_opinions was added after the original Python command surface.
+    if _has_command("clear_opinions"):
+        expected.append("clear_opinions")
 
     missing = [name for name in expected if not _has_command(name)]
 
@@ -1995,9 +1994,9 @@ def test_material_shader_commands():
     required = (
         "connect_shader_input",
         "connect_shader_node",
-        "reset_dependencies",
+        "clear_dependencies",
         "disconnect_shader_inputs",
-        "reset_shader_inputs",
+        "clear_shader_inputs",
         "connect_materialx_node",
     )
     missing = [name for name in required if not _has_command(name)]
@@ -2064,16 +2063,16 @@ def test_material_shader_commands():
             "undo disconnect_shader_inputs restores source",
         )
 
-    # reset_dependencies clears authored connections on the property and is undoable.
-    stageviz.command.reset_dependencies([diffuse_path])
+    # clear_dependencies clears authored connections on the property and is undoable.
+    stageviz.command.clear_dependencies([diffuse_path])
     _assert(
         _wait_until(lambda: _connected_source_path(diffuse) == ""),
-        "reset_dependencies clears shader input connection",
+        "clear_dependencies clears shader input connection",
     )
     if _undo():
         _assert(
             _wait_until(lambda: _connected_source_path(diffuse) == str(color_source.GetPath())),
-            "undo reset_dependencies restores shader input connection",
+            "undo clear_dependencies restores shader input connection",
         )
 
     # Create a Preview Surface texture node through the same command used by the UI.
@@ -2133,10 +2132,10 @@ def test_material_shader_commands():
     roughness.Set(0.37)
     roughness_path = str(roughness.GetAttr().GetPath())
     _assert(bool(roughness.GetAttr().HasAuthoredValueOpinion()), "roughness has authored value before reset")
-    stageviz.command.reset_shader_inputs([roughness_path])
+    stageviz.command.clear_shader_inputs([roughness_path])
     _assert(
         _wait_until(lambda: not roughness.GetAttr().HasAuthoredValueOpinion()),
-        "reset_shader_inputs clears authored shader value",
+        "clear_shader_inputs clears authored shader value",
     )
     if _undo():
         _assert(
@@ -2144,7 +2143,7 @@ def test_material_shader_commands():
                 lambda: roughness.GetAttr().HasAuthoredValueOpinion()
                 and abs(float(roughness.Get()) - 0.37) < 1e-6
             ),
-            "undo reset_shader_inputs restores authored shader value",
+            "undo clear_shader_inputs restores authored shader value",
         )
 
     # MaterialX-specific create/connect path. A scalar image node is valid for Standard Surface base.
@@ -5037,9 +5036,9 @@ def test_composed_visibility_override_and_undo():
 
 
 
-def test_reset_overrides():
-    if not _has_command("reset_overrides"):
-        print("[skip] reset_overrides is not bound")
+def test_clear_opinions():
+    if not _has_command("clear_opinions"):
+        print("[skip] clear_opinions is not bound")
         return
 
     stageviz.command.load_payloads(["/World/PayloadA"])
@@ -5101,88 +5100,88 @@ def test_reset_overrides():
 
     # Resetting the payload root must recurse into composed descendants and
     # remove their override properties without touching the payload root def.
-    stageviz.command.reset_overrides([payload_path])
+    stageviz.command.clear_opinions([payload_path])
 
     _assert(
         _wait_until(lambda: not _root_has_property(visibility_path)),
-        "reset_overrides recursively removes descendant visibility override",
+        "clear_opinions recursively removes descendant visibility override",
     )
 
     _assert(
         str(_visibility(child_path)) != "invisible",
-        "reset_overrides exposes weaker payload visibility",
+        "clear_opinions exposes weaker payload visibility",
     )
 
     _assert(
         _exists(child_path),
-        "reset_overrides preserves payload child",
+        "clear_opinions preserves payload child",
     )
 
     payload_prim = _prim(payload_path)
     _assert(
         bool(payload_prim and payload_prim.HasPayload() and payload_prim.IsLoaded()),
-        "reset_overrides preserves payload arc and load state",
+        "clear_opinions preserves payload arc and load state",
     )
 
     _assert(
         _root_has_property(payload_translate_path),
-        "reset_overrides preserves root-owned payload transform",
+        "clear_opinions preserves root-owned payload transform",
     )
 
     _assert(
         _matrix_close(_world_transform(payload_path), payload_world_before, tolerance=1e-8),
-        "reset_overrides preserves payload root world transform",
+        "clear_opinions preserves payload root world transform",
     )
 
     if _undo():
         _assert(
             _wait_until(lambda: _root_has_property(visibility_path)),
-            "undo reset_overrides restores descendant visibility override",
+            "undo clear_opinions restores descendant visibility override",
         )
 
         _assert_equal(
             str(_visibility(child_path)),
             "invisible",
-            "undo reset_overrides restores hidden child",
+            "undo clear_opinions restores hidden child",
         )
 
         payload_prim = _prim(payload_path)
         _assert(
             bool(payload_prim and payload_prim.HasPayload() and payload_prim.IsLoaded()),
-            "undo reset_overrides keeps payload loaded",
+            "undo clear_opinions keeps payload loaded",
         )
 
         _assert(
             _matrix_close(_world_transform(payload_path), payload_world_before, tolerance=1e-8),
-            "undo reset_overrides keeps payload root transform unchanged",
+            "undo clear_opinions keeps payload root transform unchanged",
         )
 
     if _redo():
         _assert(
             _wait_until(lambda: not _root_has_property(visibility_path)),
-            "redo reset_overrides removes descendant visibility override again",
+            "redo clear_opinions removes descendant visibility override again",
         )
 
         payload_prim = _prim(payload_path)
         _assert(
             bool(payload_prim and payload_prim.HasPayload() and payload_prim.IsLoaded()),
-            "redo reset_overrides keeps payload loaded",
+            "redo clear_opinions keeps payload loaded",
         )
 
         _assert(
             _root_has_property(payload_translate_path),
-            "redo reset_overrides still preserves payload root transform",
+            "redo clear_opinions still preserves payload root transform",
         )
 
         _assert(
             _matrix_close(_world_transform(payload_path), payload_world_before, tolerance=1e-8),
-            "redo reset_overrides preserves payload root world transform",
+            "redo clear_opinions preserves payload root world transform",
         )
 
 
-def test_reset_overrides_ignores_root_owned_prim():
-    if not _has_command("reset_overrides"):
-        print("[skip] reset_overrides is not bound")
+def test_clear_opinions_ignores_root_owned_prim():
+    if not _has_command("clear_opinions"):
+        print("[skip] clear_opinions is not bound")
         return
 
     path = "/World/A"
@@ -5198,29 +5197,29 @@ def test_reset_overrides_ignores_root_owned_prim():
         "root-owned prim has root-layer spec",
     )
 
-    stageviz.command.reset_overrides([path])
+    stageviz.command.clear_opinions([path])
     _wait()
 
     _assert(
         _exists(path),
-        "reset_overrides never deletes root-owned prim",
+        "clear_opinions never deletes root-owned prim",
     )
 
     root_spec = _root_layer().GetPrimAtPath(Sdf.Path(path))
     _assert(
         bool(root_spec and root_spec.HasInfo("documentation")),
-        "reset_overrides leaves root-owned metadata unchanged",
+        "clear_opinions leaves root-owned metadata unchanged",
     )
 
     _assert(
         _root_has_property(f"{path}.purpose"),
-        "reset_overrides leaves root-owned properties unchanged",
+        "clear_opinions leaves root-owned properties unchanged",
     )
 
 
-def test_reset_attribute_override():
-    if not _has_command("reset_attribute_override"):
-        print("[skip] reset_attribute_override is not bound")
+def test_clear_attribute_opinion():
+    if not _has_command("clear_attribute_opinion"):
+        print("[skip] clear_attribute_opinion is not bound")
         return
 
     stageviz.command.load_payloads(["/World/PayloadA"])
@@ -5250,45 +5249,45 @@ def test_reset_attribute_override():
         "composed attribute reflects edit-layer override",
     )
 
-    stageviz.command.reset_attribute_override(visibility_path)
+    stageviz.command.clear_attribute_opinion(visibility_path)
 
     _assert(
         _wait_until(lambda: not _edit_has_property(visibility_path)),
-        "reset_attribute_override removes only the edit-layer attribute spec",
+        "clear_attribute_opinion removes only the edit-layer attribute spec",
     )
 
     _assert(
         _exists(path),
-        "reset_attribute_override preserves composed prim",
+        "clear_attribute_opinion preserves composed prim",
     )
 
     _assert(
         str(_visibility(path)) != "invisible",
-        "reset_attribute_override exposes weaker composed attribute value",
+        "clear_attribute_opinion exposes weaker composed attribute value",
     )
 
     if _undo():
         _assert(
             _wait_until(lambda: _edit_has_property(visibility_path)),
-            "undo reset_attribute_override restores edit-layer attribute spec",
+            "undo clear_attribute_opinion restores edit-layer attribute spec",
         )
 
         _assert_equal(
             str(_visibility(path)),
             "invisible",
-            "undo reset_attribute_override restores overridden value",
+            "undo clear_attribute_opinion restores overridden value",
         )
 
     if _redo():
         _assert(
             _wait_until(lambda: not _edit_has_property(visibility_path)),
-            "redo reset_attribute_override removes attribute override again",
+            "redo clear_attribute_opinion removes attribute override again",
         )
 
 
-def test_reset_attribute_override_ignores_root_owned_prim():
-    if not _has_command("reset_attribute_override"):
-        print("[skip] reset_attribute_override is not bound")
+def test_clear_attribute_opinion_ignores_root_owned_prim():
+    if not _has_command("clear_attribute_opinion"):
+        print("[skip] clear_attribute_opinion is not bound")
         return
 
     path = "/World/A"
@@ -5304,17 +5303,17 @@ def test_reset_attribute_override_ignores_root_owned_prim():
         "root-owned attribute is authored in root layer",
     )
 
-    stageviz.command.reset_attribute_override(attribute_path)
+    stageviz.command.clear_attribute_opinion(attribute_path)
     _wait()
 
     _assert(
         _root_has_property(attribute_path),
-        "reset_attribute_override leaves root-owned attribute unchanged",
+        "clear_attribute_opinion leaves root-owned attribute unchanged",
     )
 
     _assert(
         _exists(path),
-        "reset_attribute_override never removes root-owned prim",
+        "clear_attribute_opinion never removes root-owned prim",
     )
 
 
@@ -5412,8 +5411,8 @@ def test_pivot_attribute_edit_preserves_local_transform():
         )
 
 
-def test_reset_pivots_removes_attribute_and_preserves_transform():
-    if not _has_command("center_pivots") or not _has_command("reset_pivots"):
+def test_clear_pivots_removes_attribute_and_preserves_transform():
+    if not _has_command("center_pivots") or not _has_command("clear_pivots"):
         print("[skip] pivot commands are not fully bound")
         return
 
@@ -5448,45 +5447,45 @@ def test_reset_pivots_removes_attribute_and_preserves_transform():
         "center_pivots preserves local transform before reset",
     )
 
-    stageviz.command.reset_pivots([path])
+    stageviz.command.clear_pivots([path])
 
     _assert(
         _wait_until(lambda: not _edit_has_property(pivot_path)),
-        "reset_pivots removes pivot attribute from edit layer",
+        "clear_pivots removes pivot attribute from edit layer",
     )
 
     _assert(
         _matrix_close(_local_transform(path), before, tolerance=1e-8),
-        "reset_pivots preserves local transform",
+        "clear_pivots preserves local transform",
     )
 
     properties = _transform_property_names(path)
 
     _assert(
         "xformOp:translate:pivot" not in properties,
-        "reset_pivots leaves no pivot property",
+        "clear_pivots leaves no pivot property",
     )
 
     if _undo():
         _assert(
             _wait_until(lambda: _edit_has_property(pivot_path)),
-            "undo reset_pivots restores pivot attribute",
+            "undo clear_pivots restores pivot attribute",
         )
 
         _assert(
             _matrix_close(_local_transform(path), before, tolerance=1e-8),
-            "undo reset_pivots preserves local transform",
+            "undo clear_pivots preserves local transform",
         )
 
     if _redo():
         _assert(
             _wait_until(lambda: not _edit_has_property(pivot_path)),
-            "redo reset_pivots removes pivot attribute again",
+            "redo clear_pivots removes pivot attribute again",
         )
 
         _assert(
             _matrix_close(_local_transform(path), before, tolerance=1e-8),
-            "redo reset_pivots preserves local transform",
+            "redo clear_pivots preserves local transform",
         )
 
 def test_identity_transforms_removes_existing_ops():
@@ -5588,9 +5587,9 @@ def test_identity_transforms_removes_existing_ops():
         )
 
 
-def test_reset_transforms_removes_existing_ops():
-    if not _has_command("reset_transforms"):
-        print("[skip] reset_transforms is not bound")
+def test_identity_transforms_removes_existing_ops():
+    if not _has_command("identity_transforms"):
+        print("[skip] identity_transforms is not bound")
         return
 
     path = "/World/A"
@@ -5602,10 +5601,10 @@ def test_reset_transforms_removes_existing_ops():
             (-11.0, 37.0, 21.0),
             (0.7, 1.6, 1.2),
         ),
-        "complex transform prepared for reset_transforms",
+        "complex transform prepared for identity_transforms",
     )
 
-    stageviz.command.reset_transforms([path])
+    stageviz.command.identity_transforms([path])
 
     _assert(
         _wait_until(
@@ -5615,13 +5614,13 @@ def test_reset_transforms_removes_existing_ops():
                 tolerance=1e-8,
             )
         ),
-        "reset_transforms evaluates to local identity",
+        "identity_transforms evaluates to local identity",
     )
 
     _assert_equal(
         _transform_property_names(path),
         ["xformOp:transform", "xformOpOrder"],
-        "reset_transforms leaves only canonical identity matrix op",
+        "identity_transforms leaves only canonical identity matrix op",
     )
 
 
@@ -5777,7 +5776,7 @@ def test_attribute_multi_selection_commands():
 
 def test_center_pivots_command_roundtrip():
     """Center a pivot without moving geometry; undo and redo the pivot edit."""
-    _assert(_has_command("center_pivots") and _has_command("reset_pivots"), "pivot bindings available")
+    _assert(_has_command("center_pivots") and _has_command("clear_pivots"), "pivot bindings available")
     owner = "/World/A"
     _ensure_cube(owner + "/CenterPivotRegressionGeom", size=4.0)
     before = _local_transform(owner)
@@ -5789,7 +5788,7 @@ def test_center_pivots_command_roundtrip():
     _assert(_wait_until(lambda: not bool(_prim(owner).GetAttribute(pivot_name))), "undo center pivot")
     stageviz.command.redo()
     _assert(_wait_until(lambda: bool(_prim(owner).GetAttribute(pivot_name))), "redo center pivot")
-    stageviz.command.reset_pivots([owner])
+    stageviz.command.clear_pivots([owner])
     _assert(_wait_until(lambda: not bool(_prim(owner).GetAttribute(pivot_name))), "reset centered pivot")
     _assert(_matrix_close(_local_transform(owner), before, tolerance=1e-6), "reset pivot preserves local transform")
 
@@ -5797,7 +5796,7 @@ def test_attribute_value_commands():
     required = (
         "set_attribute_value",
         "set_attribute_values",
-        "reset_attribute_values",
+        "clear_attribute_values",
     )
 
     if not all(_has_command(name) for name in required):
@@ -5845,20 +5844,20 @@ def test_attribute_value_commands():
         "set_attribute_values authors one numeric value to several attributes",
     )
 
-    stageviz.command.reset_attribute_values([path_a, path_b])
+    stageviz.command.clear_attribute_values([path_a, path_b])
 
     _assert(
         _wait_until(
             lambda: not _layer_has_default(_edit_layer(), path_a)
             and not _layer_has_default(_edit_layer(), path_b)
         ),
-        "reset_attribute_values clears authored defaults",
+        "clear_attribute_values clears authored defaults",
     )
 
 
-def test_reset_attribute_overrides_batch():
-    if not _has_command("reset_attribute_overrides"):
-        print("[skip] reset_attribute_overrides is not bound")
+def test_clear_attribute_opinions_batch():
+    if not _has_command("clear_attribute_opinions"):
+        print("[skip] clear_attribute_opinions is not bound")
         return
 
     stageviz.command.load_payloads(["/World/PayloadA"])
@@ -5882,14 +5881,14 @@ def test_reset_attribute_overrides_batch():
         "two composed attribute overrides prepared",
     )
 
-    stageviz.command.reset_attribute_overrides([visibility, purpose])
+    stageviz.command.clear_attribute_opinions([visibility, purpose])
 
     _assert(
         _wait_until(
             lambda: not _edit_has_property(visibility)
             and not _edit_has_property(purpose)
         ),
-        "reset_attribute_overrides removes several overrides in one command",
+        "clear_attribute_opinions removes several overrides in one command",
     )
 
     if _undo():
@@ -5898,7 +5897,7 @@ def test_reset_attribute_overrides_batch():
                 lambda: _edit_has_property(visibility)
                 and _edit_has_property(purpose)
             ),
-            "undo reset_attribute_overrides restores all removed overrides",
+            "undo clear_attribute_opinions restores all removed overrides",
         )
 
 
@@ -6717,19 +6716,19 @@ def run():
         ("composition boundary", test_composition_boundary_rejects_namespace_edit, ()),
         ("transactional multi move", test_multi_move_is_transactional_on_collision, ()),
         ("composed visibility override", test_composed_visibility_override_and_undo, ()),
-        ("reset overrides", test_reset_overrides, ()),
-        ("reset overrides root-owned policy", test_reset_overrides_ignores_root_owned_prim, ()),
-        ("reset attribute override", test_reset_attribute_override, ()),
-        ("reset attribute overrides batch", test_reset_attribute_overrides_batch, ()),
-        ("reset attribute override root-owned policy", test_reset_attribute_override_ignores_root_owned_prim, ()),
+        ("reset overrides", test_clear_opinions, ()),
+        ("reset overrides root-owned policy", test_clear_opinions_ignores_root_owned_prim, ()),
+        ("reset attribute override", test_clear_attribute_opinion, ()),
+        ("reset attribute overrides batch", test_clear_attribute_opinions_batch, ()),
+        ("reset attribute override root-owned policy", test_clear_attribute_opinion_ignores_root_owned_prim, ()),
         ("attribute lifecycle commands", test_attribute_lifecycle_commands, ()),
         ("attribute multi-selection commands", test_attribute_multi_selection_commands, ()),
         ("center pivots command roundtrip", test_center_pivots_command_roundtrip, ()),
         ("attribute value commands", test_attribute_value_commands, ()),
         ("pivot attribute edit preserves local transform", test_pivot_attribute_edit_preserves_local_transform, ()),
-        ("reset pivots removes attribute", test_reset_pivots_removes_attribute_and_preserves_transform, ()),
+        ("reset pivots removes attribute", test_clear_pivots_removes_attribute_and_preserves_transform, ()),
         ("identity transforms removes existing ops", test_identity_transforms_removes_existing_ops, ()),
-        ("reset transforms removes existing ops", test_reset_transforms_removes_existing_ops, ()),
+        ("reset transforms removes existing ops", test_identity_transforms_removes_existing_ops, ()),
         ("identity transforms exposes weaker transform", test_identity_transforms_exposes_weaker_transform, ()),
         ("move non-xformable prim", test_move_non_xformable_prim, ()),
         ("move preserve complex transform", test_move_preserve_complex_world_transform, ()),

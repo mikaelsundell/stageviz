@@ -219,7 +219,7 @@ namespace command {
             return false;
         }
 
-        SdfCreatePrimInLayer(state.snapshotLayer, propertyPath.GetPrimPath());
+        SdfCreatePrimInLayer(state.snapshotLayer, propertyPath.GetParentPath());
 
         if (!SdfCopySpec(editLayer, propertyPath, state.snapshotLayer, propertyPath)) {
             error = QString("failed to snapshot dependency property: %1").arg(pathText(propertyPath));
@@ -237,8 +237,8 @@ namespace command {
             return false;
         }
 
-        if (!editLayer->GetPrimAtPath(state.propertyPath.GetPrimPath()))
-            SdfCreatePrimInLayer(editLayer, state.propertyPath.GetPrimPath());
+        if (!editLayer->GetPrimAtPath(state.propertyPath.GetParentPath()))
+            SdfCreatePrimInLayer(editLayer, state.propertyPath.GetParentPath());
 
         if (!SdfCopySpec(state.snapshotLayer, state.propertyPath, editLayer, state.propertyPath)) {
             error = QString("failed to restore dependency property: %1").arg(pathText(state.propertyPath));

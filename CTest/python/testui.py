@@ -5713,7 +5713,7 @@ def test_attribute_and_pivot_command_ui(main):
     """Keep the outliner synchronized while editing properties and pivots."""
     tree = reload_fixture(main, stageviz.LoadNone)
     command = stageviz.command
-    required = ("add_attributes", "rename_attributes", "remove_attributes", "center_pivots", "reset_pivots")
+    required = ("add_attributes", "rename_attributes", "remove_attributes", "center_pivots", "clear_pivots")
     require(all(hasattr(command, name) for name in required), "property and pivot command bindings available")
     owner = "/World/Assembly"
     require(exists(owner), "attribute/pivot UI fixture prim exists")
@@ -5744,7 +5744,7 @@ def test_attribute_and_pivot_command_ui(main):
     command.redo()
     require(wait_until(lambda: bool(prim(owner).GetAttribute("xformOp:translate:pivot"))),
             "UI center pivot redo")
-    command.reset_pivots([owner])
+    command.clear_pivots([owner])
     require(wait_until(lambda: not bool(prim(owner).GetAttribute("xformOp:translate:pivot"))),
             "UI reset pivot")
 

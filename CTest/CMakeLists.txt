@@ -65,6 +65,7 @@ foreach(case IN ITEMS
     perf_scope_unset
     perf_scope_empty
     perf_scope_enabled
+    render_material_context_invalidation_api
     render_scene_index_removal
     save_twice_usda
     save_twice_usdc
@@ -79,6 +80,12 @@ foreach(case IN ITEMS
     legacy_payload_state
     reparent_dependencies
     rename_dependencies
+    rename_material_layer_parent
+    material_container_layers
+    clear_inert_material_opinions
+    explicit_override_paths_api
+    replace_material_network_api
+    layer_authoring_variants_api
     reparent_collision
     reparent_into_descendant
     reparent_batch
@@ -96,12 +103,16 @@ foreach(case IN ITEMS
     selection_list_semantics
     selection_list_large
     view_camera_api
+    camera_live_scene_clipping_api
+    session_geometry_bounds_notifications_api
+    viewport_purpose_state_api
     view_state_api
     session_core_api
     session_file_api
     session_layer_colors_api
     session_edit_layer_api
     session_layer_commands
+    create_sublayer_replace_api
     session_layer_batch_api
     session_layer_update_api
     session_state_api
@@ -125,13 +136,19 @@ foreach(case IN ITEMS
     geometry_subset_api
     material_menu_api
     command_material_api
+    material_assignment_subsets_api
     material_assignment_instances_api
-    reset_opinion_groups_api
+    relationship_opinions_api
+    clear_opinion_groups_api
     make_editable_instance_api
+    flattened_instance_cleanup_api
+    flattened_instance_dependencies_api
+    flattened_instance_nested_cleanup_api
     command_selection_api
     render_isolation_instances
     render_isolation_ordinary_prims
     command_authoring_api
+    cross_layer_child_creation_api
     new_xform_grouping_api
     command_generated_geometry_api
     command_property_api
@@ -189,6 +206,8 @@ foreach(case IN ITEMS
     viewport_capture_paths_api
     outliner_layer_mute_api
     outliner_display_menu_api
+    outliner_purpose_filter_api
+    rich_tooltips_api
     viewport_lights_api
     viewport_transform_pivot_api
     viewport_transform_hierarchy_sync_api
@@ -214,7 +233,9 @@ foreach(case IN ITEMS
     material_browser_api
     material_browser_display_menu_api
     material_select_multi_selection_api
+    material_follow_selection_api
     material_graph_disconnected_network_layout_api
+    material_graph_shared_branch_layout_api
     material_dialog_refresh_after_layer_removal_api
     property_reveal_file_api
     material_reveal_file_api
@@ -224,7 +245,7 @@ foreach(case IN ITEMS
     material_swatch_alpha_api
     material_swatch_color_view_api
     geometry_subset_gui_api
-    outliner_reset_opinions_menu_api
+    outliner_clear_opinions_menu_api
     outliner_layer_colors_api
     outliner_edit_layer_font_api
     outliner_defined_prims_api
@@ -235,6 +256,7 @@ foreach(case IN ITEMS
     changes_dialog_api
     preserve_state_menu_api
     layer_tree_root_row_api
+    layer_create_replace_dialog_api
     layer_tree_multi_selection_api
 )
     if(APPLE AND case STREQUAL "render_color_management_gl_api")
@@ -272,7 +294,8 @@ endforeach()
 # focus changes can dismiss the menu before its inspection timer runs. Keep
 # the C++ selection/command assertions deterministic without relying on OS focus.
 if(NOT WIN32)
-    foreach(popup_case IN ITEMS layer_tree_multi_selection_api material_select_multi_selection_api)
+    foreach(popup_case IN ITEMS layer_tree_multi_selection_api material_select_multi_selection_api
+                               material_browser_display_menu_api)
         set_property(TEST stageviz.gui.${popup_case} APPEND PROPERTY
             ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
         )

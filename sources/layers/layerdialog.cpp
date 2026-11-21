@@ -35,7 +35,7 @@ public:
     void updateStageState();
     void createLayer();
     void addLayer();
-    void addLayerFile(const QString& filename, bool created);
+    void addLayerFile(const QString& filename);
     QString layerDirectory() const;
     void rememberLayerDirectory(const QString& filename);
 
@@ -133,36 +133,18 @@ LayerDialogPrivate::createLayer()
         return;
     }
 
-    const QString filename = QFileDialog::getSaveFileName(d.dialog.data(), tr("Create USD Layer"), layerDirectory(),
-                                                          tr("USD Files (*.usd *.usda *.usdc)"));
-    if (filename.isEmpty()) {
+    QFileDialog dialog(d.dialog.data(), tr("Create USD Layer"), layerDirectory(),
+                       tr("USD Files (*.usd *.usda *.usdc)"));
+    dialog.setAcceptMode(QFileDialog::AcceptSave);
+    dialog.setFileMode(QFileDialog::AnyFile);
+    dialog.setDefaultSuffix(QStringLiteral("usda"));
+    if (dialog.exec() != QDialog::Accepted || dialog.selectedFiles().isEmpty())
         return;
-    }
 
-    QString path = QFileInfo(filename).absoluteFilePath();
+    const QString path = QFileInfo(dialog.selectedFiles().first()).absoluteFilePath();
     rememberLayerDirectory(path);
-    if (QFileInfo(path).suffix().isEmpty())
-        path += QStringLiteral(".usda");
-    if (QFileInfo::exists(path)) {
-        session()->notifyStatus(Session::Notify::Status::Warning,
-                                tr("A file already exists at this path: %1").arg(path));
-        return;
-    }
-
-    SdfLayerRefPtr layer;
-    try {
-        layer = SdfLayer::CreateNew(path.toStdString());
-    } catch (const std::exception& exception) {
-        session()->notifyStatus(Session::Notify::Status::Error,
-                                tr("Could not create layer: %1").arg(QString::fromUtf8(exception.what())));
-        return;
-    }
-    if (!layer || !layer->Save()) {
-        session()->notifyStatus(Session::Notify::Status::Error, tr("Could not create USD layer: %1").arg(path));
-        return;
-    }
-
-    addLayerFile(path, true);
+    session()->commandStack()->execute(new Command(createSublayer(path)));
+    d.ui->layerTree->refresh();
 }
 
 void
@@ -176,22 +158,15 @@ LayerDialogPrivate::addLayer()
                                                           tr("USD Files (*.usd *.usda *.usdc)"));
     if (!filename.isEmpty()) {
         rememberLayerDirectory(filename);
-        addLayerFile(filename, false);
+        addLayerFile(filename);
     }
     else {}
 }
 
 void
-LayerDialogPrivate::addLayerFile(const QString& filename, bool created)
+LayerDialogPrivate::addLayerFile(const QString& filename)
 {
     const QString path = QFileInfo(filename).absoluteFilePath();
-    QString editLayerIdentifier;
-    {
-        READ_LOCKER(locker, session()->stageLock(), "stageLock");
-        const UsdStageRefPtr stage = session()->stageUnsafe();
-        if (stage && stage->GetEditTarget().GetLayer())
-            editLayerIdentifier = QString::fromStdString(stage->GetEditTarget().GetLayer()->GetIdentifier());
-    }
     SdfLayerRefPtr layer;
     try {
         layer = SdfLayer::FindOrOpen(path.toStdString());
@@ -217,9 +192,7 @@ LayerDialogPrivate::addLayerFile(const QString& filename, bool created)
         return;
     }
     d.ui->layerTree->refresh();
-    session()->notifyStatus(Session::Notify::Status::Success,
-                            created ? tr("Created and added layer %1").arg(QFileInfo(path).fileName())
-                                    : tr("Added layer %1").arg(QFileInfo(path).fileName()));
+    session()->notifyStatus(Session::Notify::Status::Success, tr("Added layer %1").arg(QFileInfo(path).fileName()));
 }
 
 LayerDialog::LayerDialog(QWidget* parent)

@@ -68,9 +68,21 @@
        </widget>
       </item>
       <item>
-       <widget class="QToolButton" name="display">
+       <widget class="QToolButton" name="follow">
         <property name="toolTip">
-         <string>Display filters</string>
+         <string>Follow explicitly selected material prims, including when opening the Material Editor. Geometry and subset selection leave the editor selection unchanged.</string>
+        </property>
+        <property name="text"><string>...</string></property>
+        <property name="checkable"><bool>true</bool></property>
+        <property name="checked"><bool>false</bool></property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QToolButton" name="display">
+        <property name="checkable"><bool>true</bool></property>
+        <property name="contextMenuPolicy"><enum>Qt::ContextMenuPolicy::CustomContextMenu</enum></property>
+        <property name="toolTip">
+         <string>Display filters. Highlighted while filtering is active or the menu is open.</string>
         </property>
         <property name="text">
          <string>...</string>
