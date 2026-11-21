@@ -9,6 +9,7 @@
 #include <QString>
 #include <pxr/usd/sdf/path.h>
 #include <pxr/usd/sdf/types.h>
+#include <pxr/usd/usd/stage.h>
 
 PXR_NAMESPACE_USING_DIRECTIVE
 
@@ -35,6 +36,32 @@ Command
 newMaterial(MaterialType type);
 
 /**
+ * @brief Checks whether replacement terminal connections can win in the current edit target.
+ *
+ * @param stage Stage to inspect.
+ * @param paths Existing material paths.
+ * @param error Optional reason when replacement is unavailable.
+ * @return True for editable materials without stronger terminal connection opinions.
+ */
+bool
+canReplaceMaterialNetwork(const UsdStageRefPtr& stage, const QList<SdfPath>& paths, QString* error = nullptr);
+
+/**
+ * @brief Replaces materials' connected shader networks in the active edit target.
+ *
+ * Keeps material paths, bindings and metadata. Authors fresh shader nodes and
+ * explicit terminal connection overrides, blocking the weaker render contexts.
+ * Weaker nodes remain in their original layers. Undo restores exact local specs
+ * in the original edit target and removes newly created ancestor overs.
+ *
+ * @param paths Existing material paths to replace.
+ * @param type Built-in shader network to author.
+ * @return Undoable replacement command.
+ */
+Command
+replaceMaterialNetwork(const QList<SdfPath>& paths, MaterialType type);
+
+/**
  * @brief Creates an undoable command that binds a material to prims.
  *
  * The material must already exist in the current USD stage. A direct material
@@ -57,6 +84,8 @@ bindMaterial(const QList<SdfPath>& paths, const SdfPath& materialPath);
  * binding with all siblings. Parent bindings are stronger than descendant
  * bindings. Geometry and instancing are never changed. Undo restores exact
  * original edit-layer opinions, including binding metadata and API schemas.
+ * Assigning a face subset beneath a strong mesh binding preserves the other
+ * subsets' resolved materials and weakens that mesh binding in the edit layer.
  *
  * @param paths Geometry, subset, group, instance or proxy paths to assign.
  * @param materialPath Path to an existing UsdShadeMaterial prim.
@@ -104,16 +133,16 @@ Command
 connectShaderInput(const SdfPath& inputPath, const SdfPath& sourceOutputPath);
 
 /**
- * @brief Creates a command that resets shader-input opinions in the edit layer.
+ * @brief Creates a command that clears shader-input opinions in the edit layer.
  *
  * Removing the authored input property exposes weaker opinions or its schema
  * default. Undo restores the original property spec.
  *
- * @param inputPaths Shader input property paths to reset.
- * @return Undoable shader-input reset command.
+ * @param inputPaths Shader input property paths to clear.
+ * @return Undoable shader-input clear command.
  */
 Command
-resetShaderInputs(const QList<SdfPath>& inputPaths);
+clearShaderInputs(const QList<SdfPath>& inputPaths);
 
 /**
  * @brief Creates a shader node and connects one of its outputs to an input.

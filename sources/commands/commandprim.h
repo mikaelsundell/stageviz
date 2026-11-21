@@ -15,6 +15,19 @@ PXR_NAMESPACE_USING_DIRECTIVE
 namespace stageviz {
 
 /**
+ * @brief Authors explicit over specs for existing prims in the active edit target.
+ *
+ * Existing local definitions, metadata and descendants are preserved. Proxies,
+ * prototypes and the pseudo-root are rejected. Undo removes newly created inert
+ * specs in the original target, including their newly created ancestor overs.
+ *
+ * @param paths Existing prim paths to override.
+ * @return Undoable override command.
+ */
+Command
+overridePaths(const QList<SdfPath>& paths);
+
+/**
  * @brief Creates a command that deletes prims at the specified paths.
  *
  * Paths are reduced to minimal root paths to avoid redundant edits.
@@ -26,8 +39,13 @@ namespace stageviz {
  * collection relationships, shader connections, and custom relationship
  * targets are covered by the same generic dependency cleanup.
  *
+ * Flattened instance source roots used by deleted instances are removed from
+ * the edit layer only when no surviving authored dependency needs them. Muted
+ * layers, unloaded composition assets and inactive variants are included in
+ * this conservative check. Unrelated untyped prims are preserved.
+ *
  * The command captures sufficient snapshot state to fully restore deleted
- * prims, dependency properties, and child order on undo.
+ * prims, cleaned instance sources, dependency properties, and child order on undo.
  *
  * Selection and mask are updated to remove affected paths.
  *

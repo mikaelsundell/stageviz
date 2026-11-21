@@ -370,6 +370,36 @@ public:
     void setSceneMaterialsEnabled(bool enabled);
 
     /**
+     * @brief Returns whether USD guides purpose geometry is displayed.
+     */
+    bool showGuides() const;
+
+    /**
+     * @brief Sets whether USD guides purpose geometry is displayed.
+     */
+    void setShowGuides(bool enabled);
+
+    /**
+     * @brief Returns whether USD proxy purpose geometry is displayed.
+     */
+    bool showProxy() const;
+
+    /**
+     * @brief Sets whether USD proxy purpose geometry is displayed.
+     */
+    void setShowProxy(bool enabled);
+
+    /**
+     * @brief Returns whether USD render purpose geometry is displayed.
+     */
+    bool showRender() const;
+
+    /**
+     * @brief Sets whether USD render purpose geometry is displayed.
+     */
+    void setShowRender(bool enabled);
+
+    /**
      * @brief Returns the viewport double-sided rendering mode.
      */
     DoubleSidedMode doubleSidedMode() const;
@@ -575,6 +605,11 @@ Q_SIGNALS:
      * @brief Emitted when the scene material state changes.
      */
     void sceneMaterialsEnabledChanged(bool enabled);
+
+    /**
+     * @brief Emitted when viewport purpose visibility changes.
+     */
+    void purposesChanged();
 
     /**
      * @brief Emitted when the viewport double-sided rendering mode changes.

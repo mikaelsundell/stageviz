@@ -204,6 +204,8 @@ public Q_SLOTS:
     void updateStageUp(Session::StageUp stageUp);
     void updateSelection(const QList<SdfPath>& paths);
     void refreshPayloadMenu();
+    void showDisplayMenu();
+    void updateDisplayButton();
     void updatePreserveState(bool enabled);
     void updateMaterialMode(ViewState::MaterialMode mode);
     void captureReady(qint64 elapsed);
@@ -248,6 +250,7 @@ public:
         QList<int> panelSplitterSizes;
         bool panelsHidden = false;
         bool toolsSuppressed = false;
+        bool viewportDisplayMenuOpen = false;
         QList<ToolWidget> toolWidgets;
         QScopedPointer<MouseEvent> backgroundColorFilter;
         QScopedPointer<Ui_Viewer> ui;
@@ -573,6 +576,12 @@ ViewerPrivate::init()
         d.ui->redo->setDefaultAction(d.ui->editRedo);
         d.ui->undo->setDefaultAction(d.ui->editUndo);
         d.ui->wireframe->setDefaultAction(d.ui->displayRenderWireframe);
+        d.ui->viewportDisplay->setIcon(ui()->icon(UI::IconRole::Display));
+        connect(d.ui->viewportDisplay, &QToolButton::clicked, this, &ViewerPrivate::showDisplayMenu);
+        connect(d.ui->viewportDisplay, &QWidget::customContextMenuRequested, this,
+                [this](const QPoint&) { showDisplayMenu(); });
+        connect(session()->viewState(), &ViewState::purposesChanged, this, &ViewerPrivate::updateDisplayButton);
+        updateDisplayButton();
         d.ui->shaded->setDefaultAction(d.ui->displayRenderShaded);
         d.ui->select->setDefaultAction(d.ui->displaySelect);
         d.ui->move->setDefaultAction(d.ui->displayMove);
@@ -605,6 +614,8 @@ ViewerPrivate::init()
     connect(d.ui->hudSceneStats, &QAction::toggled, viewState, &ViewState::setSceneStatsEnabled);
     connect(d.ui->hudPerformanceStats, &QAction::toggled, viewState, &ViewState::setPerformanceStatsEnabled);
     connect(d.ui->hudCameraAxis, &QAction::toggled, viewState, &ViewState::setCameraAxisEnabled);
+    connect(d.ui->viewShelves, &QAction::toggled, d.ui->pythonShelfWidget, &QWidget::setVisible);
+    connect(d.ui->viewPlayback, &QAction::toggled, renderView(), &RenderView::setPlaybackVisible);
     connect(d.ui->viewProgress, &QAction::triggered, this, [this]() {
         if (!d.progressDialog)
             return;
@@ -903,6 +914,13 @@ ViewerPrivate::initSettings()
     bool cameraAxis = settings()->value("cameraAxis", true).toBool();
     d.ui->hudCameraAxis->setChecked(cameraAxis);
     session()->viewState()->setCameraAxisEnabled(cameraAxis);
+
+    const bool shelvesVisible = settings()->value("viewer/shelvesVisible", true).toBool();
+    d.ui->viewShelves->setChecked(shelvesVisible);
+    d.ui->pythonShelfWidget->setVisible(shelvesVisible);
+    const bool playbackVisible = settings()->value("viewer/playbackVisible", true).toBool();
+    d.ui->viewPlayback->setChecked(playbackVisible);
+    renderView()->setPlaybackVisible(playbackVisible);
 
     const bool grid = settings()->value("grid", true).toBool();
     d.ui->displayGrid->setChecked(grid);
@@ -1941,6 +1959,8 @@ ViewerPrivate::saveSettings()
     settings()->setValue("cameraAxis", d.ui->hudCameraAxis->isChecked());
     settings()->setValue("grid", d.ui->displayGrid->isChecked());
     settings()->setValue("sceneShaders", d.ui->useSceneShaders->isChecked());
+    settings()->setValue("viewer/shelvesVisible", d.ui->viewShelves->isChecked());
+    settings()->setValue("viewer/playbackVisible", d.ui->viewPlayback->isChecked());
     settings()->setValue("viewer/windowGeometry", d.viewer->saveGeometry());
     settings()->setValue("viewer/windowState", int(windowState));
 
@@ -2431,6 +2451,46 @@ void
 ViewerPrivate::renderShaded()
 {
     session()->viewState()->setRenderMode(ViewState::Shaded);
+}
+
+void
+ViewerPrivate::updateDisplayButton()
+{
+    const auto state = session()->viewState();
+    d.ui->viewportDisplay->setChecked(d.viewportDisplayMenuOpen || !state->showGuides() || !state->showProxy()
+                                      || !state->showRender());
+}
+
+void
+ViewerPrivate::showDisplayMenu()
+{
+    QMenu menu(d.ui->viewportDisplay);
+    menu.setObjectName("viewportDisplayMenu");
+    menu.addAction(tr("Purposes"))->setEnabled(false);
+    auto* defaultPurpose = menu.addAction(tr("Default"));
+    defaultPurpose->setObjectName("viewportPurposeDefault");
+    defaultPurpose->setCheckable(true);
+    defaultPurpose->setChecked(true);
+    defaultPurpose->setEnabled(false);
+    defaultPurpose->setToolTip(tr("USD always includes geometry with default purpose."));
+    const auto state = session()->viewState();
+    const auto addPurpose = [&](const QString& label, const QString& name, auto getter, auto setter) {
+        auto* action = menu.addAction(label);
+        action->setObjectName(name);
+        action->setCheckable(true);
+        action->setChecked((state->*getter)());
+        connect(action, &QAction::toggled, &menu, [state, setter](bool checked) { (state->*setter)(checked); });
+        connect(state, &ViewState::purposesChanged, &menu,
+                [state, action, getter]() { action->setChecked((state->*getter)()); });
+    };
+    addPurpose(tr("Render"), "viewportPurposeRender", &ViewState::showRender, &ViewState::setShowRender);
+    addPurpose(tr("Proxy"), "viewportPurposeProxy", &ViewState::showProxy, &ViewState::setShowProxy);
+    addPurpose(tr("Guide"), "viewportPurposeGuide", &ViewState::showGuides, &ViewState::setShowGuides);
+    d.viewportDisplayMenuOpen = true;
+    updateDisplayButton();
+    menu.exec(d.ui->viewportDisplay->mapToGlobal(QPoint(0, d.ui->viewportDisplay->height())));
+    d.viewportDisplayMenuOpen = false;
+    updateDisplayButton();
 }
 
 void

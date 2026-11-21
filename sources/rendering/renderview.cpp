@@ -22,6 +22,7 @@ class RenderViewPrivate : public QObject {
 public:
     void init();
     ViewportWidget* viewportWidget();
+    void updatePanelVisibility();
 
 public Q_SLOTS:
     void updateBoundingBox(const GfBBox3d& bbox);
@@ -38,6 +39,8 @@ public:
         QScopedPointer<Ui_RenderView> ui;
         QPointer<RenderView> view;
         QPointer<GizmoWidget> gizmoWidget;
+        bool panelVisible = true;
+        bool playbackVisible = true;
     };
     Data d;
 };
@@ -66,6 +69,7 @@ RenderViewPrivate::init()
     connect(viewportWidget(), &ViewportWidget::statusMessage, d.view, &RenderView::statusMessage);
     connect(viewportWidget(), &ViewportWidget::statusReady, d.view, &RenderView::statusReady);
     connect(timelineWidget, &TimelineWidget::timeCodeChanged, d.view, &RenderView::setTimeCode);
+    connect(d.ui->panelWidget, &QStackedWidget::currentChanged, this, [this](int) { updatePanelVisibility(); });
     connect(d.gizmoWidget, &GizmoWidget::activeChanged, d.ui->panelWidget,
             [stack = d.ui->panelWidget](bool active) { stack->setCurrentIndex(active ? 1 : 0); });
     connect(session()->selectionList(), &SelectionList::selectionChanged, d.ui->panelWidget,
@@ -80,6 +84,12 @@ RenderViewPrivate::init()
     connect(session(), &Session::stageChanged, this, &RenderViewPrivate::updateStage);
     connect(session(), &Session::stageUpChanged, this, &RenderViewPrivate::updateStageUp);
     d.ui->panelWidget->setCurrentIndex(d.gizmoWidget->isActive() ? 1 : 0);
+}
+
+void
+RenderViewPrivate::updatePanelVisibility()
+{
+    d.ui->panelWidget->setVisible(d.panelVisible && (d.playbackVisible || d.ui->panelWidget->currentIndex() != 0));
 }
 
 ViewportWidget*
@@ -117,6 +127,7 @@ RenderViewPrivate::updateStage(UsdStageRefPtr stage, Session::LoadPolicy policy,
 
         viewportWidget()->updateStageUp(stageUp);
         viewportWidget()->updateStage(session()->stage());
+        viewportWidget()->updateBoundingBox(session()->boundingBox());
     }
     else {
         viewportWidget()->close();
@@ -254,7 +265,15 @@ RenderView::setScaleEnabled(bool enabled)
 void
 RenderView::setPanelVisible(bool visible)
 {
-    p->d.ui->panelWidget->setVisible(visible);
+    p->d.panelVisible = visible;
+    p->updatePanelVisibility();
+}
+
+void
+RenderView::setPlaybackVisible(bool visible)
+{
+    p->d.playbackVisible = visible;
+    p->updatePanelVisibility();
 }
 
 void

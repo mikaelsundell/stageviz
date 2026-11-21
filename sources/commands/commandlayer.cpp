@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <functional>
 #include <memory>
+#include <pxr/base/tf/errorMark.h>
 #include <pxr/usd/sdf/layer.h>
 #include <vector>
 
@@ -154,6 +155,121 @@ Command
 updateLayers(const QStringList& layerIdentifiers)
 {
     return layerBatch(layerIdentifiers, updateLayer, true);
+}
+
+Command
+createSublayer(const QString& filename)
+{
+    struct State {
+        UsdStageRefPtr stage;
+        SdfLayerRefPtr parent;
+        SdfLayerRefPtr layer;
+        SdfLayerRefPtr before;
+        SdfLayerRefPtr empty;
+        std::vector<std::string> previousPaths;
+        bool applied = false;
+    };
+    auto state = std::make_shared<State>();
+    return Command(
+        [filename, state](Session* session) {
+            if (!session || filename.isEmpty())
+                return;
+            session->beginProgressBlock("Create sublayer", 1);
+            QString error;
+            {
+                WRITE_LOCKER(locker, session->stageLock(), "stageLock");
+                TfErrorMark mark;
+                const auto stage = session->stageUnsafe();
+                const QString path = QFileInfo(filename).absoluteFilePath();
+                SdfLayerHandle parent = state->parent;
+                if (!parent && stage)
+                    parent = stage->GetEditTarget().GetLayer();
+                SdfLayerRefPtr layer = state->layer;
+                if (!layer)
+                    layer = SdfLayer::Find(path.toStdString());
+                if (!stage || (state->stage && stage != state->stage) || !parent || !stage->HasLocalLayer(parent))
+                    error = "parent edit layer is no longer in the stage";
+                else if (!parent->PermissionToEdit())
+                    error = "parent edit layer is not editable";
+                else if (layer == parent || layer == stage->GetRootLayer())
+                    error = "cannot replace the root or parent edit layer when creating a sublayer";
+                else if (layer && (!layer->PermissionToEdit() || (!state->empty && !layer->PermissionToSave())))
+                    error = "destination layer is not writable";
+                else {
+                    if (!state->empty) {
+                        state->stage = stage;
+                        state->parent = parent;
+                        state->previousPaths = parent->GetSubLayerPaths();
+                        state->empty = SdfLayer::CreateAnonymous();
+                        if (layer) {
+                            state->before = SdfLayer::CreateAnonymous();
+                            state->before->TransferContent(layer);
+                            layer->TransferContent(state->empty);
+                            // Ask composition whether clearing this layer detached the parent.
+                            if (!stage->HasLocalLayer(parent))
+                                error = "destination contains the parent edit layer";
+                            else if (!layer->Save(true))
+                                error = "could not replace the destination layer";
+                            if (!error.isEmpty())
+                                layer->TransferContent(state->before);
+                        }
+                        else {
+                            layer = SdfLayer::CreateNew(path.toStdString());
+                            if (!layer || !layer->Save(true))
+                                error = "could not create the destination layer";
+                        }
+                        if (error.isEmpty())
+                            state->layer = layer;
+                        else {
+                            state->empty.Reset();
+                            state->before.Reset();
+                        }
+                    }
+                    else {
+                        layer->TransferContent(state->empty);
+                    }
+                    if (error.isEmpty()) {
+                        auto paths = state->previousPaths;
+                        const auto assetPath = stage::compositionAssetPath(parent, path);
+                        if (std::find(paths.begin(), paths.end(), assetPath) == paths.end())
+                            paths.push_back(assetPath);
+                        parent->SetSubLayerPaths(paths);
+                        state->applied = true;
+                    }
+                }
+                if (!mark.IsClean()) {
+                    for (const auto& diagnostic : mark)
+                        error = appendError(error, QString::fromStdString(diagnostic.GetCommentary()));
+                    mark.Clear();
+                    if (state->applied) {
+                        parent->SetSubLayerPaths(state->previousPaths);
+                        if (state->before)
+                            layer->TransferContent(state->before);
+                        state->applied = false;
+                    }
+                }
+            }
+            using Status = Session::Notify::Status;
+            session->updateProgressNotify(Session::Notify(error.isEmpty()
+                                                              ? "Created and added layer "
+                                                                    + QFileInfo(filename).fileName()
+                                                              : appendError("Create sublayer failed", error),
+                                                          {}, error.isEmpty() ? Status::Success : Status::Error),
+                                          1);
+            session->endProgressBlock();
+        },
+        [state](Session* session) {
+            if (!session || !state->applied)
+                return;
+            WRITE_LOCKER(locker, session->stageLock(), "stageLock");
+            if (session->stageUnsafe() != state->stage || !state->parent->PermissionToEdit()
+                || !state->layer->PermissionToEdit())
+                return;
+            state->parent->SetSubLayerPaths(state->previousPaths);
+            if (state->before)
+                state->layer->TransferContent(state->before);
+            state->applied = false;
+        });
 }
 
 Command

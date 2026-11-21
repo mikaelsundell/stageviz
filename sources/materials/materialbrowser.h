@@ -81,6 +81,11 @@ public:
     void selectRows(const QList<int>& rows);
 
     /**
+     * @brief Returns whether the editor follows stage selection.
+     */
+    bool followEnabled() const;
+
+    /**
      * @brief Switches presentation while retaining the browser's entries.
      */
     void setViewMode(ViewMode mode);
@@ -130,6 +135,10 @@ public:
     void refreshVisibleSwatches();
 
 Q_SIGNALS:
+    /**
+     * @brief Emitted when following stage selection is enabled or disabled.
+     */
+    void followChanged(bool enabled);
     /**
      * @brief Emitted when the browser selection changes.
      */

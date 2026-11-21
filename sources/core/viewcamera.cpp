@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <optional>
 #include <pxr/base/gf/frustum.h>
 #include <pxr/base/gf/range1d.h>
 #include <pxr/base/gf/range3d.h>
@@ -48,6 +49,7 @@ public:
         GfVec3d center;
         GfVec3d focusPoint;
         GfRange3d range;
+        std::optional<GfRange3d> sceneRange;
         GfRange3d auxiliaryRange;
         ViewCamera::CameraUp cameraUp;
         ViewCamera::CameraMode cameraMode;
@@ -285,7 +287,8 @@ ViewCameraPrivate::clippingRange() const
 {
     double nearClip = d.nearClipping;
     double farClip = d.farClipping;
-    GfRange3d viewportRange = d.range;
+    const GfRange3d sceneRange = d.sceneRange.value_or(d.range);
+    GfRange3d viewportRange = sceneRange;
     if (!d.auxiliaryRange.IsEmpty())
         viewportRange.UnionWith(d.auxiliaryRange);
 
@@ -295,9 +298,9 @@ ViewCameraPrivate::clippingRange() const
         double documentMaxDepth = 0.0;
         double viewportMaxDepth = 0.0;
 
-        if (!d.range.IsEmpty()) {
+        if (!sceneRange.IsEmpty()) {
             for (size_t corner = 0; corner < 8; ++corner) {
-                const double depth = -view.Transform(d.range.GetCorner(corner))[2];
+                const double depth = -view.Transform(sceneRange.GetCorner(corner))[2];
                 if (!std::isfinite(depth))
                     continue;
                 minDepth = std::min(minDepth, depth);
@@ -314,11 +317,11 @@ ViewCameraPrivate::clippingRange() const
                     viewportMaxDepth = std::max(viewportMaxDepth, depth);
             }
         };
-        includeViewportDepth(d.range);
+        includeViewportDepth(sceneRange);
         includeViewportDepth(d.auxiliaryRange);
 
         if (std::isfinite(minDepth) && std::isfinite(documentMaxDepth) && documentMaxDepth > 0.0) {
-            const GfVec3d sceneSize = d.range.GetSize();
+            const GfVec3d sceneSize = sceneRange.GetSize();
             const double sceneScale = std::max(sceneSize[0], std::max(sceneSize[1], sceneSize[2]));
             const double precisionFloor = std::max(1e-6, sceneScale * 1e-7);
             const double insideBoundsNear = std::max(precisionFloor,
@@ -329,7 +332,7 @@ ViewCameraPrivate::clippingRange() const
             nearClip = std::max(precisionFloor, std::min(nearClip, safeNear));
         }
 
-        const GfVec3d viewportSize = d.range.IsEmpty() ? GfVec3d(0.0) : d.range.GetSize();
+        const GfVec3d viewportSize = sceneRange.IsEmpty() ? GfVec3d(0.0) : sceneRange.GetSize();
         const GfVec3d gridSize = d.auxiliaryRange.IsEmpty() ? GfVec3d(0.0) : d.auxiliaryRange.GetSize();
         const double viewportScale = std::max(std::max(viewportSize[0], std::max(viewportSize[1], viewportSize[2])),
                                               std::max(gridSize[0], std::max(gridSize[1], gridSize[2])));
@@ -776,6 +779,16 @@ ViewCamera::setBoundingBox(const GfBBox3d& boundingBox)
     p->d.valid = false;
     p->d.identity = false;
 
+    Q_EMIT cameraChanged(camera());
+}
+
+void
+ViewCamera::setSceneRange(const GfRange3d& range)
+{
+    if (p->d.sceneRange && *p->d.sceneRange == range)
+        return;
+    p->d.sceneRange = range;
+    p->d.valid = false;
     Q_EMIT cameraChanged(camera());
 }
 

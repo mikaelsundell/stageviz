@@ -188,6 +188,13 @@ public:
     void setPanelVisible(bool visible);
 
     /**
+     * @brief Shows or hides playback controls while retaining transform controls.
+     *
+     * @param visible True to show the playback bar.
+     */
+    void setPlaybackVisible(bool visible);
+
+    /**
      * @brief Sets the USD time code evaluated by the viewport.
      */
     void setTimeCode(double timeCode);

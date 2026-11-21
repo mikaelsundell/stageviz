@@ -22,11 +22,24 @@ namespace stageviz {
  * Only dependency fields authored in the current edit layer are removed. Undo
  * restores the original property specs exactly.
  *
- * @param propertyPaths Relationship or attribute property paths to reset.
- * @return Undoable dependency-reset command.
+ * @param propertyPaths Relationship or attribute property paths to clear.
+ * @return Undoable dependency-clear command.
  */
 Command
-resetDependencies(const QList<SdfPath>& propertyPaths);
+clearDependencies(const QList<SdfPath>& propertyPaths);
+
+/**
+ * @brief Removes local relationship opinions without authoring an explicit unbind.
+ *
+ * Only relationship specs in the current edit target are removed. Proxy and
+ * prototype properties are read-only. Undo and redo retain the original edit
+ * target and restore complete relationship specs, including targets and metadata.
+ *
+ * @param propertyPaths Scene paths of relationships whose local opinions should be cleared.
+ * @return Undoable relationship-clearing command.
+ */
+Command
+clearRelationships(const QList<SdfPath>& propertyPaths);
 
 /**
  * @brief Creates an undoable command that adds an attribute to one or more prims.
@@ -112,7 +125,7 @@ setAttributeValues(const QList<SdfPath>& attributePaths, const VtValue& value);
  * edit-layer default exactly.
  */
 Command
-resetAttributeValues(const QList<SdfPath>& attributePaths);
+clearAttributeValues(const QList<SdfPath>& attributePaths);
 
 /**
  * @brief Creates a command that removes one edit-layer attribute override.
@@ -131,7 +144,7 @@ resetAttributeValues(const QList<SdfPath>& attributePaths);
  * @param attributePath USD attribute path whose edit-layer override should be removed.
  */
 Command
-resetAttributeOverride(const SdfPath& attributePath);
+clearAttributeOpinion(const SdfPath& attributePath);
 
 /**
  * @brief Creates one undoable command that removes edit-layer overrides for several attributes.
@@ -141,22 +154,22 @@ resetAttributeOverride(const SdfPath& attributePath);
  * property information.
  */
 Command
-resetAttributeOverrides(const QList<SdfPath>& attributePaths);
+clearAttributeOpinions(const QList<SdfPath>& attributePaths);
 
 /**
- * @brief Property-opinion groups available in the Outliner Reset menu.
+ * @brief Property-opinion groups available in the Outliner Opinions menu.
  */
-enum class OverrideGroup { All, Transforms, Visibility, Materials, Geometry, Primvars, Lights, Cameras, Other };
+enum class OpinionGroup { All, Transforms, Visibility, Materials, Geometry, Primvars, Lights, Cameras, Other };
 
 /**
- * @brief Finds resettable property groups authored in the current edit target.
+ * @brief Finds clearable property groups authored in the current edit target.
  *
  * @param stage Composed stage to inspect.
  * @param paths Selected hierarchy roots.
  * @return Available groups, excluding All, in menu order.
  */
-QList<OverrideGroup>
-resetOverrideGroups(const UsdStageRefPtr& stage, const QList<SdfPath>& paths);
+QList<OpinionGroup>
+clearOpinionGroups(const UsdStageRefPtr& stage, const QList<SdfPath>& paths);
 
 /**
  * @brief Creates a command that removes edit-layer property overrides from composed prims.
@@ -168,12 +181,14 @@ resetOverrideGroups(const UsdStageRefPtr& stage, const QList<SdfPath>& paths);
  * are traversed but never modified. This exposes the composed attribute or
  * relationship value again.
  *
- * Prim metadata and composition arcs are preserved, so resetting overrides does
+ * Prim metadata and composition arcs are preserved, so clearing opinions does
  * not remove references, payloads, variants, or otherwise change payload load
  * state. Edit-layer-owned prims are ignored and are never deleted.
  *
  * If removing property opinions leaves an inert edit-layer prim spec, the empty
  * override spec is removed so the weaker composed prim is exposed cleanly.
+ * All and Other also remove already-inert override containers, including nested
+ * empty overs. Containers with metadata or composition arcs are retained.
  *
  * Undo restores the removed edit-layer property specs exactly.
  *
@@ -181,6 +196,6 @@ resetOverrideGroups(const UsdStageRefPtr& stage, const QList<SdfPath>& paths);
  * @param group Property group to remove, or All for every property opinion.
  */
 Command
-resetOverrides(const QList<SdfPath>& paths, OverrideGroup group = OverrideGroup::All);
+clearOpinions(const QList<SdfPath>& paths, OpinionGroup group = OpinionGroup::All);
 
 }  // namespace stageviz

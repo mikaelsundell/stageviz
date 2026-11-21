@@ -661,6 +661,8 @@ namespace {
             SdfPath parentPath;
             SdfPath createdPath;
             TfTokenVector oldParentOrder;
+            SdfLayerRefPtr editLayer;
+            VtValue oldOrderOpinion;
             QList<SdfPath> createdAncestorSpecs;
             QList<SdfPath> previousSelection;
             QList<SdfPath> previousMask;
@@ -701,12 +703,13 @@ namespace {
                         }
                         else {
                             QString editError;
-                            const SdfLayerHandle editLayer = currentEditLayer(stage, editError);
+                            const SdfLayerHandle editLayer = state->editLayer ? SdfLayerHandle(state->editLayer)
+                                                                              : currentEditLayer(stage, editError);
 
-                            if (!editLayer) {
-                                error = editError;
+                            if (!editLayer || !editLayer->PermissionToEdit()) {
+                                error = editError.isEmpty() ? QStringLiteral("edit layer is not editable") : editError;
                             }
-                            else if (!layer::validateParent(stage, editLayer, parentPath, error)) {}
+                            else if (!layer::validateChildParent(stage, editLayer, parentPath, error)) {}
                             else {
                                 newPath = stage::buildChildPath(stage, parentPath, nameInput, error);
 
@@ -716,6 +719,8 @@ namespace {
                                     state->oldParentOrder.clear();
                                     state->createdAncestorSpecs.clear();
 
+                                    state->editLayer = editLayer;
+                                    state->oldOrderOpinion = layer::childOrderOpinion(editLayer, parentPath);
                                     stage::captureChildOrder(stage, parentPath, state->oldParentOrder);
 
                                     for (SdfPath path = parentPath;
@@ -800,16 +805,17 @@ namespace {
                         }
                         else {
                             QString editError;
-                            const SdfLayerHandle editLayer = currentEditLayer(stage, editError);
+                            const SdfLayerHandle editLayer = state->editLayer ? SdfLayerHandle(state->editLayer)
+                                                                              : currentEditLayer(stage, editError);
 
-                            if (!editLayer) {
-                                error = editError;
+                            if (!editLayer || !editLayer->PermissionToEdit()) {
+                                error = editError.isEmpty() ? QStringLiteral("edit layer is not editable") : editError;
                             }
                             else if (!stage::removePrimSpec(editLayer, state->createdPath)) {
                                 error = QString("failed to remove prim: %1").arg(pathText(state->createdPath));
                             }
                             else {
-                                stage::restoreChildOrder(stage, state->parentPath, state->oldParentOrder);
+                                layer::restoreChildOrderOpinion(editLayer, state->parentPath, state->oldOrderOpinion);
 
                                 for (auto it = state->createdAncestorSpecs.crbegin();
                                      it != state->createdAncestorSpecs.crend(); ++it) {

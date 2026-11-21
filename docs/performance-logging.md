@@ -52,6 +52,10 @@ or GPU waits. Do not add nested or overlapping scope durations together.
 - `ui.*`: Outliner selection/stage/prims, filtering and depth expansion;
   Property Editor summary/discovery and notice refresh; material refresh/list
   reconciliation; selection actions, layer tree and scene statistics.
+- `gizmo.geometry.build`, `gizmo.geometry.update`, `gizmo.renderer.warmup`,
+  `gizmo.render_cpu`: one-time auxiliary mesh creation, frame updates, hidden
+  renderer preparation, and CPU submission of the handle pass. Warmup moves
+  renderer setup to initial viewport preparation; it is not eliminated work.
 - `scene_index.*`, `hydra.*`, `viewport.paint`: scene-index add/remove handling
   and viewport rendering. Per-prim accessors and per-item loops are deliberately
   not instrumented, to avoid one log event per object in a large scene.

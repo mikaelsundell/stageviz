@@ -653,6 +653,46 @@
                  </widget>
                 </item>
                 <item>
+                 <widget class="QToolButton" name="viewportDisplay">
+                  <property name="sizePolicy">
+                   <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
+                    <horstretch>0</horstretch>
+                    <verstretch>0</verstretch>
+                   </sizepolicy>
+                  </property>
+                  <property name="minimumSize">
+                   <size>
+                    <width>32</width>
+                    <height>32</height>
+                   </size>
+                  </property>
+                  <property name="maximumSize">
+                   <size>
+                    <width>34</width>
+                    <height>34</height>
+                   </size>
+                  </property>
+                  <property name="contextMenuPolicy">
+                   <enum>Qt::CustomContextMenu</enum>
+                  </property>
+                  <property name="toolTip">
+                   <string>Viewport display purposes. A checked button indicates purpose filtering is active.</string>
+                  </property>
+                  <property name="text">
+                   <string>...</string>
+                  </property>
+                  <property name="iconSize">
+                   <size>
+                    <width>24</width>
+                    <height>24</height>
+                   </size>
+                  </property>
+                  <property name="checkable">
+                   <bool>true</bool>
+                  </property>
+                 </widget>
+                </item>
+                <item>
                  <widget class="QToolButton" name="frameAll">
                   <property name="sizePolicy">
                    <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
@@ -1063,14 +1103,6 @@
     <property name="title">
      <string>Create</string>
     </property>
-    <widget class="QMenu" name="menuCreateXform">
-     <property name="title">
-      <string>Xform</string>
-     </property>
-     <addaction name="createXform"/>
-     <addaction name="parentXform"/>
-    </widget>
-    <addaction name="menuCreateXform"/>
     <addaction name="createScope"/>
     <addaction name="createCube"/>
     <addaction name="createSphere"/>
@@ -1102,6 +1134,7 @@
      <property name="title">
       <string>Head-up display</string>
      </property>
+     <addaction name="separator"/>
      <addaction name="hudSceneStats"/>
      <addaction name="hudPerformanceStats"/>
      <addaction name="hudCameraAxis"/>
@@ -1110,6 +1143,9 @@
     <addaction name="separator"/>
     <addaction name="separator"/>
     <addaction name="menu_3"/>
+    <addaction name="separator"/>
+    <addaction name="viewShelves"/>
+    <addaction name="viewPlayback"/>
     <addaction name="separator"/>
     <addaction name="viewPython"/>
     <addaction name="viewProgress"/>
@@ -1622,6 +1658,18 @@
    <property name="shortcut">
     <string>Ctrl+W</string>
    </property>
+  </action>
+  <action name="viewShelves">
+   <property name="checkable"><bool>true</bool></property>
+   <property name="checked"><bool>true</bool></property>
+   <property name="text"><string>Shelves</string></property>
+   <property name="toolTip"><string>Show the script shelves above the viewport.</string></property>
+  </action>
+  <action name="viewPlayback">
+   <property name="checkable"><bool>true</bool></property>
+   <property name="checked"><bool>true</bool></property>
+   <property name="text"><string>Playback</string></property>
+   <property name="toolTip"><string>Show the playback bar below the viewport.</string></property>
   </action>
   <action name="viewProgress">
    <property name="checkable">

@@ -5,6 +5,7 @@
 #include "renderengine.h"
 #include "application.h"
 #include "gizmoprojection.h"
+#include "notice.h"
 #include "paths.h"
 #include "perfscope.h"
 #include "qtutils.h"
@@ -58,10 +59,12 @@
 #include <pxr/usd/sdf/assetPath.h>
 #include <pxr/usd/usd/prim.h>
 #include <pxr/usd/usdGeom/gprim.h>
+#include <pxr/usd/usdGeom/imageable.h>
 #include <pxr/usd/usdGeom/metrics.h>
 #include <pxr/usd/usdGeom/subset.h>
 #include <pxr/usd/usdGeom/tokens.h>
 #include <pxr/usd/usdGeom/xformable.h>
+#include <pxr/usd/usdShade/material.h>
 #include <pxr/usdImaging/usdImaging/sceneIndices.h>
 #include <pxr/usdImaging/usdImaging/stageSceneIndex.h>
 #include <pxr/usdImaging/usdImaging/usdPrimInfoSchema.h>
@@ -1274,6 +1277,7 @@ public:
     Settings settings;
     UsdStageRefPtr stage;
     RenderIsolation isolation;
+    std::set<SdfPath> pendingMaterialChanges;
     UsdStageWeakPtr imagingStage;
     UsdStageWeakPtr cachedImagingStage;
     uint64_t documentWarmupSourceVersion = 0;
@@ -1319,6 +1323,7 @@ public:
     std::unique_ptr<ImagingGLEngine> auxiliaryEngine;
     std::unique_ptr<ImagingGLEngine> gizmoEngine;
     bool gizmoRendered = false;
+    bool gizmoWarmed = false;
     std::unique_ptr<QOpenGLContext> offscreenContext;
     std::unique_ptr<QOffscreenSurface> offscreenSurface;
 };
@@ -1431,6 +1436,7 @@ RenderEngine::Private::resetEngine()
         return;
 
     gizmoRendered = false;
+    gizmoWarmed = false;
     selectionCacheValid = false;
 
     if (contextMode == ContextMode::Offscreen) {
@@ -1458,6 +1464,7 @@ void
 RenderEngine::Private::reset()
 {
     gizmoRendered = false;
+    gizmoWarmed = false;
     if (contextMode == ContextMode::Offscreen) {
         {
             OpenGLContextRestore contextRestore;
@@ -1753,6 +1760,24 @@ RenderEngine::Private::render()
     documentHgi->StartFrame();
     engine->PrepareBatch(root, documentParams);
     updateDocumentRenderSceneIndex();
+    if (!pendingMaterialChanges.empty()) {
+        std::set<SdfPath> materials;
+        for (auto path : pendingMaterialChanges) {
+            for (; !path.IsEmpty(); path = path.GetParentPath()) {
+                if (UsdShadeMaterial(stage->GetPrimAtPath(path))) {
+                    materials.insert(path);
+                    break;
+                }
+            }
+        }
+        pendingMaterialChanges.clear();
+        if (const auto filter = engine->sceneIndices().renderSceneIndex)
+            filter->refreshMaterials(materials);
+        if (cachedEngine) {
+            if (const auto filter = cachedEngine->sceneIndices().renderSceneIndex)
+                filter->refreshMaterials(materials);
+        }
+    }
 
     // PrepareBatch applies pending USD stage-scene-index updates. Resolve the
     // selection afterward so the mapper and its cache observe the same current
@@ -2018,6 +2043,7 @@ RenderEngine::Private::render()
         auxiliaryEngine->renderBatch({ paths::auxiliary::display }, auxiliaryParams, { gizmoPath });
 
         if (gizmoEngine && auxiliary->GetPrimAtPath(gizmoPath)) {
+            PerfScope gizmoScope("gizmo.render_cpu");
             auto* gizmoTarget = gizmoEngine.get();
             Hgi* gizmoHgi = gizmoTarget->hgi();
             // Gizmo shading must not inherit the document's wireframe mode.
@@ -2029,17 +2055,64 @@ RenderEngine::Private::render()
             UsdGeomXformable(auxiliary->GetPrimAtPath(gizmoPath))
                 .GetLocalTransformation(&gizmoTransform, &resetGizmoStack);
             const auto gizmoCamera = gizmoprojection::camera(camera, gizmoTransform);
-            gizmoTarget->SetCameraState(viewMatrix, gizmoCamera.GetFrustum().ComputeProjectionMatrix());
-            gizmoHgi->StartFrame();
-            gizmoTarget->PrepareBatch(auxiliaryRoot, gizmoParams);
-            updateAuxiliaryRenderSceneIndex();
-            // This pass intentionally clears depth but preserves the color
-            // attachment. OpenGL state operations require a current GL context.
-            glDepthMask(GL_TRUE);
-            glClear(GL_DEPTH_BUFFER_BIT);
-            gizmoTarget->renderBatch({ gizmoPath }, gizmoParams);
-            gizmoRendered = true;
-            gizmoHgi->EndFrame();
+            const bool warmPresentation = !gizmoWarmed && contextMode == ContextMode::Current;
+            if (warmPresentation) {
+                PerfScope warmupScope("gizmo.renderer.warmup");
+                // Prepare every mode in the dedicated engine without presenting
+                // its color or depth. Visibility changes touch only the private
+                // auxiliary stage and are restored before the visible pass.
+                std::vector<std::pair<UsdAttribute, VtValue>> visibility;
+                for (const SdfPath& path :
+                     { gizmoPath, gizmoPath.AppendChild(TfToken("Move")), gizmoPath.AppendChild(TfToken("Rotate")),
+                       gizmoPath.AppendChild(TfToken("Scale")) }) {
+                    UsdGeomImageable imageable(auxiliary->GetPrimAtPath(path));
+                    if (!imageable)
+                        continue;
+                    UsdAttribute attr = imageable.GetVisibilityAttr();
+                    VtValue value;
+                    if (attr.HasAuthoredValueOpinion())
+                        attr.Get(&value);
+                    visibility.emplace_back(attr, value);
+                    attr.Set(UsdGeomTokens->inherited);
+                }
+                const auto restoreVisibility = qScopeGuard([&]() {
+                    for (const auto& item : visibility) {
+                        if (item.second.IsEmpty())
+                            item.first.Clear();
+                        else
+                            item.first.Set(item.second);
+                    }
+                });
+                GfMatrix4d warmView(1.0);
+                warmView.SetLookAt(GfVec3d(0, 0, 5), GfVec3d(0), GfVec3d::YAxis());
+                GfFrustum warmFrustum;
+                warmFrustum.SetPerspective(45, 1, .01, 100);
+                gizmoTarget->SetCameraState(gizmoTransform.GetInverse() * warmView,
+                                            warmFrustum.ComputeProjectionMatrix());
+                gizmoHgi->StartFrame();
+                gizmoTarget->PrepareBatch(auxiliaryRoot, gizmoParams);
+                gizmoTarget->renderBatchWithRenderTask({ gizmoPath }, gizmoParams, {}, false);
+                gizmoHgi->EndFrame();
+                gizmoWarmed = true;
+            }
+            // Initialize the presentation pipeline once too. With the restored
+            // invisible root this presents an empty transparent overlay, never
+            // the warmup meshes. Later hidden frames skip the pass entirely.
+            if (warmPresentation
+                || UsdGeomImageable(auxiliary->GetPrimAtPath(gizmoPath)).ComputeVisibility()
+                       != UsdGeomTokens->invisible) {
+                gizmoTarget->SetCameraState(viewMatrix, gizmoCamera.GetFrustum().ComputeProjectionMatrix());
+                gizmoHgi->StartFrame();
+                gizmoTarget->PrepareBatch(auxiliaryRoot, gizmoParams);
+                updateAuxiliaryRenderSceneIndex();
+                // This pass intentionally clears depth but preserves the color
+                // attachment. OpenGL state operations require a current GL context.
+                glDepthMask(GL_TRUE);
+                glClear(GL_DEPTH_BUFFER_BIT);
+                gizmoTarget->renderBatch({ gizmoPath }, gizmoParams);
+                gizmoRendered = true;
+                gizmoHgi->EndFrame();
+            }
         }
         auxiliaryHgi->EndFrame();
     }
@@ -2089,6 +2162,7 @@ RenderEngine::setStage(UsdStageRefPtr stage)
         return;
 
     p->stage = stage;
+    p->pendingMaterialChanges.clear();
     p->isolation.setStage(stage);
     p->selectionCacheValid = false;
     p->resetEngine();
@@ -2106,6 +2180,7 @@ RenderEngine::setAuxiliaryStage(UsdStageRefPtr stage)
     if (p->auxiliary == stage)
         return;
 
+    p->gizmoWarmed = false;
     p->auxiliary = stage;
     p->resetEngine();
 }
@@ -2204,6 +2279,18 @@ RenderEngine::setSelected(const QList<SdfPath>& paths)
         return;
     p->selected = std::move(normalized);
     p->selectionCacheValid = false;
+}
+
+void
+RenderEngine::updatePrims(const NoticeBatch& batch)
+{
+    p->selectionCacheValid = false;
+    for (const auto& entry : batch.entries) {
+        if (!entry.changedInfoOnly || entry.path.GetNameToken() == TfToken("info:id")
+            || std::find(entry.changedFields.begin(), entry.changedFields.end(), TfToken("connectionPaths"))
+                   != entry.changedFields.end())
+            p->pendingMaterialChanges.insert(entry.path.GetPrimPath());
+    }
 }
 
 void

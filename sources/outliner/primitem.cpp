@@ -8,8 +8,10 @@
 #include "indextree.h"
 #include "outlinertree.h"
 #include "qtutils.h"
+#include "tracelocks.h"
 #include "ui.h"
 #include "usdutils.h"
+#include "viewcontext.h"
 #include <QBrush>
 #include <QFont>
 #include <QIcon>
@@ -234,27 +236,30 @@ PrimItem::data(int column, int role) const
 
     if (role == Qt::ToolTipRole) {
         if (column == Override) {
-            if (p->d.hasDirectOverride)
-                return QStringLiteral("Direct edit-layer override");
-
-            if (p->d.hasDescendantOverride)
-                return QStringLiteral("Contains edit-layer overrides");
-
+            if (const auto* tree = dynamic_cast<const OutlinerTree*>(treeWidget()))
+                return tree->overrideToolTip(path);
             return QVariant();
         }
 
         if (p->d.name.isEmpty())
             return QVariant();
 
-        const QString pathText = StringToQString(path.GetString());
-        const QString typeText = p->d.typeName.isEmpty() ? "Unknown" : p->d.typeName;
-
-        return QString("Type\n%2%3\nPath\n%1")
-            .arg(pathText)
-            .arg(typeText)
-            .arg(p->d.isInstanceProxy ? QStringLiteral(" (Instance proxy)")
-                 : p->d.isInstance    ? QStringLiteral(" (Instance)")
-                                      : QString());
+        QList<QPair<QString, QString>> fields { { QStringLiteral("Type"), p->d.isRoot ? QStringLiteral("Stage root")
+                                                                          : p->d.typeName.isEmpty()
+                                                                              ? QStringLiteral("Untyped")
+                                                                              : p->d.typeName },
+                                                { QStringLiteral("Path"), StringToQString(path.GetString()) } };
+        if (p->d.stage) {
+            const auto* tree = dynamic_cast<const OutlinerTree*>(treeWidget());
+            const auto* context = tree ? tree->context() : nullptr;
+            READ_LOCKER(locker, context ? context->stageLock() : nullptr, "stageLock");
+            fields.append(qt::primLayerToolTipFields(p->d.stage->GetPrimAtPath(path)));
+        }
+        if (p->d.isInstanceProxy)
+            fields.append({ QStringLiteral("Instance"), QStringLiteral("Proxy (read-only)") });
+        else if (p->d.isInstance)
+            fields.append({ QStringLiteral("Instance"), QStringLiteral("Instance root") });
+        return qt::toolTip(p->d.name, fields);
     }
 
     if (role == Qt::DecorationRole && column == Name) {

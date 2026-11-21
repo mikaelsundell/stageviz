@@ -127,6 +127,28 @@ namespace snapshot {
 }  // namespace snapshot
 
 namespace stage {
+    PrimLayerInfo primLayerInfo(const UsdPrim& prim)
+    {
+        PrimLayerInfo result;
+        if (!prim)
+            return result;
+        if (prim.IsPseudoRoot()) {
+            result.definingLayer = result.strongestLayer = prim.GetStage()->GetRootLayer();
+            return result;
+        }
+        for (const auto& spec : prim.GetPrimStack()) {
+            if (!spec)
+                continue;
+            if (!result.strongestLayer)
+                result.strongestLayer = spec->GetLayer();
+            if (spec->GetSpecifier() == SdfSpecifierDef || spec->GetSpecifier() == SdfSpecifierClass) {
+                result.definingLayer = spec->GetLayer();
+                break;
+            }
+        }
+        return result;
+    }
+
     QList<SdfPath> objectPaths(UsdStageRefPtr stage, const QList<SdfPath>& paths)
     {
         PerfScope perfScope("transform.object_paths");

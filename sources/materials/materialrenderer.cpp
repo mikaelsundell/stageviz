@@ -12,6 +12,7 @@
 #include <QApplication>
 #include <QCache>
 #include <QColor>
+#include <QCryptographicHash>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -60,7 +61,8 @@ public:
     void enqueue(const QString& path, const Pending& request, bool highPriority = false);
     void scheduleNext();
     void processNext();
-    void receive(const QString& path, const QImage& image, const QString& error, quint64 serial, RequestKind kind);
+    void receive(const QString& path, const QImage& image, const QString& error, quint64 serial, RequestKind kind,
+                 const QString& networkKey);
     void reset();
     bool sendCached(const QString& path, const Pending& request);
     void resetContext(RenderContext& context);
@@ -92,6 +94,7 @@ public:
         RequestKind fallbackKind = RequestKind::Parameters;
         MaterialParameters parameters;
         SdfLayerRefPtr sourceLayer;
+        QString networkKey;
         SdfPath inputPath;
         VtValue value;
         quint64 serial = 0;
@@ -111,6 +114,7 @@ public:
         QImage linear;
         QImage display;
         QString view;
+        QString networkKey;
         bool reusable = false;
     };
 
@@ -780,7 +784,7 @@ MaterialRendererPrivate::processNext()
         else
             image = renderParameters(request.parameters, error);
 
-        receive(path, image, error, request.serial, request.kind);
+        receive(path, image, error, request.serial, request.kind, request.networkKey);
         return;
     }
 }
@@ -848,6 +852,32 @@ MaterialRendererPrivate::dispatchNetwork(const QString& path, const SdfLayerRefP
     pending.sourceLayer = sourceLayer;
     pending.serial = ++d.serial;
     pending.forceRender = forceRender;
+    // Revisited compositions share the existing bounded image cache. Transient
+    // attribute overrides are not represented by the immutable source snapshot.
+    bool hasOverrides = false;
+    for (auto it = d.attributeOverrides.cbegin(); it != d.attributeOverrides.cend(); ++it) {
+        if (SdfPath(it.key().toStdString()).GetPrimPath().HasPrefix(SdfPath(path.toStdString()))) {
+            hasOverrides = true;
+            break;
+        }
+    }
+    if (!hasOverrides) {
+        std::string content;
+        sourceLayer->ExportToString(&content);
+        pending.networkKey
+            = path + QLatin1String("|network|")
+              + QString::fromLatin1(
+                  QCryptographicHash::hash(QByteArray::fromStdString(content), QCryptographicHash::Sha256).toHex());
+        if (!forceRender) {
+            if (const auto* variant = d.cache.object(pending.networkKey)) {
+                const CachedImage cached = *variant;
+                const qsizetype bytes = cached.linear.sizeInBytes() + cached.display.sizeInBytes();
+                d.cache.insert(path, new CachedImage(cached), int((bytes + 1023) / 1024));
+            }
+            else if (const auto* current = d.cache.object(path); current && current->networkKey != pending.networkKey)
+                d.cache.remove(path);
+        }
+    }
     if (!forceRender && sendCached(path, pending))
         return;
     enqueue(path, pending);
@@ -888,7 +918,7 @@ MaterialRendererPrivate::dispatchInteractive(const QString& path, const SdfLayer
 
 void
 MaterialRendererPrivate::receive(const QString& path, const QImage& image, const QString& error, quint64 serial,
-                                 RequestKind kind)
+                                 RequestKind kind, const QString& networkKey)
 {
     const auto pending = d.pending.constFind(path);
     const bool newerRequestExists = pending != d.pending.cend() && pending->serial > serial;
@@ -899,11 +929,14 @@ MaterialRendererPrivate::receive(const QString& path, const QImage& image, const
             cached.linear = image;
             cached.display = colorManagementImage(image, d.colorView);
             cached.view = d.colorView;
+            cached.networkKey = networkKey;
             // Keep transient previews for view changes without treating their
             // temporary input values as committed authored-network results.
             cached.reusable = kind == RequestKind::MaterialNetwork || kind == RequestKind::Placeholder;
             const qsizetype bytes = cached.linear.sizeInBytes() + cached.display.sizeInBytes();
             d.cache.insert(path, new CachedImage(cached), int((bytes + 1023) / 1024));
+            if (kind == RequestKind::MaterialNetwork && !networkKey.isEmpty())
+                d.cache.insert(networkKey, new CachedImage(cached), int((bytes + 1023) / 1024));
             if (!cached.display.isNull())
                 Q_EMIT d.renderer->rendered(path, cached.display);
             else
@@ -1076,12 +1109,19 @@ MaterialRenderer::invalidate(const SdfPath& materialPath)
 }
 
 void
-MaterialRenderer::invalidateNetwork(const SdfPath& materialPath)
+MaterialRenderer::invalidateNetwork(const SdfPath& materialPath, bool retainCompositions)
 {
     if (materialPath.IsEmpty())
         return;
 
     invalidate(materialPath);
+    if (!retainCompositions) {
+        const QString prefix = QString::fromStdString(materialPath.GetString()) + QLatin1String("|network|");
+        for (const auto& key : p->d.cache.keys()) {
+            if (key.startsWith(prefix))
+                p->d.cache.remove(key);
+        }
+    }
 
     for (auto it = p->d.attributeOverrides.begin(); it != p->d.attributeOverrides.end();) {
         const SdfPath inputPath(it.key().toStdString());

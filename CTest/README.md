@@ -91,6 +91,14 @@ so desktop focus changes cannot cancel its synthetic context-menu interaction.
 It still checks selection preservation, batch lock/mute actions and undo. The
 MCP `testlayermultiselection` suite checks the visible desktop dialog separately.
 
+The native Material Display popup case also uses the offscreen backend on
+macOS/Linux so desktop focus changes cannot dismiss its inspection popup. Its
+scoped timer is stopped when the popup closes, and the test distinguishes a
+cancelled inspection from an incorrect filter highlight. The packaged live suite
+continues to exercise the actual desktop menu. The preserve-state menu test
+explicitly saves an anonymous remembered-state baseline before checking first
+root-save refresh; authored Untitled stages can legitimately track view state.
+
 `session_layer_state_api` and the `testpreservestate` layer-controls phase cover
 lock/mute/edit-target companion-state round trips, permission undo/redo, dirty
 tracking, unchanged USD files, legacy state files and invalid lock data. Locked
@@ -122,7 +130,12 @@ or muted layers. `testlayerupdate.py` checks the menu actions, batch undo/redo,
 external disk edits, unselected sublayers, and unchanged camera state via MCP.
 
 `viewport_components_api` verifies that all nine tessellated gizmo meshes are
-explicitly polygonal, rather than inheriting USD's Catmull-Clark fallback.
+explicitly polygonal, rather than inheriting USD's Catmull-Clark fallback. It also
+checks preparation before a tool is selected, hidden initial visibility,
+idempotence, and unchanged document USD. The disposable first-show benchmark
+(`benchmark/benchmark_gizmo_first_show.py`) measures first and repeated tool
+frames separately, verifies hidden/visible handle pixels and unchanged document
+root/session layers, and records independent MCP oracles.
 `testgizmostability.py` keeps Rotate active while creating a sphere and plane,
 opens the Material Editor, and orbits through multiple camera revolutions and
 distances, including repeated left/right sweeps through an edge-on red ring.
@@ -261,8 +274,8 @@ also checks single-selection grouping through `new_xform`.
 and Outliner context menus with single and multiple selections. It checks empty
 creation versus grouping, Parent enabled state, shortcut ownership, hierarchy,
 selection, undo/redo and Qt snapshots in a disposable viewer. It also verifies
-that Edit and Create own distinct Xform submenus sharing the same actions, with
-no shared submenu attachments or cycles in the Xform menu graph.
+that Xform creation/grouping is available in Edit and omitted from Create,
+with no shared submenu attachments or cycles in the menu graph.
 
 The standalone `stageviz.python_documentation` case compares the reference with
 the CPython registrations by owning surface, argument count and keyword names,
@@ -609,12 +622,12 @@ stale ordinary-geometry checkbox state after root undo and command-driven update
 wins within a queued click batch, cancelled batches add no undo command, and stage
 replacement cancels the previous stage's pending checkbox timer.
 
-Outliner Reset shows All followed by the property-opinion groups actually authored
-in the active edit layer. `reset_opinion_groups_api` covers all eight groups,
+Outliner Opinions uses a disabled Clear header, then All followed by the property-opinion groups actually authored
+in the active edit layer. `clear_opinion_groups_api` covers all eight groups,
 recursive and overlapping selections, definition preservation, locked layers and
 exact undo after an edit-target switch, and mapped variant targets.
-`outliner_reset_opinions_menu_api` checks the offscreen menu labels, divider,
-available groups and locked-layer state. `testresetopinions.py` checks the live
+`outliner_clear_opinions_menu_api` checks the offscreen menu labels, divider,
+available groups and locked-layer state. `testclearopinions.py` checks the live
 menu, grouped and All commands, undo/redo, retained metadata and source-layer
 isolation through a disposable MCP viewer. Discovery visits authored edit-layer
 specs rather than traversing the entire composed payload hierarchy.
@@ -863,7 +876,7 @@ promotion, shared prototype preservation, variant edit targets, locked layers,
 and exact undo in the original edit layer. `clearMaterial` removes native binding
 relationships without custom markers, including bindings authored outside Assign
 and purpose-specific bindings; unrelated opinions and composition remain intact.
-Generic Reset retains its existing override-only behavior.
+Generic opinion clearing retains its existing override-only behavior.
 
 `testmaterialassignment` checks rendered colors for ordinary, parent and proxy
 assignments, whole-instance changes, Material Editor Assign/Select, viewport
@@ -884,3 +897,247 @@ existing configuration and binaries unchanged.
 
 Release embedded checks also wait for the numeric inspector's queued selection
 refresh and locate the Color menu through its current `displayColor` object name.
+
+### Grouped prim context menu
+
+`testcontextmenu` checks the shared Outliner/viewport menu hierarchy, disabled
+Show/Hide and Clear headers, the divider before Other, native material provenance
+(inherited, stronger ancestor, instance owner and mixed owners), Source/Owner
+navigation, generic relationship targets, visibility commands and relationship
+clearing with exact undo/redo. External MCP prim and selection queries bracket
+the phases. Generic relationship Clear removes current-target relationship specs;
+it does not promote proxy properties or traverse ancestors. Material clearing
+retains the explicit instance-owner promotion used by material assignment.
+
+`relationship_opinions_api` covers complete relationship-spec removal, weaker
+fallback targets, exact metadata restoration, original edit targets, variant path
+mapping, locked layers and read-only proxies. The property inspector uses Clear
+for values, dependencies and opinions. MaterialX Default Value remains a distinct
+authoring operation because restoring a NodeDef default can write a value.
+
+Python opinion-removal commands now use `clear_*` names: `clear_opinions`,
+`clear_pivots`, `clear_attribute_values`, `clear_attribute_opinion`, `clear_attribute_opinions`,
+`clear_dependencies`, `clear_shader_inputs`, and `clear_relationships`.
+The duplicate transform-reset entry point is consolidated into
+`identity_transforms`. Existing external scripts must migrate to these names;
+the obsolete reset aliases are not retained.
+
+### Outliner purpose display filter
+
+`stageviz.gui.outliner_purpose_filter_api` checks the final Purpose category,
+independent Default/Render/Proxy/Guide choices, explicit none, inherited purposes,
+explicit default overrides, inheritance through non-imageable nodes and native
+instance proxies. Filtering retains ancestors of matches, intersects with type
+and text filters, follows purpose edits and undo, and preserves row identity.
+All selected purposes bypass USD purpose computation during ordinary filtering.
+Non-imageable prims remain governed by the existing layer/type/text controls.
+
+`testoutlinerpurpose` exercises the actual menu through a disposable MCP app,
+compares visible rows against USD's reference purpose computation, captures menus
+and Qt/viewer snapshots, and checks selection and viewport capture paths remain
+unchanged. Explicit none survives menu reopening and stage reload. Purpose
+filtering authors no USD opinions and does not change viewport purpose visibility.
+
+### Rich Outliner and material tooltips
+
+`stageviz.gui.rich_tooltips_api` checks shared escaped rich-text formatting,
+long-path wrapping without losing text, matching icon/list/detail material
+presentations, prim name/type/path fields, direct and descendant override
+summaries, material targets and binding strength, large-array summaries, refresh
+after clearing a binding, and active edit-layer changes. Override details are
+computed only when requested and use the existing authored override index;
+property and descendant lists are bounded rather than scanning composed stages.
+
+`testtooltips` drives actual Qt help events over Outliner names, override icons
+and Material Editor swatches, captures the displayed tooltip windows, verifies
+proxy status and binding clear/undo refresh, and stores Qt/viewer snapshots.
+External MCP stage and prim inspection brackets the reusable synthetic fixture.
+
+### Layer ownership and material rename
+
+`rename_material_layer_parent` covers renaming a material whose definition is in
+an active sublayer while its parent scope has a stronger root-layer opinion.
+The same-parent rename retains the child's own strongest-layer validation and
+USD namespace-editor checks; only the unnecessary parent-strength requirement
+is relaxed. Tests cover binding updates, exact undo and unrelated/stronger child
+layers remaining protected. `testmateriallayerrename` exercises Material Browser
+rename, undo/redo, ownership tooltips and Layer Editor hover captures through a
+disposable app. External MCP verifies the defining, strongest and active layers.
+
+Prim and material tooltips distinguish the defining Layer from a different
+Strongest opinion layer. Override tooltips also identify the definition layer,
+while retaining the active override layer. Layer Editor names and status icons
+use the shared formatted tooltip, including paths, edit target, permissions,
+unsaved changes, opinion counts and reorder hints. Native MCP stage info exposes
+`editLayer`; prim info adds `definingLayer`, `strongestLayer` and `editLayer` so
+read-only inspection does not need an embedded Python execution.
+
+### Independent material containers across layers
+
+`material_container_layers` creates Preview Surface, MaterialX Standard Surface and
+OpenPBR materials in a different layer from the original `/Materials` definition.
+It checks that muting the original layer retains the new material and that undo
+restores the exact previous container and metadata, including an existing `over`.
+`testmaterialcontainer` exercises the Material Browser creation signal, undo/redo,
+layer mute/unmute and both browser and Outliner presentation in a disposable app.
+The external MCP controller independently checks the material's defining layer.
+
+### Material composition and inert opinion cleanup
+
+`testmaterialcomposition` constructs a shared material path with a universal
+Preview Surface output in one layer and a MaterialX output in another, plus
+nested empty root-layer overs. It compares live mute/unmute transitions with
+independently rendered compositions, samples the browser and large preview,
+checks that displayed property inputs belong to existing composed shader nodes,
+checks material removal/restoration, reloads a different document at the same
+material path, and records switching time and Qt event-loop gaps. Timings include
+an explicit 700 ms settling interval; they are diagnostic rather than a universal
+performance threshold. External MCP inspection verifies composed prim presence.
+`clear_inert_material_opinions` verifies Clear All removes empty over chains,
+restores exact specs and sibling order on undo, and preserves metadata and the
+underlying definitions. `testclearopinions` continues to cover grouped property
+clears and the real Opinions menu.
+
+The material renderer retains content-keyed composition images within the same
+128 MiB LRU budget. `material_swatch_color_view_api` checks that repeated authored
+compositions reuse their linear image, new contents render once, explicit network
+invalidation flushes variants, and transient edits do not reuse an old image.
+
+### Explicit overrides and material network replacement
+
+`explicit_override_paths_api` checks authored overs without duplicate prims,
+original-target undo/redo and rejection of invalid batches.
+`replace_material_network_api` checks replacement with Preview Surface,
+Standard Surface and OpenPBR, competing universal/MaterialX terminals, fresh
+shader node paths, preserved bindings/metadata, stronger-opinion guards and
+exact local-layer restoration. `testlayerauthoring` drives the actual Outliner
+and Material Browser menus, both Python commands, swatch refresh and undo/redo
+without muting any layer. The external controller checks composed material
+presence and selection through named MCP tools.
+
+`layer_authoring_variants_api` covers mapped variant targets, exact original-target
+undo/redo, referenced material replacement, rejection of stronger direct layer
+opinions inside variants, locked layers, material instances and proxy materials.
+
+### Current scene clipping bounds after edits
+
+`camera_live_scene_clipping_api` reproduces a far plane fitted to stale framing
+bounds and verifies current scene bounds across a complete orbit in all three
+projection modes, without changing the view pose or stored framing bounds.
+`session_geometry_bounds_notifications_api` checks transform and radius changes
+notify render views. `testcameraclipping` moves a sphere outside the original
+bounds, switches from Front to a leftward tumble, verifies both sphere IDs stay
+visible, and checks undo/redo and unchanged focus/zoom. The external MCP controller
+independently verifies that the source prims remain present.
+
+### Material graph layout with shared sources
+
+`material_graph_shared_branch_layout_api` checks branching networks whose texture
+nodes share a UV source, including unequal branch lengths and different node
+heights. It verifies that node bodies do not overlap, shared sources remain left
+of their consumers, network roots align on the right, and supported networks
+appear in blocks above unknown networks. It also checks finite placement for
+cycles, deterministic automatic rebuilds, preservation of manual positions during
+refresh, and unchanged USD layer contents. The disconnected-network layout case
+checks the same root alignment for separate networks.
+
+### Confirmed layer creation replacement
+
+`create_sublayer_replace_api` verifies replacement of existing `.usd`, `.usda`
+and `.usdc` files, including destinations already loaded into the stage. Undo
+restores prior in-memory layer contents and parent sublayer arcs; redo restores
+the empty destination without writing the file again. The disk file remains the
+confirmed replacement. Creating a sublayer cannot replace its own parent or the
+stage root. `layer_create_replace_dialog_api` drives the Qt save chooser and its
+Replace confirmation, checks the default `.usda` suffix, and verifies replacement,
+attachment, and one-step undo/redo. This chooser test uses Qt's non-native dialog.
+
+### Display filter indicators
+
+The Outliner Display button highlights deviations from its default settings.
+The Material Browser Display button remains checked while filters restrict
+content, including when all rows are hidden or newly created materials have an
+excluded shader type. Both menus remain available from either
+left click or the button's context menu. `material_browser_display_menu_api`
+checks the active indicator during and after popup interaction, newly added
+hidden materials, and clearing filters through a context-opened menu.
+`outliner_purpose_filter_api` checks purpose and Untyped restrictions, updates
+through the tree's filter setters, and context-menu highlighting. The Outliner's default Untyped exclusion does not activate the indicator;
+showing Untyped highlights a departure from the default display settings.
+
+### Unused flattened instance sources
+
+`flattened_instance_cleanup_api`, `flattened_instance_dependencies_api` and
+`flattened_instance_nested_cleanup_api` cover Delete cleanup of exported USD
+instance sources, shared and nested users, inactive variants, muted layers,
+relationships, connections, payloads, inherits and specializes, plus undo/redo.
+Only source roots associated with the deleted instances in the edit layer are
+eligible; unrelated untyped roots are retained. Missing composition assets skip
+cleanup conservatively. `testinstancecleanup` exports and reopens actual USD
+instances, checks the last deletion and undo/redo, saves empty USDA/USDC copies,
+and captures Qt/viewer state with independent external MCP prim-list checks.
+
+### Material render-context changes in the viewport
+
+`render_material_context_invalidation_api` verifies targeted material-root resyncs
+without reintroducing deleted materials or resyncing ordinary geometry. `testmaterialviewportcomposition` compares viewport pixels against
+fresh Preview Surface and MaterialX renders, checks swatch colors, repeatedly
+mutes/unmutes a stronger layer containing material overs, and exercises undo/redo
+and isolation renderer caching. An external MCP
+controller independently verifies the material's strongest layer at checkpoints.
+
+### Viewport purpose display
+
+`viewport_purpose_state_api` checks native purpose defaults, change signals and
+view-state persistence. `testviewportpurpose` exercises the matching sidebar
+Display button with left-click and context menus, filter indication, inherited
+purposes, rendered/captured object paths, independent isolation masks and saved
+view state. An external MCP check verifies filtered geometry remains composed.
+Default-purpose geometry stays included by USD's native rendering controls.
+
+### Material assignment to packaged face subsets
+
+`material_assignment_subsets_api` verifies that assigning a whole mesh overrides
+its face-subset materials through native binding strength, preserves original
+subset relationships, and restores them through Clear and undo/redo.
+`testpackagedmaterialassignment` checks the same workflow through a generated
+USDZ reference, rendered colors, package-layer menu labels and identifier tooltips.
+Material Editor and Outliner source filters share a Sources submenu containing
+nonempty Layers, Referenced assets and Packages groups. Packaged contributors
+appear once beneath their package; native menu checks cover empty-group omission
+and filtering through nested actions. The packaged live test checks both menus.
+It also drives `Assign > Face subsets`, verifies the displayed resolved material
+for each subset, and checks rendered subset changes, sibling preservation, and
+exact one-step undo/redo of the mesh override. The native case covers multiple
+selected subsets and a stronger edit layer over an unchanged source mesh binding.
+
+`material_follow_selection_api` checks the Material Editor's Follow button,
+default-off state, direct-material selection, scrolling in all three browser
+views and synchronization when reopening. The packaged live test drives Select
+on a subset's material binding in the Property Tree and verifies editor selection
+and visible scrolling with Follow enabled.
+Follow responds only to explicitly selected material prims. Selecting geometry,
+groups or subsets preserves the editor selection and never adds their bound
+materials to the stage SelectionList; native checks cover each boundary.
+
+`cross_layer_child_creation_api` checks new prims, populated geometry, lights,
+materials, references and payloads beneath root-owned and referenced parents in
+another edit layer. It verifies exact undo/redo after switching edit targets,
+unchanged source layers, instance rejection, and unchanged rename restrictions.
+`testcrosslayercreation` drives Outliner Create > Xform beneath a stronger
+root-owned /World and checks the visible child, layer specs and undo/redo through
+an external MCP controller.
+
+`testmaterialxpreview.py` clones an imported `ND_UsdPreviewSurface_surfaceshader`
+with a same-named `carpaint` material and shader. It checks shaded browser and
+property swatches before/after a real numeric scrub, transient USD preservation,
+commit, undo/redo and reopening. `material_utils_api` exports the colliding names,
+checks the preserved material name, and resolves the imported material-interface
+connection with USD's value-producing-attribute API to verify the roundtrip color.
+
+`material_dialog_refresh_after_layer_removal_api` waits for the actual debounced
+browser refresh and graph-tab deletion, verifies composed layer removal, and
+checks browser restoration/removal on undo/redo. The viewport test helper waits
+for visible handles and completed renders before and after camera framing;
+prewarmed hidden meshes cannot satisfy gesture readiness. The shared-source
+fixture explicitly checks hidden handles in Select mode.

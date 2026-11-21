@@ -3,6 +3,7 @@
 // https://github.com/mikaelsundell/stageviz
 
 #include "commandprim.h"
+#include "commandinstanceutils.h"
 #include "commandprimprivate.h"
 #include "commandtransform.h"
 #include "commandutils.h"
@@ -325,6 +326,90 @@ namespace snapshot {
 }  // namespace snapshot
 
 Command
+overridePaths(const QList<SdfPath>& paths)
+{
+    struct State {
+        UsdEditTarget target;
+        bool initialized = false;
+        QList<SdfPath> created;
+    };
+    const auto state = std::make_shared<State>();
+    const auto apply = [state, paths](Session* session, bool undo) {
+        if (!session || paths.isEmpty())
+            return;
+        command::beginDeferred(session, undo ? "Undo override in current layer" : "Override in current layer", 1);
+        command::runWorker([state, paths, session, undo]() {
+            QString error;
+            {
+                WRITE_LOCKER(locker, session->stageLock(), "stageLock");
+                const auto stage = session->stageUnsafe();
+                if (!stage)
+                    error = "stage missing";
+                else {
+                    if (!state->initialized) {
+                        state->target = stage->GetEditTarget();
+                        state->initialized = true;
+                    }
+                    const auto layer = state->target.GetLayer();
+                    if (!layer || !layer->PermissionToEdit())
+                        error = "original edit layer is not editable";
+                    else if (undo) {
+                        for (auto it = state->created.crbegin(); it != state->created.crend(); ++it) {
+                            const auto spec = layer->GetPrimAtPath(*it);
+                            if (spec && spec->IsInert())
+                                stage::removePrimSpec(layer, *it);
+                        }
+                    }
+                    else {
+                        state->created.clear();
+                        const auto targets = path::uniquePaths(paths);
+                        for (const auto& path : targets) {
+                            const auto prim = stage->GetPrimAtPath(path);
+                            const auto mapped = state->target.MapToSpecPath(path);
+                            if (!path.IsPrimPath() || !prim || prim.IsInstanceProxy() || prim.IsPrototype()
+                                || prim.IsInPrototype() || mapped.IsEmpty()) {
+                                error = QString("prim cannot receive an override: %1").arg(command::pathText(path));
+                                break;
+                            }
+                        }
+                        if (error.isEmpty()) {
+                            state->created.clear();
+                            for (const auto& path : targets) {
+                                const auto mapped = state->target.MapToSpecPath(path);
+                                for (const auto& prefix : mapped.GetPrefixes()) {
+                                    if (!layer->GetPrimAtPath(prefix) && !state->created.contains(prefix))
+                                        state->created.append(prefix);
+                                }
+                                // OverridePrim can return an already-composed prim without authoring a spec.
+                                if (!SdfCreatePrimInLayer(layer, mapped)) {
+                                    error = QString("failed to author override: %1").arg(command::pathText(path));
+                                    break;
+                                }
+                            }
+                        }
+                        if (!error.isEmpty()) {
+                            for (auto it = state->created.crbegin(); it != state->created.crend(); ++it) {
+                                const auto spec = layer->GetPrimAtPath(*it);
+                                if (spec && spec->IsInert())
+                                    stage::removePrimSpec(layer, *it);
+                            }
+                            state->created.clear();
+                        }
+                    }
+                }
+            }
+            command::queueToSession(session, [session, paths, error]() {
+                command::finishDeferred(session, error.isEmpty() ? QString("Override opinions updated") : error, paths,
+                                        error.isEmpty() ? Session::Notify::Status::Success
+                                                        : Session::Notify::Status::Error);
+            });
+        });
+    };
+    return Command([apply](Session* session) { apply(session, false); },
+                   [apply](Session* session) { apply(session, true); });
+}
+
+Command
 deletePaths(const QList<SdfPath>& inPaths)
 {
     auto state = std::make_shared<snapshot::DeleteState>();
@@ -374,6 +459,7 @@ deletePaths(const QList<SdfPath>& inPaths)
                             }
 
                             const QList<SdfPath> paths = path::minimalRootPaths(editable);
+                            const auto sourceCandidates = command::flattenedInstanceSources(stage, editLayer, paths);
 
                             state->prims.clear();
                             state->parentOrders.clear();
@@ -408,6 +494,13 @@ deletePaths(const QList<SdfPath>& inPaths)
                                             state->parentOrders.insert(parentPath, order);
                                     }
                                 }
+                            }
+
+                            if (!sourceCandidates.isEmpty()
+                                && !state->parentOrders.contains(SdfPath::AbsoluteRootPath())) {
+                                TfTokenVector order;
+                                if (stage::captureChildOrder(stage, SdfPath::AbsoluteRootPath(), order))
+                                    state->parentOrders.insert(SdfPath::AbsoluteRootPath(), order);
                             }
 
                             // Snapshot before editing: USD stage queries must not occur while
@@ -457,6 +550,27 @@ deletePaths(const QList<SdfPath>& inPaths)
 
                                 for (const QString& dependencyError : dependencyErrors)
                                     rejected.append(dependencyError);
+
+                                const auto unusedSources = command::unusedFlattenedInstanceSources(stage, editLayer,
+                                                                                                   sourceCandidates);
+                                QList<snapshot::PrimState> sourceSnapshots;
+                                for (const auto& source : unusedSources) {
+                                    snapshot::PrimState sourceState;
+                                    if (snapshot::capturePrimToLayer(stage, source, sourceState))
+                                        sourceSnapshots.append(sourceState);
+                                }
+                                SdfChangeBlock sourceChanges;
+                                for (const auto& sourceState : sourceSnapshots) {
+                                    if (!stage::removePrimSpec(editLayer, sourceState.specPath)) {
+                                        rejected.append(QString("failed to remove unused instance source: %1")
+                                                            .arg(pathText(sourceState.stagePath)));
+                                        continue;
+                                    }
+                                    state->prims.append(sourceState);
+                                    removedPaths.append(sourceState.stagePath);
+                                    changedSet.insert(sourceState.stagePath);
+                                    changedSet.insert(SdfPath::AbsoluteRootPath());
+                                }
                             }
                             if (removedAny) {
                                 changed = changedSet.values();
@@ -1314,6 +1428,8 @@ namespace {
             SdfPath parentPath;
             SdfPath createdPath;
             TfTokenVector oldParentOrder;
+            SdfLayerRefPtr editLayer;
+            VtValue oldOrderOpinion;
             QList<SdfPath> createdAncestorSpecs;
             QList<SdfPath> previousSelection;
             QList<SdfPath> previousMask;
@@ -1347,12 +1463,13 @@ namespace {
                         }
                         else {
                             QString editError;
-                            const SdfLayerHandle editLayer = currentEditLayer(stage, editError);
+                            const SdfLayerHandle editLayer = state->editLayer ? SdfLayerHandle(state->editLayer)
+                                                                              : currentEditLayer(stage, editError);
 
-                            if (!editLayer) {
-                                error = editError;
+                            if (!editLayer || !editLayer->PermissionToEdit()) {
+                                error = editError.isEmpty() ? QStringLiteral("edit layer is not editable") : editError;
                             }
-                            else if (!layer::validateParent(stage, editLayer, parentPath, error)) {}
+                            else if (!layer::validateChildParent(stage, editLayer, parentPath, error)) {}
                             else {
                                 newPath = stage::buildChildPath(stage, parentPath, nameInput, error);
 
@@ -1362,6 +1479,8 @@ namespace {
                                     state->oldParentOrder.clear();
                                     state->createdAncestorSpecs.clear();
 
+                                    state->editLayer = editLayer;
+                                    state->oldOrderOpinion = layer::childOrderOpinion(editLayer, parentPath);
                                     stage::captureChildOrder(stage, parentPath, state->oldParentOrder);
 
                                     for (SdfPath path = parentPath;
@@ -1384,7 +1503,7 @@ namespace {
                                     }
                                     else {
                                         stage::removePrimSpec(editLayer, newPath);
-                                        stage::restoreChildOrder(stage, parentPath, state->oldParentOrder);
+                                        layer::restoreChildOrderOpinion(editLayer, parentPath, state->oldOrderOpinion);
 
                                         for (auto it = state->createdAncestorSpecs.crbegin();
                                              it != state->createdAncestorSpecs.crend(); ++it) {
@@ -1431,16 +1550,17 @@ namespace {
                         }
                         else {
                             QString editError;
-                            const SdfLayerHandle editLayer = currentEditLayer(stage, editError);
+                            const SdfLayerHandle editLayer = state->editLayer ? SdfLayerHandle(state->editLayer)
+                                                                              : currentEditLayer(stage, editError);
 
-                            if (!editLayer) {
-                                error = editError;
+                            if (!editLayer || !editLayer->PermissionToEdit()) {
+                                error = editError.isEmpty() ? QStringLiteral("edit layer is not editable") : editError;
                             }
                             else if (!stage::removePrimSpec(editLayer, state->createdPath)) {
                                 error = QString("failed to remove prim: %1").arg(pathText(state->createdPath));
                             }
                             else {
-                                stage::restoreChildOrder(stage, state->parentPath, state->oldParentOrder);
+                                layer::restoreChildOrderOpinion(editLayer, state->parentPath, state->oldOrderOpinion);
 
                                 for (auto it = state->createdAncestorSpecs.crbegin();
                                      it != state->createdAncestorSpecs.crend(); ++it) {
@@ -1480,6 +1600,8 @@ command::createPrimCommand(const SdfPath& parentPath, const QString& nameInput, 
         SdfPath parentPath;
         SdfPath createdPath;
         TfTokenVector oldParentOrder;
+        SdfLayerRefPtr editLayer;
+        VtValue oldOrderOpinion;
         QList<SdfPath> createdAncestorSpecs;
         QList<SdfPath> previousSelection;
         QList<SdfPath> previousMask;
@@ -1513,12 +1635,13 @@ command::createPrimCommand(const SdfPath& parentPath, const QString& nameInput, 
                     }
                     else {
                         QString editError;
-                        const SdfLayerHandle editLayer = currentEditLayer(stage, editError);
+                        const SdfLayerHandle editLayer = state->editLayer ? SdfLayerHandle(state->editLayer)
+                                                                          : currentEditLayer(stage, editError);
 
-                        if (!editLayer) {
-                            error = editError;
+                        if (!editLayer || !editLayer->PermissionToEdit()) {
+                            error = editError.isEmpty() ? QStringLiteral("edit layer is not editable") : editError;
                         }
-                        else if (!layer::validateParent(stage, editLayer, parentPath, error)) {}
+                        else if (!layer::validateChildParent(stage, editLayer, parentPath, error)) {}
                         else {
                             newPath = stage::buildChildPath(stage, parentPath, nameInput, error);
 
@@ -1528,6 +1651,8 @@ command::createPrimCommand(const SdfPath& parentPath, const QString& nameInput, 
                                 state->oldParentOrder.clear();
                                 state->createdAncestorSpecs.clear();
 
+                                state->editLayer = editLayer;
+                                state->oldOrderOpinion = layer::childOrderOpinion(editLayer, parentPath);
                                 stage::captureChildOrder(stage, parentPath, state->oldParentOrder);
 
                                 for (SdfPath path = parentPath; !path.IsEmpty() && path != SdfPath::AbsoluteRootPath();
@@ -1592,16 +1717,17 @@ command::createPrimCommand(const SdfPath& parentPath, const QString& nameInput, 
                     }
                     else {
                         QString editError;
-                        const SdfLayerHandle editLayer = currentEditLayer(stage, editError);
+                        const SdfLayerHandle editLayer = state->editLayer ? SdfLayerHandle(state->editLayer)
+                                                                          : currentEditLayer(stage, editError);
 
-                        if (!editLayer) {
-                            error = editError;
+                        if (!editLayer || !editLayer->PermissionToEdit()) {
+                            error = editError.isEmpty() ? QStringLiteral("edit layer is not editable") : editError;
                         }
                         else if (!stage::removePrimSpec(editLayer, state->createdPath)) {
                             error = QString("failed to remove prim: %1").arg(pathText(state->createdPath));
                         }
                         else {
-                            stage::restoreChildOrder(stage, state->parentPath, state->oldParentOrder);
+                            layer::restoreChildOrderOpinion(editLayer, state->parentPath, state->oldOrderOpinion);
 
                             for (auto it = state->createdAncestorSpecs.crbegin();
                                  it != state->createdAncestorSpecs.crend(); ++it) {

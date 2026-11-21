@@ -59,6 +59,9 @@ class SharedSourceViewportTest(_base["ViewportTest"]):
         tb.trigger_action("displayFrameAll")
         session.viewState().camera().distance(1.8)
         tb.process_events(300)
+        self.viewport().repaint()
+        assert tb.wait_until(lambda: bool(session.auxiliary().GetPrimAtPath('/Display/Transform')))
+        assert not self.handle_visible(), 'prewarmed meshes stay hidden in Select mode'
         self.snapshot("shared_loaded")
 
     def sweep(self):

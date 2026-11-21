@@ -28,6 +28,8 @@ PXR_NAMESPACE_USING_DIRECTIVE
 
 namespace stageviz {
 
+struct NoticeBatch;
+
 /**
  * @brief Reusable Hydra renderer for Stageviz viewports and scripted rendering.
  *
@@ -78,7 +80,7 @@ public:
         ColorManagementSettings colorManagement;
         bool sampleAlphaToCoverageEnabled = true;
         bool flipFrontFacing = true;
-        bool showGuides = false;
+        bool showGuides = true;
         bool showProxy = true;
         bool showRender = true;
         float defaultAmbient = 0.4f;
@@ -231,6 +233,13 @@ public:
      * @brief Invalidates cached USD selection data after stage edits.
      */
     void invalidateSelectionCache();
+
+    /**
+     * @brief Queues USD topology changes for targeted material refresh at the next render.
+     *
+     * The stage is queried only during rendering under the caller's stage read lock.
+     */
+    void updatePrims(const NoticeBatch& batch);
 
     /**
      * @brief Disables costly AO while the viewport camera is moving.

@@ -97,8 +97,11 @@ public:
      * In addition to the rendered image, this drops incremental value overrides
      * associated with the material so the next compact network snapshot becomes
      * the new authoritative state.
+     *
+     * @param materialPath Material whose active result is invalidated.
+     * @param retainCompositions Keep content-keyed images for repeated layer composition switches.
      */
-    void invalidateNetwork(const SdfPath& materialPath);
+    void invalidateNetwork(const SdfPath& materialPath, bool retainCompositions = false);
 
     /**
      * @brief Clears renderer state and cached material results.

@@ -4,6 +4,7 @@
 
 #include "layeritem.h"
 #include "application.h"
+#include "qtutils.h"
 #include "roles.h"
 #include "ui.h"
 #include <QFont>
@@ -59,7 +60,23 @@ LayerItem::setState(const State& state)
     };
 
     setIcon(Name, ui()->icon(state.editTarget ? UI::IconRole::EditLayer : UI::IconRole::Layer));
-    setToolTip(Name, state.editTarget ? state.tooltip + tr("\nCurrent edit layer.") : state.tooltip);
+    QString title = state.name;
+    if (title.startsWith('*'))
+        title.remove(0, 1);
+    QList<QPair<QString, QString>> fields;
+    if (state.anonymous)
+        fields.append({ tr("Storage"), tr("Anonymous layer") });
+    else
+        fields.append({ tr("Path"), state.identifier });
+    fields.append({ tr("Edit layer"), state.editTarget ? tr("Current edit layer") : tr("Not active") });
+    fields.append({ tr("Editing"), state.editable ? tr("Editable") : tr("Locked") });
+    fields.append({ tr("Changes"), state.dirty ? tr("Unsaved changes") : tr("No unsaved changes") });
+    fields.append({ tr("Opinions"), tr("%1 authored prim spec(s)").arg(state.primSpecCount) });
+    if (!state.anonymous && !state.saveable)
+        fields.append({ tr("Save"), tr("Unavailable") });
+    if (state.canReorder)
+        fields.append({ tr("Reorder"), tr("Drag above or below a sibling to change layer strength") });
+    setToolTip(Name, qt::toolTip(title, fields));
 
     Qt::ItemFlags itemFlags = flags();
     if (!state.parentIdentifier.isEmpty() && state.canReorder)
@@ -90,15 +107,17 @@ LayerItem::setState(const State& state)
         visibilityTooltip = tr("Layer is muted. Click to unmute.");
     else
         visibilityTooltip = tr("Layer is contributing. Click to mute.");
-    setToolTip(Visibility, visibilityTooltip);
+    auto visibilityFields = fields;
+    visibilityFields.append({ tr("Visibility"), visibilityTooltip });
+    setToolTip(Visibility, qt::toolTip(title, visibilityFields));
 
     if (state.primSpecCount > 0) {
         setIcon(Opinions, ui()->icon(UI::IconRole::Override));
-        setToolTip(Opinions, tr("Contains authored opinions on %1 prim spec(s).").arg(state.primSpecCount));
+        setToolTip(Opinions, qt::toolTip(title, fields));
     }
     else {
         setIcon(Opinions, QIcon());
-        setToolTip(Opinions, tr("No authored prim opinions in this layer."));
+        setToolTip(Opinions, qt::toolTip(title, fields));
     }
 
     setIcon(Permission, ui()->icon(state.editable ? UI::IconRole::Unlock : UI::IconRole::Lock));
@@ -106,7 +125,9 @@ LayerItem::setState(const State& state)
                                                : tr("Layer is locked. Click to allow editing.");
     if (state.inheritedMuted)
         permissionTooltip += tr("\nPermission changes are unavailable while an ancestor layer is muted.");
-    setToolTip(Permission, permissionTooltip);
+    auto permissionFields = fields;
+    permissionFields.append({ tr("Permission"), permissionTooltip });
+    setToolTip(Permission, qt::toolTip(title, permissionFields));
 }
 
 QString

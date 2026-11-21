@@ -4,18 +4,172 @@
 
 #include "qtutils.h"
 #include "bboxutils.h"
+#include "primutils.h"
+#include <QAction>
 #include <QApplication>
 #include <QBuffer>
 #include <QColor>
+#include <QFileInfo>
+#include <QHash>
 #include <QIcon>
 #include <QImage>
+#include <QMap>
+#include <QMenu>
+#include <QPalette>
 #include <QPixmap>
+#include <QSet>
+#include <algorithm>
+#include <pxr/usd/ar/packageUtils.h>
 #include <pxr/usd/usd/prim.h>
 #include <pxr/usd/usd/primRange.h>
 #include <pxr/usd/usdGeom/imageable.h>
 
 namespace stageviz {
 namespace qt {
+
+    QList<QAction*> sourceFilterMenu(QMenu* parent, const QList<QPair<QString, QString>>& localLayers,
+                                     const QStringList& contributors, const QStringList& active, bool filtered)
+    {
+        using Entry = QPair<QString, QString>;
+        QList<Entry> layers, references;
+        QMap<QString, QList<Entry>> packages;
+        QSet<QString> seen;
+        const auto append = [&](const QString& identifier, const QString& label, bool local) {
+            if (seen.contains(identifier))
+                return;
+            seen.insert(identifier);
+            const auto value = identifier.toStdString();
+            if (ArIsPackageRelativePath(value)) {
+                const auto parts = ArSplitPackageRelativePathOuter(value);
+                packages[QString::fromStdString(parts.first)].append(
+                    { identifier, QFileInfo(QString::fromStdString(parts.second)).fileName() });
+            }
+            else if (local)
+                layers.append({ identifier, label });
+            else if (QFileInfo(identifier).suffix().compare(QStringLiteral("usdz"), Qt::CaseInsensitive) == 0)
+                packages[identifier].append({ identifier, QObject::tr("Root layer") });
+            else
+                references.append({ identifier, label });
+        };
+        for (const auto& entry : localLayers)
+            append(entry.first, entry.second, true);
+        QStringList sorted = contributors;
+        std::sort(sorted.begin(), sorted.end());
+        for (const auto& identifier : sorted)
+            append(identifier, QString::fromStdString(SdfLayer::GetDisplayNameFromIdentifier(identifier.toStdString())),
+                   false);
+        if (seen.isEmpty())
+            return {};
+
+        QMenu* sources = parent->addMenu(QObject::tr("Sources"));
+        sources->setObjectName("displaySourcesMenu");
+        sources->setToolTipsVisible(true);
+        QList<QAction*> actions;
+        const auto addAction = [&](QMenu* menu, const Entry& entry) {
+            auto* action = menu->addAction(entry.second);
+            action->setData(entry.first);
+            action->setToolTip(entry.first);
+            action->setCheckable(true);
+            action->setChecked(!filtered || active.contains(entry.first));
+            actions.append(action);
+        };
+        const auto addGroup = [&](const QString& title, const QString& name, const QList<Entry>& entries) {
+            if (entries.isEmpty())
+                return;
+            auto* group = sources->addMenu(title);
+            group->setObjectName(name);
+            group->setToolTipsVisible(true);
+            for (const auto& entry : entries)
+                addAction(group, entry);
+        };
+        addGroup(QObject::tr("Layers"), QStringLiteral("displayLayersMenu"), layers);
+        addGroup(QObject::tr("Referenced assets"), QStringLiteral("displayReferencedAssetsMenu"), references);
+        if (!packages.isEmpty()) {
+            auto* group = sources->addMenu(QObject::tr("Packages"));
+            group->setObjectName("displayPackagesMenu");
+            group->setToolTipsVisible(true);
+            for (auto it = packages.cbegin(); it != packages.cend(); ++it) {
+                auto* package = group->addMenu(QFileInfo(it.key()).fileName());
+                package->setToolTipsVisible(true);
+                package->menuAction()->setToolTip(it.key());
+                QHash<QString, int> counts;
+                for (const auto& entry : it.value())
+                    ++counts[entry.second];
+                for (auto entry : it.value()) {
+                    if (counts.value(entry.second) > 1)
+                        entry.second = QString::fromStdString(
+                            ArSplitPackageRelativePathOuter(entry.first.toStdString()).second);
+                    addAction(package, entry);
+                }
+            }
+        }
+        return actions;
+    }
+
+    QList<QPair<QString, QString>> layerToolTipFields(const QString& definingIdentifier,
+                                                      const QString& strongestIdentifier, const QString& rootIdentifier)
+    {
+        const auto label = [&](const QString& identifier) {
+            const auto layer = SdfLayer::Find(identifier.toStdString());
+            if (!layer)
+                return identifier;
+            QString result = QString::fromStdString(layer->GetDisplayName());
+            if (identifier == rootIdentifier)
+                result = layer->IsAnonymous() ? QStringLiteral("Untitled (Root)") : result + " (Root)";
+            return result;
+        };
+        QList<QPair<QString, QString>> fields;
+        fields.emplaceBack(QStringLiteral("Layer"), definingIdentifier.isEmpty() ? QStringLiteral("No defining layer")
+                                                                                 : label(definingIdentifier));
+        if (!strongestIdentifier.isEmpty() && strongestIdentifier != definingIdentifier)
+            fields.emplaceBack(QStringLiteral("Strongest opinion"), label(strongestIdentifier));
+        return fields;
+    }
+
+    QList<QPair<QString, QString>> primLayerToolTipFields(const UsdPrim& prim)
+    {
+        if (!prim)
+            return {};
+        const auto layers = stage::primLayerInfo(prim);
+        return layerToolTipFields(layers.definingLayer ? QString::fromStdString(layers.definingLayer->GetIdentifier())
+                                                       : QString(),
+                                  layers.strongestLayer ? QString::fromStdString(layers.strongestLayer->GetIdentifier())
+                                                        : QString(),
+                                  QString::fromStdString(prim.GetStage()->GetRootLayer()->GetIdentifier()));
+    }
+
+    QString toolTip(const QString& title, const QList<QPair<QString, QString>>& fields)
+    {
+        const auto escaped = [](const QString& text) {
+            QString result;
+            int run = 0;
+            for (const QChar character : text) {
+                result += QString(character).toHtmlEscaped();
+                if (character == '\n') {
+                    result.chop(1);
+                    result += "<br>";
+                    run = 0;
+                }
+                else if (text.size() > 72 && (character == '/' || ++run >= 48)) {
+                    result += "&#8203;";
+                    run = 0;
+                }
+                else if (character.isSpace())
+                    run = 0;
+            }
+            return result;
+        };
+        const auto muted = QApplication::palette().color(QPalette::Disabled, QPalette::Text).name();
+        QString result = "<qt><b>" + escaped(title) + "</b><br><table cellspacing=0 cellpadding=3>";
+        for (const auto& field : fields) {
+            if (field.second.isEmpty())
+                result += "<tr><td colspan=2><b>" + escaped(field.first) + "</b></td></tr>";
+            else
+                result += QString("<tr><td valign=top style='color:%1'>%2</td><td valign=top>%3</td></tr>")
+                              .arg(muted, escaped(field.first), escaped(field.second));
+        }
+        return result + "</table></qt>";
+    }
 
     qreal devicePixelRatio() { return qApp ? qApp->devicePixelRatio() : 1.0; }
 

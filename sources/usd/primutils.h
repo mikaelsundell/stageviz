@@ -45,6 +45,22 @@ namespace snapshot {
 
 namespace stage {
     /**
+     * @brief Definition and strongest-opinion layers for a composed prim.
+     */
+    struct PrimLayerInfo {
+        SdfLayerHandle definingLayer;
+        SdfLayerHandle strongestLayer;
+    };
+
+    /**
+     * @brief Finds the strongest definition separately from stronger override opinions.
+     *
+     * @param prim Composed prim whose authored layer stack should be inspected.
+     * @return Definition and strongest-opinion layer handles, when available.
+     */
+    PrimLayerInfo primLayerInfo(const UsdPrim& prim);
+
+    /**
      * @brief Resolves selected paths to object paths for presentation or object actions.
      *
      * Geometry subsets resolve to their owning geometry. Other paths are

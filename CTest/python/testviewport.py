@@ -133,23 +133,38 @@ class ViewportTest:
         self.center = (widget.width() // 2, widget.height() // 2)
         self.snapshot("swept")
 
+    def handle_visible(self):
+        """Warmed auxiliary meshes alone do not indicate an active handle."""
+        stage = stageviz.session().auxiliary()
+        handle = stage.GetPrimAtPath('/Display/Transform')
+        return bool(handle and UsdGeom.Imageable(handle).ComputeVisibility() != UsdGeom.Tokens.invisible)
+
     def frame_handle(self):
-        """Center the camera on the actual handle, independently of selection bounds."""
-        def handle_ready():
-            # Qt may defer the first GL paint after a fixture reload. Observe
-            # the completed render instead of relying on a fixed short delay.
-            self.viewport().repaint()
-            return bool(stageviz.session().auxiliary().GetPrimAtPath('/Display/Transform'))
-        assert tb.wait_until(handle_ready, timeout=5), 'selected object has rendered gizmo geometry'
-        handle = stageviz.session().auxiliary().GetPrimAtPath('/Display/Transform')
-        pivot = UsdGeom.XformCache().GetLocalToWorldTransform(handle).ExtractTranslation()
-        camera = stageviz.session().viewState().camera()
-        camera.frame((tuple(pivot - Gf.Vec3d(4)), tuple(pivot + Gf.Vec3d(4))))
-        camera.distance(1.6)
-        tb.process_events(100)
+        """Wait for an active rendered handle, then center the camera on it."""
+        assert tb.wait_for_commands(), 'selection commands completed before framing the handle'
         widget = self.viewport()
-        self.center = (widget.width() // 2, widget.height() // 2)
-        return pivot
+        frames = []
+        def rendered(_):
+            frames.append(True)
+        widget.renderReady.connect(rendered)
+        try:
+            def handle_ready():
+                widget.repaint()
+                return bool(frames) and self.handle_visible()
+            assert tb.wait_until(handle_ready, timeout=10), 'selected object has visible rendered gizmo geometry'
+            handle = stageviz.session().auxiliary().GetPrimAtPath('/Display/Transform')
+            pivot = UsdGeom.XformCache().GetLocalToWorldTransform(handle).ExtractTranslation()
+            camera = stageviz.session().viewState().camera()
+            previous = len(frames)
+            camera.frame((tuple(pivot - Gf.Vec3d(4)), tuple(pivot + Gf.Vec3d(4))))
+            camera.distance(1.6)
+            assert tb.wait_until(lambda: handle_ready() and len(frames) > previous, timeout=10), (
+                'camera framing has rendered before the gesture')
+            assert Gf.IsClose(Gf.Vec3d(*camera.focusPoint()), pivot, 1e-6), 'camera is centered on the handle pivot'
+            self.center = (widget.width() // 2, widget.height() // 2)
+            return pivot
+        finally:
+            widget.renderReady.disconnect(rendered)
 
     def copy_drag(self):
         """Shift-started Move copies proxy roots once and preserves originals."""

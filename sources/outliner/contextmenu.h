@@ -24,7 +24,7 @@ class ViewContext;
  *
  * Builds and executes the common USD prim context menu used by widgets that
  * operate on the shared stage selection, including pivot, transform, and
- * edit-layer reset operations.
+ * relationship navigation and edit-layer opinion clearing.
  */
 class ContextMenu {
 public:

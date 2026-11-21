@@ -24,6 +24,9 @@ public:
         ViewState::AmbientOcclusionSettings ambientOcclusion;
         bool sceneLightsEnabled = true;
         bool sceneMaterialsEnabled = true;
+        bool showGuides = true;
+        bool showProxy = true;
+        bool showRender = true;
         ViewState::DoubleSidedMode doubleSidedMode = ViewState::Primitive;
         ViewState::RenderMode renderMode = ViewState::Shaded;
         ViewState::ComplexityLevel complexityLevel = ViewState::Low;
@@ -369,6 +372,51 @@ ViewState::setSceneLightsEnabled(bool enabled)
     p->d.sceneLightsEnabled = enabled;
     Q_EMIT sceneLightsEnabledChanged(enabled);
 }
+bool
+ViewState::showGuides() const
+{
+    return p->d.showGuides;
+}
+
+void
+ViewState::setShowGuides(bool enabled)
+{
+    if (p->d.showGuides == enabled)
+        return;
+    p->d.showGuides = enabled;
+    Q_EMIT purposesChanged();
+}
+
+bool
+ViewState::showProxy() const
+{
+    return p->d.showProxy;
+}
+
+void
+ViewState::setShowProxy(bool enabled)
+{
+    if (p->d.showProxy == enabled)
+        return;
+    p->d.showProxy = enabled;
+    Q_EMIT purposesChanged();
+}
+
+bool
+ViewState::showRender() const
+{
+    return p->d.showRender;
+}
+
+void
+ViewState::setShowRender(bool enabled)
+{
+    if (p->d.showRender == enabled)
+        return;
+    p->d.showRender = enabled;
+    Q_EMIT purposesChanged();
+}
+
 bool
 ViewState::sceneMaterialsEnabled() const
 {

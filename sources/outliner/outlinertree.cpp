@@ -34,8 +34,12 @@
 #include <QTimer>
 #include <algorithm>
 #include <functional>
+#include <pxr/base/tf/stringUtils.h>
+#include <pxr/usd/sdf/listOp.h>
 #include <pxr/usd/sdf/primSpec.h>
+#include <pxr/usd/sdf/relationshipSpec.h>
 #include <pxr/usd/usd/prim.h>
+#include <pxr/usd/usdGeom/imageable.h>
 #include <pxr/usd/usdGeom/subset.h>
 #include <pxr/usd/usdGeom/tokens.h>
 
@@ -58,6 +62,8 @@ public:
     int depth(const SdfPath& path) const;
     void toggleVisible(PrimItem* item);
     void updateFilter();
+    QString overrideToolTip(const SdfPath& path) const;
+    QString opinionText(const SdfPropertySpecHandle& property) const;
     void itemCheckState(QTreeWidgetItem* item, bool checkable, bool recursive = false);
     void treeCheckState(QTreeWidgetItem* item);
     void contextMenuEvent(QContextMenuEvent* event);
@@ -178,6 +184,8 @@ public:
         QStringList displayLayers;
         QStringList displayTypes;
         bool showUntyped = false;
+        QStringList displayPurposes { QStringLiteral("default"), QStringLiteral("render"), QStringLiteral("proxy"),
+                                      QStringLiteral("guide") };
         QMap<SdfPath, bool> payloadRequests;
         QList<SdfPath> maskPaths;
         QSet<SdfPath> directOverridePaths;
@@ -976,11 +984,147 @@ OutlinerTreePrivate::toggleVisible(PrimItem* item)
         d.context->execute(new Command(showPaths(QList<SdfPath> { path }, false)));
 }
 
+QString
+OutlinerTreePrivate::opinionText(const SdfPropertySpecHandle& property) const
+{
+    QStringList parts;
+    const auto layer = property->GetLayer();
+    const auto path = property->GetPath();
+    if (property->HasInfo(SdfFieldKeys->Default)) {
+        const auto value = property->GetInfo(SdfFieldKeys->Default);
+        if (value.IsArrayValued() && value.GetArraySize() > 8)
+            parts.append(QString("Array (%1 values)").arg(value.GetArraySize()));
+        else if (value.IsHolding<std::string>())
+            parts.append(QString("\"%1\"").arg(QString::fromStdString(value.UncheckedGet<std::string>())));
+        else
+            parts.append(QString::fromStdString(TfStringify(value)));
+    }
+    const auto samples = layer->GetNumTimeSamplesForPath(path);
+    if (samples)
+        parts.append(QString("%1 time samples").arg(samples));
+    for (const auto& field : { SdfFieldKeys->TargetPaths, SdfFieldKeys->ConnectionPaths }) {
+        if (!property->HasInfo(field))
+            continue;
+        const auto value = property->GetInfo(field);
+        if (!value.IsHolding<SdfPathListOp>())
+            continue;
+        const auto& op = value.UncheckedGet<SdfPathListOp>();
+        const QString label = field == SdfFieldKeys->TargetPaths ? "Targets" : "Connections";
+        const auto append = [&](const SdfPathVector& paths, const QString& operation) {
+            QStringList values;
+            const size_t count = std::min<size_t>(paths.size(), 4);
+            for (size_t i = 0; i < count; ++i)
+                values.append(QString::fromStdString(paths[i].GetString()));
+            if (paths.size() > count)
+                values.append(QString("… (%1 total)").arg(paths.size()));
+            parts.append(operation + ": " + (values.isEmpty() ? QStringLiteral("None") : values.join(", ")));
+        };
+        if (op.IsExplicit())
+            append(op.GetExplicitItems(), label);
+        else {
+            if (!op.GetPrependedItems().empty())
+                append(op.GetPrependedItems(), label + " (prepend)");
+            if (!op.GetAppendedItems().empty())
+                append(op.GetAppendedItems(), label + " (append)");
+            if (!op.GetDeletedItems().empty())
+                append(op.GetDeletedItems(), label + " (remove)");
+            if (!op.GetOrderedItems().empty())
+                append(op.GetOrderedItems(), label + " (order)");
+            if (!op.GetAddedItems().empty())
+                append(op.GetAddedItems(), label + " (add)");
+        }
+    }
+    const TfToken strength("bindMaterialAs");
+    if (property->HasInfo(strength)) {
+        const auto value = property->GetInfo(strength);
+        if (value.IsHolding<TfToken>())
+            parts.append(value.UncheckedGet<TfToken>() == TfToken("strongerThanDescendants")
+                             ? "Stronger than descendants"
+                             : "Weaker than descendants");
+    }
+    if (parts.isEmpty())
+        parts.append("Property metadata");
+    QString result = parts.join("; ");
+    if (result.size() > 220)
+        result = result.left(217) + "…";
+    return result;
+}
+
+QString
+OutlinerTreePrivate::overrideToolTip(const SdfPath& path) const
+{
+    if (!d.context || (!d.directOverridePaths.contains(path) && !d.descendantOverridePaths.contains(path)))
+        return {};
+    READ_LOCKER(locker, d.context->stageLock(), "stageLock");
+    if (!d.stage)
+        return {};
+    const auto target = d.stage->GetEditTarget();
+    const auto layer = target.GetLayer();
+    if (!layer)
+        return {};
+    QString layerName = QString::fromStdString(layer->GetDisplayName());
+    if (layer == d.stage->GetRootLayer())
+        layerName = layer->IsAnonymous() ? QStringLiteral("Untitled (Root)") : layerName + " (Root)";
+    QList<QPair<QString, QString>> fields { { "Layer", layerName }, { "Path", qt::SdfPathToQString(path) } };
+    const auto provenance = qt::primLayerToolTipFields(d.stage->GetPrimAtPath(path));
+    for (auto field : provenance) {
+        if (field.first == QStringLiteral("Layer"))
+            field.first = QStringLiteral("Defined in");
+        fields.append(field);
+    }
+    const auto localSpec = path.IsAbsoluteRootPath() ? SdfPrimSpecHandle()
+                                                     : layer->GetPrimAtPath(target.MapToSpecPath(path));
+    if (d.directOverridePaths.contains(path) && localSpec) {
+        fields.emplaceBack(QStringLiteral("This prim"), QString());
+        const auto properties = localSpec->GetProperties();
+        int shown = 0;
+        for (const auto& property : properties) {
+            if (shown++ >= 8)
+                break;
+            fields.append({ QString::fromStdString(property->GetName()), opinionText(property) });
+        }
+        if (properties.size() > 8)
+            fields.append({ "More opinions", QString::number(qulonglong(properties.size() - 8)) });
+    }
+    QList<SdfPath> descendants;
+    for (const auto& candidate : d.directOverridePaths)
+        if (candidate != path && candidate.HasPrefix(path))
+            descendants.append(candidate);
+    std::sort(descendants.begin(), descendants.end());
+    if (!descendants.isEmpty()) {
+        fields.emplaceBack(QString("Descendants (%1)").arg(descendants.size()), QString());
+        const qsizetype limit = std::min<qsizetype>(descendants.size(), 4);
+        for (qsizetype i = 0; i < limit; ++i) {
+            const auto spec = layer->GetPrimAtPath(target.MapToSpecPath(descendants[i]));
+            if (!spec)
+                continue;
+            QStringList opinions;
+            int count = 0;
+            for (const auto& property : spec->GetProperties()) {
+                if (count++ >= 3)
+                    break;
+                opinions.append(QString::fromStdString(property->GetName()) + ": " + opinionText(property));
+            }
+            if (spec->GetProperties().size() > 3)
+                opinions.append(QString("… %1 more opinions").arg(spec->GetProperties().size() - 3));
+            fields.append({ qt::SdfPathToQString(descendants[i].MakeRelativePath(path)), opinions.join("\n") });
+        }
+        if (descendants.size() > limit)
+            fields.append({ "More prims", QString::number(descendants.size() - limit) });
+    }
+    return qt::toolTip("Edit-layer overrides", fields);
+}
+
 void
 OutlinerTreePrivate::updateFilter()
 {
     PerfScope perfScope("ui.outliner_filter");
-    std::function<bool(QTreeWidgetItem*)> matchFilter = [&](QTreeWidgetItem* item) -> bool {
+    SignalGuard::Scope guard(this);
+    const bool filterPurpose = d.displayPurposes.size() != 4;
+    READ_LOCKER(locker, filterPurpose && d.context ? d.context->stageLock() : nullptr, "stageLock");
+    using PurposeInfo = UsdGeomImageable::PurposeInfo;
+    std::function<bool(QTreeWidgetItem*, const PurposeInfo&)> matchFilter =
+        [&](QTreeWidgetItem* item, const PurposeInfo& parentPurpose) -> bool {
         bool matchesText = false;
         for (int col = 0; col < d.tree->columnCount(); ++col) {
             if (item->text(col).contains(d.filter, Qt::CaseInsensitive)) {
@@ -1003,11 +1147,24 @@ OutlinerTreePrivate::updateFilter()
         const QString type = item->data(0, PrimItem::TypeName).toString();
         const bool matchesType = type.isEmpty() ? d.showUntyped
                                                 : (!d.displayTypesFiltered || d.displayTypes.contains(type));
-        const bool matches = matchesText && matchesLayer && matchesType;
+        PurposeInfo purpose = parentPurpose;
+        bool matchesPurpose = true;
+        if (filterPurpose && d.stage) {
+            const auto prim = d.stage->GetPrimAtPath(static_cast<PrimItem*>(item)->path());
+            if (prim) {
+                const UsdGeomImageable imageable(prim);
+                // Passing the parent result preserves inheritance even through
+                // non-imageable ancestors, without repeatedly walking upward.
+                purpose = imageable.ComputePurposeInfo(parentPurpose);
+                if (imageable)
+                    matchesPurpose = d.displayPurposes.contains(QString::fromStdString(purpose.purpose.GetString()));
+            }
+        }
+        const bool matches = matchesText && matchesLayer && matchesType && matchesPurpose;
 
         bool childMatches = false;
         for (int i = 0; i < item->childCount(); ++i) {
-            if (matchFilter(item->child(i)))
+            if (matchFilter(item->child(i), purpose))
                 childMatches = true;
         }
 
@@ -1016,7 +1173,7 @@ OutlinerTreePrivate::updateFilter()
         return visible;
     };
     for (int i = 0; i < d.tree->topLevelItemCount(); ++i)
-        matchFilter(d.tree->topLevelItem(i));
+        matchFilter(d.tree->topLevelItem(i), PurposeInfo());
 }
 
 void
@@ -1792,7 +1949,7 @@ OutlinerTreePrivate::updatePrims(const NoticeBatch& batch)
 
     // Everything not represented by a usable namespace pair follows the
     // conservative ordinary refresh path.
-    bool filterNeedsUpdate = false;
+    bool filterNeedsUpdate = d.displayPurposes.size() != 4 && !pathRemaps.isEmpty();
     for (const NoticeEntry& entry : batch.entries) {
         if (entry.path.IsEmpty())
             continue;
@@ -1829,6 +1986,9 @@ OutlinerTreePrivate::updatePrims(const NoticeBatch& batch)
             continue;
 
         if (entry.changedInfoOnly) {
+            if (d.displayPurposes.size() != 4 && entry.path.IsPropertyPath()
+                && entry.path.GetNameToken() == UsdGeomTokens->purpose)
+                filterNeedsUpdate = true;
             if (entry.path.IsPropertyPath() && entry.path.GetNameToken() == UsdGeomTokens->visibility) {
                 if (PrimItem* item = itemFromPath(entry.path.GetPrimPath()))
                     item->invalidate();
@@ -2506,6 +2666,12 @@ OutlinerTree::setFilter(const QString& filter)
     }
 }
 
+QString
+OutlinerTree::overrideToolTip(const SdfPath& path) const
+{
+    return p->overrideToolTip(path);
+}
+
 void
 OutlinerTree::setDisplayFilters(const QStringList& layers, const QStringList& types, bool showUntyped,
                                 bool filterLayers, bool filterTypes)
@@ -2526,6 +2692,7 @@ OutlinerTree::setDisplayFilters(const QStringList& layers, const QStringList& ty
         p->updateStage(p->d.stage);
     else
         p->updateFilter();
+    Q_EMIT displayFiltersChanged();
 }
 
 QStringList
@@ -2550,6 +2717,27 @@ bool
 OutlinerTree::displayTypesFiltered() const
 {
     return p->d.displayTypesFiltered;
+}
+
+void
+OutlinerTree::setDisplayPurposes(const QStringList& purposes)
+{
+    QStringList selected;
+    for (const auto& purpose :
+         { QStringLiteral("default"), QStringLiteral("render"), QStringLiteral("proxy"), QStringLiteral("guide") })
+        if (purposes.contains(purpose))
+            selected.append(purpose);
+    if (p->d.displayPurposes == selected)
+        return;
+    p->d.displayPurposes = selected;
+    p->updateFilter();
+    Q_EMIT displayFiltersChanged();
+}
+
+QStringList
+OutlinerTree::displayPurposes() const
+{
+    return p->d.displayPurposes;
 }
 
 bool

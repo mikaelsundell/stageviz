@@ -55,6 +55,7 @@
 #include <cmath>
 #include <pxr/usd/usd/primRange.h>
 #include <pxr/usd/usdGeom/gprim.h>
+#include <pxr/usd/usdGeom/mesh.h>
 #include <pxr/usd/usdGeom/subset.h>
 #include <pxr/usd/usdShade/materialBindingAPI.h>
 #include <set>
@@ -75,6 +76,7 @@ public:
     void updateSourceRows();
     void applyFilter(const QString& text);
     void showDisplayMenu();
+    void updateDisplayButton();
     void syncSelection(QAbstractItemView* source);
     void panView(QAbstractItemView* view, const QPoint& delta);
     void updateViewSizes();
@@ -234,6 +236,7 @@ public:
         bool updatingRows = false;
         // An inactive filter shows everything. An active filter with no keys
         // represents an explicit empty selection in the Display menu.
+        bool displayMenuOpen = false;
         bool displayLayersFiltered = false;
         bool displayTypesFiltered = false;
         QStringList displayLayers;
@@ -294,6 +297,7 @@ MaterialBrowserPrivate::init()
     header->resizeSection(MaterialItem::Type, 220);
 
     d.ui->clear->setIcon(ui()->icon(UI::IconRole::Clear));
+    d.ui->follow->setIcon(ui()->icon(UI::IconRole::Follow));
     d.ui->view->setIcon(ui()->icon(UI::IconRole::List));
     d.ui->display->setIcon(ui()->icon(UI::IconRole::Display));
     d.ui->view->setText(QString());
@@ -324,7 +328,10 @@ MaterialBrowserPrivate::init()
         d.visibleTimer->start();
     });
     connect(d.ui->clear, &QToolButton::clicked, d.ui->filter, &QLineEdit::clear);
+    connect(d.ui->follow, &QToolButton::toggled, d.browser.data(), &MaterialBrowser::followChanged);
     connect(d.ui->display, &QToolButton::clicked, d.browser.data(), [this]() { showDisplayMenu(); });
+    connect(d.ui->display, &QWidget::customContextMenuRequested, d.browser.data(),
+            [this](const QPoint&) { showDisplayMenu(); });
     connect(d.ui->view, &QToolButton::clicked, d.browser.data(), [this]() { showViewMenu(); });
     connect(d.ui->view, &QWidget::customContextMenuRequested, d.browser.data(),
             [this](const QPoint&) { showViewMenu(); });
@@ -381,13 +388,7 @@ MaterialBrowserPrivate::showViewMenu()
 void
 MaterialBrowserPrivate::showDisplayMenu()
 {
-    struct DisplayEntry {
-        QString key;
-        QString label;
-    };
-
-    QList<DisplayEntry> layers;
-    QSet<QString> seenLayers;
+    QList<QPair<QString, QString>> layers;
     QSet<QString> materialLayers;
     for (const MaterialEntry& entry : std::as_const(d.entries)) {
         for (const QString& identifier : entry.layerIdentifiers)
@@ -404,9 +405,6 @@ MaterialBrowserPrivate::showDisplayMenu()
                     continue;
 
                 const QString identifier = QString::fromStdString(layer->GetIdentifier());
-                if (seenLayers.contains(identifier))
-                    continue;
-                seenLayers.insert(identifier);
 
                 QString label = QString::fromStdString(layer->GetDisplayName());
                 if (label.isEmpty())
@@ -416,13 +414,6 @@ MaterialBrowserPrivate::showDisplayMenu()
                 layers.append({ identifier, label });
             }
         }
-    }
-
-    for (const QString& identifier : std::as_const(materialLayers)) {
-        if (seenLayers.contains(identifier))
-            continue;
-        seenLayers.insert(identifier);
-        layers.append({ identifier, identifier });
     }
 
     QStringList types;
@@ -439,16 +430,15 @@ MaterialBrowserPrivate::showDisplayMenu()
     });
 
     QMenu menu(d.ui->display);
-    menu.addAction(tr("Layers"))->setEnabled(false);
+    menu.setObjectName("materialDisplayMenu");
+    menu.setToolTipsVisible(true);
 
+    const auto sourceActions = qt::sourceFilterMenu(&menu, layers, materialLayers.values(), d.displayLayers,
+                                                    d.displayLayersFiltered);
     QStringList allLayerKeys;
-    for (const DisplayEntry& entry : std::as_const(layers))
-        allLayerKeys.append(entry.key);
-    for (const DisplayEntry& entry : std::as_const(layers)) {
-        QAction* action = menu.addAction(entry.label);
-        action->setCheckable(true);
-        action->setChecked(!d.displayLayersFiltered || d.displayLayers.contains(entry.key));
-        action->setData(entry.key);
+    for (auto* action : sourceActions)
+        allLayerKeys.append(action->data().toString());
+    for (auto* action : sourceActions) {
         connect(action, &QAction::toggled, &menu, [this, allLayerKeys, action](bool checked) {
             QStringList selected = d.displayLayers;
             if (!d.displayLayersFiltered)
@@ -520,7 +510,17 @@ MaterialBrowserPrivate::showDisplayMenu()
     for (const QString& type : std::as_const(otherTypes))
         addTypeAction(type);
 
+    d.displayMenuOpen = true;
+    updateDisplayButton();
     menu.exec(d.ui->display->mapToGlobal(QPoint(0, d.ui->display->height())));
+    d.displayMenuOpen = false;
+    updateDisplayButton();
+}
+
+void
+MaterialBrowserPrivate::updateDisplayButton()
+{
+    d.ui->display->setChecked(d.displayMenuOpen || d.displayLayersFiltered || d.displayTypesFiltered);
 }
 
 void
@@ -546,9 +546,47 @@ MaterialBrowserPrivate::showContextMenu(QAbstractItemView* view, const QPoint& p
     const bool contextMaterialSelected = d.browser->selectedRows().contains(index.row());
 
     QMenu menu(view);
+    menu.setObjectName("materialContextMenu");
+    menu.setToolTipsVisible(true);
     menu.setAttribute(Qt::WA_NoMouseReplay);
 
-    QAction* assignAction = menu.addAction(tr("Assign"));
+    QAction* assignAction = nullptr;
+    QMap<QAction*, SdfPath> subsetActions;
+    {
+        READ_LOCKER(locker, session()->stageLock(), "stageLock");
+        const auto paths = session()->selectionList()->paths();
+        const auto stage = session()->stageUnsafe();
+        const auto mesh = stage && paths.size() == 1 ? stage->GetPrimAtPath(paths.front()) : UsdPrim();
+        const auto subsets = mesh && mesh.IsA<UsdGeomMesh>() && !mesh.IsInstanceProxy()
+                                 ? UsdShadeMaterialBindingAPI(mesh).GetMaterialBindSubsets()
+                                 : std::vector<UsdGeomSubset>();
+        if (!subsets.empty()) {
+            auto* assignMenu = menu.addMenu(tr("Assign"));
+            assignMenu->setObjectName("assignMaterialMenu");
+            assignAction = assignMenu->addAction(tr("Whole object"));
+            assignAction->setObjectName("assignWholeObject");
+            auto* faces = assignMenu->addMenu(tr("Face subsets"));
+            faces->setObjectName("assignFaceSubsetsMenu");
+            faces->setToolTipsVisible(true);
+            for (const auto& subset : subsets) {
+                const auto bound = UsdShadeMaterialBindingAPI(subset.GetPrim()).ComputeBoundMaterial();
+                const QString path = QString::fromStdString(subset.GetPath().GetString());
+                const QString materialPath = bound ? QString::fromStdString(bound.GetPath().GetString()) : QString();
+                const QString materialName = bound ? QString::fromStdString(bound.GetPrim().GetName().GetString())
+                                                   : tr("Unassigned");
+                auto* action = faces->addAction(
+                    QStringLiteral("%1 — %2").arg(QString::fromStdString(subset.GetPrim().GetName().GetString()),
+                                                  materialName));
+                action->setObjectName(QStringLiteral("assignFaceSubset_%1")
+                                          .arg(QString::fromStdString(subset.GetPrim().GetName().GetString())));
+                action->setData(path);
+                action->setToolTip(tr("%1\nCurrent material: %2").arg(path, bound ? materialPath : tr("Unassigned")));
+                subsetActions.insert(action, subset.GetPath());
+            }
+        }
+        else
+            assignAction = menu.addAction(tr("Assign"));
+    }
     assignAction->setEnabled(hasSceneSelection);
 
     menu.addSeparator();
@@ -571,15 +609,26 @@ MaterialBrowserPrivate::showContextMenu(QAbstractItemView* view, const QPoint& p
 
     menu.addSeparator();
 
-    QMenu* newMenu = menu.addMenu(tr("New"));
-    newMenu->setAttribute(Qt::WA_NoMouseReplay);
-    QAction* newPreviewSurface = newMenu->addAction(tr("USD Preview Surface"));
-    QAction* newStandardSurface = newMenu->addAction(tr("MaterialX Standard Surface"));
-    QAction* newOpenPBRSurface = newMenu->addAction(tr("MaterialX OpenPBR Surface"));
-    newMenu->addSeparator();
-    QAction* newMaterialXFile = newMenu->addAction(tr("MaterialX File..."));
+    QMenu* replaceMenu = menu.addMenu(tr("Replace shader network"));
+    replaceMenu->setObjectName("replaceMaterialNetworkMenu");
+    QMap<QAction*, MaterialType> replaceActions;
+    for (const auto& pair : { qMakePair(tr("USD Preview Surface"), MaterialType::PreviewSurface),
+                              qMakePair(tr("MaterialX Standard Surface"), MaterialType::StandardSurface),
+                              qMakePair(tr("MaterialX OpenPBR Surface"), MaterialType::OpenPBRSurface) }) {
+        auto* action = replaceMenu->addAction(pair.first);
+        action->setObjectName(QStringLiteral("replaceMaterialNetwork_%1").arg(static_cast<int>(pair.second)));
+        replaceActions.insert(action, pair.second);
+    }
+    {
+        READ_LOCKER(locker, session()->stageLock(), "stageLock");
+        QString error;
+        replaceMenu->setEnabled(
+            canReplaceMaterialNetwork(session()->stageUnsafe(), { contextMaterial.materialPath }, &error));
+        replaceMenu->menuAction()->setToolTip(error);
+    }
 
     QAction* duplicateMaterial = menu.addAction(tr("Duplicate"));
+    menu.addSeparator();
     QAction* deleteMaterial = menu.addAction(tr("Delete"));
     // Delete still operates on browser selection, so an RMB click on another
     // material must never delete the previously selected material.
@@ -591,9 +640,17 @@ MaterialBrowserPrivate::showContextMenu(QAbstractItemView* view, const QPoint& p
     if (action == assignAction) {
         assignMaterial(contextMaterial);
     }
+    else if (subsetActions.contains(action)) {
+        session()->commandStack()->execute(
+            new Command(stageviz::assignMaterial({ subsetActions.value(action) }, contextMaterial.materialPath)));
+    }
     else if (action == selectAction) {
         const QList<MaterialEntry> selected = d.browser->selectedEntries();
         selectMaterials(selected.isEmpty() ? QList<MaterialEntry> { contextMaterial } : selected);
+    }
+    else if (replaceActions.contains(action)) {
+        session()->commandStack()->execute(
+            new Command(replaceMaterialNetwork({ contextMaterial.materialPath }, replaceActions.value(action))));
     }
     else if (action == duplicateMaterial) {
         // Duplicate only the RMB material and preserve the current scene/browser selection.
@@ -631,18 +688,6 @@ MaterialBrowserPrivate::showContextMenu(QAbstractItemView* view, const QPoint& p
                                        error.isEmpty() ? tr("Failed to export the material.") : error);
             }
         }
-    }
-    else if (action == newPreviewSurface) {
-        Q_EMIT d.browser->createMaterialRequested(QStringLiteral("UsdPreviewSurface"));
-    }
-    else if (action == newStandardSurface) {
-        Q_EMIT d.browser->createMaterialRequested(QStringLiteral("MaterialXStandardSurface"));
-    }
-    else if (action == newOpenPBRSurface) {
-        Q_EMIT d.browser->createMaterialRequested(QStringLiteral("MaterialXOpenPBRSurface"));
-    }
-    else if (action == newMaterialXFile) {
-        Q_EMIT d.browser->createMaterialRequested(QStringLiteral("MaterialXFile"));
     }
     else if (action == deleteMaterial) {
         Q_EMIT d.browser->deleteRequested();
@@ -857,6 +902,12 @@ MaterialBrowserPrivate::updateRow(int row)
     const MaterialEntry& entry = d.entries[row];
     const QString path = QString::fromStdString(entry.materialPath.GetString());
     const QString type = MaterialUtils::shaderTypeLabel(entry.shaderId);
+    QList<QPair<QString, QString>> fields { { QStringLiteral("Shader type"), type }, { QStringLiteral("Path"), path } };
+    fields.append(
+        qt::layerToolTipFields(entry.definingLayerIdentifier,
+                               entry.layerIdentifiers.isEmpty() ? QString() : entry.layerIdentifiers.constLast(),
+                               entry.rootLayerIdentifier));
+    const QString tooltip = qt::toolTip(entry.name, fields);
     const QImage image = d.swatches.value(row);
 
     // Keep the full-resolution render in QIcon so Qt can choose the proper high-DPI representation.
@@ -866,14 +917,14 @@ MaterialBrowserPrivate::updateRow(int row)
 
     if (QListWidgetItem* item = d.ui->icons->item(row)) {
         item->setText(entry.name);
-        item->setToolTip(QString("%1\n%2").arg(path, type));
+        item->setToolTip(tooltip);
         item->setData(SwatchImageRole, image);
         item->setIcon(icon);
     }
 
     if (QListWidgetItem* item = d.ui->list->item(row)) {
         item->setText(entry.name);
-        item->setToolTip(QString("%1\n%2").arg(path, type));
+        item->setToolTip(tooltip);
         item->setIcon(icon);
     }
 
@@ -886,7 +937,7 @@ MaterialBrowserPrivate::updateRow(int row)
         item->setText(MaterialItem::Name, entry.name);
         item->setText(MaterialItem::Type, type);
         item->setText(MaterialItem::Path, path);
-        item->setToolTip(MaterialItem::Name, QString("%1\n%2").arg(path, type));
+        item->setToolTip(MaterialItem::Name, tooltip);
         item->setIcon(MaterialItem::Name, icon);
     }
 
@@ -896,6 +947,7 @@ MaterialBrowserPrivate::updateRow(int row)
 void
 MaterialBrowserPrivate::applyFilter(const QString& text)
 {
+    updateDisplayButton();
     const QString filter = text.trimmed();
 
     for (int row = 0; row < d.entries.size(); ++row) {
@@ -1345,6 +1397,12 @@ MaterialBrowser::setViewMode(ViewMode mode)
     p->d.detailView->setChecked(mode == Details);
     p->d.ui->stackedWidget->setCurrentIndex(mode == Icons ? 1 : (mode == List ? 2 : 0));
     refreshVisibleSwatches();
+}
+
+bool
+MaterialBrowser::followEnabled() const
+{
+    return p->d.ui->follow->isChecked();
 }
 
 MaterialBrowser::ViewMode

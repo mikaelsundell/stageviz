@@ -120,6 +120,17 @@ public:
      */
 
     /**
+     * @brief Describes direct and descendant property opinions in the active edit layer.
+     *
+     * Details are formatted lazily for the override indicator tooltip. Long
+     * property and descendant lists are summarized without traversing the stage.
+     *
+     * @param path Scene prim path represented by the row.
+     * @return Rich-text tooltip, or an empty string when no override is present.
+     */
+    QString overrideToolTip(const SdfPath& path) const;
+
+    /**
      * @name Filtering
      */
     /**
@@ -172,6 +183,23 @@ public:
      * @brief Returns whether the prim-type display filter is active, including an empty selection.
      */
     bool displayTypesFiltered() const;
+
+    /**
+     * @brief Sets the imageable purposes included in the Outliner display.
+     *
+     * All four standard purposes are included by default. An empty list excludes
+     * all imageable prims, except ancestors needed to reach matching descendants.
+     * Non-imageable prims remain subject to the other display filters. Viewport
+     * purpose visibility is unaffected.
+     *
+     * @param purposes Included tokens: default, render, proxy and guide.
+     */
+    void setDisplayPurposes(const QStringList& purposes);
+
+    /**
+     * @brief Returns the included USD purposes; an empty list explicitly selects none.
+     */
+    QStringList displayPurposes() const;
 
     /**
      * @brief Returns whether untyped prims are included in the display.
@@ -251,6 +279,12 @@ public:
     /**
      * @}
      */
+
+Q_SIGNALS:
+    /**
+     * @brief Emitted when layer, type, untyped or purpose display filters change.
+     */
+    void displayFiltersChanged();
 
 protected:
     /**

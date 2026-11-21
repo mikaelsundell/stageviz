@@ -36,6 +36,7 @@
 #include "propertyitem.h"
 #include "propertytree.h"
 #include "propertyview.h"
+#include "qtutils.h"
 #include "renderengine.h"
 #include "renderresources.h"
 #include "renderview.h"
@@ -84,6 +85,7 @@
 #include <QLineEdit>
 #include <QListWidget>
 #include <QMenu>
+#include <QMessageBox>
 #include <QMouseEvent>
 #include <QNetworkAccessManager>
 #include <QNetworkProxy>
@@ -102,6 +104,7 @@
 #include <QStyleOptionSpinBox>
 #include <QSurfaceFormat>
 #include <QTemporaryDir>
+#include <QTextDocument>
 #include <QThread>
 #include <QThreadPool>
 #include <QTimer>
@@ -1469,6 +1472,23 @@ materialSwatchColorViewApi()
     state->setColorView(QStringLiteral("ACES 1.0 - SDR Video"));
     request();
     require(renderCount() == renders + 1, "view conversion reuses the newly authored material image");
+    state->setColorView(QStringLiteral("Raw"));
+    renderer.invalidateNetwork(path, true);
+    request();
+    require(image == raw && renderCount() == renders + 1,
+            "returning to an identical authored composition reuses its linear image");
+    shader.GetInput(TfToken("emissiveColor")).Set(GfVec3f(.02f, .18f, 4));
+    renderer.invalidateNetwork(path, true);
+    request();
+    require(image != raw && renderCount() == renders + 2, "new composition content renders once");
+    shader.GetInput(TfToken("emissiveColor")).Set(GfVec3f(4, .18f, .02f));
+    renderer.invalidateNetwork(path, true);
+    request();
+    require(image == raw && renderCount() == renders + 2,
+            "switching back uses content rather than source-layer identity");
+    renderer.invalidateNetwork(path);
+    request();
+    require(renderCount() == renders + 3, "explicit network invalidation discards cached compositions");
     state->setColorView(originalView);
     state->setExposure(originalExposure);
     state->setGamma(originalGamma);
@@ -1657,20 +1677,45 @@ materialBrowserDisplayMenuApi()
 
     const auto openMenu = [&](const std::function<void(const QList<QAction*>&)>& inspect) {
         bool menuFound = false;
-        QTimer::singleShot(0, &browser, [&]() {
+        bool filtered = false;
+        QTimer inspection;
+        inspection.setSingleShot(true);
+        QObject::connect(&inspection, &QTimer::timeout, &browser, [&]() {
             auto* menu = qobject_cast<QMenu*>(QApplication::activePopupWidget());
             if (!menu)
                 return;
             menuFound = true;
-            inspect(menu->actions());
+            require(display->isChecked(), "material Display button stays highlighted while its menu is open");
+            QList<QAction*> actions;
+            const auto collect = [&](auto&& self, QMenu* parent) -> void {
+                for (auto* action : parent->actions()) {
+                    actions.append(action);
+                    if (action->menu())
+                        self(self, action->menu());
+                }
+            };
+            collect(collect, menu);
+            inspect(actions);
+            for (auto* action : actions)
+                filtered |= action->isCheckable() && !action->isChecked();
             menu->close();
         });
+        inspection.start(0);
         display->click();
+        inspection.stop();
+        require(menuFound, "material Display popup remains open for filter inspection");
+        require(display->isChecked() == filtered, "material Display highlight follows active filters after closing");
         return menuFound;
     };
 
     bool layerAndTypeEntriesFound = false;
     const bool firstMenuFound = openMenu([&](const QList<QAction*>& actions) {
+        require(std::any_of(actions.begin(), actions.end(),
+                            [](auto* action) { return action->menu() && action->text() == "Referenced assets"; }),
+                "external layers appear in Referenced assets submenu");
+        require(std::none_of(actions.begin(), actions.end(),
+                             [](auto* action) { return action->menu() && action->text() == "Packages"; }),
+                "empty Packages group is omitted");
         bool layerFound = false;
         bool previewFound = false;
         bool standardFound = false;
@@ -1795,6 +1840,54 @@ materialBrowserDisplayMenuApi()
     checkRows({ 0, 1 });
     setGroup(layerIds, true);
     checkRows({ 0, 1, 2, 3 });
+    require(!display->isChecked(), "fully enabled material display has no filtering indicator");
+    require(openMenu([&](const QList<QAction*>& actions) {
+                for (auto* action : actions)
+                    if (action->data().toString() == preview.shaderId)
+                        action->trigger();
+            }),
+            "hide preview material type before creating another preview");
+    auto created = preview;
+    created.materialPath = SdfPath("/Materials/NewPreview");
+    created.shaderPath = SdfPath("/Materials/NewPreview/Surface");
+    created.name = "NewPreview";
+    browser.setEntries({ preview, standard, openPbr, vray, created });
+    require(display->isChecked() && icons->item(4)->isHidden(),
+            "filter indicator warns that a newly added material is hidden by its type");
+    bool contextFound = false;
+    QTimer::singleShot(0, &browser, [&]() {
+        auto* menu = qobject_cast<QMenu*>(QApplication::activePopupWidget());
+        require(menu && display->isChecked(), "context-opened material Display menu stays highlighted");
+        contextFound = true;
+        for (auto* action : menu->actions())
+            if (action->data().toString() == preview.shaderId && !action->isChecked())
+                action->trigger();
+        menu->close();
+    });
+    const QPoint point = display->rect().center();
+    QContextMenuEvent context(QContextMenuEvent::Mouse, point, display->mapToGlobal(point));
+    QApplication::sendEvent(display, &context);
+    require(contextFound && !display->isChecked() && !icons->item(4)->isHidden(),
+            "clearing filtering through the context menu clears the indicator and reveals the new material");
+    auto packaged = preview;
+    packaged.layerIdentifiers = { QStringLiteral("/assets/car.usdz[0/paint.usdc]") };
+    browser.setEntries({ packaged });
+    require(openMenu([&](const QList<QAction*>& actions) {
+                int matches = 0;
+                for (auto* action : actions) {
+                    require(action->text() != "Referenced assets", "empty Referenced assets group is omitted");
+                    if (action->data().toString() == packaged.layerIdentifiers.front()) {
+                        ++matches;
+                        require(action->text() == "paint.usdc"
+                                    && action->toolTip() == packaged.layerIdentifiers.front(),
+                                "package entries show internal filename and full identifier tooltip");
+                        action->trigger();
+                    }
+                }
+                require(matches == 1, "packaged source appears exactly once");
+            }),
+            "open grouped package filters");
+    require(icons->item(0)->isHidden() && display->isChecked(), "nested package filter updates rows and indicator");
 }
 
 void
@@ -1919,6 +2012,96 @@ materialSelectMultiSelectionApi()
 }
 
 void
+materialFollowSelectionApi()
+{
+    auto* current = stageviz::session();
+    require(current->newStage(), "new material follow fixture");
+    const auto stage = current->stage();
+    for (int i = 0; i < 30; ++i) {
+        const auto path = SdfPath((QStringLiteral("/Looks/Material%1").arg(i, 2, 10, QChar('0'))).toStdString());
+        const auto material = UsdShadeMaterial::Define(stage, path);
+        auto shader = UsdShadeShader::Define(stage, path.AppendChild(TfToken("Surface")));
+        shader.CreateIdAttr(VtValue(TfToken("UsdPreviewSurface")));
+        material.CreateSurfaceOutput().ConnectToSource(
+            shader.CreateOutput(TfToken("surface"), SdfValueTypeNames->Token));
+    }
+    stageviz::MaterialDialog dialog;
+    dialog.resize(600, 550);
+    dialog.show();
+    const auto drain = []() {
+        for (int i = 0; i < 4; ++i) {
+            QCoreApplication::sendPostedEvents(nullptr, 0);
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 25);
+        }
+    };
+    drain();
+    auto* browser = dialog.findChild<stageviz::MaterialBrowser*>("browserWidget");
+    auto* follow = browser->findChild<QToolButton*>("follow");
+    auto* clear = browser->findChild<QToolButton*>("clear");
+    auto* display = browser->findChild<QToolButton*>("display");
+    require(follow && clear && display && !follow->isChecked() && !follow->icon().isNull(),
+            "Follow starts off with native icon");
+    require(clear->geometry().right() < follow->geometry().left()
+                && follow->geometry().right() < display->geometry().left(),
+            "Follow appears immediately between Clear and Display");
+    browser->selectRow(0);
+    const SdfPath last("/Looks/Material29"), first("/Looks/Material00");
+    current->selectionList()->updatePaths({ last });
+    drain();
+    require(browser->selectedRows() == QList<int> { 0 }, "disabled follow preserves editor selection");
+    follow->setChecked(true);
+    drain();
+    require(browser->selectedEntries().size() == 1 && browser->selectedEntries().first().materialPath == last,
+            "enabling Follow immediately selects current stage material");
+    const auto mesh = UsdGeomMesh::Define(stage, SdfPath("/World/Mesh"));
+    mesh.CreatePointsAttr().Set(VtVec3fArray { { 0, 0, 0 }, { 1, 0, 0 }, { 0, 1, 0 } });
+    mesh.CreateFaceVertexCountsAttr().Set(VtIntArray { 3 });
+    mesh.CreateFaceVertexIndicesAttr().Set(VtIntArray { 0, 1, 2 });
+    const auto subset = UsdGeomSubset::CreateGeomSubset(mesh, TfToken("Face"), UsdGeomTokens->face, VtIntArray { 0 },
+                                                        TfToken("materialBind"));
+    const auto material = UsdShadeMaterial(stage->GetPrimAtPath(first));
+    UsdShadeMaterialBindingAPI::Apply(mesh.GetPrim()).Bind(material);
+    UsdShadeMaterialBindingAPI::Apply(subset.GetPrim()).Bind(material);
+    for (const auto& path : { SdfPath("/World"), mesh.GetPath(), subset.GetPath() }) {
+        current->selectionList()->updatePaths({ path });
+        drain();
+        require(browser->selectedEntries().size() == 1 && browser->selectedEntries().first().materialPath == last,
+                "following geometry, groups and subsets does not infer their bound materials");
+        require(current->selectionList()->paths() == QList<SdfPath> { path },
+                "following never adds materials to stage selection");
+    }
+    for (auto mode :
+         { stageviz::MaterialBrowser::Icons, stageviz::MaterialBrowser::List, stageviz::MaterialBrowser::Details }) {
+        browser->setViewMode(mode);
+        current->selectionList()->updatePaths({ first });
+        drain();
+        current->selectionList()->updatePaths({ last });
+        drain();
+        const int row = browser->rowForMaterialPath(last);
+        if (mode == stageviz::MaterialBrowser::Details) {
+            auto* view = browser->findChild<QTreeWidget*>("details");
+            require(view->viewport()->rect().intersects(view->visualItemRect(view->topLevelItem(row))),
+                    "Follow scrolls detail view");
+        }
+        else {
+            auto* view = browser->findChild<QListWidget*>(mode == stageviz::MaterialBrowser::Icons ? "icons" : "list");
+            require(view->viewport()->rect().intersects(view->visualItemRect(view->item(row))),
+                    "Follow scrolls icon and list views");
+        }
+    }
+    dialog.hide();
+    current->selectionList()->updatePaths({ first });
+    dialog.show();
+    drain();
+    require(browser->selectedEntries().size() == 1 && browser->selectedEntries().first().materialPath == first,
+            "opening editor follows the material selected while closed");
+    follow->setChecked(false);
+    current->selectionList()->updatePaths({ last });
+    drain();
+    require(browser->selectedEntries().first().materialPath == first, "turning Follow off stops synchronization");
+}
+
+void
 materialGraphDisconnectedNetworkLayoutApi()
 {
     stageviz::Session* current = stageviz::session();
@@ -1973,9 +2156,116 @@ materialGraphDisconnectedNetworkLayoutApi()
             "both primary and disconnected material nodes are present");
     require(nodePositions.value("PrimaryInput").x() == 0.0 && nodePositions.value("PrimarySurface").x() == 330.0,
             "primary network keeps its established left-to-right ordering");
-    require(nodePositions.value("AlternateSurface").x() < nodePositions.value("PrimaryInput").x()
+    require(nodePositions.value("AlternateSurface").x() == nodePositions.value("PrimarySurface").x()
                 && nodePositions.value("AlternateInput").x() < nodePositions.value("AlternateSurface").x(),
-            "disconnected network receives its own connection-directed columns");
+            "disconnected network aligns its root and retains connection-directed columns");
+}
+
+void
+materialGraphSharedBranchLayoutApi()
+{
+    auto* current = stageviz::session();
+    require(current->newStage(), "new shared-source material graph fixture");
+    const auto stage = current->stage();
+    const auto material = UsdShadeMaterial::Define(stage, SdfPath("/Material"));
+    const auto shader = [&](const char* name, const char* id) {
+        auto result = UsdShadeShader::Define(stage, SdfPath(std::string("/Material/") + name));
+        result.CreateIdAttr(VtValue(TfToken(id)));
+        result.CreateOutput(TfToken("out"), SdfValueTypeNames->Color3f);
+        return result;
+    };
+    const auto connect = [](UsdShadeShader target, const char* input, const UsdShadeShader& source) {
+        require(target.CreateInput(TfToken(input), SdfValueTypeNames->Color3f)
+                    .ConnectToSource(source.GetOutput(TfToken("out"))),
+                "connect graph layout fixture");
+    };
+    const auto primary = shader("Primary", "UsdPreviewSurface");
+    material.CreateSurfaceOutput().ConnectToSource(primary.GetOutput(TfToken("out")));
+    const auto shared = shader("SharedUV", "UsdPrimvarReader_float2");
+    auto textureA = shader("TextureA", "UsdUVTexture");
+    const auto textureB = shader("TextureB", "UsdUVTexture");
+    const auto textureC = shader("TextureC", "UsdUVTexture");
+    const auto extra = shader("Extra", "UsdUVTexture");
+    connect(textureA, "st", shared);
+    connect(textureB, "st", shared);
+    connect(textureC, "st", shared);
+    connect(extra, "rgb", textureB);
+    connect(primary, "diffuseColor", textureA);
+    connect(primary, "emissiveColor", extra);
+    connect(primary, "normal", textureC);
+    // A tall sibling exercises size-aware packing rather than equal row spacing.
+    for (int i = 0; i < 20; ++i)
+        textureA.CreateInput(TfToken("extra" + std::to_string(i)), SdfValueTypeNames->Float);
+    shader("Standard", "ND_standard_surface_surfaceshader");
+    shader("OpenPBR", "ND_open_pbr_surface_surfaceshader");
+    const auto unknown = shader("AUnknownRoot", "vendor:Surface");
+    const auto unknownInput = shader("AUnknownInput", "vendor:Texture");
+    connect(unknown, "color", unknownInput);
+    const auto cycleA = shader("CycleA", "vendor:Cycle");
+    const auto cycleB = shader("CycleB", "vendor:Cycle");
+    connect(cycleA, "color", cycleB);
+    connect(cycleB, "color", cycleA);
+
+    std::string before;
+    stage->GetRootLayer()->ExportToString(&before);
+    stageviz::MaterialGraph graph;
+    graph.setMaterial(stageviz::MaterialUtils::sceneMaterials(stage).first());
+    const auto nodes = [&]() {
+        QHash<QString, QGraphicsRectItem*> result;
+        for (QGraphicsItem* item : graph.graphicsView()->scene()->items()) {
+            auto* node = dynamic_cast<QGraphicsRectItem*>(item);
+            if (!node || node->parentItem() || node->rect().width() < 200.0)
+                continue;
+            for (QGraphicsItem* child : node->childItems()) {
+                if (auto* title = dynamic_cast<QGraphicsSimpleTextItem*>(child)) {
+                    result.insert(title->text(), node);
+                    break;
+                }
+            }
+        }
+        return result;
+    };
+    auto items = nodes();
+    require(items.size() == 12, "all supported, unknown and cyclic nodes are laid out");
+    const qreal rootX = items.value("Primary")->pos().x();
+    for (const char* root : { "Standard", "OpenPBR", "AUnknownRoot", "CycleA" })
+        require(items.value(root)->pos().x() == rootX, "network roots share the same right-hand column");
+    for (const auto& key : items.keys()) {
+        const auto* node = items.value(key);
+        require(std::isfinite(node->pos().x()) && std::isfinite(node->pos().y()),
+                "cyclic networks receive finite positions");
+        for (const auto& other : items.keys()) {
+            if (key != other)
+                require(!node->sceneBoundingRect().intersects(items.value(other)->sceneBoundingRect()),
+                        "shared sources and variable node heights do not overlap node bodies");
+        }
+    }
+    for (const char* texture : { "TextureA", "TextureB", "TextureC" })
+        require(items.value("SharedUV")->pos().x() < items.value(texture)->pos().x(),
+                "shared UV source is left of every consumer, including the longer branch");
+    require(items.value("TextureA")->pos().y() != items.value("TextureC")->pos().y(),
+            "branches sharing a source receive distinct vertical positions");
+    qreal supportedBottom = 0.0;
+    for (const char* name :
+         { "Primary", "SharedUV", "TextureA", "TextureB", "TextureC", "Extra", "Standard", "OpenPBR" })
+        supportedBottom = std::max(supportedBottom, items.value(name)->sceneBoundingRect().bottom());
+    require(items.value("AUnknownRoot")->sceneBoundingRect().top() > supportedBottom
+                && items.value("AUnknownInput")->sceneBoundingRect().top() > supportedBottom,
+            "supported network blocks precede unknown networks regardless of path ordering");
+    QHash<QString, QPointF> positions;
+    for (auto it = items.cbegin(); it != items.cend(); ++it)
+        positions.insert(it.key(), it.value()->pos());
+    graph.rebuild();
+    items = nodes();
+    for (auto it = items.cbegin(); it != items.cend(); ++it)
+        require(it.value()->pos() == positions.value(it.key()), "automatic layout is deterministic");
+    const QPointF userPosition = items.value("TextureA")->pos() + QPointF(13, 27);
+    items.value("TextureA")->setPos(userPosition);
+    graph.refresh();
+    require(nodes().value("TextureA")->pos() == userPosition, "notice refresh preserves manual node positioning");
+    std::string after;
+    stage->GetRootLayer()->ExportToString(&after);
+    require(before == after, "automatic graph layout does not author USD");
 }
 
 void
@@ -2007,15 +2297,32 @@ materialDialogRefreshAfterLayerRemovalApi()
     current->commandStack()->execute(
         new stageviz::Command(stageviz::removeLayer(QString::fromStdString(materialLayer->GetIdentifier()))));
 
-    QEventLoop refreshLoop;
-    QTimer::singleShot(300, &refreshLoop, &QEventLoop::quit);
-    refreshLoop.exec();
-    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
-    QCoreApplication::processEvents();
-
-    require(browser->entries().isEmpty(), "removing a material's owning layer removes its browser entry");
-    require(dialog.findChildren<stageviz::MaterialGraph*>().isEmpty(),
-            "removing a material's owning layer closes its graph tab");
+    const auto waitUntil = [](const std::function<bool()>& predicate) {
+        QElapsedTimer timer;
+        timer.start();
+        do {
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 25);
+            QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+            if (predicate())
+                return true;
+            QThread::msleep(1);
+        } while (timer.elapsed() < 10000);
+        return false;
+    };
+    // Swatch rendering can delay both worker notices and the debounced refresh.
+    // Observe the actual browser/tab result instead of racing a fixed 300 ms timer.
+    require(waitUntil([&]() {
+                return browser->entries().isEmpty() && dialog.findChildren<stageviz::MaterialGraph*>().isEmpty();
+            }),
+            "removing a material's owning layer refreshes browser entries and closes its graph tab");
+    require(root->GetSubLayerPaths().empty() && !stage->GetPrimAtPath(SdfPath("/Materials/LayerMaterial")),
+            "layer removal is reflected in composed USD as well as the material dialog");
+    current->commandStack()->undo();
+    require(waitUntil([&]() { return browser->entries().size() == 1; }),
+            "undoing layer removal restores the material browser entry");
+    current->commandStack()->redo();
+    require(waitUntil([&]() { return browser->entries().isEmpty(); }),
+            "redoing layer removal removes the restored browser entry");
 }
 
 
@@ -2401,7 +2708,7 @@ geometrySubsetGuiApi()
 }
 
 void
-outlinerResetOpinionsMenuApi()
+outlinerClearOpinionsMenuApi()
 {
     stageviz::OutlinerView view;
     view.resize(500, 400);
@@ -2431,7 +2738,7 @@ outlinerResetOpinionsMenuApi()
         QTimer::singleShot(0, tree, [&]() {
             for (auto* widget : QApplication::allWidgets()) {
                 auto* menu = qobject_cast<QMenu*>(widget);
-                if (!menu || menu->objectName() != "resetOpinionsMenu")
+                if (!menu || menu->objectName() != "clearOpinionsMenu")
                     continue;
                 enabled = menu->menuAction()->isEnabled();
                 for (auto* action : menu->actions())
@@ -2445,7 +2752,9 @@ outlinerResetOpinionsMenuApi()
         const QPoint point = tree->visualItemRect(row).center();
         QContextMenuEvent event(QContextMenuEvent::Mouse, point, tree->viewport()->mapToGlobal(point));
         QApplication::sendEvent(tree->viewport(), &event);
-        require(labels == (locked ? QStringList { "All" } : QStringList { "All", "separator", "Visibility" }),
+        require(labels
+                    == (locked ? QStringList { "Clear", "All" }
+                               : QStringList { "Clear", "All", "separator", "Visibility" }),
                 "reset menu shows only edit-layer property groups below All and divider");
         require(enabled != locked, "locked edit layer disables reset menu");
     };
@@ -2559,7 +2868,7 @@ outlinerLayerColorsApi()
             "strongest-layer role still identifies the override layer");
     require(strip("/ChildOwned") == blue && strip("/ChildOwned", 1) == red,
             "override adds its color to the right of the base layer while selected");
-    current->commandStack()->execute(new stageviz::Command(stageviz::resetOverrides({ SdfPath("/ChildOwned") })));
+    current->commandStack()->execute(new stageviz::Command(stageviz::clearOpinions({ SdfPath("/ChildOwned") })));
     drain();
     require(strip("/ChildOwned") == blue && strip("/ChildOwned", 1) != red,
             "reset override restores the single underlying layer color");
@@ -2628,7 +2937,7 @@ outlinerEditLayerFontApi()
     drain();
     require(root->GetPrimAtPath(SdfPath("/ChildOwned")) && !italic("/ChildOwned"),
             "authoring an edit-layer override removes italics");
-    current->commandStack()->execute(new stageviz::Command(stageviz::resetOverrides({ SdfPath("/ChildOwned") })));
+    current->commandStack()->execute(new stageviz::Command(stageviz::clearOpinions({ SdfPath("/ChildOwned") })));
     drain();
     require(!root->GetPrimAtPath(SdfPath("/ChildOwned")) && italic("/ChildOwned"),
             "resetting the override restores italics");
@@ -3510,7 +3819,12 @@ preserveStateMenuApi()
     require(current->newStage(), "new anonymous root for first-save action refresh");
     current->stage()->DefinePrim(SdfPath("/World/FirstSave"), TfToken("Cube"));
     drain();
-    require(!current->isStateDirty(), "anonymous USD edits do not create independent dirty state");
+    require(current->stage()->GetRootLayer()->IsDirty(), "anonymous USD edits dirty the document");
+    // Authored Untitled documents can track remembered view state, and viewport
+    // updates may legitimately dirty it. Establish the clean-state baseline
+    // explicitly to test first-save UI refresh without a state-dirty transition.
+    require(current->saveState(dir.filePath("anonymous-baseline.session")) && !current->isStateDirty(),
+            "establish clean remembered state before first root save");
     require(current->saveLayerAs(QString::fromStdString(current->stage()->GetRootLayer()->GetIdentifier()),
                                  dir.filePath("first-save.usda")),
             "save anonymous root without a preceding dirty-state transition");
@@ -3530,6 +3844,74 @@ preserveStateMenuApi()
             "app close writes the latest remembered state to the companion");
     firstSaveSessionFile.close();
     current->setPreserveState(originalPreserve);
+}
+
+void
+layerCreateReplaceDialogApi()
+{
+    QTemporaryDir dir;
+    require(dir.isValid(), "temporary layer editor replacement directory");
+    const QString path = dir.filePath("replace.usda");
+    const auto old = SdfLayer::CreateNew(path.toStdString());
+    SdfCreatePrimInLayer(old, SdfPath("/Old"))->SetSpecifier(SdfSpecifierDef);
+    require(old->Save(), "save existing layer editor destination");
+    auto* current = stageviz::session();
+    require(current->newStage(), "new layer editor replacement stage");
+    const bool previousNative = QCoreApplication::testAttribute(Qt::AA_DontUseNativeDialogs);
+    QCoreApplication::setAttribute(Qt::AA_DontUseNativeDialogs, true);
+    stageviz::LayerDialog editor;
+    editor.show();
+    auto* create = editor.findChild<QToolButton*>("newMaterial");
+    require(create, "layer editor create control exists");
+    bool saveSeen = false;
+    bool replaceSeen = false;
+    bool timedOut = false;
+    QElapsedTimer elapsed;
+    elapsed.start();
+    QTimer driver;
+    QObject::connect(&driver, &QTimer::timeout, &editor, [&]() {
+        for (auto* widget : QApplication::topLevelWidgets()) {
+            if (auto* message = qobject_cast<QMessageBox*>(widget); message && message->isVisible()) {
+                replaceSeen = true;
+                auto* replace = message->button(QMessageBox::Yes);
+                require(replace, "overwrite confirmation has a Yes button");
+                replace->click();
+            }
+            if (auto* chooser = qobject_cast<QFileDialog*>(widget); chooser && chooser->isVisible()) {
+                if (elapsed.elapsed() > 10000) {
+                    timedOut = true;
+                    chooser->reject();
+                }
+                else if (!replaceSeen) {
+                    saveSeen = true;
+                    require(chooser->defaultSuffix() == "usda",
+                            "default extension participates in overwrite confirmation");
+                    auto* filename = chooser->findChild<QLineEdit*>("fileNameEdit");
+                    if (!filename)
+                        continue;
+                    chooser->setDirectory(dir.path());
+                    filename->setText(path);
+                    QMetaObject::invokeMethod(chooser, "accept", Qt::QueuedConnection);
+                }
+            }
+        }
+    });
+    driver.start(25);
+    create->click();
+    driver.stop();
+    const auto confirmation = "save chooser accepts explicit replacement confirmation (save=" + std::to_string(saveSeen)
+                              + ", replace=" + std::to_string(replaceSeen) + ", timeout=" + std::to_string(timedOut)
+                              + ")";
+    require(saveSeen && replaceSeen && !timedOut, confirmation.c_str());
+    require(current->stage()->HasLocalLayer(old) && !old->GetPrimAtPath(SdfPath("/Old")),
+            "confirmed replacement creates and attaches the empty destination");
+    require(SdfLayer::OpenAsAnonymous(path.toStdString())->GetRootPrims().empty(), "replacement reaches disk");
+    current->commandStack()->undo();
+    require(old->GetPrimAtPath(SdfPath("/Old")) && current->stage()->GetRootLayer()->GetSubLayerPaths().empty(),
+            "one undo restores cached contents and removes the new arc");
+    current->commandStack()->redo();
+    require(current->stage()->HasLocalLayer(old) && old->GetRootPrims().empty(), "one redo recreates the empty layer");
+    QCoreApplication::setAttribute(Qt::AA_DontUseNativeDialogs, previousNative);
 }
 
 void
@@ -3741,6 +4123,26 @@ viewportComponentsApi()
 
     stageviz::ViewportGizmo gizmo(host);
     stageviz::ViewportGizmo::Frame frame;
+    const std::string documentBeforeWarmup = [&]() {
+        std::string text;
+        host.stage()->GetRootLayer()->ExportToString(&text);
+        return text;
+    }();
+    gizmo.update(frame);
+    const SdfPath warmupRoot = stageviz::paths::auxiliary::transform;
+    require(bool(host.auxiliary->GetPrimAtPath(warmupRoot.AppendChild(TfToken("Rotate")).AppendChild(TfToken("X"))))
+                && UsdGeomImageable(host.auxiliary->GetPrimAtPath(warmupRoot)).ComputeVisibility()
+                       == UsdGeomTokens->invisible,
+            "disabled gizmo prepares hidden meshes before the first interaction");
+    std::string preparedAuxiliary;
+    host.auxiliary->GetRootLayer()->ExportToString(&preparedAuxiliary);
+    gizmo.update(frame);
+    std::string repeatedAuxiliary;
+    host.auxiliary->GetRootLayer()->ExportToString(&repeatedAuxiliary);
+    std::string documentAfterWarmup;
+    host.stage()->GetRootLayer()->ExportToString(&documentAfterWarmup);
+    require(preparedAuxiliary == repeatedAuxiliary && documentBeforeWarmup == documentAfterWarmup,
+            "preparing handles is idempotent and leaves document USD unchanged");
     frame.enabled = true;
     frame.pivotValid = true;
     frame.orientationValid = true;
@@ -4384,6 +4786,268 @@ outlinerLayerMuteApi()
 }
 
 void
+richTooltipsApi()
+{
+    const QString rich = stageviz::qt::toolTip("Name <unsafe>",
+                                               { { "Path", "/World/Thing" }, { "Value", "<b>plain text</b>" } });
+    require(rich.startsWith("<qt>") && rich.contains("&lt;unsafe&gt;")
+                && rich.contains("&lt;b&gt;plain text&lt;/b&gt;"),
+            "tooltip headings and values are escaped, not interpreted as markup");
+    const QString longPath = "/World/" + QString(150, 'A') + "/Shape";
+    QTextDocument document;
+    document.setHtml(stageviz::qt::toolTip("Long path", { { "Path", longPath } }));
+    QString plain = document.toPlainText();
+    plain.remove(QChar(0x200b));
+    require(plain.contains(longPath), "wrapping retains the complete long path");
+
+    stageviz::MaterialBrowser browser;
+    stageviz::MaterialEntry entry;
+    entry.materialPath = SdfPath("/Materials/Paint");
+    entry.name = "Paint <blue>";
+    entry.shaderId = "UsdPreviewSurface";
+    browser.setEntries({ entry });
+    auto* icons = browser.findChild<QListWidget*>("icons");
+    auto* list = browser.findChild<QListWidget*>("list");
+    auto* details = browser.findChild<QTreeWidget*>("details");
+    require(icons && list && details, "material tooltip presentations available");
+    const auto tooltip = icons->item(0)->toolTip();
+    require(tooltip.startsWith("<qt>") && tooltip.contains("Paint &lt;blue&gt;") && tooltip.contains("Shader type")
+                && tooltip.contains("USD Preview Surface") && tooltip.contains("/Materials/Paint"),
+            "material tooltip includes formatted title, shader type and full USD path");
+    require(tooltip == list->item(0)->toolTip() && tooltip == details->topLevelItem(0)->toolTip(0),
+            "all material browser views share the same tooltip");
+    entry.name = "Updated";
+    browser.updateEntry(0, entry);
+    require(icons->item(0)->toolTip().contains("Updated"), "material tooltip title follows entry updates");
+
+    auto* current = stageviz::session();
+    require(current->newStage(), "new override tooltip fixture");
+    const auto stage = current->stage();
+    const auto root = stage->GetRootLayer();
+    UsdGeomXform::Define(stage, SdfPath("/World/Group"));
+    UsdGeomCube::Define(stage, SdfPath("/World/Group/Shape"));
+    const auto material = UsdShadeMaterial::Define(stage, SdfPath("/Materials/Paint"));
+    const auto source = SdfLayer::CreateAnonymous("tooltip_base.usda");
+    source->TransferContent(root);
+    root->Clear();
+    root->SetSubLayerPaths({ source->GetIdentifier() });
+    const auto group = stage->GetPrimAtPath(SdfPath("/World/Group"));
+    UsdShadeMaterialBindingAPI::Apply(group).Bind(UsdShadeMaterial(stage->GetPrimAtPath(SdfPath("/Materials/Paint"))),
+                                                  UsdShadeTokens->strongerThanDescendants);
+    group.CreateAttribute(TfToken("note"), SdfValueTypeNames->String, true).Set(std::string("<b>literal</b>"));
+    group.CreateAttribute(TfToken("large"), SdfValueTypeNames->FloatArray, true).Set(VtFloatArray(1000, 1.0f));
+    stage->GetPrimAtPath(SdfPath("/World/Group/Shape"))
+        .GetAttribute(UsdGeomTokens->visibility)
+        .Set(UsdGeomTokens->invisible);
+    stageviz::OutlinerView view;
+    view.show();
+    auto* tree = view.findChild<stageviz::OutlinerTree*>("outlinerTree");
+    require(tree, "override tooltip tree available");
+    tree->updateStage(stage);
+    auto* shape = tree->findItems("Shape", Qt::MatchExactly | Qt::MatchRecursive).value(0);
+    require(shape, "tooltip shape row available");
+    const auto name = shape->toolTip(stageviz::PrimItem::Name);
+    require(name.startsWith("<qt>") && name.contains("<b>Shape</b>") && name.contains("Type") && name.contains("Cube")
+                && name.contains("/World/Group/Shape"),
+            "prim tooltip has clear name, type and path fields");
+    const auto direct = tree->overrideToolTip(SdfPath("/World/Group"));
+    require(direct.contains("This prim") && direct.contains("material:binding") && direct.contains("/Materials/Paint")
+                && direct.contains("Stronger than descendants") && direct.contains("&lt;b&gt;literal&lt;/b&gt;")
+                && direct.contains("Array (1000 values)") && direct.contains("Descendants (1)")
+                && direct.contains("visibility") && direct.contains("invisible"),
+            "override tooltip describes local properties and descendant opinions");
+    const auto ancestor = tree->overrideToolTip(SdfPath::AbsoluteRootPath());
+    require(ancestor.contains("Descendants (2)") && ancestor.contains("Layer") && ancestor.contains("Untitled (Root)"),
+            "ancestor indicator describes affected descendant prims in the active layer");
+    require(shape->toolTip(stageviz::PrimItem::Override).contains("visibility"),
+            "override column uses formatted detail tooltip");
+    current->commandStack()->execute(
+        new stageviz::Command(stageviz::clearRelationships({ SdfPath("/World/Group.material:binding") })));
+    for (int i = 0; i < 6; ++i) {
+        QThreadPool::globalInstance()->waitForDone();
+        QCoreApplication::sendPostedEvents(nullptr, 0);
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 25);
+    }
+    require(!tree->overrideToolTip(SdfPath("/World/Group")).contains("material:binding"),
+            "tooltip refreshes after a binding opinion is cleared");
+    require(current->setEditLayer(source), "switch tooltip edit layer");
+    QCoreApplication::processEvents();
+    require(tree->overrideToolTip(SdfPath("/World/Group")).isEmpty(), "override details track the current edit layer");
+    require(current->setEditLayer(root), "restore tooltip edit layer");
+    const auto ownership = stageviz::qt::toolTip("Ownership", stageviz::qt::primLayerToolTipFields(group));
+    require(ownership.contains("tooltip_base.usda") && ownership.contains("Strongest opinion")
+                && ownership.contains("Untitled (Root)"),
+            "tooltip distinguishes defining and override layers");
+    QTreeWidget layerTree;
+    stageviz::LayerItem layerItem(&layerTree);
+    stageviz::LayerItem::State state;
+    state.identifier = "/tmp/look_layer.usda";
+    state.name = "*look_layer.usda";
+    state.editTarget = true;
+    state.dirty = true;
+    state.canReorder = true;
+    state.primSpecCount = 3;
+    layerItem.setState(state);
+    const auto layerTip = layerItem.toolTip(stageviz::LayerItem::Name);
+    require(layerTip.startsWith("<qt>") && layerTip.contains("<b>look_layer.usda</b>")
+                && layerTip.contains("Current edit layer") && layerTip.contains("Unsaved changes")
+                && layerTip.contains("/tmp/look_layer.usda"),
+            "layer names use the shared structured tooltip");
+    require(layerItem.toolTip(stageviz::LayerItem::Permission).contains("Permission")
+                && layerItem.toolTip(stageviz::LayerItem::Opinions).contains("3 authored prim spec")
+                && layerItem.toolTip(stageviz::LayerItem::Visibility).contains("Visibility"),
+            "layer status icons include context and action information");
+}
+
+void
+outlinerPurposeFilterApi()
+{
+    auto* current = stageviz::session();
+    require(current->newStage(), "new Outliner purpose fixture");
+    const auto stage = current->stage();
+    UsdGeomXform::Define(stage, SdfPath("/World"));
+    const auto render = UsdGeomXform::Define(stage, SdfPath("/World/Render"));
+    render.CreatePurposeAttr().Set(UsdGeomTokens->render);
+    UsdGeomCube::Define(stage, SdfPath("/World/Render/RenderCube"));
+    const auto explicitDefault = UsdGeomCube::Define(stage, SdfPath("/World/Render/DefaultCube"));
+    explicitDefault.CreatePurposeAttr().Set(UsdGeomTokens->default_);
+    stage->DefinePrim(SdfPath("/World/Render/Bridge"));
+    UsdGeomCube::Define(stage, SdfPath("/World/Render/Bridge/Child"));
+    const auto guide = UsdGeomXform::Define(stage, SdfPath("/World/Guide"));
+    guide.CreatePurposeAttr().Set(UsdGeomTokens->guide);
+    UsdGeomCube::Define(stage, SdfPath("/World/Guide/Cube"));
+    UsdGeomCube::Define(stage, SdfPath("/World/DefaultCube"));
+    const auto source = UsdGeomXform::Define(stage, SdfPath("/Library/Source"));
+    UsdGeomCube::Define(stage, SdfPath("/Library/Source/Cube"));
+    const auto instance = UsdGeomXform::Define(stage, SdfPath("/World/Instance"));
+    instance.GetPrim().GetReferences().AddInternalReference(source.GetPath());
+    instance.GetPrim().SetInstanceable(true);
+    instance.CreatePurposeAttr().Set(UsdGeomTokens->proxy);
+    UsdShadeMaterial::Define(stage, SdfPath("/Looks/Material"));
+    std::string original;
+    stage->GetRootLayer()->ExportToString(&original);
+    stageviz::OutlinerView view;
+    view.resize(500, 600);
+    view.show();
+    const auto drain = []() {
+        for (int i = 0; i < 6; ++i) {
+            QThreadPool::globalInstance()->waitForDone();
+            QCoreApplication::sendPostedEvents(nullptr, 0);
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 25);
+        }
+    };
+    drain();
+    auto* tree = view.findChild<stageviz::OutlinerTree*>("outlinerTree");
+    auto* display = view.findChild<QToolButton*>("display");
+    require(tree && display, "purpose controls available");
+    tree->updateStage(stage);
+    tree->setDisplayFilters({}, {}, true);
+    require(display->isChecked(), "showing Untyped differs from the default display state");
+    tree->setDisplayFilters({}, {}, false);
+    require(!display->isChecked(), "default display state leaves Untyped hidden without a highlight");
+    tree->setDisplayPurposes({ "default" });
+    require(display->isChecked(), "purpose restrictions update the Outliner indicator immediately");
+    tree->setDisplayPurposes({ "default", "render", "proxy", "guide" });
+    require(!display->isChecked(), "restoring all purposes clears the Outliner indicator");
+    bool contextFound = false;
+    QTimer::singleShot(0, &view, [&]() {
+        auto* menu = qobject_cast<QMenu*>(QApplication::activePopupWidget());
+        require(menu && display->isChecked(), "context-opened Outliner Display menu stays highlighted");
+        contextFound = true;
+        menu->close();
+    });
+    const QPoint point = display->rect().center();
+    QContextMenuEvent context(QContextMenuEvent::Mouse, point, display->mapToGlobal(point));
+    QApplication::sendEvent(display, &context);
+    require(contextFound && !display->isChecked(), "closing the default Outliner menu clears its highlight");
+    tree->setDisplayFilters({}, {}, true);
+    require(display->isChecked(), "including Untyped highlights customized display settings");
+    tree->setDisplayFilters({}, {}, false);
+    require(!display->isChecked(), "restoring default Untyped exclusion clears the highlight");
+
+    tree->setDisplayFilters({}, {}, true);
+
+    const auto row = [&](const char* path) -> QTreeWidgetItem* {
+        QTreeWidgetItemIterator it(tree);
+        while (*it) {
+            if ((*it)->data(0, stageviz::PrimItem::Path).toString() == QString::fromUtf8(path))
+                return *it;
+            ++it;
+        }
+        return nullptr;
+    };
+    const auto visible = [&](const char* path) {
+        auto* item = row(path);
+        require(item, (std::string("expected purpose row exists: ") + path).c_str());
+        for (; item; item = item->parent())
+            if (item->isHidden())
+                return false;
+        return true;
+    };
+    const QStringList all { "default", "render", "proxy", "guide" };
+    require(tree->displayPurposes() == all, "all purposes are initially included");
+    tree->setDisplayPurposes({ "render" });
+    require(visible("/World"), "render filter retains World ancestor");
+    require(visible("/World/Render/RenderCube"), "render filter includes inherited cube");
+    require(visible("/World/Render/Bridge/Child"), "render inheritance crosses non-imageable prims");
+    require(visible("/World/Render/Bridge"), "render filter retains untyped ancestor");
+    require(!visible("/World/Render/DefaultCube") && !visible("/World/Guide/Cube") && !visible("/World/Instance/Cube"),
+            "explicit default purpose overrides ancestor render purpose");
+    tree->setDisplayPurposes({ "proxy" });
+    require(visible("/World/Instance/Cube") && !visible("/World/Render/RenderCube"),
+            "instance proxy children inherit purpose from their scene instance root");
+    tree->setDisplayPurposes({});
+    require(!visible("/World/DefaultCube") && !visible("/World/Instance/Cube") && visible("/Looks/Material"),
+            "empty purpose selection hides all geometry without hiding non-imageable materials");
+    tree->setDisplayPurposes({ "render" });
+    tree->setDisplayFilters({}, {}, false, false, true);
+    require(!visible("/World/Render/RenderCube"), "purpose and explicit empty type filters intersect");
+    tree->setDisplayFilters({}, {});
+    require(tree->displayPurposes() == QStringList { "render" } && visible("/World/Render/RenderCube"),
+            "changing other display filters preserves purpose selection");
+    tree->setFilter("RenderCube");
+    require(visible("/World/Render/RenderCube") && !visible("/World/Render/Bridge/Child"),
+            "text and purpose filters intersect");
+    tree->setFilter({});
+    auto* retained = row("/World/Render/RenderCube");
+    current->commandStack()->execute(new stageviz::Command(
+        stageviz::setAttributeValue(SdfPath("/World/Render.purpose"), VtValue(UsdGeomTokens->guide))));
+    drain();
+    require(!visible("/World/Render/RenderCube") && row("/World/Render/RenderCube") == retained,
+            "purpose info-only changes update inherited descendants without rebuilding rows");
+    current->commandStack()->undo();
+    drain();
+    require(visible("/World/Render/RenderCube"), "purpose undo restores inherited filtering");
+    std::string restored;
+    stage->GetRootLayer()->ExportToString(&restored);
+    require(original == restored, "display filters do not author USD opinions");
+    tree->setDisplayPurposes(all);
+    bool inspected = false;
+    QTimer::singleShot(0, &view, [&]() {
+        auto* menu = qobject_cast<QMenu*>(QApplication::activePopupWidget());
+        require(menu, "purpose display menu opens");
+        const auto actions = menu->actions();
+        require(actions.size() >= 6 && actions[actions.size() - 6]->isSeparator()
+                    && actions[actions.size() - 5]->text() == "Purpose" && !actions[actions.size() - 5]->isEnabled(),
+                "Purpose is the final separated category");
+        for (int i = 0; i < 4; ++i) {
+            auto* action = actions[actions.size() - 4 + i];
+            require(action->isCheckable() && action->isChecked() && action->data().toString() == "purpose:" + all[i],
+                    "purpose choices use distinct stable keys and start checked");
+            action->trigger();
+        }
+        require(tree->displayPurposes().isEmpty() && !visible("/World/DefaultCube"),
+                "unchecking the final purpose retains explicit none");
+        inspected = true;
+        menu->close();
+    });
+    display->click();
+    require(inspected, "purpose display menu inspected");
+    tree->updateStage(stage);
+    require(tree->displayPurposes().isEmpty() && !visible("/World/DefaultCube"), "none survives tree refresh");
+}
+
+void
 outlinerDisplayMenuApi()
 {
     auto* current = stageviz::session();
@@ -4434,8 +5098,12 @@ outlinerDisplayMenuApi()
             }
             return -1;
         }();
-        sectionsValid = actions.size() > 7 && actions.first()->text() == "Layers"
-                        && actions[1]->text() == "Untitled  (Root)" && divider == 2
+        auto* sources = menu->findChild<QMenu*>("displaySourcesMenu");
+        auto* layers = menu->findChild<QMenu*>("displayLayersMenu");
+        sectionsValid = actions.size() > 7 && actions.first()->text() == "Sources" && sources && layers
+                        && layers->actions().size() == 1 && layers->actions().front()->text() == "Untitled  (Root)"
+                        && !menu->findChild<QMenu*>("displayReferencedAssetsMenu")
+                        && !menu->findChild<QMenu*>("displayPackagesMenu") && divider == 1
                         && actions[divider + 1]->text() == "Prim types";
 
         for (QAction* action : actions) {
@@ -4471,7 +5139,16 @@ outlinerDisplayMenuApi()
             if (!menu)
                 return;
             found = true;
-            inspect(menu->actions());
+            QList<QAction*> actions;
+            const auto collect = [&](auto&& self, QMenu* parent) -> void {
+                for (auto* action : parent->actions()) {
+                    actions.append(action);
+                    if (action->menu())
+                        self(self, action->menu());
+                }
+            };
+            collect(collect, menu);
+            inspect(actions);
             menu->close();
         });
         display->click();
@@ -4572,6 +5249,8 @@ main(int argc, char** argv)
     const std::map<std::string, std::function<void()>> cases {
         { "outliner_layer_mute_api", outlinerLayerMuteApi },
         { "outliner_display_menu_api", outlinerDisplayMenuApi },
+        { "outliner_purpose_filter_api", outlinerPurposeFilterApi },
+        { "rich_tooltips_api", richTooltipsApi },
         { "viewport_components_api", viewportComponentsApi },
         { "viewport_capture_paths_api", viewportCapturePathsApi },
         { "viewport_lights_api", viewportLightsApi },
@@ -4600,7 +5279,9 @@ main(int argc, char** argv)
         { "material_browser_display_menu_api", materialBrowserDisplayMenuApi },
         { "material_unknown_surface_context_api", materialUnknownSurfaceContextApi },
         { "material_select_multi_selection_api", materialSelectMultiSelectionApi },
+        { "material_follow_selection_api", materialFollowSelectionApi },
         { "material_graph_disconnected_network_layout_api", materialGraphDisconnectedNetworkLayoutApi },
+        { "material_graph_shared_branch_layout_api", materialGraphSharedBranchLayoutApi },
         { "material_dialog_refresh_after_layer_removal_api", materialDialogRefreshAfterLayerRemovalApi },
         { "property_reveal_file_api", propertyRevealFileApi },
         { "material_reveal_file_api", materialRevealFileApi },
@@ -4610,7 +5291,7 @@ main(int argc, char** argv)
         { "material_swatch_alpha_api", materialSwatchAlphaApi },
         { "material_swatch_color_view_api", materialSwatchColorViewApi },
         { "geometry_subset_gui_api", geometrySubsetGuiApi },
-        { "outliner_reset_opinions_menu_api", outlinerResetOpinionsMenuApi },
+        { "outliner_clear_opinions_menu_api", outlinerClearOpinionsMenuApi },
         { "outliner_layer_colors_api", outlinerLayerColorsApi },
         { "outliner_edit_layer_font_api", outlinerEditLayerFontApi },
         { "outliner_defined_prims_api", outlinerDefinedPrimsApi },
@@ -4622,6 +5303,7 @@ main(int argc, char** argv)
         { "mcp_server_api", mcpServerApi },
         { "preserve_state_menu_api", preserveStateMenuApi },
         { "layer_tree_root_row_api", layerTreeRootRowApi },
+        { "layer_create_replace_dialog_api", layerCreateReplaceDialogApi },
         { "layer_tree_multi_selection_api", layerTreeMultiSelectionApi },
     };
 

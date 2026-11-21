@@ -375,13 +375,13 @@ namespace {
 }  // namespace
 
 Command
-resetTransforms(const QList<SdfPath>& paths)
+identityTransforms(const QList<SdfPath>& paths)
 {
-    struct ResetTransformState {
+    struct IdentityTransformState {
         QList<TransformPropertyState> items;
     };
 
-    auto state = std::make_shared<ResetTransformState>();
+    auto state = std::make_shared<IdentityTransformState>();
 
     return Command(
         [paths, state](Session* session) {
@@ -389,7 +389,7 @@ resetTransforms(const QList<SdfPath>& paths)
                 return;
 
             const QList<SdfPath> unique = path::uniquePaths(paths);
-            command::beginDeferred(session, "Reset xform", static_cast<int>(unique.size()));
+            command::beginDeferred(session, "Identity transform", static_cast<int>(unique.size()));
 
             command::runWorker([session, unique, state]() {
                 QList<SdfPath> affected;
@@ -459,7 +459,7 @@ resetTransforms(const QList<SdfPath>& paths)
                                     QString restoreError;
                                     restoreTransformPropertyState(editLayer, item, restoreError);
                                     errors.append(error.isEmpty()
-                                                      ? QString("failed to reset xform: %1").arg(pathText(primPath))
+                                                      ? QString("failed to clear xform: %1").arg(pathText(primPath))
                                                       : error);
                                     continue;
                                 }
@@ -474,11 +474,11 @@ resetTransforms(const QList<SdfPath>& paths)
                 const bool success = errors.isEmpty() && !affected.isEmpty();
                 command::queueToSession(session, [session, affected, errors, success]() {
                     using Status = Session::Notify::Status;
-                    const QString message = success
-                                                ? QStringLiteral("Xform reset")
-                                                : (errors.isEmpty() ? QStringLiteral("No transforms to reset")
-                                                                    : appendError("Reset xform finished with errors",
-                                                                                  summarizeErrors(errors)));
+                    const QString message = success ? QStringLiteral("Transform identity applied")
+                                                    : (errors.isEmpty()
+                                                           ? QStringLiteral("No transforms to clear")
+                                                           : appendError("Transform identity finished with errors",
+                                                                         summarizeErrors(errors)));
                     command::finishDeferred(session, message, affected, success ? Status::Success : Status::Error);
                 });
             });
@@ -487,7 +487,7 @@ resetTransforms(const QList<SdfPath>& paths)
             if (!session || state->items.isEmpty())
                 return;
 
-            command::beginDeferred(session, "Undo reset xform", static_cast<int>(state->items.size()));
+            command::beginDeferred(session, "Undo identity transform", static_cast<int>(state->items.size()));
 
             command::runWorker([session, state]() {
                 QList<SdfPath> restored;
@@ -524,8 +524,8 @@ resetTransforms(const QList<SdfPath>& paths)
                 command::queueToSession(session, [session, restored, errors, success]() {
                     using Status = Session::Notify::Status;
                     command::finishDeferred(session,
-                                            success ? "Reset xform undone"
-                                                    : appendError("Undo reset xform finished with errors",
+                                            success ? "Transform identity undone"
+                                                    : appendError("Undo clear xform finished with errors",
                                                                   summarizeErrors(errors)),
                                             restored, success ? Status::Success : Status::Error);
                 });
@@ -688,7 +688,7 @@ centerPivots(const QList<SdfPath>& paths)
 }
 
 Command
-resetPivots(const QList<SdfPath>& paths)
+clearPivots(const QList<SdfPath>& paths)
 {
     struct PivotState {
         QList<TransformPropertyState> items;
@@ -702,7 +702,7 @@ resetPivots(const QList<SdfPath>& paths)
                 return;
 
             const QList<SdfPath> unique = path::uniquePaths(paths);
-            command::beginDeferred(session, "Reset pivot", static_cast<int>(unique.size()));
+            command::beginDeferred(session, "Clear pivot", static_cast<int>(unique.size()));
 
             command::runWorker([session, unique, state]() {
                 QList<SdfPath> affected;
@@ -767,7 +767,7 @@ resetPivots(const QList<SdfPath>& paths)
                                     restoreTransformPropertyState(editLayer, item, restoreError);
 
                                     errors.append(error.isEmpty()
-                                                      ? QString("failed to reset pivot: %1").arg(pathText(primPath))
+                                                      ? QString("failed to clear pivot: %1").arg(pathText(primPath))
                                                       : QString("%1: %2").arg(pathText(primPath), error));
                                     continue;
                                 }
@@ -783,8 +783,8 @@ resetPivots(const QList<SdfPath>& paths)
                 command::queueToSession(session, [session, affected, errors, success]() {
                     using Status = Session::Notify::Status;
                     command::finishDeferred(session,
-                                            success ? "Pivot reset"
-                                                    : appendError("Reset pivot finished with errors",
+                                            success ? "Pivot cleared"
+                                                    : appendError("Clear pivot finished with errors",
                                                                   summarizeErrors(errors)),
                                             affected, success ? Status::Success : Status::Error);
                 });
@@ -794,7 +794,7 @@ resetPivots(const QList<SdfPath>& paths)
             if (!session || state->items.isEmpty())
                 return;
 
-            command::beginDeferred(session, "Undo reset pivot", static_cast<int>(state->items.size()));
+            command::beginDeferred(session, "Undo clear pivot", static_cast<int>(state->items.size()));
 
             command::runWorker([session, state]() {
                 QList<SdfPath> restored;
@@ -831,19 +831,15 @@ resetPivots(const QList<SdfPath>& paths)
                 command::queueToSession(session, [session, restored, errors, success]() {
                     using Status = Session::Notify::Status;
                     command::finishDeferred(session,
-                                            success ? "Reset pivot undone"
-                                                    : appendError("Undo reset pivot failed", summarizeErrors(errors)),
+                                            success ? "Clear pivot undone"
+                                                    : appendError("Undo clear pivot failed", summarizeErrors(errors)),
                                             restored, success ? Status::Success : Status::Error);
                 });
             });
         });
 }
 
-Command
-identityTransforms(const QList<SdfPath>& paths)
-{
-    return resetTransforms(paths);
-}
+
 
 bool
 beginTransformOperation(const UsdStageRefPtr& stage, const QList<SdfPath>& selection, TransformOperation& operation,

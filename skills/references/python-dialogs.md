@@ -322,7 +322,7 @@ def ensure_looks_scope(stage):
 Choose the shading system for the target renderer. `command.new_material()`
 creates a UsdPreviewSurface material with undo support. For existing networks,
 prefer `connect_shader_input`, `connect_shader_node`, `connect_materialx_node`,
-`disconnect_shader_inputs` and `reset_shader_inputs` over equivalent direct edits.
+`disconnect_shader_inputs` and `clear_shader_inputs` over equivalent direct edits.
 The API reference documents their exact property paths and argument order.
 
 Creating an arbitrary complete MaterialX material is not exposed as one Python
@@ -600,3 +600,10 @@ For a dock, use the same content in `QDockWidget` and register it through the ma
 window as described above. For an authoring tool, replace the action with a
 documented command and add the completion/busy-state handling before enabling
 another operation.
+
+For explicit layer authoring, use `stageviz.command.override_paths(paths)` for
+existing ordinary prims. For a new built-in network at an existing material path,
+use `stageviz.command.replace_material_network(paths, "standard_surface")` (or
+`"preview_surface"` / `"open_pbr_surface"`). Wait for command completion before
+reading the composed outputs. The replacement keeps geometry bindings intact
+and disconnects competing weaker material outputs without muting layers.

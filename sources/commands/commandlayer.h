@@ -11,6 +11,20 @@
 namespace stageviz {
 
 /**
+ * @brief Creates an empty file-backed layer and adds it under the current edit layer.
+ *
+ * The caller must confirm replacing an existing file. Undo restores the parent
+ * sublayer list and any previously loaded destination contents in memory; the
+ * created or replaced file remains on disk, as with an explicit save operation.
+ * Redo restores the empty layer and sublayer arc without another disk write.
+ *
+ * @param filename Destination USD filename, including its extension.
+ * @return Undoable layer creation command.
+ */
+Command
+createSublayer(const QString& filename);
+
+/**
  * @brief Creates an undoable command that adds a USD file as a sublayer of the current edit layer.
  */
 Command

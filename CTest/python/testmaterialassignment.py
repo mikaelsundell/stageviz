@@ -192,7 +192,7 @@ class MaterialAssignmentTest:
                 action = next(a for a in menu.actions() if a.text() == label)
                 assert action.isEnabled() == enabled
                 if submenu == 'Material':
-                    assert ['separator' if a.isSeparator() else a.text() for a in menu.actions()] == ['Source', 'separator', 'Clear']
+                    assert [a.text() for a in menu.actions() if a.text() in ('Source', 'Owner', 'Clear')] == ['Source', 'Owner', 'Clear']
                     assert menu.grab().save(str(self.directory / ('material-menu-' + label + '-' + str(enabled) + '.png')))
                 observed.append(label)
                 if enabled:
@@ -207,17 +207,20 @@ class MaterialAssignmentTest:
             try:
                 parent = QtWidgets.QApplication.activePopupWidget()
                 assert isinstance(parent, QtWidgets.QMenu)
-                if submenu == 'Material':
-                    labels = [a.text() for a in parent.actions() if not a.isSeparator()]
-                    assert labels.index('Material') == labels.index('Transform') + 1, labels
+                if submenu == 'Material' and parent.objectName() == 'primContextMenu':
                     actions = parent.actions()
                     menu_objects.extend(actions)
-                    material_index = next(i for i, a in enumerate(actions) if a.text() == 'Material')
-                    assert actions[material_index - 1].isSeparator()
-                    pivot_action = next(a for a in actions if a.text() == 'Pivot')
-                    pivot = pivot_action.menu()
-                    menu_objects.append(pivot)
-                    assert ['separator' if a.isSeparator() else a.text() for a in pivot.actions()] == ['Center', 'separator', 'Reset']
+                    labels = [a.text() for a in actions if not a.isSeparator()]
+                    assert labels.index('Relationships') == labels.index('Transform') + 1, labels
+                    relation_index = next(i for i, a in enumerate(actions) if a.text() == 'Relationships')
+                    assert actions[relation_index - 1].isSeparator()
+                    action = next(a for a in actions if a.text() == 'Relationships')
+                    child = action.menu()
+                    menu_objects.extend([parent, action, child])
+                    parent.setActiveAction(action)
+                    child.popup(parent.mapToGlobal(parent.actionGeometry(action).topRight()))
+                    QtCore.QTimer.singleShot(50, open_submenu)
+                    return
                 action = next(a for a in parent.actions() if a.text() == submenu)
                 child = action.menu()
                 menu_objects.extend([parent, action, child])

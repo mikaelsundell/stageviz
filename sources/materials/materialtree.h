@@ -116,7 +116,7 @@ Q_SIGNALS:
      * Removing the local opinion allows weaker authored values or NodeDef defaults
      * to become visible again.
      */
-    void resetInputsRequested(const QList<SdfPath>& inputPaths);
+    void clearInputsRequested(const QList<SdfPath>& inputPaths);
 
     /**
      * @brief Requests creation of a USD shader node connected to an input.

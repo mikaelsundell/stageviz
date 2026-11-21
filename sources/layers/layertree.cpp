@@ -139,7 +139,6 @@ public:
             SdfLayerHandle layer;
             QString identifier;
             QString name;
-            QString tooltip;
             bool dirty = false;
             bool saveable = false;
             bool editable = true;
@@ -222,13 +221,6 @@ public:
                                    && (info.directlyMuted || (stage->HasLocalLayer(layer) && layer != editLayer));
                     for (const SdfPrimSpecHandle& rootPrim : layer->GetRootPrims())
                         info.primSpecCount += LayerItem::countPrimSpecs(rootPrim);
-                    info.tooltip = info.identifier;
-                    if (layer->IsAnonymous())
-                        info.tooltip += tr("\nAnonymous layer");
-                    else if (!info.saveable)
-                        info.tooltip += tr("\nRead-only layer");
-                    if (info.dirty)
-                        info.tooltip += tr("\nHas unsaved changes");
                     layerInfo.push_back(info);
                 }
 
@@ -259,8 +251,6 @@ public:
                     if (parent && !ambiguousParent) {
                         info.parentIdentifier = QString::fromStdString(parent->GetIdentifier());
                         info.canReorder = stage->HasLocalLayer(parent) && parent->PermissionToEdit();
-                        if (info.canReorder)
-                            info.tooltip += tr("\nDrag above or below a sibling to change layer strength.");
                     }
                 }
 
@@ -284,7 +274,6 @@ public:
                     }
                     if (info.muted && !info.directlyMuted) {
                         info.canMute = false;
-                        info.tooltip += tr("\nMuted because an ancestor layer is muted");
                     }
                 }
             }
@@ -331,7 +320,9 @@ public:
             itemState.identifier = info.identifier;
             itemState.parentIdentifier = info.parentIdentifier;
             itemState.name = name;
-            itemState.tooltip = info.tooltip;
+            itemState.dirty = info.dirty;
+            itemState.anonymous = info.layer->IsAnonymous();
+            itemState.saveable = info.saveable;
             itemState.primSpecCount = info.primSpecCount;
             itemState.root = info.layer == rootLayer;
             itemState.editTarget = info.layer == editLayer;

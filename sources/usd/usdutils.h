@@ -56,6 +56,25 @@ namespace layer {
     bool validateParent(const UsdStageRefPtr& stage, const SdfLayerHandle& layer, const SdfPath& parentPath,
                         QString& error, bool requireStrongest = true);
 
+    /**
+     * @brief Validates a composed parent for authoring a new child in a layer.
+     *
+     * The parent need not be authored in the destination layer. Inactive parents
+     * and native instance/prototype namespaces cannot receive new children.
+     */
+    bool validateChildParent(const UsdStageRefPtr& stage, const SdfLayerHandle& layer, const SdfPath& parentPath,
+                             QString& error);
+
+    /**
+     * @brief Returns a parent's authored child-order opinion, or an empty value.
+     */
+    VtValue childOrderOpinion(const SdfLayerHandle& layer, const SdfPath& parentPath);
+
+    /**
+     * @brief Restores an authored child-order opinion, clearing it for an empty value.
+     */
+    void restoreChildOrderOpinion(const SdfLayerHandle& layer, const SdfPath& parentPath, const VtValue& value);
+
 }  // namespace layer
 
 namespace identifier {

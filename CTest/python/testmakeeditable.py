@@ -77,7 +77,7 @@ class MakeEditableTest(_base['ViewportTest']):
                 labels = ['separator' if a.isSeparator() else a.text() for a in actions]
                 selected = list(stageviz.session().paths())
                 proxies = any(stageviz.session().stage().GetPrimAtPath(p).IsInstanceProxy() for p in selected)
-                expected = (['Select', 'separator'] if proxies else []) + ['Make editable', 'Source']
+                expected = ['Parent', 'Source', 'separator', 'Make editable']
                 assert labels == expected, labels
                 action = next(a for a in actions if a.text() == action_name)
                 assert action.isEnabled() != locked
@@ -95,16 +95,20 @@ class MakeEditableTest(_base['ViewportTest']):
                 failures.append(repr(error))
                 close()
 
-        def open_instance():
-            for widget in QtWidgets.QApplication.topLevelWidgets():
-                if not isinstance(widget, QtWidgets.QMenu) or not widget.isVisible():
-                    continue
-                for action in widget.actions():
-                    if action.text() == 'Instance' and action.menu():
-                        widget.setActiveAction(action)
-                        action.menu().popup(widget.mapToGlobal(widget.actionGeometry(action).topRight()))
-                        QtCore.QTimer.singleShot(50, choose)
-                        return
+        retained = []
+        def open_instance(level=0):
+            try:
+                widget = QtWidgets.QApplication.activePopupWidget()
+                assert isinstance(widget, QtWidgets.QMenu)
+                action = next(a for a in widget.actions() if a.text() == ('Composition' if level == 0 else 'Instance'))
+                child = action.menu()
+                retained.extend([widget, action, child])
+                widget.setActiveAction(action)
+                child.popup(widget.mapToGlobal(widget.actionGeometry(action).topRight()))
+                QtCore.QTimer.singleShot(50, (lambda: open_instance(1)) if level == 0 else choose)
+            except Exception as error:
+                failures.append(repr(error))
+                close()
 
         watchdog = QtCore.QTimer(tree)
         watchdog.setSingleShot(True)
@@ -192,7 +196,7 @@ class MakeEditableTest(_base['ViewportTest']):
             self.snapshot('multiple_instances_' + label)
 
             if label == 'proxies':
-                self.menu(selected[0], action_name='Select', from_viewport=True)
+                self.menu(selected[0], action_name='Parent', from_viewport=True)
                 assert list(session.paths()) == roots, 'Select deduplicates instance roots'
                 stageviz.command.select_paths(selected)
                 assert tb.wait_for_commands()
