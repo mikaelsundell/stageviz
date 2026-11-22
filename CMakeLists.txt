@@ -254,8 +254,8 @@ source_group("Resource Files" FILES ${project_resources})
 
 set(project_copyright "Copyright 2025-present Contributors to the ${project_name} project")
 set(project_identifier "com.github.mikaelsundell.${project_name}")
-set(project_long_version "0.5.7")
-set(project_short_version "0.5")
+set(project_long_version "0.6.0")
+set(project_short_version "0.6")
 set(project_url "https://github.com/mikaelsundell/stageviz")
 
 if(APPLE)

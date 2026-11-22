@@ -6,6 +6,29 @@
 
 [Application architecture](docs/architecture.md) — a short guide to the code, editing flow and rendering pipeline.
 
+## Table of contents
+
+- [Introduction](#introduction)
+- [Why Stageviz?](#why-stageviz)
+- [The everyday USD stuff](#the-everyday-usd-stuff)
+- [A viewport for looking and understanding](#a-viewport-for-looking-and-understanding)
+- [Materials should be visual](#materials-should-be-visual)
+- [Python is part of the application](#python-is-part-of-the-application)
+- [Stageviz + AI agents](#stageviz--ai-agents)
+- [How Stageviz is developed](#how-stageviz-is-developed)
+- [A few things Stageviz likes doing](#a-few-things-stageviz-likes-doing)
+- [The idea behind it](#the-idea-behind-it)
+- [Building](#building)
+  - [macOS](#macos)
+  - [Windows](#windows)
+- [Testing](#testing)
+- [Formatting](#formatting)
+- [Built with](#built-with)
+- [Connect an MCP client](#connect-an-mcp-client)
+- [Web resources](#web-resources)
+- [Copyright](#copyright)
+- [One more thing](#one-more-thing)
+
 ## Introduction
 
 **Open a stage. See what is really there. Change it. Undo it. Script the rest.**
