@@ -835,6 +835,10 @@ values in the active edit target; time-sampled authoring is not exposed here.
 
 `set_attribute_values(attribute_paths, value) -> None`
 : Author the same supported default value on several existing attributes.
+  Attribute value commands restore opinions at their mapped edit-target paths,
+  including variants. Pivot edits preserve the composed transform and restore the
+  complete mapped transform property specs on undo. The command stack clears history
+  when it detects a different stage or edit target.
 
 Supported Python values for the two setter functions are:
 
@@ -891,7 +895,8 @@ Other value types are rejected by this binding.
 : Remove local transform opinions, exposing weaker transforms or authoring identity when none exist.
 
 `clear_opinions(paths, group="all") -> None`
-: Recursively remove edit-layer property overrides on composed prims, exposing weaker opinions. All and Other also remove inert `over` containers. Preserve metadata, composition arcs and edit-layer-owned definitions. Optional positional `group` is `all`, `transforms`, `visibility`, `materials`, `geometry`, `primvars`, `lights`, `cameras`, or `other`. Materials includes bindings and shading inputs/outputs; geometry uses USD schema properties. Undo restores the removed property specs in the original authoring layer, even after switching edit targets.
+: Recursively remove edit-layer property overrides on composed prims, exposing weaker opinions. All and Other also remove inert `over` containers. Preserve metadata, composition arcs and edit-layer-owned definitions. Optional positional `group` is `all`, `transforms`, `visibility`, `materials`, `geometry`, `primvars`, `lights`, `cameras`, or `other`. Materials includes bindings and shading inputs/outputs; geometry uses USD schema properties. Undo restores the removed property specs in the original mapped authoring layer. The command stack clears history
+  when it detects a different stage or edit target; cross-target history is not retained.
 
 ### Materials
 

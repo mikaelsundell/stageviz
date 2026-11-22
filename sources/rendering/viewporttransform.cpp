@@ -39,7 +39,7 @@ public:
     using Mode = ViewportGizmo::Mode;
     static GfRotation rotationWithoutScale(const GfMatrix4d& matrix);
     static GfMatrix4d frameWithoutScale(const GfMatrix4d& matrix);
-    static GfMatrix4d frameWithoutScale(const UsdPrim& prim);
+    static GfMatrix4d frameWithoutScale(const UsdPrim& prim, UsdTimeCode time);
     static GfVec3d eulerWithoutScale(const GfMatrix4d& matrix);
     static GfVec3d eulerNearestTo(const GfMatrix4d& matrix, const GfVec3d& reference);
     static bool applyIndividualRotation(const UsdStageRefPtr& stage, TransformOperation& operation,
@@ -208,14 +208,14 @@ ViewportTransformPrivate::frameWithoutScale(const GfMatrix4d& matrix)
 }
 
 GfMatrix4d
-ViewportTransformPrivate::frameWithoutScale(const UsdPrim& prim)
+ViewportTransformPrivate::frameWithoutScale(const UsdPrim& prim, UsdTimeCode time)
 {
     if (!prim)
         return GfMatrix4d(1.0);
     if (prim.GetAttribute(TfToken("xformOp:transform:pivot"))) {
         GfMatrix4d pivotFrame(1.0);
         QString error;
-        if (stage::worldPivotFrame(prim.GetStage(), prim.GetPath(), pivotFrame, error))
+        if (stage::worldPivotFrame(prim.GetStage(), prim.GetPath(), pivotFrame, error, time))
             return frameWithoutScale(pivotFrame);
     }
 
@@ -234,10 +234,10 @@ ViewportTransformPrivate::frameWithoutScale(const UsdPrim& prim)
             const UsdGeomXformOp::Type type = op.GetOpType();
             const bool isRotation = type >= UsdGeomXformOp::TypeRotateX && type <= UsdGeomXformOp::TypeOrient;
             if (isRotation) {
-                localFrame = op.GetOpTransform(UsdTimeCode::Default()) * localFrame;
+                localFrame = op.GetOpTransform(time) * localFrame;
             }
             else if (type == UsdGeomXformOp::TypeTransform) {
-                localFrame = frameWithoutScale(op.GetOpTransform(UsdTimeCode::Default())) * localFrame;
+                localFrame = frameWithoutScale(op.GetOpTransform(time)) * localFrame;
             }
         }
 
@@ -289,13 +289,14 @@ ViewportTransformPrivate::referenceOrientation(const QList<SdfPath>& targetPaths
             const UsdPrim parent = prim ? prim.GetParent() : UsdPrim();
             GfMatrix4d parentWorld(1.0);
             QString error;
-            if (parent && stage::worldTransform(d.host->stage(), parent.GetPath(), parentWorld, error))
+            if (parent
+                && stage::worldTransform(d.host->stage(), parent.GetPath(), parentWorld, error, d.host->timeCode()))
                 return frameWithoutScale(parentWorld);
         }
         return GfMatrix4d(1.0);
     case ViewportGizmo::ReferenceFrame::Object:
         if (targetPaths.size() == 1 && d.host->stage())
-            return frameWithoutScale(d.host->stage()->GetPrimAtPath(targetPaths.first()));
+            return frameWithoutScale(d.host->stage()->GetPrimAtPath(targetPaths.first()), d.host->timeCode());
         return GfMatrix4d(1.0);
     }
     return GfMatrix4d(1.0);
@@ -324,7 +325,7 @@ ViewportTransformPrivate::selectedVisiblePaths() const
             continue;
 
         const UsdGeomImageable imageable(prim);
-        if (imageable && imageable.ComputeVisibility() == UsdGeomTokens->invisible)
+        if (imageable && imageable.ComputeVisibility(d.host->timeCode()) == UsdGeomTokens->invisible)
             continue;
 
         collector.append(path);
@@ -354,7 +355,7 @@ ViewportTransformPrivate::selectionPivot(GfVec3d& pivot)
         for (const auto& path : targetPaths) {
             GfMatrix4d frame(1.0);
             QString error;
-            if (!stage::worldPivotFrame(d.host->stage(), path, frame, error))
+            if (!stage::worldPivotFrame(d.host->stage(), path, frame, error, d.host->timeCode()))
                 return false;
             pivot += frame.ExtractTranslation();
             if (targetPaths.size() == 1)
@@ -373,7 +374,7 @@ ViewportTransformPrivate::selectionPivot(GfVec3d& pivot)
     const SdfPath& path = targetPaths.last();
     GfMatrix4d frame(1.0);
     QString error;
-    if (!stage::worldPivotFrame(d.host->stage(), path, frame, error))
+    if (!stage::worldPivotFrame(d.host->stage(), path, frame, error, d.host->timeCode()))
         return false;
     pivot = frame.ExtractTranslation();
     d.frame.orientation = referenceOrientation({ path });

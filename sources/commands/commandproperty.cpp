@@ -765,6 +765,7 @@ setAttributeValues(const QList<SdfPath>& attributePaths, const VtValue& value)
     struct AttributeValueState {
         struct Item {
             SdfPath attributePath;
+            SdfPath specPath;
             bool hadRootDefault = false;
             VtValue previousRootDefault;
             bool preservePivotTransform = false;
@@ -772,6 +773,8 @@ setAttributeValues(const QList<SdfPath>& attributePaths, const VtValue& value)
             TransformPropertyState transformState;
         };
 
+        UsdEditTarget target;
+        UsdStageWeakPtr stage;
         QList<Item> items;
         bool captured = false;
     };
@@ -783,6 +786,14 @@ setAttributeValues(const QList<SdfPath>& attributePaths, const VtValue& value)
             if (!session || attributePaths.isEmpty() || value.IsEmpty())
                 return;
 
+            if (!state->target.GetLayer()) {
+                READ_LOCKER(locker, session->stageLock(), "stageLock");
+                const auto stage = session->stageUnsafe();
+                if (!stage)
+                    return;
+                state->target = stage->GetEditTarget();
+                state->stage = stage;
+            }
             const QList<SdfPath> paths = path::uniquePaths(attributePaths);
             command::beginDeferred(session, "Set attribute values", static_cast<int>(paths.size()));
 
@@ -795,15 +806,14 @@ setAttributeValues(const QList<SdfPath>& attributePaths, const VtValue& value)
                     WRITE_LOCKER(locker, session->stageLock(), "stageLock");
                     const UsdStageRefPtr stage = session->stageUnsafe();
 
-                    if (!stage) {
+                    if (!stage || stage != state->stage) {
                         errors.append("stage missing");
                     }
                     else {
-                        QString editError;
-                        const SdfLayerHandle editLayer = currentEditLayer(stage, editError);
+                        const SdfLayerHandle editLayer = state->target.GetLayer();
 
-                        if (!editLayer) {
-                            errors.append(editError);
+                        if (!editLayer || !editLayer->PermissionToEdit()) {
+                            errors.append("original attribute layer is not editable");
                         }
                         else {
                             if (!state->captured) {
@@ -831,10 +841,15 @@ setAttributeValues(const QList<SdfPath>& attributePaths, const VtValue& value)
 
                                     AttributeValueState::Item item;
                                     item.attributePath = attributePath;
-                                    item.hadRootDefault = editLayer->HasField(attributePath, SdfFieldKeys->Default);
+                                    item.specPath = state->target.MapToSpecPath(attributePath);
+                                    if (item.specPath.IsEmpty()) {
+                                        errors.append("attribute cannot be mapped into the edit target");
+                                        continue;
+                                    }
+                                    item.hadRootDefault = editLayer->HasField(item.specPath, SdfFieldKeys->Default);
 
                                     if (item.hadRootDefault)
-                                        item.previousRootDefault = editLayer->GetField(attributePath,
+                                        item.previousRootDefault = editLayer->GetField(item.specPath,
                                                                                        SdfFieldKeys->Default);
 
                                     const bool isPivot = attributePath.GetNameToken()
@@ -864,7 +879,8 @@ setAttributeValues(const QList<SdfPath>& attributePaths, const VtValue& value)
                                         }
 
                                         QString transformError;
-                                        if (!captureTransformPropertyState(editLayer, attributePath.GetPrimPath(),
+                                        // Keep a terminal variant selection in the owning spec path.
+                                        if (!captureTransformPropertyState(editLayer, item.specPath.GetParentPath(),
                                                                            item.transformState, transformError)) {
                                             errors.append(transformError);
                                             continue;
@@ -879,7 +895,7 @@ setAttributeValues(const QList<SdfPath>& attributePaths, const VtValue& value)
                                 state->captured = !state->items.isEmpty();
                             }
 
-                            UsdEditContext context(stage, UsdEditTarget(editLayer));
+                            UsdEditContext context(stage, state->target);
 
                             for (const AttributeValueState::Item& item : state->items) {
                                 if (item.preservePivotTransform) {
@@ -959,15 +975,14 @@ setAttributeValues(const QList<SdfPath>& attributePaths, const VtValue& value)
                     WRITE_LOCKER(locker, session->stageLock(), "stageLock");
                     const UsdStageRefPtr stage = session->stageUnsafe();
 
-                    if (!stage) {
+                    if (!stage || stage != state->stage) {
                         errors.append("stage missing");
                     }
                     else {
-                        QString editError;
-                        const SdfLayerHandle editLayer = currentEditLayer(stage, editError);
+                        const SdfLayerHandle editLayer = state->target.GetLayer();
 
-                        if (!editLayer) {
-                            errors.append(editError);
+                        if (!editLayer || !editLayer->PermissionToEdit()) {
+                            errors.append("original attribute layer is not editable");
                         }
                         else {
                             for (const AttributeValueState::Item& item : state->items) {
@@ -986,10 +1001,9 @@ setAttributeValues(const QList<SdfPath>& attributePaths, const VtValue& value)
                                 }
 
                                 if (item.hadRootDefault)
-                                    editLayer->SetField(item.attributePath, SdfFieldKeys->Default,
-                                                        item.previousRootDefault);
+                                    editLayer->SetField(item.specPath, SdfFieldKeys->Default, item.previousRootDefault);
                                 else
-                                    editLayer->EraseField(item.attributePath, SdfFieldKeys->Default);
+                                    editLayer->EraseField(item.specPath, SdfFieldKeys->Default);
 
                                 affectedCollector.append(item.attributePath.GetPrimPath());
                             }

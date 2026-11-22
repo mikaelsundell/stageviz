@@ -29,6 +29,8 @@ struct TransformPropertyState {
 
 /**
  * @brief Captures transform property specs without authoring to the edit layer.
+ *
+ * The prim path is a layer spec path, including any mapped variant selections.
  */
 bool
 captureTransformPropertyState(const SdfLayerHandle& editLayer, const SdfPath& primPath, TransformPropertyState& state,

@@ -17,7 +17,7 @@ import uuid
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'CTest/benchmark/pipeline'))
 from run_regressions import discover_suites
-from mcp_runtime import test_desktop
+from mcp_runtime import qt_runtime_environment, test_desktop
 
 
 def configurations(value):
@@ -49,7 +49,10 @@ def executable(directory, configuration, platform=None):
 
 
 def tools(directory, cmake_override=None):
-    cmake = cmake_override or shutil.which('cmake') or cache_value(directory, 'CMAKE_COMMAND')
+    cached_cmake = cache_value(directory, 'CMAKE_COMMAND')
+    cmake = cmake_override
+    if not cmake:
+        cmake = cached_cmake if cached_cmake and Path(cached_cmake).is_file() else shutil.which('cmake')
     if not cmake or not Path(cmake).is_file():
         raise RuntimeError('CMake is required. Put it on PATH or pass --cmake PATH.')
     suffix = '.exe' if sys.platform == 'win32' else ''
@@ -96,8 +99,7 @@ def run_configuration(args, configuration, output):
     environment = dict(os.environ)
     environment['PYTHONUNBUFFERED'] = '1'
     environment['STAGEVIZ_TEST_SETTINGS_DIR'] = str(output / 'settings')
-    if sys.platform == 'darwin':
-        environment['DYLD_IMAGE_SUFFIX'] = '_debug'
+    environment = qt_runtime_environment(environment, configuration)
     try:
         if not (directory / 'CMakeCache.txt').is_file():
             raise RuntimeError('No configured build at %s. Run build_app for %s first.' % (directory, configuration))
@@ -138,7 +140,7 @@ def run_configuration(args, configuration, output):
         baseline = directory / 'test-baselines' / ('testapi_%s.json' % configuration.lower())
         step = run_logged([sys.executable, ROOT / 'CTest/benchmark/pipeline/run_regressions.py',
                            '--app', app, '--output', output / 'python', '--port', str(args.port),
-                           '--performance', '--performance-baseline', baseline],
+                           '--configuration', configuration, '--performance', '--performance-baseline', baseline],
                           output / 'python.log', environment)
         row['steps'].append(dict(name='python', **step))
         row['passed'] = all(step['returncode'] == 0 for step in row['steps'])

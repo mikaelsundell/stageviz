@@ -35,6 +35,7 @@ class RenderView : public QWidget {
 public:
     /**
      * @brief Constructs the render view widget.
+     *
      * @param parent Optional parent widget.
      */
     RenderView(QWidget* parent = nullptr);
@@ -53,6 +54,7 @@ public:
 
     /**
      * @brief Captures the current viewport image.
+     *
      * @return Image of the rendered viewport.
      */
     QImage captureImage();
@@ -112,6 +114,7 @@ public:
 
     /**
      * @brief Returns the currently captured visible prim paths.
+     *
      * @return Accumulated visible prim paths captured from one or more views.
      */
     QList<SdfPath> visibleCapturePaths() const;
@@ -198,6 +201,11 @@ public:
      * @brief Sets the USD time code evaluated by the viewport.
      */
     void setTimeCode(double timeCode);
+
+    /**
+     * @brief Computes displayed-time framing bounds, using the isolate mask when paths are empty.
+     */
+    GfBBox3d framingBounds(const QList<SdfPath>& paths = {}) const;
 
     /**
      * @}

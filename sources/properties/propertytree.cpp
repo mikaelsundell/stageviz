@@ -21,6 +21,7 @@
 #include "threadutils.h"
 #include "tracelocks.h"
 #include "ui.h"
+#include "usdedit.h"
 #include "usdutils.h"
 #include "viewcontext.h"
 #include <QApplication>
@@ -137,6 +138,8 @@ namespace {
 
 class PropertyTreePrivate : public QObject, public SignalGuard {
 public:
+    ~PropertyTreePrivate() override { cancelComponentPreview(); }
+    void cancelComponentPreview();
     void init();
     void close();
     void updateStage(UsdStageRefPtr stage);
@@ -229,7 +232,7 @@ public:
     void addMatrixRows(PropertyItem* parent, const SdfPath& propertyPath, const VtValue& value);
     void installComponentEditor(PropertyItem* item, double value, bool integral);
     bool componentValue(PropertyItem* item, double value, VtValue& result, QString& error) const;
-    bool applyComponentPreview(PropertyItem* item, double value);
+    bool applyComponentPreview(PropertyItem* item, double value, edit::AttributePreview& preview);
 
     static QString attributeBaseName(const UsdAttribute& attr);
     static QStringList tokenOptions(const UsdAttribute& attr);
@@ -446,6 +449,7 @@ public:
         QPointer<ViewContext> context;
         QPointer<PropertyTree> tree;
         bool componentScrubbing = false;
+        std::function<void()> cancelPreview;
         bool pendingEditorRefresh = false;
         bool pendingMultiAttributes = false;
         bool pendingMultiRelationships = false;
@@ -1354,7 +1358,7 @@ PropertyTreePrivate::componentValue(PropertyItem* item, double value, VtValue& r
 }
 
 bool
-PropertyTreePrivate::applyComponentPreview(PropertyItem* item, double value)
+PropertyTreePrivate::applyComponentPreview(PropertyItem* item, double value, edit::AttributePreview& preview)
 {
     if (!item || !d.stage || d.update)
         return false;
@@ -1370,15 +1374,7 @@ PropertyTreePrivate::applyComponentPreview(PropertyItem* item, double value)
 
     WRITE_LOCKER(locker, d.context ? d.context->stageLock() : session()->stageLock(), "stageLock");
 
-    const UsdPrim owner = d.stage->GetPrimAtPath(item->propertyPath().GetPrimPath());
-    if (!owner || owner.IsInstanceProxy())
-        return false;
-
-    const UsdAttribute attr = d.stage->GetAttributeAtPath(item->propertyPath());
-    if (!attr)
-        return false;
-
-    return attr.Set(updated);
+    return preview.matches(d.stage) && preview.set(updated);
 }
 
 void
@@ -1432,101 +1428,62 @@ PropertyTreePrivate::installComponentEditor(PropertyItem* item, double value, bo
     struct ScrubState {
         bool active = false;
         bool live = false;
-        bool hadEditDefault = false;
         bool ignoreNextEditingFinished = false;
-        VtValue previousEditDefault;
+        edit::AttributePreview preview;
     };
     const auto scrub = std::make_shared<ScrubState>();
-
-    connect(spin, &SpinBox::scrubStarted, d.tree.data(), [this, item, scrub]() {
+    connect(spin, &QObject::destroyed, this, [this, scrub]() {
+        if (scrub->active)
+            cancelComponentPreview();
+    });
+    connect(spin, &SpinBox::scrubStarted, this, [this, item, spin, scrub]() {
         if (d.update || !d.stage || !item)
             return;
-
-        // The live scrub path writes directly for preview. Never enter that path
-        // for a proxy; final committed edits are validated by the Command.
+        cancelComponentPreview();
         {
             READ_LOCKER(locker, d.context ? d.context->stageLock() : session()->stageLock(), "stageLock");
-            const UsdPrim owner = d.stage->GetPrimAtPath(item->propertyPath().GetPrimPath());
-            if (!owner || owner.IsInstanceProxy())
+            if (!scrub->preview.begin(d.stage, item->propertyPath()))
                 return;
         }
-
         scrub->active = true;
         scrub->live = item->propertyPath().GetNameToken() != TfToken("xformOp:translate:pivot")
                       && item->propertyPath().GetNameToken() != TfToken("xformOp:transform:pivot");
-        scrub->hadEditDefault = false;
-        scrub->previousEditDefault = VtValue();
-
-        if (!scrub->live)
-            return;
-
-        {
-            READ_LOCKER(locker, d.context ? d.context->stageLock() : session()->stageLock(), "stageLock");
-
-            const SdfLayerHandle editLayer = d.stage->GetEditTarget().GetLayer();
-            if (!editLayer) {
-                scrub->live = false;
-                return;
-            }
-
-            scrub->hadEditDefault = editLayer->HasField(item->propertyPath(), SdfFieldKeys->Default);
-            if (scrub->hadEditDefault)
-                scrub->previousEditDefault = editLayer->GetField(item->propertyPath(), SdfFieldKeys->Default);
-        }
-
         d.componentScrubbing = true;
+        d.cancelPreview = [this, scrub, editor = QPointer<SpinBox>(spin)]() {
+            WRITE_LOCKER(locker, d.context ? d.context->stageLock() : session()->stageLock(), "stageLock");
+            scrub->active = false;
+            scrub->ignoreNextEditingFinished = true;
+            scrub->preview.restore();
+            if (editor)
+                QTimer::singleShot(0, editor, [scrub]() { scrub->ignoreNextEditingFinished = false; });
+        };
     });
-
-    connect(spin, &SpinBox::scrubbed, d.tree.data(), [this, item, scrub](double next) {
+    connect(spin, &SpinBox::scrubbed, this, [this, item, scrub](double next) {
         if (!scrub->active || !scrub->live || d.update)
             return;
-
-        applyComponentPreview(item, next);
+        if (!applyComponentPreview(item, next, scrub->preview))
+            cancelComponentPreview();
     });
-
-    connect(spin, &SpinBox::scrubFinished, d.tree.data(), [this, item, spin, scrub, commitItemText](double finalValue) {
+    connect(spin, &SpinBox::scrubFinished, this, [this, item, scrub, commitItemText](double finalValue) {
         if (!scrub->active)
             return;
-
-        scrub->active = false;
-        scrub->ignoreNextEditingFinished = true;
-
-        QTimer::singleShot(0, spin, [scrub]() {
-            if (scrub)
-                scrub->ignoreNextEditingFinished = false;
-        });
-
-        if (!scrub->live) {
-            commitItemText(QString::number(finalValue, 'g', 12));
-            return;
-        }
-
         VtValue final;
         QString error;
-        if (!componentValue(item, finalValue, final, error) || final.IsEmpty()) {
-            d.componentScrubbing = false;
+        const bool validValue = !scrub->live || (componentValue(item, finalValue, final, error) && !final.IsEmpty());
+        bool sameTarget = false;
+        {
+            READ_LOCKER(locker, d.context ? d.context->stageLock() : session()->stageLock(), "stageLock");
+            sameTarget = scrub->preview.matches(d.stage);
+        }
+        cancelComponentPreview();
+        if (!validValue || !sameTarget) {
             restoreItemText(item);
             return;
         }
-
-        {
-            WRITE_LOCKER(locker, d.context ? d.context->stageLock() : session()->stageLock(), "stageLock");
-
-            const SdfLayerHandle editLayer = d.stage ? d.stage->GetEditTarget().GetLayer() : SdfLayerHandle();
-            if (!editLayer) {
-                d.componentScrubbing = false;
-                restoreItemText(item);
-                return;
-            }
-
-            if (scrub->hadEditDefault)
-                editLayer->SetField(item->propertyPath(), SdfFieldKeys->Default, scrub->previousEditDefault);
-            else
-                editLayer->EraseField(item->propertyPath(), SdfFieldKeys->Default);
-        }
-
-        d.componentScrubbing = false;
-        session()->commandStack()->execute(new Command(setAttributeValues(item->propertyPaths(), final)));
+        if (!scrub->live)
+            commitItemText(QString::number(finalValue, 'g', 12));
+        else
+            session()->commandStack()->execute(new Command(setAttributeValues(item->propertyPaths(), final)));
     });
 
     connect(spin, &QDoubleSpinBox::editingFinished, d.tree.data(), [this, commitItemText, spin, scrub]() {
@@ -3192,8 +3149,20 @@ PropertyTreePrivate::init()
 }
 
 void
+PropertyTreePrivate::cancelComponentPreview()
+{
+    // Clear the callback first: restoring USD may synchronously notify observers.
+    auto cancel = std::move(d.cancelPreview);
+    d.cancelPreview = {};
+    if (cancel)
+        cancel();
+    d.componentScrubbing = false;
+}
+
+void
 PropertyTreePrivate::close()
 {
+    cancelComponentPreview();
     d.pendingEditorRefresh = false;
     QSignalBlocker blocker(d.tree.data());
     d.update = true;
@@ -3207,6 +3176,7 @@ PropertyTreePrivate::close()
 void
 PropertyTreePrivate::updateStage(UsdStageRefPtr stage)
 {
+    cancelComponentPreview();
     QSignalBlocker blocker(d.tree.data());
     d.update = true;
 
@@ -3541,6 +3511,7 @@ PropertyTreePrivate::addAttribute(PropertyItem* parent, const UsdAttribute& attr
 void
 PropertyTreePrivate::updateSelection(const QList<SdfPath>& paths)
 {
+    cancelComponentPreview();
     PerfScope perfScope("ui.property_selection");
     d.pendingEditorRefresh = false;
     auto normalizedPrimPaths = [](const QList<SdfPath>& input) {

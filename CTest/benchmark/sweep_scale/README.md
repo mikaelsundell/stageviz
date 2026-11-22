@@ -17,7 +17,7 @@ For macOS standalone Release comparisons, build both revisions using the same
 SDK and the project's packaging command:
 
 ```sh
-DYLD_IMAGE_SUFFIX=_debug THIRDPARTY_DIR=/path/to/arm64.release \
+THIRDPARTY_DIR=/path/to/arm64.release \
   ./build_app.sh release --github
 ```
 

@@ -311,6 +311,43 @@ namespace stage {
         return bbox;
     }
 
+    GfBBox3d geometryBounds(UsdStageRefPtr stage, const QList<SdfPath>& paths, UsdTimeCode time)
+    {
+        if (!stage || paths.isEmpty())
+            return {};
+        bbox::CacheGuard bboxCache(bbox::CacheGuard::Purposes::Geometry, time);
+
+        GfRange3d worldRange;
+        std::unordered_set<SdfPath, SdfPath::Hash> visited;
+        // Framing needs object bounds; keep this projection out of selection storage.
+        for (const SdfPath& path : stage::objectPaths(stage, paths)) {
+            const SdfPath primPath = path.IsPropertyPath() ? path.GetPrimPath() : path;
+
+            UsdPrim prim = stage->GetPrimAtPath(primPath);
+            if (!prim)
+                continue;
+
+            for (const UsdPrim& descendant : UsdPrimRange(prim)) {
+                if (!descendant.IsActive() || !descendant.IsDefined())
+                    continue;
+
+                if (!visited.insert(descendant.GetPath()).second)
+                    continue;
+
+                const UsdGeomImageable imageable(descendant);
+                if (!imageable)
+                    continue;
+
+                const GfBBox3d bbox = bboxCache.ComputeWorldBound(descendant);
+                const GfRange3d range = bbox.ComputeAlignedRange();
+
+                if (!range.IsEmpty())
+                    worldRange.UnionWith(range);
+            }
+        }
+        return GfBBox3d(worldRange);
+    }
+
     SdfPath parentPath(UsdStageRefPtr stage, const SdfPath& path)
     {
         if (!stage || path.IsEmpty())
@@ -454,7 +491,7 @@ namespace stage {
         return preserved;
     }
 
-    bool worldTransform(UsdStageRefPtr stage, const SdfPath& path, GfMatrix4d& matrix, QString& error)
+    bool worldTransform(UsdStageRefPtr stage, const SdfPath& path, GfMatrix4d& matrix, QString& error, UsdTimeCode time)
     {
         if (!stage) {
             error = "stage missing";
@@ -473,12 +510,13 @@ namespace stage {
             return false;
         }
 
-        UsdGeomXformCache cache(UsdTimeCode::Default());
+        UsdGeomXformCache cache(time);
         matrix = cache.GetLocalToWorldTransform(prim);
         return true;
     }
 
-    static bool translationWorldPivot(UsdStageRefPtr stage, const SdfPath& path, GfVec3d& pivot, QString& error)
+    static bool translationWorldPivot(UsdStageRefPtr stage, const SdfPath& path, GfVec3d& pivot, QString& error,
+                                      UsdTimeCode time)
     {
         if (!stage) {
             error = "stage missing";
@@ -497,7 +535,7 @@ namespace stage {
             return false;
         }
 
-        UsdGeomXformCache cache(UsdTimeCode::Default());
+        UsdGeomXformCache cache(time);
         const GfMatrix4d world = cache.GetLocalToWorldTransform(prim);
 
         // Fall back to the transformed prim origin for arbitrary xform stacks.
@@ -547,13 +585,16 @@ namespace stage {
             const SdfPath pivotPath = primSpec->GetPath().AppendProperty(pivotToken);
             VtValue pivotValue;
 
-            if (layer->HasField(pivotPath, SdfFieldKeys->Default)) {
+            if (!time.IsDefault() && prim.GetAttribute(pivotToken).Get(&pivotValue, time)) {
+                // Let USD resolve animation and layer time offsets.
+            }
+            else if (layer->HasField(pivotPath, SdfFieldKeys->Default)) {
                 pivotValue = layer->GetField(pivotPath, SdfFieldKeys->Default);
             }
             else {
                 const UsdAttribute pivotAttr = prim.GetAttribute(pivotToken);
                 if (pivotAttr)
-                    pivotAttr.Get(&pivotValue, UsdTimeCode::Default());
+                    pivotAttr.Get(&pivotValue, time);
             }
 
             if (pivotValue.IsHolding<GfVec3d>()) {
@@ -583,14 +624,14 @@ namespace stage {
             // Stageviz so an arbitrary orphaned pivot attribute is not treated
             // as active for unrelated transform stacks.
             VtTokenArray composedOrder;
-            const bool matrixOnly = xformable.GetXformOpOrderAttr().Get(&composedOrder, UsdTimeCode::Default())
+            const bool matrixOnly = xformable.GetXformOpOrderAttr().Get(&composedOrder, time)
                                     && composedOrder.size() == 1
                                     && composedOrder.front() == TfToken("xformOp:transform");
 
             if (matrixOnly) {
                 const UsdAttribute pivotAttr = prim.GetAttribute(pivotToken);
                 VtValue pivotValue;
-                if (pivotAttr && pivotAttr.Get(&pivotValue, UsdTimeCode::Default())) {
+                if (pivotAttr && pivotAttr.Get(&pivotValue, time)) {
                     if (pivotValue.IsHolding<GfVec3d>()) {
                         localPivot = pivotValue.UncheckedGet<GfVec3d>();
                         foundPivot = true;
@@ -614,10 +655,10 @@ namespace stage {
         return true;
     }
 
-    bool worldPivotFrame(UsdStageRefPtr stage, const SdfPath& path, GfMatrix4d& frame, QString& error)
+    bool worldPivotFrame(UsdStageRefPtr stage, const SdfPath& path, GfMatrix4d& frame, QString& error, UsdTimeCode time)
     {
         GfMatrix4d world(1.0);
-        if (!worldTransform(stage, path, world, error))
+        if (!worldTransform(stage, path, world, error, time))
             return false;
         const UsdPrim prim = stage->GetPrimAtPath(path);
         const UsdGeomXformable xformable(prim);
@@ -650,12 +691,12 @@ namespace stage {
         const bool matrixOnly = order.size() == 1 && order.front() == TfToken("xformOp:transform");
         GfMatrix4d local(1.0);
         const UsdAttribute attr = prim.GetAttribute(pivotToken);
-        if ((paired || matrixOnly) && attr && attr.Get(&local)) {
+        if ((paired || matrixOnly) && attr && attr.Get(&local, time)) {
             frame = local * world;
             return true;
         }
         GfVec3d pivot(0.0);
-        if (!translationWorldPivot(stage, path, pivot, error))
+        if (!translationWorldPivot(stage, path, pivot, error, time))
             return false;
         frame = world;
         frame.SetTranslateOnly(pivot);

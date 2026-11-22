@@ -1074,6 +1074,48 @@ propertyMaterialLightDropdownApi()
 }
 
 void
+propertyPreviewCancellationApi()
+{
+    auto* current = stageviz::session();
+    require(current->newStage(), "new property preview stage");
+    const auto stage = current->stage();
+    const auto prim = stage->DefinePrim(SdfPath("/Asset"));
+    const auto attr = prim.CreateAttribute(TfToken("vector"), SdfValueTypeNames->Double3);
+    attr.Set(GfVec3d(1, 2, 3));
+    const auto alternate = SdfLayer::CreateAnonymous("alternate.usda");
+    stage->GetRootLayer()->SetSubLayerPaths({ alternate->GetIdentifier() });
+    stageviz::PropertyTree tree;
+    tree.updateStage(stage);
+    auto editor = [&]() {
+        tree.updateSelection({ SdfPath("/Asset") });
+        tree.expandAll();
+        QTreeWidgetItemIterator it(&tree);
+        while (*it) {
+            auto* item = dynamic_cast<stageviz::PropertyItem*>(*it);
+            if (item && item->propertyPath() == attr.GetPath())
+                if (auto* spin = qobject_cast<stageviz::SpinBox*>(tree.itemWidget(item, stageviz::PropertyItem::Value)))
+                    return spin;
+            ++it;
+        }
+        return static_cast<stageviz::SpinBox*>(nullptr);
+    };
+    for (bool changeTarget : { false, true }) {
+        auto* spin = editor();
+        require(spin, "vector component editor exists");
+        require(QMetaObject::invokeMethod(spin, "scrubStarted", Qt::DirectConnection), "start preview signal");
+        require(QMetaObject::invokeMethod(spin, "scrubbed", Qt::DirectConnection, Q_ARG(double, 9.0)),
+                "update preview signal");
+        GfVec3d value;
+        require(attr.Get(&value) && value != GfVec3d(1, 2, 3), "widget previews USD value");
+        if (changeTarget)
+            stage->SetEditTarget(alternate);
+        tree.updateSelection({});
+        require(attr.Get(&value) && value == GfVec3d(1, 2, 3), "rebuilding editor cancels preview in original layer");
+        require(!alternate->GetAttributeAtPath(attr.GetPath()), "cancel never writes replacement edit layer");
+    }
+}
+
+void
 propertyAssetEditorApi()
 {
     auto* current = stageviz::session();
@@ -3952,8 +3994,9 @@ public:
     stageviz::ViewportWidget* widget() const override { return const_cast<stageviz::ViewportWidget*>(&viewport); }
     stageviz::ViewContext* context() const override { return const_cast<stageviz::ViewContext*>(&editContext); }
     UsdStageRefPtr stage() const override { return stageviz::session()->stageUnsafe(); }
+    UsdTimeCode timeCode() const override { return time; }
     UsdStageRefPtr auxiliaryStage() const override { return auxiliary; }
-    stageviz::RenderEngine* renderEngine() const override { return nullptr; }
+    stageviz::RenderEngine* renderEngine() const override { return renderer.get(); }
     stageviz::ViewCamera* viewCamera() override { return viewState()->camera(); }
     stageviz::ViewState* viewState() override { return stageviz::session()->viewState(); }
     const QList<SdfPath>& selectedPaths() const override { return selected; }
@@ -3974,6 +4017,8 @@ public:
         selection->invalidateVisibleSelection();
     }
 
+    std::unique_ptr<stageviz::RenderEngine> renderer;
+    UsdTimeCode time = UsdTimeCode::Default();
     stageviz::ViewportWidget viewport;
     stageviz::ViewContext editContext;
     UsdStageRefPtr auxiliary = UsdStage::CreateInMemory();
@@ -3981,6 +4026,57 @@ public:
     QList<SdfPath> mask;
     stageviz::ViewportSelection* selection = nullptr;
 };
+
+void
+viewportEvaluationTimeApi()
+{
+    auto* current = stageviz::session();
+    require(current->newStage(), "new animated viewport stage");
+    const auto stage = current->stage();
+    const auto cube = UsdGeomCube::Define(stage, SdfPath("/Cube"));
+    const auto translate = UsdGeomXformable(cube).AddTranslateOp();
+    translate.Set(GfVec3d(0), UsdTimeCode(1));
+    translate.Set(GfVec3d(100, 0, 0), UsdTimeCode(2));
+    translate.Set(GfVec3d(0), UsdTimeCode(3));
+    translate.Set(GfVec3d(0), UsdTimeCode(4));
+    const auto visibility = cube.CreateVisibilityAttr();
+    visibility.Set(UsdGeomTokens->inherited, UsdTimeCode(1));
+    visibility.Set(UsdGeomTokens->invisible, UsdTimeCode(3));
+    visibility.Set(UsdGeomTokens->inherited, UsdTimeCode(4));
+    ViewportTestHost host;
+    host.renderer = std::make_unique<stageviz::RenderEngine>();
+    host.editContext.setViewState(current->viewState());
+    host.editContext.setSelectionList(current->selectionList());
+    host.viewport.setContext(&host.editContext);
+    host.viewport.updateStage(stage);
+    host.viewport.resize(640, 480);
+    stageviz::ViewportSelection selection(host);
+    host.selection = &selection;
+    host.viewCamera()->setCameraView(stageviz::ViewCamera::FrontView);
+    host.viewCamera()->setFocusPoint(GfVec3d(0));
+    host.viewCamera()->setCameraDistance(10);
+    host.viewCamera()->setAspectRatio(640. / 480.);
+    host.viewport.show();
+    QCoreApplication::processEvents();
+    for (int frame : { 1, 2, 3, 4 }) {
+        host.time = UsdTimeCode(frame);
+        host.viewport.setTimeCode(frame);
+        if (frame != 3) {
+            const double expected = frame == 2 ? 100. : 0.;
+            const auto bounds = host.viewport.framingBounds({ cube.GetPath() });
+            require(std::abs(bounds.ComputeAlignedRange().GetMidpoint()[0] - expected) < 1e-8,
+                    "viewport framing follows timeline");
+            require(std::abs(host.viewport.framingBounds().ComputeAlignedRange().GetMidpoint()[0] - expected) < 1e-8,
+                    "whole-stage framing follows timeline through USD aggregate bounds");
+        }
+        QMouseEvent event(QEvent::MouseButtonRelease, QPointF(640, 480), QPointF(640, 480), Qt::LeftButton,
+                          Qt::NoButton, Qt::NoModifier);
+        selection.sweep(QRect(0, 0, 640, 480), &event);
+        require(host.selected.contains(cube.GetPath()) == (frame == 1 || frame == 4),
+                "sweep follows time-sampled positions and visibility");
+    }
+    host.viewport.hide();
+}
 
 void
 viewportLightsApi()
@@ -5254,6 +5350,7 @@ main(int argc, char** argv)
         { "viewport_components_api", viewportComponentsApi },
         { "viewport_capture_paths_api", viewportCapturePathsApi },
         { "viewport_lights_api", viewportLightsApi },
+        { "viewport_evaluation_time_api", viewportEvaluationTimeApi },
         { "viewport_transform_pivot_api", viewportTransformPivotApi },
         { "viewport_transform_hierarchy_sync_api", viewportTransformHierarchySyncApi },
         { "viewport_transform_individual_rotation_api", viewportTransformIndividualRotationApi },
@@ -5268,6 +5365,7 @@ main(int argc, char** argv)
         { "indextree_selection_modes_api", indexTreeSelectionModesApi },
         { "ui_api", uiApi },
         { "numeric_editor_api", numericEditorApi },
+        { "property_preview_cancellation_api", propertyPreviewCancellationApi },
         { "renderengine_api", renderEngineApi },
         { "render_primitive_selection_api", renderPrimitiveSelectionApi },
         { "render_coincident_selection_api", renderCoincidentSelectionApi },

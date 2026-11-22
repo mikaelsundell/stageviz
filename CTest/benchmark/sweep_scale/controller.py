@@ -13,7 +13,7 @@ import urllib.request
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from mcp_runtime import macos_bootstrap
+from mcp_runtime import macos_bootstrap, qt_runtime_environment
 
 
 def run(args):
@@ -57,7 +57,7 @@ def run(args):
                       embedded_sha256=hashlib.sha256(script.read_bytes()).hexdigest(),
                       started=time.strftime('%Y-%m-%dT%H:%M:%S%z'),
                       activity='NSActivityUserInitiatedAllowingIdleSystemSleep; viewer stays on top',
-                      build=args.build + '; DYLD_IMAGE_SUFFIX=_debug; sequential disposable processes',
+                      build=args.build + '; sequential disposable processes',
                       measurement='first present, session-ready, three-present response, and an additional 750ms settle floor; checkpoints outside spans')
     provenance.update(host=platform.platform(), machine=platform.machine(), logical_cpus=os.cpu_count())
     (output / 'provenance.json').write_text(json.dumps(provenance, indent=2))
@@ -80,8 +80,11 @@ def run(args):
 
     env = os.environ.copy()
     env['STAGEVIZ_TEST_SETTINGS_DIR'] = str(output / 'settings')
-    env.update(DYLD_IMAGE_SUFFIX='_debug', STAGEVIZ_PERF_LOG=str(output / 'native-phases.jsonl'),
+    env.update(STAGEVIZ_PERF_LOG=str(output / 'native-phases.jsonl'),
                STAGEVIZ_SCALE_PROFILE=str(output / 'profile.json'), HD_ENABLE_GPU_FRUSTUM_CULLING='0')
+    env = qt_runtime_environment(env, app=app)
+    provenance['DYLD_IMAGE_SUFFIX'] = env.get('DYLD_IMAGE_SUFFIX')
+    (output / 'provenance.json').write_text(json.dumps(provenance, indent=2))
     # Verify the dedicated port is unused before starting anything.
     try:
         rpc('tools/list', {}, timeout=1)

@@ -60,14 +60,40 @@ The default output is `build.test-results/<run>/`, containing an overall
 `summary.json`, configure/build/CTest/Python logs, native `ctest.xml`, per-suite
 summaries, MCP oracles, resource samples and screenshot paths. Test failures
 return a nonzero exit status. Python suites still run after CTest failures;
-configure/build failures stop that configuration to avoid testing stale binaries. API timing baselines
-are kept per configuration under the build's `test-baselines/` directory.
+configure/build failures stop that configuration to avoid testing stale binaries.
+The runner uses the configured build's CMake when available. API timing
+baselines are kept per configuration under the build's `test-baselines/` directory.
+
+On macOS, baseline environments also record the Mac model, CPU model and core
+counts, RAM size, execution architecture, and GPU models/core counts/dedicated
+memory where reported. Timing comparisons require the same hardware profile.
+Different chips (such as M1 versus M2), GPU configurations, RAM sizes, or native
+versus translated execution fail the performance check without comparing or
+overwriting the baseline. Hardware detection failures also fail closed. The
+profile excludes serial numbers, UUIDs and attached-display details; identical
+hardware configurations on separate computers can match.
+
+On Windows, baselines record the system model, CPU models and core counts,
+installed RAM, execution architecture, GPU models, and a hashed identifier
+derived from the local Windows installation. Comparisons require the same
+installation and hardware profile. Reinstalling Windows can change the identifier.
+
+Legacy baselines without a hardware profile require explicit adoption on their
+original hardware or a freshly recorded baseline. An explicit
+`_PERF_BASELINE_RESET` replaces timings and hardware metadata only after
+functional tests pass. OS or Python version differences on matching hardware
+produce a warning. `stageviz.performance_baseline` covers profile mismatches,
+legacy files, failed probes, baseline creation, and timing failure propagation.
 
 The disposable runner starts the public native MCP server on a free loopback
 port and never connects to the user's app. Test settings use fresh per-process
 INI storage before app initialization. `STAGEVIZ_TEST_SETTINGS_DIR` and
 `STAGEVIZ_TEST_MCP_PORT` are set by the controller; port `0` requests a free port.
-The macOS environment includes `DYLD_IMAGE_SUFFIX=_debug` for build and run.
+On macOS, Debug uses `DYLD_IMAGE_SUFFIX=_debug`; Release clears the suffix for
+build and run, even if inherited from the shell. Disposable runners verify the
+app's linked Qt framework mode, and standalone benchmarks infer it from the
+binary rather than its directory name. CTest applies the same per-configuration
+selection when invoked directly.
 Windows resource monitoring uses the native process API; macOS additionally
 records system memory pressure and holds a finite App Nap activity scope.
 
@@ -137,8 +163,10 @@ idempotence, and unchanged document USD. The disposable first-show benchmark
 frames separately, verifies hidden/visible handle pixels and unchanged document
 root/session layers, and records independent MCP oracles.
 `testgizmostability.py` keeps Rotate active while creating a sphere and plane,
-opens the Material Editor, and orbits through multiple camera revolutions and
-distances, including repeated left/right sweeps through an edge-on red ring.
+opens the Material Editor, reloads the document twice while retaining the
+auxiliary stage and checking hidden/reselected handles, and orbits through
+multiple camera revolutions and distances, including repeated left/right sweeps
+through an edge-on red ring.
 Option/Meta-left drags starting on each Move/Rotate/Scale centre must orbit
 without authoring USD. Move is also swept across end-on axes with wireframe
 overlay enabled. It checks unchanged handle topology, finite transforms, selection,
@@ -1141,3 +1169,13 @@ checks browser restoration/removal on undo/redo. The viewport test helper waits
 for visible handles and completed renders before and after camera framing;
 prewarmed hidden meshes cannot satisfy gesture readiness. The shared-source
 fixture explicitly checks hidden handles in Select mode.
+
+### USD 25.11 architecture audit regressions
+
+- `attribute_preview_target_api`: preview cancellation and attribute command undo/redo retain the mapped variant target after an edit-target change.
+- `attribute_pivot_variant_target_api`: vector and matrix pivot edits restore exact mapped transform specs on undo/redo, preserve metadata/time samples and unrelated root opinions, and remove temporary variant child/ancestor specs for inherited transforms.
+- `bounds_evaluation_time_api`: bounds and displayed pivots follow evaluation time while default-time queries remain independent.
+- `render_selection_usd_parity_api`: cached selection mapping agrees with USD 25.11 selection schemas for hierarchy and native instances, and invalidates on topology changes.
+- `testattributetarget.py`: embedded variant command undo/redo, vector pivot values, matrix pivot edits through the Property Editor, and the existing history-reset policy on target changes, with live Qt assertions and snapshots.
+- `property_preview_cancellation_api`: selection and target changes cancel numeric scrubs without leaving authored defaults.
+- `viewport_evaluation_time_api`: framing and sweep selection follow animated transforms and visibility.

@@ -276,6 +276,12 @@ RenderView::setPlaybackVisible(bool visible)
     p->updatePanelVisibility();
 }
 
+GfBBox3d
+RenderView::framingBounds(const QList<SdfPath>& paths) const
+{
+    return p->viewportWidget()->framingBounds(paths);
+}
+
 void
 RenderView::setTimeCode(double timeCode)
 {

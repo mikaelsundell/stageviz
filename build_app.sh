@@ -171,6 +171,12 @@ copy_extra_libs() {
 build_stageviz() {
     local build_type="$1"
 
+    if [ "$build_type" = "debug" ]; then
+        export DYLD_IMAGE_SUFFIX=_debug
+    else
+        unset DYLD_IMAGE_SUFFIX
+    fi
+
     export PATH=$PATH:/Applications/CMake.app/Contents/bin
 
     cd "$script_dir"

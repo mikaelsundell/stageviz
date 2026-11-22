@@ -31,7 +31,7 @@ class TestRunner(unittest.TestCase):
         guard.start()
         self.addCleanup(guard.stop)
 
-    def plan(self, statuses):
+    def plan(self, statuses, configuration='Debug'):
         calls = []
         values = iter(statuses)
         def execute(command, log, environment):
@@ -40,7 +40,7 @@ class TestRunner(unittest.TestCase):
         with mock.patch.object(run_all, 'tools', return_value=('cmake', 'ctest')), \
                 mock.patch.object(run_all, 'run_logged', side_effect=execute), \
                 contextlib.redirect_stdout(io.StringIO()):
-            row = run_all.run_configuration(self.args, 'Debug', self.directory / 'results')
+            row = run_all.run_configuration(self.args, configuration, self.directory / 'results')
         return row, calls
 
     def test_all_configurations(self):
@@ -80,11 +80,60 @@ class TestRunner(unittest.TestCase):
         self.assertIn('STAGEVIZ_TEST_SETTINGS_DIR', calls[2][1])
         self.assertIn('--port', calls[3][0])
 
+    def test_configured_cmake_takes_precedence_over_path(self):
+        suffix = '.exe' if run_all.sys.platform == 'win32' else ''
+        cmake = self.directory / ('cmake' + suffix)
+        ctest = self.directory / ('ctest' + suffix)
+        cmake.touch()
+        ctest.touch()
+        (self.build / 'CMakeCache.txt').write_text(f'CMAKE_COMMAND:INTERNAL={cmake.as_posix()}\n')
+        with mock.patch.object(run_all.shutil, 'which', return_value='other-cmake') as lookup:
+            self.assertEqual(run_all.tools(self.build), (str(cmake.resolve()), str(ctest.resolve())))
+        lookup.assert_not_called()
+
     def test_development_run_overrides_cached_deployment_mode(self):
         (self.build / 'CMakeCache.txt').write_text('DEPLOY_BUILD:BOOL=ON\n')
         row, calls = self.plan([0, 0, 0, 0])
         self.assertTrue(row['passed'])
         self.assertIn('-DDEPLOY_BUILD=OFF', calls[0][0])
+
+    def test_macos_debug_and_release_environment_is_configuration_specific(self):
+        for configuration in ('Debug', 'Release'):
+            with self.subTest(configuration=configuration), \
+                    mock.patch.object(run_all.sys, 'platform', 'darwin'), \
+                    mock.patch.dict(run_all.os.environ, {'DYLD_IMAGE_SUFFIX': '_debug'}):
+                destination = self.directory / 'results'
+                if destination.exists():
+                    destination.rmdir()
+                row, calls = self.plan([0, 0, 0, 0], configuration)
+                self.assertTrue(row['passed'])
+                for _, environment in calls:
+                    self.assertEqual(environment.get('DYLD_IMAGE_SUFFIX'), '_debug' if configuration == 'Debug' else None)
+                self.assertEqual(calls[3][0][calls[3][0].index('--configuration') + 1], configuration)
+
+    def test_disposable_mac_environment_uses_linked_qt_not_binary_directory_name(self):
+        for suffix, expected in (('_debug', '_debug'), ('', None)):
+            with self.subTest(suffix=suffix), mock.patch.object(mcp_runtime.sys, 'platform', 'darwin'), \
+                    mock.patch.object(mcp_runtime.subprocess, 'check_output', return_value=(
+                        'renamed-app:\n\t@rpath/QtCore.framework/Versions/A/QtCore' + suffix + ' (version)\n')):
+                inherited = {'DYLD_IMAGE_SUFFIX': '_debug', 'KEEP': 'value'}
+                result = mcp_runtime.qt_runtime_environment(inherited, app=Path('/renamed app'))
+                self.assertEqual(result.get('DYLD_IMAGE_SUFFIX'), expected)
+                self.assertEqual(result['KEEP'], 'value')
+                self.assertEqual(inherited['DYLD_IMAGE_SUFFIX'], '_debug')
+
+    def test_mac_release_run_rejects_app_linked_to_debug_qt(self):
+        with mock.patch.object(mcp_runtime.sys, 'platform', 'darwin'), \
+                mock.patch.object(mcp_runtime.subprocess, 'check_output', return_value=(
+                    '@rpath/QtCore.framework/Versions/A/QtCore_debug (version)\n')):
+            with self.assertRaisesRegex(RuntimeError, 'Release run links Debug Qt'):
+                mcp_runtime.qt_runtime_environment({}, 'Release', self.app)
+
+    def test_mac_launcher_rejects_unknown_qt_linkage(self):
+        with mock.patch.object(mcp_runtime.sys, 'platform', 'darwin'), \
+                mock.patch.object(mcp_runtime.subprocess, 'check_output', return_value='not a Qt binary'):
+            with self.assertRaisesRegex(RuntimeError, 'Cannot determine Qt'):
+                mcp_runtime.qt_runtime_environment({}, app=self.app)
 
     def test_ctest_failure_does_not_skip_python_or_pass(self):
         row, calls = self.plan([0, 0, 7, 0])

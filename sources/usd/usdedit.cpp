@@ -20,6 +20,67 @@
 namespace stageviz {
 namespace edit {
 
+    bool AttributePreview::begin(const UsdStageRefPtr& stage, const SdfPath& path)
+    {
+        if (d.active || !stage)
+            return false;
+        const auto attr = stage->GetAttributeAtPath(path);
+        const auto target = stage->GetEditTarget();
+        const auto layer = target.GetLayer();
+        const auto specPath = target.MapToSpecPath(path);
+        if (!attr || attr.GetPrim().IsInstanceProxy() || attr.GetPrim().IsInPrototype() || !layer
+            || !layer->PermissionToEdit() || specPath.IsEmpty())
+            return false;
+        d = {};
+        d.stage = stage;
+        d.target = target;
+        d.path = path;
+        d.specPath = specPath;
+        d.hadSpec = bool(layer->GetAttributeAtPath(specPath));
+        d.hadDefault = layer->HasField(specPath, SdfFieldKeys->Default, &d.previous);
+        for (auto parent = specPath.GetParentPath(); !parent.IsEmpty() && !parent.IsAbsoluteRootPath();
+             parent = parent.GetParentPath())
+            if (!layer->GetPrimAtPath(parent))
+                d.missingParents.push_back(parent);
+        d.active = true;
+        return true;
+    }
+
+    bool AttributePreview::matches(const UsdStageRefPtr& stage) const
+    {
+        return d.active && stage == d.stage && stage->GetEditTarget() == d.target;
+    }
+
+    bool AttributePreview::set(const VtValue& value)
+    {
+        if (!matches(d.stage) || !d.target.GetLayer()->PermissionToEdit())
+            return false;
+        UsdEditContext context(d.stage, d.target);
+        const auto attr = d.stage->GetAttributeAtPath(d.path);
+        return attr && attr.Set(value);
+    }
+
+    void AttributePreview::restore()
+    {
+        if (!d.active)
+            return;
+        d.active = false;
+        const auto layer = d.target.GetLayer();
+        if (d.hadDefault)
+            layer->SetField(d.specPath, SdfFieldKeys->Default, d.previous);
+        else
+            layer->EraseField(d.specPath, SdfFieldKeys->Default);
+        if (!d.hadSpec) {
+            const auto spec = layer->GetAttributeAtPath(d.specPath);
+            if (spec)
+                layer->GetPrimAtPath(d.specPath.GetParentPath())->RemoveProperty(spec);
+            for (const auto& path : d.missingParents)
+                if (const auto prim = layer->GetPrimAtPath(path))
+                    layer->RemovePrimIfInert(prim);
+        }
+        d = {};
+    }
+
     namespace {
         bool isAffectedByMoves(const SdfPath& path, const QSet<SdfPath>& sources)
         {

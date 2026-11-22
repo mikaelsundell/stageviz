@@ -194,12 +194,6 @@ private:
      */
     void dirtyDoubleSided();
 
-    // Keep override targets current as the input scene index changes. This
-    // avoids traversing the full scene index whenever a display override is
-    // toggled.
-    std::set<pxr::SdfPath> gprimPaths;
-    std::set<pxr::SdfPath> geomSubsetPaths;
-    std::set<pxr::SdfPath> meshPaths;
 
 private:
     std::unique_ptr<RenderSceneIndexPrivate> p;

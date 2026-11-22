@@ -3,13 +3,16 @@ REM Copyright 2022-present Contributors to the stageviz project.
 REM SPDX-License-Identifier: BSD-3-Clause
 REM https://github.com/mikaelsundell/stageviz
 
+setlocal
 set "app_dir=%~dp0"
 set "original_dir=%cd%"
 set "app_name=Stageviz"
 set "pkg_name=stageviz"
 set "build_type="
 set "deploy=0"
-set "cmake_generator=Visual Studio 17 2022"
+set "cmake_generator="
+set "cmake_exe=cmake.exe"
+set "cmake_instance="
 
 REM Parse arguments
 :parse_args
@@ -45,27 +48,21 @@ if /I not "%build_type%"=="Debug" (
     )
 )
 
-REM check if CMake is in the PATH
-where cmake >nul 2>&1
-if errorlevel 1 (
-    echo CMake not found in the PATH, please make sure it's installed
-    goto :error
+if "%deploy%"=="1" (
+    call :check_deploy_python
+    if errorlevel 1 goto :error
 )
 
-REM check if CMake version is available
-for /f "tokens=*" %%V in ('cmake --version') do (
-    for /f "tokens=*" %%W in ("%%V") do (
-        set "cmake_version=%%W"
-        set "cmake_version=!cmake_version:cmake version =!"
-        for /f "delims=. tokens=1-3" %%a in ("!cmake_version!") do (
-            set "major=%%a"
-            set "minor=%%b"
-            set "patch=%%c"
-        )
-        goto cmake_version_done
+if defined cmake_generator (
+    where cmake.exe >nul 2>&1
+    if errorlevel 1 (
+        echo CMake not found in PATH. 1>&2
+        goto :error
     )
+) else (
+    call :find_visual_studio
+    if errorlevel 1 goto :error
 )
-:cmake_version_done
 
 if /I "%build_type%"=="All" (
     call :build_stageviz Debug
@@ -78,6 +75,64 @@ if /I "%build_type%"=="All" (
     if errorlevel 1 goto :error
     goto :end
 )
+
+:check_deploy_python
+set "python_cmd=py -3"
+%python_cmd% -c "import sys" >nul 2>&1
+if errorlevel 1 (
+    set "python_cmd=python"
+    python -c "import sys; sys.exit(sys.version_info.major != 3)" >nul 2>&1
+    if errorlevel 1 (
+        echo Windows deployment requires Python 3. Install it with the Python launcher or put python.exe on PATH. 1>&2
+        exit /b 1
+    )
+)
+
+%python_cmd% -c "import pefile" >nul 2>&1
+if errorlevel 1 (
+    echo Windows deployment requires pefile. Install it for the selected Python with 1>&2
+    echo     %python_cmd% -m pip install pefile 1>&2
+    exit /b 1
+)
+exit /b 0
+
+:find_visual_studio
+REM Match 3rdparty's Visual Studio and Build Tools discovery.
+set "vswhere=%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe"
+if not exist "%vswhere%" goto :missing_visual_studio
+set "vs_install="
+set "vs_version="
+for /f "usebackq tokens=1,*" %%I in (`"%vswhere%" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -format text`) do (
+    if "%%I"=="installationPath:" set "vs_install=%%J"
+    if "%%I"=="installationVersion:" set "vs_version=%%J"
+)
+if not defined vs_install goto :missing_visual_studio
+if not defined vs_version goto :missing_visual_studio
+for /f "delims=." %%V in ("%vs_version%") do set "vs_major=%%V"
+
+REM Use the bundled CMake if the one on PATH lacks this generator.
+where cmake.exe >nul 2>&1
+if not errorlevel 1 call :find_cmake_generator
+if not defined cmake_generator (
+    set "cmake_exe=%vs_install%\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe"
+    if exist "!cmake_exe!" call :find_cmake_generator
+)
+if not defined cmake_generator (
+    echo No CMake found that supports Visual Studio %vs_version%. Update CMake on PATH or install Visual Studio's C++ CMake tools. 1>&2
+    exit /b 1
+)
+set cmake_instance="-DCMAKE_GENERATOR_INSTANCE=%vs_install%"
+exit /b 0
+
+:find_cmake_generator
+for /f "tokens=1-4 delims=* " %%G in ('"%cmake_exe%" --help') do (
+    if "%%G %%H %%I"=="Visual Studio %vs_major%" set "cmake_generator=%%G %%H %%I %%J"
+)
+exit /b 0
+
+:missing_visual_studio
+echo Visual Studio or Build Tools with the MSVC x64 C++ tools is required. 1>&2
+exit /b 1
 
 :build_stageviz
 set "current_build_type=%~1"
@@ -114,13 +169,13 @@ if "%deploy%"=="1" (
     echo Deployment enabled
 )
 
-cmake .. -G "%cmake_generator%" -DCMAKE_MODULE_PATH="%cmake_dir%modules" -DCMAKE_PREFIX_PATH="%cmake_thirdparty_dir%" -DDEPLOY_BUILD=%deploy_build%
+"%cmake_exe%" .. -G "%cmake_generator%" %cmake_instance% -DCMAKE_MODULE_PATH="%cmake_dir%modules" -DCMAKE_PREFIX_PATH="%cmake_thirdparty_dir%" -DDEPLOY_BUILD=%deploy_build%
 if errorlevel 1 (
     popd
     goto :error
 )
 
-cmake --build . --config %current_build_type% --parallel --verbose
+"%cmake_exe%" --build . --config %current_build_type% --parallel --verbose
 if errorlevel 1 (
     popd
     goto :error
@@ -153,11 +208,6 @@ set "prefix_lib=%prefix%\lib"
 set "prefix_plugin_root=%prefix%\plugin"
 set "prefix_plugin_usd=%prefix_plugin_root%\usd"
 set "prefix_usd_root=%prefix_lib%\usd"
-
-REM prefer launcher if available, otherwise fall back to python
-set "python_cmd=py -3"
-where py >nul 2>&1
-if errorlevel 1 set "python_cmd=python"
 
 REM locate the active python runtime
 for /f "delims=" %%P in ('%python_cmd% -c "import os, sys; print(os.path.dirname(sys.executable))"') do set "python_runtime_dir=%%P"

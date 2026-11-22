@@ -2239,7 +2239,7 @@ ViewerPrivate::frameAll()
     if (!session()->isLoaded())
         return;
 
-    const GfBBox3d bbox = session()->boundingBox();
+    const GfBBox3d bbox = renderView()->framingBounds();
     if (bbox.GetRange().IsEmpty())
         return;
 
@@ -2255,7 +2255,7 @@ ViewerPrivate::frameSelected()
     if (paths.isEmpty())
         return;
 
-    const GfBBox3d bbox = session()->boundingBox(paths);
+    const GfBBox3d bbox = renderView()->framingBounds(paths);
     if (bbox.GetRange().IsEmpty())
         return;
 

@@ -9,10 +9,12 @@ Run from the Stageviz Python editor.
 """
 
 import faulthandler
+import hashlib
 import json
 import os
 import platform
 import statistics
+import subprocess
 import sys
 import tempfile
 import threading
@@ -313,6 +315,7 @@ _PERF_WARNINGS = []
 _PERF_ENABLED = True
 _PERF_BASELINE_RESET = False
 _PERF_BASELINE_VERSION = 1
+_PERF_HARDWARE_PROFILES = {'mac_hardware': 'Mac', 'windows_hardware': 'Windows'}
 _PERF_BASELINE_PATH = os.path.join(
     os.path.expanduser("~"),
     ".stageviz",
@@ -439,12 +442,136 @@ def _run(label, func, args=()):
         print(f"[TIME] {label}: {elapsed:.4f}s")
 
 
-def _performance_environment():
+def _mac_hardware_profile():
+    """Read stable configuration fields, excluding serials and display state."""
+    def output(command):
+        try:
+            return subprocess.check_output(command, text=True, stderr=subprocess.DEVNULL, timeout=15).strip()
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise RuntimeError(f"could not read Mac hardware with {command[0]}: {exc}") from exc
+
+    def sysctl(name, numeric=False):
+        value = output(['/usr/sbin/sysctl', '-n', name])
+        if numeric:
+            value = int(value)
+            if value <= 0:
+                raise ValueError(f"invalid Mac hardware value for {name}")
+        elif not value:
+            raise ValueError(f"missing Mac hardware value for {name}")
+        return value
+
+    devices = json.loads(output(['/usr/sbin/system_profiler', '-json', 'SPDisplaysDataType']))
+    gpus = []
+    for device in devices.get('SPDisplaysDataType', []):
+        model = device.get('sppci_model', '').strip()
+        if not model:
+            raise ValueError('missing Mac GPU model')
+        gpu = {'model': model}
+        cores = device.get('sppci_cores')
+        if cores is not None:
+            gpu['cores'] = int(cores)
+            if gpu['cores'] <= 0:
+                raise ValueError('invalid Mac GPU core count')
+        elif model.startswith('Apple '):
+            raise ValueError('missing Apple GPU core count')
+        # Dedicated GPU memory is stable; attached displays and their serials
+        # are deliberately omitted from the identity.
+        for key in ('spdisplays_vram', 'spdisplays_vram_shared'):
+            if device.get(key):
+                gpu[key] = str(device[key])
+        gpus.append(gpu)
+    if not gpus:
+        raise ValueError('no Mac GPU hardware was reported')
     return {
+        'version': 1,
+        'model': sysctl('hw.model'),
+        'cpu': sysctl('machdep.cpu.brand_string'),
+        'physical_cores': sysctl('hw.physicalcpu', True),
+        'logical_cores': sysctl('hw.logicalcpu', True),
+        'memory_bytes': sysctl('hw.memsize', True),
+        'architecture': platform.machine(),
+        'gpus': sorted(gpus, key=lambda gpu: json.dumps(gpu, sort_keys=True)),
+    }
+
+
+def _windows_hardware_profile():
+    """Capture the local Windows installation and stable hardware configuration."""
+    import winreg
+
+    command = r"""
+$ErrorActionPreference = 'Stop'
+[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
+$system = Get-CimInstance Win32_ComputerSystem -Property Model
+$processors = Get-CimInstance Win32_Processor -Property Name,NumberOfCores,NumberOfLogicalProcessors
+$memory = Get-CimInstance Win32_PhysicalMemory -Property Capacity
+$graphics = Get-CimInstance Win32_VideoController -Property Name
+[ordered]@{
+    model = $system.Model
+    cpus = @($processors | ForEach-Object {
+        @{ model = $_.Name; physical_cores = $_.NumberOfCores; logical_cores = $_.NumberOfLogicalProcessors }
+    })
+    memory_bytes = [uint64](($memory | Measure-Object Capacity -Sum).Sum)
+    gpus = @($graphics | ForEach-Object { $_.Name })
+} | ConvertTo-Json -Depth 4 -Compress
+"""
+    powershell = os.path.join(os.environ.get('SystemRoot', r'C:\Windows'), 'System32',
+                              'WindowsPowerShell', 'v1.0', 'powershell.exe')
+    try:
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r'SOFTWARE\Microsoft\Cryptography',
+                            access=winreg.KEY_READ | winreg.KEY_WOW64_64KEY) as key:
+            machine_guid = winreg.QueryValueEx(key, 'MachineGuid')[0].strip().lower()
+        output = subprocess.check_output(
+            [powershell, '-NoProfile', '-NonInteractive', '-Command', command],
+            encoding='utf-8', stderr=subprocess.DEVNULL, timeout=30, creationflags=subprocess.CREATE_NO_WINDOW,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise RuntimeError(f'could not read Windows hardware: {exc}') from exc
+
+    profile = json.loads(output)
+    model = (profile['model'] or '').strip()
+    cpus = profile['cpus']
+    for cpu in cpus:
+        cpu['model'] = (cpu['model'] or '').strip()
+        if not cpu['model'] or not (0 < cpu['physical_cores'] <= cpu['logical_cores']):
+            raise ValueError('incomplete Windows CPU hardware')
+    gpus = [(name or '').strip() for name in profile['gpus']]
+    architecture = platform.machine()
+    if not (machine_guid and model and architecture and cpus and gpus and all(gpus) and profile['memory_bytes'] > 0):
+        raise ValueError('incomplete Windows hardware profile')
+    return {
+        'version': 1,
+        'machine_id': hashlib.sha256(('stageviz-windows:' + machine_guid).encode('utf-8')).hexdigest(),
+        'model': model,
+        'cpus': sorted(cpus, key=lambda cpu: (cpu['model'], cpu['physical_cores'], cpu['logical_cores'])),
+        'memory_bytes': profile['memory_bytes'],
+        'architecture': architecture,
+        'gpus': sorted(gpus),
+    }
+
+
+def _performance_environment():
+    environment = {
         "platform": platform.platform(),
         "machine": platform.machine(),
         "python": sys.version.split()[0],
     }
+    system = platform.system()
+    if system == 'Darwin':
+        environment['mac_hardware'] = _mac_hardware_profile()
+    elif system == 'Windows':
+        environment['windows_hardware'] = _windows_hardware_profile()
+    return environment
+
+
+def _performance_hardware_error(baseline_environment, current_environment):
+    for key, label in _PERF_HARDWARE_PROFILES.items():
+        current = current_environment.get(key)
+        previous = baseline_environment.get(key)
+        if previous is None and current is not None:
+            return f'baseline has no {label} hardware profile; use a baseline recorded on its original hardware'
+        if previous != current:
+            return f'{label} hardware profile mismatch; use a baseline recorded for the same hardware profile'
+    return None
 
 
 def _load_performance_baseline():
@@ -468,14 +595,14 @@ def _load_performance_baseline():
     return baseline
 
 
-def _save_performance_baseline(fixture_create, fixture_reload_median, suite_total):
+def _save_performance_baseline(fixture_create, fixture_reload_median, suite_total, environment=None):
     directory = os.path.dirname(_PERF_BASELINE_PATH)
     os.makedirs(directory, exist_ok=True)
 
     data = {
         "version": _PERF_BASELINE_VERSION,
         "created": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        "environment": _performance_environment(),
+        "environment": _performance_environment() if environment is None else environment,
         "thresholds": {
             "warn_percent": _PERF_WARN_PERCENT,
             "fail_percent": _PERF_FAIL_PERCENT,
@@ -614,6 +741,16 @@ def _print_performance_summary(
         print("Performance regression checks are disabled.")
         return True
 
+    try:
+        current_environment = _performance_environment()
+    except Exception as exc:
+        _PERF_FAILURES.append(f"could not identify performance hardware: {exc}")
+        print(f"[PERF FAIL] {_PERF_FAILURES[-1]}; baseline was not compared or written.")
+        return False
+    for key, label in _PERF_HARDWARE_PROFILES.items():
+        if key in current_environment:
+            print(f'{label} hardware profile: ' + json.dumps(current_environment[key], sort_keys=True))
+
     if _PERF_BASELINE_RESET:
         if not functional_passed:
             print("[PERF WARN] baseline was not reset because functional tests failed.")
@@ -624,6 +761,7 @@ def _print_performance_summary(
                 fixture_create,
                 fixture_reload_median,
                 suite_total,
+                current_environment,
             )
             print("Performance baseline replaced.")
         except Exception as exc:
@@ -643,6 +781,7 @@ def _print_performance_summary(
                 fixture_create,
                 fixture_reload_median,
                 suite_total,
+                current_environment,
             )
             print("Performance baseline created.")
         except Exception as exc:
@@ -653,7 +792,18 @@ def _print_performance_summary(
         return True
 
     baseline_environment = baseline.get("environment", {})
-    current_environment = _performance_environment()
+    hardware_error = _performance_hardware_error(baseline_environment, current_environment)
+    if hardware_error:
+        _PERF_FAILURES.append(hardware_error)
+        print(f"[PERF FAIL] {hardware_error}; baseline was not compared or overwritten.")
+        for key in _PERF_HARDWARE_PROFILES:
+            if key in baseline_environment or key in current_environment:
+                print(f"  baseline {key}: {baseline_environment.get(key)}")
+                print(f"  current {key}:  {current_environment.get(key)}")
+        return False
+    for key, label in _PERF_HARDWARE_PROFILES.items():
+        if key in current_environment:
+            print(f'{label} hardware profile matches baseline.')
 
     if baseline_environment and baseline_environment != current_environment:
         print("[PERF WARN] baseline environment differs from current environment.")

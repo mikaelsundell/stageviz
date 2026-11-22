@@ -331,6 +331,11 @@ public:
     void setTimeCode(double timeCode);
 
     /**
+     * @brief Computes displayed-time framing bounds, using the isolate mask when paths are empty.
+     */
+    GfBBox3d framingBounds(const QList<SdfPath>& paths = {}) const;
+
+    /**
      * @brief Updates the Stageviz-owned auxiliary USD stage used by the renderer.
      *
      * The auxiliary stage contains Stageviz render-support content such as the

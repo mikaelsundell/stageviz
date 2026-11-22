@@ -23,13 +23,14 @@ namespace {
     }
 }  // namespace
 
-CacheGuard::CacheGuard(Purposes purposes)
+CacheGuard::CacheGuard(Purposes purposes, UsdTimeCode time)
     : lock_(cacheMutex)
 {
     if (cacheDirty.exchange(false))
         sharedCache().Clear();
     // USD caches bounds by purpose. Changing this filter preserves the entries,
     // allowing framing and aggregate queries to share geometry and transforms.
+    sharedCache().SetTime(time);
     sharedCache().SetIncludedPurposes(purposes == Purposes::Geometry ? geometryPurposes()
                                                                      : UsdGeomImageable::GetOrderedPurposeTokens());
 }

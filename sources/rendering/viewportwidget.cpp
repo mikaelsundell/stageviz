@@ -12,6 +12,7 @@
 #include "os.h"
 #include "paths.h"
 #include "perfscope.h"
+#include "primutils.h"
 #include "qtutils.h"
 #include "renderengine.h"
 #include "session.h"
@@ -88,6 +89,7 @@ public:
     ViewState* viewState() override;
     void close();
     void paintGL();
+    void warmDisplayModes();
     void paintOverlay(QPainter& painter);
     void updateOverlay() override;
     void focusEvent(QMouseEvent* event);
@@ -105,6 +107,7 @@ public:
     void updateAuxiliary(UsdStageRefPtr auxiliary);
     void updateStageUp(const TfToken& upAxis);
     void updateBoundingBox(const GfBBox3d& bbox);
+    GfBBox3d sceneBounds() const;
     void updateMask(const QList<SdfPath>& paths);
     void updatePrims(const NoticeBatch& batch);
     QList<SdfPath> capturePaths(bool accumulate);
@@ -158,6 +161,7 @@ public:
     ViewportWidget* widget() const override { return d.glwidget; }
     ViewContext* context() const override { return d.context; }
     UsdStageRefPtr stage() const override { return d.stage; }
+    UsdTimeCode timeCode() const override { return UsdTimeCode(d.timeCode); }
     UsdStageRefPtr auxiliaryStage() const override { return d.auxiliary->stage(); }
     RenderEngine* renderEngine() const override { return d.renderEngine.data(); }
     const QList<SdfPath>& selectedPaths() const override { return d.selection; }
@@ -195,6 +199,8 @@ public:
         bool suppressContextMenu;
         QPoint mousepos;
         QTimer navigationTimer;
+        QTimer displayModeWarmupTimer;
+        bool warmupWaitingForSwap = false;
         ViewportSceneCounts cachedSceneTotals;
         ViewportSceneCounts cachedSelectedTotals;
         bool selectedTotalsDirty = true;
@@ -246,6 +252,16 @@ ViewportWidgetPrivate::init()
     d.overlay->raise();
     d.glwidget->installEventFilter(this);
     connect(d.glwidget, &QOpenGLWidget::frameSwapped, d.overlay, qOverload<>(&QWidget::update));
+    d.displayModeWarmupTimer.setSingleShot(true);
+    d.displayModeWarmupTimer.setInterval(120);
+    connect(d.glwidget, &QOpenGLWidget::frameSwapped, this, [this]() {
+        if (!d.warmupWaitingForSwap)
+            return;
+        d.warmupWaitingForSwap = false;
+        if (!d.displayModeWarmupTimer.isActive())
+            d.displayModeWarmupTimer.start();
+    });
+    connect(&d.displayModeWarmupTimer, &QTimer::timeout, this, &ViewportWidgetPrivate::warmDisplayModes);
     if (QApplication* application = qApp)
         application->installEventFilter(this);
     d.count = 0;
@@ -465,6 +481,8 @@ ViewportWidgetPrivate::viewState()
 void
 ViewportWidgetPrivate::close()
 {
+    d.displayModeWarmupTimer.stop();
+    d.warmupWaitingForSwap = false;
     d.selectionTool->reset();
 
     d.mask.clear();
@@ -488,7 +506,7 @@ ViewportWidgetPrivate::close()
     d.suppressContextMenu = false;
 
     if (d.renderEngine)
-        d.renderEngine->reset();
+        d.renderEngine->setStage(nullptr);
 
     if (viewState() && viewState()->sceneStatsEnabled())
         updateSceneStats();
@@ -503,6 +521,7 @@ void
 ViewportWidgetPrivate::paintGL()
 {
     PerfScope perfScope("viewport.paint");
+    d.warmupWaitingForSwap = false;
     QElapsedTimer timer;
     timer.start();
     if (!d.renderEngine || !d.renderEngine->isInitialized())
@@ -537,13 +556,14 @@ ViewportWidgetPrivate::paintGL()
     {
         READ_LOCKER(locker, d.context->stageLock(), "stageLock");
         if (d.stage)
-            rendered = d.renderEngine->renderToCurrentFramebuffer();
+            rendered = d.renderEngine->renderToCurrentFramebuffer(true);
     }
     if (!mark.IsClean())
         mark.Clear();
     if (!rendered)
         return;
 
+    d.warmupWaitingForSwap = !d.navigating && d.renderEngine->hasDeferredDisplayModeWarmup();
     d.gpuPerformanceMs = gpuTimer.nsecsElapsed() / 1e6;
     const bool converged = d.renderEngine->isConverged();
     d.glwidget->setProperty("renderConverged", converged);
@@ -554,6 +574,30 @@ ViewportWidgetPrivate::paintGL()
     Q_EMIT d.glwidget->renderReady(timer.elapsed());
     if (viewState() && viewState()->performanceStatsEnabled())
         updatePerformanceStats();
+}
+
+void
+ViewportWidgetPrivate::warmDisplayModes()
+{
+    if (d.warmupWaitingForSwap || d.navigating || !d.stage || !d.context || !d.renderEngine || !d.glwidget
+        || !d.glwidget->isVisible() || !d.glwidget->isValid() || !d.renderEngine->hasDeferredDisplayModeWarmup())
+        return;
+
+    QOpenGLContext* previous = QOpenGLContext::currentContext();
+    QSurface* surface = previous ? previous->surface() : nullptr;
+    d.glwidget->makeCurrent();
+    auto restore = qScopeGuard([&]() {
+        d.glwidget->doneCurrent();
+        if (previous && surface)
+            previous->makeCurrent(surface);
+    });
+    if (QOpenGLContext::currentContext() != d.glwidget->QOpenGLWidget::context())
+        return;
+
+    TfErrorMark mark;
+    READ_LOCKER(locker, d.context->stageLock(), "stageLock");
+    d.renderEngine->warmDeferredDisplayModes();
+    mark.Clear();
 }
 
 void
@@ -1044,6 +1088,21 @@ ViewportWidgetPrivate::updateStageUp(const TfToken& upAxis)
         d.renderEngine->refreshAuxiliaryStage();
 
     d.glwidget->update();
+}
+
+GfBBox3d
+ViewportWidgetPrivate::sceneBounds() const
+{
+    if (!d.context || !d.stage)
+        return {};
+    READ_LOCKER(locker, d.context->stageLock(), "stageLock");
+    bbox::CacheGuard cache(bbox::CacheGuard::Purposes::Geometry, timeCode());
+    if (d.mask.isEmpty())
+        return cache.ComputeWorldBound(d.stage->GetPseudoRoot());
+    GfBBox3d result;
+    for (const auto& path : d.mask)
+        result = GfBBox3d::Combine(result, cache.ComputeWorldBound(d.stage->GetPrimAtPath(path)));
+    return result;
 }
 
 void
@@ -1988,13 +2047,29 @@ ViewportWidget::lightPathsInRect(const QRectF& rect)
     return p->d.lights->pathsInRect(rect);
 }
 
+GfBBox3d
+ViewportWidget::framingBounds(const QList<SdfPath>& paths) const
+{
+    if (paths.isEmpty())
+        return p->sceneBounds();
+    if (!p->d.context)
+        return {};
+    READ_LOCKER(locker, p->d.context->stageLock(), "stageLock");
+    return stage::geometryBounds(p->d.stage, paths, p->timeCode());
+}
+
 void
 ViewportWidget::setTimeCode(double timeCode)
 {
     if (qFuzzyCompare(p->d.timeCode + 1.0, timeCode + 1.0))
         return;
 
+    if (p->d.transform->dragging())
+        p->d.transform->endDrag();
     p->d.timeCode = timeCode;
+    p->d.selectionTool->invalidateStage();
+    p->d.selectionTool->resetPickCycle();
+    p->d.transform->invalidate();
     p->d.lights->setTimeCode(timeCode);
     p->updateRenderEngineSettings();
     update();

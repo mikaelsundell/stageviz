@@ -29,7 +29,6 @@ namespace stageviz {
 
 class MaterialMenuPrivate {
 public:
-    static QString shaderId(const UsdPrim& prim);
     static bool isMaterialXShader(const UsdPrim& prim);
     static bool isStormSupportedMaterialXNode(const MaterialXNodeDefinition& definition);
     static QList<MaterialMenu::Choice> materialXChoices(const SdfValueTypeName& targetType);
@@ -40,28 +39,10 @@ public:
                            const std::function<void(const MaterialMenu::Choice&)>& callback);
 };
 
-QString
-MaterialMenuPrivate::shaderId(const UsdPrim& prim)
-{
-    if (!prim)
-        return {};
-
-    VtValue value;
-    const UsdAttribute id = prim.GetAttribute(TfToken("info:id"));
-    if (!id || !id.Get(&value))
-        return {};
-
-    if (value.IsHolding<TfToken>())
-        return QString::fromStdString(value.UncheckedGet<TfToken>().GetString());
-    if (value.IsHolding<std::string>())
-        return QString::fromStdString(value.UncheckedGet<std::string>());
-    return {};
-}
-
 bool
 MaterialMenuPrivate::isMaterialXShader(const UsdPrim& prim)
 {
-    return shaderId(prim).startsWith(QStringLiteral("ND_"));
+    return MaterialUtils::shaderId(prim).startsWith(QStringLiteral("ND_"));
 }
 
 bool

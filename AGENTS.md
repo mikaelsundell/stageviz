@@ -40,9 +40,10 @@ consistent with the existing architecture.
 
 ## macOS builds and runs
 
-- Set `DYLD_IMAGE_SUFFIX=_debug` when building or running Stageviz on macOS so
-  Qt and its dependencies load their debug-suffixed libraries. Prefix both
-  build and launch commands with this environment variable.
+- Use `DYLD_IMAGE_SUFFIX=_debug` only for macOS Debug builds/runs that use
+  debug-suffixed Qt frameworks. Release builds/runs must use release Qt
+  frameworks with `DYLD_IMAGE_SUFFIX` unset, including clearing an inherited
+  `_debug` value. Match the third-party prefix to the build configuration.
 
 ## UI and class structure
 
@@ -154,7 +155,8 @@ consistent with the existing architecture.
   history.
 - Start the MCP server in the running app with
   `stageviz.startMcpServer()` (for example,
-  `DYLD_IMAGE_SUFFIX=_debug stageviz --execute 'stageviz.startMcpServer()'`).
+  `stageviz --execute 'stageviz.startMcpServer()'`; prefix with
+  `DYLD_IMAGE_SUFFIX=_debug` only for a Debug framework build).
   Use the MCP `tools/list` response to confirm the endpoint and available
   Stageviz tools before testing. Keep MCP requests in the external controller;
   embedded Python scripts must not synchronously call back into the same MCP

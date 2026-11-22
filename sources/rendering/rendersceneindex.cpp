@@ -31,6 +31,13 @@ public:
     HdContainerDataSourceHandle createMaterialBindings(const SdfPath& materialPath) const;
 
     struct Data {
+        // Keep override targets current as the input scene index changes. This
+        // avoids traversing the full scene index whenever a display override is
+        // toggled.
+        std::set<pxr::SdfPath> gprimPaths;
+        std::set<pxr::SdfPath> geomSubsetPaths;
+        std::set<pxr::SdfPath> meshPaths;
+
         bool sceneMaterialsEnabled = true;
         RenderSceneIndex::Mode mode = RenderSceneIndex::None;
         SdfPath materialPath;
@@ -277,21 +284,21 @@ RenderSceneIndex::GetChildPrimPaths(const SdfPath& primPath) const
 void
 RenderSceneIndex::indexPrim(const SdfPath& path)
 {
-    gprimPaths.erase(path);
-    geomSubsetPaths.erase(path);
-    meshPaths.erase(path);
+    p->d.gprimPaths.erase(path);
+    p->d.geomSubsetPaths.erase(path);
+    p->d.meshPaths.erase(path);
 
     if (p->isDisplayPath(path))
         return;
 
     const HdSceneIndexPrim prim = _GetInputSceneIndex()->GetPrim(path);
     if (p->isGeomSubset(prim))
-        geomSubsetPaths.insert(path);
+        p->d.geomSubsetPaths.insert(path);
     else if (p->isGprim(prim))
-        gprimPaths.insert(path);
+        p->d.gprimPaths.insert(path);
 
     if (p->isMesh(prim))
-        meshPaths.insert(path);
+        p->d.meshPaths.insert(path);
 }
 
 void
@@ -326,9 +333,9 @@ RenderSceneIndex::unindexSubtree(const SdfPath& root)
             ++last;
         paths.erase(first, last);
     };
-    eraseSubtree(gprimPaths);
-    eraseSubtree(geomSubsetPaths);
-    eraseSubtree(meshPaths);
+    eraseSubtree(p->d.gprimPaths);
+    eraseSubtree(p->d.geomSubsetPaths);
+    eraseSubtree(p->d.meshPaths);
 }
 
 void
@@ -344,11 +351,11 @@ RenderSceneIndex::dirtyMaterialBindings()
     HdSceneIndexObserver::RemovedPrimEntries subsetRemoved;
     HdSceneIndexObserver::AddedPrimEntries subsetAdded;
 
-    for (const SdfPath& path : geomSubsetPaths) {
+    for (const SdfPath& path : p->d.geomSubsetPaths) {
         subsetRemoved.push_back({ path });
         subsetAdded.push_back({ path, HdPrimTypeTokens->geomSubset });
     }
-    for (const SdfPath& path : gprimPaths)
+    for (const SdfPath& path : p->d.gprimPaths)
         gprimEntries.push_back({ path, materialLocators });
 
     if (!subsetRemoved.empty())
@@ -369,7 +376,7 @@ RenderSceneIndex::dirtyDoubleSided()
     HdDataSourceLocatorSet locators;
     locators.insert(HdMeshSchema::GetDoubleSidedLocator());
 
-    for (const SdfPath& path : meshPaths)
+    for (const SdfPath& path : p->d.meshPaths)
         entries.push_back({ path, locators });
     if (!entries.empty())
         _SendPrimsDirtied(entries);

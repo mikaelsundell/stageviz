@@ -17,7 +17,7 @@ namespace stageviz::bbox {
      * Acquires an internal mutex for the lifetime of the guard, allowing
      * bounding boxes to be computed using a shared UsdGeomBBoxCache.
      *
-     * The cache evaluates bounds at the default USD time and may retain
+     * The cache evaluates bounds at the requested USD time and may retain
      * previously computed results to improve performance.
      *
      * The caller must acquire the appropriate stage lock before creating
@@ -43,8 +43,9 @@ public:
          * The caller must already hold the appropriate stage lock.
          *
          * @param purposes Purposes included in bounds evaluation.
+         * @param time Evaluation time; default-time queries retain their existing semantics.
          */
-    explicit CacheGuard(Purposes purposes = Purposes::All);
+    explicit CacheGuard(Purposes purposes = Purposes::All, UsdTimeCode time = UsdTimeCode::Default());
 
     /**
          * @brief Releases exclusive access to the shared bounding box cache.
@@ -57,7 +58,7 @@ public:
     /**
          * @brief Computes the world-space bounding box of a USD prim.
          *
-         * Uses the shared default-time bounding box cache to evaluate
+         * Uses the shared bounding box cache to evaluate
          * the prim's bounds, including its composed transforms.
          *
          * The returned GfBBox3d represents the computed world-space

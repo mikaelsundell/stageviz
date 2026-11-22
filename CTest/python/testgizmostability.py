@@ -105,6 +105,23 @@ class GizmoStabilityTest(_base['ViewportTest']):
             if i % 24 == 23:
                 self.check('gizmo_orbit_' + str(i))
 
+    def reload(self):
+        session = stageviz.session()
+        session.setPreserveState(False)
+        filename = str(self.directory / 'gizmo_reload.usda')
+        assert session.copyToFile(filename)
+        auxiliary_id = session.auxiliary().GetRootLayer().identifier
+        for index in range(2):
+            assert session.loadFromFile(filename)
+            tb.process_events(100)
+            assert session.auxiliary().GetRootLayer().identifier == auxiliary_id
+            assert not self.handle_visible(), 'document reload clears the active handle'
+            stageviz.command.select_paths(['/World/Sphere'])
+            assert tb.wait_for_commands()
+            self.activate_mode('Rotate')
+            self.frame_handle()
+            self.check('gizmo_reload_' + str(index))
+
     def distances(self):
         camera = stageviz.session().viewState().camera()
         for distance in (1.15, 2.5, 8.0, 35.0):
@@ -246,6 +263,7 @@ def run(disposable=False):
     test = GizmoStabilityTest(disposable=disposable)
     try:
         test.setup()
+        test.reload()
         test.orbit()
         test.distances()
         test.edge_on()

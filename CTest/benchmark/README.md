@@ -137,3 +137,62 @@ Timings include CPU submission and driver stalls, not GPU hardware execution.
 The first frame of the stage pays for hidden renderer preparation, so this moves
 the first-interaction cost to viewport initialization. No OS/shader caches are
 cleared, and screenshots/readbacks occur outside measured spans.
+
+## Selection pipeline before/after comparison
+
+`compare_selection_pipeline.py` compares two app binaries using the same SDK,
+configuration, fixture and viewport. It runs disposable processes serially in
+baseline/candidate/candidate/baseline order, without invoking CTest:
+
+```sh
+python3 CTest/benchmark/compare_selection_pipeline.py \
+  --baseline /path/to/baseline/stageviz --candidate /path/to/current/stageviz \
+  --output build.test-results/selection-comparison --count 10000 --samples 24
+```
+
+The ordinary-mesh workload reuses `testselectionoutline.py`. A second workload
+uses nested native instances and fixed-seed proxy groups to exercise grouped
+prototype traversal and flattened instance indices. Both populate the Outliner;
+parent moves include undo and USD assertions. External MCP verifies final stage,
+selection and a representative proxy. Viewer screenshots and Qt snapshots are
+saved outside measured intervals.
+
+`comparison.json` includes first-selection response, repeated selections, cached
+redraws and parent moves, plus `selection.hydra_mapping` samples correlated with
+the nested workload. Response times include framebuffer readback. Native logging
+is enabled equally for both binaries; these are instrumented wall-clock timings,
+not GPU-only measurements or uninstrumented release-performance claims. Fixture
+hashes, viewport sizes and executable provenance are recorded for comparison.
+
+## Focused nested-instance parent move/undo comparison
+
+`compare_nested_parent.py` isolates the parent-edit workload from selection and
+startup benchmarks. Its default fixture has 5,000 outer instances containing
+10,000 nested cube proxies, with the Outliner expanded and the parent selected.
+
+```sh
+python3 CTest/benchmark/compare_nested_parent.py \
+  --baseline /path/to/master/stageviz --candidate /path/to/audit/stageviz \
+  --output build.test-results/nested-parent-comparison \
+  --rounds 4 --samples 12 --warmup 4
+```
+
+Processes run serially in alternating baseline/candidate order. Each process
+records warmups separately and measures both the standard `testbench` command
+wait and the same Session completion barrier without an added settling delay;
+the wait-mode order is counterbalanced. Both modes include framebuffer readback
+after the move and undo. Per-sample dispatch, waiting, readback, total time and
+rendered-frame counts distinguish command costs from event-loop settling.
+
+Every round trip verifies USD transforms and selection; each wait-mode block
+checks exact layer restoration. External MCP observations, viewer screenshots,
+Qt snapshots, fixture hashes and binary provenance accompany the results.
+Compare process medians rather than treating samples from one process as
+independent runs. Native logging is off by default; add `--instrumented` for a
+separate phase-attribution run. These timings include readback and event-loop
+work and are not GPU-only measurements.
+
+The broader selection comparator records only three nested parent round trips
+per process, without a dedicated parent-edit warmup. Use this focused comparison
+when deciding whether to revert a change for parent-edit latency; a small broad
+comparison is a signal to investigate, rather than sufficient regression evidence.

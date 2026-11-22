@@ -142,14 +142,43 @@ def windows_rss(pid):
         kernel.CloseHandle(handle)
 
 
+def qt_runtime_environment(environment, configuration=None, app=None):
+    """Select matching macOS Qt frameworks and clear inherited Release suffixes."""
+    result = dict(environment)
+    if sys.platform != 'darwin':
+        return result
+    mode = None
+    if configuration is not None:
+        if configuration.lower() not in ('debug', 'release', 'relwithdebinfo', 'minsizerel'):
+            raise ValueError('Unknown build configuration: ' + configuration)
+        mode = 'Debug' if configuration.lower() == 'debug' else 'Release'
+    if app is not None:
+        libraries = subprocess.check_output(['/usr/bin/otool', '-L', str(app)], text=True, timeout=15)
+        match = re.search(r'/QtCore\.framework/Versions/[^/]+/QtCore(_debug)?(?=\s|$)', libraries)
+        if not match:
+            raise RuntimeError('Cannot determine Qt framework configuration for ' + str(app))
+        linked_mode = 'Debug' if match[1] else 'Release'
+        if mode is not None and mode != linked_mode:
+            raise RuntimeError('%s run links %s Qt frameworks: %s' % (mode, linked_mode, app))
+        mode = linked_mode
+    if mode is None:
+        raise ValueError('A build configuration or app is required to select macOS Qt frameworks')
+    if mode == 'Debug':
+        result['DYLD_IMAGE_SUFFIX'] = '_debug'
+    else:
+        result.pop('DYLD_IMAGE_SUFFIX', None)
+    return result
+
+
 class DisposableStageviz:
-    def __init__(self, app, output, port=37657, environment=None, max_rss_mib=24576):
+    def __init__(self, app, output, port=37657, environment=None, max_rss_mib=24576, configuration=None):
         self.app = Path(app).resolve()
         self.output = Path(output).resolve()
         self.output.mkdir(parents=True, exist_ok=False)
         self.port = port
         self.environment = environment or {}
         self.max_rss_mib = max_rss_mib
+        self.configuration = configuration
         self.stop = threading.Event()
         self.watchdog_error = None
         self.desktop = ExitStack()
@@ -237,15 +266,17 @@ class DisposableStageviz:
             + 'Path(%r).write_text(json.dumps({\"url\":stageviz.startMcpServer()}))\n' % str(endpoint), encoding='utf-8')
         env = dict(os.environ)
         env.update(self.environment)
-        if sys.platform == 'darwin':
-            env['DYLD_IMAGE_SUFFIX'] = '_debug'
+        env = qt_runtime_environment(env, self.configuration, self.app)
         env['STAGEVIZ_TEST_MCP_PORT'] = str(self.port)
         env['STAGEVIZ_TEST_SETTINGS_DIR'] = str(settings_directory)
         self.log = (self.output / 'app.log').open('w')
         self.process = subprocess.Popen([str(self.app), '--execute', 'exec(open(%r, encoding="utf-8").read())' % str(bootstrap)], env=env, stdout=self.log, stderr=subprocess.STDOUT)
         self.watcher = threading.Thread(target=self._watch, daemon=True)
         self.watcher.start()
-        (self.output / 'provenance.json').write_text(json.dumps(dict(app=str(self.app), app_sha256=hashlib.sha256(self.app.read_bytes()).hexdigest(), pid=self.process.pid, environment=self.environment, activity='NSActivityUserInitiatedAllowingIdleSystemSleep' if sys.platform == 'darwin' else None, idle_sleep_prevention='caffeinate -i (controller scoped)' if sys.platform == 'darwin' else None, port=self.port), indent=2))
+        recorded_environment = dict(self.environment)
+        if sys.platform == 'darwin':
+            recorded_environment['DYLD_IMAGE_SUFFIX'] = env.get('DYLD_IMAGE_SUFFIX')
+        (self.output / 'provenance.json').write_text(json.dumps(dict(app=str(self.app), app_sha256=hashlib.sha256(self.app.read_bytes()).hexdigest(), pid=self.process.pid, environment=recorded_environment, configuration=self.configuration, activity='NSActivityUserInitiatedAllowingIdleSystemSleep' if sys.platform == 'darwin' else None, idle_sleep_prevention='caffeinate -i (controller scoped)' if sys.platform == 'darwin' else None, port=self.port), indent=2))
         deadline = time.monotonic() + 90
         try:
             while True:

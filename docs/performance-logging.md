@@ -4,10 +4,13 @@
 Release builds. Set it to a writable file path before launching:
 
 ```sh
-DYLD_IMAGE_SUFFIX=_debug STAGEVIZ_PERF_LOG=/tmp/stageviz-phases.jsonl \
+STAGEVIZ_PERF_LOG=/tmp/stageviz-phases.jsonl \
   deploy.release/Stageviz.app/Contents/MacOS/stageviz \
   --execute 'stageviz.startMcpServer()'
 ```
+
+For Release, keep `DYLD_IMAGE_SUFFIX` unset. Use `_debug` only when launching a
+Debug build linked against debug Qt frameworks.
 
 The parent directory must exist. An unset or empty value disables logging and
 benchmark observation properties: no timing clocks, JSON serialization or file
