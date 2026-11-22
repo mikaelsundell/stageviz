@@ -24,16 +24,16 @@ class StormLayerBenchmark:
         self.results = []
         self.current = None
         self.waiting = None
-        self.front_roots = []
+        self.layer_one_roots = []
         self.frames = []
         self.dispatched = False
         self.active = False
-        self.phases = [('empty','empty'),('add_front','add'),('add_axle','add')]
+        self.phases = [('empty','empty'),('add_layer_1','add'),('add_layer_2','add')]
         for index in range(1,3):
-            self.phases += [(f'mute_front_{index}','mute'),(f'unmute_front_{index}','unmute')]
-        self.phases += [('mute_axle_1','mute'),('unmute_axle_1','unmute'),
-                        ('hide_front_roots','hide'),('undo_visibility','undo'),
-                        ('mute_front_no_render','mute'),('unmute_front_no_render','unmute'),
+            self.phases += [(f'mute_layer_1_{index}','mute'),(f'unmute_layer_1_{index}','unmute')]
+        self.phases += [('mute_layer_2_1','mute'),('unmute_layer_2_1','unmute'),
+                        ('hide_layer_1_roots','hide'),('undo_visibility','undo'),
+                        ('mute_layer_1_no_render','mute'),('unmute_layer_1_no_render','unmute'),
                         ('render_after_unmute','render')]
         if config.get('smoke'):self.phases=[('empty','empty')]
         elif config.get('short'):self.phases=self.phases[:5]
@@ -109,16 +109,16 @@ class StormLayerBenchmark:
             dialog=self.layer_dialog()
             if dialog:dialog.setVisible(self.config.get('layerEditor',True))
         elif self.kind=='add':
-            index=0 if self.current=='add_front' else 1
+            index=0 if self.current=='add_layer_1' else 1
             stageviz.command.add_sublayer(self.config['layers'][index])
         elif self.kind in ('mute','unmute'):
-            index=1 if 'axle' in self.current else 0
+            index=1 if 'layer_2' in self.current else 0
             stageviz.command.set_layer_muted(self.config['layers'][index],self.kind=='mute')
         elif self.kind=='hide':
-            self.before_visibility={path:str(UsdGeom.Imageable(session.stage().GetPrimAtPath(path)).ComputeVisibility(0)) for path in self.front_roots}
-            if self.front_roots:stageviz.command.hide_paths(self.front_roots)
+            self.before_visibility={path:str(UsdGeom.Imageable(session.stage().GetPrimAtPath(path)).ComputeVisibility(0)) for path in self.layer_one_roots}
+            if self.layer_one_roots:stageviz.command.hide_paths(self.layer_one_roots)
         elif self.kind=='undo':
-            if self.front_roots:stageviz.command.undo()
+            if self.layer_one_roots:stageviz.command.undo()
         self.dispatch_end_ms=time.perf_counter()*1000
         self.dispatched=True
         self.framed=False
@@ -129,13 +129,13 @@ class StormLayerBenchmark:
         stage=stageviz.session().stage()
         if self.kind=='empty':return len(stage.GetRootLayer().subLayerPaths)==0
         if self.kind=='add':
-            index=0 if self.current=='add_front' else 1
+            index=0 if self.current=='add_layer_1' else 1
             return any(Path(layer.realPath)==Path(self.config['layers'][index]) for layer in stage.GetLayerStack())
         if self.kind in ('mute','unmute'):
-            index=1 if 'axle' in self.current else 0
+            index=1 if 'layer_2' in self.current else 0
             return stage.IsLayerMuted(self.config['layers'][index])==(self.kind=='mute')
         if self.kind=='hide':
-            return all(UsdGeom.Imageable(stage.GetPrimAtPath(path)).ComputeVisibility(0)=='invisible' for path in self.front_roots)
+            return all(UsdGeom.Imageable(stage.GetPrimAtPath(path)).ComputeVisibility(0)=='invisible' for path in self.layer_one_roots)
         if self.kind=='undo':
             return all(str(UsdGeom.Imageable(stage.GetPrimAtPath(path)).ComputeVisibility(0))==value for path,value in self.before_visibility.items())
         return True
@@ -163,20 +163,20 @@ class StormLayerBenchmark:
         stage=session.stage()
         assert session.viewState().sceneMaterialsEnabled()==self.config.get('materials',True)
         assert session.viewState().sceneStatsEnabled()==self.config.get('sceneStats',True)
-        if self.current=='add_front':
+        if self.current=='add_layer_1':
             layer=Sdf.Layer.Find(self.config['layers'][0])
-            self.front_roots=[str(spec.path) for spec in layer.rootPrims if UsdGeom.Imageable(stage.GetPrimAtPath(spec.path))]
-            # Assemblies can share a top-level container. Prefer the front
-            # assembly branch below a chain of single-child containers.
+            self.layer_one_roots=[str(spec.path) for spec in layer.rootPrims if UsdGeom.Imageable(stage.GetPrimAtPath(spec.path))]
+            # Layers can share a top-level container. Walk past single-child
+            # containers to select the first layer's branch for visibility tests.
             roots=[]
-            for path in self.front_roots:
+            for path in self.layer_one_roots:
                 prim=stage.GetPrimAtPath(path)
                 while len(prim.GetChildren())==1:
                     child=prim.GetChildren()[0]
                     if not UsdGeom.Imageable(child):break
                     prim=child
                 roots.append(str(prim.GetPath()))
-            self.front_roots=roots
+            self.layer_one_roots=roots
         result={'phase':self.current,'kind':self.kind,'start_ms':self.start_ms,
                 'start_wall_ms':self.start_wall_ms,'end_wall_ms':time.time()*1000,
                 'dispatch_end_ms':self.dispatch_end_ms,'end_ms':end,
@@ -188,7 +188,7 @@ class StormLayerBenchmark:
                 'frames_ms':[stamp-self.start_ms for stamp in self.frames],
                 'viewport_updates':not self.no_render,'trace_enabled':self.tracing,
                 'verified':self.expected(),'prims':sum(1 for _ in stage.Traverse()),
-                'muted':list(stage.GetMutedLayers()),'front_roots':self.front_roots,
+                'muted':list(stage.GetMutedLayers()),'layer_one_roots':self.layer_one_roots,
                 'dirty_file_layers':[layer.identifier for layer in stage.GetUsedLayers() if not layer.anonymous and layer.dirty],
                 'layer_stack':[layer.identifier for layer in stage.GetLayerStack()],
                 'materials_enabled':session.viewState().sceneMaterialsEnabled(),

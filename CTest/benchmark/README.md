@@ -1,25 +1,62 @@
 # Stageviz performance benchmarks
 
+## Stageviz viewport baseline
+
+Run `test_benchmark.bat Release` on Windows or `bash ./test_benchmark.sh Debug`
+on macOS from a checkout with Stageviz already built. The runner accepts
+`Debug`, `Release`, `RelWithDebInfo`, and `MinSizeRel`. Use `--build-dir`
+for a build outside the default configuration directory. Set `THIRDPARTY_DIR` to
+the same configuration-specific dependency prefix used by the build. If the
+variable is missing or invalid, the runner prompts for it in an interactive
+terminal. The answer applies to that run. On Windows the default is the executable
+in the selected build directory, including when it was configured with
+`DEPLOY_BUILD=ON`. The benchmark never builds the app or launches a second viewer.
+
+It runs three repetitions of two workloads on a generated scene. **Orbit**
+measures input to frame swap. **Orbit with selection** measures the same camera
+movement while changing the selection. The report shows median and p95 timing
+changes as percentages when a matching baseline exists. The full JSON also
+includes paint-end-to-swap and frame interval measurements.
+
+The baseline key includes the machine profile, active OpenGL renderer and
+version, OpenUSD, build configuration, viewport size, fixture hash, and sample
+settings. The Git revision and binary hash are recorded separately so different
+builds can share a baseline. A machine or GPU change can produce a new key.
+
+The runner looks up the baseline under `docs/performance/stageviz-viewport/`.
+It prints the previous and current timings with their percentage differences,
+or reports that there is no match. Answer **yes** to save or overwrite the
+matching JSON in the working tree. Press Enter or use `--no-prompt` to leave
+the baseline alone. Noninteractive runs only report and compare.
+
+Review and commit the JSON when you want to share the baseline. The file omits
+installation hashes, local paths, and raw logs. Raw results remain under
+`build.test-results/`.
+
 For optional native timings, launch with
 `STAGEVIZ_PERF_LOG=/absolute/path/to/phases.jsonl`. See
 [performance logging](../../docs/performance-logging.md) for startup behavior,
 event fields, scope coverage, overhead and interpretation.
 
-## Two-layer Storm investigation
+## Two-layer Storm benchmark
 
-`benchmark_storm_layers.py` runs the two supplied Volvo assembly sublayers in an
-anonymous stage. Use the external Windows controller
-`investigation/performance/run.py`; it starts a disposable deployed Release app,
-checks MCP tools, and records independent stage/selection oracles at checkpoints.
-The embedded script uses public commands and never saves the source layers.
-It starts once so native undo retains muted layers throughout the workflow.
+`benchmark_storm_layers.py` adds two caller-provided USD layers to an anonymous
+stage. Use generated fixtures for examples and shared results. Launch a
+disposable Stageviz process through `mcp_runtime.DisposableStageviz`. The profile
+selected by `STAGEVIZ_STORM_PROFILE` supplies two absolute paths in `layers` and
+an existing `output` directory. Start the embedded script once through MCP so
+undo retains muted layers. At each checkpoint, query the stage and selection
+through the external client and write the phase name to `ack.txt` in the output
+directory to advance.
+The benchmark leaves the input layer files unchanged.
 
 Set `HDST_MAX_STAGING_BUFFER_SIZE` before app startup to choose bounded USD
 staging bytes. `STAGEVIZ_PERF_LOG` enables optional native CPU wall-time scopes.
-The controller handles these per run; `--settings` accepts the example profile
-JSON for staging sizes, materials, scene statistics, culling, and layer-editor
-state. Restart between profiles. `--trace` is a separate diagnostic run with USD
-Trace overhead. `view.short=true` selects empty/add/add/mute/unmute only.
+Set these in the disposable process environment before launch. Restart between
+profiles. The profile's `short` option limits the run to stage creation, layer
+addition, and the first mute and unmute. Set `traceOperation` to a phase name
+for a separate diagnostic run with USD Trace overhead. Use phase names such
+as `add_layer_1`, `add_layer_2`, and `mute_layer_1_1` in custom profiles.
 
 End-to-end time waits for session updates and three subsequent viewport presents;
 add operations include an explicitly timed frame-all. Native scopes are inclusive
@@ -27,9 +64,9 @@ CPU wall times, not GPU hardware queries. Metadata, screenshots, Qt snapshots,
 and external MCP checks occur after each measured span. OS/network/shader caches
 are not cleared, so fresh processes are not cold-cache measurements.
 
-These scripts are manual performance tools, not CTest cases. They load a
-generated USDA fixture into the active session and replace its current stage.
-Run them only in a disposable Stageviz process without unsaved user work.
+Run these manual benchmarks in a disposable Stageviz process. They replace the
+active stage and can write input paths, prim names, and screenshots to their
+output directory. Keep results from private inputs local.
 
 ## Run through MCP
 
@@ -47,10 +84,10 @@ import runpy
 runpy.run_path("/absolute/path/to/stageviz/CTest/benchmark/benchmark_prim_commands.py")
 ```
 
-Each script creates fixtures, waits for deferred session updates to finish,
-checks the resulting USD state, and records dispatch and end-to-end times. The
-scripts use `testbench` for Qt event processing and viewer screenshots. They
-write JSON reports and PNG screenshots under the system temporary directory.
+The generated-fixture scripts wait for deferred session updates, check the
+resulting USD state, and record dispatch and end-to-end times. They use
+`testbench` for Qt event processing and viewer screenshots and write JSON
+reports and PNG screenshots under the system temporary directory.
 
 Set `STAGEVIZ_BENCHMARK_COUNT` before launching Stageviz to change the default
 fixture size (5,000 prims). `benchmark_hide_delete.py` also accepts
@@ -63,15 +100,48 @@ fixture size (5,000 prims). `benchmark_hide_delete.py` also accepts
 - `benchmark_outliner_parent_commands.py`: rename, move, and delete a parent
   with a large expanded Outliner subtree; checks both USD and Qt row counts.
 - `benchmark_hide_delete.py`: focused hide or delete run for a large selection.
-- `benchmark_selection_transform.py`: real-data cold/warm sweep, invert/undo,
+- `benchmark_selection_transform.py`: cold/warm sweep, invert/undo,
   Move tool activation, separate drag press/moves/release, undo/redo and cleanup.
-  The external controller and profiles are in `investigation/selection-performance5`.
+  The benchmark uses the first layer in the `STAGEVIZ_STORM_PROFILE` configuration.
   Full sweep/render timing requires a valid OpenGL viewport. CPU-only profiles
   label rendering unavailable and use deterministic path selections. They do
   not measure visible gizmo appearance or rendered drag responsiveness.
 
 The tests must use MCP for live app operation and capture screenshots through
 the viewer widget. Do not add these scripts to the automatic CTest suite.
+
+## Stageviz and usdview viewport swaps
+
+On Windows, compare a Release Stageviz build with the standalone usdview
+`StageView` from a matching Release OpenUSD prefix:
+
+```powershell
+py -3 CTest/benchmark/compare_viewer_swaps.py `
+  --stageviz build.Release/Release/Stageviz.exe `
+  --stageviz-runtime build.Release/test-runtime-Release.txt `
+  --usd-python 'path/to/python.exe' --usd-prefix 'path/to/release-prefix' `
+  --synthetic-cubes 1024 --output build.test-results/viewer-swaps
+```
+
+The runner uses the same USD file, orbit sequence, and physical viewport size
+in both viewers and checks the final camera framing. Each viewer retains its
+own depth clipping policy. The runner waits for a fresh buffer swap after each change and reports
+median, p95, and maximum times for input-to-swap, paint-end-to-swap, and swap
+intervals. It also measures Stageviz orbit with selection changes and a
+populated Outliner branch.
+Use `--select-prim` to choose which prims to cycle.
+
+The comparison runs without native tracing. A separate Stageviz run records
+inclusive viewport, Hydra, Outliner, and Property Editor durations. Scope
+totals can overlap and must not be added together. Each viewer uses its own
+rendering and UI pipeline. The standalone StageView has no Outliner, and this
+is a serialized redraw benchmark with scripted camera changes.
+
+Use `--scene` in place of `--synthetic-cubes` to benchmark an existing USD
+file. The output includes screenshots, raw samples, and MCP checkpoints.
+Keep results from private inputs local. See
+[performance references](../../docs/performance/README.md) for the checked-in
+reports.
 
 ## Synthetic 250k-prim / 20m-face comparison
 

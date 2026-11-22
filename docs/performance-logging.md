@@ -23,6 +23,13 @@ processes. An unavailable destination silently produces no output. Logging is
 synchronous and intended for bounded diagnostic runs; files have no automatic
 size limit or rotation.
 
+In the viewport's Performance Stats overlay, **Render** shows the last
+successful render call's elapsed wall time. **FPS** measures the cadence of
+fresh viewport frames at Qt's window buffer swap over roughly the last second.
+It shows a dash until two frames have swapped and after a second without a new
+frame. The swap signal measures application presentation cadence. GPU execution
+time and physical display scanout are separate measurements.
+
 ## Event fields
 
 | Field | Meaning |
@@ -62,6 +69,9 @@ or GPU waits. Do not add nested or overlapping scope durations together.
 - `scene_index.*`, `hydra.*`, `viewport.paint`: scene-index add/remove handling
   and viewport rendering. Per-prim accessors and per-item loops are deliberately
   not instrumented, to avoid one log event per object in a large scene.
+- `hydra.document_prepare`, `hydra.document_draw`, `hydra.overlays`, and
+  `viewport.overlay_paint`: document preparation and drawing, auxiliary Hydra
+  passes, and Qt viewport overlay painting.
 
 When enabled, the viewport also publishes `transformPivotValid`,
 `transformPivotScreen`, `transformDragging`, `transformActiveAxis` and

@@ -171,8 +171,10 @@ def qt_runtime_environment(environment, configuration=None, app=None):
 
 
 class DisposableStageviz:
-    def __init__(self, app, output, port=37657, environment=None, max_rss_mib=24576, configuration=None):
+    def __init__(self, app, output, port=37657, environment=None, max_rss_mib=24576, configuration=None,
+                 python_dll_paths=()):
         self.app = Path(app).resolve()
+        self.python_dll_paths = tuple(map(str, python_dll_paths))
         self.output = Path(output).resolve()
         self.output.mkdir(parents=True, exist_ok=False)
         self.port = port
@@ -258,7 +260,10 @@ class DisposableStageviz:
         settings_directory.mkdir()
         endpoint = self.output / 'endpoint.json'
         activity = _MACOS_BOOTSTRAP if sys.platform == 'darwin' else ''
-        bootstrap.write_text(activity + '\nimport json,os,stageviz\nfrom pathlib import Path\n'
+        dll_setup = ''
+        if self.python_dll_paths:
+            dll_setup = f'_test_dll_handles=[os.add_dll_directory(path) for path in {self.python_dll_paths!r}]\n'
+        bootstrap.write_text(activity + '\nimport json,os,stageviz\nfrom pathlib import Path\n' + dll_setup
             + 'from PySide6.QtCore import QSettings\n'
             + 'test_settings=Path(os.environ["STAGEVIZ_TEST_SETTINGS_DIR"]).resolve()\n'
             + 'assert QSettings.defaultFormat()==QSettings.Format.IniFormat, "Rebuild Stageviz for isolated test settings"\n'
