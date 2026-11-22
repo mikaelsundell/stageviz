@@ -2122,37 +2122,7 @@ SessionPrivate::boundingBox(const QList<SdfPath>& paths)
     if (!d.stage || paths.isEmpty())
         return GfBBox3d();
 
-    bbox::CacheGuard bboxCache(bbox::CacheGuard::Purposes::Geometry);
-
-    GfRange3d worldRange;
-    std::unordered_set<SdfPath, SdfPath::Hash> visited;
-    // Framing needs object bounds; keep this projection out of selection storage.
-    for (const SdfPath& path : stage::objectPaths(d.stage, paths)) {
-        const SdfPath primPath = path.IsPropertyPath() ? path.GetPrimPath() : path;
-
-        UsdPrim prim = d.stage->GetPrimAtPath(primPath);
-        if (!prim)
-            continue;
-
-        for (const UsdPrim& descendant : UsdPrimRange(prim)) {
-            if (!descendant.IsActive() || !descendant.IsDefined())
-                continue;
-
-            if (!visited.insert(descendant.GetPath()).second)
-                continue;
-
-            const UsdGeomImageable imageable(descendant);
-            if (!imageable)
-                continue;
-
-            const GfBBox3d bbox = bboxCache.ComputeWorldBound(descendant);
-            const GfRange3d range = bbox.ComputeAlignedRange();
-
-            if (!range.IsEmpty())
-                worldRange.UnionWith(range);
-        }
-    }
-    return GfBBox3d(worldRange);
+    return stage::geometryBounds(d.stage, paths);
 }
 
 bool

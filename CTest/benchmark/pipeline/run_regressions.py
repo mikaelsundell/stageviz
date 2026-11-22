@@ -52,7 +52,7 @@ def phases(root, name, performance=False, performance_baseline=None):
                 ('selected', 'test.selected()'), ('cleanup', 'test.cleanup()')]
     if name == 'testgizmostability':
         return [('setup', load + "; test=ns['GizmoStabilityTest'](disposable=True); test.setup()"),
-                ('orbit', 'test.orbit()'), ('distances', 'test.distances()'), ('edge-on', 'test.edge_on()'), ('option-drag', 'test.option_drag()'), ('move-axis-on', 'test.move_axis_on()'), ('clipping', 'test.clipping()'), ('cleanup', 'test.cleanup()')]
+                ('reload', 'test.reload()'), ('orbit', 'test.orbit()'), ('distances', 'test.distances()'), ('edge-on', 'test.edge_on()'), ('option-drag', 'test.option_drag()'), ('move-axis-on', 'test.move_axis_on()'), ('clipping', 'test.clipping()'), ('cleanup', 'test.cleanup()')]
     if name == 'testsourcechild':
         return [('setup', load + "; test=ns['SourceChildTest'](disposable=True); test.setup()")] + [
             ('api-' + mode, 'test.api(%r)' % mode) for mode in ('Move', 'Rotate', 'Scale')
@@ -132,6 +132,10 @@ def phases(root, name, performance=False, performance_baseline=None):
     if name == 'testcontextmenu':
         return [('setup', load + "; test=ns['ContextMenuTest'](disposable=True); test.setup()"),
                 ('structure', 'test.structure()'), ('actions', 'test.actions()'), ('cleanup', 'test.cleanup()')]
+    if name == 'testattributetarget':
+        return [('setup', load + "; test=ns['AttributeTargetTest'](disposable=True); test.setup()"),
+                ('target-history', 'test.exercise()'), ('pivot-history', 'test.pivot_history()'),
+                ('cleanup', 'test.cleanup()')]
     if name == 'testclearopinions':
         return [('setup', load + "; test=ns['ClearOpinionsTest'](disposable=True); test.setup()"),
                 ('groups-menu', 'test.exercise()'), ('cleanup', 'test.cleanup()')]
@@ -227,7 +231,8 @@ def run(args):
         started=time.monotonic()
         row=dict(suite=name,passed=False,completed=[])
         try:
-            with DisposableStageviz(args.app,output/name,port=args.port) as app:
+            with DisposableStageviz(args.app,output/name,port=args.port,
+                                    configuration=getattr(args, 'configuration', None)) as app:
                 # Changing native window flags on Windows recreates the HWND
                 # and can invalidate an already initialized QOpenGLWidget.
                 app.python("from PySide6 import QtCore,QtWidgets,QtOpenGLWidgets; import stageviz,sys; w=stageviz.application().window(); w.resize(1500,1000)\n"
@@ -249,6 +254,14 @@ def run(args):
                         timeout = 120
                     result=app.python(code, timeout=timeout)
                     after=app.oracle()
+                    if name == 'testattributetarget' and label != 'cleanup':
+                        selection = json.loads(after['stageviz_get_selection']['result']['content'][0]['text'])
+                        assert selection == (['/Asset/Matrix'] if label == 'pivot-history' else ['/Asset']), selection
+                        after['fixture'] = {}
+                        for path in ('/Asset', '/Asset/Matrix'):
+                            response = app.tool('stageviz_get_prim_info', {'path': path})
+                            assert json.loads(response['result']['content'][0]['text'])['defined']
+                            after['fixture'][path] = response
                     if name == 'testpayloadhierarchy' and label != 'cleanup':
                         after['payload_prims'] = payload_oracle(app, result)
                     if name == 'testpayloadindicator' and label != 'cleanup':
@@ -460,6 +473,8 @@ if __name__=='__main__':
     parser.add_argument('--app',required=True)
     parser.add_argument('--output',required=True)
     parser.add_argument('--suites',nargs='+')
+    parser.add_argument('--configuration', choices=('Debug', 'Release', 'RelWithDebInfo', 'MinSizeRel'),
+                        help='Expected build configuration; macOS also verifies linked Qt framework names')
     parser.add_argument('--performance', action='store_true', help='Include the API suite performance checks')
     parser.add_argument('--performance-baseline', help='Optional persistent API performance baseline file')
     parser.add_argument('--port',type=int,default=37657,help='Isolated MCP listener port')

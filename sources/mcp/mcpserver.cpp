@@ -137,405 +137,422 @@ namespace {
 
 class McpServerPrivate {
 public:
-    explicit McpServerPrivate(McpServer* owner)
-        : q(owner)
-        , server(new QTcpServer(owner))
-    {
-        QObject::connect(server, &QTcpServer::newConnection, q, [this]() { acceptConnections(); });
-    }
-
-    void acceptConnections()
-    {
-        while (server->hasPendingConnections()) {
-            QTcpSocket* socket = server->nextPendingConnection();
-            if (!socket)
-                continue;
-            socket->setReadBufferSize(maxHeaderSize + maxBodySize);
-            QObject::connect(socket, &QTcpSocket::readyRead, q, [this, socket]() { readRequest(socket); });
-            QObject::connect(socket, &QTcpSocket::disconnected, socket, &QObject::deleteLater);
-        }
-    }
-
+    explicit McpServerPrivate(McpServer* owner);
+    void acceptConnections();
     void writeResponse(QTcpSocket* socket, int status, const QByteArray& reason, const QByteArray& body = {},
-                       const QByteArray& contentType = "application/json", const QByteArray& corsOrigin = {})
-    {
+                       const QByteArray& contentType = "application/json", const QByteArray& corsOrigin = {});
+    QByteArray errorBody(int code, const QString& message);
+    bool allowedHost(const QByteArray& host) const;
+    QByteArray allowedOrigin(const QByteArray& origin) const;
+    void readRequest(QTcpSocket* socket);
+    QJsonObject handleMessage(const QJsonObject& request, bool* hasResponse);
+    QJsonObject callTool(const QString& name, const QJsonObject& args);
+
+    struct Data {
+        McpServer* q = nullptr;
+        QTcpServer* server = nullptr;
+        QString error;
+    } d;
+};
+
+McpServerPrivate::McpServerPrivate(McpServer* owner)
+{
+    d.q = owner;
+    d.server = new QTcpServer(owner);
+    QObject::connect(d.server, &QTcpServer::newConnection, d.q, [this]() { acceptConnections(); });
+}
+
+void
+McpServerPrivate::acceptConnections()
+{
+    while (d.server->hasPendingConnections()) {
+        QTcpSocket* socket = d.server->nextPendingConnection();
         if (!socket)
-            return;
-        QByteArray response = "HTTP/1.1 " + QByteArray::number(status) + " " + reason + "\r\n";
-        response += "Content-Type: " + contentType + "\r\n";
-        response += "Content-Length: " + QByteArray::number(body.size()) + "\r\n";
-        response += "Cache-Control: no-store\r\nConnection: close\r\n";
-        if (!corsOrigin.isEmpty()) {
-            response += "Access-Control-Allow-Origin: " + corsOrigin + "\r\n";
-            response += "Access-Control-Allow-Methods: POST, OPTIONS\r\n";
-            response += "Access-Control-Allow-Headers: Content-Type, Accept, Mcp-Protocol-Version\r\n";
-            response += "Vary: Origin\r\n";
-        }
-        response += "\r\n";
-        response += body;
-        socket->write(response);
-        socket->disconnectFromHost();
+            continue;
+        socket->setReadBufferSize(maxHeaderSize + maxBodySize);
+        QObject::connect(socket, &QTcpSocket::readyRead, d.q, [this, socket]() { readRequest(socket); });
+        QObject::connect(socket, &QTcpSocket::disconnected, socket, &QObject::deleteLater);
     }
+}
 
-    QByteArray errorBody(int code, const QString& message)
-    {
-        return QJsonDocument(jsonRpcError(QJsonValue(QJsonValue::Null), code, message)).toJson(QJsonDocument::Compact);
+void
+McpServerPrivate::writeResponse(QTcpSocket* socket, int status, const QByteArray& reason, const QByteArray& body,
+                                const QByteArray& contentType, const QByteArray& corsOrigin)
+{
+    if (!socket)
+        return;
+    QByteArray response = "HTTP/1.1 " + QByteArray::number(status) + " " + reason + "\r\n";
+    response += "Content-Type: " + contentType + "\r\n";
+    response += "Content-Length: " + QByteArray::number(body.size()) + "\r\n";
+    response += "Cache-Control: no-store\r\nConnection: close\r\n";
+    if (!corsOrigin.isEmpty()) {
+        response += "Access-Control-Allow-Origin: " + corsOrigin + "\r\n";
+        response += "Access-Control-Allow-Methods: POST, OPTIONS\r\n";
+        response += "Access-Control-Allow-Headers: Content-Type, Accept, Mcp-Protocol-Version\r\n";
+        response += "Vary: Origin\r\n";
     }
+    response += "\r\n";
+    response += body;
+    socket->write(response);
+    socket->disconnectFromHost();
+}
 
-    bool allowedHost(const QByteArray& host) const
-    {
-        const QByteArray port = QByteArray::number(server->serverPort());
-        return host.compare("127.0.0.1:" + port, Qt::CaseInsensitive) == 0
-               || host.compare("localhost:" + port, Qt::CaseInsensitive) == 0;
-    }
+QByteArray
+McpServerPrivate::errorBody(int code, const QString& message)
+{
+    return QJsonDocument(jsonRpcError(QJsonValue(QJsonValue::Null), code, message)).toJson(QJsonDocument::Compact);
+}
 
-    QByteArray allowedOrigin(const QByteArray& origin) const
-    {
-        if (origin.isEmpty())
-            return {};
-        const QUrl url(QString::fromUtf8(origin));
-        if (url.scheme() != QLatin1String("http") || url.port(-1) != server->serverPort()
-            || (url.host() != QLatin1String("127.0.0.1") && url.host() != QLatin1String("localhost")))
-            return {};
-        return origin;
-    }
+bool
+McpServerPrivate::allowedHost(const QByteArray& host) const
+{
+    const QByteArray port = QByteArray::number(d.server->serverPort());
+    return host.compare("127.0.0.1:" + port, Qt::CaseInsensitive) == 0
+           || host.compare("localhost:" + port, Qt::CaseInsensitive) == 0;
+}
 
-    void readRequest(QTcpSocket* socket)
-    {
-        if (!socket || socket->property("mcpResponded").toBool())
-            return;
+QByteArray
+McpServerPrivate::allowedOrigin(const QByteArray& origin) const
+{
+    if (origin.isEmpty())
+        return {};
+    const QUrl url(QString::fromUtf8(origin));
+    if (url.scheme() != QLatin1String("http") || url.port(-1) != d.server->serverPort()
+        || (url.host() != QLatin1String("127.0.0.1") && url.host() != QLatin1String("localhost")))
+        return {};
+    return origin;
+}
 
-        QByteArray buffer = socket->property("mcpRequestBuffer").toByteArray();
-        buffer += socket->readAll();
-        if (buffer.size() > maxHeaderSize + maxBodySize) {
-            socket->setProperty("mcpResponded", true);
-            writeResponse(socket, 413, "Payload Too Large", "Request body is too large.", "text/plain");
-            return;
-        }
+void
+McpServerPrivate::readRequest(QTcpSocket* socket)
+{
+    if (!socket || socket->property("mcpResponded").toBool())
+        return;
 
-        const qsizetype headerEnd = buffer.indexOf("\r\n\r\n");
-        if (headerEnd < 0) {
-            if (buffer.size() > maxHeaderSize) {
-                socket->setProperty("mcpResponded", true);
-                writeResponse(socket, 431, "Request Header Fields Too Large", "Request headers are too large.",
-                              "text/plain");
-                return;
-            }
-            socket->setProperty("mcpRequestBuffer", buffer);
-            return;
-        }
-
-        const QList<QByteArray> lines = buffer.left(headerEnd).split('\n');
-        if (lines.isEmpty()) {
-            socket->setProperty("mcpResponded", true);
-            writeResponse(socket, 400, "Bad Request", "Malformed request.", "text/plain");
-            return;
-        }
-        const QList<QByteArray> requestLine = lines.first().trimmed().split(' ');
-        if (requestLine.size() != 3) {
-            socket->setProperty("mcpResponded", true);
-            writeResponse(socket, 400, "Bad Request", "Malformed request line.", "text/plain");
-            return;
-        }
-
-        QHash<QByteArray, QByteArray> headers;
-        for (qsizetype i = 1; i < lines.size(); ++i) {
-            const QByteArray line = lines.at(i).trimmed();
-            const qsizetype separator = line.indexOf(':');
-            if (separator <= 0)
-                continue;
-            headers.insert(line.left(separator).trimmed().toLower(), line.mid(separator + 1).trimmed());
-        }
-
-        const QByteArray origin = allowedOrigin(headers.value("origin"));
-        const QByteArray host = headers.value("host");
-        if (!allowedHost(host) || (!headers.value("origin").isEmpty() && origin.isEmpty())) {
-            socket->setProperty("mcpResponded", true);
-            writeResponse(socket, 403, "Forbidden", "Only local MCP clients are allowed.", "text/plain");
-            return;
-        }
-
-        const QByteArray method = requestLine.at(0);
-        const QByteArray path = requestLine.at(1);
-        if (method == "OPTIONS" && path == "/mcp") {
-            socket->setProperty("mcpResponded", true);
-            writeResponse(socket, 204, "No Content", {}, "text/plain", origin);
-            return;
-        }
-        if (method != "POST" || path != "/mcp") {
-            socket->setProperty("mcpResponded", true);
-            writeResponse(socket, 404, "Not Found", "MCP endpoint not found.", "text/plain", origin);
-            return;
-        }
-        if (!headers.value("transfer-encoding").isEmpty()) {
-            socket->setProperty("mcpResponded", true);
-            writeResponse(socket, 400, "Bad Request", "Transfer-Encoding is not supported.", "text/plain", origin);
-            return;
-        }
-        if (!headers.value("content-type").toLower().startsWith("application/json")) {
-            socket->setProperty("mcpResponded", true);
-            writeResponse(socket, 415, "Unsupported Media Type", "Expected application/json.", "text/plain", origin);
-            return;
-        }
-
-        bool lengthOk = false;
-        const qlonglong contentLength = headers.value("content-length").toLongLong(&lengthOk);
-        if (!lengthOk || contentLength < 1 || contentLength > maxBodySize) {
-            socket->setProperty("mcpResponded", true);
-            writeResponse(socket, contentLength > maxBodySize ? 413 : 400,
-                          contentLength > maxBodySize ? "Payload Too Large" : "Bad Request", "Invalid Content-Length.",
-                          "text/plain", origin);
-            return;
-        }
-
-        const qsizetype bodyOffset = headerEnd + 4;
-        if (buffer.size() - bodyOffset < contentLength) {
-            socket->setProperty("mcpRequestBuffer", buffer);
-            return;
-        }
-
+    QByteArray buffer = socket->property("mcpRequestBuffer").toByteArray();
+    buffer += socket->readAll();
+    if (buffer.size() > maxHeaderSize + maxBodySize) {
         socket->setProperty("mcpResponded", true);
-        const QByteArray body = buffer.mid(bodyOffset, static_cast<qsizetype>(contentLength));
-        QJsonParseError parseError;
-        const QJsonDocument document = QJsonDocument::fromJson(body, &parseError);
-        if (parseError.error != QJsonParseError::NoError || !document.isObject()) {
-            writeResponse(socket, 400, "Bad Request", errorBody(-32700, "Invalid JSON request."), "application/json",
-                          origin);
-            return;
-        }
+        writeResponse(socket, 413, "Payload Too Large", "Request body is too large.", "text/plain");
+        return;
+    }
 
-        bool hasResponse = false;
-        const QJsonObject response = handleMessage(document.object(), &hasResponse);
-        if (!hasResponse) {
-            writeResponse(socket, 202, "Accepted", {}, "application/json", origin);
+    const qsizetype headerEnd = buffer.indexOf("\r\n\r\n");
+    if (headerEnd < 0) {
+        if (buffer.size() > maxHeaderSize) {
+            socket->setProperty("mcpResponded", true);
+            writeResponse(socket, 431, "Request Header Fields Too Large", "Request headers are too large.",
+                          "text/plain");
             return;
         }
-        writeResponse(socket, 200, "OK", QJsonDocument(response).toJson(QJsonDocument::Compact), "application/json",
+        socket->setProperty("mcpRequestBuffer", buffer);
+        return;
+    }
+
+    const QList<QByteArray> lines = buffer.left(headerEnd).split('\n');
+    if (lines.isEmpty()) {
+        socket->setProperty("mcpResponded", true);
+        writeResponse(socket, 400, "Bad Request", "Malformed request.", "text/plain");
+        return;
+    }
+    const QList<QByteArray> requestLine = lines.first().trimmed().split(' ');
+    if (requestLine.size() != 3) {
+        socket->setProperty("mcpResponded", true);
+        writeResponse(socket, 400, "Bad Request", "Malformed request line.", "text/plain");
+        return;
+    }
+
+    QHash<QByteArray, QByteArray> headers;
+    for (qsizetype i = 1; i < lines.size(); ++i) {
+        const QByteArray line = lines.at(i).trimmed();
+        const qsizetype separator = line.indexOf(':');
+        if (separator <= 0)
+            continue;
+        headers.insert(line.left(separator).trimmed().toLower(), line.mid(separator + 1).trimmed());
+    }
+
+    const QByteArray origin = allowedOrigin(headers.value("origin"));
+    const QByteArray host = headers.value("host");
+    if (!allowedHost(host) || (!headers.value("origin").isEmpty() && origin.isEmpty())) {
+        socket->setProperty("mcpResponded", true);
+        writeResponse(socket, 403, "Forbidden", "Only local MCP clients are allowed.", "text/plain");
+        return;
+    }
+
+    const QByteArray method = requestLine.at(0);
+    const QByteArray path = requestLine.at(1);
+    if (method == "OPTIONS" && path == "/mcp") {
+        socket->setProperty("mcpResponded", true);
+        writeResponse(socket, 204, "No Content", {}, "text/plain", origin);
+        return;
+    }
+    if (method != "POST" || path != "/mcp") {
+        socket->setProperty("mcpResponded", true);
+        writeResponse(socket, 404, "Not Found", "MCP endpoint not found.", "text/plain", origin);
+        return;
+    }
+    if (!headers.value("transfer-encoding").isEmpty()) {
+        socket->setProperty("mcpResponded", true);
+        writeResponse(socket, 400, "Bad Request", "Transfer-Encoding is not supported.", "text/plain", origin);
+        return;
+    }
+    if (!headers.value("content-type").toLower().startsWith("application/json")) {
+        socket->setProperty("mcpResponded", true);
+        writeResponse(socket, 415, "Unsupported Media Type", "Expected application/json.", "text/plain", origin);
+        return;
+    }
+
+    bool lengthOk = false;
+    const qlonglong contentLength = headers.value("content-length").toLongLong(&lengthOk);
+    if (!lengthOk || contentLength < 1 || contentLength > maxBodySize) {
+        socket->setProperty("mcpResponded", true);
+        writeResponse(socket, contentLength > maxBodySize ? 413 : 400,
+                      contentLength > maxBodySize ? "Payload Too Large" : "Bad Request", "Invalid Content-Length.",
+                      "text/plain", origin);
+        return;
+    }
+
+    const qsizetype bodyOffset = headerEnd + 4;
+    if (buffer.size() - bodyOffset < contentLength) {
+        socket->setProperty("mcpRequestBuffer", buffer);
+        return;
+    }
+
+    socket->setProperty("mcpResponded", true);
+    const QByteArray body = buffer.mid(bodyOffset, static_cast<qsizetype>(contentLength));
+    QJsonParseError parseError;
+    const QJsonDocument document = QJsonDocument::fromJson(body, &parseError);
+    if (parseError.error != QJsonParseError::NoError || !document.isObject()) {
+        writeResponse(socket, 400, "Bad Request", errorBody(-32700, "Invalid JSON request."), "application/json",
                       origin);
+        return;
     }
 
-    QJsonObject handleMessage(const QJsonObject& request, bool* hasResponse)
-    {
-        const QJsonValue id = request.value("id");
-        const bool hasId = request.contains("id");
-        if (request.value("jsonrpc").toString() != QLatin1String("2.0") || !request.value("method").isString()) {
-            *hasResponse = true;
-            return jsonRpcError(id, -32600, "Invalid Request");
-        }
+    bool hasResponse = false;
+    const QJsonObject response = handleMessage(document.object(), &hasResponse);
+    if (!hasResponse) {
+        writeResponse(socket, 202, "Accepted", {}, "application/json", origin);
+        return;
+    }
+    writeResponse(socket, 200, "OK", QJsonDocument(response).toJson(QJsonDocument::Compact), "application/json",
+                  origin);
+}
 
-        const QString method = request.value("method").toString();
-        const QJsonObject params = request.value("params").toObject();
-        if (method.startsWith(QLatin1String("notifications/"))) {
-            *hasResponse = false;
-            return {};
-        }
-        if (!hasId) {
-            *hasResponse = true;
-            return jsonRpcError(QJsonValue(QJsonValue::Null), -32600, "Requests must include an id.");
-        }
-
+QJsonObject
+McpServerPrivate::handleMessage(const QJsonObject& request, bool* hasResponse)
+{
+    const QJsonValue id = request.value("id");
+    const bool hasId = request.contains("id");
+    if (request.value("jsonrpc").toString() != QLatin1String("2.0") || !request.value("method").isString()) {
         *hasResponse = true;
-        QJsonValue result;
-        if (method == QLatin1String("initialize")) {
-            result = QJsonObject {
-                { "protocolVersion", "2025-11-25" },
-                { "capabilities", QJsonObject { { "tools", QJsonObject { { "listChanged", false } } } } },
-                { "serverInfo",
-                  QJsonObject { { "name", "Stageviz" }, { "version", QString::fromUtf8(PROJECT_VERSION) } } },
-                { "instructions",
-                  "Stageviz tools operate on the stage currently open in the Stageviz desktop application. "
-                  "Use stageviz_run_python only when named tools are insufficient; Python can make direct edits and resets native undo history." }
-            };
-        }
-        else if (method == QLatin1String("ping")) {
-            result = QJsonObject {};
-        }
-        else if (method == QLatin1String("tools/list")) {
-            result = QJsonObject { { "tools", availableTools() } };
-        }
-        else if (method == QLatin1String("tools/call")) {
-            const QString name = params.value("name").toString();
-            const QJsonObject arguments = params.value("arguments").toObject();
-            result = callTool(name, arguments);
-        }
-        else {
-            *hasResponse = true;
-            return jsonRpcError(id, -32601, QStringLiteral("Method not found: %1").arg(method));
-        }
-
-        return { { "jsonrpc", "2.0" }, { "id", id }, { "result", result } };
+        return jsonRpcError(id, -32600, "Invalid Request");
     }
 
-    QJsonObject callTool(const QString& name, const QJsonObject& args)
-    {
-        Application* application = Application::instance();
-        Session* currentSession = application ? application->session() : nullptr;
-        if (!currentSession)
-            return toolResult("Stageviz session is unavailable.", true);
+    const QString method = request.value("method").toString();
+    const QJsonObject params = request.value("params").toObject();
+    if (method.startsWith(QLatin1String("notifications/"))) {
+        *hasResponse = false;
+        return {};
+    }
+    if (!hasId) {
+        *hasResponse = true;
+        return jsonRpcError(QJsonValue(QJsonValue::Null), -32600, "Requests must include an id.");
+    }
 
-        if (name == QLatin1String("stageviz_get_stage_info")) {
-            QJsonObject info { { "loaded", false }, { "filename", currentSession->filename() } };
-            info.insert("stageUp", currentSession->stageUp() == Session::StageUp::Z ? "Z" : "Y");
-            QReadLocker locker(currentSession->stageLock());
-            UsdStageRefPtr stage = currentSession->stageUnsafe();
-            if (!stage)
-                return toolResult(jsonText(info));
+    *hasResponse = true;
+    QJsonValue result;
+    if (method == QLatin1String("initialize")) {
+        result = QJsonObject {
+            { "protocolVersion", "2025-11-25" },
+            { "capabilities", QJsonObject { { "tools", QJsonObject { { "listChanged", false } } } } },
+            { "serverInfo", QJsonObject { { "name", "Stageviz" }, { "version", QString::fromUtf8(PROJECT_VERSION) } } },
+            { "instructions",
+              "Stageviz tools operate on the stage currently open in the Stageviz desktop application. "
+              "Use stageviz_run_python only when named tools are insufficient; Python can make direct edits and resets native undo history." }
+        };
+    }
+    else if (method == QLatin1String("ping")) {
+        result = QJsonObject {};
+    }
+    else if (method == QLatin1String("tools/list")) {
+        result = QJsonObject { { "tools", availableTools() } };
+    }
+    else if (method == QLatin1String("tools/call")) {
+        const QString name = params.value("name").toString();
+        const QJsonObject arguments = params.value("arguments").toObject();
+        result = callTool(name, arguments);
+    }
+    else {
+        *hasResponse = true;
+        return jsonRpcError(id, -32601, QStringLiteral("Method not found: %1").arg(method));
+    }
 
-            const SdfLayerHandle rootLayer = stage->GetRootLayer();
-            const UsdPrim defaultPrim = stage->GetDefaultPrim();
-            info.insert("loaded", true);
-            info.insert("editLayer", QString::fromStdString(stage->GetEditTarget().GetLayer()->GetIdentifier()));
-            info.insert("rootLayer", rootLayer ? QString::fromStdString(rootLayer->GetIdentifier()) : QString());
-            info.insert("defaultPrim",
-                        defaultPrim ? QString::fromStdString(defaultPrim.GetPath().GetString()) : QString());
-            info.insert("layerCount", static_cast<int>(stage->GetLayerStack(true).size()));
+    return { { "jsonrpc", "2.0" }, { "id", id }, { "result", result } };
+}
+
+QJsonObject
+McpServerPrivate::callTool(const QString& name, const QJsonObject& args)
+{
+    Application* application = Application::instance();
+    Session* currentSession = application ? application->session() : nullptr;
+    if (!currentSession)
+        return toolResult("Stageviz session is unavailable.", true);
+
+    if (name == QLatin1String("stageviz_get_stage_info")) {
+        QJsonObject info { { "loaded", false }, { "filename", currentSession->filename() } };
+        info.insert("stageUp", currentSession->stageUp() == Session::StageUp::Z ? "Z" : "Y");
+        QReadLocker locker(currentSession->stageLock());
+        UsdStageRefPtr stage = currentSession->stageUnsafe();
+        if (!stage)
             return toolResult(jsonText(info));
-        }
 
-        if (name == QLatin1String("stageviz_get_selection")) {
-            QJsonArray paths;
-            for (const SdfPath& path : currentSession->selectionList()->paths())
-                paths.append(QString::fromStdString(path.GetString()));
-            return toolResult(jsonText(paths));
-        }
+        const SdfLayerHandle rootLayer = stage->GetRootLayer();
+        const UsdPrim defaultPrim = stage->GetDefaultPrim();
+        info.insert("loaded", true);
+        info.insert("editLayer", QString::fromStdString(stage->GetEditTarget().GetLayer()->GetIdentifier()));
+        info.insert("rootLayer", rootLayer ? QString::fromStdString(rootLayer->GetIdentifier()) : QString());
+        info.insert("defaultPrim", defaultPrim ? QString::fromStdString(defaultPrim.GetPath().GetString()) : QString());
+        info.insert("layerCount", static_cast<int>(stage->GetLayerStack(true).size()));
+        return toolResult(jsonText(info));
+    }
 
-        if (name == QLatin1String("stageviz_set_selection")) {
-            const QJsonArray requested = args.value("paths").toArray();
-            if (requested.size() > 1000)
-                return toolResult("Selection is limited to 1000 paths per request.", true);
+    if (name == QLatin1String("stageviz_get_selection")) {
+        QJsonArray paths;
+        for (const SdfPath& path : currentSession->selectionList()->paths())
+            paths.append(QString::fromStdString(path.GetString()));
+        return toolResult(jsonText(paths));
+    }
 
-            QList<SdfPath> paths;
-            {
-                QReadLocker locker(currentSession->stageLock());
-                UsdStageRefPtr stage = currentSession->stageUnsafe();
-                if (!stage && !requested.isEmpty())
-                    return toolResult("No USD stage is currently open.", true);
+    if (name == QLatin1String("stageviz_set_selection")) {
+        const QJsonArray requested = args.value("paths").toArray();
+        if (requested.size() > 1000)
+            return toolResult("Selection is limited to 1000 paths per request.", true);
 
-                for (const QJsonValue& value : requested) {
-                    if (!value.isString())
-                        return toolResult("Each selection path must be a string.", true);
-                    const SdfPath path(value.toString().toStdString());
-                    if (!path.IsAbsolutePath() || !path.IsAbsoluteRootOrPrimPath() || !stage->GetPrimAtPath(path))
-                        return toolResult(QStringLiteral("Prim does not exist: %1").arg(value.toString()), true);
-                    paths.append(path);
-                }
-            }
-            currentSession->selectionList()->updatePaths(paths);
-            return toolResult(QStringLiteral("Selected %1 prim(s).").arg(paths.size()));
-        }
-
-        if (name == QLatin1String("stageviz_run_python")) {
-            const QString code = args.value("code").toString();
-            if (code.isEmpty())
-                return toolResult("The code argument must not be empty.", true);
-            if (code.toUtf8().size() > 64 * 1024)
-                return toolResult("Python source is limited to 64 KiB per call.", true);
-            const QString output = application->pythonInterpreter()->executeScriptWithOutput(code);
-            return toolResult(output.isEmpty() ? "Script completed with no stdout or stderr output." : output);
-        }
-
-        if (name == QLatin1String("stageviz_list_prims")) {
-            const QString pathText = args.value("path").toString(QStringLiteral("/"));
-            const int maxDepth = qBound(0, args.value("maxDepth").toInt(1), 8);
-            const int limit = qBound(1, args.value("limit").toInt(100), maxPrimLimit);
-            const SdfPath path(pathText.toStdString());
-            if (!path.IsAbsolutePath() || !path.IsAbsoluteRootOrPrimPath())
-                return toolResult(QStringLiteral("Invalid absolute prim path: %1").arg(pathText), true);
-
-            QJsonArray prims;
-            bool truncated = false;
+        QList<SdfPath> paths;
+        {
             QReadLocker locker(currentSession->stageLock());
             UsdStageRefPtr stage = currentSession->stageUnsafe();
-            if (!stage)
+            if (!stage && !requested.isEmpty())
                 return toolResult("No USD stage is currently open.", true);
 
-            std::function<void(const UsdPrim&, int)> appendPrim;
-            appendPrim = [&](const UsdPrim& prim, int depth) {
+            for (const QJsonValue& value : requested) {
+                if (!value.isString())
+                    return toolResult("Each selection path must be a string.", true);
+                const SdfPath path(value.toString().toStdString());
+                if (!path.IsAbsolutePath() || !path.IsAbsoluteRootOrPrimPath() || !stage->GetPrimAtPath(path))
+                    return toolResult(QStringLiteral("Prim does not exist: %1").arg(value.toString()), true);
+                paths.append(path);
+            }
+        }
+        currentSession->selectionList()->updatePaths(paths);
+        return toolResult(QStringLiteral("Selected %1 prim(s).").arg(paths.size()));
+    }
+
+    if (name == QLatin1String("stageviz_run_python")) {
+        const QString code = args.value("code").toString();
+        if (code.isEmpty())
+            return toolResult("The code argument must not be empty.", true);
+        if (code.toUtf8().size() > 64 * 1024)
+            return toolResult("Python source is limited to 64 KiB per call.", true);
+        const QString output = application->pythonInterpreter()->executeScriptWithOutput(code);
+        return toolResult(output.isEmpty() ? "Script completed with no stdout or stderr output." : output);
+    }
+
+    if (name == QLatin1String("stageviz_list_prims")) {
+        const QString pathText = args.value("path").toString(QStringLiteral("/"));
+        const int maxDepth = qBound(0, args.value("maxDepth").toInt(1), 8);
+        const int limit = qBound(1, args.value("limit").toInt(100), maxPrimLimit);
+        const SdfPath path(pathText.toStdString());
+        if (!path.IsAbsolutePath() || !path.IsAbsoluteRootOrPrimPath())
+            return toolResult(QStringLiteral("Invalid absolute prim path: %1").arg(pathText), true);
+
+        QJsonArray prims;
+        bool truncated = false;
+        QReadLocker locker(currentSession->stageLock());
+        UsdStageRefPtr stage = currentSession->stageUnsafe();
+        if (!stage)
+            return toolResult("No USD stage is currently open.", true);
+
+        std::function<void(const UsdPrim&, int)> appendPrim;
+        appendPrim = [&](const UsdPrim& prim, int depth) {
+            if (prims.size() >= limit) {
+                truncated = true;
+                return;
+            }
+            prims.append(primDescription(prim));
+            if (depth >= maxDepth)
+                return;
+            for (const UsdPrim& child : prim.GetChildren()) {
                 if (prims.size() >= limit) {
                     truncated = true;
                     return;
                 }
-                prims.append(primDescription(prim));
-                if (depth >= maxDepth)
-                    return;
-                for (const UsdPrim& child : prim.GetChildren()) {
-                    if (prims.size() >= limit) {
-                        truncated = true;
-                        return;
-                    }
-                    appendPrim(child, depth + 1);
-                }
-            };
+                appendPrim(child, depth + 1);
+            }
+        };
 
-            if (path == SdfPath::AbsoluteRootPath()) {
-                for (const UsdPrim& child : stage->GetPseudoRoot().GetChildren()) {
-                    if (prims.size() >= limit) {
-                        truncated = true;
-                        break;
-                    }
-                    appendPrim(child, 0);
+        if (path == SdfPath::AbsoluteRootPath()) {
+            for (const UsdPrim& child : stage->GetPseudoRoot().GetChildren()) {
+                if (prims.size() >= limit) {
+                    truncated = true;
+                    break;
                 }
+                appendPrim(child, 0);
             }
-            else {
-                const UsdPrim root = stage->GetPrimAtPath(path);
-                if (!root)
-                    return toolResult(QStringLiteral("Prim does not exist: %1").arg(pathText), true);
-                appendPrim(root, 0);
-            }
-            return toolResult(jsonText(QJsonObject { { "prims", prims }, { "truncated", truncated } }));
         }
-
-        if (name == QLatin1String("stageviz_get_prim_info")) {
-            const QString pathText = args.value("path").toString();
-            const SdfPath path(pathText.toStdString());
-            if (!path.IsAbsolutePath() || !path.IsAbsoluteRootOrPrimPath())
-                return toolResult(QStringLiteral("Invalid absolute prim path: %1").arg(pathText), true);
-
-            QReadLocker locker(currentSession->stageLock());
-            UsdStageRefPtr stage = currentSession->stageUnsafe();
-            if (!stage)
-                return toolResult("No USD stage is currently open.", true);
-            const UsdPrim prim = stage->GetPrimAtPath(path);
-            if (!prim)
+        else {
+            const UsdPrim root = stage->GetPrimAtPath(path);
+            if (!root)
                 return toolResult(QStringLiteral("Prim does not exist: %1").arg(pathText), true);
-
-            QJsonArray attributes;
-            for (const UsdAttribute& attribute : prim.GetAttributes()) {
-                attributes.append(
-                    QJsonObject { { "name", QString::fromStdString(attribute.GetName().GetString()) },
-                                  { "type", QString::fromStdString(attribute.GetTypeName().GetAsToken().GetString()) },
-                                  { "hasAuthoredValue", attribute.HasAuthoredValueOpinion() } });
-            }
-            QJsonArray relationships;
-            for (const UsdRelationship& relationship : prim.GetRelationships())
-                relationships.append(QString::fromStdString(relationship.GetName().GetString()));
-
-            QJsonObject info = primDescription(prim);
-            info.insert("active", prim.IsActive());
-            info.insert("defined", prim.IsDefined());
-            info.insert("abstract", prim.IsAbstract());
-            const auto layers = stage::primLayerInfo(prim);
-            info.insert("definingLayer", layers.definingLayer
-                                             ? QString::fromStdString(layers.definingLayer->GetIdentifier())
-                                             : QString());
-            info.insert("strongestLayer", layers.strongestLayer
-                                              ? QString::fromStdString(layers.strongestLayer->GetIdentifier())
-                                              : QString());
-            info.insert("editLayer", QString::fromStdString(stage->GetEditTarget().GetLayer()->GetIdentifier()));
-            info.insert("attributes", attributes);
-            info.insert("relationships", relationships);
-            if (prim.IsInstance())
-                info.insert("prototype", QString::fromStdString(prim.GetPrototype().GetPath().GetString()));
-            return toolResult(jsonText(info));
+            appendPrim(root, 0);
         }
-
-        return toolResult(QStringLiteral("Unknown Stageviz tool: %1").arg(name), true);
+        return toolResult(jsonText(QJsonObject { { "prims", prims }, { "truncated", truncated } }));
     }
 
-    McpServer* q = nullptr;
-    QTcpServer* server = nullptr;
-    QString error;
-};
+    if (name == QLatin1String("stageviz_get_prim_info")) {
+        const QString pathText = args.value("path").toString();
+        const SdfPath path(pathText.toStdString());
+        if (!path.IsAbsolutePath() || !path.IsAbsoluteRootOrPrimPath())
+            return toolResult(QStringLiteral("Invalid absolute prim path: %1").arg(pathText), true);
+
+        QReadLocker locker(currentSession->stageLock());
+        UsdStageRefPtr stage = currentSession->stageUnsafe();
+        if (!stage)
+            return toolResult("No USD stage is currently open.", true);
+        const UsdPrim prim = stage->GetPrimAtPath(path);
+        if (!prim)
+            return toolResult(QStringLiteral("Prim does not exist: %1").arg(pathText), true);
+
+        QJsonArray attributes;
+        for (const UsdAttribute& attribute : prim.GetAttributes()) {
+            attributes.append(
+                QJsonObject { { "name", QString::fromStdString(attribute.GetName().GetString()) },
+                              { "type", QString::fromStdString(attribute.GetTypeName().GetAsToken().GetString()) },
+                              { "hasAuthoredValue", attribute.HasAuthoredValueOpinion() } });
+        }
+        QJsonArray relationships;
+        for (const UsdRelationship& relationship : prim.GetRelationships())
+            relationships.append(QString::fromStdString(relationship.GetName().GetString()));
+
+        QJsonObject info = primDescription(prim);
+        info.insert("active", prim.IsActive());
+        info.insert("defined", prim.IsDefined());
+        info.insert("abstract", prim.IsAbstract());
+        const auto layers = stage::primLayerInfo(prim);
+        info.insert("definingLayer",
+                    layers.definingLayer ? QString::fromStdString(layers.definingLayer->GetIdentifier()) : QString());
+        info.insert("strongestLayer",
+                    layers.strongestLayer ? QString::fromStdString(layers.strongestLayer->GetIdentifier()) : QString());
+        info.insert("editLayer", QString::fromStdString(stage->GetEditTarget().GetLayer()->GetIdentifier()));
+        info.insert("attributes", attributes);
+        info.insert("relationships", relationships);
+        if (prim.IsInstance())
+            info.insert("prototype", QString::fromStdString(prim.GetPrototype().GetPath().GetString()));
+        return toolResult(jsonText(info));
+    }
+
+    return toolResult(QStringLiteral("Unknown Stageviz tool: %1").arg(name), true);
+}
 
 McpServer::McpServer(QObject* parent)
     : QObject(parent)
@@ -547,7 +564,7 @@ McpServer::~McpServer() = default;
 bool
 McpServer::start()
 {
-    if (p->server->isListening())
+    if (p->d.server->isListening())
         return true;
     quint16 port = defaultPort;
     const QByteArray testPort = qgetenv("STAGEVIZ_TEST_MCP_PORT");
@@ -555,18 +572,18 @@ McpServer::start()
         bool valid = false;
         const int value = testPort.toInt(&valid);
         if (!valid || value < 0 || value > 65535) {
-            p->error = QStringLiteral("Invalid STAGEVIZ_TEST_MCP_PORT: expected 0..65535");
-            Q_EMIT errorOccurred(p->error);
+            p->d.error = QStringLiteral("Invalid STAGEVIZ_TEST_MCP_PORT: expected 0..65535");
+            Q_EMIT errorOccurred(p->d.error);
             return false;
         }
         port = static_cast<quint16>(value);
     }
-    if (!p->server->listen(QHostAddress::LocalHost, port)) {
-        p->error = p->server->errorString();
-        Q_EMIT errorOccurred(p->error);
+    if (!p->d.server->listen(QHostAddress::LocalHost, port)) {
+        p->d.error = p->d.server->errorString();
+        Q_EMIT errorOccurred(p->d.error);
         return false;
     }
-    p->error.clear();
+    p->d.error.clear();
     Q_EMIT runningChanged(true);
     return true;
 }
@@ -574,10 +591,10 @@ McpServer::start()
 void
 McpServer::stop()
 {
-    if (!p->server->isListening())
+    if (!p->d.server->isListening())
         return;
-    p->server->close();
-    const auto sockets = p->server->findChildren<QTcpSocket*>();
+    p->d.server->close();
+    const auto sockets = p->d.server->findChildren<QTcpSocket*>();
     for (QTcpSocket* socket : sockets)
         socket->disconnectFromHost();
     Q_EMIT runningChanged(false);
@@ -586,19 +603,19 @@ McpServer::stop()
 bool
 McpServer::isRunning() const
 {
-    return p->server->isListening();
+    return p->d.server->isListening();
 }
 
 QUrl
 McpServer::url() const
 {
-    return QUrl(QStringLiteral("http://127.0.0.1:%1/mcp").arg(isRunning() ? p->server->serverPort() : defaultPort));
+    return QUrl(QStringLiteral("http://127.0.0.1:%1/mcp").arg(isRunning() ? p->d.server->serverPort() : defaultPort));
 }
 
 QString
 McpServer::errorString() const
 {
-    return p->error;
+    return p->d.error;
 }
 
 }  // namespace stageviz

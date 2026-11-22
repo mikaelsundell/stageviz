@@ -90,6 +90,7 @@ public:
 
     /**
      * @brief Creates a render engine.
+     *
      * @param mode OpenGL context mode used by the renderer.
      */
     explicit RenderEngine(ContextMode mode = ContextMode::Current);
@@ -104,6 +105,7 @@ public:
 
     /**
      * @brief Initializes Hydra and the required OpenGL resources.
+     *
      * @return True if the renderer is ready for rendering.
      *
      * Current mode requires a current QOpenGLContext. Offscreen mode creates
@@ -123,6 +125,7 @@ public:
 
     /**
      * @brief Sets the primary USD stage.
+     *
      * @param stage Stage rendered by Hydra.
      */
     void setStage(UsdStageRefPtr stage);
@@ -155,6 +158,7 @@ public:
 
     /**
      * @brief Sets the camera used for rendering and intersection tests.
+     *
      * @param camera Camera state.
      */
     void setCamera(const GfCamera& camera);
@@ -166,6 +170,7 @@ public:
 
     /**
      * @brief Sets the render resolution in device pixels.
+     *
      * @param size Width and height in pixels.
      */
     void setSize(const GfVec2i& size);
@@ -202,6 +207,7 @@ public:
 
     /**
      * @brief Sets render settings.
+     *
      * @param settings Render settings to apply.
      */
     void setSettings(const Settings& settings);
@@ -213,6 +219,7 @@ public:
 
     /**
      * @brief Limits rendering to the supplied USD paths.
+     *
      * @param paths Root paths to render. An empty list renders the whole stage.
      */
     void setMask(const QList<SdfPath>& paths);
@@ -262,6 +269,7 @@ public:
 
     /**
      * @brief Renders into the framebuffer of the current OpenGL context.
+     *
      * @return True if a render pass was submitted.
      *
      * This is the path used by ViewportWidget. The caller is responsible for
@@ -350,6 +358,7 @@ public:
 
     /**
      * @brief Renders the current stage into an offscreen image.
+     *
      * @return Rendered image, or a null image if rendering failed.
      *
      * The engine must have been created with ContextMode::Offscreen. The

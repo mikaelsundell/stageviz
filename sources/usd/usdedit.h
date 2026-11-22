@@ -18,6 +18,45 @@ namespace stageviz {
 namespace edit {
 
     /**
+     * @brief Temporarily authors one attribute default in a captured edit target.
+     *
+     * Call begin/set/restore under the stage lock. Always restore before committing
+     * an undoable command or abandoning the editor; destruction does not acquire locks.
+     */
+    class AttributePreview {
+    public:
+        /**
+         * @brief Captures the original default and mapped spec path without authoring.
+         */
+        bool begin(const UsdStageRefPtr& stage, const SdfPath& path);
+        /**
+         * @brief Updates the preview only while the captured target is still current.
+         */
+        bool set(const VtValue& value);
+        /**
+         * @brief Restores the captured layer even if the active stage or target changed.
+         */
+        void restore();
+        /**
+         * @brief Reports whether committing to the current stage/target is still valid.
+         */
+        bool matches(const UsdStageRefPtr& stage) const;
+
+    private:
+        struct Data {
+            UsdStageRefPtr stage;
+            UsdEditTarget target;
+            SdfPath path;
+            SdfPath specPath;
+            SdfPathVector missingParents;
+            VtValue previous;
+            bool hadDefault = false;
+            bool hadSpec = false;
+            bool active = false;
+        } d;
+    };
+
+    /**
      * @class NamespaceEditor
      * @brief Performs Stageviz structural namespace edits on a USD stage.
      *
@@ -27,8 +66,8 @@ namespace edit {
      * Payload load rules follow the moved or renamed hierarchy.
      *
      * Rename and reparent use UsdNamespaceEditor to preserve dependency paths and
-     * semantic notices. Moves retain local layer-stack snapshots for rollback;
-     * referenced and payload asset layers are not copied into these snapshots.
+     * semantic notices. Failed move batches roll back through reverse namespace edits;
+     * the guarded Sdf fast path applies eligible batches atomically.
      * Removal uses SdfBatchNamespaceEdit.
      */
     class NamespaceEditor {

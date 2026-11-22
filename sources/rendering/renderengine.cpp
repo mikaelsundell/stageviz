@@ -13,6 +13,7 @@
 #include "renderisolation.h"
 #include "renderresources.h"
 #include "rendersceneindex.h"
+#include "renderselection.h"
 #include "rendertask.h"
 #include "ui.h"
 #include <QColorSpace>
@@ -80,590 +81,6 @@ PXR_NAMESPACE_USING_DIRECTIVE
 namespace stageviz {
 
 namespace {
-
-    // Portions adapted from OpenUSD's UsdImagingSelectionSceneIndex.
-    // Copyright 2022 Pixar. Licensed under the terms in OpenUSD's LICENSE.txt:
-    // https://openusd.org/license.
-    // SPDX-License-Identifier: BSD-3-Clause
-
-    struct InstanceSelection {
-        SdfPath instancer;
-        int prototypeIndex = 0;
-        VtIntArray indices;
-    };
-
-    using NestedInstanceSelection = std::vector<InstanceSelection>;
-
-    struct SelectionSeed {
-        SdfPath path;
-        NestedInstanceSelection nested;
-    };
-
-    using MappedPathCache = std::unordered_map<SdfPath, std::vector<SelectionSeed>, SdfPath::Hash>;
-
-    struct SelectionStateLess {
-        bool operator()(const SelectionSeed& lhs, const SelectionSeed& rhs) const
-        {
-            if (lhs.path != rhs.path)
-                return lhs.path < rhs.path;
-            if (lhs.nested.size() != rhs.nested.size())
-                return lhs.nested.size() < rhs.nested.size();
-            for (size_t i = 0; i < lhs.nested.size(); ++i) {
-                const InstanceSelection& a = lhs.nested[i];
-                const InstanceSelection& b = rhs.nested[i];
-                if (a.instancer != b.instancer)
-                    return a.instancer < b.instancer;
-                if (a.prototypeIndex != b.prototypeIndex)
-                    return a.prototypeIndex < b.prototypeIndex;
-                if (a.indices != b.indices)
-                    return std::lexicographical_compare(a.indices.begin(), a.indices.end(), b.indices.begin(),
-                                                        b.indices.end());
-            }
-            return false;
-        }
-    };
-
-    struct SelectionSeedGroupKey {
-        SdfPath path;
-        NestedInstanceSelection outerInstances;
-        SdfPath instancer;
-        int prototypeIndex = 0;
-        bool hasInstance = false;
-    };
-
-    struct SelectionSeedGroupKeyLess {
-        bool operator()(const SelectionSeedGroupKey& lhs, const SelectionSeedGroupKey& rhs) const
-        {
-            if (lhs.path != rhs.path)
-                return lhs.path < rhs.path;
-            SelectionStateLess less;
-            const SelectionSeed leftOuter { SdfPath(), lhs.outerInstances };
-            const SelectionSeed rightOuter { SdfPath(), rhs.outerInstances };
-            if (less(leftOuter, rightOuter))
-                return true;
-            if (less(rightOuter, leftOuter))
-                return false;
-            if (lhs.hasInstance != rhs.hasInstance)
-                return lhs.hasInstance < rhs.hasInstance;
-            if (!lhs.hasInstance)
-                return false;
-            if (lhs.instancer != rhs.instancer)
-                return lhs.instancer < rhs.instancer;
-            return lhs.prototypeIndex < rhs.prototypeIndex;
-        }
-    };
-
-    SelectionSeedGroupKey groupKey(const SelectionSeed& seed)
-    {
-        SelectionSeedGroupKey key;
-        key.path = seed.path;
-        if (seed.nested.empty())
-            return key;
-
-        key.hasInstance = true;
-        key.outerInstances.assign(seed.nested.begin(), seed.nested.end() - 1);
-        key.instancer = seed.nested.back().instancer;
-        key.prototypeIndex = seed.nested.back().prototypeIndex;
-        return key;
-    }
-
-    SdfPath pathAt(const HdPathArrayDataSourceHandle& dataSource, int index)
-    {
-        if (!dataSource || index < 0)
-            return {};
-        const VtArray<SdfPath> paths = dataSource->GetTypedValue(0.0f);
-        return static_cast<size_t>(index) < paths.size() ? paths[static_cast<size_t>(index)] : SdfPath();
-    }
-
-    int prototypeIndex(const HdInstancerTopologySchema& topology, const SdfPath& prototype)
-    {
-        const HdPathArrayDataSourceHandle prototypesData = topology.GetPrototypes();
-        if (!prototypesData)
-            return 0;
-        const VtArray<SdfPath> prototypes = prototypesData->GetTypedValue(0.0f);
-        const auto it = std::find(prototypes.begin(), prototypes.end(), prototype);
-        return it == prototypes.end() ? 0 : static_cast<int>(std::distance(prototypes.begin(), it));
-    }
-
-    VtIntArray instanceIndicesForPrototype(const HdInstancerTopologySchema& topology, int index)
-    {
-        const HdIntArrayDataSourceHandle data = topology.GetInstanceIndices().GetElement(index);
-        return data ? data->GetTypedValue(0.0f) : VtIntArray();
-    }
-
-    bool instanceMapping(const HdContainerDataSourceHandle& source, const HdSceneIndexBaseRefPtr& sceneIndex,
-                         SdfPath* prototype, InstanceSelection* selection)
-    {
-        if (!source || !sceneIndex || !prototype || !selection)
-            return false;
-        const HdInstanceSchema instance = HdInstanceSchema::GetFromParent(source);
-        const HdPathDataSourceHandle instancerData = instance.GetInstancer();
-        if (!instancerData)
-            return false;
-
-        selection->instancer = instancerData->GetTypedValue(0.0f);
-        const HdIntDataSourceHandle prototypeData = instance.GetPrototypeIndex();
-        if (!prototypeData || selection->instancer.IsEmpty())
-            return false;
-        selection->prototypeIndex = prototypeData->GetTypedValue(0.0f);
-
-        const HdContainerDataSourceHandle instancerSource = sceneIndex->GetPrim(selection->instancer).dataSource;
-        const HdInstancerTopologySchema topology = HdInstancerTopologySchema::GetFromParent(instancerSource);
-        *prototype = pathAt(topology.GetPrototypes(), selection->prototypeIndex);
-        if (prototype->IsEmpty())
-            return false;
-
-        if (const HdIntDataSourceHandle instanceIndexData = instance.GetInstanceIndex())
-            selection->indices = { instanceIndexData->GetTypedValue(0.0f) };
-        return true;
-    }
-
-    NestedInstanceSelection allNestedInstanceIndices(const SdfPath& prototypePath,
-                                                     const HdSceneIndexBaseRefPtr& sceneIndex)
-    {
-        NestedInstanceSelection result;
-        SdfPath path = prototypePath;
-        while (!path.IsEmpty()) {
-            const HdContainerDataSourceHandle source = sceneIndex->GetPrim(path).dataSource;
-            const HdInstancedBySchema instancedBy = HdInstancedBySchema::GetFromParent(source);
-            const HdPathArrayDataSourceHandle instancersData = instancedBy.GetPaths();
-            if (!instancersData)
-                break;
-            const VtArray<SdfPath> instancers = instancersData->GetTypedValue(0.0f);
-            if (instancers.empty())
-                break;
-
-            const SdfPath instancerPath = instancers.front();
-            const HdContainerDataSourceHandle instancerSource = sceneIndex->GetPrim(instancerPath).dataSource;
-            const HdInstancerTopologySchema topology = HdInstancerTopologySchema::GetFromParent(instancerSource);
-            const int index = prototypeIndex(topology, path);
-            InstanceSelection selection { instancerPath, index, instanceIndicesForPrototype(topology, index) };
-            result.push_back(std::move(selection));
-            path = instancerPath;
-        }
-        std::reverse(result.begin(), result.end());
-        return result;
-    }
-
-    void appendPiPropagatedSeeds(const HdContainerDataSourceHandle& source, const HdSceneIndexBaseRefPtr& sceneIndex,
-                                 const SelectionSeed& seed, std::vector<SelectionSeed>* output)
-    {
-        if (!output)
-            return;
-        const UsdImagingUsdPrimInfoSchema primInfo = UsdImagingUsdPrimInfoSchema::GetFromParent(source);
-        const HdContainerDataSourceHandle propagated = primInfo.GetPiPropagatedPrototypes();
-        if (!propagated)
-            return;
-
-        for (const TfToken& name : propagated->GetNames()) {
-            const HdPathDataSourceHandle pathData = HdPathDataSource::Cast(propagated->Get(name));
-            if (!pathData)
-                continue;
-            SelectionSeed copy { pathData->GetTypedValue(0.0f), seed.nested };
-            NestedInstanceSelection nested = allNestedInstanceIndices(copy.path, sceneIndex);
-            copy.nested.insert(copy.nested.end(), nested.begin(), nested.end());
-            output->push_back(std::move(copy));
-        }
-    }
-
-    struct PropagatedSelectionMapping {
-        SdfPath path;
-        NestedInstanceSelection nested;
-    };
-
-    struct PrimSelectionMapping {
-        SdfPath prototype;
-        InstanceSelection instance;
-        std::vector<PropagatedSelectionMapping> propagated;
-    };
-
-    class SelectionMappingCache {
-    public:
-        void invalidate()
-        {
-            ++generation;
-            primMappings.clear();
-            inspectedPrimPaths.clear();
-            mappedPaths.clear();
-            hydraMappingRequired.clear();
-            lastResolvedRoots.clear();
-            lastResolvedRprims.clear();
-        }
-
-        void invalidatePathClassification() { hydraMappingRequired.clear(); }
-
-        bool ensure(const HdSceneIndexBaseRefPtr& sceneIndex)
-        {
-            if (!sceneIndex)
-                return false;
-            if (indexedScene != sceneIndex) {
-                indexedScene = sceneIndex;
-                invalidate();
-            }
-            return true;
-        }
-
-        HdSceneIndexBaseRefPtr indexedScene;
-        MappedPathCache mappedPaths;
-        std::unordered_map<SdfPath, bool, SdfPath::Hash> hydraMappingRequired;
-        std::unordered_map<SdfPath, PrimSelectionMapping, SdfPath::Hash> primMappings;
-        std::unordered_set<SdfPath, SdfPath::Hash> inspectedPrimPaths;
-        SdfPathVector lastResolvedRoots;
-        std::vector<HydraSelectionRprim> lastResolvedRprims;
-        uint64_t generation = 0;
-    };
-
-    class SelectionMappingCacheObserver final : public HdSceneIndexObserver {
-    public:
-        explicit SelectionMappingCacheObserver(const std::weak_ptr<SelectionMappingCache>& cache)
-            : m_cache(cache)
-        {}
-
-        void PrimsAdded(const HdSceneIndexBase&, const AddedPrimEntries&) override { invalidate(); }
-        void PrimsRemoved(const HdSceneIndexBase&, const RemovedPrimEntries&) override { invalidate(); }
-        void PrimsRenamed(const HdSceneIndexBase&, const RenamedPrimEntries&) override { invalidate(); }
-
-        void PrimsDirtied(const HdSceneIndexBase&, const DirtiedPrimEntries& entries) override
-        {
-            const HdDataSourceLocator& instanceLocator = HdInstanceSchema::GetDefaultLocator();
-            const HdDataSourceLocator& topologyLocator = HdInstancerTopologySchema::GetDefaultLocator();
-            const HdDataSourceLocator& instancedByLocator = HdInstancedBySchema::GetDefaultLocator();
-            const HdDataSourceLocator& primInfoLocator = UsdImagingUsdPrimInfoSchema::GetDefaultLocator();
-            for (const DirtiedPrimEntry& entry : entries) {
-                if (entry.dirtyLocators.Intersects(instanceLocator) || entry.dirtyLocators.Intersects(topologyLocator)
-                    || entry.dirtyLocators.Intersects(instancedByLocator)
-                    || entry.dirtyLocators.Intersects(primInfoLocator)) {
-                    invalidate();
-                    return;
-                }
-            }
-
-            // Partition classification also depends on prim type and hierarchy
-            // shape. Clear its cache for any other scene-index dirty batch.
-            if (!entries.empty()) {
-                if (const std::shared_ptr<SelectionMappingCache> cache = m_cache.lock())
-                    cache->invalidatePathClassification();
-            }
-        }
-
-    private:
-        void invalidate()
-        {
-            if (const std::shared_ptr<SelectionMappingCache> cache = m_cache.lock())
-                cache->invalidate();
-        }
-
-        std::weak_ptr<SelectionMappingCache> m_cache;
-    };
-
-    std::vector<SelectionSeed> mapUsdPath(const SdfPath& usdPath, const HdSceneIndexBaseRefPtr& sceneIndex,
-                                          SelectionMappingCache* mappingCache)
-    {
-        const SdfPathVector prefixes = usdPath.GetPrefixes();
-        std::vector<SelectionSeed> seeds { { SdfPath::AbsoluteRootPath(), {} } };
-        size_t firstUnmappedPrefix = 0;
-        for (size_t i = prefixes.size(); i > 0; --i) {
-            const auto cached = mappingCache->mappedPaths.find(prefixes[i - 1]);
-            if (cached != mappingCache->mappedPaths.end()) {
-                seeds = cached->second;
-                firstUnmappedPrefix = i;
-                break;
-            }
-        }
-
-        for (size_t i = firstUnmappedPrefix; i < prefixes.size(); ++i) {
-            const SdfPath& prefix = prefixes[i];
-            const TfToken childName = prefix.GetNameToken();
-            std::vector<SelectionSeed> next;
-            for (const SelectionSeed& seed : seeds) {
-                SelectionSeed child = seed;
-                child.path = child.path.AppendChild(childName);
-                auto mapping = mappingCache->primMappings.find(child.path);
-                if (mapping == mappingCache->primMappings.end()
-                    && mappingCache->inspectedPrimPaths.insert(child.path).second) {
-                    const HdSceneIndexPrim prim = sceneIndex->GetPrim(child.path);
-                    PrimSelectionMapping discovered;
-                    if (instanceMapping(prim.dataSource, sceneIndex, &discovered.prototype, &discovered.instance)) {
-                        mapping = mappingCache->primMappings.emplace(child.path, std::move(discovered)).first;
-                    }
-                    else {
-                        std::vector<SelectionSeed> propagated;
-                        appendPiPropagatedSeeds(prim.dataSource, sceneIndex, SelectionSeed { child.path, {} },
-                                                &propagated);
-                        if (!propagated.empty()) {
-                            discovered.propagated.reserve(propagated.size());
-                            for (SelectionSeed& seed : propagated)
-                                discovered.propagated.push_back({ std::move(seed.path), std::move(seed.nested) });
-                            mapping = mappingCache->primMappings.emplace(child.path, std::move(discovered)).first;
-                        }
-                    }
-                }
-                if (mapping != mappingCache->primMappings.end() && !mapping->second.prototype.IsEmpty()) {
-                    child.path = mapping->second.prototype;
-                    child.nested.push_back(mapping->second.instance);
-                    next.push_back(std::move(child));
-                }
-                else {
-                    if (mapping != mappingCache->primMappings.end()) {
-                        for (const PropagatedSelectionMapping& propagated : mapping->second.propagated) {
-                            SelectionSeed copy { propagated.path, child.nested };
-                            copy.nested.insert(copy.nested.end(), propagated.nested.begin(), propagated.nested.end());
-                            next.push_back(std::move(copy));
-                        }
-                    }
-                    next.push_back(std::move(child));
-                }
-            }
-            auto cached = mappingCache->mappedPaths.emplace(prefix, std::move(next)).first;
-            seeds = cached->second;
-        }
-        return seeds;
-    }
-
-    struct NativeInstanceKey {
-        SdfPath prototype;
-        SdfPath instancer;
-        int prototypeIndex = 0;
-
-        bool operator<(const NativeInstanceKey& other) const
-        {
-            return std::tie(prototype, instancer, prototypeIndex)
-                   < std::tie(other.prototype, other.instancer, other.prototypeIndex);
-        }
-    };
-
-    struct SelectedPrim {
-        bool fullySelected = false;
-        std::set<int32_t> instances;
-    };
-
-    struct DescendantNode {
-        SdfPath path;
-        SdfPath prototype;
-        SdfPath instancer;
-        int prototypeIndex = 0;
-        VtIntArray instanceIndices;
-        bool supportsSelection = false;
-        std::vector<SelectionSeed> propagatedSeeds;
-        SdfPathVector children;
-    };
-
-    bool primTypeSupportsSelection(const TfToken& type)
-    {
-        // Use Hydra's complete renderable-prim registry, including implicit
-        // surfaces before tessellation. HdPrimTypeIsGprim only covers a subset.
-        const TfTokenVector& types = HdRprimTypeTokens->allTokens;
-        return std::find(types.begin(), types.end(), type) != types.end();
-    }
-
-    void classifyNodes(size_t begin, size_t end, const SelectionSeed& seed, const HdSceneIndexBaseRefPtr& sceneIndex,
-                       std::vector<DescendantNode>* nodes)
-    {
-        for (size_t index = begin; index < end; ++index) {
-            DescendantNode& node = (*nodes)[index];
-            const HdSceneIndexPrim prim = sceneIndex->GetPrim(node.path);
-            InstanceSelection instance;
-            if (instanceMapping(prim.dataSource, sceneIndex, &node.prototype, &instance)) {
-                node.instancer = std::move(instance.instancer);
-                node.prototypeIndex = instance.prototypeIndex;
-                node.instanceIndices = std::move(instance.indices);
-            }
-            else {
-                const SelectionSeed selectedPath { node.path, seed.nested };
-                appendPiPropagatedSeeds(prim.dataSource, sceneIndex, selectedPath, &node.propagatedSeeds);
-                node.supportsSelection = primTypeSupportsSelection(prim.primType);
-            }
-            node.children = sceneIndex->GetChildPrimPaths(node.path);
-        }
-    }
-
-    std::vector<DescendantNode> classifyDescendantLevel(std::vector<DescendantNode> nodes, const SelectionSeed& seed,
-                                                        const HdSceneIndexBaseRefPtr& sceneIndex)
-    {
-        constexpr size_t grainSize = 32;
-        if (nodes.size() < grainSize) {
-            classifyNodes(0, nodes.size(), seed, sceneIndex, &nodes);
-        }
-        else {
-            WorkParallelForN(
-                nodes.size(), [&](size_t begin, size_t end) { classifyNodes(begin, end, seed, sceneIndex, &nodes); },
-                grainSize);
-        }
-        return nodes;
-    }
-
-    void addSelection(const SelectionSeed& seed, const HdSceneIndexBaseRefPtr& sceneIndex,
-                      std::map<std::pair<SdfPath, int>, int>* instanceCountCache,
-                      std::map<SdfPath, SelectedPrim>* selected)
-    {
-        if (!selected)
-            return;
-        SelectedPrim& entry = (*selected)[seed.path];
-        if (seed.nested.empty()) {
-            entry.fullySelected = true;
-            entry.instances.clear();
-            return;
-        }
-
-        // HdSelection stores one flattened instance index. Combine nested indices
-        // from outermost to innermost, matching HdxSelectionSceneIndexObserver.
-        std::vector<int32_t> flattened { 0 };
-        for (const InstanceSelection& level : seed.nested) {
-            const std::pair<SdfPath, int> cacheKey { level.instancer, level.prototypeIndex };
-            auto countIt = instanceCountCache->find(cacheKey);
-            if (countIt == instanceCountCache->end()) {
-                const HdContainerDataSourceHandle instancerSource = sceneIndex->GetPrim(level.instancer).dataSource;
-                const HdInstancerTopologySchema topology = HdInstancerTopologySchema::GetFromParent(instancerSource);
-                const int count
-                    = std::max(1, static_cast<int>(instanceIndicesForPrototype(topology, level.prototypeIndex).size()));
-                countIt = instanceCountCache->emplace(cacheKey, count).first;
-            }
-            const int count = countIt->second;
-            std::vector<int32_t> next;
-            next.reserve(flattened.size() * level.indices.size());
-            for (const int32_t prefix : flattened) {
-                for (const int32_t index : level.indices)
-                    next.push_back(prefix * count + index);
-            }
-            flattened = std::move(next);
-        }
-        if (!entry.fullySelected)
-            entry.instances.insert(flattened.begin(), flattened.end());
-    }
-
-    void expandSeed(const SelectionSeed& root, const HdSceneIndexBaseRefPtr& sceneIndex,
-                    std::map<std::pair<SdfPath, int>, int>* instanceCountCache,
-                    std::map<SdfPath, SelectedPrim>* selected)
-    {
-        std::vector<SelectionSeed> pending { root };
-        std::set<SelectionSeed, SelectionStateLess> visited;
-        while (!pending.empty()) {
-            SelectionSeed seed = std::move(pending.back());
-            pending.pop_back();
-            if (!visited.insert(seed).second)
-                continue;
-
-            std::map<NativeInstanceKey, std::set<int32_t>> nativeInstances;
-            std::vector<SelectionSeed> propagatedSeeds;
-            std::vector<DescendantNode> frontier(1);
-            frontier.front().path = seed.path;
-            while (!frontier.empty()) {
-                frontier = classifyDescendantLevel(std::move(frontier), seed, sceneIndex);
-                std::vector<DescendantNode> nextFrontier;
-                size_t childCount = 0;
-                for (const DescendantNode& node : frontier)
-                    childCount += node.children.size();
-                nextFrontier.reserve(childCount);
-                for (DescendantNode& node : frontier) {
-                    if (!node.prototype.IsEmpty()) {
-                        NativeInstanceKey key { node.prototype, node.instancer, node.prototypeIndex };
-                        auto& indices = nativeInstances[key];
-                        indices.insert(node.instanceIndices.begin(), node.instanceIndices.end());
-                    }
-                    else {
-                        for (SelectionSeed& propagated : node.propagatedSeeds)
-                            propagatedSeeds.push_back(std::move(propagated));
-                        if (node.supportsSelection)
-                            addSelection(SelectionSeed { node.path, seed.nested }, sceneIndex, instanceCountCache,
-                                         selected);
-                    }
-
-                    for (SdfPath& child : node.children) {
-                        DescendantNode childNode;
-                        childNode.path = std::move(child);
-                        nextFrontier.push_back(std::move(childNode));
-                    }
-                }
-                frontier = std::move(nextFrontier);
-            }
-
-            for (SelectionSeed& propagated : propagatedSeeds)
-                pending.push_back(std::move(propagated));
-            for (const auto& [key, indices] : nativeInstances) {
-                SelectionSeed prototypeSeed { key.prototype, seed.nested };
-                InstanceSelection instance { key.instancer, key.prototypeIndex, {} };
-                instance.indices.assign(indices.begin(), indices.end());
-                prototypeSeed.nested.push_back(std::move(instance));
-                pending.push_back(std::move(prototypeSeed));
-            }
-        }
-    }
-
-    bool resolveHydraSelection(const HdSceneIndexBaseRefPtr& sceneIndex, SelectionMappingCache* mappingCache,
-                               const SdfPathVector& usdPaths, std::vector<HydraSelectionRprim>* rprims)
-    {
-        if (!rprims || !mappingCache)
-            return false;
-        rprims->clear();
-        if (!mappingCache->ensure(sceneIndex))
-            return false;
-
-        SdfPathVector roots = usdPaths;
-        for (SdfPath& path : roots) {
-            if (path.IsPropertyPath())
-                path = path.GetPrimPath();
-        }
-        SdfPath::RemoveDescendentPaths(&roots);
-        SdfPathVector cacheKey = roots;
-        std::sort(cacheKey.begin(), cacheKey.end());
-        const bool resultCacheHit = cacheKey == mappingCache->lastResolvedRoots;
-        if (resultCacheHit) {
-            *rprims = mappingCache->lastResolvedRprims;
-            return true;
-        }
-
-        using GroupedSeed = std::pair<SelectionSeed, std::set<int32_t>>;
-        std::map<SelectionSeedGroupKey, GroupedSeed, SelectionSeedGroupKeyLess> groupedSeeds;
-        MappedPathCache& mappedPathCache = mappingCache->mappedPaths;
-        if (mappedPathCache.empty())
-            mappedPathCache.reserve(roots.size() * 2);
-        for (const SdfPath& root : roots) {
-            std::vector<SelectionSeed> uncachedSeeds;
-            const std::vector<SelectionSeed>* seeds = nullptr;
-            const auto cachedRoot = mappedPathCache.find(root);
-            if (cachedRoot != mappedPathCache.end()) {
-                seeds = &cachedRoot->second;
-            }
-            else {
-                uncachedSeeds = mapUsdPath(root, sceneIndex, mappingCache);
-                seeds = &uncachedSeeds;
-            }
-            for (const SelectionSeed& seed : *seeds) {
-                const SelectionSeedGroupKey key = groupKey(seed);
-                auto it = groupedSeeds.emplace(key, GroupedSeed { seed, {} }).first;
-                if (!seed.nested.empty()) {
-                    // Multiple authored instances often share one Hydra
-                    // prototype. Merge their IDs before traversing that prototype
-                    // tree. Outer nested indices remain part of the key so we do
-                    // not create false cross-products between nested branches.
-                    it->second.second.insert(seed.nested.back().indices.begin(), seed.nested.back().indices.end());
-                }
-            }
-        }
-
-        std::map<SdfPath, SelectedPrim> selected;
-        std::map<std::pair<SdfPath, int>, int> instanceCountCache;
-        for (auto& groupedEntry : groupedSeeds) {
-            GroupedSeed& grouped = groupedEntry.second;
-            SelectionSeed& seed = grouped.first;
-            if (!seed.nested.empty())
-                seed.nested.back().indices.assign(grouped.second.begin(), grouped.second.end());
-            expandSeed(seed, sceneIndex, &instanceCountCache, &selected);
-        }
-
-        rprims->reserve(selected.size());
-        for (auto& [path, state] : selected) {
-            HydraSelectionRprim mapped;
-            mapped.path = path;
-            mapped.fullySelected = state.fullySelected;
-            mapped.instanceIndices.assign(state.instances.begin(), state.instances.end());
-            rprims->push_back(std::move(mapped));
-        }
-        mappingCache->lastResolvedRoots = std::move(cacheKey);
-        mappingCache->lastResolvedRprims = *rprims;
-        return true;
-    }
-
 
     class OpenGLContextRestore final {
     public:
@@ -845,18 +262,10 @@ namespace {
     struct SceneIndices {
         HdMergingSceneIndexRefPtr merging;
         TfRefPtr<RenderSceneIndex> renderSceneIndex;
-        HdSceneIndexBaseRefPtr selectionInputScene;
-        std::shared_ptr<SelectionMappingCache> selectionMappingCache = std::make_shared<SelectionMappingCache>();
-        std::unique_ptr<SelectionMappingCacheObserver> selectionMappingObserver;
+        RenderSelection selection;
         UsdImagingSceneIndices auxiliary;
         HdSceneIndexBaseRefPtr auxiliaryMaterials;
         bool auxiliaryInserted = false;
-
-        ~SceneIndices()
-        {
-            if (selectionInputScene && selectionMappingObserver)
-                selectionInputScene->RemoveObserver(TfCreateWeakPtr(selectionMappingObserver.get()));
-        }
 
         void clearAuxiliary()
         {
@@ -890,62 +299,13 @@ namespace {
         SceneIndices& sceneIndices() { return *m_sceneIndices; }
         const SceneIndices& sceneIndices() const { return *m_sceneIndices; }
 
-        bool resolveSelectionRprims(const UsdStageRefPtr& stage, const SdfPathVector& usdPaths,
-                                    SdfPathVector* directPaths, std::vector<HydraSelectionRprim>* rprims)
+        bool resolveSelectionRprims(const UsdStageRefPtr& stage, const SdfPathVector& paths, SdfPathVector* directPaths,
+                                    std::vector<HydraSelectionRprim>* rprims)
         {
-            if (!directPaths || !rprims)
-                return false;
-            directPaths->clear();
-            rprims->clear();
-
-            SceneIndices& indices = *m_sceneIndices;
-            SelectionMappingCache* mappingCache = indices.selectionMappingCache.get();
-            const bool canCacheClassification = mappingCache && mappingCache->ensure(indices.selectionInputScene);
-            if (canCacheClassification && mappingCache->hydraMappingRequired.empty())
-                mappingCache->hydraMappingRequired.reserve(usdPaths.size());
-            SdfPathVector hydraPaths;
-            hydraPaths.reserve(usdPaths.size());
-            directPaths->reserve(usdPaths.size());
-            for (const SdfPath& path : usdPaths) {
-                bool needsHydraMapping = false;
-                bool cachedClassification = false;
-                if (canCacheClassification) {
-                    const auto cached = mappingCache->hydraMappingRequired.find(path);
-                    if (cached != mappingCache->hydraMappingRequired.end()) {
-                        needsHydraMapping = cached->second;
-                        cachedClassification = true;
-                    }
-                }
-
-                if (!cachedClassification) {
-                    const UsdPrim prim = stage ? stage->GetPrimAtPath(path) : UsdPrim();
-                    needsHydraMapping = !prim || prim.IsInstance() || prim.IsInstanceProxy()
-                                        || !prim.GetChildren().empty() || !UsdGeomGprim(prim);
-
-                    if (!needsHydraMapping && indices.selectionInputScene) {
-                        const HdSceneIndexPrim scenePrim = indices.selectionInputScene->GetPrim(path);
-                        const HdContainerDataSourceHandle source = scenePrim.dataSource;
-                        SdfPath prototype;
-                        InstanceSelection instance;
-                        const UsdImagingUsdPrimInfoSchema primInfo = UsdImagingUsdPrimInfoSchema::GetFromParent(source);
-                        needsHydraMapping = instanceMapping(source, indices.selectionInputScene, &prototype, &instance)
-                                            || static_cast<bool>(primInfo.GetPiPropagatedPrototypes());
-                    }
-
-                    if (canCacheClassification)
-                        mappingCache->hydraMappingRequired.emplace(path, needsHydraMapping);
-                }
-                (needsHydraMapping ? hydraPaths : *directPaths).push_back(path);
-            }
-            return resolveHydraSelection(indices.selectionInputScene, indices.selectionMappingCache.get(), hydraPaths,
-                                         rprims);
+            return m_sceneIndices->selection.resolve(stage, paths, directPaths, rprims);
         }
 
-        uint64_t selectionMappingGeneration() const
-        {
-            const std::shared_ptr<SelectionMappingCache>& cache = m_sceneIndices->selectionMappingCache;
-            return cache ? cache->generation : 0;
-        }
+        uint64_t selectionMappingGeneration() const { return m_sceneIndices->selection.generation(); }
 
         void renderBatch(const SdfPathVector& paths, const UsdImagingGLRenderParams& params,
                          const SdfPathVector& excludes = {})
@@ -953,19 +313,7 @@ namespace {
             if (!_taskControllerSceneIndex || paths.empty())
                 return;
 
-            _UpdateHydraCollection(&_renderCollection, paths, params);
-            // Reset exclusions on every submission so collection state cannot
-            // retain paths excluded by an earlier submission.
-            _renderCollection.SetExcludePaths(excludes);
-            _taskControllerSceneIndex->SetCollection(_renderCollection);
-            _PrepareRender(params);
-            _SetBBoxParams(params.bboxes, params.bboxLineColor, params.bboxLineDashSize);
-            _taskControllerSceneIndex->SetEnableSelection(false);
-            _taskControllerSceneIndex->SetEnablePresentation(true);
-
-            const VtValue selectionValue(_selTracker);
-            if (HdEngine* hdEngine = _GetHdEngine())
-                hdEngine->SetTaskContextData(HdxTokens->selectionState, selectionValue);
+            prepareSubmission(paths, params, true, excludes);
 
             _Execute(params, _taskControllerSceneIndex->GetRenderingTaskPaths());
         }
@@ -976,17 +324,7 @@ namespace {
             if (!_taskControllerSceneIndex || paths.empty())
                 return;
 
-            _UpdateHydraCollection(&_renderCollection, paths, params);
-            _taskControllerSceneIndex->SetCollection(_renderCollection);
-            _PrepareRender(params);
-
-            _SetBBoxParams(params.bboxes, params.bboxLineColor, params.bboxLineDashSize);
-            _taskControllerSceneIndex->SetEnableSelection(false);
-            _taskControllerSceneIndex->SetEnablePresentation(present);
-
-            const VtValue selectionValue(_selTracker);
-            if (HdEngine* hdEngine = _GetHdEngine())
-                hdEngine->SetTaskContextData(HdxTokens->selectionState, selectionValue);
+            prepareSubmission(paths, params, present, {});
 
             SdfPathVector taskPaths = _taskControllerSceneIndex->GetRenderingTaskPaths();
 
@@ -1146,6 +484,24 @@ namespace {
         }
 
     private:
+        void prepareSubmission(const SdfPathVector& paths, const UsdImagingGLRenderParams& params, bool present,
+                               const SdfPathVector& excludes)
+        {
+            _UpdateHydraCollection(&_renderCollection, paths, params);
+            // Reset exclusions on every submission so collection state cannot
+            // retain paths excluded by an earlier submission.
+            _renderCollection.SetExcludePaths(excludes);
+            _taskControllerSceneIndex->SetCollection(_renderCollection);
+            _PrepareRender(params);
+            _SetBBoxParams(params.bboxes, params.bboxLineColor, params.bboxLineDashSize);
+            _taskControllerSceneIndex->SetEnableSelection(false);
+            _taskControllerSceneIndex->SetEnablePresentation(present);
+
+            const VtValue selectionValue(_selTracker);
+            if (HdEngine* hdEngine = _GetHdEngine())
+                hdEngine->SetTaskContextData(HdxTokens->selectionState, selectionValue);
+        }
+
         bool ensureRenderTask()
         {
             HdRenderIndex* renderIndex = _GetRenderIndex();
@@ -1206,10 +562,7 @@ namespace {
                     if (SceneIndices* sceneIndices = constructingSceneIndices()) {
                         sceneIndices->merging = mergingSceneIndex;
                         sceneIndices->renderSceneIndex = renderSceneIndex;
-                        sceneIndices->selectionInputScene = inputScene;
-                        sceneIndices->selectionMappingObserver = std::make_unique<SelectionMappingCacheObserver>(
-                            sceneIndices->selectionMappingCache);
-                        inputScene->AddObserver(TfCreateWeakPtr(sceneIndices->selectionMappingObserver.get()));
+                        sceneIndices->selection.setSceneIndex(inputScene);
                     }
 
                     return mergingSceneIndex;
@@ -1256,85 +609,94 @@ namespace {
 
 class RenderEngine::Private {
 public:
-    explicit Private(ContextMode mode)
-        : contextMode(mode)
-    {}
+    explicit Private(ContextMode mode) { d.contextMode = mode; }
 
-    bool initialize();
-    UsdStageRefPtr documentStage();
     bool ensureCurrentContext();
-    void resetEngine();
+    bool initialize();
+    void resetEngine(bool resetAuxiliary = true);
     void reset();
+    UsdStageRefPtr documentStage();
     void ensureAuxiliarySceneIndex();
     void refreshAuxiliarySceneIndex();
     void updateDocumentRenderSceneIndex();
     void updateAuxiliaryRenderSceneIndex();
     void updateRenderParams();
     void updateLighting();
+    void configureEngine(ImagingGLEngine* target, const GfVec4d& renderViewport);
+    void refreshMaterials();
+    void resolveSelection();
+    RenderTaskParams makeRenderTaskParams(const SdfPathVector& renderPaths, const GfVec4d& renderViewport);
+    void warmDocument(const UsdStageRefPtr& renderStage, const SdfPathVector& renderPaths,
+                      const UsdImagingGLRenderParams& documentParams, const RenderTaskParams& renderTaskParams);
+    bool warmGizmo(const UsdImagingGLRenderParams& gizmoParams, const GfMatrix4d& gizmoTransform);
+    void collectCaptures(const RenderTaskParams& renderTaskParams);
+    bool renderOverlays(const UsdImagingGLRenderParams& documentParams, const GfMatrix4d& viewMatrix);
     bool render();
 
-    ContextMode contextMode = ContextMode::Current;
-    Settings settings;
-    UsdStageRefPtr stage;
-    RenderIsolation isolation;
-    std::set<SdfPath> pendingMaterialChanges;
-    UsdStageWeakPtr imagingStage;
-    UsdStageWeakPtr cachedImagingStage;
-    uint64_t documentWarmupSourceVersion = 0;
-    UsdStageRefPtr auxiliary;
-    GfCamera camera;
-    GfVec2i size = GfVec2i(512, 512);
-    double devicePixelRatio = 1.0;
-    GfVec4d viewport = GfVec4d(0.0);
-    QList<SdfPath> mask;
-    QList<SdfPath> selected;
-    SdfPathVector cachedSelectedPaths;
-    SdfPathVector cachedDirectSelectionPaths;
-    SdfPathVector cachedLeadSelectionPaths;
-    SdfPathVector cachedLeadDirectSelectionPaths;
-    std::vector<HydraSelectionRprim> cachedSelectedHydraRprims;
-    std::vector<HydraSelectionRprim> cachedLeadHydraRprims;
-    bool cachedHydraSelectionResolved = false;
-    bool cachedLeadHydraSelectionResolved = false;
-    std::vector<SelectionProxyTarget> cachedSelectedProxyTargets;
-    std::vector<SelectionProxyTarget> cachedLeadProxyTargets;
-    bool selectionCacheValid = false;
-    uint64_t cachedSelectionMappingGeneration = 0;
-    bool interactiveNavigation = false;
-    QColor selectionColor = ui()->color(UI::ColorRole::Selection);
-    QColor secondarySelectionColor = ui()->color(UI::ColorRole::SelectionAlt);
-    bool linearColorCapture = false;
-    bool captureVisibleRequested = false;
-    bool captureObjectsRequested = false;
-    ViewportObjectIds capturedObjects;
-    bool captureElementIdRequested = false;
-    bool captureGpuPickRequested = false;
-    GfVec2i gpuPickPixel = GfVec2i(-1, -1);
-    SdfPathVector gpuPickExcludes;
-    GpuPickResult capturedGpuPick;
-    GfVec2i captureElementPixel = GfVec2i(-1, -1);
-    int32_t capturedElementId = -1;
-    int captureVisibleGridSize = 4;
-    SdfPathVector capturedVisiblePaths;
-    UsdImagingGLRenderParams params;
-    HgiUniquePtr sharedDocumentHgi;
-    std::unique_ptr<ImagingGLEngine> engine;
-    std::unique_ptr<ImagingGLEngine> cachedEngine;
-    std::unique_ptr<ImagingGLEngine> auxiliaryEngine;
-    std::unique_ptr<ImagingGLEngine> gizmoEngine;
-    bool gizmoRendered = false;
-    bool gizmoWarmed = false;
-    std::unique_ptr<QOpenGLContext> offscreenContext;
-    std::unique_ptr<QOffscreenSurface> offscreenSurface;
+    struct Data {
+        ContextMode contextMode = ContextMode::Current;
+        Settings settings;
+        UsdStageRefPtr stage;
+        RenderIsolation isolation;
+        std::set<SdfPath> pendingMaterialChanges;
+        UsdStageWeakPtr imagingStage;
+        UsdStageWeakPtr cachedImagingStage;
+        uint64_t documentWarmupSourceVersion = 0;
+        UsdStageRefPtr auxiliary;
+        GfCamera camera;
+        GfVec2i size = GfVec2i(512, 512);
+        double devicePixelRatio = 1.0;
+        GfVec4d viewport = GfVec4d(0.0);
+        QList<SdfPath> mask;
+        QList<SdfPath> selected;
+        SdfPathVector cachedSelectedPaths;
+        SdfPathVector cachedDirectSelectionPaths;
+        SdfPathVector cachedLeadSelectionPaths;
+        SdfPathVector cachedLeadDirectSelectionPaths;
+        std::vector<HydraSelectionRprim> cachedSelectedHydraRprims;
+        std::vector<HydraSelectionRprim> cachedLeadHydraRprims;
+        bool cachedHydraSelectionResolved = false;
+        bool cachedLeadHydraSelectionResolved = false;
+        std::vector<SelectionProxyTarget> cachedSelectedProxyTargets;
+        std::vector<SelectionProxyTarget> cachedLeadProxyTargets;
+        bool selectionCacheValid = false;
+        uint64_t cachedSelectionMappingGeneration = 0;
+        bool interactiveNavigation = false;
+        QColor selectionColor = ui()->color(UI::ColorRole::Selection);
+        QColor secondarySelectionColor = ui()->color(UI::ColorRole::SelectionAlt);
+        bool linearColorCapture = false;
+        bool captureVisibleRequested = false;
+        bool captureObjectsRequested = false;
+        ViewportObjectIds capturedObjects;
+        bool captureElementIdRequested = false;
+        bool captureGpuPickRequested = false;
+        GfVec2i gpuPickPixel = GfVec2i(-1, -1);
+        SdfPathVector gpuPickExcludes;
+        GpuPickResult capturedGpuPick;
+        GfVec2i captureElementPixel = GfVec2i(-1, -1);
+        int32_t capturedElementId = -1;
+        int captureVisibleGridSize = 4;
+        SdfPathVector capturedVisiblePaths;
+        UsdImagingGLRenderParams params;
+        HgiUniquePtr sharedDocumentHgi;
+        std::unique_ptr<ImagingGLEngine> engine;
+        std::unique_ptr<ImagingGLEngine> cachedEngine;
+        std::unique_ptr<ImagingGLEngine> auxiliaryEngine;
+        std::unique_ptr<ImagingGLEngine> gizmoEngine;
+        bool gizmoRendered = false;
+        bool gizmoWarmed = false;
+        std::unique_ptr<QOpenGLContext> offscreenContext;
+        std::unique_ptr<QOffscreenSurface> offscreenSurface;
+    } d;
 };
 
 bool
 RenderEngine::Private::ensureCurrentContext()
 {
-    if (contextMode == ContextMode::Current)
+    if (d.contextMode == ContextMode::Current)
         return QOpenGLContext::currentContext() != nullptr;
 
-    if (!offscreenContext) {
+    if (!d.offscreenContext) {
         QSurfaceFormat format;
         format.setSamples(4);
         format.setDepthBufferSize(24);
@@ -1342,32 +704,32 @@ RenderEngine::Private::ensureCurrentContext()
         format.setAlphaBufferSize(8);
         format.setColorSpace(QColorSpace::SRgb);
 
-        offscreenSurface = std::make_unique<QOffscreenSurface>();
-        offscreenSurface->setFormat(format);
-        offscreenSurface->create();
+        d.offscreenSurface = std::make_unique<QOffscreenSurface>();
+        d.offscreenSurface->setFormat(format);
+        d.offscreenSurface->create();
 
-        if (!offscreenSurface->isValid())
+        if (!d.offscreenSurface->isValid())
             return false;
 
-        offscreenContext = std::make_unique<QOpenGLContext>();
-        offscreenContext->setFormat(format);
+        d.offscreenContext = std::make_unique<QOpenGLContext>();
+        d.offscreenContext->setFormat(format);
 
         if (QOpenGLContext::globalShareContext())
-            offscreenContext->setShareContext(QOpenGLContext::globalShareContext());
+            d.offscreenContext->setShareContext(QOpenGLContext::globalShareContext());
 
-        if (!offscreenContext->create()) {
-            offscreenContext.reset();
+        if (!d.offscreenContext->create()) {
+            d.offscreenContext.reset();
             return false;
         }
     }
 
-    return offscreenContext->makeCurrent(offscreenSurface.get());
+    return d.offscreenContext->makeCurrent(d.offscreenSurface.get());
 }
 
 bool
 RenderEngine::Private::initialize()
 {
-    if (engine && (contextMode == ContextMode::Offscreen || (auxiliaryEngine && gizmoEngine)))
+    if (d.engine && (d.contextMode == ContextMode::Offscreen || (d.auxiliaryEngine && d.gizmoEngine)))
         return true;
 
     if (!ensureCurrentContext())
@@ -1382,42 +744,42 @@ RenderEngine::Private::initialize()
 
     // Full and isolated documents keep independent scene indices but share
     // their Hgi so Storm can reuse shader and geometry resource registries.
-    if (!sharedDocumentHgi)
-        sharedDocumentHgi = Hgi::CreatePlatformDefaultHgi();
-    if (!sharedDocumentHgi)
+    if (!d.sharedDocumentHgi)
+        d.sharedDocumentHgi = Hgi::CreatePlatformDefaultHgi();
+    if (!d.sharedDocumentHgi)
         return false;
     documentParams.driver.name = HgiTokens->renderDriver;
-    documentParams.driver.driver = VtValue(sharedDocumentHgi.get());
-    if (!engine)
-        engine = std::make_unique<ImagingGLEngine>(documentParams);
-    if (!engine->hgi()) {
-        engine.reset();
+    documentParams.driver.driver = VtValue(d.sharedDocumentHgi.get());
+    if (!d.engine)
+        d.engine = std::make_unique<ImagingGLEngine>(documentParams);
+    if (!d.engine->hgi()) {
+        d.engine.reset();
         return false;
     }
 
     // Transform handles remain a separate final presentation pass. Selection
     // is handled by the Stageviz RenderTask as a screen-space outline.
     // Offscreen rendering intentionally omits viewport-only auxiliary content.
-    if (contextMode == ContextMode::Current) {
+    if (d.contextMode == ContextMode::Current) {
         UsdImagingGLEngine::Parameters overlayParams = documentParams;
         overlayParams.allowAsynchronousSceneProcessing = false;
         overlayParams.driver = HdDriver();
 
-        if (!auxiliaryEngine)
-            auxiliaryEngine = std::make_unique<ImagingGLEngine>(overlayParams);
-        if (!auxiliaryEngine->hgi()) {
-            auxiliaryEngine.reset();
-            engine.reset();
+        if (!d.auxiliaryEngine)
+            d.auxiliaryEngine = std::make_unique<ImagingGLEngine>(overlayParams);
+        if (!d.auxiliaryEngine->hgi()) {
+            d.auxiliaryEngine.reset();
+            d.engine.reset();
             return false;
         }
         // Keep the grid and gizmo in independent imaging engines so their
         // camera, collection and GPU resources are not reused between passes.
-        if (!gizmoEngine)
-            gizmoEngine = std::make_unique<ImagingGLEngine>(overlayParams);
-        if (!gizmoEngine->hgi()) {
-            gizmoEngine.reset();
-            auxiliaryEngine.reset();
-            engine.reset();
+        if (!d.gizmoEngine)
+            d.gizmoEngine = std::make_unique<ImagingGLEngine>(overlayParams);
+        if (!d.gizmoEngine->hgi()) {
+            d.gizmoEngine.reset();
+            d.auxiliaryEngine.reset();
+            d.engine.reset();
             return false;
         }
     }
@@ -1430,16 +792,18 @@ RenderEngine::Private::initialize()
 }
 
 void
-RenderEngine::Private::resetEngine()
+RenderEngine::Private::resetEngine(bool resetAuxiliary)
 {
-    if (!engine && !cachedEngine && !auxiliaryEngine && !gizmoEngine)
+    if (!d.engine && !d.cachedEngine && !d.auxiliaryEngine && !d.gizmoEngine)
         return;
 
-    gizmoRendered = false;
-    gizmoWarmed = false;
-    selectionCacheValid = false;
+    if (resetAuxiliary) {
+        d.gizmoRendered = false;
+        d.gizmoWarmed = false;
+    }
+    d.selectionCacheValid = false;
 
-    if (contextMode == ContextMode::Offscreen) {
+    if (d.contextMode == ContextMode::Offscreen) {
         OpenGLContextRestore contextRestore;
 
         if (!ensureCurrentContext()) {
@@ -1447,60 +811,88 @@ RenderEngine::Private::resetEngine()
             return;
         }
 
-        gizmoEngine.reset();
-        auxiliaryEngine.reset();
-        cachedEngine.reset();
-        engine.reset();
+        if (resetAuxiliary) {
+            d.gizmoEngine.reset();
+            d.auxiliaryEngine.reset();
+        }
+        d.cachedEngine.reset();
+        d.engine.reset();
         return;
     }
 
-    gizmoEngine.reset();
-    auxiliaryEngine.reset();
-    cachedEngine.reset();
-    engine.reset();
+    if (resetAuxiliary) {
+        d.gizmoEngine.reset();
+        d.auxiliaryEngine.reset();
+    }
+    d.cachedEngine.reset();
+    d.engine.reset();
 }
 
 void
 RenderEngine::Private::reset()
 {
-    gizmoRendered = false;
-    gizmoWarmed = false;
-    if (contextMode == ContextMode::Offscreen) {
+    d.gizmoRendered = false;
+    d.gizmoWarmed = false;
+    if (d.contextMode == ContextMode::Offscreen) {
         {
             OpenGLContextRestore contextRestore;
 
-            if ((engine || cachedEngine || auxiliaryEngine || gizmoEngine)
-                && (!offscreenContext || !offscreenSurface || !offscreenContext->makeCurrent(offscreenSurface.get()))) {
+            if ((d.engine || d.cachedEngine || d.auxiliaryEngine || d.gizmoEngine)
+                && (!d.offscreenContext || !d.offscreenSurface
+                    || !d.offscreenContext->makeCurrent(d.offscreenSurface.get()))) {
                 qWarning() << "could not make offscreen context current while releasing render engine";
                 return;
             }
 
-            gizmoEngine.reset();
-            auxiliaryEngine.reset();
-            cachedEngine.reset();
-            engine.reset();
-            sharedDocumentHgi.reset();
+            d.gizmoEngine.reset();
+            d.auxiliaryEngine.reset();
+            d.cachedEngine.reset();
+            d.engine.reset();
+            d.sharedDocumentHgi.reset();
         }
 
-        offscreenContext.reset();
-        offscreenSurface.reset();
+        d.offscreenContext.reset();
+        d.offscreenSurface.reset();
         return;
     }
 
-    gizmoEngine.reset();
-    auxiliaryEngine.reset();
-    cachedEngine.reset();
-    engine.reset();
-    sharedDocumentHgi.reset();
+    d.gizmoEngine.reset();
+    d.auxiliaryEngine.reset();
+    d.cachedEngine.reset();
+    d.engine.reset();
+    d.sharedDocumentHgi.reset();
+}
+
+UsdStageRefPtr
+RenderEngine::Private::documentStage()
+{
+    const UsdStageRefPtr rendered = d.isolation.stage();
+    if (d.imagingStage != rendered) {
+        if (!d.imagingStage) {
+            d.imagingStage = rendered;
+        }
+        else if (d.cachedEngine && d.cachedImagingStage == rendered) {
+            d.engine.swap(d.cachedEngine);
+            std::swap(d.imagingStage, d.cachedImagingStage);
+        }
+        else {
+            d.cachedEngine = std::move(d.engine);
+            d.cachedImagingStage = d.imagingStage;
+            d.imagingStage = rendered;
+        }
+        d.selectionCacheValid = false;
+        d.gizmoRendered = false;
+    }
+    return rendered;
 }
 
 void
 RenderEngine::Private::ensureAuxiliarySceneIndex()
 {
-    if (!auxiliary)
+    if (!d.auxiliary)
         return;
 
-    for (ImagingGLEngine* target : { engine.get() }) {
+    for (ImagingGLEngine* target : { d.engine.get() }) {
         if (!target)
             continue;
 
@@ -1510,7 +902,7 @@ RenderEngine::Private::ensureAuxiliarySceneIndex()
             continue;
 
         UsdImagingCreateSceneIndicesInfo createInfo;
-        createInfo.stage = auxiliary;
+        createInfo.stage = d.auxiliary;
         createInfo.displayUnloadedPrimsWithBounds = false;
         createInfo.addDrawModeSceneIndex = true;
 
@@ -1532,7 +924,7 @@ RenderEngine::Private::ensureAuxiliarySceneIndex()
 void
 RenderEngine::Private::refreshAuxiliarySceneIndex()
 {
-    for (ImagingGLEngine* target : { engine.get() }) {
+    for (ImagingGLEngine* target : { d.engine.get() }) {
         if (!target)
             continue;
 
@@ -1545,20 +937,20 @@ RenderEngine::Private::refreshAuxiliarySceneIndex()
 void
 RenderEngine::Private::updateDocumentRenderSceneIndex()
 {
-    if (!engine)
+    if (!d.engine)
         return;
 
-    SceneIndices& sceneIndices = engine->sceneIndices();
+    SceneIndices& sceneIndices = d.engine->sceneIndices();
     if (!sceneIndices.renderSceneIndex)
         return;
 
     TfRefPtr<RenderSceneIndex> renderSceneIndex = sceneIndices.renderSceneIndex;
 
-    renderSceneIndex->setSceneMaterialsEnabled(settings.sceneMaterialsEnabled);
-    renderSceneIndex->setMaterialPath(settings.overrideMaterial);
+    renderSceneIndex->setSceneMaterialsEnabled(d.settings.sceneMaterialsEnabled);
+    renderSceneIndex->setMaterialPath(d.settings.overrideMaterial);
 
     RenderSceneIndex::Mode mode = RenderSceneIndex::None;
-    switch (settings.materialMode) {
+    switch (d.settings.materialMode) {
     case MaterialMode::Clay: mode = RenderSceneIndex::Clay; break;
     case MaterialMode::Override: mode = RenderSceneIndex::Custom; break;
     case MaterialMode::Scene:
@@ -1567,7 +959,7 @@ RenderEngine::Private::updateDocumentRenderSceneIndex()
 
     renderSceneIndex->setMode(mode);
 
-    const bool overrideDoubleSided = settings.doubleSidedMode == DoubleSidedMode::DoubleSided;
+    const bool overrideDoubleSided = d.settings.doubleSidedMode == DoubleSidedMode::DoubleSided;
     renderSceneIndex->setDoubleSidedOverride(false);
     renderSceneIndex->setDoubleSidedOverrideEnabled(overrideDoubleSided);
 }
@@ -1575,7 +967,7 @@ RenderEngine::Private::updateDocumentRenderSceneIndex()
 void
 RenderEngine::Private::updateAuxiliaryRenderSceneIndex()
 {
-    for (auto* target : { auxiliaryEngine.get(), gizmoEngine.get() }) {
+    for (auto* target : { d.auxiliaryEngine.get(), d.gizmoEngine.get() }) {
         if (!target)
             continue;
         SceneIndices& sceneIndices = target->sceneIndices();
@@ -1589,37 +981,36 @@ RenderEngine::Private::updateAuxiliaryRenderSceneIndex()
     }
 }
 
-
 void
 RenderEngine::Private::updateRenderParams()
 {
-    params.clearColor = qt::QColorToGfVec4f(settings.clearColor);
-    params.drawMode = settings.drawMode;
-    params.complexity = settings.complexity;
-    params.frame = settings.timeCode;
-    params.cullStyle = cullStyle(settings.doubleSidedMode);
-    params.enableLighting = true;
-    params.gammaCorrectColors = settings.gammaCorrectColors;
-    params.enableSampleAlphaToCoverage = settings.sampleAlphaToCoverageEnabled;
-    params.enableSceneLights = settings.sceneLightsEnabled;
-    params.enableSceneMaterials = true;
-    params.flipFrontFacing = settings.flipFrontFacing;
-    params.showGuides = settings.showGuides;
-    params.showProxy = settings.showProxy;
-    params.showRender = settings.showRender;
-    params.highlight = false;
+    d.params.clearColor = qt::QColorToGfVec4f(d.settings.clearColor);
+    d.params.drawMode = d.settings.drawMode;
+    d.params.complexity = d.settings.complexity;
+    d.params.frame = d.settings.timeCode;
+    d.params.cullStyle = cullStyle(d.settings.doubleSidedMode);
+    d.params.enableLighting = true;
+    d.params.gammaCorrectColors = d.settings.gammaCorrectColors;
+    d.params.enableSampleAlphaToCoverage = d.settings.sampleAlphaToCoverageEnabled;
+    d.params.enableSceneLights = d.settings.sceneLightsEnabled;
+    d.params.enableSceneMaterials = true;
+    d.params.flipFrontFacing = d.settings.flipFrontFacing;
+    d.params.showGuides = d.settings.showGuides;
+    d.params.showProxy = d.settings.showProxy;
+    d.params.showRender = d.settings.showRender;
+    d.params.highlight = false;
 }
 
 void
 RenderEngine::Private::updateLighting()
 {
-    if (!engine && !auxiliaryEngine && !gizmoEngine)
+    if (!d.engine && !d.auxiliaryEngine && !d.gizmoEngine)
         return;
 
     std::vector<GlfSimpleLight> lights;
 
-    if (settings.defaultCameraLightEnabled) {
-        const GfMatrix4d cameraTransform = camera.GetTransform();
+    if (d.settings.defaultCameraLightEnabled) {
+        const GfMatrix4d cameraTransform = d.camera.GetTransform();
         const GfVec3d cameraPosition = cameraTransform.ExtractTranslation();
 
         GlfSimpleLight light;
@@ -1630,20 +1021,20 @@ RenderEngine::Private::updateLighting()
         lights.push_back(light);
     }
 
-    if (settings.defaultDomeLightEnabled) {
+    if (d.settings.defaultDomeLightEnabled) {
         GlfSimpleLight light;
         light.SetAmbient(GfVec4f(0, 0, 0, 0));
         light.SetPosition(GfVec4f(0, 0, 1, 0));
         light.SetIsDomeLight(true);
 
-        if (stage && UsdGeomGetStageUpAxis(stage) == UsdGeomTokens->z) {
+        if (d.stage && UsdGeomGetStageUpAxis(d.stage) == UsdGeomTokens->z) {
             GfMatrix4d domeTransform(1.0);
             domeTransform.SetRotate(GfRotation(GfVec3d(1.0, 0.0, 0.0), 90.0));
             light.SetTransform(domeTransform);
         }
 
-        const QString texture = settings.domeLightTexture.isEmpty() ? renderresources::defaultDomeTexture()
-                                                                    : settings.domeLightTexture;
+        const QString texture = d.settings.domeLightTexture.isEmpty() ? renderresources::defaultDomeTexture()
+                                                                      : d.settings.domeLightTexture;
         if (!texture.isEmpty()) {
             const std::string filename = texture.toStdString();
             light.SetDomeLightTextureFile(SdfAssetPath(filename, filename));
@@ -1652,153 +1043,101 @@ RenderEngine::Private::updateLighting()
         lights.push_back(light);
     }
 
-    const GfVec4f ambient(settings.defaultAmbient, settings.defaultAmbient, settings.defaultAmbient, 1.0f);
+    const GfVec4f ambient(d.settings.defaultAmbient, d.settings.defaultAmbient, d.settings.defaultAmbient, 1.0f);
 
     GlfSimpleMaterial material;
     material.SetAmbient(ambient);
-    material.SetSpecular(GfVec4f(settings.defaultSpecular, settings.defaultSpecular, settings.defaultSpecular, 1.0f));
-    material.SetShininess(settings.defaultShininess);
+    material.SetSpecular(
+        GfVec4f(d.settings.defaultSpecular, d.settings.defaultSpecular, d.settings.defaultSpecular, 1.0f));
+    material.SetShininess(d.settings.defaultShininess);
 
-    if (engine)
-        engine->SetLightingState(lights, material, ambient);
-    if (auxiliaryEngine)
-        auxiliaryEngine->SetLightingState(lights, material, ambient);
-    if (gizmoEngine)
-        gizmoEngine->SetLightingState(lights, material, ambient);
+    if (d.engine)
+        d.engine->SetLightingState(lights, material, ambient);
+    if (d.auxiliaryEngine)
+        d.auxiliaryEngine->SetLightingState(lights, material, ambient);
+    if (d.gizmoEngine)
+        d.gizmoEngine->SetLightingState(lights, material, ambient);
 }
 
-UsdStageRefPtr
-RenderEngine::Private::documentStage()
+void
+RenderEngine::Private::configureEngine(ImagingGLEngine* target, const GfVec4d& renderViewport)
 {
-    const UsdStageRefPtr rendered = isolation.stage();
-    if (imagingStage != rendered) {
-        if (!imagingStage) {
-            imagingStage = rendered;
-        }
-        else if (cachedEngine && cachedImagingStage == rendered) {
-            engine.swap(cachedEngine);
-            std::swap(imagingStage, cachedImagingStage);
-        }
-        else {
-            cachedEngine = std::move(engine);
-            cachedImagingStage = imagingStage;
-            imagingStage = rendered;
-        }
-        selectionCacheValid = false;
-        gizmoRendered = false;
-    }
-    return rendered;
+    const GfFrustum frustum = d.camera.GetFrustum();
+    const auto viewMatrix = frustum.ComputeViewMatrix();
+    const auto projectionMatrix = frustum.ComputeProjectionMatrix();
+
+    // Only the document pass owns the background. A second opaque dome
+    // in the helper pass covers translucent document pixels, which do not
+    // write depth, even when their color was already presented correctly.
+    target->SetRendererSetting(TfToken("domeLightCameraVisibility"),
+                               VtValue(target == d.engine.get() && d.settings.domeLightCameraVisibility));
+    target->SetRendererAov(d.settings.aov);
+    target->SetRenderBufferSize(d.size);
+    // CameraUtilFraming uses image coordinates (origin at the upper left),
+    // while the widget's render viewport uses GL coordinates (origin at
+    // the lower left).
+    const double viewportTop = d.size[1] - (renderViewport[1] + renderViewport[3]);
+    const double viewportBottom = d.size[1] - renderViewport[1];
+    const GfVec2i viewportMin(static_cast<int>(std::floor(renderViewport[0])),
+                              static_cast<int>(std::floor(viewportTop)));
+    const GfVec2i viewportMax(static_cast<int>(std::ceil(renderViewport[0] + renderViewport[2])),
+                              static_cast<int>(std::ceil(viewportBottom)));
+    const GfVec2i framingMin(std::clamp(viewportMin[0], 0, d.size[0]), std::clamp(viewportMin[1], 0, d.size[1]));
+    const GfVec2i framingMax(std::clamp(viewportMax[0], framingMin[0], d.size[0]),
+                             std::clamp(viewportMax[1], framingMin[1], d.size[1]));
+    const GfRect2i dataWindow(framingMin, framingMax);
+    const GfRange2f displayWindow { GfVec2f(framingMin), GfVec2f(framingMax) };
+    target->SetFraming(CameraUtilFraming(displayWindow, dataWindow));
+    target->SetWindowPolicy(CameraUtilMatchVertically);
+    target->SetCameraState(viewMatrix, projectionMatrix);
 }
 
-bool
-RenderEngine::Private::render()
+void
+RenderEngine::Private::refreshMaterials()
 {
-    PerfScope perfScope("hydra.render_cpu");
-    if (!stage || size[0] <= 0 || size[1] <= 0)
-        return false;
-
-    const UsdStageRefPtr renderStage = documentStage();
-    if (!renderStage)
-        return false;
-    if ((!engine || (contextMode == ContextMode::Current && (!auxiliaryEngine || !gizmoEngine))) && !initialize())
-        return false;
-
-    gizmoRendered = false;
-    ensureAuxiliarySceneIndex();
-    refreshAuxiliarySceneIndex();
-    updateRenderParams();
-    updateLighting();
-
-    GfVec4d renderViewport = viewport;
-    if (renderViewport[2] <= 0.0 || renderViewport[3] <= 0.0)
-        renderViewport = GfVec4d(0, 0, size[0], size[1]);
-
-    const GfFrustum frustum = camera.GetFrustum();
-    const GfMatrix4d viewMatrix = frustum.ComputeViewMatrix();
-    const GfMatrix4d projectionMatrix = frustum.ComputeProjectionMatrix();
-
-    auto configureEngine = [&](ImagingGLEngine* target) {
-        // Only the document pass owns the background. A second opaque dome
-        // in the helper pass covers translucent document pixels, which do not
-        // write depth, even when their color was already presented correctly.
-        target->SetRendererSetting(TfToken("domeLightCameraVisibility"),
-                                   VtValue(target == engine.get() && settings.domeLightCameraVisibility));
-        target->SetRendererAov(settings.aov);
-        target->SetRenderBufferSize(size);
-        // CameraUtilFraming uses image coordinates (origin at the upper left),
-        // while the widget's render viewport uses GL coordinates (origin at
-        // the lower left).
-        const double viewportTop = size[1] - (renderViewport[1] + renderViewport[3]);
-        const double viewportBottom = size[1] - renderViewport[1];
-        const GfVec2i viewportMin(static_cast<int>(std::floor(renderViewport[0])),
-                                  static_cast<int>(std::floor(viewportTop)));
-        const GfVec2i viewportMax(static_cast<int>(std::ceil(renderViewport[0] + renderViewport[2])),
-                                  static_cast<int>(std::ceil(viewportBottom)));
-        const GfVec2i framingMin(std::clamp(viewportMin[0], 0, size[0]), std::clamp(viewportMin[1], 0, size[1]));
-        const GfVec2i framingMax(std::clamp(viewportMax[0], framingMin[0], size[0]),
-                                 std::clamp(viewportMax[1], framingMin[1], size[1]));
-        const GfRect2i dataWindow(framingMin, framingMax);
-        const GfRange2f displayWindow { GfVec2f(framingMin), GfVec2f(framingMax) };
-        target->SetFraming(CameraUtilFraming(displayWindow, dataWindow));
-        target->SetWindowPolicy(CameraUtilMatchVertically);
-        target->SetCameraState(viewMatrix, projectionMatrix);
-    };
-
-    configureEngine(engine.get());
-    if (auxiliaryEngine)
-        configureEngine(auxiliaryEngine.get());
-    if (gizmoEngine)
-        configureEngine(gizmoEngine.get());
-
-    const UsdPrim root = renderStage->GetPseudoRoot();
-    UsdImagingGLRenderParams documentParams = params;
-    documentParams.highlight = false;
-    Hgi* documentHgi = engine->hgi();
-    if (!documentHgi)
-        return false;
-
-    documentHgi->StartFrame();
-    engine->PrepareBatch(root, documentParams);
-    updateDocumentRenderSceneIndex();
-    if (!pendingMaterialChanges.empty()) {
+    if (!d.pendingMaterialChanges.empty()) {
         std::set<SdfPath> materials;
-        for (auto path : pendingMaterialChanges) {
+        for (auto path : d.pendingMaterialChanges) {
             for (; !path.IsEmpty(); path = path.GetParentPath()) {
-                if (UsdShadeMaterial(stage->GetPrimAtPath(path))) {
+                if (UsdShadeMaterial(d.stage->GetPrimAtPath(path))) {
                     materials.insert(path);
                     break;
                 }
             }
         }
-        pendingMaterialChanges.clear();
-        if (const auto filter = engine->sceneIndices().renderSceneIndex)
+        d.pendingMaterialChanges.clear();
+        if (const auto filter = d.engine->sceneIndices().renderSceneIndex)
             filter->refreshMaterials(materials);
-        if (cachedEngine) {
-            if (const auto filter = cachedEngine->sceneIndices().renderSceneIndex)
+        if (d.cachedEngine) {
+            if (const auto filter = d.cachedEngine->sceneIndices().renderSceneIndex)
                 filter->refreshMaterials(materials);
         }
     }
+}
 
+void
+RenderEngine::Private::resolveSelection()
+{
     // PrepareBatch applies pending USD stage-scene-index updates. Resolve the
     // selection afterward so the mapper and its cache observe the same current
     // Hydra hierarchy and instance topology that the render tasks will consume.
-    const uint64_t mappingGeneration = engine->selectionMappingGeneration();
-    if (!selectionCacheValid || cachedSelectionMappingGeneration != mappingGeneration) {
+    const uint64_t mappingGeneration = d.engine->selectionMappingGeneration();
+    if (!d.selectionCacheValid || d.cachedSelectionMappingGeneration != mappingGeneration) {
         PerfScope perfScope("selection.hydra_mapping");
-        cachedSelectedPaths.clear();
-        cachedSelectedPaths.reserve(selected.size());
-        cachedSelectedProxyTargets.clear();
-        cachedLeadSelectionPaths.clear();
-        cachedLeadDirectSelectionPaths.clear();
-        cachedLeadHydraRprims.clear();
-        cachedLeadProxyTargets.clear();
-        cachedLeadHydraSelectionResolved = false;
+        d.cachedSelectedPaths.clear();
+        d.cachedSelectedPaths.reserve(d.selected.size());
+        d.cachedSelectedProxyTargets.clear();
+        d.cachedLeadSelectionPaths.clear();
+        d.cachedLeadDirectSelectionPaths.clear();
+        d.cachedLeadHydraRprims.clear();
+        d.cachedLeadProxyTargets.clear();
+        d.cachedLeadHydraSelectionResolved = false;
         std::unordered_set<SdfPath, SdfPath::Hash> viewportPaths;
-        viewportPaths.reserve(selected.size());
+        viewportPaths.reserve(d.selected.size());
 
-        for (const SdfPath& selectedPath : selected) {
+        for (const SdfPath& selectedPath : d.selected) {
             const SdfPath path = selectedPath.IsPropertyPath() ? selectedPath.GetPrimPath() : selectedPath;
-            const UsdPrim prim = stage->GetPrimAtPath(path);
+            const UsdPrim prim = d.stage->GetPrimAtPath(path);
             // Project subset selection only for drawing. The selection model
             // retains the exact subset path for inspection and authoring.
             const UsdPrim viewportPrim = prim && prim.IsA<UsdGeomSubset>() ? prim.GetParent() : prim;
@@ -1812,79 +1151,85 @@ RenderEngine::Private::render()
                 while (prototypeRoot && !prototypeRoot.IsPrototype())
                     prototypeRoot = prototypeRoot.GetParent();
                 if (prototypePrim && prototypeRoot) {
-                    cachedSelectedProxyTargets.push_back(
+                    d.cachedSelectedProxyTargets.push_back(
                         { viewportPath, prototypeRoot.GetPath(), prototypePrim.GetPath() });
                 }
             }
 
-            cachedSelectedPaths.push_back(viewportPath);
+            d.cachedSelectedPaths.push_back(viewportPath);
         }
 
-        cachedSelectedHydraRprims.clear();
-        cachedDirectSelectionPaths.clear();
-        cachedHydraSelectionResolved = engine
-                                       && engine->resolveSelectionRprims(stage, cachedSelectedPaths,
-                                                                         &cachedDirectSelectionPaths,
-                                                                         &cachedSelectedHydraRprims);
-        if (!cachedSelectedPaths.empty()) {
+        d.cachedSelectedHydraRprims.clear();
+        d.cachedDirectSelectionPaths.clear();
+        d.cachedHydraSelectionResolved = d.engine
+                                         && d.engine->resolveSelectionRprims(d.stage, d.cachedSelectedPaths,
+                                                                             &d.cachedDirectSelectionPaths,
+                                                                             &d.cachedSelectedHydraRprims);
+        if (!d.cachedSelectedPaths.empty()) {
             // The most recently selected path is the active object. Keep its
             // outline in the primary selection color, matching the Outliner
             // current item and the gizmo's lead transform target.
-            cachedLeadSelectionPaths.push_back(cachedSelectedPaths.back());
-            for (const SelectionProxyTarget& target : cachedSelectedProxyTargets) {
-                if (target.proxyPath == cachedLeadSelectionPaths.front())
-                    cachedLeadProxyTargets.push_back(target);
+            d.cachedLeadSelectionPaths.push_back(d.cachedSelectedPaths.back());
+            for (const SelectionProxyTarget& target : d.cachedSelectedProxyTargets) {
+                if (target.proxyPath == d.cachedLeadSelectionPaths.front())
+                    d.cachedLeadProxyTargets.push_back(target);
             }
-            cachedLeadHydraSelectionResolved = engine->resolveSelectionRprims(stage, cachedLeadSelectionPaths,
-                                                                              &cachedLeadDirectSelectionPaths,
-                                                                              &cachedLeadHydraRprims);
+            d.cachedLeadHydraSelectionResolved = d.engine->resolveSelectionRprims(d.stage, d.cachedLeadSelectionPaths,
+                                                                                  &d.cachedLeadDirectSelectionPaths,
+                                                                                  &d.cachedLeadHydraRprims);
         }
-        cachedSelectionMappingGeneration = engine->selectionMappingGeneration();
-        selectionCacheValid = true;
+        d.cachedSelectionMappingGeneration = d.engine->selectionMappingGeneration();
+        d.selectionCacheValid = true;
     }
-    const auto& selectedPaths = cachedSelectedPaths;
+}
 
-    // Isolation is represented by the rendering stage's population for every
-    // prim type. Both beauty and scene-ID passes render that complete input.
-    const SdfPathVector renderPaths { root.GetPath() };
+RenderTaskParams
+RenderEngine::Private::makeRenderTaskParams(const SdfPathVector& renderPaths, const GfVec4d& renderViewport)
+{
+    const auto& selectedPaths = d.cachedSelectedPaths;
+    const auto& documentParams = d.params;
+    const GfFrustum frustum = d.camera.GetFrustum();
+    const GfMatrix4d viewMatrix = frustum.ComputeViewMatrix();
+    const GfMatrix4d projectionMatrix = frustum.ComputeProjectionMatrix();
     RenderTaskParams renderTaskParams;
-    renderTaskParams.applyColorManagement = !linearColorCapture && settings.aov == HdAovTokens->color;
-    renderTaskParams.colorManagement = settings.colorManagement;
-    renderTaskParams.ambientOcclusion = settings.ambientOcclusion;
-    renderTaskParams.ambientOcclusion.enabled = settings.ambientOcclusion.enabled && !interactiveNavigation
-                                                && settings.aov == HdAovTokens->color
-                                                && settings.drawMode != UsdImagingGLDrawMode::DRAW_WIREFRAME_ON_SURFACE;
+    renderTaskParams.applyColorManagement = !d.linearColorCapture && d.settings.aov == HdAovTokens->color;
+    renderTaskParams.colorManagement = d.settings.colorManagement;
+    renderTaskParams.ambientOcclusion = d.settings.ambientOcclusion;
+    renderTaskParams.ambientOcclusion.enabled = d.settings.ambientOcclusion.enabled && !d.interactiveNavigation
+                                                && d.settings.aov == HdAovTokens->color
+                                                && d.settings.drawMode
+                                                       != UsdImagingGLDrawMode::DRAW_WIREFRAME_ON_SURFACE;
     renderTaskParams.projectionMatrix = GfMatrix4f(projectionMatrix);
 
-    renderTaskParams.selectionOutline.enabled = !captureObjectsRequested && contextMode == ContextMode::Current
-                                                && !selectedPaths.empty() && settings.aov == HdAovTokens->color;
+    renderTaskParams.selectionOutline.enabled = !d.captureObjectsRequested && d.contextMode == ContextMode::Current
+                                                && !selectedPaths.empty() && d.settings.aov == HdAovTokens->color;
     {
         renderTaskParams.selectionOutline.paths = selectedPaths;
-        renderTaskParams.selectionOutline.leadPaths = cachedLeadSelectionPaths;
-        renderTaskParams.selectionOutline.directPaths = cachedDirectSelectionPaths;
-        renderTaskParams.selectionOutline.leadDirectPaths = cachedLeadDirectSelectionPaths;
-        renderTaskParams.selectionOutline.hydraRprims = cachedSelectedHydraRprims;
-        renderTaskParams.selectionOutline.leadHydraRprims = cachedLeadHydraRprims;
-        renderTaskParams.selectionOutline.hydraMappingResolved = cachedHydraSelectionResolved;
-        renderTaskParams.selectionOutline.leadHydraMappingResolved = cachedLeadHydraSelectionResolved;
-        renderTaskParams.selectionOutline.proxyTargets = cachedSelectedProxyTargets;
-        renderTaskParams.selectionOutline.leadProxyTargets = cachedLeadProxyTargets;
+        renderTaskParams.selectionOutline.leadPaths = d.cachedLeadSelectionPaths;
+        renderTaskParams.selectionOutline.directPaths = d.cachedDirectSelectionPaths;
+        renderTaskParams.selectionOutline.leadDirectPaths = d.cachedLeadDirectSelectionPaths;
+        renderTaskParams.selectionOutline.hydraRprims = d.cachedSelectedHydraRprims;
+        renderTaskParams.selectionOutline.leadHydraRprims = d.cachedLeadHydraRprims;
+        renderTaskParams.selectionOutline.hydraMappingResolved = d.cachedHydraSelectionResolved;
+        renderTaskParams.selectionOutline.leadHydraMappingResolved = d.cachedLeadHydraSelectionResolved;
+        renderTaskParams.selectionOutline.proxyTargets = d.cachedSelectedProxyTargets;
+        renderTaskParams.selectionOutline.leadProxyTargets = d.cachedLeadProxyTargets;
     }
-    renderTaskParams.selectionOutline.color = qt::QColorToGfVec4f(selectionColor);
-    renderTaskParams.selectionOutline.secondaryColor = qt::QColorToGfVec4f(secondarySelectionColor);
+    renderTaskParams.selectionOutline.color = qt::QColorToGfVec4f(d.selectionColor);
+    renderTaskParams.selectionOutline.secondaryColor = qt::QColorToGfVec4f(d.secondarySelectionColor);
     renderTaskParams.selectionOutline.radius = static_cast<unsigned int>(
-        std::clamp(std::lround(devicePixelRatio), 1l, 4l));
+        std::clamp(std::lround(d.devicePixelRatio), 1l, 4l));
 
-    renderTaskParams.captureVisible = captureVisibleRequested;
-    renderTaskParams.captureObjects = captureObjectsRequested;
-    renderTaskParams.captureElementId = captureElementIdRequested;
-    renderTaskParams.captureGpuPick = captureGpuPickRequested;
-    renderTaskParams.gpuPickPixel = gpuPickPixel;
-    renderTaskParams.gpuPickExcludes = gpuPickExcludes;
-    renderTaskParams.captureElementPixel = captureElementPixel;
+    renderTaskParams.captureVisible = d.captureVisibleRequested;
+    renderTaskParams.captureObjects = d.captureObjectsRequested;
+    renderTaskParams.captureElementId = d.captureElementIdRequested;
+    renderTaskParams.captureGpuPick = d.captureGpuPickRequested;
+    renderTaskParams.gpuPickPixel = d.gpuPickPixel;
+    renderTaskParams.gpuPickExcludes = d.gpuPickExcludes;
+    renderTaskParams.captureElementPixel = d.captureElementPixel;
     renderTaskParams.captureProjectionMatrices.clear();
     if (renderTaskParams.captureVisible) {
-        const int gridSize = std::clamp(captureVisibleGridSize, 1, 8);
+        const int gridSize = std::clamp(d.captureVisibleGridSize, 1, 8);
         if (gridSize > 1) {
             renderTaskParams.captureProjectionMatrices.reserve(static_cast<size_t>(gridSize * gridSize));
 
@@ -1904,12 +1249,12 @@ RenderEngine::Private::render()
             }
         }
     }
-    renderTaskParams.prepareSelection = !captureObjectsRequested && contextMode == ContextMode::Current
-                                        && settings.aov == HdAovTokens->color;
+    renderTaskParams.prepareSelection = !d.captureObjectsRequested && d.contextMode == ContextMode::Current
+                                        && d.settings.aov == HdAovTokens->color;
     renderTaskParams.sceneIds.enabled = renderTaskParams.prepareSelection || renderTaskParams.selectionOutline.enabled
                                         || renderTaskParams.captureVisible || renderTaskParams.captureElementId
                                         || renderTaskParams.captureGpuPick || renderTaskParams.captureObjects;
-    if (captureObjectsRequested) {
+    if (d.captureObjectsRequested) {
         switch (documentParams.cullStyle) {
         case UsdImagingGLCullStyle::CULL_STYLE_BACK: renderTaskParams.sceneIds.cullStyle = HdCullStyleBack; break;
         case UsdImagingGLCullStyle::CULL_STYLE_FRONT: renderTaskParams.sceneIds.cullStyle = HdCullStyleFront; break;
@@ -1921,13 +1266,13 @@ RenderEngine::Private::render()
     }
     renderTaskParams.sceneIds.roots = renderPaths;
     renderTaskParams.sceneIds.renderTags = { HdRenderTagTokens->geometry };
-    if (settings.showGuides)
+    if (d.settings.showGuides)
         renderTaskParams.sceneIds.renderTags.push_back(HdRenderTagTokens->guide);
-    if (settings.showProxy)
+    if (d.settings.showProxy)
         renderTaskParams.sceneIds.renderTags.push_back(HdRenderTagTokens->proxy);
-    if (settings.showRender)
+    if (d.settings.showRender)
         renderTaskParams.sceneIds.renderTags.push_back(HdRenderTagTokens->render);
-    renderTaskParams.sceneIds.size = size;
+    renderTaskParams.sceneIds.size = d.size;
     renderTaskParams.sceneIds.viewport = renderViewport;
     renderTaskParams.sceneIds.viewMatrix = viewMatrix;
     renderTaskParams.sceneIds.projectionMatrix = projectionMatrix;
@@ -1935,7 +1280,7 @@ RenderEngine::Private::render()
     const GfRange1d nearFar = frustum.GetNearFar();
     renderTaskParams.nearClip = static_cast<float>(nearFar.GetMin());
     renderTaskParams.farClip = static_cast<float>(nearFar.GetMax());
-    renderTaskParams.orthographic = camera.GetProjection() == GfCamera::Orthographic;
+    renderTaskParams.orthographic = d.camera.GetProjection() == GfCamera::Orthographic;
 
     if (renderTaskParams.ambientOcclusion.enabled || renderTaskParams.selectionOutline.enabled
         || renderTaskParams.prepareSelection) {
@@ -1974,49 +1319,114 @@ RenderEngine::Private::render()
             renderTaskParams.captureObjects = false;
         }
     }
+
+    return renderTaskParams;
+}
+
+void
+RenderEngine::Private::warmDocument(const UsdStageRefPtr& renderStage, const SdfPathVector& renderPaths,
+                                    const UsdImagingGLRenderParams& documentParams,
+                                    const RenderTaskParams& renderTaskParams)
+{
     if (renderTaskParams.prepareSelection
         && (documentParams.drawMode == UsdImagingGLDrawMode::DRAW_SHADED_SMOOTH
             || documentParams.drawMode == UsdImagingGLDrawMode::DRAW_WIREFRAME_ON_SURFACE)) {
         // Population changes do not introduce new source geometry. Reuse the
         // full document's shared GPU preparation when its topology, shader
         // dependencies and render settings have not changed while inactive.
-        if (isolation.active() && cachedEngine && cachedImagingStage == stage
-            && documentWarmupSourceVersion == isolation.sourceVersion()
-            && cachedEngine->displayModesPrepared(renderPaths, documentParams))
-            engine->markDisplayModesPrepared(renderPaths, documentParams);
+        if (d.isolation.active() && d.cachedEngine && d.cachedImagingStage == d.stage
+            && d.documentWarmupSourceVersion == d.isolation.sourceVersion()
+            && d.cachedEngine->displayModesPrepared(renderPaths, documentParams))
+            d.engine->markDisplayModesPrepared(renderPaths, documentParams);
         else
-            engine->warmDisplayModes(renderStage, renderPaths, documentParams, renderTaskParams);
-        if (!isolation.active())
-            documentWarmupSourceVersion = isolation.sourceVersion();
+            d.engine->warmDisplayModes(renderStage, renderPaths, documentParams, renderTaskParams);
+        if (!d.isolation.active())
+            d.documentWarmupSourceVersion = d.isolation.sourceVersion();
     }
-    engine->renderBatchWithRenderTask(renderPaths, documentParams, renderTaskParams);
+}
 
-    if (captureObjectsRequested)
-        capturedObjects = engine->takeCapturedObjects();
-
-    if (captureVisibleRequested) {
-        capturedVisiblePaths = renderTaskParams.captureVisible ? engine->takeCapturedVisiblePaths() : SdfPathVector {};
-        captureVisibleRequested = false;
+bool
+RenderEngine::Private::warmGizmo(const UsdImagingGLRenderParams& gizmoParams, const GfMatrix4d& gizmoTransform)
+{
+    const SdfPath gizmoPath = paths::auxiliary::transform;
+    auto* gizmoTarget = d.gizmoEngine.get();
+    Hgi* gizmoHgi = gizmoTarget->hgi();
+    const UsdPrim auxiliaryRoot = d.auxiliary->GetPseudoRoot();
+    const bool warmPresentation = !d.gizmoWarmed && d.contextMode == ContextMode::Current;
+    if (warmPresentation) {
+        PerfScope warmupScope("gizmo.renderer.warmup");
+        // Prepare every mode in the dedicated engine without presenting
+        // its color or depth. Visibility changes touch only the private
+        // auxiliary stage and are restored before the visible pass.
+        std::vector<std::pair<UsdAttribute, VtValue>> visibility;
+        for (const SdfPath& path :
+             { gizmoPath, gizmoPath.AppendChild(TfToken("Move")), gizmoPath.AppendChild(TfToken("Rotate")),
+               gizmoPath.AppendChild(TfToken("Scale")) }) {
+            UsdGeomImageable imageable(d.auxiliary->GetPrimAtPath(path));
+            if (!imageable)
+                continue;
+            UsdAttribute attr = imageable.GetVisibilityAttr();
+            VtValue value;
+            if (attr.HasAuthoredValueOpinion())
+                attr.Get(&value);
+            visibility.emplace_back(attr, value);
+            attr.Set(UsdGeomTokens->inherited);
+        }
+        const auto restoreVisibility = qScopeGuard([&]() {
+            for (const auto& item : visibility) {
+                if (item.second.IsEmpty())
+                    item.first.Clear();
+                else
+                    item.first.Set(item.second);
+            }
+        });
+        GfMatrix4d warmView(1.0);
+        warmView.SetLookAt(GfVec3d(0, 0, 5), GfVec3d(0), GfVec3d::YAxis());
+        GfFrustum warmFrustum;
+        warmFrustum.SetPerspective(45, 1, .01, 100);
+        gizmoTarget->SetCameraState(gizmoTransform.GetInverse() * warmView, warmFrustum.ComputeProjectionMatrix());
+        gizmoHgi->StartFrame();
+        gizmoTarget->PrepareBatch(auxiliaryRoot, gizmoParams);
+        gizmoTarget->renderBatchWithRenderTask({ gizmoPath }, gizmoParams, {}, false);
+        gizmoHgi->EndFrame();
+        d.gizmoWarmed = true;
     }
 
-    if (captureGpuPickRequested) {
-        capturedGpuPick = renderTaskParams.captureGpuPick ? engine->takeGpuPickResult() : GpuPickResult {};
-        captureGpuPickRequested = false;
+    return warmPresentation;
+}
+
+void
+RenderEngine::Private::collectCaptures(const RenderTaskParams& renderTaskParams)
+{
+    if (d.captureObjectsRequested)
+        d.capturedObjects = d.engine->takeCapturedObjects();
+
+    if (d.captureVisibleRequested) {
+        d.capturedVisiblePaths = renderTaskParams.captureVisible ? d.engine->takeCapturedVisiblePaths()
+                                                                 : SdfPathVector {};
+        d.captureVisibleRequested = false;
     }
 
-    if (captureElementIdRequested) {
-        capturedElementId = renderTaskParams.captureElementId ? engine->takeCapturedElementId() : -1;
-        captureElementIdRequested = false;
+    if (d.captureGpuPickRequested) {
+        d.capturedGpuPick = renderTaskParams.captureGpuPick ? d.engine->takeGpuPickResult() : GpuPickResult {};
+        d.captureGpuPickRequested = false;
     }
 
-    documentHgi->EndFrame();
+    if (d.captureElementIdRequested) {
+        d.capturedElementId = renderTaskParams.captureElementId ? d.engine->takeCapturedElementId() : -1;
+        d.captureElementIdRequested = false;
+    }
+}
 
+bool
+RenderEngine::Private::renderOverlays(const UsdImagingGLRenderParams& documentParams, const GfMatrix4d& viewMatrix)
+{
     // Render viewport support geometry after Look processing. The dedicated
     // pass keeps /Display out of document AO/depth while preserving Stageviz
     // grid and helper presentation in the final viewport.
-    if (!captureObjectsRequested && auxiliaryEngine && auxiliary
-        && auxiliary->GetPrimAtPath(paths::auxiliary::display)) {
-        Hgi* auxiliaryHgi = auxiliaryEngine->hgi();
+    if (!d.captureObjectsRequested && d.auxiliaryEngine && d.auxiliary
+        && d.auxiliary->GetPrimAtPath(paths::auxiliary::display)) {
+        Hgi* auxiliaryHgi = d.auxiliaryEngine->hgi();
         if (!auxiliaryHgi)
             return false;
 
@@ -2029,22 +1439,22 @@ RenderEngine::Private::render()
         // other refinable document primitives.
         auxiliaryParams.complexity = 1.0;
 
-        const UsdPrim auxiliaryRoot = auxiliary->GetPseudoRoot();
+        const UsdPrim auxiliaryRoot = d.auxiliary->GetPseudoRoot();
         auxiliaryHgi->StartFrame();
-        auxiliaryEngine->PrepareBatch(auxiliaryRoot, auxiliaryParams);
+        d.auxiliaryEngine->PrepareBatch(auxiliaryRoot, auxiliaryParams);
         updateAuxiliaryRenderSceneIndex();
-        if (settings.aov == HdAovTokens->color
+        if (d.settings.aov == HdAovTokens->color
             && (auxiliaryParams.drawMode == UsdImagingGLDrawMode::DRAW_SHADED_SMOOTH
                 || auxiliaryParams.drawMode == UsdImagingGLDrawMode::DRAW_WIREFRAME_ON_SURFACE))
-            auxiliaryEngine->warmDisplayModes(auxiliary, { paths::auxiliary::display }, auxiliaryParams, {});
+            d.auxiliaryEngine->warmDisplayModes(d.auxiliary, { paths::auxiliary::display }, auxiliaryParams, {});
         const SdfPath gizmoPath = paths::auxiliary::transform;
         // Draw the gizmo only in its dedicated smooth-shaded, depth-cleared
         // pass. The broader /Display collection otherwise draws it twice.
-        auxiliaryEngine->renderBatch({ paths::auxiliary::display }, auxiliaryParams, { gizmoPath });
+        d.auxiliaryEngine->renderBatch({ paths::auxiliary::display }, auxiliaryParams, { gizmoPath });
 
-        if (gizmoEngine && auxiliary->GetPrimAtPath(gizmoPath)) {
+        if (d.gizmoEngine && d.auxiliary->GetPrimAtPath(gizmoPath)) {
             PerfScope gizmoScope("gizmo.render_cpu");
-            auto* gizmoTarget = gizmoEngine.get();
+            auto* gizmoTarget = d.gizmoEngine.get();
             Hgi* gizmoHgi = gizmoTarget->hgi();
             // Gizmo shading must not inherit the document's wireframe mode.
             UsdImagingGLRenderParams gizmoParams = auxiliaryParams;
@@ -2052,54 +1462,15 @@ RenderEngine::Private::render()
             gizmoParams.clipPlanes.clear();
             GfMatrix4d gizmoTransform(1.0);
             bool resetGizmoStack = false;
-            UsdGeomXformable(auxiliary->GetPrimAtPath(gizmoPath))
+            UsdGeomXformable(d.auxiliary->GetPrimAtPath(gizmoPath))
                 .GetLocalTransformation(&gizmoTransform, &resetGizmoStack);
-            const auto gizmoCamera = gizmoprojection::camera(camera, gizmoTransform);
-            const bool warmPresentation = !gizmoWarmed && contextMode == ContextMode::Current;
-            if (warmPresentation) {
-                PerfScope warmupScope("gizmo.renderer.warmup");
-                // Prepare every mode in the dedicated engine without presenting
-                // its color or depth. Visibility changes touch only the private
-                // auxiliary stage and are restored before the visible pass.
-                std::vector<std::pair<UsdAttribute, VtValue>> visibility;
-                for (const SdfPath& path :
-                     { gizmoPath, gizmoPath.AppendChild(TfToken("Move")), gizmoPath.AppendChild(TfToken("Rotate")),
-                       gizmoPath.AppendChild(TfToken("Scale")) }) {
-                    UsdGeomImageable imageable(auxiliary->GetPrimAtPath(path));
-                    if (!imageable)
-                        continue;
-                    UsdAttribute attr = imageable.GetVisibilityAttr();
-                    VtValue value;
-                    if (attr.HasAuthoredValueOpinion())
-                        attr.Get(&value);
-                    visibility.emplace_back(attr, value);
-                    attr.Set(UsdGeomTokens->inherited);
-                }
-                const auto restoreVisibility = qScopeGuard([&]() {
-                    for (const auto& item : visibility) {
-                        if (item.second.IsEmpty())
-                            item.first.Clear();
-                        else
-                            item.first.Set(item.second);
-                    }
-                });
-                GfMatrix4d warmView(1.0);
-                warmView.SetLookAt(GfVec3d(0, 0, 5), GfVec3d(0), GfVec3d::YAxis());
-                GfFrustum warmFrustum;
-                warmFrustum.SetPerspective(45, 1, .01, 100);
-                gizmoTarget->SetCameraState(gizmoTransform.GetInverse() * warmView,
-                                            warmFrustum.ComputeProjectionMatrix());
-                gizmoHgi->StartFrame();
-                gizmoTarget->PrepareBatch(auxiliaryRoot, gizmoParams);
-                gizmoTarget->renderBatchWithRenderTask({ gizmoPath }, gizmoParams, {}, false);
-                gizmoHgi->EndFrame();
-                gizmoWarmed = true;
-            }
+            const auto gizmoCamera = gizmoprojection::camera(d.camera, gizmoTransform);
+            const bool warmPresentation = warmGizmo(gizmoParams, gizmoTransform);
             // Initialize the presentation pipeline once too. With the restored
             // invisible root this presents an empty transparent overlay, never
             // the warmup meshes. Later hidden frames skip the pass entirely.
             if (warmPresentation
-                || UsdGeomImageable(auxiliary->GetPrimAtPath(gizmoPath)).ComputeVisibility()
+                || UsdGeomImageable(d.auxiliary->GetPrimAtPath(gizmoPath)).ComputeVisibility()
                        != UsdGeomTokens->invisible) {
                 gizmoTarget->SetCameraState(viewMatrix, gizmoCamera.GetFrustum().ComputeProjectionMatrix());
                 gizmoHgi->StartFrame();
@@ -2110,7 +1481,7 @@ RenderEngine::Private::render()
                 glDepthMask(GL_TRUE);
                 glClear(GL_DEPTH_BUFFER_BIT);
                 gizmoTarget->renderBatch({ gizmoPath }, gizmoParams);
-                gizmoRendered = true;
+                d.gizmoRendered = true;
                 gizmoHgi->EndFrame();
             }
         }
@@ -2118,6 +1489,68 @@ RenderEngine::Private::render()
     }
 
     return true;
+}
+
+bool
+RenderEngine::Private::render()
+{
+    PerfScope perfScope("hydra.render_cpu");
+    if (!d.stage || d.size[0] <= 0 || d.size[1] <= 0)
+        return false;
+
+    const UsdStageRefPtr renderStage = documentStage();
+    if (!renderStage)
+        return false;
+    if ((!d.engine || (d.contextMode == ContextMode::Current && (!d.auxiliaryEngine || !d.gizmoEngine)))
+        && !initialize())
+        return false;
+
+    d.gizmoRendered = false;
+    ensureAuxiliarySceneIndex();
+    refreshAuxiliarySceneIndex();
+    updateRenderParams();
+    updateLighting();
+
+    GfVec4d renderViewport = d.viewport;
+    if (renderViewport[2] <= 0.0 || renderViewport[3] <= 0.0)
+        renderViewport = GfVec4d(0, 0, d.size[0], d.size[1]);
+
+    const GfFrustum frustum = d.camera.GetFrustum();
+    const GfMatrix4d viewMatrix = frustum.ComputeViewMatrix();
+    const GfMatrix4d projectionMatrix = frustum.ComputeProjectionMatrix();
+
+    configureEngine(d.engine.get(), renderViewport);
+    if (d.auxiliaryEngine)
+        configureEngine(d.auxiliaryEngine.get(), renderViewport);
+    if (d.gizmoEngine)
+        configureEngine(d.gizmoEngine.get(), renderViewport);
+
+    const UsdPrim root = renderStage->GetPseudoRoot();
+    UsdImagingGLRenderParams documentParams = d.params;
+    documentParams.highlight = false;
+    Hgi* documentHgi = d.engine->hgi();
+    if (!documentHgi)
+        return false;
+
+    documentHgi->StartFrame();
+    d.engine->PrepareBatch(root, documentParams);
+    updateDocumentRenderSceneIndex();
+    refreshMaterials();
+
+    resolveSelection();
+
+    // Isolation is represented by the rendering stage's population for every
+    // prim type. Both beauty and scene-ID passes render that complete input.
+    const SdfPathVector renderPaths { root.GetPath() };
+    const RenderTaskParams renderTaskParams = makeRenderTaskParams(renderPaths, renderViewport);
+    warmDocument(renderStage, renderPaths, documentParams, renderTaskParams);
+    d.engine->renderBatchWithRenderTask(renderPaths, documentParams, renderTaskParams);
+
+    collectCaptures(renderTaskParams);
+
+    documentHgi->EndFrame();
+
+    return renderOverlays(documentParams, viewMatrix);
 }
 
 RenderEngine::RenderEngine(ContextMode mode)
@@ -2133,7 +1566,7 @@ RenderEngine::~RenderEngine()
 bool
 RenderEngine::initialize()
 {
-    if (p->contextMode == ContextMode::Offscreen) {
+    if (p->d.contextMode == ContextMode::Offscreen) {
         OpenGLContextRestore contextRestore;
         return p->initialize();
     }
@@ -2150,45 +1583,47 @@ RenderEngine::reset()
 bool
 RenderEngine::isInitialized() const
 {
-    return p->engine != nullptr
-           && (p->contextMode == ContextMode::Offscreen
-               || (p->auxiliaryEngine != nullptr && p->gizmoEngine != nullptr));
+    return p->d.engine != nullptr
+           && (p->d.contextMode == ContextMode::Offscreen
+               || (p->d.auxiliaryEngine != nullptr && p->d.gizmoEngine != nullptr));
 }
 
 void
 RenderEngine::setStage(UsdStageRefPtr stage)
 {
-    if (p->stage == stage)
+    if (p->d.stage == stage)
         return;
 
-    p->stage = stage;
-    p->pendingMaterialChanges.clear();
-    p->isolation.setStage(stage);
-    p->selectionCacheValid = false;
-    p->resetEngine();
+    p->d.stage = stage;
+    p->d.pendingMaterialChanges.clear();
+    p->d.isolation.setStage(stage);
+    p->d.selectionCacheValid = false;
+    // Grid and transform handles belong to the unchanged auxiliary stage.
+    // Retain their GPU resources and warmup across document replacements.
+    p->resetEngine(false);
 }
 
 UsdStageRefPtr
 RenderEngine::stage() const
 {
-    return p->stage;
+    return p->d.stage;
 }
 
 void
 RenderEngine::setAuxiliaryStage(UsdStageRefPtr stage)
 {
-    if (p->auxiliary == stage)
+    if (p->d.auxiliary == stage)
         return;
 
-    p->gizmoWarmed = false;
-    p->auxiliary = stage;
+    p->d.gizmoWarmed = false;
+    p->d.auxiliary = stage;
     p->resetEngine();
 }
 
 UsdStageRefPtr
 RenderEngine::auxiliaryStage() const
 {
-    return p->auxiliary;
+    return p->d.auxiliary;
 }
 
 void
@@ -2200,69 +1635,69 @@ RenderEngine::refreshAuxiliaryStage()
 void
 RenderEngine::setCamera(const GfCamera& camera)
 {
-    p->camera = camera;
+    p->d.camera = camera;
 }
 
 const GfCamera&
 RenderEngine::camera() const
 {
-    return p->camera;
+    return p->d.camera;
 }
 
 void
 RenderEngine::setSize(const GfVec2i& size)
 {
-    p->size = size;
+    p->d.size = size;
 }
 
 void
 RenderEngine::setDevicePixelRatio(double ratio)
 {
     if (std::isfinite(ratio) && ratio > 0.0)
-        p->devicePixelRatio = ratio;
+        p->d.devicePixelRatio = ratio;
 }
 
 const GfVec2i&
 RenderEngine::size() const
 {
-    return p->size;
+    return p->d.size;
 }
 
 void
 RenderEngine::setViewport(const GfVec4d& viewport)
 {
-    p->viewport = viewport;
+    p->d.viewport = viewport;
 }
 
 const GfVec4d&
 RenderEngine::viewport() const
 {
-    return p->viewport;
+    return p->d.viewport;
 }
 
 void
 RenderEngine::setSettings(const Settings& settings)
 {
-    p->settings = settings;
+    p->d.settings = settings;
 }
 
 const RenderEngine::Settings&
 RenderEngine::settings() const
 {
-    return p->settings;
+    return p->d.settings;
 }
 
 void
 RenderEngine::setMask(const QList<SdfPath>& paths)
 {
-    p->mask = paths;
-    p->isolation.setMask(paths);
+    p->d.mask = paths;
+    p->d.isolation.setMask(paths);
 }
 
 void
 RenderEngine::setSelected(const QList<SdfPath>& paths)
 {
-    if (paths == p->selected)
+    if (paths == p->d.selected)
         return;
 
     std::set<SdfPath> seen;
@@ -2275,46 +1710,46 @@ RenderEngine::setSelected(const QList<SdfPath>& paths)
         if (seen.insert(primPath).second)
             normalized.append(primPath);
     }
-    if (normalized == p->selected)
+    if (normalized == p->d.selected)
         return;
-    p->selected = std::move(normalized);
-    p->selectionCacheValid = false;
+    p->d.selected = std::move(normalized);
+    p->d.selectionCacheValid = false;
 }
 
 void
 RenderEngine::updatePrims(const NoticeBatch& batch)
 {
-    p->selectionCacheValid = false;
+    p->d.selectionCacheValid = false;
     for (const auto& entry : batch.entries) {
         if (!entry.changedInfoOnly || entry.path.GetNameToken() == TfToken("info:id")
             || std::find(entry.changedFields.begin(), entry.changedFields.end(), TfToken("connectionPaths"))
                    != entry.changedFields.end())
-            p->pendingMaterialChanges.insert(entry.path.GetPrimPath());
+            p->d.pendingMaterialChanges.insert(entry.path.GetPrimPath());
     }
 }
 
 void
 RenderEngine::invalidateSelectionCache()
 {
-    p->selectionCacheValid = false;
+    p->d.selectionCacheValid = false;
 }
 
 void
 RenderEngine::setInteractiveNavigation(bool enabled)
 {
-    p->interactiveNavigation = enabled;
+    p->d.interactiveNavigation = enabled;
 }
 
 void
 RenderEngine::setSelectionColor(const QColor& color)
 {
-    p->selectionColor = color;
+    p->d.selectionColor = color;
 }
 
 void
 RenderEngine::setSecondarySelectionColor(const QColor& color)
 {
-    p->secondarySelectionColor = color;
+    p->d.secondarySelectionColor = color;
 }
 
 bool
@@ -2323,11 +1758,11 @@ RenderEngine::renderToCurrentFramebuffer()
     if (!QOpenGLContext::currentContext())
         return false;
 
-    if (!p->engine && !p->initialize())
+    if (!p->d.engine && !p->initialize())
         return false;
 
-    glClearColor(p->settings.clearColor.redF(), p->settings.clearColor.greenF(), p->settings.clearColor.blueF(),
-                 p->settings.clearColor.alphaF());
+    glClearColor(p->d.settings.clearColor.redF(), p->d.settings.clearColor.greenF(), p->d.settings.clearColor.blueF(),
+                 p->d.settings.clearColor.alphaF());
 
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
@@ -2339,9 +1774,9 @@ RenderEngine::renderToCurrentFramebuffer()
     glDepthMask(GL_TRUE);
     glDepthFunc(GL_LESS);
 
-    GfVec4d viewport = p->viewport;
+    GfVec4d viewport = p->d.viewport;
     if (viewport[2] <= 0.0 || viewport[3] <= 0.0)
-        viewport = GfVec4d(0, 0, p->size[0], p->size[1]);
+        viewport = GfVec4d(0, 0, p->d.size[0], p->d.size[1]);
 
     glViewport(static_cast<GLint>(viewport[0]), static_cast<GLint>(viewport[1]), static_cast<GLsizei>(viewport[2]),
                static_cast<GLsizei>(viewport[3]));
@@ -2353,44 +1788,46 @@ RenderEngine::renderToCurrentFramebuffer()
 bool
 RenderEngine::isConverged() const
 {
-    return (!p->engine || p->engine->IsConverged()) && (!p->auxiliaryEngine || p->auxiliaryEngine->IsConverged())
-           && (!p->gizmoEngine || !p->gizmoRendered || p->gizmoEngine->IsConverged());
+    return (!p->d.engine || p->d.engine->IsConverged())
+           && (!p->d.auxiliaryEngine || p->d.auxiliaryEngine->IsConverged())
+           && (!p->d.gizmoEngine || !p->d.gizmoRendered || p->d.gizmoEngine->IsConverged());
 }
 
 QJsonObject
 RenderEngine::inspectPrim(const SdfPath& path, QString& error)
 {
-    if (!p->stage || !p->engine || !p->engine->renderIndex()) {
+    if (!p->d.stage || !p->d.engine || !p->d.engine->renderIndex()) {
         error = QStringLiteral("No synchronized viewport renderer is available");
         return {};
     }
-    const auto prim = p->stage->GetPrimAtPath(path);
+    const auto prim = p->d.stage->GetPrimAtPath(path);
     if (!prim || !UsdGeomGprim(prim)) {
         error = QStringLiteral("inspectPrim requires an existing USD geometry prim path");
         return {};
     }
     SdfPathVector mapped;
     std::vector<HydraSelectionRprim> instances;
-    p->engine->resolveSelectionRprims(p->stage, { path }, &mapped, &instances);
+    p->d.engine->resolveSelectionRprims(p->d.stage, { path }, &mapped, &instances);
     for (const auto& instance : instances) {
         if (std::find(mapped.begin(), mapped.end(), instance.path) == mapped.end())
             mapped.push_back(instance.path);
     }
     if (mapped.empty())
         mapped.push_back(path);
-    auto result = inspectRenderPrim(p->stage, p->engine->renderIndex(), p->engine->sceneIndices().selectionInputScene,
-                                    path, mapped, p->camera, p->settings.timeCode, p->engine->renderCollection());
+    auto result = inspectRenderPrim(p->d.stage, p->d.engine->renderIndex(),
+                                    p->d.engine->sceneIndices().selection.sceneIndex(), path, mapped, p->d.camera,
+                                    p->d.settings.timeCode, p->d.engine->renderCollection());
     QJsonArray mask;
-    bool included = p->mask.isEmpty();
-    for (const auto& root : p->mask) {
+    bool included = p->d.mask.isEmpty();
+    for (const auto& root : p->d.mask) {
         mask.append(QString::fromStdString(root.GetString()));
         included = included || path.HasPrefix(root);
     }
     result.insert("mask", mask);
     result.insert("includedByMask", included);
-    result.insert("drawMode", int(p->settings.drawMode));
-    result.insert("aov", QString::fromStdString(p->settings.aov.GetString()));
-    result.insert("doubleSidedMode", int(p->settings.doubleSidedMode));
+    result.insert("drawMode", int(p->d.settings.drawMode));
+    result.insert("aov", QString::fromStdString(p->d.settings.aov.GetString()));
+    result.insert("doubleSidedMode", int(p->d.settings.doubleSidedMode));
     return result;
 }
 
@@ -2398,17 +1835,17 @@ ViewportCapture
 RenderEngine::captureViewport(QString& error)
 {
     ViewportCapture result;
-    if (p->contextMode != ContextMode::Current || !QOpenGLContext::currentContext() || !p->stage) {
+    if (p->d.contextMode != ContextMode::Current || !QOpenGLContext::currentContext() || !p->d.stage) {
         error = QStringLiteral("An active viewport GL context and USD stage are required");
         return result;
     }
-    if (p->settings.aov != HdAovTokens->color) {
+    if (p->d.settings.aov != HdAovTokens->color) {
         error = QStringLiteral("Viewport color capture requires the color AOV");
         return result;
     }
-    if (p->settings.drawMode == UsdImagingGLDrawMode::DRAW_WIREFRAME
-        || p->settings.drawMode == UsdImagingGLDrawMode::DRAW_WIREFRAME_ON_SURFACE
-        || p->settings.drawMode == UsdImagingGLDrawMode::DRAW_POINTS) {
+    if (p->d.settings.drawMode == UsdImagingGLDrawMode::DRAW_WIREFRAME
+        || p->d.settings.drawMode == UsdImagingGLDrawMode::DRAW_WIREFRAME_ON_SURFACE
+        || p->d.settings.drawMode == UsdImagingGLDrawMode::DRAW_POINTS) {
         error = QStringLiteral("Viewport color capture requires a filled surface display mode");
         return result;
     }
@@ -2417,32 +1854,32 @@ RenderEngine::captureViewport(QString& error)
     functions->glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &drawFramebuffer);
     functions->glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &readFramebuffer);
     auto restore = qScopeGuard([&]() {
-        p->captureObjectsRequested = false;
+        p->d.captureObjectsRequested = false;
         functions->glBindFramebuffer(GL_DRAW_FRAMEBUFFER, GLuint(drawFramebuffer));
         functions->glBindFramebuffer(GL_READ_FRAMEBUFFER, GLuint(readFramebuffer));
     });
     QOpenGLFramebufferObjectFormat format;
     format.setAttachment(QOpenGLFramebufferObject::CombinedDepthStencil);
     format.setSamples(0);
-    QOpenGLFramebufferObject framebuffer(p->size[0], p->size[1], format);
+    QOpenGLFramebufferObject framebuffer(p->d.size[0], p->d.size[1], format);
     if (!framebuffer.isValid() || !framebuffer.bind()) {
         error = QStringLiteral("Could not allocate viewport capture framebuffer");
         return result;
     }
-    p->captureObjectsRequested = true;
-    p->capturedObjects = {};
+    p->d.captureObjectsRequested = true;
+    p->d.capturedObjects = {};
     if (!renderToCurrentFramebuffer()) {
         error = QStringLiteral("Viewport capture rendering failed");
         return result;
     }
-    result.objects = std::move(p->capturedObjects);
+    result.objects = std::move(p->d.capturedObjects);
     result.image = framebuffer.toImage().convertToFormat(QImage::Format_ARGB32);
     if (result.image.isNull() || result.objects.size != result.image.size()) {
         error = QStringLiteral("Viewport object-ID capture is unavailable for this renderer");
         return {};
     }
     for (const auto& path : result.objects.paths) {
-        const auto prim = p->stage->GetPrimAtPath(path);
+        const auto prim = p->d.stage->GetPrimAtPath(path);
         if (!prim || !prim.IsA<UsdGeomGprim>()) {
             error = QStringLiteral("Could not resolve a captured object to USD geometry: %1")
                         .arg(QString::fromStdString(path.GetString()));
@@ -2457,62 +1894,62 @@ RenderEngine::captureVisiblePaths(int gridSize)
 {
     QList<SdfPath> result;
 
-    if (p->contextMode != ContextMode::Current || !QOpenGLContext::currentContext())
+    if (p->d.contextMode != ContextMode::Current || !QOpenGLContext::currentContext())
         return result;
 
-    p->captureVisibleRequested = true;
-    p->captureVisibleGridSize = std::clamp(gridSize, 1, 8);
-    p->capturedVisiblePaths.clear();
+    p->d.captureVisibleRequested = true;
+    p->d.captureVisibleGridSize = std::clamp(gridSize, 1, 8);
+    p->d.capturedVisiblePaths.clear();
 
     if (!renderToCurrentFramebuffer()) {
-        p->captureVisibleRequested = false;
+        p->d.captureVisibleRequested = false;
         return result;
     }
 
-    result.reserve(static_cast<qsizetype>(p->capturedVisiblePaths.size()));
-    for (const SdfPath& path : p->capturedVisiblePaths)
+    result.reserve(static_cast<qsizetype>(p->d.capturedVisiblePaths.size()));
+    for (const SdfPath& path : p->d.capturedVisiblePaths)
         result.append(path);
 
-    p->capturedVisiblePaths.clear();
+    p->d.capturedVisiblePaths.clear();
     return result;
 }
 
 int
 RenderEngine::captureElementIdAt(const GfVec2i& pixel)
 {
-    if (p->contextMode != ContextMode::Current || !QOpenGLContext::currentContext())
+    if (p->d.contextMode != ContextMode::Current || !QOpenGLContext::currentContext())
         return -1;
 
-    p->captureElementIdRequested = true;
-    p->captureElementPixel = pixel;
-    p->capturedElementId = -1;
+    p->d.captureElementIdRequested = true;
+    p->d.captureElementPixel = pixel;
+    p->d.capturedElementId = -1;
 
     if (!renderToCurrentFramebuffer()) {
-        p->captureElementIdRequested = false;
+        p->d.captureElementIdRequested = false;
         return -1;
     }
 
-    const int result = static_cast<int>(p->capturedElementId);
-    p->capturedElementId = -1;
+    const int result = static_cast<int>(p->d.capturedElementId);
+    p->d.capturedElementId = -1;
     return result;
 }
 
 GpuPickResult
 RenderEngine::gpuPickAt(const GfVec2i& pixel, const QList<SdfPath>& excludedPaths)
 {
-    if (p->contextMode != ContextMode::Current || !QOpenGLContext::currentContext())
+    if (p->d.contextMode != ContextMode::Current || !QOpenGLContext::currentContext())
         return {};
 
-    p->captureGpuPickRequested = true;
-    p->gpuPickPixel = pixel;
-    p->gpuPickExcludes.assign(excludedPaths.begin(), excludedPaths.end());
-    p->capturedGpuPick = GpuPickResult {};
+    p->d.captureGpuPickRequested = true;
+    p->d.gpuPickPixel = pixel;
+    p->d.gpuPickExcludes.assign(excludedPaths.begin(), excludedPaths.end());
+    p->d.capturedGpuPick = GpuPickResult {};
 
     if (!renderToCurrentFramebuffer()) {
-        p->captureGpuPickRequested = false;
+        p->d.captureGpuPickRequested = false;
         return {};
     }
-    return p->capturedGpuPick;
+    return p->d.capturedGpuPick;
 }
 
 SdfPath
@@ -2536,7 +1973,7 @@ RenderEngine::renderLinearImage()
 QImage
 RenderEngine::renderImageInternal(bool linear)
 {
-    if (p->contextMode != ContextMode::Offscreen)
+    if (p->d.contextMode != ContextMode::Offscreen)
         return {};
 
     OpenGLContextRestore contextRestore;
@@ -2544,7 +1981,7 @@ RenderEngine::renderImageInternal(bool linear)
     if (!p->ensureCurrentContext())
         return {};
 
-    if (!p->engine && !p->initialize())
+    if (!p->d.engine && !p->initialize())
         return {};
 
     QOpenGLFramebufferObjectFormat format;
@@ -2553,7 +1990,7 @@ RenderEngine::renderImageInternal(bool linear)
     if (linear)
         format.setInternalTextureFormat(GL_RGBA32F);
 
-    QOpenGLFramebufferObject framebuffer(p->size[0], p->size[1], format);
+    QOpenGLFramebufferObject framebuffer(p->d.size[0], p->d.size[1], format);
 
     if (!framebuffer.isValid())
         return {};
@@ -2561,18 +1998,18 @@ RenderEngine::renderImageInternal(bool linear)
     if (!framebuffer.bind())
         return {};
 
-    const bool previousCapture = p->linearColorCapture;
-    p->linearColorCapture = linear;
-    auto restoreCapture = qScopeGuard([&]() { p->linearColorCapture = previousCapture; });
+    const bool previousCapture = p->d.linearColorCapture;
+    p->d.linearColorCapture = linear;
+    auto restoreCapture = qScopeGuard([&]() { p->d.linearColorCapture = previousCapture; });
     const bool rendered = renderToCurrentFramebuffer();
 
     QImage image;
     if (rendered && linear && framebuffer.bind()) {
-        image = QImage(p->size[0], p->size[1], QImage::Format_RGBA32FPx4_Premultiplied);
+        image = QImage(p->d.size[0], p->d.size[1], QImage::Format_RGBA32FPx4_Premultiplied);
         if (!image.isNull()) {
             auto* functions = QOpenGLContext::currentContext()->functions();
             functions->glPixelStorei(GL_PACK_ALIGNMENT, 4);
-            functions->glReadPixels(0, 0, p->size[0], p->size[1], GL_RGBA, GL_FLOAT, image.bits());
+            functions->glReadPixels(0, 0, p->d.size[0], p->d.size[1], GL_RGBA, GL_FLOAT, image.bits());
             image = image.flipped(Qt::Vertical);
         }
     }
@@ -2597,16 +2034,16 @@ RenderEngine::testIntersection(const UsdImagingGLEngine::PickParams& pickParams,
     const UsdStageRefPtr documentStage = p->documentStage();
     if (!documentStage || !root)
         return false;
-    if (!p->engine && !p->initialize())
+    if (!p->d.engine && !p->initialize())
         return false;
 
     p->updateRenderParams();
 
     UsdImagingGLEngine::IntersectionResultVector rawResults;
 
-    const UsdPrim pickRoot = p->isolation.active() ? documentStage->GetPseudoRoot()
-                                                   : documentStage->GetPrimAtPath(root.GetPath());
-    if (!p->engine->TestIntersection(pickParams, viewMatrix, projectionMatrix, pickRoot, p->params, &rawResults)) {
+    const UsdPrim pickRoot = p->d.isolation.active() ? documentStage->GetPseudoRoot()
+                                                     : documentStage->GetPrimAtPath(root.GetPath());
+    if (!p->d.engine->TestIntersection(pickParams, viewMatrix, projectionMatrix, pickRoot, p->d.params, &rawResults)) {
         results->clear();
         return false;
     }
@@ -2618,11 +2055,11 @@ RenderEngine::testIntersection(const UsdImagingGLEngine::PickParams& pickParams,
         if (result.hitPrimPath.IsEmpty())
             continue;
 
-        if (p->stage && !p->stage->GetPrimAtPath(result.hitPrimPath))
+        if (p->d.stage && !p->d.stage->GetPrimAtPath(result.hitPrimPath))
             continue;
         if (!result.hitPrimPath.HasPrefix(root.GetPath()))
             continue;
-        if (!p->mask.isEmpty() && std::none_of(p->mask.begin(), p->mask.end(), [&](const SdfPath& path) {
+        if (!p->d.mask.isEmpty() && std::none_of(p->d.mask.begin(), p->d.mask.end(), [&](const SdfPath& path) {
                 return result.hitPrimPath.HasPrefix(path);
             }))
             continue;
@@ -2638,10 +2075,10 @@ RenderEngine::rendererAovs() const
 {
     QList<QString> result;
 
-    if (!p->engine)
+    if (!p->d.engine)
         return result;
 
-    for (const TfToken& token : p->engine->GetRendererAovs())
+    for (const TfToken& token : p->d.engine->GetRendererAovs())
         result.append(QString::fromStdString(token.GetString()));
 
     return result;
@@ -2650,23 +2087,23 @@ RenderEngine::rendererAovs() const
 VtDictionary
 RenderEngine::renderStats() const
 {
-    return p->engine ? p->engine->GetRenderStats() : VtDictionary();
+    return p->d.engine ? p->d.engine->GetRenderStats() : VtDictionary();
 }
 
 QString
 RenderEngine::hgiApiName() const
 {
-    if (!p->engine)
+    if (!p->d.engine)
         return {};
 
-    Hgi* hgi = p->engine->hgi();
+    Hgi* hgi = p->d.engine->hgi();
     return hgi ? QString::fromStdString(hgi->GetAPIName().GetString()) : QString();
 }
 
 bool
 RenderEngine::isColorCorrectionCapable() const
 {
-    return p->engine && p->engine->IsColorCorrectionCapable();
+    return p->d.engine && p->d.engine->IsColorCorrectionCapable();
 }
 
 }  // namespace stageviz

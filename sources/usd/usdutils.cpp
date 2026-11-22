@@ -358,16 +358,13 @@ namespace path {
 
     QList<SdfPath> sortedRootPaths(const QList<SdfPath>& paths)
     {
-        QList<SdfPath> sorted = paths;
-        std::sort(sorted.begin(), sorted.end());
-        QList<SdfPath> result;
-        result.reserve(sorted.size());
-        for (const auto& path : sorted) {
-            if (path.IsEmpty() || (!result.isEmpty() && path.HasPrefix(result.last())))
-                continue;
-            result.append(path);
-        }
-        return result;
+        SdfPathVector roots;
+        roots.reserve(paths.size());
+        for (const auto& path : paths)
+            if (!path.IsEmpty())
+                roots.push_back(path);
+        SdfPath::RemoveDescendentPaths(&roots);
+        return QList<SdfPath>(roots.begin(), roots.end());
     }
 
     QList<SdfPath> topLevelPaths(const QList<SdfPath>& paths)
@@ -395,13 +392,7 @@ namespace path {
 
     QList<SdfPath> minimalRootPaths(const QList<SdfPath>& paths)
     {
-        QList<SdfPath> sorted;
-        sorted.reserve(paths.size());
-
-        for (const SdfPath& path : paths) {
-            if (!path.IsEmpty())
-                sorted.append(path);
-        }
+        QList<SdfPath> sorted = sortedRootPaths(paths);
 
         std::sort(sorted.begin(), sorted.end(), [](const SdfPath& a, const SdfPath& b) {
             const size_t aDepth = a.GetPathElementCount();
@@ -413,20 +404,7 @@ namespace path {
             return a.GetString() < b.GetString();
         });
 
-        PathIndex accepted;
-
-        QList<SdfPath> result;
-        result.reserve(sorted.size());
-
-        for (const SdfPath& path : sorted) {
-            if (accepted.covers(path))
-                continue;
-
-            accepted.insert(path);
-            result.append(path);
-        }
-
-        return result;
+        return sorted;
     }
 
     bool isAffectedPath(const SdfPath& selectedPath, const SdfPath& rootPath)

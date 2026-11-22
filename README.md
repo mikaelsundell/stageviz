@@ -4,6 +4,8 @@
 
 <img src="resources/stageviz.jpg" style="padding-bottom: 20px;" />
 
+[Application architecture](docs/architecture.md) — a short guide to the code, editing flow and rendering pipeline.
+
 ## Introduction
 
 **Open a stage. See what is really there. Change it. Undo it. Script the rest.**
@@ -304,11 +306,10 @@ Create a macOS release bundle and ZIP archive:
 
 The `.app` bundle and versioned ZIP are written to `deploy.release/`.
 
-When using debug versions of frameworks on macOS, configure the image suffix where required:
-
-```shell
-export DYLD_IMAGE_SUFFIX=_debug
-```
+The macOS build and test scripts select `_debug` Qt framework extensions only
+for Debug. Release clears `DYLD_IMAGE_SUFFIX`, including an inherited `_debug`
+value, and uses release Qt frameworks. For a manual Debug app launch only,
+prefix the command with `DYLD_IMAGE_SUFFIX=_debug`; keep it unset for Release.
 
 ### Windows
 

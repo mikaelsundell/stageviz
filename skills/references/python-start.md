@@ -21,11 +21,12 @@ The executable also accepts Python source through `--execute`, after the viewer
 starts. For a file, read and execute it explicitly:
 
 ```sh
-DYLD_IMAGE_SUFFIX=_debug stageviz --execute 'from pathlib import Path; p = Path("/absolute/path/tool.py"); exec(compile(p.read_text(), str(p), "exec"))'
+stageviz --execute 'from pathlib import Path; p = Path("/absolute/path/tool.py"); exec(compile(p.read_text(), str(p), "exec"))'
 ```
 
-The macOS prefix selects the required debug-suffixed Qt libraries. On other
-platforms omit it. Replace `stageviz` with your executable's full path if needed.
+For a macOS Debug framework build, prefix the command with
+`DYLD_IMAGE_SUFFIX=_debug`. Keep the suffix unset for Release. Replace `stageviz`
+with your executable's full path if needed.
 There is no `--script` option. Use absolute paths; editor/shelf execution need not
 define `__file__` or put your script directory on `sys.path`. Add your own module
 directory to `sys.path` explicitly when splitting a tool into importable modules.

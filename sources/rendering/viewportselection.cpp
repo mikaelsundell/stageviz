@@ -190,7 +190,7 @@ public:
             entries_.clear();
             nodes_.clear();
         }
-        void build(const UsdStageRefPtr& stage)
+        void build(const UsdStageRefPtr& stage, UsdTimeCode time)
         {
             PerfScope perfScope("selection.bvh_build");
             clear();
@@ -208,7 +208,7 @@ public:
             threadutils::parallelForRanges(candidates, workers, [&](unsigned, size_t begin, size_t end) {
                 for (size_t i = begin; i < end; ++i) {
                     const UsdGeomImageable imageable(prims[i]);
-                    visible[i] = !(imageable && imageable.ComputeVisibility() == UsdGeomTokens->invisible);
+                    visible[i] = !(imageable && imageable.ComputeVisibility(time) == UsdGeomTokens->invisible);
                 }
             });
             {
@@ -219,9 +219,8 @@ public:
                 std::vector<std::unique_ptr<UsdGeomBBoxCache>> caches;
                 caches.reserve(workers);
                 for (unsigned worker = 0; worker < workers; ++worker) {
-                    caches.push_back(std::make_unique<UsdGeomBBoxCache>(UsdTimeCode::Default(),
-                                                                        UsdGeomImageable::GetOrderedPurposeTokens(),
-                                                                        true));
+                    caches.push_back(
+                        std::make_unique<UsdGeomBBoxCache>(time, UsdGeomImageable::GetOrderedPurposeTokens(), true));
                 }
                 std::vector<std::vector<Entry>> partialEntries(workers);
                 threadutils::parallelForRanges(candidates, workers, [&](unsigned worker, size_t begin, size_t end) {
@@ -366,6 +365,7 @@ public:
         QList<SdfPath> lastPickPaths;
         int lastPickIndex = -1;
         PrimBoundsBVH sweepIndex;
+        UsdTimeCode sweepTime = UsdTimeCode::Default();
         bool sweepIndexDirty = true;
         QList<SdfPath> visibleSelectionCache;
         bool visibleSelectionDirty = true;
@@ -524,8 +524,9 @@ ViewportSelectionPrivate::sweepEvent(const QRect& rect, QMouseEvent* event)
             if (!d.host->stage())
                 return;
 
-            if (d.sweepIndexDirty) {
-                d.sweepIndex.build(d.host->stage());
+            if (d.sweepIndexDirty || d.sweepTime != d.host->timeCode()) {
+                d.sweepIndex.build(d.host->stage(), d.host->timeCode());
+                d.sweepTime = d.host->timeCode();
 
                 d.sweepIndexDirty = false;
             }

@@ -13,6 +13,7 @@ import json
 import os
 import platform
 import statistics
+import subprocess
 import sys
 import tempfile
 import threading
@@ -439,12 +440,79 @@ def _run(label, func, args=()):
         print(f"[TIME] {label}: {elapsed:.4f}s")
 
 
-def _performance_environment():
+def _mac_hardware_profile():
+    """Read stable configuration fields, excluding serials and display state."""
+    def output(command):
+        try:
+            return subprocess.check_output(command, text=True, stderr=subprocess.DEVNULL, timeout=15).strip()
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise RuntimeError(f"could not read Mac hardware with {command[0]}: {exc}") from exc
+
+    def sysctl(name, numeric=False):
+        value = output(['/usr/sbin/sysctl', '-n', name])
+        if numeric:
+            value = int(value)
+            if value <= 0:
+                raise ValueError(f"invalid Mac hardware value for {name}")
+        elif not value:
+            raise ValueError(f"missing Mac hardware value for {name}")
+        return value
+
+    devices = json.loads(output(['/usr/sbin/system_profiler', '-json', 'SPDisplaysDataType']))
+    gpus = []
+    for device in devices.get('SPDisplaysDataType', []):
+        model = device.get('sppci_model', '').strip()
+        if not model:
+            raise ValueError('missing Mac GPU model')
+        gpu = {'model': model}
+        cores = device.get('sppci_cores')
+        if cores is not None:
+            gpu['cores'] = int(cores)
+            if gpu['cores'] <= 0:
+                raise ValueError('invalid Mac GPU core count')
+        elif model.startswith('Apple '):
+            raise ValueError('missing Apple GPU core count')
+        # Dedicated GPU memory is stable; attached displays and their serials
+        # are deliberately omitted from the identity.
+        for key in ('spdisplays_vram', 'spdisplays_vram_shared'):
+            if device.get(key):
+                gpu[key] = str(device[key])
+        gpus.append(gpu)
+    if not gpus:
+        raise ValueError('no Mac GPU hardware was reported')
     return {
+        'version': 1,
+        'model': sysctl('hw.model'),
+        'cpu': sysctl('machdep.cpu.brand_string'),
+        'physical_cores': sysctl('hw.physicalcpu', True),
+        'logical_cores': sysctl('hw.logicalcpu', True),
+        'memory_bytes': sysctl('hw.memsize', True),
+        'architecture': platform.machine(),
+        'gpus': sorted(gpus, key=lambda gpu: json.dumps(gpu, sort_keys=True)),
+    }
+
+
+def _performance_environment():
+    environment = {
         "platform": platform.platform(),
         "machine": platform.machine(),
         "python": sys.version.split()[0],
     }
+    if platform.system() == 'Darwin':
+        environment['mac_hardware'] = _mac_hardware_profile()
+    return environment
+
+
+def _performance_hardware_error(baseline_environment, current_environment):
+    current = current_environment.get('mac_hardware')
+    previous = baseline_environment.get('mac_hardware')
+    if current is None and previous is None:
+        return None
+    if previous is None:
+        return 'baseline has no Mac hardware profile; adopt it explicitly on its original Mac or use a new baseline'
+    if previous != current:
+        return 'Mac hardware profile mismatch; use a baseline recorded for the same hardware configuration'
+    return None
 
 
 def _load_performance_baseline():
@@ -468,14 +536,14 @@ def _load_performance_baseline():
     return baseline
 
 
-def _save_performance_baseline(fixture_create, fixture_reload_median, suite_total):
+def _save_performance_baseline(fixture_create, fixture_reload_median, suite_total, environment=None):
     directory = os.path.dirname(_PERF_BASELINE_PATH)
     os.makedirs(directory, exist_ok=True)
 
     data = {
         "version": _PERF_BASELINE_VERSION,
         "created": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        "environment": _performance_environment(),
+        "environment": _performance_environment() if environment is None else environment,
         "thresholds": {
             "warn_percent": _PERF_WARN_PERCENT,
             "fail_percent": _PERF_FAIL_PERCENT,
@@ -614,6 +682,15 @@ def _print_performance_summary(
         print("Performance regression checks are disabled.")
         return True
 
+    try:
+        current_environment = _performance_environment()
+    except Exception as exc:
+        _PERF_FAILURES.append(f"could not identify performance hardware: {exc}")
+        print(f"[PERF FAIL] {_PERF_FAILURES[-1]}; baseline was not compared or written.")
+        return False
+    if 'mac_hardware' in current_environment:
+        print('Mac hardware profile: ' + json.dumps(current_environment['mac_hardware'], sort_keys=True))
+
     if _PERF_BASELINE_RESET:
         if not functional_passed:
             print("[PERF WARN] baseline was not reset because functional tests failed.")
@@ -624,6 +701,7 @@ def _print_performance_summary(
                 fixture_create,
                 fixture_reload_median,
                 suite_total,
+                current_environment,
             )
             print("Performance baseline replaced.")
         except Exception as exc:
@@ -643,6 +721,7 @@ def _print_performance_summary(
                 fixture_create,
                 fixture_reload_median,
                 suite_total,
+                current_environment,
             )
             print("Performance baseline created.")
         except Exception as exc:
@@ -653,7 +732,15 @@ def _print_performance_summary(
         return True
 
     baseline_environment = baseline.get("environment", {})
-    current_environment = _performance_environment()
+    hardware_error = _performance_hardware_error(baseline_environment, current_environment)
+    if hardware_error:
+        _PERF_FAILURES.append(hardware_error)
+        print(f"[PERF FAIL] {hardware_error}; baseline was not compared or overwritten.")
+        print(f"  baseline hardware: {baseline_environment.get('mac_hardware')}")
+        print(f"  current hardware:  {current_environment.get('mac_hardware')}")
+        return False
+    if 'mac_hardware' in current_environment:
+        print('Mac hardware profile matches baseline.')
 
     if baseline_environment and baseline_environment != current_environment:
         print("[PERF WARN] baseline environment differs from current environment.")

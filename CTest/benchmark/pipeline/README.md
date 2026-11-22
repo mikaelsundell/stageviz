@@ -5,7 +5,7 @@ connect to the user's running app. Build the application with the normal release
 pipeline, preserving an immutable baseline application for comparisons:
 
 ```sh
-DYLD_IMAGE_SUFFIX=_debug ./build_app.sh release --github
+./build_app.sh release --github
 ```
 
 `../mcp_runtime.py` owns each process, confirms its native MCP tools list, records

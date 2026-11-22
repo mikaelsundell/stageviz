@@ -51,490 +51,509 @@ namespace {
 
 class LayerTreePrivate : public QObject {
 public:
-    explicit LayerTreePrivate(LayerTree* tree)
-        : d(tree)
-    {
-        if (session()) {
-            connect(session(), &Session::stageChanged, this,
-                    [this](UsdStageRefPtr stage, Session::LoadPolicy, Session::StageStatus) {
-                        rootChanged = false;
-                        const QString rootIdentifier = stage && stage->GetRootLayer() ? QString::fromStdString(
-                                                           stage->GetRootLayer()->GetIdentifier())
-                                                                                      : QString();
-                        if (!rootIdentifier.isEmpty() && !retainedRootIdentifier.isEmpty()
-                            && rootIdentifier != retainedRootIdentifier && d) {
-                            // Saving an anonymous root replaces the stage with a
-                            // file-backed stage. Keep the root item itself so Qt
-                            // retains its expanded/current state, just as the
-                            // StageTree retains its prim rows across stage swaps.
-                            QTreeWidgetItemIterator itemIt(d);
-                            while (*itemIt) {
-                                LayerItem* item = layerItem(*itemIt);
-                                if (item->identifier() == retainedRootIdentifier) {
-                                    item->setIdentifier(rootIdentifier);
-                                    break;
-                                }
-                                ++itemIt;
-                            }
-                        }
-                        if (rootIdentifier != retainedRootIdentifier)
-                            retainedLayerHandles.clear();
-                        retainedRootIdentifier = rootIdentifier;
-                        refresh();
-                    });
-            connect(session(), &Session::editLayerChanged, this, [this](SdfLayerHandle) { refresh(); });
-            connect(session(), &Session::layerPermissionsChanged, this, [this]() { refresh(); });
-            connect(session(), &Session::layerMutingChanged, this,
-                    [this](const QStringList&, const QStringList&) { refresh(); });
-            connect(session(), &Session::primsChanged, this, [this](const NoticeBatch& batch) {
-                if (!batch.entries.empty()) {
-                    bool editTargetIsRoot = false;
-                    {
-                        READ_LOCKER(locker, session()->stageLock(), "stageLock");
-                        const UsdStageRefPtr stage = session()->stageUnsafe();
-                        editTargetIsRoot = stage && stage->GetEditTarget().GetLayer() == stage->GetRootLayer();
-                    }
-                    if (editTargetIsRoot) {
-                        rootChanged = true;
-                    }
-                }
-                refresh();
-            });
-            connect(session()->commandStack(), &CommandStack::changed, this, [this]() { refresh(); });
-        }
-        refresh();
-    }
+    explicit LayerTreePrivate(LayerTree* tree);
+    void refresh();
+    QTreeWidgetItem* currentItem() const;
+    QStringList selectedIdentifiers() const;
+    void setDropIndicator(QTreeWidgetItem* item, int mode);
+    void clearDropIndicator();
+    QString currentIdentifier() const;
 
-    void refresh()
-    {
-        if (!d || !session()) {
-            return;
-        }
-
-        refreshing = true;
-        if (!headerConfigured || d->columnCount() != 4 || !d->headerItem()
-            || d->headerItem()->text(LayerItem::Name) != tr("Name")) {
-            d->setColumnCount(4);
-            d->setHeaderLabels({ tr("Name"), QString(), QString(), QString() });
-            d->setHeaderHidden(false);
-            d->header()->setStretchLastSection(false);
-            d->header()->setSectionResizeMode(LayerItem::Name, QHeaderView::Stretch);
-            d->header()->setSectionResizeMode(LayerItem::Visibility, QHeaderView::Fixed);
-            d->header()->setSectionResizeMode(LayerItem::Opinions, QHeaderView::Fixed);
-            d->header()->setSectionResizeMode(LayerItem::Permission, QHeaderView::Fixed);
-            d->setColumnWidth(LayerItem::Visibility, 28);
-            d->setColumnWidth(LayerItem::Opinions, 28);
-            d->setColumnWidth(LayerItem::Permission, 28);
-            headerConfigured = true;
-        }
-
-        std::vector<SdfLayerHandle> layers;
-        SdfLayerHandle editLayer;
-        SdfLayerHandle rootLayer;
-        std::vector<std::string> mutedLayers;
-        QSet<QString> directlyMutedIdentifiers;
-        QSet<QString> layerIdentifiers;
-        QSet<QString> activeLayerIdentifiers;
-        struct LayerInfo {
-            SdfLayerHandle layer;
-            QString identifier;
-            QString name;
-            bool dirty = false;
-            bool saveable = false;
-            bool editable = true;
-            bool muted = false;
-            bool directlyMuted = false;
-            bool canMute = false;
-            QString parentIdentifier;
-            int siblingIndex = -1;
-            bool canReorder = false;
-            int primSpecCount = 0;
-        };
-        std::vector<LayerInfo> layerInfo;
-        {
-            READ_LOCKER(locker, session()->stageLock(), "stageLock");
-            const UsdStageRefPtr stage = session()->stageUnsafe();
-            if (stage) {
-                layers = stage->GetLayerStack(false);
-                editLayer = stage->GetEditTarget().GetLayer();
-                rootLayer = stage->GetRootLayer();
-                if (rootLayer && std::find(layers.begin(), layers.end(), rootLayer) == layers.end()) {
-                    qWarning() << "[LayerTree] root layer missing from layer stack; adding it explicitly:"
-                               << QString::fromStdString(rootLayer->GetIdentifier());
-                    layers.insert(layers.begin(), rootLayer);
-                }
-                mutedLayers = stage->GetMutedLayers();
-                for (const std::string& identifier : mutedLayers)
-                    directlyMutedIdentifiers.insert(QString::fromStdString(identifier));
-
-                for (const SdfLayerHandle& layer : layers) {
-                    if (!layer)
-                        continue;
-                    const QString identifier = QString::fromStdString(layer->GetIdentifier());
-                    layerIdentifiers.insert(identifier);
-                    activeLayerIdentifiers.insert(identifier);
-                    retainedLayerHandles.insert(identifier, SdfLayerRefPtr(layer));
-                }
-
-                QSet<QString> expandedMutedSubtree;
-                std::function<void(const SdfLayerHandle&)> appendMutedSubtree = [&](const SdfLayerHandle& layer) {
-                    if (!layer)
-                        return;
-                    const QString identifier = QString::fromStdString(layer->GetIdentifier());
-                    if (expandedMutedSubtree.contains(identifier))
-                        return;
-                    expandedMutedSubtree.insert(identifier);
-                    retainedLayerHandles.insert(identifier, SdfLayerRefPtr(layer));
-                    if (!layerIdentifiers.contains(identifier)) {
-                        layers.push_back(layer);
-                        layerIdentifiers.insert(identifier);
-                    }
-                    for (const std::string& subLayerPath : layer->GetSubLayerPaths())
-                        appendMutedSubtree(SdfLayer::FindRelativeToLayer(layer, subLayerPath));
-                };
-                for (const std::string& identifier : mutedLayers) {
-                    const QString layerIdentifier = QString::fromStdString(identifier);
-                    SdfLayerRefPtr mutedReference = retainedLayerHandles.value(layerIdentifier);
-                    if (!mutedReference)
-                        mutedReference = SdfLayer::Find(identifier);
-                    if (!mutedReference)
-                        mutedReference = SdfLayer::FindOrOpen(identifier);
-                    appendMutedSubtree(mutedReference);
-                }
-
-                for (const SdfLayerHandle& layer : layers) {
-                    if (!layer)
-                        continue;
-
-                    LayerInfo info;
-                    info.layer = layer;
-                    info.identifier = QString::fromStdString(layer->GetIdentifier());
-                    info.name = QString::fromStdString(layer->GetDisplayName());
-                    if (info.name.isEmpty())
-                        info.name = info.identifier;
-                    info.dirty = layer->IsDirty();
-                    info.saveable = layer->PermissionToSave() && !layer->IsAnonymous();
-                    info.editable = layer->PermissionToEdit();
-                    info.directlyMuted = directlyMutedIdentifiers.contains(info.identifier);
-                    info.muted = info.directlyMuted;
-                    info.canMute = layer != rootLayer
-                                   && (info.directlyMuted || (stage->HasLocalLayer(layer) && layer != editLayer));
-                    for (const SdfPrimSpecHandle& rootPrim : layer->GetRootPrims())
-                        info.primSpecCount += LayerItem::countPrimSpecs(rootPrim);
-                    layerInfo.push_back(info);
-                }
-
-                for (LayerInfo& info : layerInfo) {
-                    if (info.layer == rootLayer)
-                        continue;
-                    SdfLayerHandle parent;
-                    bool ambiguousParent = false;
-                    for (const LayerInfo& candidate : layerInfo) {
-                        if (candidate.layer == info.layer)
-                            continue;
-                        const std::vector<std::string>& subLayerPaths = candidate.layer->GetSubLayerPaths();
-                        for (int siblingIndex = 0; siblingIndex < int(subLayerPaths.size()); ++siblingIndex) {
-                            const std::string& subLayerPath = subLayerPaths[siblingIndex];
-                            const SdfLayerHandle child = SdfLayer::FindRelativeToLayer(candidate.layer, subLayerPath);
-                            if (child == info.layer) {
-                                if (parent && parent != candidate.layer) {
-                                    ambiguousParent = true;
-                                    break;
-                                }
-                                parent = candidate.layer;
-                                info.siblingIndex = siblingIndex;
-                            }
-                        }
-                        if (ambiguousParent)
-                            break;
-                    }
-                    if (parent && !ambiguousParent) {
-                        info.parentIdentifier = QString::fromStdString(parent->GetIdentifier());
-                        info.canReorder = stage->HasLocalLayer(parent) && parent->PermissionToEdit();
-                    }
-                }
-
-                for (LayerInfo& info : layerInfo) {
-                    QString ancestorIdentifier = info.parentIdentifier;
-                    QSet<QString> visited;
-                    while (!ancestorIdentifier.isEmpty() && !visited.contains(ancestorIdentifier)) {
-                        visited.insert(ancestorIdentifier);
-                        if (directlyMutedIdentifiers.contains(ancestorIdentifier)
-                            && !activeLayerIdentifiers.contains(info.identifier)) {
-                            info.muted = true;
-                            break;
-                        }
-                        const auto ancestor = std::find_if(layerInfo.begin(), layerInfo.end(),
-                                                           [&](const LayerInfo& candidate) {
-                                                               return candidate.identifier == ancestorIdentifier;
-                                                           });
-                        if (ancestor == layerInfo.end())
-                            break;
-                        ancestorIdentifier = ancestor->parentIdentifier;
-                    }
-                    if (info.muted && !info.directlyMuted) {
-                        info.canMute = false;
-                    }
-                }
-            }
-            else {}
-        }
-
-        // Keep existing items when their layer still exists. Reusing the item
-        // preserves its selection and expansion state across layer notices.
-        const QString previousCurrentIdentifier = currentIdentifier();
-        const QStringList previousSelectedIdentifiers = selectedIdentifiers();
-        QHash<QString, LayerItem*> items;
-        QHash<QString, bool> expanded;
-        QTreeWidgetItemIterator existing(d);
-        while (*existing) {
-            LayerItem* item = layerItem(*existing);
-            const QString identifier = item->identifier();
-            if (!identifier.isEmpty()) {
-                items.insert(identifier, item);
-                expanded.insert(identifier, item->isExpanded());
-            }
-            ++existing;
-        }
-
-        LayerItem* editItem = nullptr;
-        for (const LayerInfo& info : layerInfo) {
-            QString name = info.name;
-            if (info.layer == rootLayer && session()->filename().isEmpty())
-                name = tr("Untitled");
-            const bool showDirty = info.dirty
-                                   && (info.layer != rootLayer || !session()->filename().isEmpty() || rootChanged);
-            if (showDirty)
-                name.prepend(QLatin1Char('*'));
-            if (info.layer == rootLayer)
-                name += tr("  (Root)");
-
-
-            LayerItem* item = items.value(info.identifier, nullptr);
-            const bool isNew = item == nullptr;
-            if (isNew) {
-                item = new LayerItem(d);
-                items.insert(info.identifier, item);
-            }
-            LayerItem::State itemState;
-            itemState.identifier = info.identifier;
-            itemState.parentIdentifier = info.parentIdentifier;
-            itemState.name = name;
-            itemState.dirty = info.dirty;
-            itemState.anonymous = info.layer->IsAnonymous();
-            itemState.saveable = info.saveable;
-            itemState.primSpecCount = info.primSpecCount;
-            itemState.root = info.layer == rootLayer;
-            itemState.editTarget = info.layer == editLayer;
-            itemState.muted = info.muted;
-            itemState.directlyMuted = info.directlyMuted;
-            itemState.inheritedMuted = info.muted && !info.directlyMuted;
-            itemState.canMute = info.canMute;
-            itemState.editable = info.editable;
-            itemState.canReorder = info.canReorder;
-            item->setState(itemState);
-            if (info.layer == editLayer)
-                editItem = item;
-        }
-
-        // Move only rows whose parent changed, retaining the QTreeWidgetItem
-        // instances for unaffected layers.
-        for (const LayerInfo& info : layerInfo) {
-            QTreeWidgetItem* item = items.value(info.identifier, nullptr);
-            QTreeWidgetItem* parent = items.value(info.parentIdentifier, nullptr);
-            if (parent == item)
-                parent = nullptr;
-
-            QTreeWidgetItem* oldParent = item->parent();
-            const bool attachedToTree = item->treeWidget() == d;
-            if (oldParent == parent && attachedToTree)
-                continue;
-
-            if (oldParent) {
-                const int index = oldParent->indexOfChild(item);
-                if (index >= 0)
-                    oldParent->takeChild(index);
-            }
-            else if (attachedToTree) {
-                const int index = d->indexOfTopLevelItem(item);
-                if (index >= 0)
-                    d->takeTopLevelItem(index);
-            }
-
-            if (parent)
-                parent->addChild(item);
-            else
-                d->addTopLevelItem(item);
-        }
-
-        // Match USD sibling order without rebuilding the tree.
-        auto reorderChildren = [](QTreeWidgetItem* parent, const QList<QTreeWidgetItem*>& desired) {
-            for (int targetIndex = 0; targetIndex < desired.size(); ++targetIndex) {
-                QTreeWidgetItem* wanted = desired[targetIndex];
-                if (parent->child(targetIndex) == wanted)
-                    continue;
-                const int currentIndex = parent->indexOfChild(wanted);
-                if (currentIndex < 0)
-                    continue;
-                parent->insertChild(targetIndex, parent->takeChild(currentIndex));
-            }
-        };
-        QHash<QString, QList<QPair<int, QTreeWidgetItem*>>> desiredChildren;
-        QList<QTreeWidgetItem*> desiredTopLevel;
-        for (const LayerInfo& info : layerInfo) {
-            QTreeWidgetItem* item = items.value(info.identifier, nullptr);
-            if (info.parentIdentifier.isEmpty() || !items.contains(info.parentIdentifier))
-                desiredTopLevel.append(item);
-            else
-                desiredChildren[info.parentIdentifier].append(qMakePair(info.siblingIndex, item));
-        }
-        for (auto it = desiredChildren.cbegin(); it != desiredChildren.cend(); ++it) {
-            QList<QPair<int, QTreeWidgetItem*>> orderedChildren = it.value();
-            std::stable_sort(orderedChildren.begin(), orderedChildren.end(),
-                             [](const auto& lhs, const auto& rhs) { return lhs.first < rhs.first; });
-            QList<QTreeWidgetItem*> desired;
-            desired.reserve(orderedChildren.size());
-            for (const auto& child : orderedChildren)
-                desired.append(child.second);
-            reorderChildren(items.value(it.key()), desired);
-        }
-        for (int targetIndex = 0; targetIndex < desiredTopLevel.size(); ++targetIndex) {
-            QTreeWidgetItem* wanted = desiredTopLevel[targetIndex];
-            if (d->topLevelItem(targetIndex) == wanted)
-                continue;
-            const int currentIndex = d->indexOfTopLevelItem(wanted);
-            if (currentIndex >= 0)
-                d->insertTopLevelItem(targetIndex, d->takeTopLevelItem(currentIndex));
-        }
-
-        // Delete rows that no longer exist after surviving descendants have
-        // been moved to their new parents.
-        QSet<QString> activeIdentifiers;
-        for (const LayerInfo& info : layerInfo)
-            activeIdentifiers.insert(info.identifier);
-        std::function<void(QTreeWidgetItem*)> removeStaleRows = [&](QTreeWidgetItem* item) {
-            for (int childIndex = item->childCount() - 1; childIndex >= 0; --childIndex) {
-                QTreeWidgetItem* child = item->child(childIndex);
-                removeStaleRows(child);
-                if (!activeIdentifiers.contains(layerItem(child)->identifier())) {
-                    const QString identifier = layerItem(child)->identifier();
-                    delete item->takeChild(childIndex);
-                }
-            }
-        };
-        for (int index = d->topLevelItemCount() - 1; index >= 0; --index) {
-            QTreeWidgetItem* item = d->topLevelItem(index);
-            removeStaleRows(item);
-            const QString identifier = layerItem(item)->identifier();
-            if (!activeIdentifiers.contains(identifier)) {
-                delete d->takeTopLevelItem(index);
-            }
-        }
-
-        // A moved row keeps its expanded flag in Qt, but restore it explicitly
-        // for robustness when the tree implementation reparents an item.
-        for (auto it = expanded.cbegin(); it != expanded.cend(); ++it) {
-            if (activeIdentifiers.contains(it.key())) {
-                QTreeWidgetItem* item = items.value(it.key(), nullptr);
-                if (item && item->isExpanded() != it.value())
-                    item->setExpanded(it.value());
-            }
-        }
-
-        if (rootLayer) {
-            const QString rootIdentifier = QString::fromStdString(rootLayer->GetIdentifier());
-            QTreeWidgetItem* rootItem = items.value(rootIdentifier, nullptr);
-            if (rootItem && !rootItem->isExpanded()) {
-                rootItem->setExpanded(true);
-            }
-            // Reapply after Qt finishes processing item insertions/reparenting.
-            // This also covers a tree first populated while its dialog is hidden.
-            QTimer::singleShot(0, d, [tree = d, rootIdentifier]() {
-                QTreeWidgetItemIterator itemIt(tree);
-                while (*itemIt) {
-                    LayerItem* item = layerItem(*itemIt);
-                    if (item->identifier() == rootIdentifier) {
-                        if (!item->isExpanded()) {
-                            item->setExpanded(true);
-                        }
-                        return;
-                    }
-                    ++itemIt;
-                }
-            });
-        }
-
-        QTreeWidgetItem* previousCurrent = activeIdentifiers.contains(previousCurrentIdentifier)
-                                               ? items.value(previousCurrentIdentifier, nullptr)
-                                               : nullptr;
-        if (previousCurrent && previousCurrent->treeWidget() == d) {
-            if (d->currentItem() != previousCurrent)
-                d->setCurrentItem(previousCurrent, LayerItem::Name, QItemSelectionModel::NoUpdate);
-        }
-        else if (editItem)
-            d->setCurrentItem(editItem, LayerItem::Name, QItemSelectionModel::NoUpdate);
-        const QSet<QString> selected(previousSelectedIdentifiers.begin(), previousSelectedIdentifiers.end());
-        const bool selectionSurvives = std::any_of(selected.begin(), selected.end(), [&](const auto& identifier) {
-            return activeIdentifiers.contains(identifier);
-        });
-        for (const auto& identifier : activeIdentifiers) {
-            if (auto* item = items.value(identifier))
-                item->setSelected(selected.contains(identifier)
-                                  || (!previousCurrent && !selectionSurvives && item == editItem));
-        }
-        d->setEnabled(!layers.empty());
-        refreshing = false;
-    }
-
-    QTreeWidgetItem* currentItem() const { return d ? d->currentItem() : nullptr; }
-
-    QStringList selectedIdentifiers() const
-    {
-        QStringList result;
-        if (d) {
-            QTreeWidgetItemIterator it(d, QTreeWidgetItemIterator::Selected);
-            while (*it) {
-                const QString identifier = layerItem(*it)->identifier();
-                if (!identifier.isEmpty())
-                    result.append(identifier);
-                ++it;
-            }
-        }
-        return result;
-    }
-
-    void setDropIndicator(QTreeWidgetItem* item, int mode)
-    {
-        if (!d)
-            return;
-        const qulonglong newPointer = reinterpret_cast<qulonglong>(item);
-        d->setProperty(mime::dropItemPtrProperty, QVariant::fromValue<qulonglong>(newPointer));
-        d->setProperty(mime::dropModeProperty, mode);
-        d->viewport()->update();
-    }
-
-    void clearDropIndicator()
-    {
-        if (!d)
-            return;
-        d->setProperty(mime::dropItemPtrProperty, QVariant::fromValue<qulonglong>(0));
-        d->setProperty(mime::dropModeProperty, 0);
-        d->viewport()->update();
-    }
-
-    QString currentIdentifier() const
-    {
-        const QTreeWidgetItem* item = currentItem();
-        return item ? layerItem(item)->identifier() : QString();
-    }
-
-    LayerTree* d = nullptr;
-    QHash<QString, SdfLayerRefPtr> retainedLayerHandles;
-    QString retainedRootIdentifier;
-    bool refreshing = false;
-    bool rootChanged = false;
-    bool headerConfigured = false;
+    struct Data {
+        LayerTree* tree = nullptr;
+        QHash<QString, SdfLayerRefPtr> retainedLayerHandles;
+        QString retainedRootIdentifier;
+        bool refreshing = false;
+        bool rootChanged = false;
+        bool headerConfigured = false;
+    } d;
 };
+
+LayerTreePrivate::LayerTreePrivate(LayerTree* tree)
+{
+    d.tree = tree;
+    if (session()) {
+        connect(session(), &Session::stageChanged, this,
+                [this](UsdStageRefPtr stage, Session::LoadPolicy, Session::StageStatus) {
+                    d.rootChanged = false;
+                    const QString rootIdentifier = stage && stage->GetRootLayer()
+                                                       ? QString::fromStdString(stage->GetRootLayer()->GetIdentifier())
+                                                       : QString();
+                    if (!rootIdentifier.isEmpty() && !d.retainedRootIdentifier.isEmpty()
+                        && rootIdentifier != d.retainedRootIdentifier && d.tree) {
+                        // Saving an anonymous root replaces the stage with a
+                        // file-backed stage. Keep the root item itself so Qt
+                        // retains its expanded/current state, just as the
+                        // StageTree retains its prim rows across stage swaps.
+                        QTreeWidgetItemIterator itemIt(d.tree);
+                        while (*itemIt) {
+                            LayerItem* item = layerItem(*itemIt);
+                            if (item->identifier() == d.retainedRootIdentifier) {
+                                item->setIdentifier(rootIdentifier);
+                                break;
+                            }
+                            ++itemIt;
+                        }
+                    }
+                    if (rootIdentifier != d.retainedRootIdentifier)
+                        d.retainedLayerHandles.clear();
+                    d.retainedRootIdentifier = rootIdentifier;
+                    refresh();
+                });
+        connect(session(), &Session::editLayerChanged, this, [this](SdfLayerHandle) { refresh(); });
+        connect(session(), &Session::layerPermissionsChanged, this, [this]() { refresh(); });
+        connect(session(), &Session::layerMutingChanged, this,
+                [this](const QStringList&, const QStringList&) { refresh(); });
+        connect(session(), &Session::primsChanged, this, [this](const NoticeBatch& batch) {
+            if (!batch.entries.empty()) {
+                bool editTargetIsRoot = false;
+                {
+                    READ_LOCKER(locker, session()->stageLock(), "stageLock");
+                    const UsdStageRefPtr stage = session()->stageUnsafe();
+                    editTargetIsRoot = stage && stage->GetEditTarget().GetLayer() == stage->GetRootLayer();
+                }
+                if (editTargetIsRoot) {
+                    d.rootChanged = true;
+                }
+            }
+            refresh();
+        });
+        connect(session()->commandStack(), &CommandStack::changed, this, [this]() { refresh(); });
+    }
+    refresh();
+}
+
+void
+LayerTreePrivate::refresh()
+{
+    if (!d.tree || !session()) {
+        return;
+    }
+
+    d.refreshing = true;
+    if (!d.headerConfigured || d.tree->columnCount() != 4 || !d.tree->headerItem()
+        || d.tree->headerItem()->text(LayerItem::Name) != tr("Name")) {
+        d.tree->setColumnCount(4);
+        d.tree->setHeaderLabels({ tr("Name"), QString(), QString(), QString() });
+        d.tree->setHeaderHidden(false);
+        d.tree->header()->setStretchLastSection(false);
+        d.tree->header()->setSectionResizeMode(LayerItem::Name, QHeaderView::Stretch);
+        d.tree->header()->setSectionResizeMode(LayerItem::Visibility, QHeaderView::Fixed);
+        d.tree->header()->setSectionResizeMode(LayerItem::Opinions, QHeaderView::Fixed);
+        d.tree->header()->setSectionResizeMode(LayerItem::Permission, QHeaderView::Fixed);
+        d.tree->setColumnWidth(LayerItem::Visibility, 28);
+        d.tree->setColumnWidth(LayerItem::Opinions, 28);
+        d.tree->setColumnWidth(LayerItem::Permission, 28);
+        d.headerConfigured = true;
+    }
+
+    std::vector<SdfLayerHandle> layers;
+    SdfLayerHandle editLayer;
+    SdfLayerHandle rootLayer;
+    std::vector<std::string> mutedLayers;
+    QSet<QString> directlyMutedIdentifiers;
+    QSet<QString> layerIdentifiers;
+    QSet<QString> activeLayerIdentifiers;
+    struct LayerInfo {
+        SdfLayerHandle layer;
+        QString identifier;
+        QString name;
+        bool dirty = false;
+        bool saveable = false;
+        bool editable = true;
+        bool muted = false;
+        bool directlyMuted = false;
+        bool canMute = false;
+        QString parentIdentifier;
+        int siblingIndex = -1;
+        bool canReorder = false;
+        int primSpecCount = 0;
+    };
+    std::vector<LayerInfo> layerInfo;
+    {
+        READ_LOCKER(locker, session()->stageLock(), "stageLock");
+        const UsdStageRefPtr stage = session()->stageUnsafe();
+        if (stage) {
+            layers = stage->GetLayerStack(false);
+            editLayer = stage->GetEditTarget().GetLayer();
+            rootLayer = stage->GetRootLayer();
+            if (rootLayer && std::find(layers.begin(), layers.end(), rootLayer) == layers.end()) {
+                qWarning() << "[LayerTree] root layer missing from layer stack; adding it explicitly:"
+                           << QString::fromStdString(rootLayer->GetIdentifier());
+                layers.insert(layers.begin(), rootLayer);
+            }
+            mutedLayers = stage->GetMutedLayers();
+            for (const std::string& identifier : mutedLayers)
+                directlyMutedIdentifiers.insert(QString::fromStdString(identifier));
+
+            for (const SdfLayerHandle& layer : layers) {
+                if (!layer)
+                    continue;
+                const QString identifier = QString::fromStdString(layer->GetIdentifier());
+                layerIdentifiers.insert(identifier);
+                activeLayerIdentifiers.insert(identifier);
+                d.retainedLayerHandles.insert(identifier, SdfLayerRefPtr(layer));
+            }
+
+            QSet<QString> expandedMutedSubtree;
+            std::function<void(const SdfLayerHandle&)> appendMutedSubtree = [&](const SdfLayerHandle& layer) {
+                if (!layer)
+                    return;
+                const QString identifier = QString::fromStdString(layer->GetIdentifier());
+                if (expandedMutedSubtree.contains(identifier))
+                    return;
+                expandedMutedSubtree.insert(identifier);
+                d.retainedLayerHandles.insert(identifier, SdfLayerRefPtr(layer));
+                if (!layerIdentifiers.contains(identifier)) {
+                    layers.push_back(layer);
+                    layerIdentifiers.insert(identifier);
+                }
+                for (const std::string& subLayerPath : layer->GetSubLayerPaths())
+                    appendMutedSubtree(SdfLayer::FindRelativeToLayer(layer, subLayerPath));
+            };
+            for (const std::string& identifier : mutedLayers) {
+                const QString layerIdentifier = QString::fromStdString(identifier);
+                SdfLayerRefPtr mutedReference = d.retainedLayerHandles.value(layerIdentifier);
+                if (!mutedReference)
+                    mutedReference = SdfLayer::Find(identifier);
+                if (!mutedReference)
+                    mutedReference = SdfLayer::FindOrOpen(identifier);
+                appendMutedSubtree(mutedReference);
+            }
+
+            for (const SdfLayerHandle& layer : layers) {
+                if (!layer)
+                    continue;
+
+                LayerInfo info;
+                info.layer = layer;
+                info.identifier = QString::fromStdString(layer->GetIdentifier());
+                info.name = QString::fromStdString(layer->GetDisplayName());
+                if (info.name.isEmpty())
+                    info.name = info.identifier;
+                info.dirty = layer->IsDirty();
+                info.saveable = layer->PermissionToSave() && !layer->IsAnonymous();
+                info.editable = layer->PermissionToEdit();
+                info.directlyMuted = directlyMutedIdentifiers.contains(info.identifier);
+                info.muted = info.directlyMuted;
+                info.canMute = layer != rootLayer
+                               && (info.directlyMuted || (stage->HasLocalLayer(layer) && layer != editLayer));
+                for (const SdfPrimSpecHandle& rootPrim : layer->GetRootPrims())
+                    info.primSpecCount += LayerItem::countPrimSpecs(rootPrim);
+                layerInfo.push_back(info);
+            }
+
+            for (LayerInfo& info : layerInfo) {
+                if (info.layer == rootLayer)
+                    continue;
+                SdfLayerHandle parent;
+                bool ambiguousParent = false;
+                for (const LayerInfo& candidate : layerInfo) {
+                    if (candidate.layer == info.layer)
+                        continue;
+                    const std::vector<std::string>& subLayerPaths = candidate.layer->GetSubLayerPaths();
+                    for (int siblingIndex = 0; siblingIndex < int(subLayerPaths.size()); ++siblingIndex) {
+                        const std::string& subLayerPath = subLayerPaths[siblingIndex];
+                        const SdfLayerHandle child = SdfLayer::FindRelativeToLayer(candidate.layer, subLayerPath);
+                        if (child == info.layer) {
+                            if (parent && parent != candidate.layer) {
+                                ambiguousParent = true;
+                                break;
+                            }
+                            parent = candidate.layer;
+                            info.siblingIndex = siblingIndex;
+                        }
+                    }
+                    if (ambiguousParent)
+                        break;
+                }
+                if (parent && !ambiguousParent) {
+                    info.parentIdentifier = QString::fromStdString(parent->GetIdentifier());
+                    info.canReorder = stage->HasLocalLayer(parent) && parent->PermissionToEdit();
+                }
+            }
+
+            for (LayerInfo& info : layerInfo) {
+                QString ancestorIdentifier = info.parentIdentifier;
+                QSet<QString> visited;
+                while (!ancestorIdentifier.isEmpty() && !visited.contains(ancestorIdentifier)) {
+                    visited.insert(ancestorIdentifier);
+                    if (directlyMutedIdentifiers.contains(ancestorIdentifier)
+                        && !activeLayerIdentifiers.contains(info.identifier)) {
+                        info.muted = true;
+                        break;
+                    }
+                    const auto ancestor = std::find_if(layerInfo.begin(), layerInfo.end(),
+                                                       [&](const LayerInfo& candidate) {
+                                                           return candidate.identifier == ancestorIdentifier;
+                                                       });
+                    if (ancestor == layerInfo.end())
+                        break;
+                    ancestorIdentifier = ancestor->parentIdentifier;
+                }
+                if (info.muted && !info.directlyMuted) {
+                    info.canMute = false;
+                }
+            }
+        }
+        else {}
+    }
+
+    // Keep existing items when their layer still exists. Reusing the item
+    // preserves its selection and expansion state across layer notices.
+    const QString previousCurrentIdentifier = currentIdentifier();
+    const QStringList previousSelectedIdentifiers = selectedIdentifiers();
+    QHash<QString, LayerItem*> items;
+    QHash<QString, bool> expanded;
+    QTreeWidgetItemIterator existing(d.tree);
+    while (*existing) {
+        LayerItem* item = layerItem(*existing);
+        const QString identifier = item->identifier();
+        if (!identifier.isEmpty()) {
+            items.insert(identifier, item);
+            expanded.insert(identifier, item->isExpanded());
+        }
+        ++existing;
+    }
+
+    LayerItem* editItem = nullptr;
+    for (const LayerInfo& info : layerInfo) {
+        QString name = info.name;
+        if (info.layer == rootLayer && session()->filename().isEmpty())
+            name = tr("Untitled");
+        const bool showDirty = info.dirty
+                               && (info.layer != rootLayer || !session()->filename().isEmpty() || d.rootChanged);
+        if (showDirty)
+            name.prepend(QLatin1Char('*'));
+        if (info.layer == rootLayer)
+            name += tr("  (Root)");
+
+
+        LayerItem* item = items.value(info.identifier, nullptr);
+        const bool isNew = item == nullptr;
+        if (isNew) {
+            item = new LayerItem(d.tree);
+            items.insert(info.identifier, item);
+        }
+        LayerItem::State itemState;
+        itemState.identifier = info.identifier;
+        itemState.parentIdentifier = info.parentIdentifier;
+        itemState.name = name;
+        itemState.dirty = info.dirty;
+        itemState.anonymous = info.layer->IsAnonymous();
+        itemState.saveable = info.saveable;
+        itemState.primSpecCount = info.primSpecCount;
+        itemState.root = info.layer == rootLayer;
+        itemState.editTarget = info.layer == editLayer;
+        itemState.muted = info.muted;
+        itemState.directlyMuted = info.directlyMuted;
+        itemState.inheritedMuted = info.muted && !info.directlyMuted;
+        itemState.canMute = info.canMute;
+        itemState.editable = info.editable;
+        itemState.canReorder = info.canReorder;
+        item->setState(itemState);
+        if (info.layer == editLayer)
+            editItem = item;
+    }
+
+    // Move only rows whose parent changed, retaining the QTreeWidgetItem
+    // instances for unaffected layers.
+    for (const LayerInfo& info : layerInfo) {
+        QTreeWidgetItem* item = items.value(info.identifier, nullptr);
+        QTreeWidgetItem* parent = items.value(info.parentIdentifier, nullptr);
+        if (parent == item)
+            parent = nullptr;
+
+        QTreeWidgetItem* oldParent = item->parent();
+        const bool attachedToTree = item->treeWidget() == d.tree;
+        if (oldParent == parent && attachedToTree)
+            continue;
+
+        if (oldParent) {
+            const int index = oldParent->indexOfChild(item);
+            if (index >= 0)
+                oldParent->takeChild(index);
+        }
+        else if (attachedToTree) {
+            const int index = d.tree->indexOfTopLevelItem(item);
+            if (index >= 0)
+                d.tree->takeTopLevelItem(index);
+        }
+
+        if (parent)
+            parent->addChild(item);
+        else
+            d.tree->addTopLevelItem(item);
+    }
+
+    // Match USD sibling order without rebuilding the tree.
+    auto reorderChildren = [](QTreeWidgetItem* parent, const QList<QTreeWidgetItem*>& desired) {
+        for (int targetIndex = 0; targetIndex < desired.size(); ++targetIndex) {
+            QTreeWidgetItem* wanted = desired[targetIndex];
+            if (parent->child(targetIndex) == wanted)
+                continue;
+            const int currentIndex = parent->indexOfChild(wanted);
+            if (currentIndex < 0)
+                continue;
+            parent->insertChild(targetIndex, parent->takeChild(currentIndex));
+        }
+    };
+    QHash<QString, QList<QPair<int, QTreeWidgetItem*>>> desiredChildren;
+    QList<QTreeWidgetItem*> desiredTopLevel;
+    for (const LayerInfo& info : layerInfo) {
+        QTreeWidgetItem* item = items.value(info.identifier, nullptr);
+        if (info.parentIdentifier.isEmpty() || !items.contains(info.parentIdentifier))
+            desiredTopLevel.append(item);
+        else
+            desiredChildren[info.parentIdentifier].append(qMakePair(info.siblingIndex, item));
+    }
+    for (auto it = desiredChildren.cbegin(); it != desiredChildren.cend(); ++it) {
+        QList<QPair<int, QTreeWidgetItem*>> orderedChildren = it.value();
+        std::stable_sort(orderedChildren.begin(), orderedChildren.end(),
+                         [](const auto& lhs, const auto& rhs) { return lhs.first < rhs.first; });
+        QList<QTreeWidgetItem*> desired;
+        desired.reserve(orderedChildren.size());
+        for (const auto& child : orderedChildren)
+            desired.append(child.second);
+        reorderChildren(items.value(it.key()), desired);
+    }
+    for (int targetIndex = 0; targetIndex < desiredTopLevel.size(); ++targetIndex) {
+        QTreeWidgetItem* wanted = desiredTopLevel[targetIndex];
+        if (d.tree->topLevelItem(targetIndex) == wanted)
+            continue;
+        const int currentIndex = d.tree->indexOfTopLevelItem(wanted);
+        if (currentIndex >= 0)
+            d.tree->insertTopLevelItem(targetIndex, d.tree->takeTopLevelItem(currentIndex));
+    }
+
+    // Delete rows that no longer exist after surviving descendants have
+    // been moved to their new parents.
+    QSet<QString> activeIdentifiers;
+    for (const LayerInfo& info : layerInfo)
+        activeIdentifiers.insert(info.identifier);
+    std::function<void(QTreeWidgetItem*)> removeStaleRows = [&](QTreeWidgetItem* item) {
+        for (int childIndex = item->childCount() - 1; childIndex >= 0; --childIndex) {
+            QTreeWidgetItem* child = item->child(childIndex);
+            removeStaleRows(child);
+            if (!activeIdentifiers.contains(layerItem(child)->identifier())) {
+                const QString identifier = layerItem(child)->identifier();
+                delete item->takeChild(childIndex);
+            }
+        }
+    };
+    for (int index = d.tree->topLevelItemCount() - 1; index >= 0; --index) {
+        QTreeWidgetItem* item = d.tree->topLevelItem(index);
+        removeStaleRows(item);
+        const QString identifier = layerItem(item)->identifier();
+        if (!activeIdentifiers.contains(identifier)) {
+            delete d.tree->takeTopLevelItem(index);
+        }
+    }
+
+    // A moved row keeps its expanded flag in Qt, but restore it explicitly
+    // for robustness when the tree implementation reparents an item.
+    for (auto it = expanded.cbegin(); it != expanded.cend(); ++it) {
+        if (activeIdentifiers.contains(it.key())) {
+            QTreeWidgetItem* item = items.value(it.key(), nullptr);
+            if (item && item->isExpanded() != it.value())
+                item->setExpanded(it.value());
+        }
+    }
+
+    if (rootLayer) {
+        const QString rootIdentifier = QString::fromStdString(rootLayer->GetIdentifier());
+        QTreeWidgetItem* rootItem = items.value(rootIdentifier, nullptr);
+        if (rootItem && !rootItem->isExpanded()) {
+            rootItem->setExpanded(true);
+        }
+        // Reapply after Qt finishes processing item insertions/reparenting.
+        // This also covers a tree first populated while its dialog is hidden.
+        QTimer::singleShot(0, d.tree, [tree = d.tree, rootIdentifier]() {
+            QTreeWidgetItemIterator itemIt(tree);
+            while (*itemIt) {
+                LayerItem* item = layerItem(*itemIt);
+                if (item->identifier() == rootIdentifier) {
+                    if (!item->isExpanded()) {
+                        item->setExpanded(true);
+                    }
+                    return;
+                }
+                ++itemIt;
+            }
+        });
+    }
+
+    QTreeWidgetItem* previousCurrent = activeIdentifiers.contains(previousCurrentIdentifier)
+                                           ? items.value(previousCurrentIdentifier, nullptr)
+                                           : nullptr;
+    if (previousCurrent && previousCurrent->treeWidget() == d.tree) {
+        if (d.tree->currentItem() != previousCurrent)
+            d.tree->setCurrentItem(previousCurrent, LayerItem::Name, QItemSelectionModel::NoUpdate);
+    }
+    else if (editItem)
+        d.tree->setCurrentItem(editItem, LayerItem::Name, QItemSelectionModel::NoUpdate);
+    const QSet<QString> selected(previousSelectedIdentifiers.begin(), previousSelectedIdentifiers.end());
+    const bool selectionSurvives = std::any_of(selected.begin(), selected.end(), [&](const auto& identifier) {
+        return activeIdentifiers.contains(identifier);
+    });
+    for (const auto& identifier : activeIdentifiers) {
+        if (auto* item = items.value(identifier))
+            item->setSelected(selected.contains(identifier)
+                              || (!previousCurrent && !selectionSurvives && item == editItem));
+    }
+    d.tree->setEnabled(!layers.empty());
+    d.refreshing = false;
+}
+
+QTreeWidgetItem*
+LayerTreePrivate::currentItem() const
+{
+    return d.tree ? d.tree->currentItem() : nullptr;
+}
+
+QStringList
+LayerTreePrivate::selectedIdentifiers() const
+{
+    QStringList result;
+    if (d.tree) {
+        QTreeWidgetItemIterator it(d.tree, QTreeWidgetItemIterator::Selected);
+        while (*it) {
+            const QString identifier = layerItem(*it)->identifier();
+            if (!identifier.isEmpty())
+                result.append(identifier);
+            ++it;
+        }
+    }
+    return result;
+}
+
+void
+LayerTreePrivate::setDropIndicator(QTreeWidgetItem* item, int mode)
+{
+    if (!d.tree)
+        return;
+    const qulonglong newPointer = reinterpret_cast<qulonglong>(item);
+    d.tree->setProperty(mime::dropItemPtrProperty, QVariant::fromValue<qulonglong>(newPointer));
+    d.tree->setProperty(mime::dropModeProperty, mode);
+    d.tree->viewport()->update();
+}
+
+void
+LayerTreePrivate::clearDropIndicator()
+{
+    if (!d.tree)
+        return;
+    d.tree->setProperty(mime::dropItemPtrProperty, QVariant::fromValue<qulonglong>(0));
+    d.tree->setProperty(mime::dropModeProperty, 0);
+    d.tree->viewport()->update();
+}
+
+QString
+LayerTreePrivate::currentIdentifier() const
+{
+    const QTreeWidgetItem* item = currentItem();
+    return item ? layerItem(item)->identifier() : QString();
+}
 
 LayerTree::LayerTree(QWidget* parent)
     : TreeWidget(parent)
@@ -609,7 +628,7 @@ LayerTree::selectCurrentLayer()
         if (!stage)
             return;
         for (const auto& identifier : identifiers) {
-            SdfLayerHandle layer = p->retainedLayerHandles.value(identifier);
+            SdfLayerHandle layer = p->d.retainedLayerHandles.value(identifier);
             if (!layer)
                 layer = SdfLayer::Find(identifier.toStdString());
             if (!layer)
@@ -776,7 +795,7 @@ LayerTree::contextMenuEvent(QContextMenuEvent* event)
                 inheritedMuteStates.insert(layerItem(selectedItem)->identifier(),
                                            layerItem(selectedItem)->isInheritedMuted());
             for (const auto& id : identifiers) {
-                SdfLayerRefPtr layer = p->retainedLayerHandles.value(id);
+                SdfLayerRefPtr layer = p->d.retainedLayerHandles.value(id);
                 if (!layer)
                     layer = SdfLayer::Find(id.toStdString());
                 if (!layer) {
@@ -933,7 +952,7 @@ LayerTree::mousePressEvent(QMouseEvent* event)
                 READ_LOCKER(locker, session()->stageLock(), "stageLock");
                 const UsdStageRefPtr stage = session()->stageUnsafe();
                 if (stage) {
-                    clickedLayer = p->retainedLayerHandles.value(identifier);
+                    clickedLayer = p->d.retainedLayerHandles.value(identifier);
                     if (!clickedLayer)
                         clickedLayer = SdfLayer::Find(identifier.toStdString());
                     const std::vector<std::string> mutedLayers = stage->GetMutedLayers();
@@ -960,7 +979,7 @@ LayerTree::mousePressEvent(QMouseEvent* event)
                 bool editable = true;
                 {
                     READ_LOCKER(locker, session()->stageLock(), "stageLock");
-                    SdfLayerHandle layer = p->retainedLayerHandles.value(identifier);
+                    SdfLayerHandle layer = p->d.retainedLayerHandles.value(identifier);
                     if (!layer)
                         layer = SdfLayer::Find(identifier.toStdString());
                     const UsdStageRefPtr stage = session()->stageUnsafe();

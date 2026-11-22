@@ -26,6 +26,7 @@
 #include "renderisolation.h"
 #include "renderresources.h"
 #include "rendersceneindex.h"
+#include "renderselection.h"
 #include "selectionlist.h"
 #include "session.h"
 #include "usdedit.h"
@@ -58,6 +59,7 @@
 #include <pxr/base/tf/errorMark.h>
 #include <pxr/imaging/hd/retainedSceneIndex.h>
 #include <pxr/imaging/hd/tokens.h>
+#include <pxr/imaging/hdx/selectionSceneIndexObserver.h>
 #include <pxr/usd/sdf/assetPath.h>
 #include <pxr/usd/sdf/layer.h>
 #include <pxr/usd/sdf/namespaceEdit.h>
@@ -86,6 +88,9 @@
 #include <pxr/usd/usdShade/material.h>
 #include <pxr/usd/usdShade/materialBindingAPI.h>
 #include <pxr/usd/usdShade/shader.h>
+#include <pxr/usdImaging/usdImaging/sceneIndices.h>
+#include <pxr/usdImaging/usdImaging/selectionSceneIndex.h>
+#include <pxr/usdImaging/usdImaging/stageSceneIndex.h>
 #include <stdexcept>
 
 PXR_NAMESPACE_USING_DIRECTIVE
@@ -2772,6 +2777,235 @@ commandMergeApi()
 }
 
 void
+attributePreviewTargetApi()
+{
+    Session current;
+    require(current.newStage(), "new preview fixture");
+    const auto stage = current.stage();
+    const auto root = stage->GetRootLayer();
+    const auto base = SdfLayer::CreateAnonymous("preview_base.usda");
+    root->SetSubLayerPaths({ base->GetIdentifier() });
+    {
+        UsdEditContext context(stage, base);
+        stage->DefinePrim(SdfPath("/Asset")).CreateAttribute(TfToken("value"), SdfValueTypeNames->Double).Set(1.0);
+    }
+    auto variants = stage->GetPrimAtPath(SdfPath("/Asset")).GetVariantSets().AddVariantSet("look");
+    variants.AddVariant("A");
+    variants.SetVariantSelection("A");
+    const auto target = variants.GetVariantEditTarget();
+    stage->SetEditTarget(target);
+    const auto text = [](const SdfLayerHandle& layer) {
+        std::string value;
+        layer->ExportToString(&value);
+        return value;
+    };
+    const auto before = text(root);
+    stageviz::edit::AttributePreview preview;
+    const SdfPath path("/Asset.value");
+    require(preview.begin(stage, path) && preview.set(VtValue(9.0)), "preview mapped variant property");
+    require(root->GetAttributeAtPath(target.MapToSpecPath(path)), "preview authors mapped spec");
+    stage->SetEditTarget(root);
+    require(!preview.matches(stage) && !preview.set(VtValue(10.0)), "changed target rejects preview writes");
+    preview.restore();
+    require(text(root) == before, "cancel restores original target and removes temporary specs");
+    preview.restore();
+    stage->SetEditTarget(target);
+    auto command = stageviz::setAttributeValues({ path }, VtValue(4.0));
+    executeCommand(command, current);
+    require(root->GetField(target.MapToSpecPath(path), SdfFieldKeys->Default) == VtValue(4.0),
+            "command authors variant");
+    stage->SetEditTarget(root);
+    command.undo(&current);
+    drainWorkers();
+    require(!root->HasField(target.MapToSpecPath(path), SdfFieldKeys->Default),
+            "undo restores original variant target");
+    require(!root->HasField(path, SdfFieldKeys->Default), "undo does not author current target");
+    executeCommand(command, current);
+    require(root->GetField(target.MapToSpecPath(path), SdfFieldKeys->Default) == VtValue(4.0),
+            "redo retains original target");
+}
+
+void
+attributePivotVariantTargetApi()
+{
+    const auto text = [](const SdfLayerHandle& layer) {
+        std::string value;
+        layer->ExportToString(&value);
+        return value;
+    };
+    for (bool matrixPivot : { false, true }) {
+        for (bool authoredInVariant : { true, false }) {
+            for (const SdfPath& primPath : { SdfPath("/Asset"), SdfPath("/Asset/Branch/Child") }) {
+                Session current;
+                require(current.newStage(), "new mapped pivot fixture");
+                const auto stage = current.stage();
+                const auto root = stage->GetRootLayer();
+                const auto base = SdfLayer::CreateAnonymous("pivot_variant_base.usda");
+                const auto asset = UsdGeomXform::Define(stage, SdfPath("/Asset"));
+                auto variants = asset.GetPrim().GetVariantSets().AddVariantSet("look");
+                variants.AddVariant("A");
+                variants.SetVariantSelection("A");
+                const auto target = variants.GetVariantEditTarget();
+                const TfToken pivotName(matrixPivot ? "xformOp:transform:pivot" : "xformOp:translate:pivot");
+                const auto authorPivot = [&](const UsdStageRefPtr& fixtureStage) {
+                    const auto xform = UsdGeomXform::Define(fixtureStage, primPath);
+                    if (matrixPivot) {
+                        GfMatrix4d pivot(1.0);
+                        pivot.SetTranslate(GfVec3d(1, 2, 3));
+                        xform.AddTransformOp(UsdGeomXformOp::PrecisionDouble, TfToken("pivot")).Set(pivot);
+                        xform.AddRotateZOp().Set(30.0f);
+                        xform.AddTransformOp(UsdGeomXformOp::PrecisionDouble, TfToken("pivot"), true);
+                        xform.SetResetXformStack(true);
+                    }
+                    else {
+                        const auto pivot = xform.AddTranslateOp(UsdGeomXformOp::PrecisionDouble, TfToken("pivot"));
+                        pivot.Set(GfVec3d(1, 2, 3));
+                        pivot.Set(GfVec3d(2, 3, 4), UsdTimeCode(1));
+                        pivot.GetAttr().SetDocumentation("Original pivot metadata");
+                        xform.AddRotateZOp().Set(30.0f);
+                        xform.AddTranslateOp(UsdGeomXformOp::PrecisionDouble, TfToken("pivot"), true);
+                    }
+                };
+                if (authoredInVariant) {
+                    UsdEditContext context(stage, target);
+                    authorPivot(stage);
+                }
+                else {
+                    {
+                        const auto source = UsdStage::Open(base);
+                        authorPivot(source);
+                    }
+                    asset.GetPrim().GetReferences().AddReference(base->GetIdentifier(), SdfPath("/Asset"));
+                }
+                // Unrelated transform specs outside the variant must survive undo.
+                const auto prim = stage->GetPrimAtPath(primPath);
+                prim.CreateAttribute(TfToken("xformOp:translate:outsideVariant"), SdfValueTypeNames->Double3)
+                    .Set(GfVec3d(7, 8, 9));
+                stage->SetEditTarget(target);
+                const auto before = text(root);
+                const auto baseBefore = text(base);
+                const auto localBefore = UsdGeomXformCache().GetLocalToWorldTransform(prim);
+                const auto attr = prim.GetAttribute(pivotName);
+                VtValue originalValue;
+                require(attr.Get(&originalValue), "original pivot value exists");
+                GfMatrix4d newFrame(1.0);
+                newFrame.SetTranslate(GfVec3d(4, 5, 6));
+                const VtValue value = matrixPivot ? VtValue(newFrame) : VtValue(GfVec3d(4, 5, 6));
+                auto command = stageviz::setAttributeValues({ attr.GetPath() }, value);
+                executeCommand(command, current);
+                const auto fixtureLabel = primPath.GetString() + (matrixPivot ? " matrix" : " vector")
+                                          + (authoredInVariant ? " authored" : " inherited");
+                require(root->GetField(target.MapToSpecPath(attr.GetPath()), SdfFieldKeys->Default) == value,
+                        ("pivot edit authors mapped variant spec: " + fixtureLabel).c_str());
+                require(GfIsClose(UsdGeomXformCache().GetLocalToWorldTransform(prim), localBefore, 1e-8),
+                        "variant pivot edit preserves geometry");
+                const auto authored = text(root);
+                stage->SetEditTarget(root);
+                command.undo(&current);
+                drainWorkers();
+                VtValue restored;
+                require(attr.Get(&restored) && restored == originalValue, "undo restores variant pivot value");
+                require(text(root) == before && text(base) == baseBefore,
+                        "undo restores exact mapped specs and removes temporary ancestor specs");
+                executeCommand(command, current);
+                require(text(root) == authored && text(base) == baseBefore,
+                        "redo restores exact mapped pivot edit in captured target");
+                command.undo(&current);
+                drainWorkers();
+                require(text(root) == before && text(base) == baseBefore, "second undo restores exact original layers");
+            }
+        }
+    }
+}
+
+void
+boundsEvaluationTimeApi()
+{
+    const auto stage = UsdStage::CreateInMemory();
+    const auto cube = UsdGeomCube::Define(stage, SdfPath("/Cube"));
+    auto translate = UsdGeomXformable(cube).AddTranslateOp();
+    translate.Set(GfVec3d(0.0));
+    translate.Set(GfVec3d(10, 0, 0), UsdTimeCode(1));
+    translate.Set(GfVec3d(20, 0, 0), UsdTimeCode(2));
+    stageviz::bbox::clear();
+    for (double time : { 1., 2., 1. }) {
+        const auto box = stageviz::stage::geometryBounds(stage, { SdfPath("/Cube") }, UsdTimeCode(time));
+        require(std::abs(box.ComputeAlignedRange().GetMidpoint()[0] - time * 10) < 1e-8,
+                "bounds follow requested frame");
+        GfMatrix4d pivot(1.0);
+        QString error;
+        require(stageviz::stage::worldPivotFrame(stage, SdfPath("/Cube"), pivot, error, UsdTimeCode(time)),
+                "sampled pivot");
+        require(std::abs(pivot.ExtractTranslation()[0] - time * 10) < 1e-8, "pivot follows requested frame");
+    }
+    require(std::abs(stageviz::stage::geometryBounds(stage, { SdfPath("/Cube") }).ComputeAlignedRange().GetMidpoint()[0])
+                < 1e-8,
+            "default-time authoring queries remain independent of playback");
+}
+
+void
+renderSelectionUsdParityApi()
+{
+    const auto stage = UsdStage::CreateInMemory();
+    UsdGeomXform::Define(stage, SdfPath("/Source"));
+    UsdGeomCube::Define(stage, SdfPath("/Source/Shape"));
+    for (const char* name : { "/A", "/B" }) {
+        auto prim = stage->DefinePrim(SdfPath(name));
+        prim.GetReferences().AddInternalReference(SdfPath("/Source"));
+        prim.SetInstanceable(true);
+    }
+    UsdImagingCreateSceneIndicesInfo info;
+    info.stage = stage;
+    const auto indices = UsdImagingCreateSceneIndices(info);
+    indices.stageSceneIndex->ApplyPendingUpdates();
+    stageviz::RenderSelection mapper;
+    mapper.setSceneIndex(indices.finalSceneIndex);
+    const auto native = UsdImagingSelectionSceneIndex::New(indices.finalSceneIndex);
+    HdxSelectionSceneIndexObserver observer;
+    observer.SetSceneIndex(native);
+    for (const SdfPathVector& roots :
+         { SdfPathVector { SdfPath("/Source") }, SdfPathVector { SdfPath("/A") }, SdfPathVector { SdfPath("/B") },
+           SdfPathVector { SdfPath("/A/Shape") }, SdfPathVector { SdfPath("/A"), SdfPath("/B") },
+           SdfPathVector { SdfPath("/") } }) {
+        native->ClearSelection();
+        for (const auto& path : roots)
+            native->AddSelection(path);
+        const auto expected = observer.GetSelection();
+        SdfPathVector direct;
+        std::vector<stageviz::HydraSelectionRprim> mapped;
+        require(mapper.resolve(stage, roots, &direct, &mapped), "resolve selection");
+        for (const auto& item : mapped) {
+            const auto state = expected->GetPrimSelectionState(HdSelection::HighlightModeSelect, item.path);
+            require(state && state->fullySelected == item.fullySelected, "native selection coverage matches");
+            std::set<int32_t> nativeInstances;
+            for (const auto& array : state->instanceIndices)
+                nativeInstances.insert(array.begin(), array.end());
+            // AddRprim can coexist with AddInstance in USD's observer. Once the
+            // whole rprim is selected, additional instance indices are redundant.
+            if (!state->fullySelected)
+                require(nativeInstances == std::set<int32_t>(item.instanceIndices.begin(), item.instanceIndices.end()),
+                        "native instance indices match");
+        }
+        // The fixture contains only cube geometry. Check native coverage in
+        // reverse too, so an empty or incomplete mapping cannot pass parity.
+        for (const auto& selected : expected->GetSelectedPrimPaths(HdSelection::HighlightModeSelect)) {
+            const auto type = indices.finalSceneIndex->GetPrim(selected).primType;
+            if (type == HdPrimTypeTokens->cube || type == HdPrimTypeTokens->mesh)
+                require(std::any_of(mapped.begin(), mapped.end(),
+                                    [&](const auto& item) { return item.path == selected; }),
+                        "every native selected drawable is mapped");
+        }
+        const auto first = mapped;
+        require(mapper.resolve(stage, roots, &direct, &mapped) && first == mapped, "cached mapping retains selection");
+    }
+    const auto generation = mapper.generation();
+    UsdGeomCube::Define(stage, SdfPath("/Source/Added"));
+    indices.stageSceneIndex->ApplyPendingUpdates();
+    require(mapper.generation() != generation, "topology change invalidates mapper");
+    observer.SetSceneIndex({});
+}
+
+void
 namespaceEditorCrudApi()
 {
     const auto stage = UsdStage::CreateInMemory();
@@ -2820,6 +3054,9 @@ usdPathUtilsApi()
     const QList<SdfPath> roots = stageviz::path::minimalRootPaths(input);
     require(roots.contains(SdfPath("/A")) && roots.contains(SdfPath("/C")) && roots.size() == 2,
             "minimalRootPaths removes covered descendants");
+    require(stageviz::path::minimalRootPaths({ SdfPath("/A/Child"), SdfPath("/Z"), SdfPath("/A/Child"), SdfPath() })
+                == QList<SdfPath>({ SdfPath("/Z"), SdfPath("/A/Child") }),
+            "native reduction preserves depth ordering");
     const QList<SdfPath> top = stageviz::path::topLevelPaths({ SdfPath("/A"), SdfPath("/A/B"), SdfPath("/C") });
     require(top.contains(SdfPath("/A")) && top.contains(SdfPath("/C")) && top.size() == 2,
             "topLevelPaths removes descendants");
@@ -6818,6 +7055,10 @@ main(int argc, char** argv)
         { "session_load_policy_api", sessionLoadPolicyApi },
         { "command_merge_api", commandMergeApi },
         { "namespace_editor_crud_api", namespaceEditorCrudApi },
+        { "attribute_preview_target_api", attributePreviewTargetApi },
+        { "attribute_pivot_variant_target_api", attributePivotVariantTargetApi },
+        { "bounds_evaluation_time_api", boundsEvaluationTimeApi },
+        { "render_selection_usd_parity_api", renderSelectionUsdParityApi },
         { "usd_path_utils_api", usdPathUtilsApi },
         { "transform_instance_targets", transformInstanceTargets },
         { "transform_source_child_api", transformSourceChildApi },

@@ -12,6 +12,7 @@
 #include "os.h"
 #include "paths.h"
 #include "perfscope.h"
+#include "primutils.h"
 #include "qtutils.h"
 #include "renderengine.h"
 #include "session.h"
@@ -105,6 +106,7 @@ public:
     void updateAuxiliary(UsdStageRefPtr auxiliary);
     void updateStageUp(const TfToken& upAxis);
     void updateBoundingBox(const GfBBox3d& bbox);
+    GfBBox3d sceneBounds() const;
     void updateMask(const QList<SdfPath>& paths);
     void updatePrims(const NoticeBatch& batch);
     QList<SdfPath> capturePaths(bool accumulate);
@@ -158,6 +160,7 @@ public:
     ViewportWidget* widget() const override { return d.glwidget; }
     ViewContext* context() const override { return d.context; }
     UsdStageRefPtr stage() const override { return d.stage; }
+    UsdTimeCode timeCode() const override { return UsdTimeCode(d.timeCode); }
     UsdStageRefPtr auxiliaryStage() const override { return d.auxiliary->stage(); }
     RenderEngine* renderEngine() const override { return d.renderEngine.data(); }
     const QList<SdfPath>& selectedPaths() const override { return d.selection; }
@@ -488,7 +491,7 @@ ViewportWidgetPrivate::close()
     d.suppressContextMenu = false;
 
     if (d.renderEngine)
-        d.renderEngine->reset();
+        d.renderEngine->setStage(nullptr);
 
     if (viewState() && viewState()->sceneStatsEnabled())
         updateSceneStats();
@@ -1044,6 +1047,21 @@ ViewportWidgetPrivate::updateStageUp(const TfToken& upAxis)
         d.renderEngine->refreshAuxiliaryStage();
 
     d.glwidget->update();
+}
+
+GfBBox3d
+ViewportWidgetPrivate::sceneBounds() const
+{
+    if (!d.context || !d.stage)
+        return {};
+    READ_LOCKER(locker, d.context->stageLock(), "stageLock");
+    bbox::CacheGuard cache(bbox::CacheGuard::Purposes::Geometry, timeCode());
+    if (d.mask.isEmpty())
+        return cache.ComputeWorldBound(d.stage->GetPseudoRoot());
+    GfBBox3d result;
+    for (const auto& path : d.mask)
+        result = GfBBox3d::Combine(result, cache.ComputeWorldBound(d.stage->GetPrimAtPath(path)));
+    return result;
 }
 
 void
@@ -1988,13 +2006,29 @@ ViewportWidget::lightPathsInRect(const QRectF& rect)
     return p->d.lights->pathsInRect(rect);
 }
 
+GfBBox3d
+ViewportWidget::framingBounds(const QList<SdfPath>& paths) const
+{
+    if (paths.isEmpty())
+        return p->sceneBounds();
+    if (!p->d.context)
+        return {};
+    READ_LOCKER(locker, p->d.context->stageLock(), "stageLock");
+    return stage::geometryBounds(p->d.stage, paths, p->timeCode());
+}
+
 void
 ViewportWidget::setTimeCode(double timeCode)
 {
     if (qFuzzyCompare(p->d.timeCode + 1.0, timeCode + 1.0))
         return;
 
+    if (p->d.transform->dragging())
+        p->d.transform->endDrag();
     p->d.timeCode = timeCode;
+    p->d.selectionTool->invalidateStage();
+    p->d.selectionTool->resetPickCycle();
+    p->d.transform->invalidate();
     p->d.lights->setTimeCode(timeCode);
     p->updateRenderEngineSettings();
     update();

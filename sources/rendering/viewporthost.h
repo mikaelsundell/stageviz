@@ -55,6 +55,11 @@ public:
     virtual UsdStageRefPtr stage() const = 0;
 
     /**
+     * @brief Returns the USD time displayed by this viewport.
+     */
+    virtual UsdTimeCode timeCode() const = 0;
+
+    /**
      * @brief Returns the auxiliary display stage.
      */
     virtual UsdStageRefPtr auxiliaryStage() const = 0;

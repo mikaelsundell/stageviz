@@ -88,6 +88,15 @@ namespace stage {
     GfBBox3d boundingBox(UsdStageRefPtr stage, const QList<SdfPath>& paths);
 
     /**
+     * @brief Computes framing bounds for selected objects at the requested time.
+     *
+     * Projects property/subset paths to their owners and excludes guide purpose.
+     * The caller holds the stage lock.
+     */
+    GfBBox3d geometryBounds(UsdStageRefPtr stage, const QList<SdfPath>& paths,
+                            UsdTimeCode time = UsdTimeCode::Default());
+
+    /**
      * @brief Returns the immediate parent path of a valid prim.
      *
      * Property paths are normalized to their owning prim. The pseudo-root has
@@ -159,16 +168,19 @@ namespace stage {
      * @param stage Stage containing the prim.
      * @param path Prim path to query.
      * @param matrix Receives the world transform.
+     * @param time Evaluation time; authoring callers use the default.
      * @param error Receives a failure reason.
      */
-    bool worldTransform(UsdStageRefPtr stage, const SdfPath& path, GfMatrix4d& matrix, QString& error);
+    bool worldTransform(UsdStageRefPtr stage, const SdfPath& path, GfMatrix4d& matrix, QString& error,
+                        UsdTimeCode time = UsdTimeCode::Default());
 
     /**
      * @brief Returns the authored pivot frame in world space, including orientation and scale.
      *
      * Legacy paired translation pivots and matrix-only preview overrides are supported.
      */
-    bool worldPivotFrame(UsdStageRefPtr stage, const SdfPath& path, GfMatrix4d& frame, QString& error);
+    bool worldPivotFrame(UsdStageRefPtr stage, const SdfPath& path, GfMatrix4d& frame, QString& error,
+                         UsdTimeCode time = UsdTimeCode::Default());
 
     /**
      * @brief Resolves the manipulation pivot for an xformable prim in world space.

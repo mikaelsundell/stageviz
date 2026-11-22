@@ -14,6 +14,11 @@ add_test(
 )
 set_tests_properties(stageviz.test_app_runner PROPERTIES LABELS "python;tooling" TIMEOUT 30)
 add_test(
+    NAME stageviz.performance_baseline
+    COMMAND ${Python3_EXECUTABLE} "${CMAKE_CURRENT_SOURCE_DIR}/test_performance_baseline.py"
+)
+set_tests_properties(stageviz.performance_baseline PROPERTIES LABELS "python;tooling" TIMEOUT 30)
+add_test(
     NAME stageviz.clang_format_scope
     COMMAND ${Python3_EXECUTABLE} "${CMAKE_CURRENT_SOURCE_DIR}/test_clang_format.py"
 )
@@ -120,6 +125,10 @@ foreach(case IN ITEMS
     session_state_dirty_api
     session_load_policy_api
     command_merge_api
+    attribute_preview_target_api
+    attribute_pivot_variant_target_api
+    bounds_evaluation_time_api
+    render_selection_usd_parity_api
     namespace_editor_crud_api
     usd_path_utils_api
     transform_instance_targets
@@ -222,6 +231,8 @@ foreach(case IN ITEMS
     indextree_selection_api
     indextree_selection_modes_api
     ui_api
+    property_preview_cancellation_api
+    viewport_evaluation_time_api
     numeric_editor_api
     renderengine_api
     render_primitive_selection_api
@@ -265,7 +276,7 @@ foreach(case IN ITEMS
     endif()
     if(APPLE)
         # Qt debug frameworks on macOS use the _debug image suffix. The GUI
-        # regression executable links against Qt*_debug, and the Cocoa platform
+        # Debug regression executable links against Qt*_debug, and the Cocoa platform
         # plugin must resolve against the same debug Qt binaries. Set the suffix
         # before the test process starts so dyld never mixes release and debug
         # Qt frameworks in one process. In non-Debug configurations the suffix is
@@ -273,7 +284,7 @@ foreach(case IN ITEMS
         add_test(
             NAME stageviz.gui.${case}
             COMMAND ${CMAKE_COMMAND} -E env
-                "DYLD_IMAGE_SUFFIX=_debug"
+                "DYLD_IMAGE_SUFFIX=$<$<CONFIG:Debug>:_debug>"
                 $<TARGET_FILE:stageviz_gui_regressions>
                 ${case}
         )
@@ -298,6 +309,17 @@ if(NOT WIN32)
                                material_browser_display_menu_api)
         set_property(TEST stageviz.gui.${popup_case} APPEND PROPERTY
             ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+        )
+    endforeach()
+endif()
+
+if(APPLE)
+    # Also cover native and Python tests launched directly with ctest, clearing
+    # any suffix inherited by a non-Debug configuration.
+    get_property(stageviz_registered_tests DIRECTORY PROPERTY TESTS)
+    foreach(test_name IN LISTS stageviz_registered_tests)
+        set_property(TEST ${test_name} APPEND PROPERTY ENVIRONMENT
+            "DYLD_IMAGE_SUFFIX=$<$<CONFIG:Debug>:_debug>"
         )
     endforeach()
 endif()
