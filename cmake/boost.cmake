@@ -13,6 +13,7 @@ function(find_boost_python out_target)
         message(FATAL_ERROR "Python3 must be found before calling find_boost_python()")
     endif()
 
+    set(boost_python_version_tag "${Python3_VERSION_MAJOR}${Python3_VERSION_MINOR}")
     set(boost_prefix "")
     set(boost_include_dir "")
     set(boost_library_dir "")
@@ -58,17 +59,31 @@ function(find_boost_python out_target)
                 endif()
             endif()
         endif()
+
+        if(WIN32 AND EXISTS "${prefix}/include/boost/python.hpp")
+            # The tagged 3rdparty build exports the Python ABI, libraries and usage requirements.
+            if(BOOST_VERSION)
+                file(STRINGS "${prefix}/include/boost/version.hpp" version_line
+                    REGEX "^#define BOOST_LIB_VERSION \"[0-9_]+\"$")
+                if(NOT version_line STREQUAL "#define BOOST_LIB_VERSION \"${BOOST_VERSION}\"")
+                    continue()
+                endif()
+            endif()
+            find_package(Boost CONFIG REQUIRED COMPONENTS "python${boost_python_version_tag}"
+                PATHS "${prefix}" NO_DEFAULT_PATH)
+            add_library(${out_target} ALIAS Boost::python${boost_python_version_tag})
+            return()
+        endif()
     endforeach()
 
     if(NOT boost_prefix)
         message(FATAL_ERROR
             "Failed to locate Boost under CMAKE_PREFIX_PATH.\n"
             "Checked prefixes:\n  ${CMAKE_PREFIX_PATH}\n"
-            "Expected layout like <prefix>/include/boost-<version>/boost/python.hpp and <prefix>/lib"
+            "Expected Boost.Python in a tagged Windows install (include/boost/python.hpp) "
+            "or a versioned install (include/boost-<version>/boost/python.hpp)."
         )
     endif()
-
-    set(boost_python_version_tag "${Python3_VERSION_MAJOR}${Python3_VERSION_MINOR}")
 
     set(boost_arch_tag "")
     if(WIN32)

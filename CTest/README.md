@@ -60,8 +60,9 @@ The default output is `build.test-results/<run>/`, containing an overall
 `summary.json`, configure/build/CTest/Python logs, native `ctest.xml`, per-suite
 summaries, MCP oracles, resource samples and screenshot paths. Test failures
 return a nonzero exit status. Python suites still run after CTest failures;
-configure/build failures stop that configuration to avoid testing stale binaries. API timing baselines
-are kept per configuration under the build's `test-baselines/` directory.
+configure/build failures stop that configuration to avoid testing stale binaries.
+The runner uses the configured build's CMake when available. API timing
+baselines are kept per configuration under the build's `test-baselines/` directory.
 
 On macOS, baseline environments also record the Mac model, CPU model and core
 counts, RAM size, execution architecture, and GPU models/core counts/dedicated
@@ -72,14 +73,17 @@ overwriting the baseline. Hardware detection failures also fail closed. The
 profile excludes serial numbers, UUIDs and attached-display details; identical
 hardware configurations on separate computers can match.
 
-Legacy Mac baselines without a hardware profile require explicit adoption on
-their original hardware or a freshly recorded baseline. They are never silently
-assigned to the current Mac. An explicit `_PERF_BASELINE_RESET` still replaces
-the timings and hardware metadata only after functional tests pass. OS/Python
-version differences on matching hardware retain the existing warning behavior;
-Windows baseline behavior is unchanged. `stageviz.performance_baseline` covers
-M1/M2, core-count, GPU, RAM and architecture mismatches, legacy files, failed
-hardware probes, baseline creation and comparison/failure propagation.
+On Windows, baselines record the system model, CPU models and core counts,
+installed RAM, execution architecture, GPU models, and a hashed identifier
+derived from the local Windows installation. Comparisons require the same
+installation and hardware profile. Reinstalling Windows can change the identifier.
+
+Legacy baselines without a hardware profile require explicit adoption on their
+original hardware or a freshly recorded baseline. An explicit
+`_PERF_BASELINE_RESET` replaces timings and hardware metadata only after
+functional tests pass. OS or Python version differences on matching hardware
+produce a warning. `stageviz.performance_baseline` covers profile mismatches,
+legacy files, failed probes, baseline creation, and timing failure propagation.
 
 The disposable runner starts the public native MCP server on a free loopback
 port and never connects to the user's app. Test settings use fresh per-process

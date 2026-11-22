@@ -184,17 +184,19 @@ endforeach()
 # GUI/offscreen regressions use QApplication because Qt requires QWindow-backed
 # offscreen surfaces and OpenGL resources to be created on the GUI thread.
 add_executable(stageviz_gui_regressions gui_regression.cpp ${stageviz_test_absolute_sources})
-foreach(test_target IN ITEMS stageviz_regressions stageviz_gui_regressions)
-    add_custom_command(TARGET ${test_target} POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:${test_target}>/resources"
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "${PROJECT_SOURCE_DIR}/resources/Render.glslfx"
-            "${PROJECT_SOURCE_DIR}/resources/SceneId.glslfx"
-            "${PROJECT_SOURCE_DIR}/resources/SelectionId.glslfx"
-            "$<TARGET_FILE_DIR:${test_target}>/resources"
-        VERBATIM
-    )
-endforeach()
+# Both executables share an output directory. Copy its shaders once so parallel
+# builds cannot race to replace the same files.
+add_custom_target(stageviz_test_resources
+    COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:stageviz_regressions>/resources"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${PROJECT_SOURCE_DIR}/resources/Render.glslfx"
+        "${PROJECT_SOURCE_DIR}/resources/SceneId.glslfx"
+        "${PROJECT_SOURCE_DIR}/resources/SelectionId.glslfx"
+        "$<TARGET_FILE_DIR:stageviz_regressions>/resources"
+    VERBATIM
+)
+add_dependencies(stageviz_regressions stageviz_test_resources)
+add_dependencies(stageviz_gui_regressions stageviz_test_resources)
 target_include_directories(stageviz_gui_regressions PRIVATE
     "${PROJECT_SOURCE_DIR}/sources"
     "$<TARGET_PROPERTY:${project_name},INCLUDE_DIRECTORIES>"

@@ -347,7 +347,8 @@ def run(args):
                         after['material'] = app.tool('stageviz_get_prim_info', {'path':'/Materials/Paint'})
                         after['prims'] = app.tool('stageviz_list_prims', {'path':'/Materials/Paint','maxDepth':2,'limit':10})
                         material = json.loads(after['material']['result']['content'][0]['text'])
-                        assert (material['strongestLayer']==expected['layer']) == (not expected['muted']), (material, expected)
+                        same_layer = Path(material['strongestLayer']) == Path(expected['layer'])
+                        assert same_layer == (not expected['muted']), (material, expected)
                     if name == 'testinstancecleanup' and label != 'cleanup':
                         lines = [line for block in result['result']['content'] for line in block.get('text', '').splitlines()
                                  if line.startswith('INSTANCE_CLEANUP_CHECKPOINT ')]
@@ -392,7 +393,8 @@ def run(args):
                         expected = json.loads(checkpoints[-1].split(' ', 1)[1])
                         after['material'] = app.tool('stageviz_get_prim_info', {'path': expected['path']})
                         material = json.loads(after['material']['result']['content'][0]['text'])
-                        assert material['defined'] and material['definingLayer'] == expected['layer']
+                        assert material['defined'] and Path(material['definingLayer']) == Path(expected['layer']), (
+                            material, expected)
                     if name == 'testmateriallayerrename' and label != 'cleanup':
                         checkpoints = [line for block in result['result']['content']
                                        for line in block.get('text', '').splitlines()

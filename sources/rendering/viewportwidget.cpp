@@ -89,6 +89,7 @@ public:
     ViewState* viewState() override;
     void close();
     void paintGL();
+    void warmDisplayModes();
     void paintOverlay(QPainter& painter);
     void updateOverlay() override;
     void focusEvent(QMouseEvent* event);
@@ -198,6 +199,8 @@ public:
         bool suppressContextMenu;
         QPoint mousepos;
         QTimer navigationTimer;
+        QTimer displayModeWarmupTimer;
+        bool warmupWaitingForSwap = false;
         ViewportSceneCounts cachedSceneTotals;
         ViewportSceneCounts cachedSelectedTotals;
         bool selectedTotalsDirty = true;
@@ -249,6 +252,16 @@ ViewportWidgetPrivate::init()
     d.overlay->raise();
     d.glwidget->installEventFilter(this);
     connect(d.glwidget, &QOpenGLWidget::frameSwapped, d.overlay, qOverload<>(&QWidget::update));
+    d.displayModeWarmupTimer.setSingleShot(true);
+    d.displayModeWarmupTimer.setInterval(120);
+    connect(d.glwidget, &QOpenGLWidget::frameSwapped, this, [this]() {
+        if (!d.warmupWaitingForSwap)
+            return;
+        d.warmupWaitingForSwap = false;
+        if (!d.displayModeWarmupTimer.isActive())
+            d.displayModeWarmupTimer.start();
+    });
+    connect(&d.displayModeWarmupTimer, &QTimer::timeout, this, &ViewportWidgetPrivate::warmDisplayModes);
     if (QApplication* application = qApp)
         application->installEventFilter(this);
     d.count = 0;
@@ -468,6 +481,8 @@ ViewportWidgetPrivate::viewState()
 void
 ViewportWidgetPrivate::close()
 {
+    d.displayModeWarmupTimer.stop();
+    d.warmupWaitingForSwap = false;
     d.selectionTool->reset();
 
     d.mask.clear();
@@ -506,6 +521,7 @@ void
 ViewportWidgetPrivate::paintGL()
 {
     PerfScope perfScope("viewport.paint");
+    d.warmupWaitingForSwap = false;
     QElapsedTimer timer;
     timer.start();
     if (!d.renderEngine || !d.renderEngine->isInitialized())
@@ -540,13 +556,14 @@ ViewportWidgetPrivate::paintGL()
     {
         READ_LOCKER(locker, d.context->stageLock(), "stageLock");
         if (d.stage)
-            rendered = d.renderEngine->renderToCurrentFramebuffer();
+            rendered = d.renderEngine->renderToCurrentFramebuffer(true);
     }
     if (!mark.IsClean())
         mark.Clear();
     if (!rendered)
         return;
 
+    d.warmupWaitingForSwap = !d.navigating && d.renderEngine->hasDeferredDisplayModeWarmup();
     d.gpuPerformanceMs = gpuTimer.nsecsElapsed() / 1e6;
     const bool converged = d.renderEngine->isConverged();
     d.glwidget->setProperty("renderConverged", converged);
@@ -557,6 +574,30 @@ ViewportWidgetPrivate::paintGL()
     Q_EMIT d.glwidget->renderReady(timer.elapsed());
     if (viewState() && viewState()->performanceStatsEnabled())
         updatePerformanceStats();
+}
+
+void
+ViewportWidgetPrivate::warmDisplayModes()
+{
+    if (d.warmupWaitingForSwap || d.navigating || !d.stage || !d.context || !d.renderEngine || !d.glwidget
+        || !d.glwidget->isVisible() || !d.glwidget->isValid() || !d.renderEngine->hasDeferredDisplayModeWarmup())
+        return;
+
+    QOpenGLContext* previous = QOpenGLContext::currentContext();
+    QSurface* surface = previous ? previous->surface() : nullptr;
+    d.glwidget->makeCurrent();
+    auto restore = qScopeGuard([&]() {
+        d.glwidget->doneCurrent();
+        if (previous && surface)
+            previous->makeCurrent(surface);
+    });
+    if (QOpenGLContext::currentContext() != d.glwidget->QOpenGLWidget::context())
+        return;
+
+    TfErrorMark mark;
+    READ_LOCKER(locker, d.context->stageLock(), "stageLock");
+    d.renderEngine->warmDeferredDisplayModes();
+    mark.Clear();
 }
 
 void

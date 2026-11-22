@@ -9,6 +9,7 @@ Run from the Stageviz Python editor.
 """
 
 import faulthandler
+import hashlib
 import json
 import os
 import platform
@@ -314,6 +315,7 @@ _PERF_WARNINGS = []
 _PERF_ENABLED = True
 _PERF_BASELINE_RESET = False
 _PERF_BASELINE_VERSION = 1
+_PERF_HARDWARE_PROFILES = {'mac_hardware': 'Mac', 'windows_hardware': 'Windows'}
 _PERF_BASELINE_PATH = os.path.join(
     os.path.expanduser("~"),
     ".stageviz",
@@ -492,26 +494,83 @@ def _mac_hardware_profile():
     }
 
 
+def _windows_hardware_profile():
+    """Capture the local Windows installation and stable hardware configuration."""
+    import winreg
+
+    command = r"""
+$ErrorActionPreference = 'Stop'
+[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
+$system = Get-CimInstance Win32_ComputerSystem -Property Model
+$processors = Get-CimInstance Win32_Processor -Property Name,NumberOfCores,NumberOfLogicalProcessors
+$memory = Get-CimInstance Win32_PhysicalMemory -Property Capacity
+$graphics = Get-CimInstance Win32_VideoController -Property Name
+[ordered]@{
+    model = $system.Model
+    cpus = @($processors | ForEach-Object {
+        @{ model = $_.Name; physical_cores = $_.NumberOfCores; logical_cores = $_.NumberOfLogicalProcessors }
+    })
+    memory_bytes = [uint64](($memory | Measure-Object Capacity -Sum).Sum)
+    gpus = @($graphics | ForEach-Object { $_.Name })
+} | ConvertTo-Json -Depth 4 -Compress
+"""
+    powershell = os.path.join(os.environ.get('SystemRoot', r'C:\Windows'), 'System32',
+                              'WindowsPowerShell', 'v1.0', 'powershell.exe')
+    try:
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r'SOFTWARE\Microsoft\Cryptography',
+                            access=winreg.KEY_READ | winreg.KEY_WOW64_64KEY) as key:
+            machine_guid = winreg.QueryValueEx(key, 'MachineGuid')[0].strip().lower()
+        output = subprocess.check_output(
+            [powershell, '-NoProfile', '-NonInteractive', '-Command', command],
+            encoding='utf-8', stderr=subprocess.DEVNULL, timeout=30, creationflags=subprocess.CREATE_NO_WINDOW,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise RuntimeError(f'could not read Windows hardware: {exc}') from exc
+
+    profile = json.loads(output)
+    model = (profile['model'] or '').strip()
+    cpus = profile['cpus']
+    for cpu in cpus:
+        cpu['model'] = (cpu['model'] or '').strip()
+        if not cpu['model'] or not (0 < cpu['physical_cores'] <= cpu['logical_cores']):
+            raise ValueError('incomplete Windows CPU hardware')
+    gpus = [(name or '').strip() for name in profile['gpus']]
+    architecture = platform.machine()
+    if not (machine_guid and model and architecture and cpus and gpus and all(gpus) and profile['memory_bytes'] > 0):
+        raise ValueError('incomplete Windows hardware profile')
+    return {
+        'version': 1,
+        'machine_id': hashlib.sha256(('stageviz-windows:' + machine_guid).encode('utf-8')).hexdigest(),
+        'model': model,
+        'cpus': sorted(cpus, key=lambda cpu: (cpu['model'], cpu['physical_cores'], cpu['logical_cores'])),
+        'memory_bytes': profile['memory_bytes'],
+        'architecture': architecture,
+        'gpus': sorted(gpus),
+    }
+
+
 def _performance_environment():
     environment = {
         "platform": platform.platform(),
         "machine": platform.machine(),
         "python": sys.version.split()[0],
     }
-    if platform.system() == 'Darwin':
+    system = platform.system()
+    if system == 'Darwin':
         environment['mac_hardware'] = _mac_hardware_profile()
+    elif system == 'Windows':
+        environment['windows_hardware'] = _windows_hardware_profile()
     return environment
 
 
 def _performance_hardware_error(baseline_environment, current_environment):
-    current = current_environment.get('mac_hardware')
-    previous = baseline_environment.get('mac_hardware')
-    if current is None and previous is None:
-        return None
-    if previous is None:
-        return 'baseline has no Mac hardware profile; adopt it explicitly on its original Mac or use a new baseline'
-    if previous != current:
-        return 'Mac hardware profile mismatch; use a baseline recorded for the same hardware configuration'
+    for key, label in _PERF_HARDWARE_PROFILES.items():
+        current = current_environment.get(key)
+        previous = baseline_environment.get(key)
+        if previous is None and current is not None:
+            return f'baseline has no {label} hardware profile; use a baseline recorded on its original hardware'
+        if previous != current:
+            return f'{label} hardware profile mismatch; use a baseline recorded for the same hardware profile'
     return None
 
 
@@ -688,8 +747,9 @@ def _print_performance_summary(
         _PERF_FAILURES.append(f"could not identify performance hardware: {exc}")
         print(f"[PERF FAIL] {_PERF_FAILURES[-1]}; baseline was not compared or written.")
         return False
-    if 'mac_hardware' in current_environment:
-        print('Mac hardware profile: ' + json.dumps(current_environment['mac_hardware'], sort_keys=True))
+    for key, label in _PERF_HARDWARE_PROFILES.items():
+        if key in current_environment:
+            print(f'{label} hardware profile: ' + json.dumps(current_environment[key], sort_keys=True))
 
     if _PERF_BASELINE_RESET:
         if not functional_passed:
@@ -736,11 +796,14 @@ def _print_performance_summary(
     if hardware_error:
         _PERF_FAILURES.append(hardware_error)
         print(f"[PERF FAIL] {hardware_error}; baseline was not compared or overwritten.")
-        print(f"  baseline hardware: {baseline_environment.get('mac_hardware')}")
-        print(f"  current hardware:  {current_environment.get('mac_hardware')}")
+        for key in _PERF_HARDWARE_PROFILES:
+            if key in baseline_environment or key in current_environment:
+                print(f"  baseline {key}: {baseline_environment.get(key)}")
+                print(f"  current {key}:  {current_environment.get(key)}")
         return False
-    if 'mac_hardware' in current_environment:
-        print('Mac hardware profile matches baseline.')
+    for key, label in _PERF_HARDWARE_PROFILES.items():
+        if key in current_environment:
+            print(f'{label} hardware profile matches baseline.')
 
     if baseline_environment and baseline_environment != current_environment:
         print("[PERF WARN] baseline environment differs from current environment.")

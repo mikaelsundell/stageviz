@@ -17,8 +17,8 @@ def performance_namespace():
     # stdlib imports, performance state and helpers; never execute its app setup.
     source = Path(__file__).with_name('python') / 'testapi.py'
     tree = ast.parse(source.read_text(encoding='utf-8'), filename=str(source))
-    imports = {'json', 'os', 'platform', 'statistics', 'subprocess', 'sys', 'time'}
-    functions = {'_mac_hardware_profile', '_performance_environment', '_performance_hardware_error',
+    imports = {'hashlib', 'json', 'os', 'platform', 'statistics', 'subprocess', 'sys', 'time'}
+    functions = {'_mac_hardware_profile', '_windows_hardware_profile', '_performance_environment', '_performance_hardware_error',
                  '_load_performance_baseline', '_save_performance_baseline', '_performance_level',
                  '_format_performance_delta', '_compare_performance_metric', '_compare_performance',
                  '_print_performance_summary'}
@@ -52,6 +52,8 @@ class PerformanceBaselineTest(unittest.TestCase):
         }
         self.environment = {'platform': 'macOS-test-arm64', 'machine': 'arm64', 'python': '3.test',
                             'mac_hardware': self.profile}
+        self.windows = {'platform': 'Windows-test', 'machine': 'AMD64', 'python': '3.test',
+                        'windows_hardware': {'version': 1, 'machine_id': 'test-machine'}}
 
     def probe(self, devices=None, values=None):
         values = values or {'hw.model': 'MacBookPro18,1', 'machdep.cpu.brand_string': 'Apple M1 Pro',
@@ -107,10 +109,15 @@ class PerformanceBaselineTest(unittest.TestCase):
                 mock.patch.object(self.ns['platform'], 'system', return_value='Darwin'):
             self.assertEqual(self.ns['_performance_environment']()['mac_hardware'], self.profile)
         collector.reset_mock()
-        with mock.patch.dict(self.ns, {'_mac_hardware_profile': collector}), \
+        windows_collector = mock.Mock(return_value=self.windows['windows_hardware'])
+        with mock.patch.dict(self.ns, {'_mac_hardware_profile': collector,
+                                       '_windows_hardware_profile': windows_collector}), \
                 mock.patch.object(self.ns['platform'], 'system', return_value='Windows'):
-            self.assertNotIn('mac_hardware', self.ns['_performance_environment']())
+            environment = self.ns['_performance_environment']()
+            self.assertNotIn('mac_hardware', environment)
+            self.assertEqual(environment['windows_hardware'], self.windows['windows_hardware'])
         collector.assert_not_called()
+        windows_collector.assert_called_once_with()
 
     def test_matching_hardware_retains_performance_comparison(self):
         passed, message = self.summary(self.baseline())
@@ -173,13 +180,52 @@ class PerformanceBaselineTest(unittest.TestCase):
         self.assertTrue(passed)
         self.assertIn('baseline environment differs', message)
 
-    def test_windows_baselines_keep_existing_behavior(self):
-        environment = {'platform': 'Windows-test', 'machine': 'AMD64', 'python': '3.test'}
-        self.assertTrue(self.summary(self.baseline(environment), environment)[0])
+    def test_windows_hardware_capture(self):
+        registry = mock.MagicMock()
+        registry.KEY_READ, registry.KEY_WOW64_64KEY = 1, 2
+        registry.QueryValueEx.return_value = ('original-machine-id', 1)
+        payload = {'model': 'Test Laptop', 'cpus': [{'model': 'Test CPU', 'physical_cores': 4, 'logical_cores': 8}],
+                   'gpus': ['Discrete GPU', 'Built-in GPU'], 'memory_bytes': 16 * 1024 ** 3}
+        with mock.patch.dict(self.ns['sys'].modules, {'winreg': registry}), \
+                mock.patch.object(self.ns['subprocess'], 'CREATE_NO_WINDOW', 0, create=True), \
+                mock.patch.object(self.ns['subprocess'], 'check_output', return_value=json.dumps(payload)) as probe:
+            profile = self.ns['_windows_hardware_profile']()
+            self.assertEqual(profile['gpus'], ['Built-in GPU', 'Discrete GPU'])
+            self.assertEqual(profile['cpus'], payload['cpus'])
+            self.assertEqual(profile['memory_bytes'], payload['memory_bytes'])
+            self.assertNotIn('original-machine-id', json.dumps(profile))
+            self.assertEqual(len(profile['machine_id']), 64)
+            self.assertEqual(probe.call_args.kwargs['timeout'], 30)
+            payload['gpus'].reverse()
+            probe.return_value = json.dumps(payload)
+            self.assertEqual(self.ns['_windows_hardware_profile'](), profile)
+            registry.QueryValueEx.return_value = ('another-machine-id', 1)
+            self.assertNotEqual(self.ns['_windows_hardware_profile']()['machine_id'], profile['machine_id'])
+            payload['gpus'].clear()
+            probe.return_value = json.dumps(payload)
+            with self.assertRaisesRegex(ValueError, 'incomplete Windows hardware'):
+                self.ns['_windows_hardware_profile']()
+
+    def test_windows_baseline_requires_the_same_profile(self):
+        self.assertTrue(self.summary(None, self.windows)[0])
+        saved = self.path.read_text()
+        baseline = self.ns['_load_performance_baseline']()
+        self.assertEqual(baseline['environment'], self.windows)
+        self.assertIn('Windows hardware profile matches baseline.', self.summary(baseline, self.windows)[1])
+        for hardware in (None, {'version': 1, 'machine_id': 'other-machine'}):
+            with self.subTest(hardware=hardware):
+                previous = copy.deepcopy(baseline)
+                if hardware is None:
+                    del previous['environment']['windows_hardware']
+                else:
+                    previous['environment']['windows_hardware'] = hardware
+                with mock.patch.dict(self.ns, {'_compare_performance': mock.Mock(
+                        side_effect=AssertionError('must not compare'))}):
+                    self.assertFalse(self.summary(previous, self.windows)[0])
+                self.assertEqual(self.path.read_text(), saved)
 
     def test_mac_baseline_cannot_be_compared_on_windows(self):
-        environment = {'platform': 'Windows-test', 'machine': 'AMD64', 'python': '3.test'}
-        self.assertFalse(self.summary(self.baseline(), environment)[0])
+        self.assertFalse(self.summary(self.baseline(), self.windows)[0])
 
     def test_explicit_reset_still_requires_functional_success(self):
         self.ns['_PERF_BASELINE_RESET'] = True

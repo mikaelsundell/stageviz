@@ -145,15 +145,31 @@ class IsolationInstancesTest:
         tb.process_events(100)
         frame = stageviz.render().capture()
         target = frame.paths().index(a + "/Body")
-        pixels = [i for i, value in enumerate(memoryview(frame.objectIds()).cast("i")) if value == target]
-        assert pixels
-        pixel = pixels[len(pixels) // 2]
-        width, _ = frame.size()
+        ids = memoryview(frame.objectIds()).cast("i")
+        width, height = frame.size()
         viewport = next(widget for widget in tb.all_widgets()
                         if widget.objectName() == "imagingGLWidget" and widget.isVisible())
         QtCore, _, QtTest, _ = tb.qt()
         ratio = viewport.devicePixelRatioF()
-        point = QtCore.QPoint(int((pixel % width) / ratio), int((pixel // width) / ratio))
+        logical_width, logical_height = viewport.width(), viewport.height()
+        # A Qt mouse event uses integer logical coordinates. At fractional DPI
+        # scaling, a capture pixel at the edge can round onto the background.
+        clickable = []
+        for index, value in enumerate(ids):
+            if value != target:
+                continue
+            y, x = divmod(index, width)
+            logical_x, logical_y = round(x / ratio), round(y / ratio)
+            if logical_x >= logical_width or logical_y >= logical_height:
+                continue
+            device_x, device_y = int(logical_x * ratio + 0.5), int(logical_y * ratio + 0.5)
+            if device_x < width and device_y < height and ids[device_y * width + device_x] == target:
+                clickable.append((logical_x, logical_y))
+        assert clickable, "isolated object covers no clickable viewport pixels"
+        center_x = sum(x for x, _ in clickable) / len(clickable)
+        center_y = sum(y for _, y in clickable) / len(clickable)
+        x, y = min(clickable, key=lambda point: (point[0] - center_x) ** 2 + (point[1] - center_y) ** 2)
+        point = QtCore.QPoint(x, y)
         QtTest.QTest.mouseClick(viewport, QtCore.Qt.MouseButton.LeftButton,
                                QtCore.Qt.KeyboardModifier.NoModifier, point)
         assert tb.wait_until(lambda: list(self.session.paths()) == [a + "/Body"]), (

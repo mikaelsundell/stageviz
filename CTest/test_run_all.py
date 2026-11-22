@@ -80,6 +80,17 @@ class TestRunner(unittest.TestCase):
         self.assertIn('STAGEVIZ_TEST_SETTINGS_DIR', calls[2][1])
         self.assertIn('--port', calls[3][0])
 
+    def test_configured_cmake_takes_precedence_over_path(self):
+        suffix = '.exe' if run_all.sys.platform == 'win32' else ''
+        cmake = self.directory / ('cmake' + suffix)
+        ctest = self.directory / ('ctest' + suffix)
+        cmake.touch()
+        ctest.touch()
+        (self.build / 'CMakeCache.txt').write_text(f'CMAKE_COMMAND:INTERNAL={cmake.as_posix()}\n')
+        with mock.patch.object(run_all.shutil, 'which', return_value='other-cmake') as lookup:
+            self.assertEqual(run_all.tools(self.build), (str(cmake.resolve()), str(ctest.resolve())))
+        lookup.assert_not_called()
+
     def test_development_run_overrides_cached_deployment_mode(self):
         (self.build / 'CMakeCache.txt').write_text('DEPLOY_BUILD:BOOL=ON\n')
         row, calls = self.plan([0, 0, 0, 0])

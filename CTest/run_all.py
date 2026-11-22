@@ -49,7 +49,10 @@ def executable(directory, configuration, platform=None):
 
 
 def tools(directory, cmake_override=None):
-    cmake = cmake_override or shutil.which('cmake') or cache_value(directory, 'CMAKE_COMMAND')
+    cached_cmake = cache_value(directory, 'CMAKE_COMMAND')
+    cmake = cmake_override
+    if not cmake:
+        cmake = cached_cmake if cached_cmake and Path(cached_cmake).is_file() else shutil.which('cmake')
     if not cmake or not Path(cmake).is_file():
         raise RuntimeError('CMake is required. Put it on PATH or pass --cmake PATH.')
     suffix = '.exe' if sys.platform == 'win32' else ''

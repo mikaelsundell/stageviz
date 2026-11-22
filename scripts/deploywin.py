@@ -45,6 +45,7 @@ excluded_dlls = {  # lowercase
     "ntdll.dll",
     "ole32.dll",
     "oleaut32.dll",
+    "opengl32.dll",  # Qt and Hydra must use the same Windows OpenGL runtime.
     "rpcrt4.dll",
     "secur32.dll",
     "setupapi.dll",

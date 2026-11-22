@@ -31,6 +31,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <pxr/base/gf/rotation.h>
 #include <pxr/base/gf/vec2d.h>
 #include <pxr/base/vt/array.h>
@@ -609,6 +610,13 @@ namespace {
 
 class RenderEngine::Private {
 public:
+    struct DisplayModeWarmup {
+        UsdStageRefPtr stage;
+        SdfPathVector paths;
+        UsdImagingGLRenderParams params;
+        RenderTaskParams taskParams;
+    };
+
     explicit Private(ContextMode mode) { d.contextMode = mode; }
 
     bool ensureCurrentContext();
@@ -627,11 +635,18 @@ public:
     void resolveSelection();
     RenderTaskParams makeRenderTaskParams(const SdfPathVector& renderPaths, const GfVec4d& renderViewport);
     void warmDocument(const UsdStageRefPtr& renderStage, const SdfPathVector& renderPaths,
-                      const UsdImagingGLRenderParams& documentParams, const RenderTaskParams& renderTaskParams);
+                      const UsdImagingGLRenderParams& documentParams, const RenderTaskParams& renderTaskParams,
+                      bool deferDisplayModeWarmup);
+    void prepareDisplayModes(ImagingGLEngine& target, const UsdStageRefPtr& stage, const SdfPathVector& paths,
+                             const UsdImagingGLRenderParams& params, const RenderTaskParams& taskParams,
+                             std::optional<DisplayModeWarmup>* deferred);
+    void runDisplayModeWarmup(ImagingGLEngine& target, const DisplayModeWarmup& warmup);
+    void warmDeferredDisplayModes();
     bool warmGizmo(const UsdImagingGLRenderParams& gizmoParams, const GfMatrix4d& gizmoTransform);
     void collectCaptures(const RenderTaskParams& renderTaskParams);
-    bool renderOverlays(const UsdImagingGLRenderParams& documentParams, const GfMatrix4d& viewMatrix);
-    bool render();
+    bool renderOverlays(const UsdImagingGLRenderParams& documentParams, const GfMatrix4d& viewMatrix,
+                        bool deferDisplayModeWarmup);
+    bool render(bool deferDisplayModeWarmup);
 
     struct Data {
         ContextMode contextMode = ContextMode::Current;
@@ -642,6 +657,9 @@ public:
         UsdStageWeakPtr imagingStage;
         UsdStageWeakPtr cachedImagingStage;
         uint64_t documentWarmupSourceVersion = 0;
+        uint64_t deferredWarmupSourceVersion = 0;
+        std::optional<DisplayModeWarmup> deferredDocumentWarmup;
+        std::optional<DisplayModeWarmup> deferredAuxiliaryWarmup;
         UsdStageRefPtr auxiliary;
         GfCamera camera;
         GfVec2i size = GfVec2i(512, 512);
@@ -794,6 +812,8 @@ RenderEngine::Private::initialize()
 void
 RenderEngine::Private::resetEngine(bool resetAuxiliary)
 {
+    d.deferredDocumentWarmup.reset();
+    d.deferredAuxiliaryWarmup.reset();
     if (!d.engine && !d.cachedEngine && !d.auxiliaryEngine && !d.gizmoEngine)
         return;
 
@@ -831,6 +851,8 @@ RenderEngine::Private::resetEngine(bool resetAuxiliary)
 void
 RenderEngine::Private::reset()
 {
+    d.deferredDocumentWarmup.reset();
+    d.deferredAuxiliaryWarmup.reset();
     d.gizmoRendered = false;
     d.gizmoWarmed = false;
     if (d.contextMode == ContextMode::Offscreen) {
@@ -1324,9 +1346,33 @@ RenderEngine::Private::makeRenderTaskParams(const SdfPathVector& renderPaths, co
 }
 
 void
+RenderEngine::Private::prepareDisplayModes(ImagingGLEngine& target, const UsdStageRefPtr& stage,
+                                           const SdfPathVector& paths, const UsdImagingGLRenderParams& params,
+                                           const RenderTaskParams& taskParams,
+                                           std::optional<DisplayModeWarmup>* deferred)
+{
+    if (target.displayModesPrepared(paths, params))
+        return;
+    if (deferred)
+        deferred->emplace(DisplayModeWarmup { stage, paths, params, taskParams });
+    else
+        target.warmDisplayModes(stage, paths, params, taskParams);
+}
+
+void
+RenderEngine::Private::runDisplayModeWarmup(ImagingGLEngine& target, const DisplayModeWarmup& warmup)
+{
+    if (Hgi* hgi = target.hgi()) {
+        hgi->StartFrame();
+        target.warmDisplayModes(warmup.stage, warmup.paths, warmup.params, warmup.taskParams);
+        hgi->EndFrame();
+    }
+}
+
+void
 RenderEngine::Private::warmDocument(const UsdStageRefPtr& renderStage, const SdfPathVector& renderPaths,
                                     const UsdImagingGLRenderParams& documentParams,
-                                    const RenderTaskParams& renderTaskParams)
+                                    const RenderTaskParams& renderTaskParams, bool deferDisplayModeWarmup)
 {
     if (renderTaskParams.prepareSelection
         && (documentParams.drawMode == UsdImagingGLDrawMode::DRAW_SHADED_SMOOTH
@@ -1339,8 +1385,9 @@ RenderEngine::Private::warmDocument(const UsdStageRefPtr& renderStage, const Sdf
             && d.cachedEngine->displayModesPrepared(renderPaths, documentParams))
             d.engine->markDisplayModesPrepared(renderPaths, documentParams);
         else
-            d.engine->warmDisplayModes(renderStage, renderPaths, documentParams, renderTaskParams);
-        if (!d.isolation.active())
+            prepareDisplayModes(*d.engine, renderStage, renderPaths, documentParams, renderTaskParams,
+                                deferDisplayModeWarmup ? &d.deferredDocumentWarmup : nullptr);
+        if (!d.isolation.active() && !d.deferredDocumentWarmup)
             d.documentWarmupSourceVersion = d.isolation.sourceVersion();
     }
 }
@@ -1419,7 +1466,8 @@ RenderEngine::Private::collectCaptures(const RenderTaskParams& renderTaskParams)
 }
 
 bool
-RenderEngine::Private::renderOverlays(const UsdImagingGLRenderParams& documentParams, const GfMatrix4d& viewMatrix)
+RenderEngine::Private::renderOverlays(const UsdImagingGLRenderParams& documentParams, const GfMatrix4d& viewMatrix,
+                                      bool deferDisplayModeWarmup)
 {
     // Render viewport support geometry after Look processing. The dedicated
     // pass keeps /Display out of document AO/depth while preserving Stageviz
@@ -1443,14 +1491,20 @@ RenderEngine::Private::renderOverlays(const UsdImagingGLRenderParams& documentPa
         auxiliaryHgi->StartFrame();
         d.auxiliaryEngine->PrepareBatch(auxiliaryRoot, auxiliaryParams);
         updateAuxiliaryRenderSceneIndex();
-        if (d.settings.aov == HdAovTokens->color
-            && (auxiliaryParams.drawMode == UsdImagingGLDrawMode::DRAW_SHADED_SMOOTH
-                || auxiliaryParams.drawMode == UsdImagingGLDrawMode::DRAW_WIREFRAME_ON_SURFACE))
-            d.auxiliaryEngine->warmDisplayModes(d.auxiliary, { paths::auxiliary::display }, auxiliaryParams, {});
+        const bool prepareAuxiliaryModes = d.settings.aov == HdAovTokens->color
+                                           && (auxiliaryParams.drawMode == UsdImagingGLDrawMode::DRAW_SHADED_SMOOTH
+                                               || auxiliaryParams.drawMode
+                                                      == UsdImagingGLDrawMode::DRAW_WIREFRAME_ON_SURFACE);
+        if (prepareAuxiliaryModes && !deferDisplayModeWarmup)
+            prepareDisplayModes(*d.auxiliaryEngine, d.auxiliary, { paths::auxiliary::display }, auxiliaryParams, {},
+                                nullptr);
         const SdfPath gizmoPath = paths::auxiliary::transform;
         // Draw the gizmo only in its dedicated smooth-shaded, depth-cleared
         // pass. The broader /Display collection otherwise draws it twice.
         d.auxiliaryEngine->renderBatch({ paths::auxiliary::display }, auxiliaryParams, { gizmoPath });
+        if (prepareAuxiliaryModes && deferDisplayModeWarmup)
+            prepareDisplayModes(*d.auxiliaryEngine, d.auxiliary, { paths::auxiliary::display }, auxiliaryParams, {},
+                                &d.deferredAuxiliaryWarmup);
 
         if (d.gizmoEngine && d.auxiliary->GetPrimAtPath(gizmoPath)) {
             PerfScope gizmoScope("gizmo.render_cpu");
@@ -1492,9 +1546,11 @@ RenderEngine::Private::renderOverlays(const UsdImagingGLRenderParams& documentPa
 }
 
 bool
-RenderEngine::Private::render()
+RenderEngine::Private::render(bool deferDisplayModeWarmup)
 {
     PerfScope perfScope("hydra.render_cpu");
+    d.deferredDocumentWarmup.reset();
+    d.deferredAuxiliaryWarmup.reset();
     if (!d.stage || d.size[0] <= 0 || d.size[1] <= 0)
         return false;
 
@@ -1543,14 +1599,18 @@ RenderEngine::Private::render()
     // prim type. Both beauty and scene-ID passes render that complete input.
     const SdfPathVector renderPaths { root.GetPath() };
     const RenderTaskParams renderTaskParams = makeRenderTaskParams(renderPaths, renderViewport);
-    warmDocument(renderStage, renderPaths, documentParams, renderTaskParams);
+    if (!deferDisplayModeWarmup)
+        warmDocument(renderStage, renderPaths, documentParams, renderTaskParams, false);
     d.engine->renderBatchWithRenderTask(renderPaths, documentParams, renderTaskParams);
+    if (deferDisplayModeWarmup)
+        warmDocument(renderStage, renderPaths, documentParams, renderTaskParams, true);
 
     collectCaptures(renderTaskParams);
 
     documentHgi->EndFrame();
 
-    return renderOverlays(documentParams, viewMatrix);
+    d.deferredWarmupSourceVersion = d.isolation.sourceVersion();
+    return renderOverlays(documentParams, viewMatrix, deferDisplayModeWarmup);
 }
 
 RenderEngine::RenderEngine(ContextMode mode)
@@ -1753,7 +1813,7 @@ RenderEngine::setSecondarySelectionColor(const QColor& color)
 }
 
 bool
-RenderEngine::renderToCurrentFramebuffer()
+RenderEngine::renderToCurrentFramebuffer(bool deferDisplayModeWarmup)
 {
     if (!QOpenGLContext::currentContext())
         return false;
@@ -1782,7 +1842,37 @@ RenderEngine::renderToCurrentFramebuffer()
                static_cast<GLsizei>(viewport[3]));
 #endif  // WIN32
 
-    return p->render();
+    return p->render(deferDisplayModeWarmup);
+}
+
+bool
+RenderEngine::hasDeferredDisplayModeWarmup() const
+{
+    return p->d.deferredDocumentWarmup.has_value() || p->d.deferredAuxiliaryWarmup.has_value();
+}
+
+void
+RenderEngine::Private::warmDeferredDisplayModes()
+{
+    auto document = std::exchange(d.deferredDocumentWarmup, std::nullopt);
+    auto auxiliary = std::exchange(d.deferredAuxiliaryWarmup, std::nullopt);
+    if (!QOpenGLContext::currentContext() || d.deferredWarmupSourceVersion != d.isolation.sourceVersion())
+        return;
+
+    PerfScope scope("viewport.display_modes.deferred");
+    if (document && d.engine && document->stage == d.imagingStage) {
+        runDisplayModeWarmup(*d.engine, *document);
+        if (!d.isolation.active() && d.engine->displayModesPrepared(document->paths, document->params))
+            d.documentWarmupSourceVersion = d.deferredWarmupSourceVersion;
+    }
+    if (auxiliary && d.auxiliaryEngine && auxiliary->stage == d.auxiliary)
+        runDisplayModeWarmup(*d.auxiliaryEngine, *auxiliary);
+}
+
+void
+RenderEngine::warmDeferredDisplayModes()
+{
+    p->warmDeferredDisplayModes();
 }
 
 bool

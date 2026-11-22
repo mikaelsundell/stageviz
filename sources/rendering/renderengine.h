@@ -270,12 +270,27 @@ public:
     /**
      * @brief Renders into the framebuffer of the current OpenGL context.
      *
+     * @param deferDisplayModeWarmup Queue hidden display-mode preparation until after presentation.
      * @return True if a render pass was submitted.
      *
      * This is the path used by ViewportWidget. The caller is responsible for
      * making its OpenGL context and target framebuffer current before calling.
      */
-    bool renderToCurrentFramebuffer();
+    bool renderToCurrentFramebuffer(bool deferDisplayModeWarmup = false);
+
+    /**
+     * @brief Reports whether the last frame queued hidden display-mode preparation.
+     *
+     * @return True if preparation is pending.
+     */
+    bool hasDeferredDisplayModeWarmup() const;
+
+    /**
+     * @brief Prepares alternate display modes after the current frame is presented.
+     *
+     * The caller holds the stage read lock and has made the viewport context current.
+     */
+    void warmDeferredDisplayModes();
 
     /**
      * @brief Returns whether rendering and renderer maintenance have settled.
