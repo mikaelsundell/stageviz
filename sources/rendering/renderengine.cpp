@@ -1589,9 +1589,12 @@ RenderEngine::Private::render(bool deferDisplayModeWarmup)
         return false;
 
     documentHgi->StartFrame();
-    d.engine->PrepareBatch(root, documentParams);
-    updateDocumentRenderSceneIndex();
-    refreshMaterials();
+    {
+        PerfScope scope("hydra.document_prepare");
+        d.engine->PrepareBatch(root, documentParams);
+        updateDocumentRenderSceneIndex();
+        refreshMaterials();
+    }
 
     resolveSelection();
 
@@ -1601,7 +1604,10 @@ RenderEngine::Private::render(bool deferDisplayModeWarmup)
     const RenderTaskParams renderTaskParams = makeRenderTaskParams(renderPaths, renderViewport);
     if (!deferDisplayModeWarmup)
         warmDocument(renderStage, renderPaths, documentParams, renderTaskParams, false);
-    d.engine->renderBatchWithRenderTask(renderPaths, documentParams, renderTaskParams);
+    {
+        PerfScope scope("hydra.document_draw");
+        d.engine->renderBatchWithRenderTask(renderPaths, documentParams, renderTaskParams);
+    }
     if (deferDisplayModeWarmup)
         warmDocument(renderStage, renderPaths, documentParams, renderTaskParams, true);
 
@@ -1610,6 +1616,7 @@ RenderEngine::Private::render(bool deferDisplayModeWarmup)
     documentHgi->EndFrame();
 
     d.deferredWarmupSourceVersion = d.isolation.sourceVersion();
+    PerfScope overlayScope("hydra.overlays");
     return renderOverlays(documentParams, viewMatrix, deferDisplayModeWarmup);
 }
 

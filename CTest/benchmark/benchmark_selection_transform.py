@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: BSD-3-Clause
-"""Real-data sweep/invert/gizmo input benchmark; launch once through external MCP."""
+"""Sweep, invert and gizmo benchmark using a caller-provided USD layer."""
 import contextlib,hashlib,io,json,os,runpy,time,random
 from pathlib import Path
 import stageviz
@@ -13,7 +13,7 @@ Base=support['StormLayerBenchmark']
 class SelectionBenchmark(Base):
     def __init__(self,config):
         self.original_config=dict(config)
-        super().__init__({**config,'phases':['empty','add_front']})
+        super().__init__({**config,'phases':['empty','add_layer_1']})
         operations=['sweep_cold','clear_selection','sweep_warm','invert_selection','undo_invert',
                     'move_gizmo','drag_press','drag_step_1','drag_step_2','drag_release',
                     'undo_drag','redo_drag','restore_drag','reload_baseline']
@@ -89,7 +89,7 @@ class SelectionBenchmark(Base):
 
     def start(self):
         next_phase=self.phases[len(self.results)][0]
-        if next_phase in ('empty','add_front'):return super().start()
+        if next_phase in ('empty','add_layer_1'):return super().start()
         self.current,self.kind=self.phases[len(self.results)]
         self.frames=[];self.dispatched=False;self.prims_ready_ms=None;self.framing_ms=0
         self.active=True;self.no_render=False;self.tracing=False;self.framed=True
@@ -173,7 +173,7 @@ class SelectionBenchmark(Base):
 
     def expected(self):
         phase=self.current;paths=list(stageviz.session().paths())
-        if phase in ('empty','add_front'):return super().expected()
+        if phase in ('empty','add_layer_1'):return super().expected()
         if phase=='seed_selection':return paths==self.seed
         if phase=='existing_xform_selection':return paths==[self.control_target]
         if phase.startswith('sweep_'):return bool(paths)
@@ -197,7 +197,7 @@ class SelectionBenchmark(Base):
         super().finish()
         row=self.results[-1];phase=self.current;session=stageviz.session()
         paths=list(session.paths());widget=self.viewport()
-        if phase=='add_front':
+        if phase=='add_layer_1':
             context=widget.context()
             (self.directory/'gl-context.json').write_text(json.dumps({'valid':widget.isValid(),'context':str(context),
                 'version':[context.format().majorVersion(),context.format().minorVersion()] if context else None}))

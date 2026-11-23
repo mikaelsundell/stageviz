@@ -54,6 +54,7 @@
 #include <QTimer>
 #include <algorithm>
 #include <cmath>
+#include <deque>
 #include <pxr/base/tf/error.h>
 #include <pxr/usd/usd/primRange.h>
 #include <pxr/usd/usdGeom/camera.h>
@@ -88,7 +89,7 @@ public:
     ViewCamera* viewCamera() override;
     ViewState* viewState() override;
     void close();
-    void paintGL();
+    void paintGL(bool viewportPaint = false);
     void warmDisplayModes();
     void paintOverlay(QPainter& painter);
     void updateOverlay() override;
@@ -133,8 +134,12 @@ public:
     void drawBorder(QPainter& painter);
     void updateSceneStats();
     void updatePerformanceStats();
+    void recordFramePresentation();
+    void resetFrameRate();
 
 public:
+    static constexpr int frameRateWindowMs = 1000;
+
     class OverlayWidget : public QWidget {
     public:
         explicit OverlayWidget(ViewportWidgetPrivate* owner, QWidget* parent)
@@ -189,7 +194,11 @@ public:
     struct Data {
         size_t count;
         qint64 frame;
-        double gpuPerformanceMs;
+        double renderPerformanceMs;
+        QElapsedTimer framePresentationClock;
+        QTimer frameRateIdleTimer;
+        std::deque<qint64> framePresentations;
+        bool frameAwaitingPresentation = false;
         double timeCode;
         float defaultAmbient;
         float defaultSpecular;
@@ -207,6 +216,7 @@ public:
         bool sceneTotalsDirty = true;
         QImage sceneStats;
         QImage performanceStats;
+        QString graphicsRenderer;
         GfBBox3d selectionBBox;
         UsdStageRefPtr stage;
         QScopedPointer<ViewportAuxiliary> auxiliary;
@@ -251,7 +261,15 @@ ViewportWidgetPrivate::init()
     d.overlay->show();
     d.overlay->raise();
     d.glwidget->installEventFilter(this);
+    connect(d.glwidget, &QOpenGLWidget::frameSwapped, this, &ViewportWidgetPrivate::recordFramePresentation);
     connect(d.glwidget, &QOpenGLWidget::frameSwapped, d.overlay, qOverload<>(&QWidget::update));
+    d.frameRateIdleTimer.setSingleShot(true);
+    d.frameRateIdleTimer.setInterval(frameRateWindowMs);
+    connect(&d.frameRateIdleTimer, &QTimer::timeout, this, [this]() {
+        resetFrameRate();
+        updatePerformanceStats();
+        updateOverlay();
+    });
     d.displayModeWarmupTimer.setSingleShot(true);
     d.displayModeWarmupTimer.setInterval(120);
     connect(d.glwidget, &QOpenGLWidget::frameSwapped, this, [this]() {
@@ -266,7 +284,7 @@ ViewportWidgetPrivate::init()
         application->installEventFilter(this);
     d.count = 0;
     d.frame = 0;
-    d.gpuPerformanceMs = 0.0;
+    d.renderPerformanceMs = 0.0;
     d.timeCode = 0.0;
     d.defaultAmbient = 0.4f;
     d.defaultSpecular = 0.5f;
@@ -437,6 +455,7 @@ ViewportWidgetPrivate::initContext()
         updateOverlay();
     });
     connect(viewState(), &ViewState::performanceStatsEnabledChanged, this, [this](bool enabled) {
+        resetFrameRate();
         if (enabled)
             updatePerformanceStats();
         else
@@ -499,6 +518,8 @@ ViewportWidgetPrivate::close()
     d.sceneTotalsDirty = true;
     d.sceneStats = QImage();
     d.performanceStats = QImage();
+    d.renderPerformanceMs = 0.0;
+    resetFrameRate();
     d.bbox = GfBBox3d();
     d.selectionBBox = GfBBox3d();
     d.drag = false;
@@ -518,9 +539,11 @@ ViewportWidgetPrivate::close()
 }
 
 void
-ViewportWidgetPrivate::paintGL()
+ViewportWidgetPrivate::paintGL(bool viewportPaint)
 {
     PerfScope perfScope("viewport.paint");
+    if (viewportPaint)
+        d.frameAwaitingPresentation = false;
     d.warmupWaitingForSwap = false;
     QElapsedTimer timer;
     timer.start();
@@ -549,8 +572,8 @@ ViewportWidgetPrivate::paintGL()
     d.renderEngine->setSecondarySelectionColor(ui()->color(UI::ColorRole::SelectionAlt));
     updateRenderEngineSettings();
 
-    QElapsedTimer gpuTimer;
-    gpuTimer.start();
+    QElapsedTimer renderTimer;
+    renderTimer.start();
     TfErrorMark mark;
     bool rendered = false;
     {
@@ -564,16 +587,46 @@ ViewportWidgetPrivate::paintGL()
         return;
 
     d.warmupWaitingForSwap = !d.navigating && d.renderEngine->hasDeferredDisplayModeWarmup();
-    d.gpuPerformanceMs = gpuTimer.nsecsElapsed() / 1e6;
+    d.renderPerformanceMs = renderTimer.nsecsElapsed() / 1e6;
     const bool converged = d.renderEngine->isConverged();
     d.glwidget->setProperty("renderConverged", converged);
     if (!converged)
         d.glwidget->update();
     d.count++;
 
+    if (viewportPaint && viewState() && viewState()->performanceStatsEnabled())
+        d.frameAwaitingPresentation = true;
     Q_EMIT d.glwidget->renderReady(timer.elapsed());
-    if (viewState() && viewState()->performanceStatsEnabled())
-        updatePerformanceStats();
+}
+
+void
+ViewportWidgetPrivate::recordFramePresentation()
+{
+    if (!d.frameAwaitingPresentation)
+        return;
+
+    // A top-level swap can reuse the viewport texture without rendering it again.
+    d.frameAwaitingPresentation = false;
+    if (!d.framePresentationClock.isValid())
+        d.framePresentationClock.start();
+    const auto now = d.framePresentationClock.nsecsElapsed();
+    auto& frames = d.framePresentations;
+    frames.push_back(now);
+    constexpr qint64 windowNs = frameRateWindowMs * 1'000'000LL;
+    // Keep the interval that crosses the window boundary, including a slow frame.
+    while (frames.size() > 2 && now - frames[1] >= windowNs)
+        frames.pop_front();
+    d.frameRateIdleTimer.start();
+    updatePerformanceStats();
+}
+
+void
+ViewportWidgetPrivate::resetFrameRate()
+{
+    d.frameRateIdleTimer.stop();
+    d.framePresentationClock.invalidate();
+    d.framePresentations.clear();
+    d.frameAwaitingPresentation = false;
 }
 
 void
@@ -610,6 +663,7 @@ ViewportWidgetPrivate::updateOverlay()
 void
 ViewportWidgetPrivate::paintOverlay(QPainter& painter)
 {
+    PerfScope scope("viewport.overlay_paint");
     if (!d.stage) {
         QColor background = Qt::black;
         if (viewState() && viewState()->backgroundColor().isValid())
@@ -630,15 +684,38 @@ ViewportWidgetPrivate::paintOverlay(QPainter& painter)
         painter.drawImage(QPoint(0, 0), d.sceneStats);
     }
 
-    if (viewState() && viewState()->performanceStatsEnabled()) {
+    const bool showPerformance = viewState() && viewState()->performanceStatsEnabled();
+    if (showPerformance) {
         QPoint pos(d.glwidget->width() - d.performanceStats.width() / d.performanceStats.devicePixelRatio(), 0);
         painter.drawImage(pos, d.performanceStats);
     }
 
-    if (viewState() && viewState()->cameraAxisEnabled()) {
-        const int margin = qRound(ui()->axisSize(UI::UIScale::Medium) / 9.0);
-        const int axisHeight = qRound(d.auxiliary->axisImage().height() / d.auxiliary->axisImage().devicePixelRatio());
-        painter.drawImage(QPoint(margin, d.glwidget->height() - margin - axisHeight), d.auxiliary->axisImage());
+    const int axisSize = ui()->axisSize(UI::UIScale::Medium);
+    const int axisMargin = qRound(axisSize / 9.0);
+    const QImage& axis = d.auxiliary->axisImage();
+    const int axisHeight = axis.isNull() ? axisSize : qRound(axis.height() / axis.devicePixelRatio());
+    const int axisTop = d.glwidget->height() - axisMargin - axisHeight;
+    const bool showAxis = viewState() && viewState()->cameraAxisEnabled() && !axis.isNull();
+    if (showAxis)
+        painter.drawImage(QPoint(axisMargin, axisTop), axis);
+
+    const int rightMargin = 18;
+    const int textLeft = showAxis ? axisMargin + qRound(axis.width() / axis.devicePixelRatio()) + axisMargin
+                                  : rightMargin;
+    const QRect textRect(textLeft, axisTop, d.glwidget->width() - textLeft - rightMargin, axisHeight);
+    if (showPerformance && !d.graphicsRenderer.isEmpty() && textRect.isValid()) {
+        painter.save();
+        QFont font = d.glwidget->font();
+        font.setPixelSize(ui()->fontSize(UI::UIScale::Small));
+        font.setLetterSpacing(QFont::AbsoluteSpacing, 0.5);
+        painter.setFont(font);
+        const QString label = painter.fontMetrics().elidedText(d.graphicsRenderer, Qt::ElideRight, textRect.width());
+        const auto alignment = Qt::AlignRight | Qt::AlignVCenter;
+        painter.setPen(QColor(0, 0, 0, 160));
+        painter.drawText(textRect.translated(1, 1), alignment, label);
+        painter.setPen(ui()->color(UI::ColorRole::Text, UI::UIState::Normal));
+        painter.drawText(textRect, alignment, label);
+        painter.restore();
     }
 
     drawBorder(painter);
@@ -1033,6 +1110,10 @@ void
 ViewportWidgetPrivate::updateStage(UsdStageRefPtr stage)
 {
     SignalGuard::Scope guard(this);
+    if (d.stage != stage) {
+        d.renderPerformanceMs = 0.0;
+        resetFrameRate();
+    }
     d.stage = stage;
     d.lights->invalidate();
     d.sceneTotalsDirty = true;
@@ -1051,6 +1132,8 @@ ViewportWidgetPrivate::updateStage(UsdStageRefPtr stage)
     if (viewState() && viewState()->sceneStatsEnabled()) {
         updateSceneStats();
     }
+    if (viewState() && viewState()->performanceStatsEnabled())
+        updatePerformanceStats();
 
     updateAuxiliaryGrid();
     d.glwidget->update();
@@ -1724,7 +1807,17 @@ ViewportWidgetPrivate::updatePerformanceStats()
         rows.append({ "Hgi", d.renderEngine->hgiApiName() });
     else
         rows.append({ "Hgi", QStringLiteral("-") });
-    rows.append({ "GPU time", hasEngine ? QString::number(d.gpuPerformanceMs, 'f', 2) + " ms" : "-" });
+    QString renderTiming = QStringLiteral("-");
+    QString renderFps = QStringLiteral("-");
+    if (hasEngine && d.renderPerformanceMs > 0.0)
+        renderTiming = QString::number(d.renderPerformanceMs, 'f', 2) + " ms";
+    const auto& frames = d.framePresentations;
+    if (hasEngine && frames.size() > 1 && frames.back() > frames.front()) {
+        const double fps = (frames.size() - 1) * 1e9 / (frames.back() - frames.front());
+        renderFps = QString::number(fps, 'f', 2);
+    }
+    rows.append({ "Render", renderTiming });
+    rows.append({ "FPS", renderFps });
     if (hasEngine) {
         uint64_t bytes = 0;
         if (statBytes(TfToken("gpuMemoryUsed"), bytes)) {
@@ -2109,13 +2202,16 @@ void
 ViewportWidget::initializeGL()
 {
     initializeOpenGLFunctions();
+    const GLubyte* renderer = glGetString(GL_RENDERER);
+    p->d.graphicsRenderer = renderer ? QString::fromUtf8(reinterpret_cast<const char*>(renderer)) : QString();
+    p->updateOverlay();
     p->initGL();
 }
 
 void
 ViewportWidget::paintGL()
 {
-    p->paintGL();
+    p->paintGL(true);
 }
 
 void

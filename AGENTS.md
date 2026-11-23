@@ -26,7 +26,7 @@ consistent with the existing architecture.
   `python3 CTest/check_python_documentation.py` for documentation synchronization;
   this static check supplements the behavior regressions below.
 
-## Sensitive local investigation files
+## Sensitive local data
 
 - `investigation/` contains sensitive local files. Never stage, commit, push,
   upload, or otherwise publish that directory or its contents, including by
@@ -34,9 +34,10 @@ consistent with the existing architecture.
 - Keep `investigation/` ignored by Git. Before staging or committing, check
   the staged file list and ensure no investigation files are included. Never
   use force-add to bypass this exclusion.
-- Reusable tests or documentation intended for the repository must be written
-  without sensitive local data, paths, logs, captures, or credentials from
-  investigation files.
+- Keep private dataset names, local paths, credentials, and sensitive data out
+  of all checked-in files, including examples, fixtures, benchmarks,
+  documentation, logs, and screenshots. Use synthetic fixtures or public test
+  assets approved for sharing.
 
 ## macOS builds and runs
 

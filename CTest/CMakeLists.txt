@@ -327,17 +327,24 @@ if(APPLE)
 endif()
 
 if(WIN32)
-    # Share the configured DLL search path with the external Python controller.
+    # Native executables link against CPython itself as well as the dependency
+    # prefix. Use the DLL directories found by FindPython3, which may be outside
+    # both the dependency prefix and the caller's PATH.
+    set(stageviz_test_runtime_paths ${Python3_RUNTIME_LIBRARY_DIRS} ${python_runtime_library_paths})
+    list(REMOVE_DUPLICATES stageviz_test_runtime_paths)
     file(GENERATE OUTPUT "${CMAKE_BINARY_DIR}/test-runtime-$<CONFIG>.txt"
-        CONTENT "$<JOIN:${python_runtime_library_paths},\n>\n"
+        CONTENT "$<JOIN:${stageviz_test_runtime_paths},\n>\n"
     )
     # Native tests need the configured dependency DLLs before any other build
     # configuration inherited through PATH (notably OpenUSD's same-named DLLs).
+    # CTest applies successive prepends in order. Reverse the list to match the
+    # search order in the manifest consumed by the external Python runner.
+    list(REVERSE stageviz_test_runtime_paths)
     get_property(stageviz_registered_tests DIRECTORY PROPERTY TESTS)
     foreach(test_name IN LISTS stageviz_registered_tests)
         get_test_property(${test_name} LABELS test_labels)
         if("native" IN_LIST test_labels)
-            foreach(runtime_dir IN LISTS python_runtime_library_paths)
+            foreach(runtime_dir IN LISTS stageviz_test_runtime_paths)
                 set_property(TEST ${test_name} APPEND PROPERTY ENVIRONMENT_MODIFICATION
                     "PATH=path_list_prepend:${runtime_dir}"
                 )
