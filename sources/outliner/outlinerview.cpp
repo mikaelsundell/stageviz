@@ -8,6 +8,7 @@
 #include "outlinertree.h"
 #include "perfscope.h"
 #include "primitem.h"
+#include "primutils.h"
 #include "qtutils.h"
 #include "signalguard.h"
 #include "tracelocks.h"
@@ -19,9 +20,7 @@
 #include <QSet>
 #include <QSignalBlocker>
 #include <QTimer>
-#include <algorithm>
 #include <pxr/usd/usd/prim.h>
-#include <pxr/usd/usd/primRange.h>
 
 PXR_NAMESPACE_USING_DIRECTIVE
 
@@ -228,15 +227,7 @@ OutlinerViewPrivate::showDisplayMenu()
                 contributors.append(QString::fromStdString(layer->GetIdentifier()));
         }
 
-        QSet<QString> seenTypes;
-        for (const UsdPrim& prim : UsdPrimRange(stage->GetPseudoRoot())) {
-            const QString type = QString::fromStdString(prim.GetTypeName().GetString());
-            if (!type.isEmpty())
-                seenTypes.insert(type);
-        }
-        types = seenTypes.values();
-        std::sort(types.begin(), types.end(),
-                  [](const QString& lhs, const QString& rhs) { return lhs.compare(rhs, Qt::CaseInsensitive) < 0; });
+        types = stage::primTypeNames(stage);
     }
 
     OutlinerTree* tree = outlinerTree();

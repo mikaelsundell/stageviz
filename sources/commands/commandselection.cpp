@@ -269,176 +269,145 @@ selectPaths(const QList<SdfPath>& paths)
         });
 }
 
+namespace {
+
+    using SelectionKind = SelectionDomain::Kind;
+
+    QList<SdfPath> selectionPaths(UsdStageRefPtr stage, const QList<SdfPath>& mask, const SelectionDomain& domain)
+    {
+        if (!stage)
+            return {};
+        if (domain.kind == SelectionKind::LeafPrims)
+            return stage::leafPaths(stage, mask, false);
+
+        QList<SdfPath> paths;
+        if (domain.kind == SelectionKind::Parents) {
+            for (const UsdPrim& prim : stage->GetPseudoRoot().GetChildren())
+                paths.append(prim.GetPath());
+            return paths;
+        }
+        if (domain.kind == SelectionKind::AllPrims) {
+            for (const UsdPrim& prim : stage->Traverse())
+                paths.append(prim.GetPath());
+            return paths;
+        }
+
+        const path::PathIndex maskRoots(mask);
+        const UsdPrimRange range = domain.kind == SelectionKind::Geometry
+                                       ? UsdPrimRange(stage->GetPseudoRoot(), UsdTraverseInstanceProxies())
+                                       : stage->Traverse();
+        for (const UsdPrim& prim : range) {
+            const SdfPath& path = prim.GetPath();
+            if (!mask.isEmpty() && !maskRoots.covers(path))
+                continue;
+            if (domain.kind == SelectionKind::PrimType) {
+                if (prim.GetTypeName() == domain.type)
+                    paths.append(path);
+            }
+            else if ((prim.IsA<UsdGeomGprim>() || prim.IsA<UsdGeomPointInstancer>())
+                     && UsdGeomImageable(prim).ComputeVisibility(domain.timeCode) != UsdGeomTokens->invisible) {
+                paths.append(path);
+            }
+        }
+        return paths;
+    }
+
+    QList<SdfPath> invertExclusions(UsdStageRefPtr stage, const QList<SdfPath>& selected, SelectionKind kind)
+    {
+        if (kind == SelectionKind::LeafPrims)
+            return selected;
+        QList<SdfPath> paths = kind == SelectionKind::Geometry ? stage::objectPaths(stage, selected) : selected;
+        for (SdfPath& path : paths) {
+            if (path.IsPropertyPath())
+                path = path.GetPrimPath();
+            if (kind == SelectionKind::Parents) {
+                while (path.IsPrimPath() && path.GetPathElementCount() > 1)
+                    path = path.GetParentPath();
+            }
+        }
+        return paths;
+    }
+
+    Command selectDomain(SelectionDomain domain, bool invert)
+    {
+        auto previousSelection = std::make_shared<QList<SdfPath>>();
+        return Command(
+            [domain, invert, previousSelection](Session* session) {
+                if (!session)
+                    return;
+
+                session->beginProgressBlock(invert ? "Invert selection" : "Select all", 1);
+                command::runWorker([session, domain, invert, previousSelection]() {
+                    PerfScope workerScope(invert ? "selection.invert_worker" : "selection.all_worker");
+                    QList<SdfPath> paths;
+                    QList<SdfPath> exclusions;
+                    {
+                        READ_LOCKER(locker, session->stageLock(), "stageLock");
+                        const UsdStageRefPtr stage = session->stageUnsafe();
+                        *previousSelection = session->selectionList()->paths();
+                        PerfScope domainScope(invert ? "selection.invert_domain" : "selection.all_domain");
+                        paths = selectionPaths(stage, session->mask(), domain);
+                        if (invert)
+                            exclusions = invertExclusions(stage, *previousSelection, domain.kind);
+                    }
+                    if (invert) {
+                        const path::PathIndex selectedRoots(exclusions);
+                        paths.removeIf([&](const SdfPath& path) { return selectedRoots.covers(path); });
+                    }
+
+                    command::queueToSession(session, [session, invert, paths = std::move(paths)]() {
+                        using Status = Session::Notify::Status;
+                        session->selectionList()->updatePaths(paths);
+                        command::updateProgressNotify(session,
+                                                      invert ? QStringLiteral("Selection inverted")
+                                                             : QStringLiteral("Paths selected"),
+                                                      paths, Status::Success, 1);
+                        session->endProgressBlock();
+                    });
+                });
+            },
+            [invert, previousSelection](Session* session) {
+                if (!session)
+                    return;
+                session->beginProgressBlock(invert ? "Undo invert selection" : "Undo select all", 1);
+                command::runWorker([session, invert, previousSelection]() {
+                    command::queueToSession(session, [session, invert, previousSelection]() {
+                        using Status = Session::Notify::Status;
+                        session->selectionList()->updatePaths(*previousSelection);
+                        command::updateProgressNotify(session,
+                                                      invert ? QStringLiteral("Invert selection undone")
+                                                             : QStringLiteral("Select all undone"),
+                                                      *previousSelection, Status::Success, 1);
+                        session->endProgressBlock();
+                    });
+                });
+            });
+    }
+
+}  // namespace
+
 Command
 selectAll(bool recursive)
 {
-    struct SelectAllState {
-        QList<SdfPath> previousSelection;
-    };
-
-    auto state = std::make_shared<SelectAllState>();
-
-    return Command(
-        [recursive, state](Session* session) {
-            if (!session)
-                return;
-
-            session->beginProgressBlock("Select all", 1);
-
-            command::runWorker([session, recursive, state]() {
-                QList<SdfPath> selection;
-
-                {
-                    READ_LOCKER(locker, session->stageLock(), "stageLock");
-
-                    const UsdStageRefPtr stage = session->stageUnsafe();
-                    if (!stage)
-                        return;
-
-                    state->previousSelection = session->selectionList()->paths();
-
-                    if (recursive) {
-                        for (const UsdPrim& prim : stage->Traverse()) {
-                            if (!prim || !prim.IsValid())
-                                continue;
-
-                            selection.append(prim.GetPath());
-                        }
-                    }
-                    else {
-                        for (const UsdPrim& prim : stage->GetPseudoRoot().GetChildren()) {
-                            if (!prim || !prim.IsValid())
-                                continue;
-
-                            selection.append(prim.GetPath());
-                        }
-                    }
-                }
-
-                command::queueToSession(session, [session, selection]() {
-                    using Status = Session::Notify::Status;
-
-                    session->selectionList()->updatePaths(selection);
-                    command::updateProgressNotify(session, QStringLiteral("Paths selected"), selection, Status::Success,
-                                                  1);
-                    session->endProgressBlock();
-                });
-            });
-        },
-        [state](Session* session) {
-            if (!session)
-                return;
-
-            session->beginProgressBlock("Undo select all", 1);
-
-            command::runWorker([session, state]() {
-                command::queueToSession(session, [session, state]() {
-                    using Status = Session::Notify::Status;
-
-                    session->selectionList()->updatePaths(state->previousSelection);
-                    command::updateProgressNotify(session, QStringLiteral("Select all undone"),
-                                                  state->previousSelection, Status::Success, 1);
-                    session->endProgressBlock();
-                });
-            });
-        });
+    return selectAll({ recursive ? SelectionKind::AllPrims : SelectionKind::Parents });
 }
 
-static Command
-invertSelection(bool geometryOnly, UsdTimeCode timeCode)
+Command
+selectAll(const SelectionDomain& domain)
 {
-    struct SelectInvertState {
-        QList<SdfPath> previousSelection;
-    };
-
-    auto state = std::make_shared<SelectInvertState>();
-
-    return Command(
-        [state, geometryOnly, timeCode](Session* session) {
-            if (!session)
-                return;
-
-            session->beginProgressBlock("Invert selection", 1);
-
-            command::runWorker([session, state, geometryOnly, timeCode]() {
-                PerfScope perfScope("selection.invert_worker");
-                QList<SdfPath> invertedSelection;
-                QList<SdfPath> previousSelection;
-                QList<SdfPath> selectedPaths;
-                QList<SdfPath> domain;
-
-                {
-                    READ_LOCKER(locker, session->stageLock(), "stageLock");
-                    const UsdStageRefPtr stage = session->stageUnsafe();
-                    previousSelection = session->selectionList()->paths();
-                    const QList<SdfPath> mask = session->mask();
-
-                    {
-                        PerfScope domainScope("selection.invert_domain");
-                        selectedPaths = previousSelection;
-                        if (!geometryOnly)
-                            domain = stage::leafPaths(stage, mask, false);
-                        else if (stage) {
-                            selectedPaths = stage::objectPaths(stage, previousSelection);
-                            const path::PathIndex maskRoots(mask);
-                            const auto geometry = UsdPrimRange(stage->GetPseudoRoot(), UsdTraverseInstanceProxies());
-                            for (const UsdPrim& prim : geometry) {
-                                if (!prim.IsA<UsdGeomGprim>() && !prim.IsA<UsdGeomPointInstancer>())
-                                    continue;
-                                const SdfPath& path = prim.GetPath();
-                                if ((mask.isEmpty() || maskRoots.covers(path))
-                                    && UsdGeomImageable(prim).ComputeVisibility(timeCode) != UsdGeomTokens->invisible)
-                                    domain.append(path);
-                            }
-                        }
-                    }
-                }
-
-                state->previousSelection = previousSelection;
-
-                const path::PathIndex selectedRoots(selectedPaths);
-                for (const SdfPath& path : domain) {
-                    if (!selectedRoots.covers(path))
-                        invertedSelection.append(path);
-                }
-
-                command::queueToSession(session, [session, invertedSelection]() {
-                    using Status = Session::Notify::Status;
-                    session->selectionList()->updatePaths(invertedSelection);
-                    command::updateProgressNotify(session, QStringLiteral("Selection inverted"), invertedSelection,
-                                                  Status::Success, 1);
-                    session->endProgressBlock();
-                });
-            });
-        },
-        [state](Session* session) {
-            if (!session)
-                return;
-
-            session->beginProgressBlock("Undo invert selection", 1);
-
-            command::runWorker([session, state]() {
-                command::queueToSession(session, [session, state]() {
-                    using Status = Session::Notify::Status;
-                    session->selectionList()->updatePaths(state->previousSelection);
-                    command::updateProgressNotify(session, QStringLiteral("Invert selection undone"),
-                                                  state->previousSelection, Status::Success, 1);
-                    session->endProgressBlock();
-                });
-            });
-        });
+    return selectDomain(domain, false);
 }
 
 Command
 selectInvert()
 {
-    return invertSelection(false, UsdTimeCode::Default());
+    return selectInvert({ SelectionKind::LeafPrims });
 }
 
 Command
-selectInvertGeometry(UsdTimeCode timeCode)
+selectInvert(const SelectionDomain& domain)
 {
-    return invertSelection(true, timeCode);
+    return selectDomain(domain, true);
 }
 
 }  // namespace stageviz

@@ -6,6 +6,7 @@
 
 #include "command.h"
 #include <QList>
+#include <pxr/base/tf/token.h>
 #include <pxr/usd/sdf/path.h>
 #include <pxr/usd/usd/timeCode.h>
 
@@ -110,14 +111,34 @@ Command
 selectInvert();
 
 /**
- * @brief Inverts the viewport selection across geometry in the current scope.
+ * @brief Defines the prims eligible for a selection command.
+ */
+struct SelectionDomain {
+    enum class Kind { Parents, Geometry, PrimType, AllPrims, LeafPrims };
+
+    Kind kind = Kind::Parents;
+    TfToken type;
+    UsdTimeCode timeCode = UsdTimeCode::Default();
+};
+
+/**
+ * @brief Selects prims in the given domain and restores the previous selection on undo.
  *
- * Includes occluded and offscreen geometry. Respects USD visibility and the
- * isolate mask. Undo restores the previous selection.
- *
- * @param timeCode Viewport time at which to evaluate USD visibility.
+ * @param domain Parents, viewport geometry, or an exact USD prim type.
  */
 Command
-selectInvertGeometry(UsdTimeCode timeCode);
+selectAll(const SelectionDomain& domain);
+
+/**
+ * @brief Inverts selection within the given domain.
+ *
+ * Parent-level inversion treats a selected descendant as selecting its top-level prim.
+ * Geometry includes occluded and offscreen prims and respects the mask and viewport time.
+ * Exact prim types are matched within the current mask.
+ *
+ * @param domain Domain of prims eligible for inversion.
+ */
+Command
+selectInvert(const SelectionDomain& domain);
 
 }  // namespace stageviz

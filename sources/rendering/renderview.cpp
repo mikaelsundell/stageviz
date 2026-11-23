@@ -50,7 +50,6 @@ RenderViewPrivate::init()
 {
     d.ui.reset(new Ui_RenderView());
     d.ui->setupUi(d.view.data());
-    d.view->setFocusProxy(viewportWidget());
     d.context.reset(new ViewContext(d.view.data()));
     d.context->setStageLock(session()->stageLock());
     d.context->setCommandStack(session()->commandStack());

@@ -398,18 +398,39 @@ class ViewportCaptureTest(_base["ViewportTest"]):
         assert stageviz.render().visibleCapturePaths() == ["/Plane"]
         action("editSelectVisibleSelect")
         assert list(session.paths()) == ["/Plane"]
-        action("editSelectInvert")
+        action("editSelectInvertGeometry")
         assert list(session.paths()) == ["/Sphere"], list(session.paths())
         stageviz.command.undo()
         assert tb.wait_for_commands() and list(session.paths()) == ["/Plane"]
 
-        QtCore, _, QtTest, _ = tb.qt()
-        tree = next(widget for widget in tb.all_widgets()
-                    if widget.objectName() == "outlinerTree" and widget.isVisible())
-        tree.setFocus()
-        tb.process_events(50)
         action("editSelectInvert")
-        assert set(session.paths()) == {"/World", "/Sphere", "/Materials/Material"}
+        assert set(session.paths()) == {"/World", "/Sphere", "/Materials"}
+        action("editSelectAll")
+        assert set(session.paths()) == {"/World", "/Sphere", "/Materials", "/Plane"}
+        action("editSelectAllGeometry")
+        assert set(session.paths()) == {"/Plane", "/Sphere"}
+
+        QtCore, _, QtTest, QtWidgets = tb.qt()
+        expected_menu = ["All", None, "Geometry", None, "Material", "Mesh", "Sphere", "Xform", None, "Untyped"]
+        widgets = tb.all_widgets()
+        edit_menu = next(widget for widget in widgets if widget.objectName() == "menuEdit")
+        entries = [action.text() for action in edit_menu.actions()]
+        index = entries.index("Select")
+        assert entries[index:index + 4] == ["Select", "Select invert", "Select parent", "Select visible"]
+        for operation in ("All", "Invert"):
+            menu = next(widget for widget in widgets
+                        if widget.objectName() == "editSelect" + operation + "Menu")
+            assert isinstance(menu, QtWidgets.QMenu)
+            for _ in range(2):
+                menu.aboutToShow.emit()
+                assert [None if row.isSeparator() else row.text() for row in menu.actions()] == expected_menu
+
+        action("editSelectAllType_Mesh")
+        assert list(session.paths()) == ["/Plane"]
+        action("editSelectInvertType_Sphere")
+        assert list(session.paths()) == ["/Sphere"]
+        stageviz.command.undo()
+        assert tb.wait_for_commands() and list(session.paths()) == ["/Plane"]
 
         self.activate_mode("Move")
         stageviz.command.select_paths(["/Materials/Material"])

@@ -489,8 +489,9 @@ support; they do not run in the headless aggregate suite.
 The `inspect` phase checks read-only USD/Hydra reports, proxy Rprim mapping,
 visibility updates with undo/redo, default versus sampled visibility, and
 diagnostic argument boundaries.
-The `invert_and_drag` phase checks viewport and Outliner inversion after
-selecting captured geometry. It also checks that a selected material stays
+The `invert_and_drag` phase checks the Select and Select invert menus and
+their parent, geometry, and exact-type selection after selecting captured
+geometry. It also checks that a selected material stays
 selected without blocking a sphere's drag, undo, or redo.
 The script does not autorun; its `run(disposable=True)` executes all phases.
 
