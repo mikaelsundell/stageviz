@@ -210,6 +210,18 @@ configure_file(
 
 if(WIN32)
     find_package(OpenGL REQUIRED)
+
+    # Use the same dependencies for debugger launches and native tests.
+    # CMake resolves a single third-party prefix for each generated solution.
+    set(stageviz_windows_runtime_paths ${Python3_RUNTIME_LIBRARY_DIRS} ${python_runtime_library_paths})
+    foreach(openusd_library_dir IN LISTS OpenUSD_LIBRARY_DIRS)
+        get_filename_component(openusd_runtime_prefix "${openusd_library_dir}" DIRECTORY)
+        append_existing_paths(stageviz_windows_runtime_paths
+            "${openusd_runtime_prefix}/bin"
+            "${openusd_library_dir}"
+        )
+    endforeach()
+    list(REMOVE_DUPLICATES stageviz_windows_runtime_paths)
 endif()
 
 file(GLOB_RECURSE project_sources CONFIGURE_DEPENDS
@@ -323,6 +335,13 @@ elseif(WIN32)
     set_target_properties(${project_name} PROPERTIES
         OUTPUT_NAME "${project_output_name}"
     )
+    if(CMAKE_GENERATOR MATCHES "^Visual Studio ")
+        string(REPLACE "/" "\\" stageviz_debugger_path "${stageviz_windows_runtime_paths}")
+        set_property(TARGET ${project_name} PROPERTY VS_DEBUGGER_ENVIRONMENT
+            "PATH=${stageviz_debugger_path};$(Path)"
+        )
+        set_property(DIRECTORY PROPERTY VS_STARTUP_PROJECT ${project_name})
+    endif()
 
     target_compile_definitions(${project_name} PRIVATE
         WIN32
@@ -363,18 +382,14 @@ elseif(WIN32)
     set(project_icon "${CMAKE_SOURCE_DIR}/resources/resources.rc")
     target_sources(${project_name} PRIVATE ${project_icon})
 
-    set(project_debug ${CMAKE_BINARY_DIR}/Debug)
-    set(project_release ${CMAKE_BINARY_DIR}/Release)
+    set(project_resource_dir "$<TARGET_FILE_DIR:${project_name}>/resources")
     foreach(resource_file ${project_resources})
         get_filename_component(resource_name ${resource_file} NAME)
         add_custom_command(TARGET ${project_name} POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E make_directory
-                $<$<CONFIG:Debug>:${project_debug}/resources>
-                $<$<CONFIG:Release>:${project_release}/resources>
+            COMMAND ${CMAKE_COMMAND} -E make_directory "${project_resource_dir}"
             COMMAND ${CMAKE_COMMAND} -E copy_if_different
                 ${resource_file}
-                $<$<CONFIG:Debug>:${project_debug}/resources/${resource_name}>
-                $<$<CONFIG:Release>:${project_release}/resources/${resource_name}>
+                "${project_resource_dir}/${resource_name}"
         )
     endforeach()
 else()

@@ -10,6 +10,7 @@ set "app_name=Stageviz"
 set "pkg_name=stageviz"
 set "build_type="
 set "deploy=0"
+set "skip_build=0"
 set "cmake_generator="
 set "cmake_exe=cmake.exe"
 set "cmake_instance="
@@ -22,6 +23,8 @@ if "%arg:~0,18%"=="--cmake_generator=" (
     set "cmake_generator=%arg:~18%"
 ) else if /I "%arg%"=="--deploy" (
     set "deploy=1"
+) else if /I "%arg%"=="--no-build" (
+    set "skip_build=1"
 ) else (
     set "build_type=%arg%"
 )
@@ -48,20 +51,27 @@ if /I not "%build_type%"=="Debug" (
     )
 )
 
+if "%skip_build%"=="1" if "%deploy%"=="0" (
+    echo --no-build requires --deploy. 1>&2
+    goto :error
+)
+
 if "%deploy%"=="1" (
     call :check_deploy_python
     if errorlevel 1 goto :error
 )
 
-if defined cmake_generator (
-    where cmake.exe >nul 2>&1
-    if errorlevel 1 (
-        echo CMake not found in PATH. 1>&2
-        goto :error
+if "%skip_build%"=="0" (
+    if defined cmake_generator (
+        where cmake.exe >nul 2>&1
+        if errorlevel 1 (
+            echo CMake not found in PATH. 1>&2
+            goto :error
+        )
+    ) else (
+        call :find_visual_studio
+        if errorlevel 1 goto :error
     )
-) else (
-    call :find_visual_studio
-    if errorlevel 1 goto :error
 )
 
 if /I "%build_type%"=="All" (
@@ -136,11 +146,11 @@ exit /b 1
 
 :build_stageviz
 set "current_build_type=%~1"
+set "build_dir=%app_dir%build.%current_build_type%"
+if "%skip_build%"=="1" goto :deploy_existing_stageviz
 
 echo Building stageviz for %current_build_type% using %cmake_generator%
 echo -------------------------------------------------------
-
-set "build_dir=%app_dir%build.%current_build_type%"
 
 if exist "%build_dir%" rmdir /s /q "%build_dir%"
 mkdir "%build_dir%"
@@ -192,6 +202,22 @@ if "%deploy%"=="1" (
 
 popd
 exit /b 0
+
+:deploy_existing_stageviz
+if not defined THIRDPARTY_DIR (
+    echo Could not find 3rdparty project environment variable THIRDPARTY_DIR 1>&2
+    exit /b 1
+)
+
+findstr /L /X /C:"DEPLOY_BUILD:BOOL=ON" "%build_dir%\CMakeCache.txt" >nul 2>&1
+if errorlevel 1 (
+    echo No deployment build is configured in "%build_dir%". Build %current_build_type% with --deploy first. 1>&2
+    exit /b 1
+)
+
+echo Packaging existing %current_build_type% build
+call :deploy_stageviz %current_build_type%
+exit /b %errorlevel%
 
 :deploy_stageviz
 set "current_build_type=%~1"
@@ -311,7 +337,7 @@ if not defined current_date (
 set "zipfile=%deploy_dir%\%app_name%_%version%_%current_date%_%current_build_type%.zip"
 echo Creating zip file: %zipfile%
 
-powershell -command "Compress-Archive -Path '%deploy_dir%\*' -DestinationPath '%zipfile%' -Force"
+%python_cmd% "%deploy_script%" --archive "%deploy_dir%" "%zipfile%"
 if errorlevel 1 (
     echo Failed to create ZIP file
     goto :error

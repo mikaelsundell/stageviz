@@ -20,6 +20,7 @@ developerid_identity=""
 
 # globals
 github=OFF
+skip_build=OFF
 build_type=""
 
 # permissions
@@ -40,8 +41,11 @@ parse_args() {
             --sign)
                 sign_code=ON
                 ;;
-            --github)
+            --deploy|--github)
                 github=ON
+                ;;
+            --no-build)
+                skip_build=ON
                 ;;
             *)
                 build_type="$1"
@@ -67,7 +71,15 @@ if [ "$build_type" != "debug" ] && [ "$build_type" != "release" ] && [ "$build_t
     exit 1
 fi
 
-echo "Building stageviz for $build_type"
+if [ "$skip_build" == "ON" ]; then
+    if [ "$github" != "ON" ]; then
+        echo "--no-build requires --deploy or --github." >&2
+        exit 1
+    fi
+    echo "Packaging existing $build_type build"
+else
+    echo "Building stageviz for $build_type"
+fi
 echo "---------------------------------"
 
 if [ "$sign_code" == "ON" ]; then
@@ -81,25 +93,27 @@ if [ "$sign_code" == "ON" ]; then
     echo ""
 fi
 
-# check cmake
-if ! command -v cmake &> /dev/null; then
-    echo "cmake not found in PATH, trying /Applications/CMake.app/Contents/bin"
-    export PATH=$PATH:/Applications/CMake.app/Contents/bin
+if [ "$skip_build" == "OFF" ]; then
+    # check cmake
     if ! command -v cmake &> /dev/null; then
-        echo "cmake could not be found, please make sure it's installed"
+        echo "cmake not found in PATH, trying /Applications/CMake.app/Contents/bin"
+        export PATH=$PATH:/Applications/CMake.app/Contents/bin
+        if ! command -v cmake &> /dev/null; then
+            echo "cmake could not be found, please make sure it's installed"
+            exit 1
+        fi
+    fi
+
+    # check version
+    cmake_version=$(cmake --version | sed -n '1s/[^0-9]*\([0-9][0-9.]*\).*/\1/p')
+    cmake_major=${cmake_version%%.*}
+    cmake_remainder=${cmake_version#*.}
+    cmake_minor=${cmake_remainder%%.*}
+    if [ -z "$cmake_version" ] || [ "$cmake_major" -gt 3 ] \
+        || { [ "$cmake_major" -eq 3 ] && [ "$cmake_minor" -ge 28 ]; }; then
+        echo "cmake version is not compatible with Qt, must be before 3.28.0 for multi configuration"
         exit 1
     fi
-fi
-
-# check version
-cmake_version=$(cmake --version | sed -n '1s/[^0-9]*\([0-9][0-9.]*\).*/\1/p')
-cmake_major=${cmake_version%%.*}
-cmake_remainder=${cmake_version#*.}
-cmake_minor=${cmake_remainder%%.*}
-if [ -z "$cmake_version" ] || [ "$cmake_major" -gt 3 ] \
-    || { [ "$cmake_major" -eq 3 ] && [ "$cmake_minor" -ge 28 ]; }; then
-    echo "cmake version is not compatible with Qt, must be before 3.28.0 for multi configuration"
-    exit 1
 fi
 
 copy_xcode_framework() {
@@ -182,13 +196,6 @@ build_stageviz() {
     cd "$script_dir"
 
     local build_dir="$script_dir/build.$build_type"
-    if [ -d "$build_dir" ]; then
-        rm -rf "$build_dir"
-    fi
-
-    mkdir -p "$build_dir"
-    cd "$build_dir"
-
     if [ -z "$THIRDPARTY_DIR" ]; then
         echo "THIRDPARTY_DIR is not set."
         echo "Please set THIRDPARTY_DIR to the root of your 3rdparty project."
@@ -211,16 +218,27 @@ build_stageviz() {
         deploy_build=ON
     fi
 
-    cmake .. \
-        -DCMAKE_MODULE_PATH="$script_dir/modules" \
-        -DCMAKE_PREFIX_PATH="$prefix" \
-        -DDEPLOY_BUILD="$deploy_build" \
-        -G Xcode
-
-    cmake --build . --config "$xcode_type" --parallel
+    if [ "$skip_build" == "ON" ]; then
+        if ! grep -Fxq 'DEPLOY_BUILD:BOOL=ON' "$build_dir/CMakeCache.txt" 2>/dev/null; then
+            echo "No deployment build is configured in $build_dir. Build $build_type with --deploy first." >&2
+            return 1
+        fi
+    else
+        if [ -d "$build_dir" ]; then
+            rm -rf "$build_dir"
+        fi
+        mkdir -p "$build_dir"
+        cd "$build_dir"
+        cmake .. \
+            -DCMAKE_MODULE_PATH="$script_dir/modules" \
+            -DCMAKE_PREFIX_PATH="$prefix" \
+            -DDEPLOY_BUILD="$deploy_build" \
+            -G Xcode
+        cmake --build . --config "$xcode_type" --parallel
+    fi
 
     if [ "$github" == "ON" ]; then
-        local app_bundle="$xcode_type/${app_name}.app"
+        local app_bundle="$build_dir/$xcode_type/${app_name}.app"
         local deploy_dir="$script_dir/deploy.$build_type"
         local build_date
         build_date=$(date +%y%m%d)
@@ -229,6 +247,18 @@ build_stageviz() {
         if [ -z "$project_version" ]; then
             echo "Could not extract project version from CMakeLists.txt"
             exit 1
+        fi
+
+        if [ ! -d "$app_bundle" ]; then
+            echo "App bundle not found: $app_bundle" >&2
+            return 1
+        fi
+        local staging_dir=""
+        if [ "$skip_build" == "ON" ]; then
+            staging_dir=$(mktemp -d "$build_dir/deploy-stage.XXXXXX")
+            trap "$(printf 'rm -rf -- %q' "$staging_dir")" EXIT
+            ditto "$app_bundle" "$staging_dir/$app_name.app"
+            app_bundle="$staging_dir/$app_name.app"
         fi
 
         if [ -f "$archive_file" ]; then
@@ -375,6 +405,10 @@ build_stageviz() {
 
         echo "Create zip archive: $archive_file"
         ditto -c -k --sequesterRsrc --keepParent "$release_bundle" "$archive_file"
+        if [ -n "$staging_dir" ]; then
+            rm -rf -- "$staging_dir"
+            trap - EXIT
+        fi
     fi
 }
 

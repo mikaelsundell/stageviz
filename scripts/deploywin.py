@@ -4,8 +4,11 @@
 
 import fnmatch
 import os
+from pathlib import Path
 import shutil
 import sys
+import tempfile
+from zipfile import ZIP_DEFLATED, ZipFile
 import pefile
 
 
@@ -527,7 +530,23 @@ def report_summary():
     print("\nOperation completed.\n")
 
 
+def archive_deployment(directory, destination):
+    directory = Path(directory).resolve(strict=True)
+    destination = Path(destination).resolve()
+    with tempfile.TemporaryDirectory(dir=directory.parent) as temporary:
+        archive = Path(temporary) / destination.name
+        with ZipFile(archive, "w", ZIP_DEFLATED, strict_timestamps=False) as output:
+            for path in sorted(directory.rglob("*")):
+                if path != destination:
+                    output.write(path, path.relative_to(directory))
+        archive.replace(destination)
+
+
 def main():
+    if len(sys.argv) == 4 and sys.argv[1] == "--archive":
+        archive_deployment(sys.argv[2], sys.argv[3])
+        return
+
     if len(sys.argv) < 3:
         print(
             "Usage: python deploywin.py "
