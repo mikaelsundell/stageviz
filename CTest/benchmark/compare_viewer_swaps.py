@@ -155,10 +155,6 @@ def stageviz_worker(config, output):
     widget = next(w for w in tb.all_widgets() if w.objectName() == 'imagingGLWidget' and w.isVisible())
     viewer.resize(config['size'][0] + viewer.width() - widget.width(),
                   config['size'][1] + viewer.height() - widget.height())
-    geometry = list(islice((str(prim.GetPath()) for prim in stage.Traverse() if prim.IsA(UsdGeom.Gprim)), 2))
-    selections = config['selection'] or geometry
-    if not geometry or any(not stage.GetPrimAtPath(path) for path in selections):
-        raise ValueError('The scene must contain geometry and any --select-prim paths must exist')
     tree = viewer.findChild(QtWidgets.QTreeWidget, 'outlinerTree')
     if tree:
         index = QtCore.QModelIndex()
@@ -170,6 +166,20 @@ def stageviz_worker(config, output):
     stageviz.command.select_paths([])
     assert tb.wait_for_commands()
     tb.process_events(400)
+
+    hierarchy = config.get('hierarchy')
+    if hierarchy:
+        prim_count = sum(1 for _ in stage.Traverse())
+        if prim_count != hierarchy['prims']:
+            raise RuntimeError(f'Expected {hierarchy["prims"]} composed prims, loaded {prim_count}')
+        batches = hierarchy['batches']
+        if any(not stage.GetPrimAtPath(path) for batch in batches for path in batch):
+            raise RuntimeError('The hierarchy selection contains a missing prim')
+    else:
+        geometry = list(islice((str(prim.GetPath()) for prim in stage.Traverse() if prim.IsA(UsdGeom.Gprim)), 2))
+        selections = config['selection'] or geometry
+        if not geometry or any(not stage.GetPrimAtPath(path) for path in selections):
+            raise ValueError('The scene must contain geometry and any --select-prim paths must exist')
 
     def orbit(index):
         view_camera.setAxisRoll(index * 1.5)
@@ -186,15 +196,23 @@ def stageviz_worker(config, output):
     def selection_ready():
         return session.primsUpdate() == stageviz.PrimsImmediate and list(session.paths()) == expected_selection
 
+    def select_hierarchy(index):
+        nonlocal expected_selection
+        expected_selection = batches[index % len(batches)]
+        stageviz.command.select_paths(expected_selection)
+
     frames = config['frames']
-    orbit_samples = measure(widget, orbit, frames, QtCore, widget.renderReady)
-    orbit_camera = stageviz.render().inspectPrim(geometry[0])['camera']
-    assert widget.grab().save(str(output / 'orbit-viewport.png'))
     result = dict(camera=camera, size=viewport_size(widget), logical_size=[widget.width(), widget.height()],
-                  usd_version=list(Usd.GetVersion()),
-                  orbit=orbit_samples, orbit_camera=orbit_camera,
-                  orbit_selection=measure(widget, orbit_and_select, frames, QtCore, widget.renderReady,
-                                          selection_ready))
+                  usd_version=list(Usd.GetVersion()))
+    if hierarchy:
+        result['hierarchy_selection'] = measure(widget, select_hierarchy, frames, QtCore, widget.renderReady,
+                                                selection_ready)
+    else:
+        result['orbit'] = measure(widget, orbit, frames, QtCore, widget.renderReady)
+        result['orbit_camera'] = stageviz.render().inspectPrim(geometry[0])['camera']
+        assert widget.grab().save(str(output / 'orbit-viewport.png'))
+        result['orbit_selection'] = measure(widget, orbit_and_select, frames, QtCore, widget.renderReady,
+                                            selection_ready)
     assert stage.GetRootLayer().ExportToString() == root_text
     assert not any(layer.dirty for layer in stage.GetUsedLayers() if not layer.anonymous)
     result['graphics'] = graphics_profile(widget, QtCore)

@@ -1,0 +1,86 @@
+{
+  "recorded_on": "2026-11-23T06:18:12.301913+00:00",
+  "profile": {
+    "protocol": 1,
+    "hardware": {
+      "version": 1,
+      "model": "83JE",
+      "cpus": [
+        {
+          "logical_cores": 20,
+          "physical_cores": 14,
+          "model": "13th Gen Intel(R) Core(TM) i7-13650HX"
+        }
+      ],
+      "memory_bytes": 34359738368,
+      "architecture": "AMD64",
+      "gpus": [
+        "Intel(R) UHD Graphics",
+        "NVIDIA GeForce RTX 5070 Laptop GPU"
+      ]
+    },
+    "os": "Windows-10-10.0.26100",
+    "graphics": {
+      "qt": "6.10.1",
+      "python": "3.9.0",
+      "msaa_samples": 0,
+      "opengl_renderer": "NVIDIA GeForce RTX 5070 Laptop GPU/PCIe/SSE2",
+      "opengl_version": "4.6.0 NVIDIA 621.24"
+    },
+    "openusd": [
+      0,
+      25,
+      11
+    ],
+    "configuration": "Release",
+    "viewport": [
+      1002,
+      795
+    ],
+    "fixture_sha256": "f9c365f8a996488d1358daa9dce51441cc418fcd63688f71d5f19c983bd50b36",
+    "frames": 90,
+    "runs": 3,
+    "cubes": 1024
+  },
+  "source": {
+    "head": "90f17039b26cadeea72a8f57dc30ce8c1d399b1d",
+    "working_tree_dirty": true,
+    "binary_sha256": "56d199574cb0d07649d76044ca5ff31778aaf412ba6d53e4d3e828563eace193"
+  },
+  "measurements": {
+    "orbit": {
+      "input_to_swap_ms": {
+        "median": 6.864850000000001,
+        "p95": 7.075,
+        "maximum": 8.4557
+      },
+      "paint_end_to_swap_ms": {
+        "median": 4.4862,
+        "p95": 4.7567,
+        "maximum": 5.4941
+      },
+      "frame_intervals_ms": {
+        "median": 6.938,
+        "p95": 7.1152,
+        "maximum": 8.4937
+      }
+    },
+    "orbit_selection": {
+      "input_to_swap_ms": {
+        "median": 10.91045,
+        "p95": 12.107,
+        "maximum": 13.0626
+      },
+      "paint_end_to_swap_ms": {
+        "median": 4.1107,
+        "p95": 4.622,
+        "maximum": 5.4214
+      },
+      "frame_intervals_ms": {
+        "median": 10.9836,
+        "p95": 12.1636,
+        "maximum": 13.121
+      }
+    }
+  }
+}

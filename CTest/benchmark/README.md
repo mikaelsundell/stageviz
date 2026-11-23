@@ -12,26 +12,54 @@ terminal. The answer applies to that run. On Windows the default is the executab
 in the selected build directory, including when it was configured with
 `DEPLOY_BUILD=ON`. The benchmark never builds the app or launches a second viewer.
 
-It runs three repetitions of two workloads on a generated scene. **Orbit**
-measures input to frame swap. **Orbit with selection** measures the same camera
-movement while changing the selection. The report shows median and p95 timing
-changes as percentages when a matching baseline exists. The full JSON also
-includes paint-end-to-swap and frame interval measurements.
+The normal run measures **Orbit**, **Orbit with selection**, and
+**Large hierarchy selection**. Four passes feed one result per workload.
+Orbit measures input to frame swap, with and
+without changing the selection during camera movement. Use `--quick` to run
+only the two orbit workloads. Reports show median and p95 timing changes as
+percentages when a matching baseline exists. The full JSON also includes
+paint-end-to-swap and frame interval measurements.
 
 The baseline key includes the machine profile, active OpenGL renderer and
 version, OpenUSD, build configuration, viewport size, fixture hash, and sample
-settings. The Git revision and binary hash are recorded separately so different
-builds can share a baseline. A machine or GPU change can produce a new key.
+settings. The pass count, Git revision, and binary hash are recorded without
+affecting baseline matching. A machine or GPU change can produce a new key.
 
-The runner looks up the baseline under `docs/performance/stageviz-viewport/`.
+The runner looks up each baseline under `docs/performance/stageviz-viewport/`.
 It prints the previous and current timings with their percentage differences,
 or reports that there is no match. Answer **yes** to save or overwrite the
-matching JSON in the working tree. Press Enter or use `--no-prompt` to leave
-the baseline alone. Noninteractive runs only report and compare.
+matching JSON files in the working tree. The normal run numbers all eight
+passes in sequence and asks once after both comparisons. Press Enter or use
+`--no-prompt` to keep the existing baselines. Noninteractive runs only
+report and compare.
 
 Review and commit the JSON when you want to share the baseline. The file omits
 installation hashes, local paths, and raw logs. Raw results remain under
 `build.test-results/`.
+
+### Large hierarchy selection
+
+The hierarchy workload runs by default and uses its own baseline. The normal
+run writes its report under `hierarchy/summary.json` in the results directory.
+Pass `--hierarchy` to run this workload on its own.
+
+The default fixture contains **240,421 composed prims**, including 40,000
+polygon meshes and 40,000 analytic shapes. Each component has nested Xforms,
+geometry, and a metadata branch. Meshes include triangles, quads, pyramids,
+and subdivided boxes. Analytic shapes include spheres, cubes, cones, cylinders,
+and capsules.
+
+With the camera fixed and an Outliner branch expanded, the benchmark cycles
+through four repeatable sets of up to 96 selections across the hierarchy.
+Each set mixes parent Xforms and individual geometry paths. The primary
+measurement is selection dispatch to the first fresh frame swap after the
+selection completes. The benchmark checks the composed prim count, exact
+selection, and unchanged USD data. The baseline matches the fixture,
+selection sequence, and sample settings.
+
+The default is four passes of 24 samples. Use `--runs` to change the pass
+count. For a smaller fixture, use
+`--hierarchy 400 --frames 6 --no-prompt`.
 
 For optional native timings, launch with
 `STAGEVIZ_PERF_LOG=/absolute/path/to/phases.jsonl`. See
@@ -140,8 +168,8 @@ is a serialized redraw benchmark with scripted camera changes.
 Use `--scene` in place of `--synthetic-cubes` to benchmark an existing USD
 file. The output includes screenshots, raw samples, and MCP checkpoints.
 Keep results from private inputs local. See
-[performance references](../../docs/performance/README.md) for the checked-in
-reports.
+[performance references](../../docs/performance/README.md) for the repository
+baseline workflow.
 
 ## Synthetic 250k-prim / 20m-face comparison
 

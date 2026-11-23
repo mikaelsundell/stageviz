@@ -1,0 +1,79 @@
+{
+  "recorded_on": "2026-11-23T07:17:03.260473+00:00",
+  "profile": {
+    "protocol": 1,
+    "hardware": {
+      "version": 1,
+      "model": "83JE",
+      "cpus": [
+        {
+          "logical_cores": 20,
+          "physical_cores": 14,
+          "model": "13th Gen Intel(R) Core(TM) i7-13650HX"
+        }
+      ],
+      "memory_bytes": 34359738368,
+      "architecture": "AMD64",
+      "gpus": [
+        "Intel(R) UHD Graphics",
+        "NVIDIA GeForce RTX 5070 Laptop GPU"
+      ]
+    },
+    "os": "Windows-10-10.0.26100",
+    "graphics": {
+      "qt": "6.10.1",
+      "python": "3.9.0",
+      "msaa_samples": 0,
+      "opengl_renderer": "NVIDIA GeForce RTX 5070 Laptop GPU/PCIe/SSE2",
+      "opengl_version": "4.6.0 NVIDIA 621.24"
+    },
+    "openusd": [
+      0,
+      25,
+      11
+    ],
+    "configuration": "Release",
+    "viewport": [
+      1002,
+      795
+    ],
+    "fixture_sha256": "d03fa1e5ed3868256bdb7df9c721331411275f2e5e18e1c0d5cee39ab4a644aa",
+    "frames": 24,
+    "runs": 4,
+    "hierarchy": {
+      "parts": 40000,
+      "prims": 240421,
+      "selection_sizes": [
+        96,
+        96,
+        96,
+        96
+      ],
+      "selection_sha256": "8b52a9dd13aa9487e526c61497120cb28dc37b48df40fe00dbaeb47367263f34"
+    }
+  },
+  "source": {
+    "head": "90f17039b26cadeea72a8f57dc30ce8c1d399b1d",
+    "working_tree_dirty": true,
+    "binary_sha256": "f24d75a11173a3935ff3e407441f84c69ddfaf41f8b9094181dce4414be03e1e"
+  },
+  "measurements": {
+    "hierarchy_selection": {
+      "input_to_swap_ms": {
+        "median": 174.64445,
+        "p95": 186.9557,
+        "maximum": 190.2114
+      },
+      "paint_end_to_swap_ms": {
+        "median": 3.555775,
+        "p95": 4.0498,
+        "maximum": 4.5159
+      },
+      "frame_intervals_ms": {
+        "median": 174.8744,
+        "p95": 187.0121,
+        "maximum": 190.2659
+      }
+    }
+  }
+}
