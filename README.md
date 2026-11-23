@@ -329,6 +329,12 @@ Create a macOS release bundle and ZIP archive:
 
 The `.app` bundle and versioned ZIP are written to `deploy.release/`.
 
+To repackage an existing deployment build without running CMake or compiling:
+
+```shell
+./build_app.sh release --deploy --no-build
+```
+
 The macOS build and test scripts select `_debug` Qt framework extensions only
 for Debug. Release clears `DYLD_IMAGE_SUFFIX`, including an inherited `_debug`
 value, and uses release Qt frameworks. For a manual Debug app launch only,
@@ -358,6 +364,19 @@ Build Release:
 
 ```shell
 call build_app.bat Release --deploy
+```
+
+To debug in Visual Studio, open the solution in `build.Debug` or
+`build.Release` and choose the matching configuration. Generate each
+solution with the matching `THIRDPARTY_DIR`. Stageviz is the startup
+project, and the debugger prepends the discovered Python and third-party
+DLL directories to the inherited `PATH`.
+
+To repackage an existing Release build configured with `DEPLOY_BUILD=ON`,
+skip CMake and compilation:
+
+```shell
+call build_app.bat Release --deploy --no-build
 ```
 
 ---

@@ -2168,6 +2168,12 @@ ViewportWidget::setTimeCode(double timeCode)
     update();
 }
 
+double
+ViewportWidget::timeCode() const
+{
+    return p->d.timeCode;
+}
+
 void
 ViewportWidget::updateAuxiliary(UsdStageRefPtr auxiliary)
 {

@@ -7,6 +7,7 @@
 #include "stageviz.h"
 #include <QList>
 #include <QMap>
+#include <QStringList>
 #include <pxr/usd/usd/stage.h>
 
 PXR_NAMESPACE_USING_DIRECTIVE
@@ -444,6 +445,13 @@ namespace stage {
      * @return List of leaf prim paths.
      */
     QList<SdfPath> leafPaths(UsdStageRefPtr stage, const QList<SdfPath>& mask = {}, bool childMustBeWithinMask = true);
+
+    /**
+     * @brief Returns the stage's unique, nonempty USD prim type names in display order.
+     *
+     * @param stage Stage to inspect.
+     */
+    QStringList primTypeNames(UsdStageRefPtr stage);
 
     /**
      * @brief Collects effectively visible renderable prim paths from the stage.

@@ -1181,6 +1181,24 @@ namespace stage {
         return vis != UsdGeomTokens->invisible;
     }
 
+    QStringList primTypeNames(UsdStageRefPtr stage)
+    {
+        if (!stage)
+            return {};
+        QSet<QString> unique;
+        for (const UsdPrim& prim : UsdPrimRange(stage->GetPseudoRoot())) {
+            const TfToken type = prim.GetTypeName();
+            if (!type.IsEmpty())
+                unique.insert(QString::fromStdString(type.GetString()));
+        }
+        QStringList types = unique.values();
+        std::sort(types.begin(), types.end(), [](const QString& lhs, const QString& rhs) {
+            const int order = lhs.compare(rhs, Qt::CaseInsensitive);
+            return order == 0 ? lhs < rhs : order < 0;
+        });
+        return types;
+    }
+
     QList<SdfPath> leafPaths(UsdStageRefPtr stage, const QList<SdfPath>& mask, bool childMustBeWithinMask)
     {
         QList<SdfPath> paths;

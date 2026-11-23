@@ -5039,6 +5039,46 @@ commandSelectionApi()
     undoCommand(invert, session);
     require(session.selectionList()->paths() == QList<SdfPath>({ SdfPath("/A/Leaf") }), "selectInvert undo");
 
+    stageviz::Command invertParents = stageviz::selectInvert(stageviz::SelectionDomain {});
+    executeCommand(invertParents, session);
+    const auto invertedParents = session.selectionList()->paths();
+    require(invertedParents.size() == 2 && invertedParents.contains(SdfPath("/World"))
+                && invertedParents.contains(SdfPath("/B")),
+            "top-level inversion excludes the top-level prim containing a selected descendant");
+    undoCommand(invertParents, session);
+
+    const SdfPath front("/A/Front");
+    const SdfPath back("/A/Back");
+    UsdGeomSphere::Define(session.stage(), front);
+    UsdGeomSphere::Define(session.stage(), back);
+    UsdGeomSphere::Define(session.stage(), SdfPath("/A/Hidden"))
+        .CreateVisibilityAttr()
+        .Set(UsdGeomTokens->invisible, UsdTimeCode(1));
+    UsdGeomSphere::Define(session.stage(), SdfPath("/B/OutsideMask"));
+    session.setMask({ SdfPath("/A") });
+    session.selectionList()->updatePaths({ front });
+    stageviz::Command invertGeometry = stageviz::selectInvert(
+        { stageviz::SelectionDomain::Kind::Geometry, {}, UsdTimeCode(1) });
+    executeCommand(invertGeometry, session);
+    require(session.selectionList()->paths() == QList<SdfPath>({ back }),
+            "viewport invert excludes non-geometry, hidden geometry and geometry outside the mask");
+    undoCommand(invertGeometry, session);
+    require(session.selectionList()->paths() == QList<SdfPath>({ front }), "viewport invert undo");
+    executeCommand(invertGeometry, session);
+    require(session.selectionList()->paths() == QList<SdfPath>({ back }), "viewport invert redo");
+    const stageviz::SelectionDomain spheres { stageviz::SelectionDomain::Kind::PrimType, TfToken("Sphere") };
+    stageviz::Command selectSpheres = stageviz::selectAll(spheres);
+    executeCommand(selectSpheres, session);
+    const SdfPath hidden("/A/Hidden");
+    require(session.selectionList()->paths() == QList<SdfPath>({ front, back, hidden }),
+            "exact selection matches the USD prim type in the mask");
+    undoCommand(selectSpheres, session);
+    stageviz::Command invertSpheres = stageviz::selectInvert(spheres);
+    executeCommand(invertSpheres, session);
+    require(session.selectionList()->paths() == QList<SdfPath>({ front, hidden }),
+            "exact inversion uses the same domain as exact selection");
+    session.setMask({});
+
     stageviz::Command isolate = stageviz::isolatePaths({ SdfPath("/A") });
     executeCommand(isolate, session);
     require(session.mask() == QList<SdfPath>({ SdfPath("/A") }), "isolatePaths command");

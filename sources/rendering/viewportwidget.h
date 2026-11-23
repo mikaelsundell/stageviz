@@ -331,6 +331,11 @@ public:
     void setTimeCode(double timeCode);
 
     /**
+     * @brief Returns the USD time code evaluated by the viewport.
+     */
+    double timeCode() const;
+
+    /**
      * @brief Computes displayed-time framing bounds, using the isolate mask when paths are empty.
      */
     GfBBox3d framingBounds(const QList<SdfPath>& paths = {}) const;

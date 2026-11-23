@@ -288,6 +288,12 @@ RenderView::setTimeCode(double timeCode)
     p->viewportWidget()->setTimeCode(timeCode);
 }
 
+double
+RenderView::timeCode() const
+{
+    return p->viewportWidget()->timeCode();
+}
+
 void
 RenderView::updateAuxiliary(UsdStageRefPtr auxiliary)
 {

@@ -327,11 +327,7 @@ if(APPLE)
 endif()
 
 if(WIN32)
-    # Native executables link against CPython itself as well as the dependency
-    # prefix. Use the DLL directories found by FindPython3, which may be outside
-    # both the dependency prefix and the caller's PATH.
-    set(stageviz_test_runtime_paths ${Python3_RUNTIME_LIBRARY_DIRS} ${python_runtime_library_paths})
-    list(REMOVE_DUPLICATES stageviz_test_runtime_paths)
+    set(stageviz_test_runtime_paths ${stageviz_windows_runtime_paths})
     file(GENERATE OUTPUT "${CMAKE_BINARY_DIR}/test-runtime-$<CONFIG>.txt"
         CONTENT "$<JOIN:${stageviz_test_runtime_paths},\n>\n"
     )

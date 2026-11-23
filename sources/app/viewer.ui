@@ -1060,6 +1060,24 @@
      <addaction name="editPayloadInvert"/>
      <addaction name="editLayerInvert"/>
     </widget>
+    <widget class="QMenu" name="editSelectAllMenu">
+     <property name="title">
+      <string>Select</string>
+     </property>
+     <addaction name="editSelectAll"/>
+     <addaction name="separator"/>
+     <addaction name="editSelectAllGeometry"/>
+     <addaction name="separator"/>
+    </widget>
+    <widget class="QMenu" name="editSelectInvertMenu">
+     <property name="title">
+      <string>Select invert</string>
+     </property>
+     <addaction name="editSelectInvert"/>
+     <addaction name="separator"/>
+     <addaction name="editSelectInvertGeometry"/>
+     <addaction name="separator"/>
+    </widget>
     <widget class="QMenu" name="menu_2">
      <property name="title">
       <string>Select visible</string>
@@ -1083,8 +1101,8 @@
     <addaction name="separator"/>
     <addaction name="editCopyImage"/>
     <addaction name="separator"/>
-    <addaction name="editSelectAll"/>
-    <addaction name="editSelectInvert"/>
+    <addaction name="editSelectAllMenu"/>
+    <addaction name="editSelectInvertMenu"/>
     <addaction name="editSelectParent"/>
     <addaction name="menu_2"/>
     <addaction name="separator"/>
@@ -2100,10 +2118,18 @@
   </action>
   <action name="editSelectInvert">
    <property name="text">
-    <string>Select invert</string>
+    <string>All</string>
    </property>
    <property name="shortcut">
     <string>Ctrl+Shift+I</string>
+   </property>
+  </action>
+  <action name="editSelectInvertGeometry">
+   <property name="text">
+    <string>Geometry</string>
+   </property>
+   <property name="toolTip">
+    <string>Invert geometry selection at the current viewport time and within the isolate mask.</string>
    </property>
   </action>
   <action name="fileMergeStage">
@@ -2134,10 +2160,18 @@
   </action>
   <action name="editSelectAll">
    <property name="text">
-    <string>Select all</string>
+    <string>All</string>
    </property>
    <property name="shortcut">
     <string>Ctrl+A</string>
+   </property>
+  </action>
+  <action name="editSelectAllGeometry">
+   <property name="text">
+    <string>Geometry</string>
+   </property>
+   <property name="toolTip">
+    <string>Select geometry at the current viewport time and within the isolate mask.</string>
    </property>
   </action>
   <action name="editSelectParent">

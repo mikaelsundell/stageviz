@@ -53,6 +53,7 @@
 #include <QFileDialog>
 #include <QHash>
 #include <QImageWriter>
+#include <QMenu>
 #include <QMimeData>
 #include <QObject>
 #include <QParallelAnimationGroup>
@@ -130,8 +131,8 @@ public Q_SLOTS:
     void redo();
     void clear();
     void copyImage();
-    void selectAll();
-    void selectInvert();
+    void selectInDomain(SelectionDomain domain, bool invert);
+    void populateSelectionTypes(QMenu* menu, bool invert);
     void selectParent();
     void showSelected();
     void showRecursive();
@@ -371,8 +372,18 @@ ViewerPrivate::init()
     connect(d.ui->editRedo, &QAction::triggered, this, &ViewerPrivate::redo);
     connect(d.ui->editClear, &QAction::triggered, this, &ViewerPrivate::clear);
     connect(d.ui->editCopyImage, &QAction::triggered, this, &ViewerPrivate::copyImage);
-    connect(d.ui->editSelectAll, &QAction::triggered, this, &ViewerPrivate::selectAll);
-    connect(d.ui->editSelectInvert, &QAction::triggered, this, &ViewerPrivate::selectInvert);
+    connect(d.ui->editSelectAll, &QAction::triggered, this, [this]() { selectInDomain({}, false); });
+    connect(d.ui->editSelectInvert, &QAction::triggered, this, [this]() { selectInDomain({}, true); });
+    connect(d.ui->editSelectAllGeometry, &QAction::triggered, this, [this]() {
+        selectInDomain({ SelectionDomain::Kind::Geometry, {}, UsdTimeCode(renderView()->timeCode()) }, false);
+    });
+    connect(d.ui->editSelectInvertGeometry, &QAction::triggered, this, [this]() {
+        selectInDomain({ SelectionDomain::Kind::Geometry, {}, UsdTimeCode(renderView()->timeCode()) }, true);
+    });
+    connect(d.ui->editSelectAllMenu, &QMenu::aboutToShow, this,
+            [this]() { populateSelectionTypes(d.ui->editSelectAllMenu, false); });
+    connect(d.ui->editSelectInvertMenu, &QMenu::aboutToShow, this,
+            [this]() { populateSelectionTypes(d.ui->editSelectInvertMenu, true); });
     connect(d.ui->editSelectParent, &QAction::triggered, this, &ViewerPrivate::selectParent);
     connect(d.ui->editSelectVisibleCapture, &QAction::triggered, this, &ViewerPrivate::selectVisibleCapture);
     connect(d.ui->editSelectVisibleClear, &QAction::triggered, this, &ViewerPrivate::selectVisibleClear);
@@ -1204,6 +1215,7 @@ ViewerPrivate::enable(bool enable)
                                 d.ui->fileExportImage,
                                 d.ui->editCopyImage,
                                 d.ui->editSelectAll,
+                                d.ui->editSelectAllGeometry,
                                 d.ui->editSelectParent,
                                 d.ui->editShowSelected,
                                 d.ui->editShowRecursive,
@@ -1902,16 +1914,43 @@ ViewerPrivate::copyImage()
 }
 
 void
-ViewerPrivate::selectAll()
+ViewerPrivate::selectInDomain(SelectionDomain domain, bool invert)
 {
-    session()->commandStack()->execute(new Command(stageviz::selectAll()));
+    session()->commandStack()->execute(
+        new Command(invert ? stageviz::selectInvert(domain) : stageviz::selectAll(domain)));
 }
 
 void
-ViewerPrivate::selectInvert()
+ViewerPrivate::populateSelectionTypes(QMenu* menu, bool invert)
 {
-    if (session()->selectionList()->paths().size())
-        session()->commandStack()->execute(new Command(stageviz::selectInvert()));
+    for (QAction* action : menu->actions()) {
+        if (action->data().isValid())
+            delete action;
+    }
+
+    QStringList types;
+    {
+        READ_LOCKER(locker, session()->stageLock(), "stageLock");
+        const auto stage = session()->stageUnsafe();
+        if (!stage)
+            return;
+        types = stage::primTypeNames(stage);
+    }
+
+    const QString prefix = invert ? QStringLiteral("editSelectInvert") : QStringLiteral("editSelectAll");
+    auto addType = [this, menu, invert, &prefix](const QString& label, const QString& name, const TfToken& type) {
+        QAction* action = menu->addAction(label);
+        action->setData(true);
+        action->setObjectName(prefix + name);
+        connect(action, &QAction::triggered, this, [this, invert, type]() {
+            selectInDomain({ SelectionDomain::Kind::PrimType, type }, invert);
+        });
+    };
+    for (const QString& type : types)
+        addType(type, QStringLiteral("Type_") + type, TfToken(type.toStdString()));
+    if (!types.isEmpty())
+        menu->addSeparator()->setData(true);
+    addType(tr("Untyped"), QStringLiteral("Untyped"), {});
 }
 
 void
@@ -2025,7 +2064,7 @@ void
 ViewerPrivate::selectVisibleSelect()
 {
     QList<SdfPath> paths = renderView()->visibleCapturePaths();
-    if (paths.size())
+    if (!paths.isEmpty())
         session()->commandStack()->execute(new Command(selectPaths(paths)));
 }
 
@@ -2747,6 +2786,8 @@ ViewerPrivate::updateSelection(const QList<SdfPath>& paths)
     PerfScope perfScope("ui.selection_actions");
     const bool hasSelection = !paths.isEmpty();
     d.ui->editSelectInvert->setEnabled(hasSelection);
+    d.ui->editSelectInvertGeometry->setEnabled(hasSelection);
+    d.ui->editSelectInvertMenu->menuAction()->setEnabled(hasSelection);
     d.ui->editCopySelected->setEnabled(hasSelection);
     const QList<SdfPath> xformPaths = path::minimalRootPaths(paths);
     d.ui->parentXform->setEnabled(session()->isLoaded() && !xformPaths.isEmpty()
