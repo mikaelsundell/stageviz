@@ -12,6 +12,8 @@
 #include <pxr/usd/sdf/layer.h>
 #include <pxr/usd/usd/prim.h>
 #include <pxr/usd/usd/primRange.h>
+#include <pxr/usd/usdGeom/gprim.h>
+#include <pxr/usd/usdGeom/pointInstancer.h>
 
 namespace stageviz {
 
@@ -342,8 +344,8 @@ selectAll(bool recursive)
         });
 }
 
-Command
-selectInvert()
+static Command
+invertSelection(bool geometryOnly, UsdTimeCode timeCode)
 {
     struct SelectInvertState {
         QList<SdfPath> previousSelection;
@@ -352,34 +354,49 @@ selectInvert()
     auto state = std::make_shared<SelectInvertState>();
 
     return Command(
-        [state](Session* session) {
+        [state, geometryOnly, timeCode](Session* session) {
             if (!session)
                 return;
 
             session->beginProgressBlock("Invert selection", 1);
 
-            command::runWorker([session, state]() {
+            command::runWorker([session, state, geometryOnly, timeCode]() {
                 PerfScope perfScope("selection.invert_worker");
                 QList<SdfPath> invertedSelection;
                 QList<SdfPath> previousSelection;
+                QList<SdfPath> selectedPaths;
                 QList<SdfPath> domain;
-                QList<SdfPath> mask;
 
                 {
                     READ_LOCKER(locker, session->stageLock(), "stageLock");
                     const UsdStageRefPtr stage = session->stageUnsafe();
                     previousSelection = session->selectionList()->paths();
-                    mask = session->mask();
+                    const QList<SdfPath> mask = session->mask();
 
                     {
                         PerfScope domainScope("selection.invert_domain");
-                        domain = stage::leafPaths(stage, mask, false);
+                        selectedPaths = previousSelection;
+                        if (!geometryOnly)
+                            domain = stage::leafPaths(stage, mask, false);
+                        else if (stage) {
+                            selectedPaths = stage::objectPaths(stage, previousSelection);
+                            const path::PathIndex maskRoots(mask);
+                            const auto geometry = UsdPrimRange(stage->GetPseudoRoot(), UsdTraverseInstanceProxies());
+                            for (const UsdPrim& prim : geometry) {
+                                if (!prim.IsA<UsdGeomGprim>() && !prim.IsA<UsdGeomPointInstancer>())
+                                    continue;
+                                const SdfPath& path = prim.GetPath();
+                                if ((mask.isEmpty() || maskRoots.covers(path))
+                                    && UsdGeomImageable(prim).ComputeVisibility(timeCode) != UsdGeomTokens->invisible)
+                                    domain.append(path);
+                            }
+                        }
                     }
                 }
 
                 state->previousSelection = previousSelection;
 
-                const path::PathIndex selectedRoots(previousSelection);
+                const path::PathIndex selectedRoots(selectedPaths);
                 for (const SdfPath& path : domain) {
                     if (!selectedRoots.covers(path))
                         invertedSelection.append(path);
@@ -410,6 +427,18 @@ selectInvert()
                 });
             });
         });
+}
+
+Command
+selectInvert()
+{
+    return invertSelection(false, UsdTimeCode::Default());
+}
+
+Command
+selectInvertGeometry(UsdTimeCode timeCode)
+{
+    return invertSelection(true, timeCode);
 }
 
 }  // namespace stageviz

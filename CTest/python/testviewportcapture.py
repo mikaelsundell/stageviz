@@ -363,6 +363,88 @@ class ViewportCaptureTest(_base["ViewportTest"]):
                 raise AssertionError("invalid color query was accepted")
         print("PASS culling, masks, snapshot lifetime, no-stage and argument boundaries")
 
+    def invert_and_drag(self):
+        session = stageviz.session()
+        fixture_path = self.directory / "capture_invert.usda"
+        fixture = Usd.Stage.CreateNew(str(fixture_path))
+        UsdGeom.SetStageUpAxis(fixture, UsdGeom.Tokens.y)
+        UsdGeom.Xform.Define(fixture, "/World")
+        sphere = UsdGeom.Sphere.Define(fixture, "/Sphere")
+        sphere.CreateRadiusAttr(0.55)
+        sphere.AddTranslateOp().Set(Gf.Vec3d(0, 0, -1.4))
+        UsdShade.Material.Define(fixture, "/Materials/Material")
+        plane = UsdGeom.Mesh.Define(fixture, "/Plane")
+        plane.CreatePointsAttr([(-1.2, -1.2, 0), (1.2, -1.2, 0), (1.2, 1.2, 0), (-1.2, 1.2, 0)])
+        plane.CreateFaceVertexCountsAttr([4])
+        plane.CreateFaceVertexIndicesAttr([0, 1, 2, 3])
+        plane.CreateDoubleSidedAttr(True)
+        fixture.GetRootLayer().Save()
+        assert session.loadFromFile(str(fixture_path))
+        tb.process_events(300)
+        camera = session.viewState().camera()
+        camera.setCameraUp(stageviz.CameraUpY)
+        camera.setAxisYaw(0)
+        camera.setAxisPitch(0)
+        camera.setAxisRoll(0)
+        camera.frame(((-1.5, -1.5, -1.5), (1.5, 1.5, 1.5)))
+        camera.distance(1.6)
+        tb.process_events(300)
+
+        def action(name):
+            assert tb.trigger_action(name), name
+            assert tb.wait_for_commands(), name
+
+        action("editSelectVisibleCapture")
+        assert stageviz.render().visibleCapturePaths() == ["/Plane"]
+        action("editSelectVisibleSelect")
+        assert list(session.paths()) == ["/Plane"]
+        action("editSelectInvert")
+        assert list(session.paths()) == ["/Sphere"], list(session.paths())
+        stageviz.command.undo()
+        assert tb.wait_for_commands() and list(session.paths()) == ["/Plane"]
+
+        QtCore, _, QtTest, _ = tb.qt()
+        tree = next(widget for widget in tb.all_widgets()
+                    if widget.objectName() == "outlinerTree" and widget.isVisible())
+        tree.setFocus()
+        tb.process_events(50)
+        action("editSelectInvert")
+        assert set(session.paths()) == {"/World", "/Sphere", "/Materials/Material"}
+
+        self.activate_mode("Move")
+        stageviz.command.select_paths(["/Materials/Material"])
+        assert tb.wait_for_commands()
+        self.viewport().repaint()
+        assert not self.handle_visible(), "a material alone has no transform gizmo"
+
+        mixed = ["/Sphere", "/Materials/Material"]
+        stageviz.command.select_paths(mixed)
+        assert tb.wait_for_commands()
+        self.frame_handle()
+        widget = self.viewport()
+        stage = session.stage()
+        sphere_prim = stage.GetPrimAtPath("/Sphere")
+        plane_prim = stage.GetPrimAtPath("/Plane")
+        before = UsdGeom.XformCache().GetLocalToWorldTransform(sphere_prim)
+        plane_before = UsdGeom.XformCache().GetLocalToWorldTransform(plane_prim)
+        start = QtCore.QPoint(*self.center)
+        end = start + QtCore.QPoint(27, -9)
+        QtTest.QTest.mousePress(widget, QtCore.Qt.MouseButton.LeftButton, pos=start)
+        QtTest.QTest.mouseMove(widget, end, 60)
+        QtTest.QTest.mouseRelease(widget, QtCore.Qt.MouseButton.LeftButton, pos=end)
+        assert tb.wait_for_commands()
+        after = UsdGeom.XformCache().GetLocalToWorldTransform(sphere_prim)
+        assert not Gf.IsClose(before, after, 1e-6), "material selection must not block sphere drag"
+        assert list(session.paths()) == mixed
+        assert Gf.IsClose(plane_before, UsdGeom.XformCache().GetLocalToWorldTransform(plane_prim), 1e-6)
+        stageviz.command.undo()
+        assert tb.wait_for_commands()
+        assert Gf.IsClose(before, UsdGeom.XformCache().GetLocalToWorldTransform(sphere_prim), 1e-6)
+        stageviz.command.redo()
+        assert tb.wait_for_commands()
+        assert Gf.IsClose(after, UsdGeom.XformCache().GetLocalToWorldTransform(sphere_prim), 1e-6)
+        self.snapshot("capture_invert_drag")
+
     def cleanup(self):
         state = stageviz.session().viewState()
         state.setOverrideMaterial("")
@@ -380,6 +462,7 @@ def run(disposable=False):
         test.inspect()
         test.diagnostic()
         test.boundaries()
+        test.invert_and_drag()
         return True
     finally:
         test.cleanup()

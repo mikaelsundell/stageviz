@@ -343,11 +343,10 @@ bool
 ViewportTransformPrivate::selectionPivot(GfVec3d& pivot)
 {
     PerfScope perfScope("transform.selection_pivot");
-    const QList<SdfPath> selectedPaths = selectedVisiblePaths();
-    const QList<SdfPath> targetPaths = stage::transformEditTargetPaths(d.host->stage(), selectedPaths);
+    const QList<SdfPath> targetPaths = visibleTargetPaths();
     d.frame.orientationValid = false;
 
-    if (selectedPaths.isEmpty() || targetPaths.isEmpty())
+    if (targetPaths.isEmpty())
         return false;
 
     if (d.frame.pivotEditing) {
@@ -468,6 +467,7 @@ ViewportTransformPrivate::beginDrag(const QPointF& pos, bool copy)
     if (handle == 0 || !d.host->context() || !d.host->stage())
         return false;
     TransformOperation operation;
+    QList<SdfPath> targets;
     d.operation = TransformOperation();
     GfVec3d pivot = d.frame.pivot;
     {
@@ -487,10 +487,10 @@ ViewportTransformPrivate::beginDrag(const QPointF& pos, bool copy)
             d.metersPerUnit = 1.0;
 
         QString error;
+        targets = visibleTargetPaths();
         const bool captured = d.frame.pivotEditing
-                                  ? beginPivotOperation(d.host->stage(), selectedVisiblePaths(), d.pivotOperation,
-                                                        error)
-                                  : beginTransformOperation(d.host->stage(), selectedVisiblePaths(), operation, error);
+                                  ? beginPivotOperation(d.host->stage(), targets, d.pivotOperation, error)
+                                  : beginTransformOperation(d.host->stage(), targets, operation, error);
         if (!captured) {
             Q_EMIT d.host->widget()->statusMessage(error);
             return false;
@@ -559,7 +559,7 @@ ViewportTransformPrivate::beginDrag(const QPointF& pos, bool copy)
     }
 
     d.copyDrag = copy && !d.frame.pivotEditing && d.frame.mode == Mode::Move;
-    d.copySelection = d.copyDrag ? selectedVisiblePaths() : QList<SdfPath>();
+    d.copySelection = d.copyDrag ? targets : QList<SdfPath>();
     if (d.copyDrag)
         d.snap = false;
     d.dragging = true;
@@ -1154,7 +1154,7 @@ ViewportTransform::applyNumeric(const GfVec3d& values, QString& error)
     {
         WRITE_LOCKER(locker, p->d.host->context()->stageLock(), "stageLock");
         if (!p->d.host->stage()
-            || !beginTransformOperation(p->d.host->stage(), p->selectedVisiblePaths(), operation, error))
+            || !beginTransformOperation(p->d.host->stage(), p->visibleTargetPaths(), operation, error))
             return false;
         prepared = prepareTransforms(p->d.host->stage(), operation.paths, operation.edit.before, &errors);
         if (errors.isEmpty()) {
@@ -1287,7 +1287,7 @@ ViewportTransform::beginNumericEdit(QString& error)
     {
         WRITE_LOCKER(locker, p->d.host->context()->stageLock(), "stageLock");
         captured = p->d.host->stage()
-                   && beginTransformOperation(p->d.host->stage(), p->selectedVisiblePaths(), p->d.numericOperation,
+                   && beginTransformOperation(p->d.host->stage(), p->visibleTargetPaths(), p->d.numericOperation,
                                               error);
         if (captured)
             p->d.numericPrepared = prepareTransforms(p->d.host->stage(), p->d.numericOperation.paths,

@@ -476,7 +476,7 @@ real GL viewport: native-instance proxy resolution, masks applied immediately be
 accumulating paths, legacy entry-point parity, duplicate suppression, completion
 signals, clearing, stage closure, and unchanged selection/USD/history.
 `python/testviewportcapture.py` provides disposable MCP phases (`setup`, `colors`,
-`visible_paths`, `inspect`, `diagnostic`, `boundaries`, `cleanup`) for color/object alignment, native instance
+`visible_paths`, `inspect`, `diagnostic`, `boundaries`, `invert_and_drag`, `cleanup`) for color/object alignment, native instance
 resolution, exact selection preservation, selection undo/redo, the normal-direction
 MaterialX override, masks/culling, and snapshot lifetime after stage closure.
 The `visible_paths` phase checks the shared menu/Python tiled scan, accumulating
@@ -489,6 +489,9 @@ support; they do not run in the headless aggregate suite.
 The `inspect` phase checks read-only USD/Hydra reports, proxy Rprim mapping,
 visibility updates with undo/redo, default versus sampled visibility, and
 diagnostic argument boundaries.
+The `invert_and_drag` phase checks viewport and Outliner inversion after
+selecting captured geometry. It also checks that a selected material stays
+selected without blocking a sphere's drag, undo, or redo.
 The script does not autorun; its `run(disposable=True)` executes all phases.
 
 - `copy_transform_api` covers world-space copying below rotated/scaled parents,

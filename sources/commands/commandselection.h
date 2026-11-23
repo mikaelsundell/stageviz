@@ -7,6 +7,7 @@
 #include "command.h"
 #include <QList>
 #include <pxr/usd/sdf/path.h>
+#include <pxr/usd/usd/timeCode.h>
 
 PXR_NAMESPACE_USING_DIRECTIVE
 
@@ -107,5 +108,16 @@ selectAll(bool recursive = false);
  */
 Command
 selectInvert();
+
+/**
+ * @brief Inverts the viewport selection across geometry in the current scope.
+ *
+ * Includes occluded and offscreen geometry. Respects USD visibility and the
+ * isolate mask. Undo restores the previous selection.
+ *
+ * @param timeCode Viewport time at which to evaluate USD visibility.
+ */
+Command
+selectInvertGeometry(UsdTimeCode timeCode);
 
 }  // namespace stageviz

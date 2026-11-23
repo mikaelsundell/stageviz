@@ -5039,6 +5039,26 @@ commandSelectionApi()
     undoCommand(invert, session);
     require(session.selectionList()->paths() == QList<SdfPath>({ SdfPath("/A/Leaf") }), "selectInvert undo");
 
+    const SdfPath front("/A/Front");
+    const SdfPath back("/A/Back");
+    UsdGeomSphere::Define(session.stage(), front);
+    UsdGeomSphere::Define(session.stage(), back);
+    UsdGeomSphere::Define(session.stage(), SdfPath("/A/Hidden"))
+        .CreateVisibilityAttr()
+        .Set(UsdGeomTokens->invisible, UsdTimeCode(1));
+    UsdGeomSphere::Define(session.stage(), SdfPath("/B/OutsideMask"));
+    session.setMask({ SdfPath("/A") });
+    session.selectionList()->updatePaths({ front });
+    stageviz::Command invertGeometry = stageviz::selectInvertGeometry(UsdTimeCode(1));
+    executeCommand(invertGeometry, session);
+    require(session.selectionList()->paths() == QList<SdfPath>({ back }),
+            "viewport invert excludes non-geometry, hidden geometry and geometry outside the mask");
+    undoCommand(invertGeometry, session);
+    require(session.selectionList()->paths() == QList<SdfPath>({ front }), "viewport invert undo");
+    executeCommand(invertGeometry, session);
+    require(session.selectionList()->paths() == QList<SdfPath>({ back }), "viewport invert redo");
+    session.setMask({});
+
     stageviz::Command isolate = stageviz::isolatePaths({ SdfPath("/A") });
     executeCommand(isolate, session);
     require(session.mask() == QList<SdfPath>({ SdfPath("/A") }), "isolatePaths command");

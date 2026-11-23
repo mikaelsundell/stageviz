@@ -1910,8 +1910,13 @@ ViewerPrivate::selectAll()
 void
 ViewerPrivate::selectInvert()
 {
-    if (session()->selectionList()->paths().size())
-        session()->commandStack()->execute(new Command(stageviz::selectInvert()));
+    if (session()->selectionList()->paths().isEmpty())
+        return;
+    const QWidget* focus = d.viewer->focusWidget();
+    const bool outlinerFocus = focus && d.ui->outlinerWidget->isAncestorOf(focus);
+    session()->commandStack()->execute(
+        new Command(outlinerFocus ? stageviz::selectInvert()
+                                  : stageviz::selectInvertGeometry(UsdTimeCode(renderView()->timeCode()))));
 }
 
 void
@@ -2025,8 +2030,10 @@ void
 ViewerPrivate::selectVisibleSelect()
 {
     QList<SdfPath> paths = renderView()->visibleCapturePaths();
-    if (paths.size())
+    if (!paths.isEmpty()) {
+        renderView()->setFocus(Qt::OtherFocusReason);
         session()->commandStack()->execute(new Command(selectPaths(paths)));
+    }
 }
 
 void
