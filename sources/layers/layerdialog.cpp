@@ -6,6 +6,7 @@
 #include "application.h"
 #include "commandlayer.h"
 #include "commandstack.h"
+#include "fileformats.h"
 #include "layertree.h"
 #include "session.h"
 #include "settings.h"
@@ -133,11 +134,10 @@ LayerDialogPrivate::createLayer()
         return;
     }
 
-    QFileDialog dialog(d.dialog.data(), tr("Create USD Layer"), layerDirectory(),
-                       tr("USD Files (*.usd *.usda *.usdc)"));
+    QFileDialog dialog(d.dialog.data(), tr("Create USD Layer"), layerDirectory(), fileformats::filters(true, true));
     dialog.setAcceptMode(QFileDialog::AcceptSave);
     dialog.setFileMode(QFileDialog::AnyFile);
-    dialog.setDefaultSuffix(QStringLiteral("usda"));
+    dialog.setDefaultSuffix(fileformats::defaultExtension(true));
     if (dialog.exec() != QDialog::Accepted || dialog.selectedFiles().isEmpty())
         return;
 
@@ -155,7 +155,7 @@ LayerDialogPrivate::addLayer()
     }
 
     const QString filename = QFileDialog::getOpenFileName(d.dialog.data(), tr("Add USD Layer"), layerDirectory(),
-                                                          tr("USD Files (*.usd *.usda *.usdc)"));
+                                                          fileformats::filters(false, true));
     if (!filename.isEmpty()) {
         rememberLayerDirectory(filename);
         addLayerFile(filename);

@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>objOptionsDialog</class>
+ <widget class="QDialog" name="objOptionsDialog">
+  <property name="windowTitle"><string>OBJ Options</string></property>
+  <property name="minimumSize"><size><width>380</width><height>0</height></size></property>
+  <layout class="QVBoxLayout" name="verticalLayout">
+   <item><widget class="QLabel" name="filenameLabel"><property name="text"><string>File</string></property><property name="textFormat"><enum>Qt::PlainText</enum></property></widget></item>
+   <item><widget class="QCheckBox" name="triangulateCheckBox">
+    <property name="text"><string>Triangulate all faces</string></property>
+    <property name="toolTip"><string>Convert polygon faces to triangles, preserving face-corner UVs and normals.</string></property>
+   </widget></item>
+   <item><widget class="QLabel" name="descriptionLabel">
+    <property name="text"><string>Geometry, UVs and normals only. OBJ materials are not included.</string></property>
+    <property name="wordWrap"><bool>true</bool></property>
+   </widget></item>
+   <item><widget class="QDialogButtonBox" name="buttonBox"><property name="standardButtons"><set>QDialogButtonBox::Cancel|QDialogButtonBox::Ok</set></property></widget></item>
+  </layout>
+ </widget>
+ <resources/>
+ <connections>
+  <connection><sender>buttonBox</sender><signal>accepted()</signal><receiver>objOptionsDialog</receiver><slot>accept()</slot><hints><hint type="sourcelabel"><x>0</x><y>0</y></hint><hint type="destinationlabel"><x>0</x><y>0</y></hint></hints></connection>
+  <connection><sender>buttonBox</sender><signal>rejected()</signal><receiver>objOptionsDialog</receiver><slot>reject()</slot><hints><hint type="sourcelabel"><x>0</x><y>0</y></hint><hint type="destinationlabel"><x>0</x><y>0</y></hint></hints></connection>
+ </connections>
+</ui>

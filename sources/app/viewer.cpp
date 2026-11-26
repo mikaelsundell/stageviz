@@ -14,6 +14,7 @@
 #include "commandstage.h"
 #include "commandvisibility.h"
 #include "consoledialog.h"
+#include "fileformats.h"
 #include "githubclient.h"
 #include "layerdialog.h"
 #include "materialdialog.h"
@@ -59,6 +60,7 @@
 #include <QParallelAnimationGroup>
 #include <QPointer>
 #include <QPropertyAnimation>
+#include <QRegularExpression>
 #include <QSet>
 #include <QSettings>
 #include <QSizePolicy>
@@ -87,10 +89,12 @@ public:
     void initSettings();
     bool loadFile(const QString& fileName);
     bool mergeFile(const QString& fileName);
+    bool exportFile(const QString& filename, const QList<SdfPath>* paths = nullptr);
     bool mergeFlattenedFile(const QString& fileName);
     bool mergeReferenceFile(const QString& fileName, const SdfPath& targetPath);
     bool mergePayloadFile(const QString& fileName, const SdfPath& targetPath);
-    QString selectUsdFile(const QString& title);
+    QString selectImportFile(const QString& title, bool usdOnly = false);
+    QString selectExportFile(const QString& title, const QString& path);
     SdfPath compositionTarget() const;
     OutlinerView* outlinerView();
     PropertyView* propertyView();
@@ -246,7 +250,6 @@ public:
         bool rootChanged;
         quint64 statusRevision = 0;
         QStringList arguments;
-        QStringList extensions;
         QStringList recentFiles;
         QList<int> panelSplitterSizes;
         bool panelsHidden = false;
@@ -273,7 +276,6 @@ ViewerPrivate::ViewerPrivate()
     d.loadPolicy = Session::LoadPolicy::All;
     d.stageChanged = false;
     d.rootChanged = false;
-    d.extensions = { "usd", "usda", "usdc", "usdz" };
 }
 
 void
@@ -873,7 +875,7 @@ ViewerPrivate::initRecentFiles()
                 return;
             }
 
-            if (!d.extensions.contains(fileInfo.suffix().toLower())) {
+            if (!fileformats::supports(file)) {
                 session()->notifyStatus(Session::Notify::Status::Error,
                                         QString("Unsupported file format: %1").arg(fileInfo.suffix()));
                 return;
@@ -970,7 +972,7 @@ bool
 ViewerPrivate::loadFile(const QString& fileName)
 {
     QFileInfo fileInfo(fileName);
-    if (!d.extensions.contains(fileInfo.suffix().toLower())) {
+    if (!fileformats::supports(fileName)) {
         session()->notifyStatus(Session::Notify::Status::Error,
                                 QString("Unsupported file format: %1").arg(fileInfo.suffix()));
         return false;
@@ -979,8 +981,9 @@ ViewerPrivate::loadFile(const QString& fileName)
     QElapsedTimer timer;
     timer.start();
 
-    if (!session()->loadFromFile(fileName, d.loadPolicy)) {
-        session()->notifyStatus(Session::Notify::Status::Error, QString("Failed to load file: %1").arg(fileName));
+    if (!session()->loadFromFile(fileName, d.loadPolicy, true)) {
+        if (fileformats::isNative(fileName))
+            session()->notifyStatus(Session::Notify::Status::Error, QString("Failed to load file: %1").arg(fileName));
         return false;
     }
 
@@ -996,16 +999,53 @@ ViewerPrivate::loadFile(const QString& fileName)
 }
 
 bool
+ViewerPrivate::exportFile(const QString& filename, const QList<SdfPath>* paths)
+{
+    if (fileformats::isNative(filename)) {
+        if (!fileformats::supports(filename, true)) {
+            session()->notifyStatus(Session::Notify::Status::Error, "USD file format does not support writing");
+            return false;
+        }
+        return paths ? session()->flattenPathsToFile(*paths, filename) : session()->flattenToFile(filename);
+    }
+    try {
+        const UsdStageRefPtr snapshot = paths ? session()->snapshotPaths(*paths) : session()->snapshot();
+        if (!snapshot)
+            throw std::runtime_error("Could not prepare in-memory USD snapshot for export");
+        return fileformats::write(snapshot, filename, true);
+    } catch (const std::exception& error) {
+        qWarning().noquote() << "[File formats]" << error.what();
+        session()->notifyStatus(Session::Notify::Status::Error, "File export failed", QString::fromUtf8(error.what()));
+        return false;
+    }
+}
+
+bool
 ViewerPrivate::mergeFile(const QString& fileName)
 {
     const QFileInfo fileInfo(fileName);
-    if (!d.extensions.contains(fileInfo.suffix().toLower())) {
+    if (!fileformats::supports(fileName)) {
         session()->notifyStatus(Session::Notify::Status::Error,
                                 QString("Unsupported file format: %1").arg(fileInfo.suffix()));
         return false;
     }
 
-    session()->commandStack()->execute(new Command(mergeStage(fileName)));
+    if (fileformats::isNative(fileName)) {
+        session()->commandStack()->execute(new Command(mergeStage(fileName)));
+        settings()->setValue("openDir", fileInfo.absolutePath());
+        return true;
+    }
+    UsdStageRefPtr usdStage;
+    try {
+        usdStage = fileformats::read(fileName, true, "merge");
+    } catch (const std::exception& error) {
+        qWarning().noquote() << "[File formats]" << error.what();
+        session()->notifyStatus(Session::Notify::Status::Error, "File import failed", QString::fromUtf8(error.what()));
+        return false;
+    }
+    if (!usdStage)
+        return false;
+    session()->commandStack()->execute(new Command(mergeStage(usdStage)));
     settings()->setValue("openDir", fileInfo.absolutePath());
     return true;
 }
@@ -1014,13 +1054,28 @@ bool
 ViewerPrivate::mergeFlattenedFile(const QString& fileName)
 {
     const QFileInfo fileInfo(fileName);
-    if (!d.extensions.contains(fileInfo.suffix().toLower())) {
+    if (!fileformats::supports(fileName)) {
         session()->notifyStatus(Session::Notify::Status::Error,
                                 QString("Unsupported file format: %1").arg(fileInfo.suffix()));
         return false;
     }
 
-    session()->commandStack()->execute(new Command(mergeFlattenedStage(fileName)));
+    if (fileformats::isNative(fileName)) {
+        session()->commandStack()->execute(new Command(mergeFlattenedStage(fileName)));
+        settings()->setValue("openDir", fileInfo.absolutePath());
+        return true;
+    }
+    UsdStageRefPtr usdStage;
+    try {
+        usdStage = fileformats::read(fileName, true, "merge");
+    } catch (const std::exception& error) {
+        qWarning().noquote() << "[File formats]" << error.what();
+        session()->notifyStatus(Session::Notify::Status::Error, "File import failed", QString::fromUtf8(error.what()));
+        return false;
+    }
+    if (!usdStage)
+        return false;
+    session()->commandStack()->execute(new Command(mergeFlattenedStage(usdStage)));
     settings()->setValue("openDir", fileInfo.absolutePath());
     return true;
 }
@@ -1029,7 +1084,7 @@ bool
 ViewerPrivate::mergeReferenceFile(const QString& fileName, const SdfPath& targetPath)
 {
     const QFileInfo fileInfo(fileName);
-    if (!d.extensions.contains(fileInfo.suffix().toLower())) {
+    if (!fileformats::isNative(fileName) || !fileformats::supports(fileName)) {
         session()->notifyStatus(Session::Notify::Status::Error,
                                 QString("Unsupported file format: %1").arg(fileInfo.suffix()));
         return false;
@@ -1044,7 +1099,7 @@ bool
 ViewerPrivate::mergePayloadFile(const QString& fileName, const SdfPath& targetPath)
 {
     const QFileInfo fileInfo(fileName);
-    if (!d.extensions.contains(fileInfo.suffix().toLower())) {
+    if (!fileformats::isNative(fileName) || !fileformats::supports(fileName)) {
         session()->notifyStatus(Session::Notify::Status::Error,
                                 QString("Unsupported file format: %1").arg(fileInfo.suffix()));
         return false;
@@ -1056,16 +1111,27 @@ ViewerPrivate::mergePayloadFile(const QString& fileName, const SdfPath& targetPa
 }
 
 QString
-ViewerPrivate::selectUsdFile(const QString& title)
+ViewerPrivate::selectImportFile(const QString& title, bool usdOnly)
 {
     const QString openDir = settings()->value("openDir", QDir::homePath()).toString();
 
-    QStringList filters;
-    for (const QString& ext : d.extensions)
-        filters.append("*." + ext);
-
-    const QString filter = QString("USD Files (%1)").arg(filters.join(' '));
+    const QString filter = fileformats::filters(false, usdOnly);
     return QFileDialog::getOpenFileName(d.viewer.data(), title, openDir, filter);
+}
+
+QString
+ViewerPrivate::selectExportFile(const QString& title, const QString& path)
+{
+    QString selectedFilter;
+    QString filename = QFileDialog::getSaveFileName(d.viewer.data(), title, path, fileformats::filters(true),
+                                                    &selectedFilter);
+    if (!filename.isEmpty() && QFileInfo(filename).suffix().isEmpty()) {
+        const qsizetype start = selectedFilter.indexOf("*.");
+        const qsizetype end = selectedFilter.indexOf(QRegularExpression("[ )]"), start + 2);
+        filename += start >= 0 && end > start ? selectedFilter.mid(start + 1, end - start - 1)
+                                              : ("." + fileformats::defaultExtension());
+    }
+    return filename;
 }
 
 SdfPath
@@ -1340,12 +1406,7 @@ void
 ViewerPrivate::open()
 {
     QString openDir = settings()->value("openDir", QDir::homePath()).toString();
-    QStringList filters;
-    for (const QString& ext : d.extensions)
-        filters.append("*." + ext);
-
-    QString filter = QString("USD Files (%1)").arg(filters.join(' '));
-    QString filename = QFileDialog::getOpenFileName(d.viewer.data(), "Open USD File", openDir, filter);
+    QString filename = QFileDialog::getOpenFileName(d.viewer.data(), "Open File", openDir, fileformats::filters());
     if (filename.isEmpty())
         return;
 
@@ -1353,7 +1414,7 @@ ViewerPrivate::open()
     if (!fileInfo.exists() || !fileInfo.isFile())
         return;
 
-    if (!d.extensions.contains(fileInfo.suffix().toLower()))
+    if (!fileformats::supports(filename))
         return;
 
     if (!saveChanges())
@@ -1372,7 +1433,7 @@ ViewerPrivate::openLayers()
 void
 ViewerPrivate::merge()
 {
-    const QString filename = selectUsdFile("Merge into Stage");
+    const QString filename = selectImportFile("Merge into Stage");
     if (!filename.isEmpty())
         mergeFile(filename);
 }
@@ -1380,7 +1441,7 @@ ViewerPrivate::merge()
 void
 ViewerPrivate::mergeFlattened()
 {
-    const QString filename = selectUsdFile("Merge Flattened");
+    const QString filename = selectImportFile("Merge Flattened");
     if (!filename.isEmpty())
         mergeFlattenedFile(filename);
 }
@@ -1394,7 +1455,7 @@ ViewerPrivate::mergeReference()
         return;
     }
 
-    const QString filename = selectUsdFile("Merge Reference");
+    const QString filename = selectImportFile("Merge Reference", true);
     if (!filename.isEmpty())
         mergeReferenceFile(filename, targetPath);
 }
@@ -1408,7 +1469,7 @@ ViewerPrivate::mergePayload()
         return;
     }
 
-    const QString filename = selectUsdFile("Merge Payload");
+    const QString filename = selectImportFile("Merge Payload", true);
     if (!filename.isEmpty())
         mergePayloadFile(filename, targetPath);
 }
@@ -1475,22 +1536,19 @@ ViewerPrivate::saveAs()
         saveDir = info.absolutePath();
     }
     else if (rootLayer && session()->filename().isEmpty()) {
-        defaultName = QStringLiteral("Untitled.usd");
+        defaultName = QStringLiteral("Untitled.%1").arg(fileformats::defaultExtension());
     }
     else if (defaultName.isEmpty()) {
-        defaultName = QStringLiteral("Layer.usd");
+        defaultName = QStringLiteral("Layer.%1").arg(fileformats::defaultExtension());
     }
 
-    QStringList filters;
-    for (const QString& ext : d.extensions)
-        filters.append("*." + ext);
-    const QString filter = QString("USD Files (%1)").arg(filters.join(' '));
+    const QString filter = fileformats::filters(true, true);
     QString filename = QFileDialog::getSaveFileName(d.viewer.data(), tr("Save Layer As"),
                                                     QDir(saveDir).filePath(defaultName), filter);
     if (filename.isEmpty())
         return;
     if (QFileInfo(filename).suffix().isEmpty())
-        filename += ".usd";
+        filename += "." + fileformats::defaultExtension();
 
     QElapsedTimer timer;
     timer.start();
@@ -1527,15 +1585,10 @@ ViewerPrivate::saveStageAs()
         saveDir = info.absolutePath();
     }
     else {
-        defaultName = "Untitled.usd";
+        defaultName = QString("Untitled.%1").arg(fileformats::defaultExtension());
     }
 
-    QStringList filters;
-    filters.reserve(d.extensions.size());
-    for (const QString& ext : d.extensions)
-        filters.append("*." + ext);
-
-    const QString filter = QString("USD Files (%1)").arg(filters.join(' '));
+    const QString filter = fileformats::filters(true, true);
     QString filename = QFileDialog::getSaveFileName(d.viewer.data(), "Save USD File As",
                                                     QDir(saveDir).filePath(defaultName), filter);
 
@@ -1543,7 +1596,7 @@ ViewerPrivate::saveStageAs()
         return;
 
     if (QFileInfo(filename).suffix().isEmpty())
-        filename += ".usd";
+        filename += "." + fileformats::defaultExtension();
 
     const QStringList targets = saveTargets(filename);
     QElapsedTimer timer;
@@ -1588,17 +1641,12 @@ ViewerPrivate::saveCopy()
                                                                   : sourceInfo.completeBaseName();
     if (defaultName.isEmpty())
         defaultName = QStringLiteral("Layer");
-    defaultName
-        += QStringLiteral(" (Copy).%1").arg(sourceInfo.suffix().isEmpty() ? QStringLiteral("usd") : sourceInfo.suffix());
+    defaultName += QStringLiteral(" (Copy).%1")
+                       .arg(sourceInfo.suffix().isEmpty() ? fileformats::defaultExtension() : sourceInfo.suffix());
     if (sourceInfo.exists())
         copyDir = sourceInfo.absolutePath();
 
-    QStringList filters;
-    filters.reserve(d.extensions.size());
-    for (const QString& ext : d.extensions)
-        filters.append("*." + ext);
-
-    const QString filter = QString("USD Files (%1)").arg(filters.join(' '));
+    const QString filter = fileformats::filters(true, true);
     QString filename = QFileDialog::getSaveFileName(d.viewer.data(), tr("Save Layer Copy As"),
                                                     QDir(copyDir).filePath(defaultName), filter);
 
@@ -1606,7 +1654,7 @@ ViewerPrivate::saveCopy()
         return;
 
     if (QFileInfo(filename).suffix().isEmpty())
-        filename += ".usd";
+        filename += "." + fileformats::defaultExtension();
 
     QElapsedTimer timer;
     timer.start();
@@ -1668,34 +1716,28 @@ ViewerPrivate::exportAll()
         exportDir = info.absolutePath();
     }
     else {
-        defaultName = "Untitled.usd";
+        defaultName = QString("Untitled.%1").arg(fileformats::defaultExtension());
     }
 
-    QStringList filters;
-    for (const QString& ext : d.extensions)
-        filters.append("*." + ext);
-
-    const QString filter = QString("USD Files (%1)").arg(filters.join(' '));
-    QString fileName = QFileDialog::getSaveFileName(d.viewer.data(), "Export All",
-                                                    QDir(exportDir).filePath(defaultName), filter);
+    QString fileName = selectExportFile("Export All", QDir(exportDir).filePath(defaultName));
 
     if (fileName.isEmpty())
         return;
 
     if (QFileInfo(fileName).suffix().isEmpty())
-        fileName += ".usd";
+        fileName += "." + fileformats::defaultExtension();
 
     QElapsedTimer timer;
     timer.start();
 
-    if (session()->flattenToFile(fileName)) {
+    if (exportFile(fileName)) {
         const double elapsedSec = timer.elapsed() / 1000.0;
         settings()->setValue("exportAllDir", QFileInfo(fileName).absolutePath());
         session()->notifyStatus(
             Session::Notify::Status::Success,
             QString("Exported all to %1 in %2 seconds").arg(fileName).arg(QString::number(elapsedSec, 'f', 2)));
     }
-    else {
+    else if (fileformats::isNative(fileName)) {
         session()->notifyStatus(Session::Notify::Status::Error, QString("Failed to export all: %1").arg(fileName));
     }
 }
@@ -1719,34 +1761,28 @@ ViewerPrivate::exportSelected()
         exportDir = info.absolutePath();
     }
     else {
-        defaultName = "Untitled.usd";
+        defaultName = QString("Untitled.%1").arg(fileformats::defaultExtension());
     }
 
-    QStringList filters;
-    for (const QString& ext : d.extensions)
-        filters.append("*." + ext);
-
-    const QString filter = QString("USD Files (%1)").arg(filters.join(' '));
-    QString fileName = QFileDialog::getSaveFileName(d.viewer.data(), "Export Selected",
-                                                    QDir(exportDir).filePath(defaultName), filter);
+    QString fileName = selectExportFile("Export Selected", QDir(exportDir).filePath(defaultName));
 
     if (fileName.isEmpty())
         return;
 
     if (QFileInfo(fileName).suffix().isEmpty())
-        fileName += ".usd";
+        fileName += "." + fileformats::defaultExtension();
 
     QElapsedTimer timer;
     timer.start();
 
-    if (session()->flattenPathsToFile(selectedPaths, fileName)) {
+    if (exportFile(fileName, &selectedPaths)) {
         const double elapsedSec = timer.elapsed() / 1000.0;
         settings()->setValue("exportSelectedDir", QFileInfo(fileName).absolutePath());
         session()->notifyStatus(
             Session::Notify::Status::Success,
             QString("Exported selected to %1 in %2 seconds").arg(fileName).arg(QString::number(elapsedSec, 'f', 2)));
     }
-    else {
+    else if (fileformats::isNative(fileName)) {
         session()->notifyStatus(Session::Notify::Status::Error, QString("Failed to export selected: %1").arg(fileName));
     }
 }
@@ -1764,23 +1800,17 @@ ViewerPrivate::exportVisible()
         exportDir = info.absolutePath();
     }
     else {
-        defaultName = "Untitled.usd";
+        defaultName = QString("Untitled.%1").arg(fileformats::defaultExtension());
     }
 
-    QStringList filters;
-    for (const QString& ext : d.extensions)
-        filters.append("*." + ext);
 
-    const QString filter = QString("USD Files (%1)").arg(filters.join(' '));
-
-    QString fileName = QFileDialog::getSaveFileName(d.viewer.data(), "Export Visible",
-                                                    QDir(exportDir).filePath(defaultName), filter);
+    QString fileName = selectExportFile("Export Visible", QDir(exportDir).filePath(defaultName));
 
     if (fileName.isEmpty())
         return;
 
     if (QFileInfo(fileName).suffix().isEmpty())
-        fileName += ".usd";
+        fileName += "." + fileformats::defaultExtension();
 
     QList<SdfPath> visiblePaths;
     {
@@ -1796,14 +1826,14 @@ ViewerPrivate::exportVisible()
     QElapsedTimer timer;
     timer.start();
 
-    if (session()->flattenPathsToFile(visiblePaths, fileName)) {
+    if (exportFile(fileName, &visiblePaths)) {
         const double elapsedSec = timer.elapsed() / 1000.0;
         settings()->setValue("exportVisibleDir", QFileInfo(fileName).absolutePath());
         session()->notifyStatus(
             Session::Notify::Status::Success,
             QString("Exported visible to %1 in %2 seconds").arg(fileName).arg(QString::number(elapsedSec, 'f', 2)));
     }
-    else {
+    else if (fileformats::isNative(fileName)) {
         session()->notifyStatus(Session::Notify::Status::Error, QString("Failed to export visible: %1").arg(fileName));
     }
 }
@@ -3744,7 +3774,7 @@ Viewer::openFile(const QString& filename)
         return;
     }
 
-    if (!p->d.extensions.contains(fileInfo.suffix().toLower())) {
+    if (!fileformats::supports(filename)) {
         session()->notifyStatus(Session::Notify::Status::Error,
                                 QString("Unsupported file format: %1").arg(fileInfo.suffix()));
         return;
@@ -3809,8 +3839,7 @@ Viewer::dragEnterEvent(QDragEnterEvent* event)
         const QList<QUrl> urls = event->mimeData()->urls();
         if (urls.size() == 1) {
             QString filename = urls.first().toLocalFile();
-            QString extension = QFileInfo(filename).suffix().toLower();
-            if (p->d.extensions.contains(extension)) {
+            if (fileformats::supports(filename)) {
                 event->acceptProposedAction();
                 return;
             }
@@ -3841,9 +3870,7 @@ Viewer::dropEvent(QDropEvent* event)
         return;
     }
 
-    const QString extension = QFileInfo(filename).suffix().toLower();
-
-    if (!p->d.extensions.contains(extension)) {
+    if (!fileformats::supports(filename)) {
         event->ignore();
         return;
     }
@@ -3861,6 +3888,8 @@ Viewer::dropEvent(QDropEvent* event)
 
     QAction* mergeReferenceAction = menu.addAction("Merge Reference");
     QAction* mergePayloadAction = menu.addAction("Merge Payload");
+    mergeReferenceAction->setEnabled(fileformats::isNative(filename));
+    mergePayloadAction->setEnabled(fileformats::isNative(filename));
 
     QAction* selected = menu.exec(mapToGlobal(event->position().toPoint()));
 

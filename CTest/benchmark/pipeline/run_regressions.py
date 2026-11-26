@@ -2,6 +2,7 @@
 """Run the existing Python suites in isolated apps with external MCP evidence."""
 import argparse
 import json
+import os
 from pathlib import Path
 import sys
 import signal
@@ -42,6 +43,19 @@ def phases(root, name, performance=False, performance_baseline=None):
     if name == 'testdragclipping':
         return [('setup', load + "; test=ns['DragClippingTest'](disposable=True); test.setup()"),
                 ('drag', 'test.drag()'), ('cleanup', 'test.cleanup()')]
+    if name == 'testobjfileformat':
+        return [('setup', load + "; test=ns['ObjFileFormatTest'](disposable=True); test.setup()"),
+                ('roundtrip', 'test.roundtrip()'), ('triangulation', 'test.triangulation()'),
+                ('transforms', 'test.transforms()'), ('failures', 'test.failures()'),
+                ('dialog', 'test.dialog()'), ('cleanup', 'test.cleanup()')]
+    if name == 'testfileformats':
+        return [('setup', load + "; test=ns['FileFormatsTest'](disposable=True); test.setup()"),
+                ('native-formats', 'test.native_formats()'), ('registry', 'test.registry()'), ('imports', 'test.imports()'),
+                ('merge', 'test.merge()'), ('exports', 'test.exports()'), ('ui', 'test.ui()'), ('cleanup', 'test.cleanup()')]
+    if name == 'testcommandgil':
+        return [('setup', load + "; test=ns['CommandGilTest'](disposable=True); test.setup()"),
+                ('roundtrip', 'test.roundtrip()'), ('menu-roundtrip', 'test.menu_roundtrip()'),
+                ('cleanup', 'test.cleanup()')]
     if name == 'testtoolspanel':
         return [('setup', load + "; test=ns['ToolsPanelTest'](disposable=True); test.setup()"),
                 ('visibility', 'test.exercise()'), ('cleanup', 'test.cleanup()')]
@@ -245,7 +259,23 @@ def run(args):
         started=time.monotonic()
         row=dict(suite=name,passed=False,completed=[])
         try:
-            with DisposableStageviz(args.app,output/name,port=args.port,
+            environment = {}
+            if name == 'testfileformats':
+                plugin_dir = output / 'usd-native-fixture'
+                plugin_dir.mkdir()
+                metadata = {'Plugins': [{
+                    'Type': 'resource', 'Name': 'stageviz_runtime_sdf_fixture', 'Root': '.', 'ResourcePath': '.',
+                    'Info': {'Types': {'StagevizRuntimeSdfReadOnlyFixture': {
+                        'bases': ['SdfFileFormat'], 'extensions': ['svsdfruntime'],
+                        'formatId': 'stageviz_runtime_read_fixture', 'target': 'usd', 'primary': True,
+                        'supportsReading': True, 'supportsWriting': False, 'supportsEditing': False,
+                    }}},
+                }]}
+                (plugin_dir / 'plugInfo.json').write_text(json.dumps(metadata))
+                existing = os.environ.get('PXR_PLUGINPATH_NAME', '')
+                environment['PXR_PLUGINPATH_NAME'] = str(plugin_dir) + (os.pathsep + existing if existing else '')
+                environment['STAGEVIZ_TEST_NATIVE_USD_FORMAT'] = 'svsdfruntime'
+            with DisposableStageviz(args.app,output/name,port=args.port, environment=environment,
                                     configuration=getattr(args, 'configuration', None)) as app:
                 # Changing native window flags on Windows recreates the HWND
                 # and can invalidate an already initialized QOpenGLWidget.
@@ -264,10 +294,22 @@ def run(args):
                     timeout = 900
                     if name == 'testapi':
                         timeout = 1800
-                    elif name in ('testpreservestate', 'testlayermultiselection', 'testchangesdialog'):
+                    elif name in ('testpreservestate', 'testlayermultiselection', 'testchangesdialog', 'testcommandgil'):
                         timeout = 120
                     result=app.python(code, timeout=timeout)
                     after=app.oracle()
+                    if name == 'testcommandgil' and label == 'roundtrip':
+                        selected = json.loads(after['stageviz_get_selection']['result']['content'][0]['text'])
+                        assert selected == ['/World/NoticePrim7'], selected
+                        after['notice_prim'] = app.tool('stageviz_get_prim_info', {'path': '/World/NoticePrim7'})
+                        info = json.loads(after['notice_prim']['result']['content'][0]['text'])
+                        assert info['type'] == 'Xform' and info['defined'], info
+                    if name == 'testcommandgil' and label == 'menu-roundtrip':
+                        selected = json.loads(after['stageviz_get_selection']['result']['content'][0]['text'])
+                        assert selected == ['/World'], selected
+                        after['menu_prim'] = app.tool('stageviz_get_prim_info', {'path': '/World/Xform'})
+                        info = json.loads(after['menu_prim']['result']['content'][0]['text'])
+                        assert info['type'] == 'Xform' and info['defined'], info
                     if name == 'testconverttomesh' and label != 'cleanup':
                         after['sphere'] = app.tool('stageviz_get_prim_info', {'path': '/World/Sphere'})
                         info = json.loads(after['sphere']['result']['content'][0]['text'])

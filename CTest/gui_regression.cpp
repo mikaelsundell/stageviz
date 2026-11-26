@@ -17,6 +17,7 @@
 #include "commandtransform.h"
 #include "commandvisibility.h"
 #include "console.h"
+#include "fileformats.h"
 #include "gizmoprojection.h"
 #include "indextree.h"
 #include "layerdialog.h"
@@ -3939,7 +3940,7 @@ layerCreateReplaceDialogApi()
                 }
                 else if (!replaceSeen) {
                     saveSeen = true;
-                    require(chooser->defaultSuffix() == "usda",
+                    require(chooser->defaultSuffix() == stageviz::fileformats::defaultExtension(true),
                             "default extension participates in overwrite confirmation");
                     auto* filename = chooser->findChild<QLineEdit*>("fileNameEdit");
                     if (!filename)

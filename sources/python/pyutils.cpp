@@ -5,6 +5,7 @@
 #include "pyutils.h"
 #include "application.h"
 #include <pxr/base/gf/range3d.h>
+#include <pxr/base/tf/makePyConstructor.h>
 #include <pxr/external/boost/python.hpp>
 
 namespace stageviz::python {
@@ -384,6 +385,28 @@ pyToBBox(PyObject* object, GfBBox3d* bbox)
     return true;
 }
 
+bool
+pyToUsdStage(PyObject* object, UsdStageRefPtr* stage)
+{
+    try {
+        // Extracting a TfRefPtr directly transfers ownership away from the Python
+        // object. Borrow its weak handle and acquire our own strong reference.
+        PXR_BOOST_PYTHON_NAMESPACE::extract<UsdStageWeakPtr> extract(object);
+        if (!extract.check()) {
+            PyErr_SetString(PyExc_TypeError, "Expected a live pxr.Usd.Stage");
+            return false;
+        }
+        *stage = UsdStageRefPtr(extract());
+        if (!*stage) {
+            PyErr_SetString(PyExc_TypeError, "Expected a live pxr.Usd.Stage");
+            return false;
+        }
+        return true;
+    } catch (const PXR_BOOST_PYTHON_NAMESPACE::error_already_set&) {
+        return false;
+    }
+}
+
 PyObject*
 wrapUsdStage(const UsdStageRefPtr& stage)
 {
@@ -391,8 +414,10 @@ wrapUsdStage(const UsdStageRefPtr& stage)
         Py_RETURN_NONE;
 
     try {
-        PXR_BOOST_PYTHON_NAMESPACE::object object(stage);
-        return PXR_BOOST_PYTHON_NAMESPACE::incref(object.ptr());
+        // Use OpenUSD's factory policy so the Python object owns a reference,
+        // including when the caller holds only a temporary native snapshot.
+        TfPyRefPtrFactory<>::apply<UsdStageRefPtr>::type converter;
+        return converter(stage);
     } catch (const PXR_BOOST_PYTHON_NAMESPACE::error_already_set&) {
         return nullptr;
     } catch (...) {

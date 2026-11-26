@@ -329,6 +329,13 @@ Create a macOS release bundle and ZIP archive:
 
 The `.app` bundle and versioned ZIP are written to `deploy.release/`.
 
+Finder file associations are generated from the readable native formats reported
+by the linked USD SDK during the app build. Deployment regenerates them after
+copying the bundled USD plugins and before signing. Rebuild after installing a
+native USD format plugin; there is no fixed extension list in the bundle template.
+Python adapters registered through `stageviz.plugins` are initialized at runtime
+and do not add Finder associations during the build.
+
 To repackage an existing deployment build without running CMake or compiling:
 
 ```shell
@@ -487,3 +494,14 @@ It began as a way to learn USD by building something with it. Now it is also a p
 **Open a stage. Pull it apart. Understand it. Change it. Script it. Ask an agent to build the weird tool you need today.**
 
 And hopefully make working with USD a little more enjoyable.
+
+### Plugins and file formats
+
+Register external loaders and savers with `stageviz.plugins`. Imports become
+editable USD documents; Export All, Selected and Visible can write registered
+formats. Loaders return USD stages and savers receive isolated in-memory stage
+snapshots, with no intermediate USD file cache. Optional Python/Qt settings
+callbacks run for single-file operations.
+Place `stageviz.py` beside the executable or in your home directory to
+initialize adapters before opening a document. See the [plugin guide](skills/references/python-file-formats.md)
+and [sample adapter](scripts/fileformats/simple_shapes.py).

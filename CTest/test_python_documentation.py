@@ -25,7 +25,8 @@ class DocumentationCheckTest(unittest.TestCase):
             shutil.copyfile(documentation.ROOT / relative, target)
         # Link targets need to exist, but no implementation/data contents are used.
         for target in ("CTest/python/testbench.py",
-                       "skills/scripts/dialogs.py"):
+                       "skills/scripts/dialogs.py", "scripts/fileformats/simple_shapes.py", "scripts/stageviz.py",
+                       "support/fileformats/README.md"):
             path = self.root / target
             path.parent.mkdir(parents=True, exist_ok=True)
             path.touch()
@@ -56,6 +57,16 @@ class DocumentationCheckTest(unittest.TestCase):
     def test_keyword_drift(self):
         self.mutate("sources/python/pycommand.cpp", '"recursive", nullptr', '"recurse", nullptr')
         self.assertIn("Keyword names mismatch: stageviz.command.select_all", self.errors())
+
+    def test_native_registry_signature(self):
+        self.mutate("skills/references/python-api.md", '`writeFile(stage, path, interactive=False) -> bool`',
+                    '`writeFile(stage, path) -> bool`')
+        self.assertIn("Argument count mismatch: stageviz.plugins.writeFile", self.errors())
+
+    def test_native_registry_keyword_drift(self):
+        self.mutate("sources/python/pyplugins.cpp", '"stage", "path", "interactive", nullptr',
+                    '"source", "path", "interactive", nullptr')
+        self.assertIn("Keyword names mismatch: stageviz.plugins.writeFile", self.errors())
 
     def test_constant_drift(self):
         self.mutate("sources/python/pymodule.cpp", '"PrimsImmediate"', '"PrimsNow"')

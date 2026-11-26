@@ -116,6 +116,8 @@ foreach(case IN ITEMS
     view_state_api
     session_core_api
     session_file_api
+    file_format_registry_api
+    usd_file_format_discovery_api
     session_layer_colors_api
     session_edit_layer_api
     session_layer_commands
@@ -320,6 +322,19 @@ if(NOT WIN32)
 endif()
 
 if(APPLE)
+    set(stageviz_document_type_test_options)
+    if(DEPLOY_BUILD)
+        list(APPEND stageviz_document_type_test_options --deploy-build)
+    endif()
+    add_test(NAME stageviz.macos_document_types
+        COMMAND ${Python3_EXECUTABLE} "${CMAKE_CURRENT_SOURCE_DIR}/test_macos_document_types.py"
+                --formats-tool $<TARGET_FILE:stageviz_usd_formats>
+                --bundle $<TARGET_BUNDLE_DIR:${project_name}>
+                --configuration $<CONFIG> ${stageviz_document_type_test_options}
+    )
+    set_tests_properties(stageviz.macos_document_types PROPERTIES
+        LABELS "tooling;fileformats" TIMEOUT 60
+    )
     # Also cover native and Python tests launched directly with ctest, clearing
     # any suffix inherited by a non-Debug configuration.
     get_property(stageviz_registered_tests DIRECTORY PROPERTY TESTS)
@@ -361,3 +376,10 @@ add_dependencies(stageviz_tests
     stageviz_regressions
     stageviz_gui_regressions
 )
+
+add_test(
+    NAME stageviz.fileformat_startup
+    COMMAND ${Python3_EXECUTABLE} "${CMAKE_CURRENT_SOURCE_DIR}/test_fileformat_startup.py"
+            --app $<TARGET_FILE:${project_name}> --configuration $<CONFIG>
+)
+set_tests_properties(stageviz.fileformat_startup PROPERTIES LABELS "python;gui;fileformats" TIMEOUT 150 RUN_SERIAL TRUE)

@@ -8,6 +8,7 @@
 #include <QList>
 #include <QString>
 #include <pxr/usd/sdf/path.h>
+#include <pxr/usd/usd/stage.h>
 
 PXR_NAMESPACE_USING_DIRECTIVE
 
@@ -27,6 +28,20 @@ mergeStage(const QString& filename);
  */
 Command
 mergeFlattenedStage(const QString& filename);
+
+/**
+ * @brief Captures an in-memory stage and merges it without retaining caller-owned mutable data.
+ *
+ * Undo restores the edit layer; redo reuses the captured stage without invoking a loader.
+ */
+Command
+mergeStage(const UsdStageRefPtr& stage);
+
+/**
+ * @brief Captures and merges the composed content of an in-memory stage with undo/redo.
+ */
+Command
+mergeFlattenedStage(const UsdStageRefPtr& stage);
 
 /**
  * @brief Creates an undoable command that authors a reference on an existing prim.

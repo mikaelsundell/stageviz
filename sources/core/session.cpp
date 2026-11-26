@@ -5,6 +5,7 @@
 #include "session.h"
 #include "bboxutils.h"
 #include "commandstack.h"
+#include "fileformats.h"
 #include "perfscope.h"
 #include "qtutils.h"
 #include "selectionlist.h"
@@ -60,7 +61,7 @@ public:
     void endProgressBlock();
     bool isProgressBlockCancelled() const;
     bool newStage(Session::LoadPolicy policy);
-    bool loadFromFile(const QString& filename, Session::LoadPolicy loadPolicy);
+    bool loadFromFile(const QString& filename, Session::LoadPolicy loadPolicy, bool interactive = false);
     bool exportLayer(const SdfLayerHandle& layer, const QString& filename, QString& error);
     SdfLayerRefPtr relocatedCopy(const SdfLayerHandle& layer);
     bool saveSublayers(const UsdStageRefPtr& stage, QString& error);
@@ -69,7 +70,7 @@ public:
     bool saveLayerAs(const QString& identifier, const QString& filename);
     bool copyLayerToFile(const QString& identifier, const QString& filename);
     bool copyToFile(const QString& filename);
-    bool flattenPathsToFile(const QList<SdfPath>& paths, const QString& filename);
+    UsdStageRefPtr snapshotPaths(const QList<SdfPath>& paths) const;
     bool loadState(const QString& filename);
     bool saveState(const QString& filename, bool markSaved = true, const QString& stageFilenameOverride = QString());
     void markStateDirty();
@@ -516,12 +517,32 @@ SessionPrivate::newStage(Session::LoadPolicy policy)
 }
 
 bool
-SessionPrivate::loadFromFile(const QString& filename, Session::LoadPolicy policy)
+SessionPrivate::loadFromFile(const QString& filename, Session::LoadPolicy policy, bool interactive)
 {
     StateTrackingBlocker stateBlocker(d.stateTrackingBlocked);
     PerfScope perfScope("session.load_file");
     const QString absFilename = QFileInfo(filename).absoluteFilePath();
-    const std::string identifier = QStringToString(absFilename);
+    const bool imported = !fileformats::isNative(filename);
+    UsdStageRefPtr openedStage;
+    try {
+        if (imported) {
+            openedStage = fileformats::read(filename, interactive);
+        }
+        else {
+            const std::string identifier = QStringToString(absFilename);
+            if (SdfLayerHandle existingLayer = SdfLayer::Find(identifier))
+                existingLayer->Reload(true);
+            openedStage = UsdStage::Open(identifier,
+                                         policy == Session::LoadPolicy::All ? UsdStage::LoadAll : UsdStage::LoadNone);
+        }
+    } catch (const std::exception& error) {
+        qWarning().noquote() << "[File formats]" << error.what();
+        d.session->notifyStatus(Session::Notify::Status::Error, "File conversion failed",
+                                QString::fromUtf8(error.what()));
+        return false;
+    }
+    if (!openedStage)
+        return false;
     if (!close())
         return false;
     QList<SdfPath> mask;
@@ -532,22 +553,17 @@ SessionPrivate::loadFromFile(const QString& filename, Session::LoadPolicy policy
         WRITE_LOCKER(locker, &d.stageLock, "stageLock");
         StageBlocker blocker(d.stageWatcher.data());
         d.stageWatcher->init();
-        if (SdfLayerHandle existingLayer = SdfLayer::Find(identifier))
-            existingLayer->Reload(true);
-        if (policy == Session::LoadPolicy::All)
-            d.stage = UsdStage::Open(identifier, UsdStage::LoadAll);
-        else
-            d.stage = UsdStage::Open(identifier, UsdStage::LoadNone);
+        d.stage = openedStage;
         d.loadPolicy = policy;
         d.mask.clear();
         d.pendingNotices.entries.clear();
         d.bboxDirty.store(true);
         if (d.stage) {
             d.stage->SetEditTarget(UsdEditTarget(d.stage->GetRootLayer()));
-            d.filename = absFilename;
+            d.filename = imported ? QString() : absFilename;
             d.stateDocumentEstablished.store(true);
             loaded = true;
-            preserveState = d.preserveState;
+            preserveState = d.preserveState && !imported;
             stateFilename = QFileInfo(d.filename + ".session").absoluteFilePath();
         }
         mask = d.mask;
@@ -1140,12 +1156,12 @@ SessionPrivate::copyToFile(const QString& filename)
     return true;
 }
 
-bool
-SessionPrivate::flattenPathsToFile(const QList<SdfPath>& paths, const QString& filename)
+UsdStageRefPtr
+SessionPrivate::snapshotPaths(const QList<SdfPath>& paths) const
 {
     READ_LOCKER(locker, &d.stageLock, "stageLock");
     if (!d.stage)
-        return false;
+        return {};
 
     UsdStagePopulationMask mask;
     const QList<SdfPath> roots = path::topLevelPaths(paths);
@@ -1153,12 +1169,12 @@ SessionPrivate::flattenPathsToFile(const QList<SdfPath>& paths, const QString& f
         mask.Add(path);
 
     if (mask.GetPaths().empty())
-        return false;
+        return {};
 
     UsdStageRefPtr maskedStage = UsdStage::OpenMasked(d.stage->GetRootLayer(), d.stage->GetSessionLayer(),
                                                       d.stage->GetPathResolverContext(), mask, UsdStage::LoadNone);
     if (!maskedStage)
-        return false;
+        return {};
 
     maskedStage->MuteAndUnmuteLayers(d.stage->GetMutedLayers(), {});
     maskedStage->SetLoadRules(d.stage->GetLoadRules());
@@ -1167,7 +1183,7 @@ SessionPrivate::flattenPathsToFile(const QList<SdfPath>& paths, const QString& f
     maskedStage->ExpandPopulationMask(UsdTraverseInstanceProxies());
     const SdfLayerRefPtr flattened = maskedStage->Flatten();
     if (!flattened)
-        return false;
+        return {};
 
     // USD preserves stage metadata when flattening a population mask. Remove
     // references to omitted roots on the export layer, never the source layer.
@@ -1186,7 +1202,7 @@ SessionPrivate::flattenPathsToFile(const QList<SdfPath>& paths, const QString& f
     if (order.size() != originalOrder.size())
         flattened->SetRootPrimOrder(order);
 
-    return flattened->Export(QStringToString(QFileInfo(filename).absoluteFilePath()));
+    return UsdStage::Open(flattened, d.stage->GetPathResolverContext());
 }
 
 bool
@@ -2324,9 +2340,9 @@ Session::newStage(Session::LoadPolicy policy)
 
 
 bool
-Session::loadFromFile(const QString& filename, Session::LoadPolicy loadPolicy)
+Session::loadFromFile(const QString& filename, Session::LoadPolicy loadPolicy, bool interactive)
 {
-    return p->loadFromFile(filename, loadPolicy);
+    return p->loadFromFile(filename, loadPolicy, interactive);
 }
 
 bool
@@ -2359,6 +2375,19 @@ Session::copyToFile(const QString& filename)
     return p->copyToFile(filename);
 }
 
+UsdStageRefPtr
+Session::snapshot() const
+{
+    READ_LOCKER(locker, stageLock(), "stageLock");
+    return p->d.stage ? fileformats::snapshot(p->d.stage) : UsdStageRefPtr();
+}
+
+UsdStageRefPtr
+Session::snapshotPaths(const QList<SdfPath>& paths) const
+{
+    return p->snapshotPaths(paths);
+}
+
 bool
 Session::flattenToFile(const QString& filename)
 {
@@ -2375,7 +2404,12 @@ Session::flattenToFile(const QString& filename)
 bool
 Session::flattenPathsToFile(const QList<SdfPath>& paths, const QString& filename)
 {
-    return p->flattenPathsToFile(paths, filename);
+    try {
+        const auto stage = p->snapshotPaths(paths);
+        return stage && stage->GetRootLayer()->Export(QStringToString(QFileInfo(filename).absoluteFilePath()));
+    } catch (const std::exception&) {
+        return false;
+    }
 }
 
 bool

@@ -30,11 +30,13 @@ main(int argc, char* argv[])
                                      QStringLiteral("Execute Python code after the viewer starts."),
                                      QStringLiteral("code"));
     parser.addOption(executeOption);
+    QCommandLineOption noStartupOption("no-startup", "Skip application and user Python startup scripts.");
+    parser.addOption(noStartupOption);
 
-    QCommandLineOption openOption(QStringList { QStringLiteral("open") },
-                                  QStringLiteral("Open the specified USD file."), QStringLiteral("file"));
+    QCommandLineOption openOption(QStringList { QStringLiteral("open") }, QStringLiteral("Open the specified file."),
+                                  QStringLiteral("file"));
     parser.addOption(openOption);
-    parser.addPositionalArgument(QStringLiteral("file"), QStringLiteral("USD file or Stageviz URL to open."),
+    parser.addPositionalArgument(QStringLiteral("file"), QStringLiteral("File or Stageviz URL to open."),
                                  QStringLiteral("[file]"));
     parser.process(app);
 
@@ -47,6 +49,8 @@ main(int argc, char* argv[])
     else {
         viewerArguments.append(parser.positionalArguments());
     }
+    if (!parser.isSet(noStartupOption))
+        app.pythonInterpreter()->runStartupScripts();
     viewer.setArguments(viewerArguments);
     viewer.show();
 

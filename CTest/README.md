@@ -1191,3 +1191,54 @@ Live transform clipping: `stageviz.camera_preview_clipping_api` and `stageviz.gu
 Tools panel visibility: `stageviz.gui.viewer_tools_panel_api` covers both stacked pages, the migrated Playback preference and saved Tools visibility. `testtoolspanel.py` checks View > Tools across Select/Move/Rotate/Scale, selection changes, released viewport space and Qt screenshots.
 
 Spin-box keyboard focus belongs only to explicit double-click text editing. Numeric editor regressions check focus-free mouse scrubbing and arrow steps, application complexity shortcuts after release, manual-entry shortcut ownership, and undo/redo.
+
+Python file-format coverage: `testfileformats.py` exercises registration validation,
+capability filters, anonymous USD import, cancellation/failure preservation, merge
+undo/redo without reconversion, atomic saver failure, Qt settings callbacks and
+Open/Merge/Export dialogs. `stageviz.fileformat_startup` launches isolated executable
+copies and home directories to verify application-before-user startup, registration
+before the initial external file, error recovery and `--no-startup`.
+
+`testobjfileformat.py` covers the sample OBJ adapter's polygon/UV/normal round
+trip, concave triangulation, negative indices, group-name collisions, reflected
+world transforms, expanded instances, invalid input and failed export preservation,
+merge undo/redo, and accepted/canceled settings in the Qt Designer options dialog.
+
+`file_format_registry_api` registers C++ callbacks without initializing Python,
+checks extension/filter validation, provider-owned settings and cancellation,
+Session import and merge undo/redo, failed conversion preservation, atomic export,
+anonymous stage lifetime after unregistering the provider, input/output snapshot
+isolation and the absence of intermediate USD files.
+
+In-memory file-format regressions reject filename/None loader results and saver
+sources, retain merge snapshots independently of caller edits, and verify that
+saver edits cannot reach the active document. The OBJ sample passes stages directly
+in every round trip. External output publication remains atomic; only actual
+external outputs use a temporary staging directory, with no USD conversion cache.
+
+`usd_file_format_discovery_api` registers synthetic Sdf plugin metadata and checks
+native extension discovery, separate read/write capabilities, package-format capabilities,
+native-only composition/save filters, and conflicts with Stageviz adapters.
+
+The external controller configures native Sdf plugin metadata before app startup
+and verifies that live Open/Merge dialogs include its readable extension,
+Export excludes it when read-only, and Stageviz adapters cannot shadow it.
+
+`testcommandgil.py` retains a Python-owned stage and registers Python USD notice
+callbacks while repeatedly creating prims, undoing, redoing and clearing history
+through both command bindings and Qt menu actions that bypass those bindings.
+Worker callbacks yield and reacquire the GIL while holding the stage write lock,
+exercising command-stack signals that refresh the Layer Tree. The controller uses
+a bounded timeout and captures independent MCP state between phases; Qt snapshots
+and screenshots cover the live presentation.
+
+On macOS, `stageviz.macos_document_types` compares the built bundle's Finder
+associations with a headless native USD discovery tool. Synthetic plugin metadata
+verifies that additional readable formats are included and write-only formats are
+excluded, without changing the app bundle or executing user startup Python.
+The accompanying generator checks cover plist metadata, XML/binary representation,
+permissions, idempotence, discovery failures, and Debug/Release framework selection.
+Synthetic Finder plugins are registered through an isolated bundle directory so
+Release's packaged-plugin search policy is exercised. Startup error assertions
+read the console-file capture API, including Release's internally captured output,
+rather than depending on process stdout.

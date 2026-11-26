@@ -41,6 +41,12 @@ or unselected sublayers.
 
 ## Native command factories without direct Python equivalents
 
+Command dispatch and undo/redo/clear release the GIL around native execution and
+signals. `testcommandgil.py` retains a Python-owned stage and exercises repeated
+creation, undo, redo and history clearing through both bindings and native Qt
+menu actions with Python USD notices on worker threads, alongside Qt snapshots
+and externally captured MCP stage/session state.
+
 The Python command surface is useful but is not every native factory/overload:
 
 - `newMaterial(MaterialType)` creates built-in network presets natively. Python
@@ -157,3 +163,22 @@ Viewport purpose visibility is exposed through ViewState.showGuides/showProxy/sh
 Primitive mesh conversion is exposed through `command.convert_to_mesh(paths, segments=0)`; native `convert_to_mesh_api` and embedded `testconverttomesh.py` cover topology, preserved state, menu availability and undo/redo.
 
 `ViewCamera::clippingSceneRange()` and `setClippingPreviewRange()` are native-only interaction helpers. Live drag/numeric previews maintain temporary clipping bounds without changing camera navigation or evaluating USD bounds per mouse move.
+
+## External file formats
+
+The `stageviz.plugins` native bindings expose the core registry for
+registration, metadata, conversion and atomic single-file export. Core owns the
+registrations, format validation, filters, isolated in-memory USD snapshots and
+external output publication. Python owns callback references and argument/exception
+marshalling. The documentation checker reads the public CPython method table and
+argument parsers directly. Session load/loadFromFile accept optional interactive settings.
+See [file formats](python-file-formats.md) for startup scripts and converter contracts.
+
+Loaders now return live USD stages and savers consume isolated stage snapshots.
+The binding validates and converts `pxr.Usd.Stage` objects; legacy USD filename
+handoffs are rejected. Session `snapshot()` / `snapshotPaths(paths)` expose
+lock-protected in-memory exports; merge commands also accept USD stage objects.
+
+`stageviz.plugins` is registered directly by `pyplugins.cpp`; no Python
+wrapper module is embedded in Qt resources. UI file operations call the core C++
+registry. Python executes only for a registered Python provider callback.

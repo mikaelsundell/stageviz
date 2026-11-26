@@ -39,7 +39,8 @@ All arguments of the following callables may be passed by the displayed names:
 | Surface | Callables accepting keywords |
 | --- | --- |
 | Module | `setConsoleOutputFile(path, append=True)` |
-| Session | `beginProgressBlock(name, count=0)`, `updateProgressNotify(message, completed, paths=None, status=0, details=None)`, `newStage(policy=stageviz.LoadAll)`, `load(filename, policy=stageviz.LoadAll)`, `loadFromFile(filename, policy=stageviz.LoadAll)`, `boundingBox(paths=None)` |
+| plugins | `registerFileFormat(name, extensions, loader=None, saver=None, options=None)`, `unregisterFileFormat(name)`, `readFile(path, interactive=False, operation="open")`, `writeFile(stage, path, interactive=False)` |
+| Session | `beginProgressBlock(name, count=0)`, `updateProgressNotify(message, completed, paths=None, status=0, details=None)`, `newStage(policy=stageviz.LoadAll)`, `load(filename, policy=stageviz.LoadAll, interactive=False)`, `loadFromFile(filename, policy=stageviz.LoadAll, interactive=False)`, `boundingBox(paths=None)` |
 | command | `convert_to_mesh(paths, segments=0)`, `select_all(recursive=False)`, `show_paths(paths, recursive=False)`, `hide_paths(paths, recursive=False)`, `load_payloads(paths, variant_set="", variant_value="")`, `new_light(parent_path, name, type="point")`, `new_prim(parent_path, name, type_name="")`, `new_reference(parent_path, name, asset_path, prim_path="")`, `new_payload(parent_path, name, asset_path, prim_path="")`, `move_path(paths, parent_path, insert_index=-1, preserve_world_transform=True)`, `add_attributes(prim_paths, name, type_name, custom=False)` |
 | UI | `color(role, state=stageviz.UI.Normal)` |
 | Render | `capturePaths(accumulate=True)` |
@@ -81,6 +82,13 @@ return as a success flag. File operations returning bool must be checked.
 There is no public Python command-group/context-manager API.
 
 ### Command completion and threads
+
+The native CommandStack releases the Python GIL during dispatch and history
+operations (`undo`, `redo`, `clear`), including Qt menu actions triggered from
+Python that bypass `stageviz.command`. This allows
+USD worker notice callbacks and Python object cleanup to acquire the GIL even
+when the UI waits for a stage lock. Python arguments and results are handled
+with the GIL held; this does not change command completion semantics.
 
 Commands may return after dispatching a worker, before USD edits and queued Qt
 completion callbacks finish. Run commands serially. Before dependent commands,
@@ -383,11 +391,14 @@ The wrapper defaults to the current native Stageviz session and does not own it.
   default prim, Z up, millimeter units, and the root layer as edit target. Clears
   selection, mask and command history. Discards unsaved stage edits.
 
-`load(filename, policy=stageviz.LoadAll) -> bool`
-: Replace the document with a USD file, choosing LoadAll or LoadNone for payloads.
-  Check the bool result and reacquire stage/prim/Qt objects after replacement.
+`load(filename, policy=stageviz.LoadAll, interactive=False) -> bool`
+: Replace the document with a USD file, choosing LoadAll or LoadNone for payloads,
+  or import a registered external format into an anonymous USD document. External
+  imports flatten composition and skip settings unless interactive=True. Conversion
+  failure/cancellation preserves the existing document. Check the bool result and
+  reacquire stage/prim/Qt objects after successful replacement.
 
-`loadFromFile(filename, policy=stageviz.LoadAll) -> bool`
+`loadFromFile(filename, policy=stageviz.LoadAll, interactive=False) -> bool`
 : Alias of `load`.
 
 Composition edits belong to [stageviz.command](#stagevizcommand), not Session.
@@ -427,6 +438,16 @@ Use `merge_stage`, `merge_flattened_stage`, `add_sublayer`, `add_reference`, and
 
 `flattenToFile(filename) -> bool`
 : Alias of `flatten`. Export the composed stage as a flattened USD file.
+
+`snapshot() -> Usd.Stage | None`
+: Return an isolated, anonymous snapshot of the composed stage entirely in memory,
+  including session opinions. Returns None if no stage is loaded. Captures under
+  the Session read lock; changes to the result do not affect the document.
+
+`snapshotPaths(paths) -> Usd.Stage | None`
+: Snapshot selected hierarchies and their dependencies in memory, with the same
+  population-mask, payload, muted-layer, resolver-context and metadata rules as
+  `flattenPathsToFile`. Empty paths or no stage return None. No USD files are written.
 
 `flattenPaths(paths, filename) -> bool`
 
@@ -610,12 +631,17 @@ Layer identifiers come from `session.editLayers()` or `Sdf.Layer.identifier`;
 use identifiers rather than display labels. Muted layers may no longer appear in
 the composed layer stack, so retain their identifier before muting.
 
-`merge_stage(filename) -> None`
+`merge_stage(source) -> None`
 : Merge authored USD content into the active edit layer; undo restores its
-  previous contents. Use when you want editable imported content rather than an arc.
+  previous contents. Source may be a filename or live `pxr.Usd.Stage`. External
+  files are loaded noninteractively before dispatch; in-memory stages are captured
+  immediately. Redo reuses that detached snapshot even if the caller changes or
+  releases its stage. Use when
+  you want editable imported content rather than an arc.
 
-`merge_flattened_stage(filename) -> None`
-: Flatten the incoming stage first, then merge its composed content into the edit layer.
+`merge_flattened_stage(source) -> None`
+: Accept a filename or live `pxr.Usd.Stage`, snapshot its composed content and merge
+  it into the edit layer with the same ownership and undo/redo rules as `merge_stage`.
 
 `add_sublayer(filename) -> None`
 : Add a USD file to the edit layer's sublayer list. The file remains a separate layer.
@@ -1592,3 +1618,49 @@ Viewport light guides support click and sweep selection; existing transform
 commands move and rotate the real light.
 The guides are editor overlays, visible through geometry and excluded from USD
 exports and viewport color capture. Scene lighting still follows Scene Lights.
+
+## stageviz.plugins
+
+The core file-format registry is exposed through `stageviz.plugins`.
+Python callback adapters and native C++ providers share the same registrations.
+All functions accept positional or keyword arguments. Registrations are process
+local; initialize them in `stageviz.py`. See [file formats](python-file-formats.md)
+for callback contracts, dialogs, startup discovery and a runnable plugin.
+
+`registerFileFormat(name, extensions, loader=None, saver=None, options=None) -> None`
+
+Register a unique name and sequence of simple extensions (without wildcards).
+Names/extensions cannot conflict with another registration or built-in USD.
+At least one conversion callback is required. Invalid types raise TypeError;
+invalid/conflicting registrations raise ValueError.
+
+`unregisterFileFormat(name) -> bool`
+
+Remove a registration; returns False if absent. Existing imports remain usable.
+
+`fileFormats() -> list[dict]`
+
+Return metadata copies: name, extensions (tuple), readable and writable (bool).
+
+`readFile(path, interactive=False, operation="open") -> Usd.Stage | None`
+
+Convert one external file to an isolated, flattened, anonymous USD stage in memory.
+The loader is called as `loader(filename, options)` and must return a live
+`pxr.Usd.Stage`; other return types raise TypeError. None from this function means
+options cancellation. It does not replace the active document or clear history.
+The result owns its USD data independently of the loader and registration; its
+lifetime follows ordinary stage references. There is no conversion file cache.
+Noninteractive calls use empty options and skip the settings callback. Use
+operation="merge" for merges. Exceptions propagate to Python; UI operations log
+them and report status errors.
+
+`writeFile(stage, path, interactive=False) -> bool`
+
+Export a live `pxr.Usd.Stage` to an external format. Filenames/None are rejected as
+stage arguments. The core takes an isolated anonymous in-memory snapshot and calls
+`saver(stage, destination_filename, options)`. A saver may edit that snapshot
+without affecting the supplied stage or active document. Returns False on options
+cancellation; conversion errors raise. Only the external output is staged in a
+sibling temporary directory and atomically published; there is no intermediate
+USD file. Multi-file outputs are rejected. Document identity, dirty state and
+undo history are unchanged.

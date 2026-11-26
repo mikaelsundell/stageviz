@@ -7,6 +7,7 @@
 #include "mcp/mcpserver.h"
 #include "pyapplication.h"
 #include "pycommand.h"
+#include "pyplugins.h"
 #include "pyrender.h"
 #include "pyrenderengine.h"
 #include "pyselectionlist.h"
@@ -240,6 +241,11 @@ PyInit_stageviz(void)
     }
 
     if (addPyCommandModule(module) < 0) {
+        Py_DECREF(module);
+        return nullptr;
+    }
+
+    if (addPyPluginsModule(module) < 0) {
         Py_DECREF(module);
         return nullptr;
     }

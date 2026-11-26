@@ -328,6 +328,25 @@ if(APPLE)
         "-framework AppKit"
     )
 
+    # Query the SDK directly in a headless tool; never execute user startup Python
+    # while generating build metadata. Regenerate before normal bundle signing.
+    add_executable(stageviz_usd_formats tools/usd_file_formats.cpp)
+    target_compile_features(stageviz_usd_formats PRIVATE cxx_std_17)
+    target_link_libraries(stageviz_usd_formats PRIVATE Qt6::Core OpenUSD::OpenUSD TBB::tbb)
+    add_dependencies(${project_name} stageviz_usd_formats)
+    set(stageviz_document_type_options)
+    if(DEPLOY_BUILD)
+        list(APPEND stageviz_document_type_options --deploy-build)
+    endif()
+    add_custom_command(TARGET ${project_name} POST_BUILD
+        COMMAND ${Python3_EXECUTABLE} "${CMAKE_SOURCE_DIR}/scripts/update_macos_document_types.py"
+                --formats-tool $<TARGET_FILE:stageviz_usd_formats>
+                --bundle $<TARGET_BUNDLE_DIR:${project_name}>
+                --configuration $<CONFIG> ${stageviz_document_type_options}
+        VERBATIM
+        COMMENT "Generating Finder associations from native USD file formats"
+    )
+
 elseif(WIN32)
     list(APPEND project_sources "${CMAKE_SOURCE_DIR}/sources/platform/os_win.cpp")
 

@@ -6,9 +6,11 @@
 #include "commandstack.h"
 #include "config.h"
 #include "os.h"
+#include "pyplugins.h"
 #include "session.h"
 
 #include <QDir>
+#include <QFile>
 #include <QPointer>
 #include <QStringList>
 
@@ -27,6 +29,24 @@ extern "C" PyObject*
 PyInit__stageviz_native_wrapper();
 
 namespace stageviz {
+
+namespace {
+    void reportPythonError()
+    {
+        // PyErr_Print handles SystemExit by terminating the host application.
+        PyObject* type = nullptr;
+        PyObject* value = nullptr;
+        PyObject* traceback = nullptr;
+        PyErr_Fetch(&type, &value, &traceback);
+        PyErr_NormalizeException(&type, &value, &traceback);
+        if (type)
+            PyErr_Display(type, value, traceback);
+        Py_XDECREF(type);
+        Py_XDECREF(value);
+        Py_XDECREF(traceback);
+        PyErr_Clear();
+    }
+}  // namespace
 
 class PythonInterpreterPrivate {
 public:
@@ -221,6 +241,7 @@ PythonInterpreterPrivate::release()
 
     PyGILState_STATE gil = PyGILState_Ensure();
 
+    python::releasePyPlugins();
     Py_XDECREF(d.globals);
     Py_XDECREF(d.locals);
 
@@ -477,6 +498,45 @@ QString
 PythonInterpreter::executeScriptWithOutput(const QString& script)
 {
     return p->executeScriptWithOutput(script);
+}
+
+void
+PythonInterpreter::runStartupScripts()
+{
+    if (!p->d.initialized)
+        return;
+    const auto gil = PyGILState_Ensure();
+    QStringList paths { QDir(QCoreApplication::applicationDirPath()).filePath("stageviz.py"),
+                        QDir::home().filePath("stageviz.py") };
+    paths.removeDuplicates();
+    for (const QString& path : paths) {
+        QFile file(path);
+        if (!file.exists())
+            continue;
+        if (!file.open(QIODevice::ReadOnly)) {
+            qWarning() << "Could not read startup script:" << path;
+            continue;
+        }
+        // Separate globals preserve each script's __file__ in installed callbacks.
+        PyObject* globals = PyDict_New();
+        PyDict_SetItemString(globals, "__builtins__", PyEval_GetBuiltins());
+        PyObject* name = PyUnicode_FromString("__stageviz_startup__");
+        PyObject* filename = PyUnicode_FromString(path.toUtf8().constData());
+        PyDict_SetItemString(globals, "__name__", name);
+        PyDict_SetItemString(globals, "__file__", filename);
+        Py_DECREF(name);
+        Py_DECREF(filename);
+        PyObject* code = Py_CompileString(file.readAll().constData(), path.toUtf8().constData(), Py_file_input);
+        PyObject* result = code ? PyEval_EvalCode(code, globals, globals) : nullptr;
+        if (!result) {
+            reportPythonError();
+            qWarning() << "Startup script failed:" << path;
+        }
+        Py_XDECREF(result);
+        Py_XDECREF(code);
+        Py_DECREF(globals);
+    }
+    PyGILState_Release(gil);
 }
 
 }  // namespace stageviz

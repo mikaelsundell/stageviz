@@ -43,12 +43,8 @@
             <string>Owner</string>
 
             <key>CFBundleTypeExtensions</key>
-            <array>
-                <string>usd</string>
-                <string>usda</string>
-                <string>usdc</string>
-                <string>usdz</string>
-            </array>
+            <!-- Populated at build time from the readable native USD formats. -->
+            <array/>
         </dict>
     </array>
 </dict>

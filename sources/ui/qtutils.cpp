@@ -20,6 +20,7 @@
 #include <QSet>
 #include <algorithm>
 #include <pxr/usd/ar/packageUtils.h>
+#include <pxr/usd/sdf/fileFormat.h>
 #include <pxr/usd/usd/prim.h>
 #include <pxr/usd/usd/primRange.h>
 #include <pxr/usd/usdGeom/imageable.h>
@@ -46,7 +47,7 @@ namespace qt {
             }
             else if (local)
                 layers.append({ identifier, label });
-            else if (QFileInfo(identifier).suffix().compare(QStringLiteral("usdz"), Qt::CaseInsensitive) == 0)
+            else if (const auto format = SdfFileFormat::FindByExtension(value); format && format->IsPackage())
                 packages[identifier].append({ identifier, QObject::tr("Root layer") });
             else
                 references.append({ identifier, label });

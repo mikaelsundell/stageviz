@@ -4,6 +4,7 @@
 
 #include "commandcomposition.h"
 #include "commandutils.h"
+#include "fileformats.h"
 #include "qtutils.h"
 #include "selectionlist.h"
 #include "tracelocks.h"
@@ -140,7 +141,7 @@ namespace {
         bool captured = false;
     };
 
-    Command mergeLayerCommand(const QString& filename, bool flatten)
+    Command mergeLayerCommand(const QString& filename, bool flatten, const UsdStageRefPtr& importedStage = {})
     {
         auto state = std::make_shared<MergeLayerState>();
         const QString title = flatten ? QStringLiteral("Merge flattened") : QStringLiteral("Merge stage");
@@ -148,8 +149,8 @@ namespace {
                                                : QStringLiteral("Stage merged");
 
         return Command(
-            [filename, flatten, state, title, successMessage](Session* session) {
-                if (!session || filename.isEmpty())
+            [filename, flatten, state, title, successMessage, importedStage](Session* session) {
+                if (!session || (filename.isEmpty() && !importedStage))
                     return;
 
                 session->beginProgressBlock(title, 1);
@@ -181,10 +182,11 @@ namespace {
 
                 if (state->captured) {
                     const QString absFilename = QFileInfo(filename).absoluteFilePath();
-                    UsdStageRefPtr sourceStage;
+                    UsdStageRefPtr sourceStage = importedStage;
                     try {
-                        sourceStage = UsdStage::Open(qt::QStringToString(absFilename),
-                                                     flatten ? UsdStage::LoadAll : UsdStage::LoadNone);
+                        if (!sourceStage)
+                            sourceStage = UsdStage::Open(qt::QStringToString(absFilename),
+                                                         flatten ? UsdStage::LoadAll : UsdStage::LoadNone);
                     } catch (const std::exception&) {
                         error = "failed to open source stage";
                     }
@@ -363,13 +365,45 @@ namespace {
 Command
 mergeStage(const QString& filename)
 {
-    return mergeLayerCommand(filename, false);
+    try {
+        return fileformats::isNative(filename)
+                   ? mergeLayerCommand(filename, false)
+                   : mergeLayerCommand({}, false, fileformats::read(filename, false, "merge"));
+    } catch (const std::exception& error) {
+        const QString message = QString::fromUtf8(error.what());
+        return Command([message](Session* session) {
+            if (session)
+                session->notifyStatus(Session::Notify::Status::Error, "File import failed", message);
+        });
+    }
 }
 
 Command
 mergeFlattenedStage(const QString& filename)
 {
-    return mergeLayerCommand(filename, true);
+    try {
+        return fileformats::isNative(filename)
+                   ? mergeLayerCommand(filename, true)
+                   : mergeLayerCommand({}, true, fileformats::read(filename, false, "merge"));
+    } catch (const std::exception& error) {
+        const QString message = QString::fromUtf8(error.what());
+        return Command([message](Session* session) {
+            if (session)
+                session->notifyStatus(Session::Notify::Status::Error, "File import failed", message);
+        });
+    }
+}
+
+Command
+mergeStage(const UsdStageRefPtr& stage)
+{
+    return mergeLayerCommand({}, false, fileformats::snapshot(stage));
+}
+
+Command
+mergeFlattenedStage(const UsdStageRefPtr& stage)
+{
+    return mergeLayerCommand({}, true, fileformats::snapshot(stage));
 }
 
 Command

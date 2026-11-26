@@ -112,3 +112,6 @@ When writing tests for Stageviz Qt widgets or embedded Python workflows, read [r
 - Identify assumptions not guaranteed by the bindings.
 - When debugging, distinguish Stageviz binding behavior from PySide/PyQt behavior, OpenUSD behavior, and inference from user-provided code.
 - When modifying an existing source file, preserve unrelated formatting, structure, and conventions as much as possible.
+
+For external Python loaders/savers and startup registration, read
+[Python file formats](references/python-file-formats.md).

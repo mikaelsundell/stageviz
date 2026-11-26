@@ -60,6 +60,8 @@ def source_contract(root):
                 if not module:
                     raise ValueError("Unknown method table owner: " + str(path) + ":" + table_name)
                 surface = module[1]
+            if surface.startswith("stageviz._"):
+                continue
             names = re.findall(r'\{\s*"(\w+)"\s*,', entries)
             parsed = list(re.finditer(r'\{\s*"(\w+)"\s*,\s*(?:reinterpret_cast<PyCFunction>\()?'
                                      r'(\w+)\)?\s*,\s*([^,]+),', entries))
@@ -67,6 +69,8 @@ def source_contract(root):
                 raise ValueError("Unrecognized registration in " + table_name)
             for entry in parsed:
                 name, function, flags = entry.groups()
+                if name.startswith("_"):
+                    continue
                 if "METH_NOARGS" in flags:
                     call = Call(0, 0, ())
                 else:
@@ -148,7 +152,7 @@ def check(root=ROOT):
     # The keyword table is the explicit allow-list for an otherwise positional API.
     keyword_block = reference.split("| Surface | Callables accepting keywords |", 1)[1].split("\n\n", 1)[0]
     documented_keywords = set()
-    owners = {"Module": "stageviz", "Session": "stageviz.Session", "command": "stageviz.command",
+    owners = {"Module": "stageviz", "plugins": "stageviz.plugins", "Session": "stageviz.Session", "command": "stageviz.command",
               "UI": "stageviz.UI", "Render": "stageviz.Render", "ViewportCapture": "stageviz.ViewportCapture"}
     for row in keyword_block.splitlines():
         cells = row.split("|")

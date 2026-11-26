@@ -152,9 +152,14 @@ bool
 pyToBBox(PyObject* object, GfBBox3d* bbox);
 
 /**
- * @brief Wrap a native USD stage as a Python USD object.
+ * @brief Wrap a native USD stage as a Python USD object that owns a strong reference.
  */
 PyObject*
 wrapUsdStage(const UsdStageRefPtr& stage);
+/**
+ * @brief Extracts a live pxr.Usd.Stage from a Python object, setting TypeError on failure.
+ */
+bool
+pyToUsdStage(PyObject* object, UsdStageRefPtr* stage);
 
 }  // namespace stageviz::python

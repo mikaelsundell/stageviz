@@ -19,6 +19,7 @@
 #include "commandutils.h"
 #include "commandvisibility.h"
 #include "console.h"
+#include "fileformats.h"
 #include "materialmenu.h"
 #include "materialutils.h"
 #include "notice.h"
@@ -57,11 +58,13 @@
 #include <pxr/base/gf/matrix4d.h>
 #include <pxr/base/gf/range3d.h>
 #include <pxr/base/gf/rotation.h>
+#include <pxr/base/plug/registry.h>
 #include <pxr/base/tf/errorMark.h>
 #include <pxr/imaging/hd/retainedSceneIndex.h>
 #include <pxr/imaging/hd/tokens.h>
 #include <pxr/imaging/hdx/selectionSceneIndexObserver.h>
 #include <pxr/usd/sdf/assetPath.h>
+#include <pxr/usd/sdf/fileFormat.h>
 #include <pxr/usd/sdf/layer.h>
 #include <pxr/usd/sdf/namespaceEdit.h>
 #include <pxr/usd/sdf/schema.h>
@@ -2135,6 +2138,216 @@ sessionCoreApi()
 }
 
 void
+usdFileFormatDiscoveryApi()
+{
+    namespace formats = stageviz::fileformats;
+    QTemporaryDir directory;
+    require(directory.isValid(), "USD format metadata directory");
+    writeFile(directory.filePath("plugInfo.json"), R"json({
+        "Plugins": [{
+            "Type": "resource", "Name": "stageviz_sdf_format_test", "Root": ".", "ResourcePath": ".",
+            "Info": { "Types": {
+                "StagevizTestReadOnlySdfFormat": {
+                    "bases": ["SdfFileFormat"], "extensions": ["svsdfread"],
+                    "formatId": "stageviz_read_fixture", "target": "usd", "primary": true,
+                    "supportsReading": true, "supportsWriting": false, "supportsEditing": false
+                },
+                "StagevizTestWriteOnlySdfFormat": {
+                    "bases": ["SdfFileFormat"], "extensions": ["svsdfwrite"],
+                    "formatId": "stageviz_write_fixture", "target": "usd", "primary": true,
+                    "supportsReading": false, "supportsWriting": true, "supportsEditing": false
+                }
+            }}
+        }]
+    })json");
+    const auto registered = PlugRegistry::GetInstance().RegisterPlugins(
+        directory.filePath("plugInfo.json").toStdString());
+    require(!registered.empty(), "USD plugin metadata registered");
+    require(SdfFileFormat::FindAllFileFormatExtensions().count("svsdfread") != 0, "SDK discovers fixture extension");
+    require(formats::isNative("scene.svsdfread") && formats::isNative("scene.SVSDFWRITE"),
+            "all registered USD extensions recognized");
+    require(formats::supports("scene.svsdfread") && !formats::supports("scene.svsdfread", true),
+            "native read-only capability respected");
+    require(!formats::supports("scene.svsdfwrite") && formats::supports("scene.svsdfwrite", true),
+            "native write-only capability respected");
+    const QString reading = formats::filters(false, true);
+    const QString writing = formats::filters(true, true);
+    require(reading.contains("*.svsdfread") && !reading.contains("*.svsdfwrite"),
+            "native open/reference filters use read metadata");
+    require(writing.contains("*.svsdfwrite") && !writing.contains("*.svsdfread"),
+            "native save/export filters use write metadata");
+    require(formats::supports("scene.usdz", true) == SdfFileFormat::FormatSupportsWriting("usdz"),
+            "package format write capability follows USD metadata");
+    require(!formats::defaultExtension().isEmpty() && !formats::defaultExtension(true).isEmpty(),
+            "default output extensions come from registered USD formats");
+    formats::Format adapter;
+    adapter.name = "Stageviz adapter fixture";
+    adapter.extensions = { "svadapter" };
+    adapter.loader = [](const QString&, const std::any&) { return UsdStage::CreateInMemory(); };
+    formats::registerFormat(adapter);
+    require(formats::filters().contains("*.svadapter") && !formats::filters(false, true).contains("*.svadapter"),
+            "native-only composition dialogs exclude Stageviz converters");
+    for (const QString& extension : { QString("svsdfread"), QString("svsdfwrite") }) {
+        formats::Format conflict = adapter;
+        conflict.name = "Conflicting native extension";
+        conflict.extensions = { extension };
+        bool rejected = false;
+        try {
+            formats::registerFormat(conflict);
+        } catch (const std::invalid_argument&) {
+            rejected = true;
+        }
+        require(rejected, "Stageviz adapters cannot replace registered USD extensions");
+    }
+    formats::unregisterFormat(adapter.name);
+}
+
+void
+fileFormatRegistryApi()
+{
+    namespace formats = stageviz::fileformats;
+    QTemporaryDir directory;
+    require(directory.isValid(), "native converter fixture directory");
+    formats::clear();
+    const QString source = directory.filePath("source.nativeformat");
+    writeFile(source, "synthetic external geometry");
+    int loads = 0;
+    int saves = 0;
+    int dialogs = 0;
+    bool cancel = false;
+    bool fail = false;
+    UsdStageRefPtr providerStage;
+    formats::Format format;
+    format.name = "Native fixture";
+    format.extensions = { ".NATIVEFORMAT", "nativeformat" };
+    format.settings = [&](const QString&, const QString&) -> std::optional<std::any> {
+        ++dialogs;
+        if (cancel)
+            return std::nullopt;
+        return std::any(7);
+    };
+    format.loader = [&](const QString&, const std::any& options) -> UsdStageRefPtr {
+        ++loads;
+        if (options.has_value())
+            require(std::any_cast<int>(options) == 7, "native options cross conversion boundary");
+        if (fail)
+            throw std::runtime_error("intentional native loader failure");
+        const auto stage = UsdStage::CreateInMemory();
+        UsdGeomCube::Define(stage, SdfPath("/NativeCube"));
+        providerStage = stage;
+        return stage;
+    };
+    format.saver = [&](const UsdStageRefPtr& input, const QString& output, const std::any&) {
+        ++saves;
+        require(input && input->GetRootLayer()->IsAnonymous(), "native saver receives in-memory USD");
+        input->DefinePrim(SdfPath("/SaverEdit"));
+        writeFile(output, "converted geometry");
+        if (fail)
+            throw std::runtime_error("intentional native saver failure");
+    };
+    formats::registerFormat(format);
+    require(formats::formats().size() == 1 && formats::formats().first().extensions == QStringList { "nativeformat" },
+            "native registry normalizes and deduplicates extensions");
+    require(formats::supports(source) && formats::supports(source, true), "native capabilities");
+    require(formats::filters().contains("Native fixture (*.nativeformat)"), "native dialog filters");
+    bool duplicateRejected = false;
+    try {
+        formats::registerFormat(format);
+    } catch (const std::invalid_argument&) {
+        duplicateRejected = true;
+    }
+    require(duplicateRejected, "native duplicate registration rejected");
+    formats::Format reserved = format;
+    reserved.name = "Reserved";
+    reserved.extensions = { "usd" };
+    bool reservedRejected = false;
+    try {
+        formats::registerFormat(reserved);
+    } catch (const std::invalid_argument&) {
+        reservedRejected = true;
+    }
+    require(reservedRejected, "native USD extensions protected");
+    const auto converted = formats::read(source);
+    require(converted && converted->GetRootLayer()->IsAnonymous(), "native loader returns anonymous USD snapshot");
+    require(bool(converted->GetPrimAtPath(SdfPath("/NativeCube"))), "native loader USD stage");
+    providerStage->DefinePrim(SdfPath("/ProviderEdit"));
+    require(!converted->GetPrimAtPath(SdfPath("/ProviderEdit")), "import detaches provider-owned stage data");
+    require(dialogs == 0, "batch conversion skips settings");
+    Session session;
+    session.setPreserveState(false);
+    require(session.loadFromFile(source), "Session imports a native registered converter without Python");
+    require(session.filename().isEmpty() && session.stage()->GetRootLayer()->IsAnonymous(),
+            "external import remains native USD document");
+    const auto originalStage = session.stage();
+    cancel = true;
+    require(!session.loadFromFile(source, Session::All, true), "native options cancellation");
+    require(session.stage() == originalStage, "cancellation retains document");
+    cancel = false;
+    fail = true;
+    require(!session.loadFromFile(source), "native loader failure rejected");
+    require(session.stage() == originalStage, "native converter failure retains document");
+    fail = false;
+    const QString destination = directory.filePath("result.nativeformat");
+    writeFile(destination, "original");
+    fail = true;
+    bool failureReported = false;
+    try {
+        formats::write(converted, destination);
+    } catch (const std::runtime_error&) {
+        failureReported = true;
+    }
+    require(failureReported, "native saver failure propagated");
+    QFile output(destination);
+    require(output.open(QIODevice::ReadOnly) && output.readAll() == "original",
+            "failed native saver retains destination");
+    output.close();
+    fail = false;
+    require(formats::write(converted, destination, true), "native saver atomic publication");
+    require(dialogs == 2 && saves == 2, "single-file operations invoke native settings");
+    require(output.open(QIODevice::ReadOnly) && output.readAll() == "converted geometry", "native output published");
+    output.close();
+    require(session.newStage(), "new stage for native format merge");
+    stageviz::Command merge = stageviz::mergeStage(source);
+    const int calls = loads;
+    executeCommand(merge, session);
+    require(bool(session.stage()->GetPrimAtPath(SdfPath("/NativeCube"))), "native converted merge");
+    undoCommand(merge, session);
+    require(!session.stage()->GetPrimAtPath(SdfPath("/NativeCube")), "native converted merge undo");
+    executeCommand(merge, session);
+    require(bool(session.stage()->GetPrimAtPath(SdfPath("/NativeCube"))) && loads == calls,
+            "native converted merge redo reuses snapshot");
+    require(formats::unregisterFormat(format.name) && !formats::supports(source), "native registration removed");
+    require(bool(converted->GetPrimAtPath(SdfPath("/NativeCube"))), "unregister retains caller-owned stage snapshots");
+    require(!converted->GetPrimAtPath(SdfPath("/SaverEdit")), "saver cannot mutate the supplied stage");
+    require(QDir(directory.path()).entryList({ "*.usd", "*.usda", "*.usdc" }, QDir::Files).isEmpty(),
+            "conversion creates no intermediate USD files");
+    require(session.newStage(), "new stage for in-memory merge");
+    stageviz::Command inMemory = stageviz::mergeStage(converted);
+    converted->DefinePrim(SdfPath("/CallerEdit"));
+    executeCommand(inMemory, session);
+    require(bool(session.stage()->GetPrimAtPath(SdfPath("/NativeCube")))
+                && !session.stage()->GetPrimAtPath(SdfPath("/CallerEdit")),
+            "stage merge detaches caller-owned data");
+    undoCommand(inMemory, session);
+    executeCommand(inMemory, session);
+    require(!session.stage()->GetPrimAtPath(SdfPath("/CallerEdit")), "in-memory merge redo retains its own snapshot");
+    const char firstProvider = 0;
+    const char secondProvider = 0;
+    format.provider = &firstProvider;
+    formats::registerFormat(format);
+    formats::Format other = format;
+    other.name = "Other native provider";
+    other.extensions = { "othernativeformat" };
+    other.provider = &secondProvider;
+    formats::registerFormat(other);
+    formats::unregisterProvider(&firstProvider);
+    require(!formats::supports(source) && formats::supports("source.othernativeformat"),
+            "provider shutdown preserves independent native registrations");
+    formats::unregisterProvider(&secondProvider);
+    require(formats::formats().isEmpty(), "provider registrations released");
+}
+
+void
 sessionFileApi()
 {
     QTemporaryDir dir;
@@ -2149,6 +2362,14 @@ sessionFileApi()
     const QString source = dir.filePath("source.usda");
     require(session.saveToFile(source), "save source");
     require(session.filename() == source, "save sets filename");
+    const auto memory = session.snapshot();
+    require(memory && memory->GetRootLayer()->IsAnonymous(), "Session snapshot is in memory");
+    memory->DefinePrim(SdfPath("/SnapshotOnly"));
+    require(!session.stage()->GetPrimAtPath(SdfPath("/SnapshotOnly")), "Session snapshot is isolated");
+    const auto selected = session.snapshotPaths({ SdfPath("/World/Part") });
+    require(selected && selected->GetRootLayer()->IsAnonymous() && selected->GetPrimAtPath(SdfPath("/World/Part")),
+            "Session snapshots selected content in memory");
+    require(!session.snapshotPaths({}), "empty in-memory selection rejected");
 
     const QString copy = dir.filePath("copy.usda");
     require(session.copyToFile(copy), "copy root layer");
@@ -2176,6 +2397,14 @@ sessionFileApi()
     require(!session.isLoaded() && !session.stage(), "close clears current stage");
     require(session.loadFromFile(source, Session::All), "load stage after close");
     require(session.isLoaded() && session.loadPolicy() == Session::All, "load restores stage and policy");
+    const UsdStageRefPtr beforeFailure = session.stage();
+    const QString filenameBeforeFailure = session.filename();
+    require(!session.loadFromFile(dir.filePath("missing.usda")), "missing native file rejected");
+    require(session.stage() == beforeFailure && session.filename() == filenameBeforeFailure,
+            "failed native load retains the current document");
+    require(!session.loadFromFile(dir.filePath("missing.unknownformat")), "unregistered external file rejected");
+    require(session.stage() == beforeFailure && session.filename() == filenameBeforeFailure,
+            "failed external conversion retains the current document");
 }
 
 void
@@ -7231,6 +7460,8 @@ main(int argc, char** argv)
         { "view_state_api", viewStateApi },
         { "session_core_api", sessionCoreApi },
         { "session_file_api", sessionFileApi },
+        { "file_format_registry_api", fileFormatRegistryApi },
+        { "usd_file_format_discovery_api", usdFileFormatDiscoveryApi },
         { "session_layer_colors_api", sessionLayerColorsApi },
         { "session_edit_layer_api", sessionEditLayerApi },
         { "session_layer_commands", sessionLayerCommands },

@@ -236,14 +236,15 @@ public:
     bool newStage(LoadPolicy policy = LoadPolicy::All);
 
     /**
-     * @brief Loads a USD stage from file.
+     * @brief Loads USD or imports a registered external format as an anonymous USD document.
      *
      * @param filename File to load.
      * @param policy Stage loading policy.
+     * @param interactive Allow a plugin settings dialog for this single file.
      *
      * @return True if loading succeeded.
      */
-    bool loadFromFile(const QString& filename, LoadPolicy policy = LoadPolicy::All);
+    bool loadFromFile(const QString& filename, LoadPolicy policy = LoadPolicy::All, bool interactive = false);
 
     /**
      * @brief Saves the root document and modified file-backed local sublayers.
@@ -302,6 +303,24 @@ public:
      * @return True if the copy and optional session-state write succeed.
      */
     bool copyToFile(const QString& filename);
+
+    /**
+     * @brief Returns an isolated, composed in-memory snapshot under the stage read lock.
+     *
+     * @return Anonymous USD stage, or null when no stage is loaded.
+     */
+    UsdStageRefPtr snapshot() const;
+
+    /**
+     * @brief Snapshots selected prim hierarchies and their dependencies entirely in memory.
+     *
+     * Preserves session opinions, muted layers, resolver context and payload load rules.
+     * Removes metadata references to omitted roots without modifying the source.
+     *
+     * @param paths Root prim paths to include.
+     * @return Anonymous USD stage, or null for an empty selection or unavailable stage.
+     */
+    UsdStageRefPtr snapshotPaths(const QList<SdfPath>& paths) const;
 
     /**
      * @brief Flattens the entire stage to a file.

@@ -131,11 +131,14 @@ PySession_load(PySessionObject* self, PyObject* args, PyObject* kwargs)
     const char* filename = nullptr;
     long policy = static_cast<long>(Session::LoadPolicy::All);
 
-    static const char* keywords[] = { "filename", "policy", nullptr };
-    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "s|l", const_cast<char**>(keywords), &filename, &policy))
+    int interactive = 0;
+    static const char* keywords[] = { "filename", "policy", "interactive", nullptr };
+    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "s|lp", const_cast<char**>(keywords), &filename, &policy,
+                                     &interactive))
         return nullptr;
 
-    return PyBool_FromLong(self->session->loadFromFile(QString::fromUtf8(filename), toLoadPolicy(policy)));
+    return PyBool_FromLong(
+        self->session->loadFromFile(QString::fromUtf8(filename), toLoadPolicy(policy), interactive != 0));
 }
 
 static PyObject*
@@ -203,6 +206,38 @@ PySession_copy(PySessionObject* self, PyObject* args)
         return nullptr;
 
     return PyBool_FromLong(self->session->copyToFile(QString::fromUtf8(filename)));
+}
+
+static PyObject*
+PySession_snapshot(PySessionObject* self, PyObject*)
+{
+    if (!checkSession(self->session))
+        return nullptr;
+    try {
+        return wrapUsdStage(self->session->snapshot());
+    } catch (const std::exception& error) {
+        PyErr_SetString(PyExc_RuntimeError, error.what());
+        return nullptr;
+    }
+}
+
+static PyObject*
+PySession_snapshotPaths(PySessionObject* self, PyObject* args)
+{
+    if (!checkSession(self->session))
+        return nullptr;
+    PyObject* paths = nullptr;
+    if (!PyArg_ParseTuple(args, "O", &paths))
+        return nullptr;
+    QList<SdfPath> values;
+    if (!pyToPathList(paths, &values))
+        return nullptr;
+    try {
+        return wrapUsdStage(self->session->snapshotPaths(values));
+    } catch (const std::exception& error) {
+        PyErr_SetString(PyExc_RuntimeError, error.what());
+        return nullptr;
+    }
 }
 
 static PyObject*
@@ -711,6 +746,10 @@ static PyMethodDef PySession_methods[] = {
       "Export one local layer to a new file without changing the stage" },
     { "copy", reinterpret_cast<PyCFunction>(PySession_copy), METH_VARARGS, "Copy the current stage to file" },
     { "copyToFile", reinterpret_cast<PyCFunction>(PySession_copy), METH_VARARGS, "Copy the current stage to file" },
+    { "snapshot", reinterpret_cast<PyCFunction>(PySession_snapshot), METH_NOARGS,
+      "Snapshot the composed stage in memory" },
+    { "snapshotPaths", reinterpret_cast<PyCFunction>(PySession_snapshotPaths), METH_VARARGS,
+      "Snapshot selected hierarchies in memory" },
     { "flatten", reinterpret_cast<PyCFunction>(PySession_flatten), METH_VARARGS, "Flatten the stage to file" },
     { "flattenToFile", reinterpret_cast<PyCFunction>(PySession_flatten), METH_VARARGS, "Flatten the stage to file" },
     { "flattenPaths", reinterpret_cast<PyCFunction>(PySession_flattenPaths), METH_VARARGS,

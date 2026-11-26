@@ -297,21 +297,49 @@ PyCommand_canClear(PyObject*, PyObject*)
 static PyObject*
 PyCommand_mergeStage(PyObject*, PyObject* args)
 {
-    const char* filename = nullptr;
-    if (!PyArg_ParseTuple(args, "s", &filename))
+    PyObject* source = nullptr;
+    if (!PyArg_ParseTuple(args, "O", &source))
         return nullptr;
 
-    return runCommand(mergeStage(QString::fromUtf8(filename)));
+    if (PyUnicode_Check(source)) {
+        const char* filename = PyUnicode_AsUTF8(source);
+        if (!filename)
+            return nullptr;
+        return runCommand(mergeStage(QString::fromUtf8(filename)));
+    }
+    UsdStageRefPtr stage;
+    if (!pyToUsdStage(source, &stage))
+        return nullptr;
+    try {
+        return runCommand(mergeStage(stage));
+    } catch (const std::exception& error) {
+        PyErr_SetString(PyExc_RuntimeError, error.what());
+        return nullptr;
+    }
 }
 
 static PyObject*
 PyCommand_mergeFlattenedStage(PyObject*, PyObject* args)
 {
-    const char* filename = nullptr;
-    if (!PyArg_ParseTuple(args, "s", &filename))
+    PyObject* source = nullptr;
+    if (!PyArg_ParseTuple(args, "O", &source))
         return nullptr;
 
-    return runCommand(mergeFlattenedStage(QString::fromUtf8(filename)));
+    if (PyUnicode_Check(source)) {
+        const char* filename = PyUnicode_AsUTF8(source);
+        if (!filename)
+            return nullptr;
+        return runCommand(mergeFlattenedStage(QString::fromUtf8(filename)));
+    }
+    UsdStageRefPtr stage;
+    if (!pyToUsdStage(source, &stage))
+        return nullptr;
+    try {
+        return runCommand(mergeFlattenedStage(stage));
+    } catch (const std::exception& error) {
+        PyErr_SetString(PyExc_RuntimeError, error.what());
+        return nullptr;
+    }
 }
 
 static PyObject*

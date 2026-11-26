@@ -381,6 +381,11 @@ build_stageviz() {
         echo "Set permissions"
         permission_app "$app_bundle"
 
+        echo "Generate Finder associations from the packaged USD plugins"
+        python3 "$script_dir/scripts/update_macos_document_types.py" \
+            --formats-tool "$build_dir/$xcode_type/stageviz_usd_formats" \
+            --bundle "$app_bundle" --configuration "$xcode_type" --deploy-build
+
         echo "Run final deploymac"
         deploymac_args=(
             --bundle "$app_bundle"

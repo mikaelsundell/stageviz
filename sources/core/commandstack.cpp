@@ -9,6 +9,7 @@
 #include <QPointer>
 #include <QReadLocker>
 #include <QVector>
+#include <pxr/base/tf/pyLock.h>
 
 namespace stageviz {
 class CommandStackPrivate {
@@ -88,6 +89,10 @@ CommandStackPrivate::synchronizeEditTarget()
 void
 CommandStack::execute(Command* command, ExecutionMode mode)
 {
+    // Qt actions can enter here with Python's GIL held, without passing
+    // through our bindings. Native signals may wait for a stage writer whose
+    // USD notices/cleanup need the GIL. Release it for every dispatch path.
+    pxr::TfPyEnsureGILUnlockedObj allowPythonThreads;
     PerfScope perfScope("command.execute_dispatch");
     if (!command)
         return;
@@ -136,6 +141,7 @@ CommandStack::canRedo() const
 void
 CommandStack::undo()
 {
+    pxr::TfPyEnsureGILUnlockedObj allowPythonThreads;
     PerfScope perfScope("command.undo_dispatch");
     if (p->synchronizeEditTarget())
         clear();
@@ -165,6 +171,7 @@ CommandStack::undo()
 void
 CommandStack::redo()
 {
+    pxr::TfPyEnsureGILUnlockedObj allowPythonThreads;
     PerfScope perfScope("command.redo_dispatch");
     if (p->synchronizeEditTarget())
         clear();
@@ -194,6 +201,7 @@ CommandStack::redo()
 void
 CommandStack::clear()
 {
+    pxr::TfPyEnsureGILUnlockedObj allowPythonThreads;
     const bool prevCanUndo = canUndo();
     const bool prevCanRedo = canRedo();
     const bool prevCanClear = canClear();

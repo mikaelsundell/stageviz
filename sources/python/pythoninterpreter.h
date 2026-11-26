@@ -76,6 +76,11 @@ public:
     QString executeScriptWithOutput(const QString& script);
 
     /**
+     * @brief Runs application and user stageviz.py startup scripts after viewer creation.
+     */
+    void runStartupScripts();
+
+    /**
      * @}
      */
 
