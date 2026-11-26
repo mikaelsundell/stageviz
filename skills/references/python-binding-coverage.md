@@ -153,3 +153,7 @@ undoable, positional-only commands; replacement type choices are documented in
 the API reference. Native and embedded regressions cover their layer isolation.
 
 Viewport purpose visibility is exposed through ViewState.showGuides/showProxy/showRender and their setters; these use native renderer purpose controls.
+
+Primitive mesh conversion is exposed through `command.convert_to_mesh(paths, segments=0)`; native `convert_to_mesh_api` and embedded `testconverttomesh.py` cover topology, preserved state, menu availability and undo/redo.
+
+`ViewCamera::clippingSceneRange()` and `setClippingPreviewRange()` are native-only interaction helpers. Live drag/numeric previews maintain temporary clipping bounds without changing camera navigation or evaluating USD bounds per mouse move.

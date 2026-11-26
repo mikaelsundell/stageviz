@@ -1163,7 +1163,7 @@
     <addaction name="menu_3"/>
     <addaction name="separator"/>
     <addaction name="viewShelves"/>
-    <addaction name="viewPlayback"/>
+    <addaction name="viewTools"/>
     <addaction name="separator"/>
     <addaction name="viewPython"/>
     <addaction name="viewProgress"/>
@@ -1683,11 +1683,11 @@
    <property name="text"><string>Shelves</string></property>
    <property name="toolTip"><string>Show the script shelves above the viewport.</string></property>
   </action>
-  <action name="viewPlayback">
+  <action name="viewTools">
    <property name="checkable"><bool>true</bool></property>
    <property name="checked"><bool>true</bool></property>
-   <property name="text"><string>Playback</string></property>
-   <property name="toolTip"><string>Show the playback bar below the viewport.</string></property>
+   <property name="text"><string>Tools</string></property>
+   <property name="toolTip"><string>Show playback controls and manipulator status below the viewport.</string></property>
   </action>
   <action name="viewProgress">
    <property name="checkable">

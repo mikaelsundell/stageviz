@@ -191,11 +191,11 @@ public:
     void setPanelVisible(bool visible);
 
     /**
-     * @brief Shows or hides playback controls while retaining transform controls.
+     * @brief Shows or hides the tools panel for playback and manipulator status.
      *
-     * @param visible True to show the playback bar.
+     * @param visible True to show the tools panel, regardless of its active page.
      */
-    void setPlaybackVisible(bool visible);
+    void setToolsVisible(bool visible);
 
     /**
      * @brief Sets the USD time code evaluated by the viewport.

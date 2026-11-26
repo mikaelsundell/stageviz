@@ -13,6 +13,79 @@ tb = _base["tb"]
 
 
 class NumericEditorTest(_base["ViewportTest"]):
+    def exercise_shortcuts(self):
+        QtCore, _, QtTest, QtWidgets = tb.qt()
+        self.activate_mode('Select')
+        assert tb.wait_for_commands()
+        session = stageviz.session()
+        assert session.newStage()
+        stageviz.command.new_prim('/World', 'ShortcutCube', 'Cube')
+        assert tb.wait_for_commands()
+        state = session.viewState()
+        original_complexity = state.complexityLevel()
+        try:
+            for mode in ('Move', 'Rotate', 'Scale'):
+                self.activate_mode(mode)
+                tb.process_events(100)
+                spin = tb.find_widget('valueX', QtWidgets.QDoubleSpinBox, tb.viewer())
+                line = spin.findChild(QtWidgets.QLineEdit)
+                self.viewport().setFocus()
+                state.setComplexityLevel(stageviz.ComplexityLow)
+                stageviz.command.clear()
+                before = session.stage().GetRootLayer().ExportToString()
+                start = line.rect().center()
+                end = start + QtCore.QPoint(35, 0)
+                QtTest.QTest.mousePress(line, QtCore.Qt.MouseButton.LeftButton, pos=start)
+                event = tb.qt()[1].QMouseEvent(QtCore.QEvent.Type.MouseMove, QtCore.QPointF(end),
+                    QtCore.QPointF(line.mapToGlobal(end)), QtCore.Qt.MouseButton.NoButton,
+                    QtCore.Qt.MouseButton.LeftButton, QtCore.Qt.KeyboardModifier.NoModifier)
+                QtWidgets.QApplication.sendEvent(line, event)
+                QtTest.QTest.mouseRelease(line, QtCore.Qt.MouseButton.LeftButton, pos=end)
+                assert tb.wait_for_commands()
+                assert line.isReadOnly() and not line.hasFocus() and not spin.hasFocus()
+                scrubbed = session.stage().GetRootLayer().ExportToString()
+                assert scrubbed != before
+                QtTest.QTest.keyClick(QtWidgets.QApplication.focusWidget() or self.viewport(), QtCore.Qt.Key.Key_4)
+                assert tb.wait_until(lambda: state.complexityLevel() == stageviz.ComplexityVeryHigh)
+                assert session.stage().GetRootLayer().ExportToString() == scrubbed, '4 changes complexity after scrubbing'
+                self.snapshot('shortcut_after_' + mode + '_scrub')
+
+                state.setComplexityLevel(stageviz.ComplexityLow)
+                QtTest.QTest.mouseDClick(line, QtCore.Qt.MouseButton.LeftButton, pos=line.rect().center())
+                assert line.hasFocus() and not line.isReadOnly()
+                QtTest.QTest.keyClick(line, QtCore.Qt.Key.Key_4)
+                assert spin.value() == 4 and state.complexityLevel() == stageviz.ComplexityLow
+                self.snapshot('shortcut_during_' + mode + '_entry')
+                QtTest.QTest.keyClick(line, QtCore.Qt.Key.Key_Return)
+                assert tb.wait_for_commands()
+                assert line.isReadOnly() and not line.hasFocus() and not spin.hasFocus()
+                stageviz.command.undo()
+                assert tb.wait_for_commands()
+                assert session.stage().GetRootLayer().ExportToString() == scrubbed, 'manual entry is one undo step'
+                stageviz.command.redo()
+                assert tb.wait_for_commands() and spin.value() == 4
+                stageviz.command.undo()
+                assert tb.wait_for_commands()
+                stageviz.command.undo()
+                assert tb.wait_for_commands()
+                assert session.stage().GetRootLayer().ExportToString() == before, 'scrub is one undo step'
+
+                option = QtWidgets.QStyleOptionSpinBox()
+                option.initFrom(spin)
+                option.buttonSymbols = spin.buttonSymbols()
+                option.frame = spin.hasFrame()
+                arrow = spin.style().subControlRect(QtWidgets.QStyle.ComplexControl.CC_SpinBox, option,
+                                                    QtWidgets.QStyle.SubControl.SC_SpinBoxUp, spin).center()
+                QtTest.QTest.mouseClick(spin, QtCore.Qt.MouseButton.LeftButton, pos=arrow)
+                assert tb.wait_for_commands()
+                assert not spin.hasFocus() and not line.hasFocus()
+                assert session.stage().GetRootLayer().ExportToString() != before, 'arrow click commits without focus'
+                stageviz.command.undo()
+                assert tb.wait_for_commands()
+                assert session.stage().GetRootLayer().ExportToString() == before, 'arrow click is one undo step'
+        finally:
+            state.setComplexityLevel(original_complexity)
+
     def setup(self):
         assert self.disposable
         self.original_filename = stageviz.session().filename()
@@ -52,9 +125,9 @@ class NumericEditorTest(_base["ViewportTest"]):
         tree.window().raise_()
         tree.window().activateWindow()
         QtWidgets.QApplication.setActiveWindow(tree.window())
-        line.setFocus()
         tb.process_events(50)
-        assert line.hasFocus(), "numeric editor has keyboard focus"
+        assert spin.focusPolicy() == QtCore.Qt.FocusPolicy.NoFocus
+        assert line.focusPolicy() == QtCore.Qt.FocusPolicy.NoFocus
         return tree, spin, line
 
     def exercise(self):
@@ -95,18 +168,19 @@ class NumericEditorTest(_base["ViewportTest"]):
                 shortcut.deleteLater()
         tree, spin, line = self.editor()
         decimal = spin.locale().decimalPoint()
+        QtTest.QTest.mouseDClick(line, QtCore.Qt.MouseButton.LeftButton, pos=line.rect().center())
         QtTest.QTest.keyClicks(line, "0" + decimal + "25")
         assert abs(spin.value() - .25) < 1e-8 and not line.isReadOnly(), spin.value()
         assert tree.currentItem().text(0) == "inputs:specular", "typing must not jump to another row"
         QtTest.QTest.keyClick(line, QtCore.Qt.Key.Key_Return)
         assert tb.wait_until(lambda: abs(attr().Get() - .25) < 1e-6)
         tree, spin, line = self.editor()
-        # The same delegate editor must survive both asynchronous USD updates.
-        import shiboken6
-        identity = shiboken6.getCppPointer(spin)[0]
+        # Focus is released after each scrub. Reacquire delegate editors after
+        # asynchronous USD updates rather than retaining deleted Qt wrappers.
         stageviz.command.clear()
         values = [attr().Get()]
         for _ in range(2):
+            tree, spin, line = self.editor()
             start = QtCore.QPoint(max(4, line.width()//2), line.height()//2)
             end = start + QtCore.QPoint(30, 0)
             QtTest.QTest.mousePress(line, QtCore.Qt.MouseButton.LeftButton, pos=start)
@@ -119,19 +193,22 @@ class NumericEditorTest(_base["ViewportTest"]):
             expected = spin.value()
             QtTest.QTest.mouseRelease(line, QtCore.Qt.MouseButton.LeftButton, pos=end)
             assert tb.wait_until(lambda: abs(attr().Get() - expected) < 1e-6)
-            assert spin.isVisible() and shiboken6.getCppPointer(spin)[0] == identity
-            assert line.hasFocus(), "scrub release preserves the editable field"
+            focus = QtWidgets.QApplication.focusWidget()
+            assert not (isinstance(focus, QtWidgets.QDoubleSpinBox) or
+                        (focus is not None and isinstance(focus.parentWidget(), QtWidgets.QDoubleSpinBox))), "scrubbing releases numeric keyboard focus"
             assert expected > values[-1], (expected, values)
             values.append(expected)
-        assert spin.isVisible(), "before undo"
         stageviz.command.undo()
         assert tb.wait_until(lambda: abs(attr().Get() - values[1]) < 1e-6)
-        assert abs(spin.value() - values[1]) < 1e-6, "undo refreshes focused numeric editor"
+        tree, spin, line = self.editor()
+        assert abs(spin.value() - values[1]) < 1e-6, "undo refreshes the numeric editor"
         stageviz.command.undo()
         assert tb.wait_until(lambda: abs(attr().Get() - values[0]) < 1e-6)
         stageviz.command.redo()
         assert tb.wait_until(lambda: abs(attr().Get() - values[1]) < 1e-6)
-        # Type directly after scrubbing; the first digit replaces the old value.
+        # Manual entry starts only with an explicit double-click.
+        tree, spin, line = self.editor()
+        QtTest.QTest.mouseDClick(line, QtCore.Qt.MouseButton.LeftButton, pos=line.rect().center())
         QtTest.QTest.keyClicks(line, "0" + decimal + "5")
         assert abs(spin.value() - .5) < 1e-8
         QtTest.QTest.keyClick(line, QtCore.Qt.Key.Key_Return)
@@ -252,6 +329,7 @@ def run(disposable=False):
         test.setup()
         test.exercise()
         test.exercise_gizmo_panel()
+        test.exercise_shortcuts()
     finally:
         test.cleanup()
     return str(test.directory)

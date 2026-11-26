@@ -62,6 +62,9 @@ public:
     void endDrag();
     void updateHover(const QPointF& pos);
     void updateInputValues();
+    void beginClippingPreview(const TransformOperation& operation, const QList<PreparedTransform>& prepared);
+    void updateClippingPreview(const GfMatrix4d& delta);
+    void clearClippingPreview();
 
     GfMatrix4d referenceOrientation(const QList<SdfPath>& targetPaths) const;
     QList<SdfPath> selectedVisiblePaths() const;
@@ -91,11 +94,56 @@ public:
         GfVec3d numericStartValues = GfVec3d(0.0);
         GfMatrix4d startOrientation = GfMatrix4d(1.0);
         QList<PreparedTransform> prepared;
+        GfRange3d clippingSourceRange;
+        GfRange3d rotationClippingRange;
         bool defersPrimsUpdate = false;
         Session::PrimsUpdate previousPrimsUpdate = Session::PrimsUpdate::Immediate;
     };
     Data d;
 };
+
+void
+ViewportTransformPrivate::beginClippingPreview(const TransformOperation& operation,
+                                               const QList<PreparedTransform>& prepared)
+{
+    clearClippingPreview();
+    if (d.frame.pivotEditing || !d.host->viewCamera())
+        return;
+    d.clippingSourceRange = d.host->viewCamera()->clippingSceneRange();
+    if (d.frame.mode != Mode::Rotate || d.clippingSourceRange.IsEmpty())
+        return;
+    // Rotation uses each object's own pivot. Bound all possible displacements
+    // once at gesture start, including custom pivots outside the geometry.
+    // Move and scale do not scan targets here or during preview clipping.
+    GfRange3d envelope = d.clippingSourceRange;
+    for (qsizetype i = 0; i < operation.targetCount; ++i)
+        envelope.UnionWith((prepared.at(i).localPivot * operation.edit.before.at(i)).ExtractTranslation());
+    const GfVec3d margin(2.0 * envelope.GetSize().GetLength());
+    d.rotationClippingRange = GfRange3d(d.clippingSourceRange.GetMin() - margin,
+                                        d.clippingSourceRange.GetMax() + margin);
+}
+
+void
+ViewportTransformPrivate::updateClippingPreview(const GfMatrix4d& delta)
+{
+    PerfScope perfScope("transform.preview_clipping");
+    if (d.clippingSourceRange.IsEmpty() || !d.host->viewCamera())
+        return;
+    // Transform the cached document box, not its prims. The original document
+    // remains included by ViewCamera, so unselected geometry is also covered.
+    const GfRange3d range = d.frame.mode == Mode::Rotate ? d.rotationClippingRange
+                                                         : GfBBox3d(d.clippingSourceRange, delta).ComputeAlignedRange();
+    d.host->viewCamera()->setClippingPreviewRange(range);
+}
+
+void
+ViewportTransformPrivate::clearClippingPreview()
+{
+    if (d.host->viewCamera())
+        d.host->viewCamera()->setClippingPreviewRange(GfRange3d());
+    d.clippingSourceRange.SetEmpty();
+    d.rotationClippingRange.SetEmpty();
+}
 
 bool
 ViewportTransformPrivate::applyIndividualRotation(const UsdStageRefPtr& stage, TransformOperation& operation,
@@ -563,6 +611,7 @@ ViewportTransformPrivate::beginDrag(const QPointF& pos, bool copy)
     if (d.copyDrag)
         d.snap = false;
     d.dragging = true;
+    beginClippingPreview(d.operation, d.prepared);
     Q_EMIT d.host->widget()->transformInputValuesChanged(d.inputValues);
     d.gizmo->invalidate();
     d.host->widget()->update();
@@ -936,6 +985,7 @@ ViewportTransformPrivate::updateDrag(const QPointF& pos)
                 d.frame.pivot = authoredPivot;
         }
     }
+    updateClippingPreview(dragDelta);
     if (d.frame.pivotEditing)
         Q_EMIT d.host->widget()->transformInputValuesChanged(inputValues);
     else
@@ -1010,6 +1060,7 @@ ViewportTransformPrivate::endDrag()
         session()->setPrimsUpdate(d.previousPrimsUpdate);
         d.defersPrimsUpdate = false;
     }
+    clearClippingPreview();
 
     Q_EMIT d.host->widget()->statusReady();
     if (createCopies) {
@@ -1313,6 +1364,7 @@ ViewportTransform::beginNumericEdit(QString& error)
         return false;
     }
     p->d.numericEditing = true;
+    p->beginClippingPreview(p->d.numericOperation, p->d.numericPrepared);
     return true;
 }
 
@@ -1339,8 +1391,10 @@ ViewportTransform::updateNumericEdit(const GfVec3d& values, QString& error)
     }
     if (!errors.isEmpty()) {
         error = errors.join('\n');
+        p->d.host->viewCamera()->setClippingPreviewRange(GfRange3d());
         return false;
     }
+    p->updateClippingPreview(delta);
     // Retain the Euler branch explicitly entered by the user when the
     // committed matrix has more than one equivalent XYZ representation.
     p->d.inputValues = values;
@@ -1380,6 +1434,7 @@ ViewportTransform::finishNumericEdit()
         session()->setPrimsUpdate(p->d.previousPrimsUpdate);
         p->d.defersPrimsUpdate = false;
     }
+    p->clearClippingPreview();
     p->d.frame.pivotValid = false;
     p->d.frame.orientationValid = false;
     p->d.gizmo->invalidate();
@@ -1502,6 +1557,7 @@ ViewportTransform::close()
         session()->setPrimsUpdate(p->d.previousPrimsUpdate);
         p->d.defersPrimsUpdate = false;
     }
+    p->clearClippingPreview();
     const Mode mode = p->d.frame.mode;
     const bool pivotEditing = p->d.frame.pivotEditing;
     p->d.frame = ViewportGizmo::Frame();

@@ -40,7 +40,7 @@ public:
         QPointer<RenderView> view;
         QPointer<GizmoWidget> gizmoWidget;
         bool panelVisible = true;
-        bool playbackVisible = true;
+        bool toolsVisible = true;
     };
     Data d;
 };
@@ -89,7 +89,7 @@ RenderViewPrivate::init()
 void
 RenderViewPrivate::updatePanelVisibility()
 {
-    d.ui->panelWidget->setVisible(d.panelVisible && (d.playbackVisible || d.ui->panelWidget->currentIndex() != 0));
+    d.ui->panelWidget->setVisible(d.panelVisible && d.toolsVisible);
 }
 
 ViewportWidget*
@@ -270,9 +270,9 @@ RenderView::setPanelVisible(bool visible)
 }
 
 void
-RenderView::setPlaybackVisible(bool visible)
+RenderView::setToolsVisible(bool visible)
 {
-    p->d.playbackVisible = visible;
+    p->d.toolsVisible = visible;
     p->updatePanelVisibility();
 }
 

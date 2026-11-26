@@ -10,6 +10,7 @@ set(OpenUSD_COMPONENTS
   BOOST
   PYTHON
   CAMERAUTIL
+  GEOMUTIL
   GF
   GLF
   HD
@@ -19,6 +20,7 @@ set(OpenUSD_COMPONENTS
   HGIGL
   HIO
   PLUG
+  PXOSD
   SDF
   SDR
   TF
@@ -47,9 +49,15 @@ set(OpenUSD_LIBRARY_DIRS "")
 
 foreach(component ${OpenUSD_COMPONENTS})
   string(TOLOWER ${component} component_name)
+  set(component_library_names usd_${component_name})
+  if(component STREQUAL "GEOMUTIL")
+    list(APPEND component_library_names usd_geomUtil)
+  elseif(component STREQUAL "PXOSD")
+    list(APPEND component_library_names usd_pxOsd)
+  endif()
 
   find_library(OpenUSD_${component}_LIBRARY
-    NAMES usd_${component_name}
+    NAMES ${component_library_names}
     PATH_SUFFIXES lib
     PATHS ${CMAKE_PREFIX_PATH}
   )

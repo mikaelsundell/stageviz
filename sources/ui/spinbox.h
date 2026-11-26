@@ -23,9 +23,10 @@ namespace stageviz {
  * or downward decreases it. Shift enables fine adjustment and Control snaps
  * the dragged value to whole-number increments.
  *
- * The value editor is read-only during normal interaction. Typing a number or double-clicking the
- * value enables direct text entry, replacing the selected value. Pressing Enter or moving focus away commits
- * the value and returns the control to scrub mode. The standard spin buttons
+ * The value editor is read-only and does not take keyboard focus during normal
+ * interaction. Double-clicking the value enables focused text entry, replacing
+ * the selected value. Pressing Enter or moving focus away commits the value and
+ * releases keyboard focus back to the application. The standard spin buttons
  * remain available for step-wise adjustment.
  */
 class SpinBox : public QDoubleSpinBox {
@@ -129,23 +130,24 @@ protected:
     void mouseDoubleClickEvent(QMouseEvent* event) override;
 
     /**
-     * @brief Starts direct numeric entry when typing in scrub mode.
+     * @brief Accepts numeric keyboard input only during double-click text editing.
      */
     void keyPressEvent(QKeyEvent* event) override;
 
 private:
-    void beginTextInput(QKeyEvent* event);
     void beginPress(QMouseEvent* event);
     bool updateScrub(QMouseEvent* event);
     bool finishPress(QMouseEvent* event);
     void beginEditing();
     void finishEditing();
+    void releaseKeyboardFocus();
     void updateValueCursor();
 
     QPoint m_pressGlobalPosition;
     double m_pressValue = 0.0;
     double m_scrubSensitivity = 0.1;
     bool m_pressed = false;
+    bool m_stepping = false;
     bool m_scrubbing = false;
     bool m_editing = false;
 };

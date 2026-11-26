@@ -294,3 +294,18 @@ The broader selection comparator records only three nested parent round trips
 per process, without a dedicated parent-edit warmup. Use this focused comparison
 when deciding whether to revert a change for parent-edit latency; a small broad
 comparison is a signal to investigate, rather than sufficient regression evidence.
+
+### Live drag clipping
+
+`benchmark_drag_clipping.py --baseline APP --candidate APP --output DIRECTORY`
+compares serial disposable viewers using identical synthetic geometry far from
+the origin. Defaults cover 1, 2,000 and 20,000 objects, populated Outliner
+branches, fixed-seed random selections, all-object selections and parent moves.
+Mouse dispatch and dispatch-plus-repaint wall times are separate; screenshots,
+USD checks, exact undo/redo checks and MCP oracles are outside the measured loop.
+The single-object case must reproduce rear clipping in the baseline and retain
+visibility in the candidate. `native-phases.jsonl` includes
+`transform.preview_clipping` so its constant-size box-math cost can be inspected
+independently of selection size. These are CPU wall times, not GPU timings.
+
+For drag-clipping measurements, repaint-call wall times can include coalesced or skipped Qt frames. Use mouse dispatch and the native clipping phase to assess input-path overhead; do not interpret repaint-call time as GPU execution time.

@@ -306,3 +306,5 @@ missing from these docs, consult the matching CPython binding before inventing
 a replacement or asserting it does not exist. For tests and external MCP
 inspection, read [Qt testing](python-qt-testing.md); MCP calls must come from an
 external controller while the embedded Qt thread executes Python.
+
+To bake a supported geometric primitive into polygons, use `run_command(stageviz.command.convert_to_mesh, [moon])`. It uses the current viewport complexity without a dialog. The command keeps its path and transforms and supports undo/redo; see the [API reference](python-api.md#stagevizcommand) for supported shapes and limits.

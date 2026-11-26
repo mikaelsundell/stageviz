@@ -6,8 +6,10 @@
 
 #include <QApplication>
 #include <QKeyEvent>
-#include <QKeySequence>
 #include <QLineEdit>
+#include <QSignalBlocker>
+#include <QStyle>
+#include <QStyleOptionSpinBox>
 #include <algorithm>
 #include <cmath>
 
@@ -20,12 +22,18 @@ SpinBox::SpinBox(QWidget* parent)
     setAccelerated(false);
     setButtonSymbols(QAbstractSpinBox::UpDownArrows);
     setScrubSensitivity(0.1);
+    setFocusPolicy(Qt::NoFocus);
+    lineEdit()->setFocusPolicy(Qt::NoFocus);
     lineEdit()->setReadOnly(true);
     lineEdit()->setMouseTracking(true);
     lineEdit()->installEventFilter(this);
     updateValueCursor();
     // connect
     connect(this, &QDoubleSpinBox::editingFinished, this, [this]() { finishEditing(); });
+    connect(this, qOverload<double>(&QDoubleSpinBox::valueChanged), this, [this](double next) {
+        if (m_stepping && !m_scrubbing)
+            Q_EMIT scrubbed(next);
+    });
 }
 
 SpinBox::~SpinBox() = default;
@@ -46,13 +54,12 @@ bool
 SpinBox::event(QEvent* event)
 {
     if (event->type() == QEvent::ShortcutOverride) {
-        // Shortcut resolution precedes KeyPress. Claim numeric entry here so
-        // application actions cannot consume the first digit in scrub mode.
-        beginTextInput(static_cast<QKeyEvent*>(event));
         if (m_editing) {
             event->accept();
             return true;
         }
+        event->ignore();
+        return true;
     }
     return QDoubleSpinBox::event(event);
 }
@@ -63,13 +70,18 @@ SpinBox::eventFilter(QObject* watched, QEvent* event)
     if (watched == lineEdit()) {
         switch (event->type()) {
         case QEvent::ShortcutOverride:
-            beginTextInput(static_cast<QKeyEvent*>(event));
             if (m_editing) {
                 event->accept();
                 return true;
             }
+            event->ignore();
+            return true;
+        case QEvent::KeyPress:
+            if (!m_editing) {
+                event->ignore();
+                return true;
+            }
             break;
-        case QEvent::KeyPress: beginTextInput(static_cast<QKeyEvent*>(event)); break;
         case QEvent::Enter: updateValueCursor(); break;
 
         case QEvent::FocusIn:
@@ -92,7 +104,8 @@ SpinBox::eventFilter(QObject* watched, QEvent* event)
             auto* mouse = static_cast<QMouseEvent*>(event);
             if (!m_editing && mouse->button() == Qt::LeftButton) {
                 beginPress(mouse);
-                return false;
+                mouse->accept();
+                return true;
             }
             break;
         }
@@ -106,8 +119,12 @@ SpinBox::eventFilter(QObject* watched, QEvent* event)
 
         case QEvent::MouseButtonRelease: {
             auto* mouse = static_cast<QMouseEvent*>(event);
-            if (!m_editing && finishPress(mouse))
+            if (!m_editing && mouse->button() == Qt::LeftButton) {
+                finishPress(mouse);
+                mouse->accept();
+                releaseKeyboardFocus();
                 return true;
+            }
             break;
         }
 
@@ -142,31 +159,28 @@ SpinBox::isScrubbing() const
 }
 
 void
-SpinBox::beginTextInput(QKeyEvent* event)
-{
-    if (!event || m_editing || m_scrubbing)
-        return;
-    const QString text = event->text();
-    const bool numeric = !(event->modifiers() & (Qt::ControlModifier | Qt::AltModifier | Qt::MetaModifier))
-                         && !text.isEmpty()
-                         && (text.front().isDigit() || QStringLiteral("+-.,").contains(text.front()));
-    if (numeric || event->key() == Qt::Key_Backspace || event->key() == Qt::Key_Delete
-        || event->matches(QKeySequence::Paste) || event->matches(QKeySequence::SelectAll))
-        beginEditing();
-}
-
-void
 SpinBox::keyPressEvent(QKeyEvent* event)
 {
-    beginTextInput(event);
-    QDoubleSpinBox::keyPressEvent(event);
+    if (m_editing)
+        QDoubleSpinBox::keyPressEvent(event);
+    else
+        event->ignore();
 }
 
 void
 SpinBox::mousePressEvent(QMouseEvent* event)
 {
-    if (!m_editing && event->button() == Qt::LeftButton)
+    if (!m_editing && event->button() == Qt::LeftButton) {
         beginPress(event);
+        QStyleOptionSpinBox option;
+        initStyleOption(&option);
+        const auto control = style()->hitTestComplexControl(QStyle::CC_SpinBox, &option, event->position().toPoint(),
+                                                            this);
+        m_stepping = (control == QStyle::SC_SpinBoxUp && stepEnabled().testFlag(StepUpEnabled))
+                     || (control == QStyle::SC_SpinBoxDown && stepEnabled().testFlag(StepDownEnabled));
+        if (m_stepping)
+            Q_EMIT scrubStarted();
+    }
 
     QDoubleSpinBox::mousePressEvent(event);
 }
@@ -183,9 +197,13 @@ SpinBox::mouseMoveEvent(QMouseEvent* event)
 void
 SpinBox::mouseReleaseEvent(QMouseEvent* event)
 {
-    if (!m_editing && finishPress(event))
+    if (!m_editing && event->button() == Qt::LeftButton) {
+        if (!m_scrubbing)
+            QDoubleSpinBox::mouseReleaseEvent(event);
+        finishPress(event);
+        releaseKeyboardFocus();
         return;
-
+    }
     QDoubleSpinBox::mouseReleaseEvent(event);
 }
 
@@ -210,6 +228,7 @@ SpinBox::beginPress(QMouseEvent* event)
         return;
 
     m_pressed = true;
+    m_stepping = false;
     m_scrubbing = false;
     m_pressGlobalPosition = event->globalPosition().toPoint();
     m_pressValue = value();
@@ -238,7 +257,8 @@ SpinBox::updateScrub(QMouseEvent* event)
         m_scrubbing = true;
         setCursor(Qt::SizeHorCursor);
         updateValueCursor();
-        Q_EMIT scrubStarted();
+        if (!m_stepping)
+            Q_EMIT scrubStarted();
     }
     const int pixels = delta.x() - delta.y();
 
@@ -272,9 +292,10 @@ SpinBox::finishPress(QMouseEvent* event)
     if (!event || event->button() != Qt::LeftButton || !m_pressed)
         return false;
 
-    const bool wasScrubbing = m_scrubbing;
+    const bool wasScrubbing = m_scrubbing || m_stepping;
     m_pressed = false;
     m_scrubbing = false;
+    m_stepping = false;
     unsetCursor();
 
     if (wasScrubbing)
@@ -296,6 +317,8 @@ SpinBox::beginEditing()
         return;
 
     m_editing = true;
+    setFocusPolicy(Qt::StrongFocus);
+    lineEdit()->setFocusPolicy(Qt::StrongFocus);
     lineEdit()->setReadOnly(false);
     lineEdit()->setCursor(Qt::IBeamCursor);
     lineEdit()->setFocus(Qt::MouseFocusReason);
@@ -312,6 +335,19 @@ SpinBox::finishEditing()
     lineEdit()->setReadOnly(true);
     lineEdit()->deselect();
     updateValueCursor();
+    setFocusPolicy(Qt::NoFocus);
+    lineEdit()->setFocusPolicy(Qt::NoFocus);
+    releaseKeyboardFocus();
+}
+
+void
+SpinBox::releaseKeyboardFocus()
+{
+    // Enter already emits editingFinished. Clearing focus must not emit a
+    // second commit, and a mouse scrub commits through scrubFinished instead.
+    const QSignalBlocker blocker(this);
+    lineEdit()->clearFocus();
+    clearFocus();
 }
 
 void
