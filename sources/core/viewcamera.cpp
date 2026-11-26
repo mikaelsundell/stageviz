@@ -50,6 +50,7 @@ public:
         GfVec3d focusPoint;
         GfRange3d range;
         std::optional<GfRange3d> sceneRange;
+        GfRange3d clippingPreviewRange;
         GfRange3d auxiliaryRange;
         ViewCamera::CameraUp cameraUp;
         ViewCamera::CameraMode cameraMode;
@@ -287,7 +288,8 @@ ViewCameraPrivate::clippingRange() const
 {
     double nearClip = d.nearClipping;
     double farClip = d.farClipping;
-    const GfRange3d sceneRange = d.sceneRange.value_or(d.range);
+    GfRange3d sceneRange = d.sceneRange.value_or(d.range);
+    sceneRange.UnionWith(d.clippingPreviewRange);
     GfRange3d viewportRange = sceneRange;
     if (!d.auxiliaryRange.IsEmpty())
         viewportRange.UnionWith(d.auxiliaryRange);
@@ -353,6 +355,7 @@ ViewCameraPrivate::rotateAxis(const GfVec3d& value, double angle)
 void
 ViewCameraPrivate::reset()
 {
+    d.clippingPreviewRange.SetEmpty();
     d.cameraMode = ViewCamera::None;
     d.axisyaw = 0.0;
     d.axispitch = 30.0;
@@ -790,6 +793,21 @@ ViewCamera::setSceneRange(const GfRange3d& range)
     p->d.sceneRange = range;
     p->d.valid = false;
     Q_EMIT cameraChanged(camera());
+}
+
+GfRange3d
+ViewCamera::clippingSceneRange() const
+{
+    return p->d.sceneRange.value_or(p->d.range);
+}
+
+void
+ViewCamera::setClippingPreviewRange(const GfRange3d& range)
+{
+    if (p->d.clippingPreviewRange == range)
+        return;
+    p->d.clippingPreviewRange = range;
+    p->d.valid = false;
 }
 
 void

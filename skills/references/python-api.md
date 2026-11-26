@@ -40,7 +40,7 @@ All arguments of the following callables may be passed by the displayed names:
 | --- | --- |
 | Module | `setConsoleOutputFile(path, append=True)` |
 | Session | `beginProgressBlock(name, count=0)`, `updateProgressNotify(message, completed, paths=None, status=0, details=None)`, `newStage(policy=stageviz.LoadAll)`, `load(filename, policy=stageviz.LoadAll)`, `loadFromFile(filename, policy=stageviz.LoadAll)`, `boundingBox(paths=None)` |
-| command | `select_all(recursive=False)`, `show_paths(paths, recursive=False)`, `hide_paths(paths, recursive=False)`, `load_payloads(paths, variant_set="", variant_value="")`, `new_light(parent_path, name, type="point")`, `new_prim(parent_path, name, type_name="")`, `new_reference(parent_path, name, asset_path, prim_path="")`, `new_payload(parent_path, name, asset_path, prim_path="")`, `move_path(paths, parent_path, insert_index=-1, preserve_world_transform=True)`, `add_attributes(prim_paths, name, type_name, custom=False)` |
+| command | `convert_to_mesh(paths, segments=0)`, `select_all(recursive=False)`, `show_paths(paths, recursive=False)`, `hide_paths(paths, recursive=False)`, `load_payloads(paths, variant_set="", variant_value="")`, `new_light(parent_path, name, type="point")`, `new_prim(parent_path, name, type_name="")`, `new_reference(parent_path, name, asset_path, prim_path="")`, `new_payload(parent_path, name, asset_path, prim_path="")`, `move_path(paths, parent_path, insert_index=-1, preserve_world_transform=True)`, `add_attributes(prim_paths, name, type_name, custom=False)` |
 | UI | `color(role, state=stageviz.UI.Normal)` |
 | Render | `capturePaths(accumulate=True)` |
 | ViewportCapture | `pathsByColor(color, tolerance=30, minPixels=8, minCoverage=0.0)`, `pathsByHue(hue, tolerance=15, minSaturation=0.35, minValue=0.05, minPixels=8, minCoverage=0.0)` |
@@ -747,6 +747,20 @@ the composed layer stack, so retain their identifier before muting.
 
 `instance_paths(paths) -> None`
 : Create instanceable sibling prims that internally reference the selected prims.
+
+`convert_to_mesh(paths, segments=0) -> None`
+: Convert Cube, Sphere, Cone, Cylinder, Capsule and Plane prims to polygon
+  meshes at the same paths. Accepts positional or keyword arguments. `segments`
+  defaults to 0, which uses the current viewport complexity: Low/Medium/High/VeryHigh
+  select 16/32/64/128 radial segments. An explicit integer from 4 to 256
+  overrides that choice; axial resolution is half the radial value. Resolution
+  is captured on first execution so redo retains the same geometry.
+  Preserves transforms, material bindings, children and selection. Bakes authored
+  shape-dimension samples into points/normals/extent samples; interpolation
+  between baked samples follows mesh interpolation. The entire batch is rejected
+  for unsupported prims, instances/proxies/prototypes, invalid dimensions or an
+  uneditable target. Undo restores exact edit-layer opinions; redo retains the
+  original target even after an edit-target change. No new constants are needed.
 
 `make_editable_paths(paths) -> None`
 : Disable native instancing in the active edit target. Proxy children resolve to

@@ -366,6 +366,25 @@ public:
     void setSceneRange(const GfRange3d& range);
 
     /**
+     * @brief Returns cached document bounds used for clipping without evaluating USD.
+     *
+     * Falls back to the framing range before document bounds have been supplied.
+     */
+    GfRange3d clippingSceneRange() const;
+
+    /**
+     * @brief Includes temporary transform-preview bounds in adaptive clipping.
+     *
+     * Empty bounds clear the preview. Does not change framing or emit navigation
+     * signals; the interaction owner schedules repainting and clears the bounds
+     * after the deferred document bounds refresh. This is a native interaction
+     * helper and is not part of the Python camera interface.
+     *
+     * @param range Conservative preview geometry bounds in world space.
+     */
+    void setClippingPreviewRange(const GfRange3d& range);
+
+    /**
      * @brief Sets additional viewport bounds used to calculate the far clip.
      *
      * Auxiliary geometry can extend beyond the document bounds. These bounds

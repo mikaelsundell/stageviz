@@ -56,7 +56,8 @@ class XformGroupingTest(_base["ViewportTest"]):
                 if not isinstance(widget, QtWidgets.QMenu) or not widget.isVisible():
                     continue
                 for action in widget.actions():
-                    if action.text() == "Create" and action.menu():
+                    if action.menu() and action.menu().objectName() == "createPrimMenu":
+                        assert action.text() == "Group"
                         assert [item.text() for item in action.menu().actions()] == ["Xform", "Parent Xform"]
                         widget.setActiveAction(action)
                         action.menu().popup(widget.mapToGlobal(widget.actionGeometry(action).topRight()))

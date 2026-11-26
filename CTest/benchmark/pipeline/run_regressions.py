@@ -35,6 +35,20 @@ def phases(root, name, performance=False, performance_baseline=None):
     if name == 'testpayloadindicator':
         return [('setup', load + "; test=ns['PayloadIndicatorTest'](disposable=True); test.setup()"),
                 ('mute', 'test.mute()'), ('structure', 'test.structure()'), ('cleanup', 'test.cleanup()')]
+    if name == 'testconverttomesh':
+        return [('setup', load + "; test=ns['ConvertMeshTest'](disposable=True); test.setup()"),
+                ('api', 'test.api()'), ('availability', 'test.availability()'),
+                ('ui', 'test.ui()'), ('bake', 'test.bake()'), ('cleanup', 'test.cleanup()')]
+    if name == 'testdragclipping':
+        return [('setup', load + "; test=ns['DragClippingTest'](disposable=True); test.setup()"),
+                ('drag', 'test.drag()'), ('cleanup', 'test.cleanup()')]
+    if name == 'testtoolspanel':
+        return [('setup', load + "; test=ns['ToolsPanelTest'](disposable=True); test.setup()"),
+                ('visibility', 'test.exercise()'), ('cleanup', 'test.cleanup()')]
+    if name == 'testnumericeditors':
+        return [('setup', load + "; test=ns['NumericEditorTest'](disposable=True); test.setup()"),
+                ('property', 'test.exercise()'), ('gizmo-panel', 'test.exercise_gizmo_panel()'),
+                ('shortcuts', 'test.exercise_shortcuts()'), ('cleanup', 'test.cleanup()')]
     if name == 'testselectionoutline':
         return [('setup', load + "; test=ns['SelectionOutlineTest'](disposable=True); test.setup()"),
                 ('overlap', 'test.overlap()'), ('cleanup', 'test.cleanup()')]
@@ -254,6 +268,10 @@ def run(args):
                         timeout = 120
                     result=app.python(code, timeout=timeout)
                     after=app.oracle()
+                    if name == 'testconverttomesh' and label != 'cleanup':
+                        after['sphere'] = app.tool('stageviz_get_prim_info', {'path': '/World/Sphere'})
+                        info = json.loads(after['sphere']['result']['content'][0]['text'])
+                        assert info['type'] == ('Mesh' if label == 'bake' else 'Sphere'), info
                     if name == 'testattributetarget' and label != 'cleanup':
                         selection = json.loads(after['stageviz_get_selection']['result']['content'][0]['text'])
                         assert selection == (['/Asset/Matrix'] if label == 'pivot-history' else ['/Asset']), selection

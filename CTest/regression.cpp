@@ -7,6 +7,7 @@
 #include "commandlayer.h"
 #include "commandlight.h"
 #include "commandmaterial.h"
+#include "commandmesh.h"
 #include "commandpayload.h"
 #include "commandpivot.h"
 #include "commandprim.h"
@@ -637,6 +638,111 @@ explicitOverridePathsApi()
     auto invalid = stageviz::overridePaths({ SdfPath("/World/Group/Child"), SdfPath::AbsoluteRootPath() });
     executeCommand(invalid, current);
     require(text(root) == before, "invalid override batch authors nothing");
+}
+
+void
+convertToMeshApi()
+{
+    Session current;
+    require(current.newStage(), "new mesh conversion fixture");
+    const auto stage = current.stage();
+    const auto root = stage->GetRootLayer();
+    const auto base = SdfLayer::CreateAnonymous("mesh_conversion_source.usda");
+    root->SetSubLayerPaths({ base->GetIdentifier() });
+    stage->SetEditTarget(UsdEditTarget(base));
+    QList<SdfPath> paths;
+    for (const auto* type : { "Cube", "Sphere", "Cone", "Cylinder", "Capsule", "Plane" }) {
+        const SdfPath path(std::string("/Shapes/") + type);
+        const auto prim = stage->DefinePrim(path, TfToken(type));
+        UsdGeomXformable(prim).AddTranslateOp().Set(GfVec3d(3, 4, 5));
+        prim.CreateRelationship(TfToken("material:binding")).SetTargets({ SdfPath("/Looks/Paint") });
+        stage->DefinePrim(path.AppendChild(TfToken("Child")), TfToken("Xform"));
+        paths.append(path);
+    }
+    const auto sphere = UsdGeomSphere(stage->GetPrimAtPath(SdfPath("/Shapes/Sphere")));
+    sphere.GetRadiusAttr().Set(2.0, UsdTimeCode(1));
+    sphere.GetRadiusAttr().Set(4.0, UsdTimeCode(2));
+    const auto cylinder = stage->GetPrimAtPath(SdfPath("/Shapes/Cylinder"));
+    cylinder.GetAttribute(TfToken("axis")).Set(TfToken("X"));
+    cylinder.GetAttribute(TfToken("height")).Set(6.0);
+    cylinder.GetAttribute(TfToken("radius")).Set(1.0);
+    stage->SetEditTarget(UsdEditTarget(root));
+    // Existing local geometry opinions must survive undo, including metadata
+    // and samples that the converted mesh replaces.
+    const auto localPoints = stage->GetPrimAtPath(SdfPath("/Shapes/Sphere"))
+                                 .CreateAttribute(TfToken("points"), SdfValueTypeNames->Point3fArray, false);
+    localPoints.Set(VtVec3fArray { GfVec3f(9, 8, 7) }, UsdTimeCode(4));
+    localPoints.SetDocumentation("Preserved local property metadata");
+    const auto text = [](const SdfLayerHandle& layer) {
+        std::string result;
+        layer->ExportToString(&result);
+        return result;
+    };
+    const auto before = text(root), baseBefore = text(base);
+    require(stageviz::canConvertToMesh(stage, paths), "supported shape batch is convertible");
+    require(!stageviz::canConvertToMesh(stage, { SdfPath("/Shapes") }), "Xform is not convertible");
+    auto command = stageviz::convertToMesh(paths, 16);
+    executeCommand(command, current);
+    for (const auto& path : paths) {
+        const auto prim = stage->GetPrimAtPath(path);
+        const UsdGeomMesh mesh(prim);
+        require(bool(mesh), "conversion produces Mesh at original path");
+        VtVec3fArray points, normals;
+        VtIntArray counts, indices;
+        require(mesh.GetPointsAttr().Get(&points) && !points.empty(), "mesh has points");
+        require(mesh.GetNormalsAttr().Get(&normals) && !normals.empty(), "mesh has normals");
+        require(mesh.GetFaceVertexCountsAttr().Get(&counts) && !counts.empty(), "mesh has faces");
+        require(mesh.GetFaceVertexIndicesAttr().Get(&indices), "mesh has vertex indices");
+        size_t vertices = 0;
+        for (int count : counts) {
+            require(count >= 3, "faces have at least three vertices");
+            vertices += count;
+        }
+        require(vertices == indices.size(), "topology sizes match");
+        for (int index : indices)
+            require(index >= 0 && static_cast<size_t>(index) < points.size(), "topology indexes valid points");
+        TfToken scheme;
+        require(mesh.GetSubdivisionSchemeAttr().Get(&scheme) && scheme == UsdGeomTokens->none,
+                "converted polygon mesh does not subdivide");
+        require(bool(stage->GetPrimAtPath(path.AppendChild(TfToken("Child")))), "children survive conversion");
+        SdfPathVector targets;
+        require(prim.GetRelationship(TfToken("material:binding")).GetTargets(&targets)
+                    && targets == SdfPathVector { SdfPath("/Looks/Paint") },
+                "material relationship survives conversion");
+        bool reset;
+        GfMatrix4d transform;
+        require(UsdGeomXformable(prim).GetLocalTransformation(&transform, &reset)
+                    && transform.ExtractTranslation() == GfVec3d(3, 4, 5),
+                "local transforms survive conversion");
+    }
+    const UsdGeomMesh converted(stage->GetPrimAtPath(SdfPath("/Shapes/Sphere")));
+    VtVec3fArray first, second;
+    require(converted.GetPointsAttr().Get(&first, UsdTimeCode(1))
+                && converted.GetPointsAttr().Get(&second, UsdTimeCode(2)) && first.size() == second.size(),
+            "dimension samples bake to mesh samples");
+    for (size_t i = 0; i < first.size(); ++i)
+        require(GfIsClose(second[i], first[i] * 2, 1e-5), "animated radius preserves sampled geometry");
+    VtVec3fArray extent;
+    require(UsdGeomMesh(cylinder).GetExtentAttr().Get(&extent) && extent.size() == 2
+                && GfIsClose(extent[0], GfVec3f(-3, -1, -1), 1e-5) && GfIsClose(extent[1], GfVec3f(3, 1, 1), 1e-5),
+            "axis-based conversion preserves dimensions and orientation");
+    require(text(base) == baseBefore, "conversion never changes source layer");
+    const auto after = text(root);
+    stage->SetEditTarget(UsdEditTarget(base));
+    undoCommand(command, current);
+    require(text(root) == before && text(base) == baseBefore, "undo restores exact original edit layer");
+    executeCommand(command, current);
+    require(text(root) == after && text(base) == baseBefore, "redo uses captured target despite target change");
+    undoCommand(command, current);
+    stage->SetEditTarget(UsdEditTarget(root));
+    auto invalid = stageviz::convertToMesh({ paths.first(), SdfPath("/Shapes") });
+    executeCommand(invalid, current);
+    require(text(root) == before, "unsupported mixed batch authors nothing");
+    root->SetPermissionToEdit(false);
+    require(!stageviz::canConvertToMesh(stage, paths), "locked layer disables conversion");
+    executeCommand(invalid, current);
+    require(text(root) == before, "locked layer remains unchanged");
+    root->SetPermissionToEdit(true);
 }
 
 void
@@ -1784,6 +1890,46 @@ cameraLiveSceneClippingApi()
     }
     camera.setFarClipping(100);
     require(camera.camera().GetClippingRange().GetMax() <= 100, "explicit far clipping remains an intentional limit");
+}
+
+void
+cameraPreviewClippingApi()
+{
+    ViewCamera camera(1.5, 40.0);
+    const GfRange3d scene(GfVec3d(-2), GfVec3d(2));
+    camera.setBoundingBox(GfBBox3d(scene));
+    camera.setSceneRange(scene);
+    camera.setCameraDistance(20);
+    const auto original = camera.camera();
+    const auto focus = camera.focusPoint();
+    int notifications = 0;
+    QObject::connect(&camera, &ViewCamera::cameraChanged, [&notifications](const GfCamera&) { ++notifications; });
+    const auto cameraWorld = original.GetTransform();
+    const GfVec3d away = cameraWorld.TransformDir(GfVec3d(0, 0, -1000));
+    const GfRange3d preview = GfBBox3d(scene, GfMatrix4d(1).SetTranslate(away)).ComputeAlignedRange();
+    const auto view = original.GetFrustum().ComputeViewMatrix();
+    require(-view.Transform(preview.GetMidpoint())[2] > original.GetClippingRange().GetMax(),
+            "preview moves behind the original far plane");
+    camera.setClippingPreviewRange(preview);
+    const auto expanded = camera.camera();
+    for (size_t corner = 0; corner < 8; ++corner) {
+        const auto depth = -view.Transform(preview.GetCorner(corner))[2];
+        require(depth < expanded.GetClippingRange().GetMax(), "all preview corners remain before the far plane");
+    }
+    require(camera.clippingSceneRange() == scene && camera.boundingBox() == GfBBox3d(scene)
+                && camera.focusPoint() == focus && camera.cameraDistance() == 20
+                && expanded.GetTransform() == original.GetTransform(),
+            "preview never changes document bounds, framing or navigation");
+    require(notifications == 0, "clipping previews do not emit navigation signals or dirty view state");
+    camera.setClippingPreviewRange(GfRange3d());
+    require(camera.camera().GetClippingRange() == original.GetClippingRange(),
+            "clearing preview restores adaptive clip");
+    camera.setFarClipping(100);
+    camera.setClippingPreviewRange(preview);
+    require(camera.camera().GetClippingRange().GetMax() <= 100, "preview respects the explicit far limit");
+    camera.resetView();
+    camera.setFarClipping(2000000);
+    require(camera.camera().GetClippingRange().GetMax() < 1000, "reset discards transient clipping bounds");
 }
 
 void
@@ -7058,6 +7204,7 @@ main(int argc, char** argv)
         { "material_container_layers", materialContainerLayers },
         { "clear_inert_material_opinions", clearInertMaterialOpinions },
         { "explicit_override_paths_api", explicitOverridePathsApi },
+        { "convert_to_mesh_api", convertToMeshApi },
         { "replace_material_network_api", replaceMaterialNetworkApi },
         { "layer_authoring_variants_api", layerAuthoringVariantsApi },
         { "reparent_collision", reparentCollision },
@@ -7078,6 +7225,7 @@ main(int argc, char** argv)
         { "selection_list_large", selectionListLarge },
         { "view_camera_api", viewCameraApi },
         { "camera_live_scene_clipping_api", cameraLiveSceneClippingApi },
+        { "camera_preview_clipping_api", cameraPreviewClippingApi },
         { "session_geometry_bounds_notifications_api", sessionGeometryBoundsNotificationsApi },
         { "viewport_purpose_state_api", viewportPurposeStateApi },
         { "view_state_api", viewStateApi },

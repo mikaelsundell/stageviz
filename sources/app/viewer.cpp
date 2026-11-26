@@ -626,7 +626,7 @@ ViewerPrivate::init()
     connect(d.ui->hudPerformanceStats, &QAction::toggled, viewState, &ViewState::setPerformanceStatsEnabled);
     connect(d.ui->hudCameraAxis, &QAction::toggled, viewState, &ViewState::setCameraAxisEnabled);
     connect(d.ui->viewShelves, &QAction::toggled, d.ui->pythonShelfWidget, &QWidget::setVisible);
-    connect(d.ui->viewPlayback, &QAction::toggled, renderView(), &RenderView::setPlaybackVisible);
+    connect(d.ui->viewTools, &QAction::toggled, renderView(), &RenderView::setToolsVisible);
     connect(d.ui->viewProgress, &QAction::triggered, this, [this]() {
         if (!d.progressDialog)
             return;
@@ -929,9 +929,10 @@ ViewerPrivate::initSettings()
     const bool shelvesVisible = settings()->value("viewer/shelvesVisible", true).toBool();
     d.ui->viewShelves->setChecked(shelvesVisible);
     d.ui->pythonShelfWidget->setVisible(shelvesVisible);
-    const bool playbackVisible = settings()->value("viewer/playbackVisible", true).toBool();
-    d.ui->viewPlayback->setChecked(playbackVisible);
-    renderView()->setPlaybackVisible(playbackVisible);
+    const bool toolsVisible
+        = settings()->value("viewer/toolsVisible", settings()->value("viewer/playbackVisible", true)).toBool();
+    d.ui->viewTools->setChecked(toolsVisible);
+    renderView()->setToolsVisible(toolsVisible);
 
     const bool grid = settings()->value("grid", true).toBool();
     d.ui->displayGrid->setChecked(grid);
@@ -1999,7 +2000,7 @@ ViewerPrivate::saveSettings()
     settings()->setValue("grid", d.ui->displayGrid->isChecked());
     settings()->setValue("sceneShaders", d.ui->useSceneShaders->isChecked());
     settings()->setValue("viewer/shelvesVisible", d.ui->viewShelves->isChecked());
-    settings()->setValue("viewer/playbackVisible", d.ui->viewPlayback->isChecked());
+    settings()->setValue("viewer/toolsVisible", d.ui->viewTools->isChecked());
     settings()->setValue("viewer/windowGeometry", d.viewer->saveGeometry());
     settings()->setValue("viewer/windowState", int(windowState));
 

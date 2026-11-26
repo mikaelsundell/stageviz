@@ -73,7 +73,7 @@ class ContextMenuTest(_base['ViewportTest']):
         tree.scrollToItem(iterator.value())
         widget = tree.viewport() if target == 'outliner' else self.viewport()
         point = tree.visualItemRect(iterator.value()).center() if target == 'outliner' else widget.rect().center()
-        captured, errors, keep = [], [], []
+        captured, errors, keep, triggered = [], [], [], []
 
         def close():
             for w in QtWidgets.QApplication.topLevelWidgets():
@@ -126,8 +126,9 @@ class ContextMenuTest(_base['ViewportTest']):
                         assert action.isEnabled(), action_name
                         menu.setActiveAction(action)
                         if index == len(route) - 1:
+                            action.triggered.connect(lambda: triggered.append(action_name))
                             assert menu.grab().save(str(self.directory / (action_name + '.png')))
-                            QtTest.QTest.keyPress(menu, QtCore.Qt.Key.Key_Return)
+                            QtTest.QTest.keyClick(menu, QtCore.Qt.Key.Key_Return)
                             return
                         child = action.menu()
                         child.popup(menu.mapToGlobal(menu.actionGeometry(action).topRight()))
@@ -149,6 +150,7 @@ class ContextMenuTest(_base['ViewportTest']):
         watchdog.stop()
         watchdog.deleteLater()
         assert captured and not errors, errors
+        assert action_name is None or triggered == [action_name], ('context action was not triggered', action_name, triggered)
         assert tb.wait_for_commands()
         (self.directory / 'menu.json').write_text(json.dumps(captured[0], indent=2))
         return captured[0]
@@ -166,8 +168,8 @@ class ContextMenuTest(_base['ViewportTest']):
     def structure(self):
         rows = self.menu([self.child])
         labels = [r['text'] for r in rows if not r['separator']]
-        assert labels == ['Frame', 'Isolate', 'Visibility', 'Transform', 'Relationships',
-                          'Opinions', 'Composition', 'Copy', 'Create', 'Duplicate', 'Delete'], labels
+        assert labels == ['Frame', 'Isolate', 'Convert to Mesh', 'Visibility', 'Transform', 'Relationships',
+                          'Opinions', 'Composition', 'Copy', 'Group', 'Duplicate', 'Delete'], labels
         assert self.find(rows,'overrideInCurrentLayer') is None
         visibility = self.find(rows, 'primVisibilityMenu')['children']
         assert ['separator' if r['separator'] else r['text'] for r in visibility] == [
@@ -198,7 +200,7 @@ class ContextMenuTest(_base['ViewportTest']):
         self.menu([self.child], 'materialBindingSource')
         assert list(stageviz.session().paths()) == ['/Looks/Red']
         self.menu([self.child], 'materialBindingOwner')
-        assert list(stageviz.session().paths()) == ['/World/Group']
+        assert list(stageviz.session().paths()) == ['/World/Group'], list(stageviz.session().paths())
         self.menu([self.child], 'visibilityHideSelected')
         stage = stageviz.session().stage()
         assert UsdGeom.Imageable(stage.GetPrimAtPath(self.child)).ComputeVisibility() == 'invisible'

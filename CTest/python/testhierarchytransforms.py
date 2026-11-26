@@ -99,8 +99,9 @@ class HierarchyTransformTest(_base['ViewportTest']):
             'numeric rotation matches USD rotateXYZ, independently of panel decomposition')
         self.check_panel(path)
         assert Gf.IsClose(self.values(), Gf.Vec3d(*requested), .015)
-        # Enter commits the whole numeric preview without changing selection.
+        # Double-click opts into manual entry; Enter commits the preview.
         line = self.fields()[-1].findChild(widgets.QLineEdit)
+        test.QTest.mouseDClick(line, core.Qt.MouseButton.LeftButton, pos=line.rect().center())
         test.QTest.keyClick(line, core.Qt.Key.Key_Return)
         tb.process_events(80)
         self.history(path, before, preview, Gf.Vec3d(*requested), 'numeric_' + path.rsplit('/', 1)[-1])
@@ -163,7 +164,9 @@ class HierarchyTransformTest(_base['ViewportTest']):
             preview = self.local('/World/Cube')
             expected = Gf.Matrix4d(1).SetScale(Gf.Vec3d(4.188)) * expected_op.GetOpTransform(Usd.TimeCode.Default())
             assert Gf.IsClose(preview, expected, 1e-6), 'numeric XYZ matches USD while retaining scale'
-            test.QTest.keyClick(self.fields()[-1].findChild(widgets.QLineEdit), core.Qt.Key.Key_Return)
+            line = self.fields()[-1].findChild(widgets.QLineEdit)
+            test.QTest.mouseDClick(line, core.Qt.MouseButton.LeftButton, pos=line.rect().center())
+            test.QTest.keyClick(line, core.Qt.Key.Key_Return)
             tb.process_events(100)
             self.history('/World/Cube', before, preview, requested, 'numeric_xyz_' + str(requested[1]))
             stageviz.command.undo()

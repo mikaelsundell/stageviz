@@ -8,6 +8,7 @@
 #include "commandlayer.h"
 #include "commandlight.h"
 #include "commandmaterial.h"
+#include "commandmesh.h"
 #include "commandpayload.h"
 #include "commandpivot.h"
 #include "commandprim.h"
@@ -846,6 +847,24 @@ PyCommand_makeEditablePaths(PyObject*, PyObject* args)
 }
 
 static PyObject*
+PyCommand_convertToMesh(PyObject*, PyObject* args, PyObject* kwargs)
+{
+    PyObject* pyPaths = nullptr;
+    int segments = 0;
+    static const char* keys[] = { "paths", "segments", nullptr };
+    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "O|i:convert_to_mesh", const_cast<char**>(keys), &pyPaths, &segments))
+        return nullptr;
+    QList<SdfPath> paths;
+    if (!parsePathListArg(pyPaths, "paths", &paths))
+        return nullptr;
+    if (segments != 0 && (segments < 4 || segments > 256)) {
+        PyErr_SetString(PyExc_ValueError, "segments must be 0 (viewport complexity) or between 4 and 256");
+        return nullptr;
+    }
+    return runCommand(convertToMesh(paths, segments));
+}
+
+static PyObject*
 PyCommand_newLight(PyObject*, PyObject* args, PyObject* kwargs)
 {
     PyObject* parentObject = nullptr;
@@ -1634,6 +1653,8 @@ static PyMethodDef PyCommand_methods[] = {
       "Copy one or more prim paths as sibling prims." },
     { "instance_paths", reinterpret_cast<PyCFunction>(PyCommand_instancePaths), METH_VARARGS,
       "Create instanceable sibling prims referencing one or more prim paths." },
+    { "convert_to_mesh", reinterpret_cast<PyCFunction>(PyCommand_convertToMesh), METH_VARARGS | METH_KEYWORDS,
+      "Convert supported shape prims to meshes in place with undo support." },
     { "make_editable_paths", reinterpret_cast<PyCFunction>(PyCommand_makeEditablePaths), METH_VARARGS,
       "Disable instancing on instance roots or the owners of proxy children, retaining references and selection." },
     { "new_light", reinterpret_cast<PyCFunction>(PyCommand_newLight), METH_VARARGS | METH_KEYWORDS,

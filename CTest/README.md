@@ -519,7 +519,7 @@ The script does not autorun; its `run(disposable=True)` executes all phases.
   and sweep selection, Move undo/redo, Qt snapshots and clean viewport capture
   in a disposable viewer.
 
-- `numeric_editor_api` checks typing directly into a scrub-mode spin box,
+- `numeric_editor_api` checks that scrub-mode spin boxes leave numeric shortcuts available,
   double-click replacement, scrub/text cursor transitions and shortcut ownership during numeric entry.
   `testnumericeditors.py` checks double-click replacement with conflicting
   application shortcuts, numeric replacement, stable row focus, repeated
@@ -1183,3 +1183,11 @@ fixture explicitly checks hidden handles in Select mode.
 - `testattributetarget.py`: embedded variant command undo/redo, vector pivot values, matrix pivot edits through the Property Editor, and the existing history-reset policy on target changes, with live Qt assertions and snapshots.
 - `property_preview_cancellation_api`: selection and target changes cancel numeric scrubs without leaving authored defaults.
 - `viewport_evaluation_time_api`: framing and sweep selection follow animated transforms and visibility.
+
+Mesh conversion: `stageviz.convert_to_mesh_api` checks six implicit shapes, topology, axis orientation, sampled dimensions, preserved transforms/materials/children, atomic rejection and exact original-layer undo/redo. `testconverttomesh.py` checks the Python binding and context-menu placement, availability, immediate conversion at all four viewport complexity levels, stable redo resolution and Qt snapshots.
+
+Live transform clipping: `stageviz.camera_preview_clipping_api` and `stageviz.gui.viewport_transform_clipping_api` cover temporary far-plane expansion, unchanged camera navigation, deferred bounds notifications, release cleanup and undo/redo. `testdragclipping.py` verifies real axis dragging beyond stale bounds, rendered visibility and restored USD state.
+
+Tools panel visibility: `stageviz.gui.viewer_tools_panel_api` covers both stacked pages, the migrated Playback preference and saved Tools visibility. `testtoolspanel.py` checks View > Tools across Select/Move/Rotate/Scale, selection changes, released viewport space and Qt screenshots.
+
+Spin-box keyboard focus belongs only to explicit double-click text editing. Numeric editor regressions check focus-free mouse scrubbing and arrow steps, application complexity shortcuts after release, manual-entry shortcut ownership, and undo/redo.

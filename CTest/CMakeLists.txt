@@ -89,6 +89,7 @@ foreach(case IN ITEMS
     material_container_layers
     clear_inert_material_opinions
     explicit_override_paths_api
+    convert_to_mesh_api
     replace_material_network_api
     layer_authoring_variants_api
     reparent_collision
@@ -109,6 +110,7 @@ foreach(case IN ITEMS
     selection_list_large
     view_camera_api
     camera_live_scene_clipping_api
+    camera_preview_clipping_api
     session_geometry_bounds_notifications_api
     viewport_purpose_state_api
     view_state_api
@@ -215,12 +217,14 @@ foreach(case IN ITEMS
     viewport_components_api
     mcp_server_api
     viewport_capture_paths_api
+    viewer_tools_panel_api
     outliner_layer_mute_api
     outliner_display_menu_api
     outliner_purpose_filter_api
     rich_tooltips_api
     viewport_lights_api
     viewport_transform_pivot_api
+    viewport_transform_clipping_api
     viewport_transform_hierarchy_sync_api
     viewport_transform_individual_rotation_api
     viewport_gizmo_default_frame_api

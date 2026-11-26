@@ -6,6 +6,7 @@
 #include "bboxutils.h"
 #include "commandcomposition.h"
 #include "commandmaterial.h"
+#include "commandmesh.h"
 #include "commandpayload.h"
 #include "commandprim.h"
 #include "commandproperty.h"
@@ -234,6 +235,7 @@ ContextMenu::exec(QWidget* parent, ViewContext* context, UsdStageRefPtr usdStage
     bool hasInstanceProxies = false;
     bool canMakeInstanceEditable = false;
     bool canEdit = false;
+    bool canConvert = false;
     bool canClearMaterial = false;
     QList<SdfPath> materialPaths;
     path::PathCollector materialCollector(materialPaths);
@@ -247,6 +249,7 @@ ContextMenu::exec(QWidget* parent, ViewContext* context, UsdStageRefPtr usdStage
         opinionGroups = clearOpinionGroups(usdStage, paths);
         const auto instanceEditLayer = usdStage->GetEditTarget().GetLayer();
         canEdit = instanceEditLayer && instanceEditLayer->PermissionToEdit();
+        canConvert = canConvertToMesh(usdStage, paths);
         canMakeInstanceEditable = canEdit;
 
         if (canSetDefaultPrim) {
@@ -444,6 +447,11 @@ ContextMenu::exec(QWidget* parent, ViewContext* context, UsdStageRefPtr usdStage
     isolateAction->setCheckable(true);
     isolateAction->setChecked(isolateChecked);
     isolateAction->setEnabled(!paths.isEmpty());
+    menu.addSeparator();
+
+    QAction* convertMesh = menu.addAction("Convert to Mesh");
+    convertMesh->setObjectName("convertToMesh");
+    convertMesh->setEnabled(canConvert);
     menu.addSeparator();
 
     QMenu* visibilityMenu = menu.addMenu("Visibility");
@@ -687,7 +695,7 @@ ContextMenu::exec(QWidget* parent, ViewContext* context, UsdStageRefPtr usdStage
     copyMenu->setEnabled(!paths.isEmpty());
     menu.addSeparator();
 
-    QMenu* createMenu = menu.addMenu("Create");
+    QMenu* createMenu = menu.addMenu("Group");
     createMenu->setObjectName("createPrimMenu");
     createMenu->setEnabled(canEdit);
     QAction* newXform = createMenu->addAction("Xform");
@@ -709,6 +717,11 @@ ContextMenu::exec(QWidget* parent, ViewContext* context, UsdStageRefPtr usdStage
     QAction* chosen = menu.exec(globalPos);
     if (!chosen)
         return;
+
+    if (chosen == convertMesh) {
+        context->execute(new Command(convertToMesh(paths)));
+        return;
+    }
 
     if (replaceActions.contains(chosen)) {
         context->execute(new Command(replaceMaterialNetwork(paths, replaceActions.value(chosen))));

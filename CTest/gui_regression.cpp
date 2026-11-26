@@ -100,6 +100,7 @@
 #include <QSet>
 #include <QSettings>
 #include <QSplitter>
+#include <QStackedWidget>
 #include <QStyle>
 #include <QStyleOptionSpinBox>
 #include <QSurfaceFormat>
@@ -793,26 +794,36 @@ numericEditorApi()
     spin.setValue(42.);
     auto* line = spin.findChild<QLineEdit*>();
     require(line && line->isReadOnly(), "numeric editor starts in scrub mode");
+    require(spin.focusPolicy() == Qt::NoFocus && line->focusPolicy() == Qt::NoFocus,
+            "scrubbing does not claim keyboard focus or tab stops");
     require(line->cursor().shape() == Qt::SizeHorCursor, "scrub mode advertises horizontal dragging");
     QKeyEvent firstDigit(QEvent::ShortcutOverride, Qt::Key_7, Qt::NoModifier, "7");
     firstDigit.ignore();
     QApplication::sendEvent(line, &firstDigit);
-    require(firstDigit.isAccepted(), "numeric entry overrides application shortcuts before the first key press");
+    require(!firstDigit.isAccepted(), "digits remain application shortcuts outside explicit numeric editing");
+    QKeyEvent scrubDigit(QEvent::KeyPress, Qt::Key_7, Qt::NoModifier, "7");
+    QApplication::sendEvent(line, &scrubDigit);
+    require(line->isReadOnly() && spin.value() == 42., "typing in scrub mode cannot start manual entry");
+    QMouseEvent doubleClick(QEvent::MouseButtonDblClick, QPointF(10, 10), QPointF(10, 10), Qt::LeftButton,
+                            Qt::LeftButton, Qt::NoModifier);
+    QApplication::sendEvent(line, &doubleClick);
+    require(spin.focusPolicy() == Qt::StrongFocus && line->focusPolicy() == Qt::StrongFocus,
+            "double-click explicitly enables keyboard focus");
     for (const auto& key : { std::make_pair(Qt::Key_7, QString("7")), std::make_pair(Qt::Key_Period, QString(".")),
                              std::make_pair(Qt::Key_5, QString("5")) }) {
         QKeyEvent press(QEvent::KeyPress, key.first, Qt::NoModifier, key.second);
         QApplication::sendEvent(line, &press);
     }
-    require(!line->isReadOnly() && qAbs(spin.value() - 7.5) < 1e-8, "typing replaces the old scrub-mode value");
+    require(!line->isReadOnly() && qAbs(spin.value() - 7.5) < 1e-8, "typing replaces the double-clicked value");
     require(line->cursor().shape() == Qt::IBeamCursor, "direct entry uses the text cursor");
     QKeyEvent enter(QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier);
     QApplication::sendEvent(line, &enter);
     require(line->isReadOnly(), "Enter returns numeric editor to scrub mode");
+    require(spin.focusPolicy() == Qt::NoFocus && line->focusPolicy() == Qt::NoFocus,
+            "committing restores application keyboard focus policy");
     require(line->cursor().shape() == Qt::SizeHorCursor, "committing restores the scrub cursor");
 
     spin.setValue(42.);
-    QMouseEvent doubleClick(QEvent::MouseButtonDblClick, QPointF(10, 10), QPointF(10, 10), Qt::LeftButton,
-                            Qt::LeftButton, Qt::NoModifier);
     QApplication::sendEvent(line, &doubleClick);
     require(spin.isTextEditing() && line->selectedText() == line->text(), "double-click selects the complete value");
     for (QWidget* target : { static_cast<QWidget*>(line), static_cast<QWidget*>(&spin) }) {
@@ -887,6 +898,8 @@ numericEditorApi()
             idle.exec();
             require(arrows.value() == releasedValue, "arrow stepping stops after release, including a drag outside");
             require(!arrows.isScrubbing(), "release ends arrow scrubbing");
+            require(!arrows.hasFocus() && !arrows.findChild<QLineEdit*>()->hasFocus(),
+                    "arrow clicks and scrubs leave keyboard focus available to the application");
         }
     }
 }
@@ -2428,19 +2441,19 @@ propertyRevealFileApi()
         QString target;
         bool inspected = false;
         QTimer::singleShot(0, tree, [&]() {
-            for (QWidget* widget : QApplication::topLevelWidgets()) {
-                auto* menu = qobject_cast<QMenu*>(widget);
-                if (!menu || !menu->isVisible())
-                    continue;
-                for (QAction* action : menu->actions()) {
-                    if (action->objectName() == "propertyRevealFile") {
-                        require(action->isEnabled(), "file reveal action enabled");
-                        target = action->data().toString();
-                    }
+            // Inspect this live popup only. Closing a menu may destroy other
+            // top-level widgets, invalidating a raw topLevelWidgets() snapshot.
+            auto* menu = qobject_cast<QMenu*>(QApplication::activePopupWidget());
+            require(menu && menu->isVisible() && menu->parentWidget() == tree,
+                    "active popup belongs to the property tree");
+            for (QAction* action : menu->actions()) {
+                if (action->objectName() == "propertyRevealFile") {
+                    require(action->isEnabled(), "file reveal action enabled");
+                    target = action->data().toString();
                 }
-                inspected = true;
-                menu->close();
             }
+            inspected = true;
+            menu->close();
         });
         QContextMenuEvent event(QContextMenuEvent::Mouse, point, tree->viewport()->mapToGlobal(point));
         QApplication::sendEvent(tree->viewport(), &event);
@@ -4297,6 +4310,58 @@ viewportComponentsApi()
 }
 
 void
+viewerToolsPanelApi()
+{
+    stageviz::Settings settings;
+    settings.setValue("viewer/playbackVisible", false);
+    const auto checkPagesHidden = [](QStackedWidget* panel) {
+        for (int index : { 0, 1, 0 }) {
+            panel->setCurrentIndex(index);
+            QCoreApplication::processEvents();
+            require(panel->isHidden() && !panel->isVisible(), "unchecked Tools hides either panel page");
+        }
+    };
+    {
+        stageviz::Viewer viewer;
+        viewer.show();
+        QCoreApplication::processEvents();
+        auto* action = viewer.findChild<QAction*>("viewTools");
+        auto* view = viewer.findChild<stageviz::RenderView*>();
+        auto* panel = viewer.findChild<QStackedWidget*>("panelWidget");
+        require(action && view && panel && action->text() == "Tools" && action->isCheckable(),
+                "Tools action controls the shared playback and manipulator panel");
+        require(!action->isChecked() && !viewer.findChild<QAction*>("viewPlayback"),
+                "legacy Playback preference migrates to Tools");
+        checkPagesHidden(panel);
+        action->setChecked(true);
+        require(panel->isVisible(), "checked Tools reveals the current page");
+        panel->setCurrentIndex(1);
+        require(panel->isVisible(), "checked Tools also reveals manipulator controls");
+        view->setPanelVisible(false);
+        require(panel->isHidden(), "outer panel suppression still wins");
+        view->setPanelVisible(true);
+        require(panel->isVisible(), "restoring outer panel preserves the Tools preference");
+        action->setChecked(false);
+        checkPagesHidden(panel);
+        require(viewer.close(), "close viewer with Tools hidden");
+    }
+    require(!settings.value("viewer/toolsVisible", true).toBool(), "Tools visibility is saved under its own key");
+    settings.setValue("viewer/playbackVisible", true);
+    {
+        stageviz::Viewer viewer;
+        viewer.show();
+        QCoreApplication::processEvents();
+        auto* action = viewer.findChild<QAction*>("viewTools");
+        auto* panel = viewer.findChild<QStackedWidget*>("panelWidget");
+        require(action && panel && !action->isChecked(), "new Tools preference takes precedence on restart");
+        checkPagesHidden(panel);
+        action->setChecked(true);
+        require(panel->isVisible() && viewer.close(), "Tools can be restored and saved");
+    }
+    require(settings.value("viewer/toolsVisible", false).toBool(), "shown Tools preference persists");
+}
+
+void
 viewportCapturePathsApi()
 {
     auto* current = stageviz::session();
@@ -4477,6 +4542,70 @@ pivotOperationAppliedApi()
     stage->GetRootLayer()->ExportToString(&registered);
     require(registered == preview, "Applied redo reproduces the preview exactly");
     require(current->selectionList()->paths() == selected, "Applied redo preserves original subset selection");
+}
+
+void
+viewportTransformClippingApi()
+{
+    auto* current = stageviz::session();
+    require(current->newStage(), "new live transform clipping stage");
+    const SdfPath path("/World/Shape");
+    const auto cube = UsdGeomCube::Define(current->stage(), path);
+    const auto drain = []() {
+        for (int i = 0; i < 6; ++i) {
+            QThreadPool::globalInstance()->waitForDone();
+            QCoreApplication::sendPostedEvents(nullptr, 0);
+            QCoreApplication::processEvents();
+        }
+    };
+    drain();
+    ViewportTestHost host;
+    stageviz::ViewportSelection selection(host);
+    host.selection = &selection;
+    host.selected = { path };
+    stageviz::ViewportTransform transform(host);
+    transform.setMode(stageviz::ViewportTransform::Mode::Move, true);
+    auto* camera = host.viewCamera();
+    const GfRange3d initial(GfVec3d(-1), GfVec3d(1));
+    camera->setSceneRange(initial);
+    camera->setFocusPoint(GfVec3d(0));
+    camera->setCameraDistance(20);
+    const auto before = camera->camera();
+    const auto view = before.GetFrustum().ComputeViewMatrix();
+    const auto world = before.GetTransform();
+    const auto away = world.TransformDir(GfVec3d(0, 0, -1000));
+    int boundsNotifications = 0;
+    const auto connection = QObject::connect(current, &stageviz::Session::boundingBoxChanged,
+                                             [&boundsNotifications](const GfBBox3d&) { ++boundsNotifications; });
+    QString error;
+    require(transform.beginNumericEdit(error), "begin deferred transform preview");
+    for (int step = 1; step <= 20; ++step) {
+        require(transform.updateNumericEdit(away * (step / 20.0), error), "advance live transform preview");
+        const auto position = UsdGeomXformCache().GetLocalToWorldTransform(cube.GetPrim()).ExtractTranslation();
+        const double depth = -view.Transform(position)[2];
+        require(depth < camera->camera().GetClippingRange().GetMax(), "moving shape remains inside the live far clip");
+        require(camera->camera().GetTransform() == before.GetTransform(), "clip expansion never moves the camera");
+    }
+    require(boundsNotifications == 0 && current->primsUpdate() == stageviz::Session::PrimsUpdate::Deferred,
+            "preview does not trigger stage bounds scans or end the deferred batch");
+    require(camera->camera().GetClippingRange().GetMax() > before.GetClippingRange().GetMax(),
+            "live preview expands the stale rear clipping plane");
+    transform.finishNumericEdit();
+    drain();
+    require(current->primsUpdate() == stageviz::Session::PrimsUpdate::Immediate && boundsNotifications > 0,
+            "release refreshes stage bounds through the existing session path");
+    camera->setSceneRange(initial);
+    require(camera->camera().GetClippingRange() == before.GetClippingRange(), "release clears transient bounds");
+    current->commandStack()->undo();
+    drain();
+    require(GfIsClose(UsdGeomXformCache().GetLocalToWorldTransform(cube.GetPrim()), GfMatrix4d(1), 1e-8),
+            "one undo restores the pre-preview transform");
+    current->commandStack()->redo();
+    drain();
+    require(GfIsClose(UsdGeomXformCache().GetLocalToWorldTransform(cube.GetPrim()).ExtractTranslation(), away, 1e-8),
+            "redo restores the committed displacement");
+    QObject::disconnect(connection);
+    transform.close();
 }
 
 void
@@ -5349,9 +5478,11 @@ main(int argc, char** argv)
         { "rich_tooltips_api", richTooltipsApi },
         { "viewport_components_api", viewportComponentsApi },
         { "viewport_capture_paths_api", viewportCapturePathsApi },
+        { "viewer_tools_panel_api", viewerToolsPanelApi },
         { "viewport_lights_api", viewportLightsApi },
         { "viewport_evaluation_time_api", viewportEvaluationTimeApi },
         { "viewport_transform_pivot_api", viewportTransformPivotApi },
+        { "viewport_transform_clipping_api", viewportTransformClippingApi },
         { "viewport_transform_hierarchy_sync_api", viewportTransformHierarchySyncApi },
         { "viewport_transform_individual_rotation_api", viewportTransformIndividualRotationApi },
         { "viewport_gizmo_default_frame_api", viewportGizmoDefaultFrameApi },
